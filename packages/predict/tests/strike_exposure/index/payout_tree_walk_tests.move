@@ -154,8 +154,8 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     // Independent per-order reference: both ranges' values round to 0, so true
     // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
     let reference =
-        math::mul(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
-        math::mul(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
+        math::mul_down(pricer.range_price(raw(lower_a), raw(higher)), DUST_QUANTITY) +
+        math::mul_down(pricer.range_price(raw(lower_b), raw(higher)), DUST_QUANTITY);
     assert_eq!(reference, 0);
     assert_eq!(walk_linear(&tree, &pricer), 0);
 
@@ -243,7 +243,7 @@ fun up_reference(pricer: &Pricer, ticks: vector<u64>, quantities: vector<u64>): 
     let mut total = 0;
     ticks.length().do!(|i| {
         total =
-            total + math::mul(
+            total + math::mul_down(
                 pricer.range_price(raw(ticks[i]), raw(constants::pos_inf_tick!())),
                 quantities[i],
             );
@@ -262,7 +262,7 @@ fun range_reference(
     let mut total = 0;
     lower_ticks.length().do!(|i| {
         let range_price = pricer.range_price(raw(lower_ticks[i]), raw(higher_ticks[i]));
-        total = total + math::mul(range_price, quantities[i]);
+        total = total + math::mul_down(range_price, quantities[i]);
     });
     total
 }

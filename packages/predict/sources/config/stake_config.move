@@ -32,11 +32,11 @@ public(package) fun fee_amount_after_discount(
     amount: u64,
     active_stake: u64,
 ): u64 {
-    let discount_fraction = math::mul(
+    let discount_fraction = math::mul_down(
         config.benefit_ratio(active_stake),
         constants::max_fee_discount!(),
     );
-    amount - math::mul(amount, discount_fraction)
+    amount - math::mul_down(amount, discount_fraction)
 }
 
 /// Trading-loss rebate earned for an active stake, rounded down.
@@ -45,7 +45,7 @@ public(package) fun rebate_amount(
     eligible_rebate: u64,
     active_stake: u64,
 ): u64 {
-    math::mul(eligible_rebate, config.benefit_ratio(active_stake))
+    math::mul_down(eligible_rebate, config.benefit_ratio(active_stake))
 }
 
 public(package) fun new(): StakeConfig {

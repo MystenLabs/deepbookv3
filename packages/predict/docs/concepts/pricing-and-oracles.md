@@ -11,7 +11,7 @@ Predict separates the *spot* of the underlying asset, the forward surface, and t
 | Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
 | Block Scholes spot | `propbook::block_scholes_spot_feed::BlockScholesSpotFeed` | One source-level BS spot stream plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
 | Block Scholes forward | `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` | One source-level forward object with per-expiry streams plus exact timestamp inserts | `normalized_forward(expiry_ms)` and its `OracleRead` timestamp |
-| SVI params | `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` | One source-level SVI object with per-expiry streams plus exact timestamp inserts | `normalized_svi(expiry_ms)` and its `OracleRead` timestamp |
+| SVI params | `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` | One source-level SVI object with per-expiry streams plus exact timestamp inserts | `normalized_svi(expiry_ms)` and its `OracleRead` timestamps, plus `params_timestamp_ms(expiry_ms)` |
 
 The `pricing` module is a stateless read layer over these feeds. It resolves them on demand, checks BS price and SVI freshness, computes prices, and never mutates feed, pool, expiry, or position state.
 
@@ -48,7 +48,7 @@ The SVI curve is described by five stochastic-volatility-inspired parameters in 
 
 `a`, `rho`, and `m` are signed because the baseline variance, wing tilt, and smile-center offset can each point either direction; `b` and `sigma` remain unsigned. `I64` is the signed fixed-point type from the shared `fixed_math` package (the renamed `predict_math`), a magnitude-plus-sign type with normalized zero. (The "Role" column describes each parameter's place in the variance formula below; the standard raw-SVI reading — `a` baseline variance, `b` wing slope, `rho` skew, `m` horizontal shift, `sigma` curvature — is consistent with it.)
 
-SVI is its own per-expiry lane and has a looser freshness threshold than BS spot/forward. A push whose publisher timestamp does not advance its lane is a clean no-op rather than an abort, so one transaction can refresh multiple BS feeds without an ordering race on one non-advancing feed reverting the whole batch.
+SVI is its own per-expiry lane and has a looser freshness threshold than BS spot/forward. Its normalized `OracleRead` retains the standard timestamps: `source_timestamp_ms` is the latest accepted provider-envelope timestamp and `update_timestamp_ms` is when that envelope landed on chain. The feed separately exposes `params_timestamp_ms`, the first source timestamp that carried the current exact normalized five-parameter tuple. A newer retransmit of the same normalized tuple advances the read timestamps while preserving the parameter anchor; changing any one parameter resets the anchor to the new source timestamp. A push whose publisher timestamp does not advance its lane is a clean no-op rather than an abort, so one transaction can refresh multiple BS feeds without an ordering race on one non-advancing feed reverting the whole batch.
 
 The feed validates source identity and records the source-native payload. It does not impose Predict's full pricing-safe envelope at ingest; Predict applies its own read-time checks before using the row for pricing.
 
@@ -60,7 +60,7 @@ A Predict range contract pays a fixed notional if the asset's settlement price l
 
 The derivation, conceptually:
 
-1. **Forward and SVI.** Take the resolved live forward `F` and the live `SVIParams` (see below).
+1. **Forward and SVI.** Take the resolved live forward `F` and roll the current raw SVI tuple from its parameter timestamp to the current remaining time-to-expiry (see below).
 2. **Total variance at a strike.** For a strike `K`, compute log-moneyness `k = ln(K / F)`, then evaluate the SVI total-variance function `w(k) = a + b·(rho·(k − m) + sqrt((k − m)² + sigma²))`. This expresses the smile as variance: how much dispersion is priced at that moneyness.
 3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))`, then apply the SVI strike-skew adjustment to the digital price: `up_price(K) = clamp01(N(d2) − phi(d2)·w'(k)/(2·sqrt(w)))`, where `w'(k) = b·(rho + (k − m)/sqrt((k − m)² + sigma²))`. This is the smile-aware probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`, i.e. a cash-or-nothing digital call.
 4. **Range probability by differencing.** The probability of landing in the half-open interval `(lower, higher]` is the difference between the two one-sided digital prices, floored at zero so fixed-point dust or a clamped/non-monotone segment of the adjusted digital (reachable at any moneyness under an arbitrage-able SVI surface — predeploy open-items P-11) cannot abort a live quote:
@@ -71,6 +71,19 @@ The derivation, conceptually:
 
 The endpoints carry sentinel handling so open-ended ranges work without special-casing: a strike equal to `neg_inf` (the raw value `0`) has UP price `1.0` (the whole distribution is above it), and a strike equal to `pos_inf` (`u64::MAX`) has UP price `0`. A one-sided contract is the difference against the appropriate sentinel.
 
+### SVI remaining-time roll-down
+
+The provider's SVI `a` and `b` values describe variance over the horizon that remained when the current tuple first appeared. Let `T_params` be that tuple's `params_timestamp_ms`, `T_expiry` the market expiry, and `t` the current Sui clock. Before evaluating any strike, Predict derives:
+
+    remaining_ms = T_expiry - t
+    anchor_tte_ms = T_expiry - T_params
+    a_eff_1e18 = sign(a) × floor(abs(a) × 1e9 × remaining_ms / anchor_tte_ms)
+    b_eff_1e18 = floor(b × 1e9 × remaining_ms / anchor_tte_ms)
+
+The multiplications use `u256` intermediates and produce 1e18-scaled `u128` magnitudes; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the parameter anchor the tuple is unchanged at 1e18 precision; an identical provider retransmit refreshes the feed's source timestamp but does not move the anchor, so elapsed time continues to reduce `a_eff` and `b_eff`. A changed normalized tuple establishes a new anchor. Live pricing is already forbidden at or after expiry.
+
+The raw tuple must pass Predict's existing pricing envelope before roll-down. If fixed-point flooring makes the effective per-strike total variance non-positive before expiry, the existing `ENonPositiveVariance` quote guard aborts. This policy addresses the age of an unchanged variance-to-expiry tuple; it does not claim that the provider's near-expiry calibration is accurate.
+
 ### Price-tail saturation
 
 Because strikes are absolute integer ticks against a forward that can drift far outside the encodable strike ladder (see [markets and positions](./markets-and-positions.md)), the UP-price math must stay live in both deep tails rather than aborting. The strike/forward ratio is computed in `u128`, then both tails saturate to their limits:
@@ -80,11 +93,11 @@ Because strikes are absolute integer ticks against a forward that can drift far 
 
 Reaching either tail requires the forward to leave the entire encodable strike domain by orders of magnitude; saturating there keeps NAV, redeem, and liquidation reads live instead of bricking the whole market on an extreme price. The range-price differencing is likewise saturating, so a thin or far-OTM range with ~0 true probability and a 1-ulp fixed-point inversion prices `0` rather than aborting a legitimate trade.
 
-The math runs in 1e9 fixed point throughout, using the `fixed_math` `I64` signed type for the intermediate signed quantities (`a`, `rho`, `m`, `k`, `k − m`, `d2`) and guarding the real preconditions: positive forward, non-negative SVI wing term, and positive total variance. The read-time envelope bounds `|a|` instead of rejecting negative `a`, then checks the analytical minimum variance `a + b·sigma·sqrt(1 − rho²)` is positive. That rejects surfaces whose signed baseline over-offsets the SVI wing before any mint, redeem, liquidation, or NAV path can divide by `sqrt(w)`. The deep `ENonPositiveVariance` check remains as a defensive math backstop, but valid loaded surfaces are expected to fail at the envelope if their minimum total variance is non-positive.
+Most of the math runs in 1e9 fixed point. The remaining-time roll-down is the exception: it produces `a_eff` and `b_eff` at `u128`/1e18 with `u256` intermediates, and total variance remains at 1e18 through the integer square-root input. `sqrt(w)` and `d2` return at 1e9 for the rest of the formula. Carrying the rolled values in the wider domain avoids discarding most of the signal on a short-dated surface — a five-minute market's total variance is only about ten raw units at 1e9, and `d2` is ill-conditioned in it. Everything outside that island — log-moneyness, the SVI geometry, the smile-slope correction, and the normal CDF/PDF — stays at 1e9. The signed intermediates use the `fixed_math` `I64` type (`rho`, `m`, `k`, `k − m`, `d2`) and guard the real preconditions: positive forward, non-negative SVI wing term, and positive total variance. The read-time envelope bounds raw `|a|` instead of rejecting negative `a`, then checks the raw analytical minimum variance `a + b·sigma·sqrt(1 − rho²)` is positive. That rejects source surfaces whose signed baseline over-offsets the SVI wing before any mint, redeem, liquidation, or NAV path can divide by `sqrt(w)`. The deep `ENonPositiveVariance` check remains the effective per-strike backstop, including when remaining-time roll-down floors a valid raw surface to non-positive variance before expiry.
 
 For single order/range quotes, range-price differencing is saturating: if a clamped or non-monotone adjusted digital segment would make `up_price(lower) < up_price(higher)`, that order prices at zero rather than aborting the trade path. NAV valuation has an additional active-book check. The payout-tree walk caches finite boundary UP prices in ascending tick order; if an active market's current surface makes those cached UP prices increase over the active boundary set, the flush aborts with a non-monotone price-memo guard instead of netting a non-monotone surface into an overstated `current_nav`.
 
-> The full closed-form SVI and normal-CDF/PDF implementation, including the fixed-point `ln`, `sqrt`, `normal_cdf`, and `normal_pdf` helpers, lives in the `pricing` and `fixed_math` modules. The formulas above are the model, not a reproduction of every rounding step.
+> The full closed-form SVI and normal-CDF/PDF implementation, including the fixed-point `ln`, `sqrt_down`, `normal_cdf`, and `normal_pdf` helpers, lives in the `pricing` and `fixed_math` modules. The formulas above are the model, not a reproduction of every rounding step.
 
 ## Resolving the live forward
 
@@ -98,7 +111,7 @@ flowchart TD
     S -- yes --> B{normalized Pyth spot fresh?}
     B -- yes --> C["forward = pyth_spot x basis(expiry)<br/>basis = bs.forward / bs.spot"]
     B -- no --> D["forward = bs.forward(expiry)<br/>(Block Scholes fallback)"]
-    C --> E[forward + bs.svi]
+    C --> E[forward + time-rolled bs.svi]
     D --> E
 ```
 
@@ -128,7 +141,7 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 - **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward.
 - **Block Scholes price freshness** (`block_scholes_price_freshness_ms`) — how recent the BS spot and expiry forward must be to compute the fallback forward and Pyth-reanchored basis.
-- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the expiry SVI parameters must be. This window is intentionally looser than BS price freshness because SVI changes more slowly.
+- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the latest accepted SVI provider envelope must be. Freshness uses `source_timestamp_ms`, while remaining-time roll-down independently uses the preserved `params_timestamp_ms` of the current normalized tuple. This window is intentionally looser than BS price freshness because SVI changes more slowly.
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 

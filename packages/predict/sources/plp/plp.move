@@ -730,7 +730,7 @@ fun lp_pool_value(
     let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
     let gross_pool_value = idle_balance + active_expiry_value;
     let aggregate_credits = profit_basis_credits + active_expiry_value;
-    let exclusion = math::mul(
+    let exclusion = math::mul_down(
         aggregate_credits.saturating_sub(profit_basis_debits),
         protocol_reserve_profit_share,
     );
@@ -831,7 +831,7 @@ fun sweep_live_expiry_surplus(
 
 fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
     let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
-    let requested_allocation = math::mul(
+    let requested_allocation = math::mul_down(
         max_expiry_allocation,
         constants::fee_incentive_live_target_rate!(),
     )
@@ -841,14 +841,7 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
 
     let (allocation, allocated_after) = vault
         .expiry_accounting
-        .record_fee_incentives_allocated_up_to(
-            expiry_market_id,
-            math::mul(
-                max_expiry_allocation,
-                constants::fee_incentive_lifetime_cap_rate!(),
-            ),
-            requested_allocation,
-        );
+        .record_fee_incentives_allocated_up_to(expiry_market_id, requested_allocation);
     if (allocation == 0) return;
 
     let incentives = vault.fee_incentive_reserve.split(allocation);
@@ -871,7 +864,7 @@ fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry
 /// returns the excess over target.
 fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64): (u64, u64) {
     let required_cash = market.required_cash();
-    let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
+    let target_buffer = math::mul_down(required_cash, constants::expiry_rebalance_pct!());
     let target_cash = (required_cash + target_buffer).max(initial_expiry_cash);
     let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
         initial_expiry_cash,
@@ -930,7 +923,7 @@ fun materialize_expiry_profit(
     if (profit == 0) {
         return
     };
-    let protocol_profit = math::mul(profit, config.protocol_reserve_profit_share());
+    let protocol_profit = math::mul_down(profit, config.protocol_reserve_profit_share());
     let lp_profit = profit - protocol_profit;
     let realized = vault.expiry_accounting.realize_protocol_profit(protocol_profit);
     vault.protocol_reserve_balance.join(realized);

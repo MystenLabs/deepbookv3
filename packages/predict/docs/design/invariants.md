@@ -19,7 +19,7 @@ and contributors. For *how* each mechanism works, follow the links into
   floor is the maximum summed net payout at any *single* settlement price, read
   from `StrikePayoutTree::net_payout_reserve_terms`; the buffer is
   `backing_buffer_lambda × (Σ net payout − floor)`, with both terms derived from
-  the payout tree's aggregate quantity/floor atoms. Because exactly one
+  the payout tree's aggregate net-payout terms (each `quantity − floor_shares`). Because exactly one
   settlement price resolves a market, the floor alone covers every settlement
   outcome in full (`settled_liability(p) ≤ floor` for every `p`); the buffer
   governs how much pre-settlement exit demand beyond the floor is funded. A
@@ -239,7 +239,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Rounding
 
-- All fixed-point math is at 1e9 scale; `math::mul` and `math::div` round **down**
+- All fixed-point math is at 1e9 scale; `math::mul_down` and `math::div_down` round **down**
   uniformly.
 - **Solvency rests on bit-identical pairing:** where a reserve and a payout derive
   from the same quantity/floor atoms, they use the same net-payout calculation

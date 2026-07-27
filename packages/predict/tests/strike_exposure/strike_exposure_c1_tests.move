@@ -111,6 +111,7 @@ fun near_expiry_leverage_exact_amount_mint_rejected() {
         test_constants::mint_deposit(),
         constants::position_lot_size!(),
         LEVERAGE_TWO_X,
+        std::u64::max_value!(),
     );
     abort 999
 }

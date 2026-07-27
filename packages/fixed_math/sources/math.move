@@ -10,9 +10,8 @@ module fixed_math::math;
 use fixed_math::i64;
 
 const EInputZero: u64 = 0;
-const EInvalidPrecision: u64 = 1;
-const EPow10ExponentTooLarge: u64 = 2;
-const EExpOverflow: u64 = 3;
+const EPow10ExponentTooLarge: u64 = 1;
+const EExpOverflow: u64 = 2;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
@@ -71,13 +70,13 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 // === Public Functions ===
 
 /// Multiply two 1e9-scaled fixed-point values, rounding down.
-public fun mul(x: u64, y: u64): u64 {
+public fun mul_down(x: u64, y: u64): u64 {
     (((x as u128) * (y as u128)) / F) as u64
 }
 
 /// Divides two 1e9-scaled fixed-point values, rounding down.
 /// Aborts when `y` is zero or the quotient does not fit in `u64`.
-public fun div(x: u64, y: u64): u64 {
+public fun div_down(x: u64, y: u64): u64 {
     (((x as u128) * F) / (y as u128)) as u64
 }
 
@@ -167,16 +166,28 @@ public fun normal_pdf(x: &i64::I64): u64 {
 
     let x_sq_half = (((x_mag as u128) * (x_mag as u128)) / (2 * F)) as u64;
     let exponent = i64::from_parts(x_sq_half, true);
-    mul(exp(&exponent), INV_SQRT_2PI)
+    mul_down(exp(&exponent), INV_SQRT_2PI)
 }
 
-/// Returns a fixed-point square root with `precision` as the operand scale.
-/// For `m = floor(1e9 / precision)`, the exact integer contract is `floor(sqrt(x * m * 1e9)) / m`; when `precision` divides 1e9, the raw result represents `sqrt(x * precision)`. Predict callers pass `precision = 1e9`, so a 1e9-scaled input produces a 1e9-scaled result rounded down within one raw unit. `precision` must be in `[1, 1e9]`.
-public fun sqrt(x: u64, precision: u64): u64 {
-    assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
-    let multiplier = (float_scaling!() / precision) as u128;
-    let scaled = (x as u128) * multiplier * F;
-    (sqrt_u128(scaled) / multiplier) as u64
+/// Returns the square root of a 1e9-scaled value as a 1e9-scaled result, rounded down within one raw unit.
+public fun sqrt_down(x: u64): u64 {
+    sqrt_u128_down((x as u128) * F) as u64
+}
+
+/// Integer square root of a raw `u128`, rounded down. A `1e18`-scaled input returns its `1e9`-scaled square root, which is how a caller carrying a value at `1e18` takes its root without first narrowing to `1e9`.
+public fun sqrt_u128_down(x: u128): u128 {
+    if (x == 0) return 0;
+    if (x < 4) return 1;
+    let mut g = sqrt_initial_guess_u128(x);
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    if (g > x / g) { g = g - 1; };
+    g
 }
 
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
@@ -327,22 +338,6 @@ fun normalize(x: u64): (u64, u64) {
 /// Multiply two 1e9-scaled values using a u128 intermediate.
 fun mul_scaled_u128(x: u128, y: u128): u128 {
     x * y / F
-}
-
-/// Integer square root for u128 values.
-fun sqrt_u128(x: u128): u128 {
-    if (x == 0) return 0;
-    if (x < 4) return 1;
-    let mut g = sqrt_initial_guess_u128(x);
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    if (g * g > x) { g = g - 1; };
-    g
 }
 
 /// Initial power-of-two guess for Newton square root.

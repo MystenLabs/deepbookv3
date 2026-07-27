@@ -77,9 +77,9 @@ composition is, with F=1e9 and all quantities in real (un-scaled) units:
     sq    = sqrt(si)      ; e_sq  = e_si/(2*sqrt(si)) + 1/F         (sqrt floor)
     rk    = rho*km        ; e_rk  = |rho|*d_k + 1/F                 (rho exact; mul floor)
     inner = rk + sq       ; e_in  = e_rk + e_sq
-    w     = a + b*inner   ; e_w   = b*e_in + 1/F                    (a exact; mul floor)
+    w     = a + b*inner   ; e_w   = b*e_in                          (a exact; product exact, see below)
     S     = sqrt(w)       ; e_S_floor = 1/F                         (sqrt floor, independent)
-    hv    = w/2           ; e_hv_floor = 0.5/F                      (int floor, independent)
+    hv    = w/2           ; e_hv_floor = 0.5/F^2                    (int floor at 1e18, independent)
     N     = k + w/2       ;  d2 = -N/S
     d_d2  = d_k/S                                  (dk through num,  dN/dk = 1)
           + |dd2/dw| * e_w                         (variance value error, correlated num+den)
@@ -98,11 +98,17 @@ composition is, with F=1e9 and all quantities in real (un-scaled) units:
              + pdf*|wp|/(2*w)*(e_w/(2*S) + 1/F) + 1/F
     d_up  = 2e-8 + pdf*d_d2 + e_corr               (cdf + skew-correction error)
 
-KEY RESULT: the budget is dominated NOT by any single primitive (~1e-7) but by the
-`|dd2/dw|*e_w` term: at small total variance w (near-expiry scenarios) and moderate
-moneyness (|d2|~1, where phi(d2) is still large), d2 = -(k+w/2)/sqrt(w) is
-ill-conditioned w.r.t. w (the w^(-3/2) factor), so a 1-ULP variance rounding moves
-the quote by ~1e-6. The reported worst-case budget reflects this.
+KEY RESULT: d2 = -(k+w/2)/sqrt(w) is ill-conditioned w.r.t. the total-variance
+VALUE w (the w^(-3/2) factor in dd2/dw), so at small w (short-dated scenarios) and
+moderate moneyness (|d2|~1, where phi(d2) is still large) the `|dd2/dw|*e_w` term
+governs the whole budget. What e_w contains is therefore the design question. The
+contract assembles `w = a + b*inner` in u128 at 1e18, where `b` and `inner` are
+both 1e9-scaled so their product is EXACT; e_w is only the propagated error of
+`inner` (~b*1e-9), not a 1-ULP floor on w itself. Narrowing that product back to
+1e9 — one truncation — would put a full 1/F into e_w and, at w~1e-7, inflate this
+term by ~4 orders of magnitude. The variance path's precision is thus a property
+of the reported budget, not a claim in a comment: re-narrow the product and the
+generated tolerances blow up.
 
 The wings (deep ITM/OTM, |d2| large) hit the contract's normal_cdf clamp (0 or F)
 and Phi rounds to exactly 0/F, so those points are EXACT (tolerance = a 2-unit
@@ -123,18 +129,25 @@ CUSHION_UNITS = 2                    # reference integer rounding + 2nd-order pr
 NORMAL_CDF_ABS = 2e-8
 NORMAL_PDF_ABS = 50.0 / F
 ULP = 1.0 / F
+ULP18 = 1.0 / (F * F)              # the pricing variance path's 1e18 granularity
 
 # SVI production bounds (constants.move) the chosen rows must satisfy so the
 # fixture can seed them through the production cap path (assert_valid_svi).
 SVI_SIGMA_MIN, SVI_SIGMA_MAX = 1_000_000, 100_000_000_000
 
-# Three diverse-variance rows from the single real market, selected by stable
+# Four diverse-variance rows from the single real market, selected by stable
 # svi_event_digest (large / medium / small total variance => different time to
 # expiry). Recorded for reproducibility; the generator fails loudly if absent.
+# The last row is the dataset's minimum-variance observation — the short-dated
+# regime where 1/sqrt(w) conditioning is tightest, ~200x below the next smallest.
+# It is the demonstration case, not full coverage of the deployed variance range:
+# the corpus bottoms out near w ~ 4e-7 while deployed 1m/5m cadences reach ~1e-8
+# (predeploy open item P-16).
 SELECTED_DIGESTS = [
     "5KbNiu2S7ULJcS1ryDtJ3DC2omTojjJoMFjmu7nYgTAF9",   # 2026-05-27 08:00:18  sqrt_w_atm ~0.0171
     "H4DNoM3eRw83KdZjASFabLJSgu7YNZYRNfCWErcKgnE59",   # 2026-05-27 20:04:03  sqrt_w_atm ~0.0109
     "357n4TarJkp62atdMpfGExEr77SZGqnDBZ7QcBatgpUF9",   # 2026-05-28 02:03:03  sqrt_w_atm ~0.0084
+    "5nspsu63K2FrU8X5GwAprdMfE9wkDh59BS3xyQdnwtWf9",   # 2026-05-28 07:59:44  sqrt_w_atm ~0.00064
 ]
 
 # Interior d2 ladder (well below the sqrt(32)~5.657 clamp) + two clamp wings.
@@ -148,11 +161,11 @@ OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "pricing_reference_data.mov
 
 
 # --- predict math floor ops (INPUT construction only: forward round-trip) ---
-def fp_div(x, y):  # math::div: floor(x * F / y)
+def fp_div(x, y):  # math::div_down: floor(x * F / y)
     return (x * F) // y
 
 
-def fp_mul(x, y):  # math::mul: floor(x * y / F)
+def fp_mul(x, y):  # math::mul_down: floor(x * y / F)
     return (x * y) // F
 
 
@@ -241,14 +254,16 @@ class Scenario:
         e_sq = e_si / (2.0 * math.sqrt(si)) + 1.0 / F
         e_rk = abs(self.rf) * d_k + 1.0 / F
         e_in = e_rk + e_sq
-        e_w = self.bf * e_in + 1.0 / F
+        # b * inner is formed in u128 and kept at 1e18, so the product itself
+        # contributes no floor: e_w is only the propagated error of `inner`.
+        e_w = self.bf * e_in
         # d2 sensitivity: dk through numerator; e_w correlated through num+den;
         # independent half_var and sqrt_var floors; div floor.
         dd2_dw = 0.5 * w ** (-1.5) * (k - w / 2.0)
         d_d2 = (
             d_k / S
             + abs(dd2_dw) * e_w
-            + (0.5 / F) / S
+            + (0.5 * ULP18) / S
             + abs(N / w) * (1.0 / F)
             + 1.0 / F
         )
@@ -353,6 +368,130 @@ def build_points(s):
 # ----------------------------------------------------------------------------
 # Move emission
 # ----------------------------------------------------------------------------
+# The synthetic surface every FLOW fixture prices against, mirroring
+# `packages/predict/tests/test_constants.move` (the generator cannot read Move, so
+# these are a hand-kept mirror; `flow_fixture_atm_up` below fails loudly in the
+# Move tests if they drift). Spot == forward == the strike at `default_strike_tick
+# * default_tick_size`, so the flow fixtures price exactly at the money.
+FLOW_FIXTURE = {
+    "a": 1 / F,                        # default_svi_a
+    "b": 10_000 / F,                   # default_svi_b
+    "rho": 1_000_000_000 / F,          # default_svi_rho_magnitude, positive
+    "m": 10 * F / F,                   # default_svi_m
+    "sigma": 1_000_000 / F,            # default_svi_sigma
+}
+# The fixtures price a surface that has ALREADY rolled down: the SVI tuple is
+# seeded at `live_source_timestamp_ms` and the pricer loads at `now_ms`, so `a`
+# and `b` are scaled by `remaining_ms / anchor_tte_ms` before pricing. Modelling
+# that here is what makes the reference independent of the contract: it was
+# omitted while the roll-down floored at 1e9, because flooring snapped every
+# fixture ratio in [0.5, 1) onto the same effective `a` and the un-rolled value
+# agreed by construction (predeploy open item P-17).
+PARAMS_TIMESTAMP_MS = 119_000          # test_constants::live_source_timestamp_ms
+NOW_MS = 120_000                       # test_constants::now_ms
+DEFAULT_EXPIRY_MS = 31_536_120_000     # test_constants::default_expiry_ms
+SHORT_EXPIRY_MS = 240_000              # test_constants::short_expiry_ms
+
+
+def roll_down_ratio(expiry_ms):
+    """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`."""
+    return (expiry_ms - NOW_MS) / (expiry_ms - PARAMS_TIMESTAMP_MS)
+# A surface in the region the 1e18 variance path newly admits: its per-strike
+# total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
+# aborted `ENonPositiveVariance` here while the analytical minimum still passed the
+# load gate (min_increment 3 against a = -2). Mirrors the fixture in
+# `pricing_guard_tests::low_variance_surface_prices_where_the_1e9_path_aborted`.
+ADMITTED_LOW_VARIANCE = {
+    "a": -2 / F,
+    "b": 1_000 / F,
+    "rho": 800_000_000 / F,
+    "m": 6_666_634 / F,
+    "sigma": 5_000_000 / F,
+}
+
+
+# A surface that separates the two ways of forming `w'` in the skew correction.
+# `b` is carried at 1e18, so `w' = b * slope / 1e18`; narrowing `b` back to 1e9
+# first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
+# moves the digital by ~890 units against a 21-unit budget. Mirrors the fixture in
+# `pricing_guard_tests::w_prime_keeps_the_rolled_b_precision`, which seeds the
+# tuple at 120_000, advances the clock to 121_000, and retransmits it unchanged so
+# the anchor is preserved and `b` is genuinely non-integral at 1e9.
+W_PRIME_PRECISION_SURFACE = {
+    "a": 203 / F,
+    "b": 13 / F,
+    "rho": 1_000_000_000 / F,
+    "m": -831_439 / F,
+    "sigma": 5_000_000 / F,
+}
+# expiry 240_000, anchor 120_000, priced at 121_000.
+W_PRIME_REMAINING_MS, W_PRIME_ANCHOR_TTE_MS = 240_000 - 121_000, 240_000 - 120_000
+
+
+def w_prime_precision_surface_up():
+    """True UP digital at the forward for the `w'` precision surface."""
+    ratio = W_PRIME_REMAINING_MS / W_PRIME_ANCHOR_TTE_MS
+    a = W_PRIME_PRECISION_SURFACE["a"] * ratio
+    b = W_PRIME_PRECISION_SURFACE["b"] * ratio
+    rho, m, sigma = (W_PRIME_PRECISION_SURFACE[key] for key in ("rho", "m", "sigma"))
+    k = 0.0
+    x = k - m
+    sq = math.sqrt(x * x + sigma * sigma)
+    w = a + b * (rho * x + sq)
+    w_prime = b * (rho + x / sq)
+    S = math.sqrt(w)
+    d2 = -(k + w / 2.0) / S
+    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
+
+
+def admitted_low_variance_up():
+    """True UP digital on the newly admitted low-variance surface, at the forward."""
+    a, b = ADMITTED_LOW_VARIANCE["a"], ADMITTED_LOW_VARIANCE["b"]
+    rho, m, sigma = (ADMITTED_LOW_VARIANCE[key] for key in ("rho", "m", "sigma"))
+    k = 0.0
+    x = k - m
+    sq = math.sqrt(x * x + sigma * sigma)
+    w = a + b * (rho * x + sq)
+    w_prime = b * (rho + x / sq)
+    S = math.sqrt(w)
+    d2 = -(k + w / 2.0) / S
+    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
+
+
+# Budget for the synthetic at-the-money digitals: math.move documents
+# normal_cdf to 20 raw units, and the 1e18 variance path plus its 1e9-scaled root
+# move d2 by ~6e-10 (well under one raw unit of probability). Independent of any
+# contract output — never widen this to accommodate a measurement.
+ATM_PRICING_BUDGET_UNITS = 21
+
+
+def flat_surface_atm_up():
+    """True at-the-money UP digital for a=1e-9, b=0, from first principles."""
+    w = 1 / F
+    d2 = -math.sqrt(w) / 2.0
+    return round(phi(d2) * F)
+
+
+def flow_fixture_atm_up(expiry_ms=DEFAULT_EXPIRY_MS):
+    """True at-the-money UP digital for the flow fixtures, from first principles.
+
+    `a` and `b` carry the remaining-time roll-down for `expiry_ms`; `rho`, `m`
+    and `sigma` are not rolled.
+    """
+    ratio = roll_down_ratio(expiry_ms)
+    a, b = FLOW_FIXTURE["a"] * ratio, FLOW_FIXTURE["b"] * ratio
+    rho, m, sigma = FLOW_FIXTURE["rho"], FLOW_FIXTURE["m"], FLOW_FIXTURE["sigma"]
+    k = 0.0                                            # strike == live forward
+    x = k - m
+    sq = math.sqrt(x * x + sigma * sigma)
+    w = a + b * (rho * x + sq)
+    w_prime = b * (rho + x / sq)
+    S = math.sqrt(w)
+    d2 = -(k + w / 2.0) / S
+    up = phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)
+    return round(up * F)
+
+
 def fmt_u64(x):
     return f"{x:_}"
 
@@ -493,6 +632,54 @@ def emit_move(scenarios, scen_points, budget_units):
     w("        abort ENoSuchScenario")
     w("    }")
     w("}")
+    w("")
+
+    w("// === Flow-fixture at-the-money digital ===")
+    w("//")
+    w("// The flow tests price a synthetic at-the-money surface, not the real rows")
+    w("// above, and their expected costs all follow from this one digital. It is")
+    w("// emitted here so those tests assert the contract against an independently")
+    w("// computed value instead of against a number copied out of the contract.")
+    w("// The pre-1e18 pricer returned exactly 500_000_000 here — 6,310 units out,")
+    w("// roughly 300x the budget below — so this check is what that class of defect")
+    w("// fails against.")
+    w("")
+    w("/// True UP digital at the flow fixtures' at-the-money strike, `Phi(d2) -")
+    w("/// phi(d2)*w\'(k)/(2*sqrt(w))` evaluated in float64 from the fixture\'s SVI")
+    w("/// parameters, with `a` and `b` carrying the remaining-time roll-down for the")
+    w("/// far `default_expiry_ms` horizon (ratio 1 - 3.2e-8). Independent of the contract.")
+    w(f"public fun flow_fixture_atm_up(): u64 {{ {fmt_u64(flow_fixture_atm_up())} }}")
+    w("")
+    w("/// Same, for fixtures built at `short_expiry_ms`. Their roll-down ratio is")
+    w("/// 120_000/121_000, so the rolled `a` is materially below the raw value and")
+    w("/// the digital sits off the far-horizon reference by more than its budget.")
+    w("public fun flow_fixture_short_expiry_atm_up(): u64 { "
+      f"{fmt_u64(flow_fixture_atm_up(SHORT_EXPIRY_MS))} }}")
+    w("")
+    w("/// Absolute budget for the above: `normal_cdf` is documented to 20 raw units")
+    w("/// and the d2 path adds under one. Derived from math.move\'s precision")
+    w("/// contract, never measured from contract output.")
+    w(f"public fun flow_fixture_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
+    w("")
+    w("/// True UP digital at the forward for the flat `a = 1e-9, b = 0` surface,")
+    w("/// evaluated from `Phi(-sqrt(a)/2)` with Python stdlib `erf`. Independent")
+    w("/// of the contract and shared by the direct and rolled-surface tests.")
+    w(f"public fun flat_surface_atm_up(): u64 {{ {fmt_u64(flat_surface_atm_up())} }}")
+    w("")
+    w("/// Absolute budget for the flat-surface reference, derived from math.move's")
+    w("/// precision contract and never measured from contract output.")
+    w(f"public fun flat_surface_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
+    w("")
+    w("/// True UP digital on the surface that separates the two ways of forming `w'`")
+    w("/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the")
+    w("/// budget below; narrowing it to 1e9 first misses by ~890 units.")
+    w("public fun w_prime_precision_surface_up(): u64 { "
+      f"{fmt_u64(w_prime_precision_surface_up())} }}")
+    w("")
+    w("/// True UP digital on the surface whose per-strike total variance is positive")
+    w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")
+    w("/// admits, where the previous pricer aborted `ENonPositiveVariance`.")
+    w(f"public fun admitted_low_variance_up(): u64 {{ {fmt_u64(admitted_low_variance_up())} }}")
     return "\n".join(lines) + "\n"
 
 

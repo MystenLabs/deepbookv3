@@ -68,7 +68,6 @@ fun fee_incentives_allocate_up_to_lifetime_cap() {
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         FIRST_FEE_INCENTIVE_ALLOCATION,
     );
     assert_eq!(allocated, FIRST_FEE_INCENTIVE_ALLOCATION);
@@ -76,7 +75,6 @@ fun fee_incentives_allocate_up_to_lifetime_cap() {
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         OVER_CAP_FEE_INCENTIVE_REQUEST,
     );
     assert_eq!(allocated, FEE_INCENTIVE_CAP - FIRST_FEE_INCENTIVE_ALLOCATION);
@@ -84,7 +82,6 @@ fun fee_incentives_allocate_up_to_lifetime_cap() {
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         FIRST_FEE_INCENTIVE_ALLOCATION,
     );
     assert_eq!(allocated, 0);
@@ -257,7 +254,6 @@ fun fee_incentive_allocation_after_terminal_accounting_started_aborts() {
     ledger.materialize_expiry_profit(id);
     ledger.record_fee_incentives_allocated_up_to(
         id,
-        FEE_INCENTIVE_CAP,
         FIRST_FEE_INCENTIVE_ALLOCATION,
     );
 

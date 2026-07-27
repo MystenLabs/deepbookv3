@@ -247,7 +247,7 @@ them.
 ### Payout tree
 
 `StrikePayoutTree` keys finite interval boundaries by absolute tick and tracks
-each interval's aggregate `quantity` and `floor_shares`.
+each interval's aggregate `quantity` and net payout (`quantity - floor_shares`).
 
 - **NAV linear term.** `walk_linear` walks the whole tree, prices each distinct
   boundary tick once through the resolved pricer, and returns
@@ -255,8 +255,9 @@ each interval's aggregate `quantity` and `floor_shares`.
   contract. The same walk fills a transaction-local price memo for every boundary
   it touches, so the leveraged correction scan can read range prices back without
   pricing each order again.
-- **Reserve and settled liability.** The tree derives net payout as
-  `quantity - floor_shares`. Its root summary gives the maximum summed net payout
+- **Reserve and settled liability.** The tree stores net payout
+  (`quantity - floor_shares`) directly, converting the packed floor once at the
+  write boundary. Its root summary gives the maximum summed net payout
   at any single settlement price for live backing, and settlement reads the same
   net-payout prefix at the settlement price.
 

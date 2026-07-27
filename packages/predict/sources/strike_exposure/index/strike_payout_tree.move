@@ -9,10 +9,11 @@
 /// (`raw_strike = tick * tick_size`); the tree stores no grid geometry.
 ///
 /// This treap stores finite interval boundaries touched by positions. It tracks
-/// each order's quantity and static floor shares, deriving net payout (`quantity -
-/// floor_shares = Q - F`) for settled liability and max single-point payout. Live
-/// cash backing is the max-point net payout plus a buffer over the disjoint-book
-/// gap; the tree's max-point term is the floor anchor of that enforced reserve.
+/// each order's quantity and its net payout (`Q - F`), converting the packed
+/// static floor once at the write boundary so no aggregate read re-derives it.
+/// Live cash backing is the max-point net payout plus a buffer over the
+/// disjoint-book gap; the tree's max-point term is the floor anchor of that
+/// enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
@@ -35,15 +36,18 @@ public struct PayoutTerms has copy, drop, store {
     /// Aggregate order quantity over the prefix. Read by the NAV linear walk
     /// (`walk_linear`), which prices each boundary's start/end quantity.
     quantity: u64,
-    /// Aggregate static floor shares over the prefix. Net payout is derived as
-    /// `quantity - floor_shares` for settled liability and max-point reserve reads.
-    floor_shares: u64,
+    /// Aggregate net payout (`Q - F`) over the prefix — the basis for settled
+    /// liability and max-point reserve reads. Stored rather than derived so a
+    /// negative aggregate net payout is unrepresentable instead of relying on the
+    /// per-order `F <= Q` invariant surviving every summation.
+    net_payout: u64,
 }
 
-/// Subtree totals and max static net-payout prefix gain.
+/// Subtree net-payout totals and max static net-payout prefix gain. No consumer
+/// reads a subtree's aggregate quantity, so only the net terms are summarized.
 public struct PayoutSummary has copy, drop, store {
-    total_start: PayoutTerms,
-    total_end: PayoutTerms,
+    net_start: u64,
+    net_end: u64,
     max_net_payout_prefix_gain: u64,
 }
 
@@ -61,14 +65,14 @@ public struct PayoutNode has copy, drop, store {
 
 /// Return `(max_net_payout, total_net_payout)` for pre-settlement reserve math.
 public(package) fun net_payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64) {
-    let mut max_net_payout = net_payout(tree.base);
-    let mut total_terms = tree.base;
+    let mut max_net_payout = tree.base.net_payout;
+    let mut total_net_payout = tree.base.net_payout;
     if (tree.root.is_some()) {
         let summary = tree.nodes[*tree.root.borrow()].summary;
         max_net_payout = max_net_payout + summary.max_net_payout_prefix_gain;
-        total_terms = add_terms(total_terms, summary.total_start);
+        total_net_payout = total_net_payout + summary.net_start;
     };
-    (max_net_payout, net_payout(total_terms))
+    (max_net_payout, total_net_payout)
 }
 
 /// Evaluate payout liability at one positive normalized settlement price.
@@ -80,13 +84,12 @@ public(package) fun settled_payout_liability(
     tick_size: u64,
 ): u64 {
     let limit_tick = range_codec::prefix_limit_tick(settlement, tick_size);
-    let terms = settlement_prefix_terms(
+    settlement_prefix_net_payout(
         &tree.nodes,
         tree.root,
         limit_tick,
-        tree.base,
-    );
-    net_payout(terms)
+        tree.base.net_payout,
+    )
 }
 
 /// Value the quantity-weighted linear liability by pricing each distinct boundary
@@ -135,7 +138,7 @@ public(package) fun insert_range(
     quantity: u64,
     floor_shares: u64,
 ) {
-    let terms = payout_terms(quantity, floor_shares);
+    let terms = payout_terms_from_order(quantity, floor_shares);
     if (terms.is_zero_terms()) return;
 
     // Whole-line ranges are rejected by `order`, so this pre-count matches the
@@ -171,7 +174,7 @@ public(package) fun remove_range(
     tree.apply_range(
         lower_tick,
         higher_tick,
-        payout_terms(quantity, floor_shares),
+        payout_terms_from_order(quantity, floor_shares),
         false,
     );
 }
@@ -375,28 +378,28 @@ fun merge_subtrees(
     }
 }
 
-fun settlement_prefix_terms(
+fun settlement_prefix_net_payout(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     limit_tick: u64,
-    running: PayoutTerms,
-): PayoutTerms {
+    running: u64,
+): u64 {
     if (root.is_none()) return running;
     let tick = *root.borrow();
     let node = nodes[tick];
     // A boundary is active in the prefix iff `tick < limit_tick`
     // (`tick * tick_size < settlement`); otherwise exclude it and its right subtree.
     if (limit_tick <= tick) {
-        return settlement_prefix_terms(nodes, node.left, limit_tick, running)
+        return settlement_prefix_net_payout(nodes, node.left, limit_tick, running)
     };
 
     let mut running = running;
     let left_summary = subtree_summary(nodes, node.left);
-    apply_terms_delta(&mut running, left_summary.total_start, true);
-    apply_terms_delta(&mut running, left_summary.total_end, false);
-    apply_terms_delta(&mut running, node.local_start, true);
-    apply_terms_delta(&mut running, node.local_end, false);
-    settlement_prefix_terms(nodes, node.right, limit_tick, running)
+    apply_net_delta(&mut running, left_summary.net_start, true);
+    apply_net_delta(&mut running, left_summary.net_end, false);
+    apply_net_delta(&mut running, node.local_start.net_payout, true);
+    apply_net_delta(&mut running, node.local_end.net_payout, false);
+    settlement_prefix_net_payout(nodes, node.right, limit_tick, running)
 }
 
 /// Accumulate start and end boundary products separately during an in-order walk.
@@ -419,8 +422,8 @@ fun walk_linear_subtree(
     let mut start_total = 0;
     let mut end_total = 0;
     if (node.local_start.quantity != node.local_end.quantity) {
-        start_total = math::mul(price, node.local_start.quantity);
-        end_total = math::mul(price, node.local_end.quantity);
+        start_total = math::mul_down(price, node.local_start.quantity);
+        end_total = math::mul_down(price, node.local_end.quantity);
     };
 
     let (right_start, right_end) = walk_linear_subtree(nodes, node.right, pricer, tick_size, memo);
@@ -442,55 +445,50 @@ fun subtree_summary(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSu
 
 fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
     PayoutSummary {
-        total_start: start,
-        total_end: end,
-        max_net_payout_prefix_gain: positive_net_delta(start, end, 0),
+        net_start: start.net_payout,
+        net_end: end.net_payout,
+        max_net_payout_prefix_gain: positive_net_delta(start.net_payout, end.net_payout, 0),
     }
 }
 
 fun zero_summary(): PayoutSummary {
     PayoutSummary {
-        total_start: payout_terms(0, 0),
-        total_end: payout_terms(0, 0),
+        net_start: 0,
+        net_end: 0,
         max_net_payout_prefix_gain: 0,
     }
 }
 
 fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary {
     let right_gain_after_left = positive_net_delta(
-        left.total_start,
-        left.total_end,
+        left.net_start,
+        left.net_end,
         right.max_net_payout_prefix_gain,
     );
 
     PayoutSummary {
-        total_start: add_terms(left.total_start, right.total_start),
-        total_end: add_terms(left.total_end, right.total_end),
+        net_start: left.net_start + right.net_start,
+        net_end: left.net_end + right.net_end,
         max_net_payout_prefix_gain: left.max_net_payout_prefix_gain.max(right_gain_after_left),
     }
 }
 
-fun positive_net_delta(start: PayoutTerms, end: PayoutTerms, gain: u64): u64 {
-    (net_payout(start) + gain).saturating_sub(net_payout(end))
+fun positive_net_delta(start: u64, end: u64, gain: u64): u64 {
+    (start + gain).saturating_sub(end)
 }
 
-fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {
-    payout_terms(
-        left.quantity + right.quantity,
-        left.floor_shares + right.floor_shares,
-    )
+/// Convert the packed order atoms into stored terms. `order::assert_valid` is the
+/// `F <= Q` authority, so this is the one site where a floor becomes a net payout.
+fun payout_terms_from_order(quantity: u64, floor_shares: u64): PayoutTerms {
+    PayoutTerms { quantity, net_payout: quantity - floor_shares }
 }
 
-fun net_payout(terms: PayoutTerms): u64 {
-    terms.quantity - terms.floor_shares
-}
-
-fun payout_terms(quantity: u64, floor_shares: u64): PayoutTerms {
-    PayoutTerms { quantity, floor_shares }
+fun payout_terms(quantity: u64, net_payout: u64): PayoutTerms {
+    PayoutTerms { quantity, net_payout }
 }
 
 fun is_zero_terms(terms: PayoutTerms): bool {
-    terms.quantity == 0 && terms.floor_shares == 0
+    terms.quantity == 0 && terms.net_payout == 0
 }
 
 fun is_empty_node(node: PayoutNode): bool {
@@ -498,14 +496,21 @@ fun is_empty_node(node: PayoutNode): bool {
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
+    apply_net_delta(&mut value.quantity, delta.quantity, add);
+    apply_net_delta(&mut value.net_payout, delta.net_payout, add);
+    // Net payout can never exceed quantity (floor_shares = quantity - net_payout
+    // >= 0). A remove that breaks this subtracted a floor component that was never
+    // inserted -- a caller/index desync -- so abort rather than leave the boundary
+    // holding a phantom net payout above zero quantity.
+    assert!(value.net_payout <= value.quantity, EInsufficientPayoutTerms);
+}
+
+fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
     if (add) {
-        value.quantity = value.quantity + delta.quantity;
-        value.floor_shares = value.floor_shares + delta.floor_shares;
+        *value = *value + delta;
     } else {
-        assert!(value.quantity >= delta.quantity, EInsufficientPayoutTerms);
-        assert!(value.floor_shares >= delta.floor_shares, EInsufficientPayoutTerms);
-        value.quantity = value.quantity - delta.quantity;
-        value.floor_shares = value.floor_shares - delta.floor_shares;
+        assert!(*value >= delta, EInsufficientPayoutTerms);
+        *value = *value - delta;
     };
 }
 

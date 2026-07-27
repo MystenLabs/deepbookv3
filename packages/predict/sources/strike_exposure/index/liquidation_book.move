@@ -78,14 +78,14 @@ public(package) fun correction_value(
     while (cursor.is_some()) {
         let scan = cursor.destroy_some();
         let order = order::from_order_id(book.order_id_at(scan));
-        let range_value = math::mul(
+        let range_value = math::mul_down(
             memo.cached_range_price(order.lower_tick(), order.higher_tick()),
             order.quantity(),
         );
         // Knocked out (gross <= floor / ltv): the sweep will liquidate it and it
         // owes nothing above its separately reserved floor, so mark its live
         // liability at zero — credit the full range value, not the floor cap.
-        let cap = if (range_value <= math::div(order.floor_shares(), liquidation_ltv)) {
+        let cap = if (range_value <= math::div_down(order.floor_shares(), liquidation_ltv)) {
             range_value
         } else {
             range_value.min(order.floor_shares())

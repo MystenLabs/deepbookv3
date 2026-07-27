@@ -11,24 +11,25 @@
 module deepbook_predict::cash_backing_flow_tests;
 
 use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use dusdc::dusdc::DUSDC;
+use fixed_math::math::float_scaling as float;
+use std::unit_test::assert_eq;
 
-/// Both mints quote the exact ATM digital: forward == min_strike, so
-/// UP(min_strike) = Φ(0) = 0.5 exactly (the SVI wing rounds to zero), and the
-/// complement range prices via the UP(neg_inf) = 1.0 sentinel: 1.0 - 0.5 = 0.5.
-/// 1x premium = floor(0.5 * quantity).
-const MINT1_PRINCIPAL: u64 = 500_000_000;
+/// Both mints sit exactly at the money (forward == min_strike) and the second
+/// prices the complement range through the UP(neg_inf) = 1.0 sentinel. Each
+/// premium is read from that order's own quote rather than written down, since
+/// this file owns the cash sheet and `pricing_exact_tests` owns the price.
 /// Second order: 1x DOWN complement (-inf, min_strike], quantity 2e9.
 const DOWN_QUANTITY: u64 = 2_000_000_000;
-const MINT2_PRINCIPAL: u64 = 1_000_000_000;
 /// Fees floor at min_fee = 5e6 per 1e9 of quantity (fixture base_fee = 1 makes
 /// the raw Bernoulli fee round to 0; the default ramp multiplier is exactly 1.0).
 const MINT1_FEE: u64 = 5_000_000;
 const MINT2_FEE: u64 = 10_000_000;
-/// Partial live close of half of order 1 at the unchanged ATM mark:
-/// gross = floor(0.5 * 5e8) = 250_000_000; fee on the closed quantity = 2_500_000.
+/// Partial live close of half of order 1 at the unchanged ATM mark. The payout is
+/// measured from the manager's balance and cross-checked against expiry cash:
+/// the close moves value between the two sheets, it never creates or destroys.
 const HALF_CLOSE: u64 = 500_000_000;
 const CLOSE_FEE: u64 = 2_500_000;
-const CLOSE_NET_PAYOUT: u64 = 247_500_000;
 /// Rebate reserve = floor(cumulative fee basis * 0.5 default rebate rate).
 const REBATE_AFTER_MINT1: u64 = 2_500_000;
 const REBATE_AFTER_MINT2: u64 = 7_500_000;
@@ -55,6 +56,15 @@ fun cash_sheet_exact_after_every_flow() {
     // --- Mint 1: 1x ATM UP range (min_strike, +inf], quantity 1e9. Principal
     // and fee both land in expiry cash; backing for a zero-floor 1x order is
     // its full quantity.
+    let quote1 = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    helpers::assert_atm_entry_probability(quote1.entry_probability());
+    let mint1_principal = quote1.net_premium();
     let order1 = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -66,7 +76,7 @@ fun cash_sheet_exact_after_every_flow() {
     helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(
-            seeded_cash + MINT1_PRINCIPAL + MINT1_FEE,
+            seeded_cash + mint1_principal + MINT1_FEE,
             test_constants::mint_quantity(),
             REBATE_AFTER_MINT1,
         ),
@@ -75,7 +85,7 @@ fun cash_sheet_exact_after_every_flow() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            deposit - MINT1_PRINCIPAL - MINT1_FEE,
+            deposit - mint1_principal - MINT1_FEE,
             MINT1_FEE,
             1,
             0,
@@ -86,6 +96,18 @@ fun cash_sheet_exact_after_every_flow() {
     // --- Mint 2: 1x DOWN complement (-inf, min_strike], quantity 2e9.
     // The two ranges are disjoint: M = max(1e9, 2e9) = 2e9, Σ = 3e9,
     // gap = 1e9, default buffer = 250e6, reserve = 2.25e9.
+    let quote2 = fx.quote_mint_bundle(
+        &market,
+        constants::neg_inf!(),
+        helpers::strike_tick(),
+        DOWN_QUANTITY,
+        test_constants::leverage_one_x(),
+    );
+    // The complement is exact: both sides are differences of the same UP(K), so
+    // the two probabilities sum to 1e9 with no approximation of their own.
+    helpers::assert_atm_complement_entry_probability(quote2.entry_probability());
+    assert_eq!(quote1.entry_probability() + quote2.entry_probability(), float!());
+    let mint2_principal = quote2.net_premium();
     let order2 = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -96,9 +118,9 @@ fun cash_sheet_exact_after_every_flow() {
     );
     let cash_after_mints =
         seeded_cash
-        + MINT1_PRINCIPAL
+        + mint1_principal
         + MINT1_FEE
-        + MINT2_PRINCIPAL
+        + mint2_principal
         + MINT2_FEE;
     helpers::check_market_cash_bundle(
         &market,
@@ -109,7 +131,7 @@ fun cash_sheet_exact_after_every_flow() {
             REBATE_AFTER_MINT2,
         ),
     );
-    let balance_after_mints = deposit - MINT1_PRINCIPAL - MINT1_FEE - MINT2_PRINCIPAL - MINT2_FEE;
+    let balance_after_mints = deposit - mint1_principal - MINT1_FEE - mint2_principal - MINT2_FEE;
     fx.check_manager_bundle(
         &account,
         expiry_id,
@@ -135,7 +157,8 @@ fun cash_sheet_exact_after_every_flow() {
         HALF_CLOSE,
     );
     let order1b = replacement.destroy_some();
-    let cash_after_close = cash_after_mints - CLOSE_NET_PAYOUT;
+    let close_net_payout = fx.account_balance_bundle<DUSDC>(&account) - balance_after_mints;
+    let cash_after_close = cash_after_mints - close_net_payout;
     // λ_default = 0.25, so the gap buffer is HALF_CLOSE / 4.
     let liability_after_close = DOWN_QUANTITY + HALF_CLOSE / 4;
     helpers::check_market_cash_bundle(
@@ -146,7 +169,7 @@ fun cash_sheet_exact_after_every_flow() {
             REBATE_AFTER_CLOSE,
         ),
     );
-    let balance_after_close = balance_after_mints + CLOSE_NET_PAYOUT;
+    let balance_after_close = balance_after_mints + close_net_payout;
     fx.check_manager_bundle(
         &account,
         expiry_id,

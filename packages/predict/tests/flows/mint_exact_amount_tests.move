@@ -5,16 +5,18 @@
 /// budget-bias quote): the flow mints the largest lot-rounded quantity whose net
 /// premium fits the budget, never charges past the budget, saturates at the lot
 /// cap instead of aborting on oversized budgets (the DBU-566 regression), and
-/// enforces `min_quantity` as the fill floor. Every expected value is
-/// hand-derived from the fixture's exact at-the-money probability Φ(0) = 0.5.
-/// Not covered here: the one-lot-conservative probe edge at fractional leverage
-/// with a rounding-lossy probability — at p = 0.5 every per-lot product is
-/// exact, so the probe and the charge coincide at all these points.
+/// enforces `min_quantity` as the fill floor. Budgets and expected debits are
+/// read from a quantity quote at the size in question rather than hardcoded: a
+/// budget threshold IS the next lot's premium, and `pricing_exact_tests` owns
+/// whether that premium is itself correct.
+/// Not covered here: the one-lot-conservative probe edge at fractional leverage,
+/// where the per-lot product rounds and the probe can diverge from the charge.
 #[test_only]
 module deepbook_predict::mint_exact_amount_tests;
 
 use deepbook_predict::{
     constants,
+    expiry_market::{Self, MintQuote},
     flow_test_helpers as helpers,
     strike_exposure,
     strike_exposure_config,
@@ -23,28 +25,48 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
-/// Largest budget that still sizes exactly 10_000 lots (the ATM 1x one-lot
-/// premium is p * lot = 0.5 * 10_000 = 5_000): one unit below the 10_001-lot
-/// premium 10_001 * 5_000 = 50_005_000.
-const BUDGET_BELOW_NEXT_LOT: u64 = 50_004_999;
-/// 10_000 lots of 10_000 raw units.
+/// 10_000 lots of 10_000 raw units, and the next lot up. Quantities are lot
+/// arithmetic and independent of the price; every budget and debit below is
+/// taken from a quantity quote at that size instead, because a budget threshold
+/// is by definition "the premium of the next lot", not a number that can be
+/// written down once. `pricing_exact_tests` owns whether the premium behind them
+/// is right.
 const TEN_THOUSAND_LOTS: u64 = 100_000_000;
-/// Exact debit for the 10_000-lot 1x mint, same derivation as
-/// `quote_mint_tests::VARIANCE_SEED_COST`: net premium 0.5 * 1e8 = 50_000_000
-/// plus min fee 0.005 * 1e8 = 500_000.
-const TEN_THOUSAND_LOTS_DEBIT: u64 = 50_500_000;
-/// The smallest budget admitting the 10_001st lot, and its exact debit:
-/// net premium 50_005_000 plus min fee 0.005 * 100_010_000 = 500_050.
-const BUDGET_AT_NEXT_LOT: u64 = 50_005_000;
 const NEXT_LOT_QUANTITY: u64 = 100_010_000;
-const NEXT_LOT_DEBIT: u64 = 50_505_050;
-/// Lot-cap saturation: quantity = max_quantity_lots (u32 max = 4_294_967_295)
-/// * lot 10_000, and its net premium at p = 0.5, 1x leverage.
+/// Lot-cap saturation quantity: max_quantity_lots (u32 max = 4_294_967_295)
+/// * lot 10_000.
 const LOT_CAP_QUANTITY: u64 = 42_949_672_950_000;
-const LOT_CAP_NET_PREMIUM: u64 = 21_474_836_475_000;
-/// Fill for a balance-capped budget: deposit 1e9 / one-lot premium 5_000 =
-/// 200_000 lots of 10_000 raw units.
-const BALANCE_CAPPED_QUANTITY: u64 = 2_000_000_000;
+
+/// The anonymous 1x quantity quote at the fixture's at-the-money strike, the
+/// reference every budget threshold and expected debit below is read from.
+fun atm_quote(fx: &mut helpers::Fixture, market: &helpers::MarketBundle, quantity: u64): MintQuote {
+    fx.quote_mint_bundle(
+        market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        quantity,
+        test_constants::leverage_one_x(),
+    )
+}
+
+/// Every budget threshold and expected debit here flows through `atm_quote`, so
+/// pinning its probability once against the independent reference keeps all of
+/// them anchored to a verified price rather than to the contract's own output.
+fun atm_quote_checked(
+    fx: &mut helpers::Fixture,
+    market: &helpers::MarketBundle,
+    quantity: u64,
+): MintQuote {
+    let quote = atm_quote(fx, market, quantity);
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    quote
+}
+
+/// The largest budget that still sizes exactly `TEN_THOUSAND_LOTS`: one unit
+/// below what the next lot up would cost.
+fun budget_below_next_lot(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64 {
+    atm_quote_checked(fx, market, NEXT_LOT_QUANTITY).net_premium() - 1
+}
 
 #[test]
 fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
@@ -56,22 +78,26 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    // min_quantity equal to the expected fill pins sizing from below (one lot
-    // fewer aborts on the fill floor) while the exact debit pins it from above
-    // (one lot more would debit 50_505_050).
+    // One unit below the 10_001-lot premium is the largest budget that still
+    // sizes 10_000 lots. min_quantity equal to the expected fill pins sizing from
+    // below (one lot fewer aborts on the fill floor) while the exact debit pins
+    // it from above (one lot more would debit the next lot's total).
+    let budget = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY).net_premium() - 1;
+    let expected_debit = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS).all_in_cost();
     fx.mint_exact_amount_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        BUDGET_BELOW_NEXT_LOT,
+        budget,
         TEN_THOUSAND_LOTS,
         test_constants::leverage_one_x(),
+        std::u64::max_value!(),
     );
 
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - TEN_THOUSAND_LOTS_DEBIT,
+        test_constants::mint_deposit() - expected_debit,
     );
 
     helpers::return_account_bundle(account);
@@ -89,19 +115,22 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    // The smallest budget admitting the 10_001st lot is exactly that lot's premium.
+    let next_lot = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY);
     fx.mint_exact_amount_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        BUDGET_AT_NEXT_LOT,
+        next_lot.net_premium(),
         NEXT_LOT_QUANTITY,
         test_constants::leverage_one_x(),
+        std::u64::max_value!(),
     );
 
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - NEXT_LOT_DEBIT,
+        test_constants::mint_deposit() - next_lot.all_in_cost(),
     );
 
     helpers::return_account_bundle(account);
@@ -120,14 +149,16 @@ fun budget_fill_below_min_quantity_aborts() {
     let mut account = fx.take_account_bundle(&trader);
 
     // The budget sizes exactly 10_000 lots; a floor one lot higher must abort.
+    let budget = budget_below_next_lot(&mut fx, &market);
     fx.mint_exact_amount_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        BUDGET_BELOW_NEXT_LOT,
+        budget,
         TEN_THOUSAND_LOTS + constants::position_lot_size!(),
         test_constants::leverage_one_x(),
+        std::u64::max_value!(),
     );
 
     abort 999
@@ -145,14 +176,107 @@ fun budget_mint_with_leverage_below_one_x_aborts_with_domain_code() {
 
     // Policy runs before the sizing search, so an invalid leverage aborts with
     // its domain code — never the math module's zero-input abort.
+    let budget = budget_below_next_lot(&mut fx, &market);
     fx.mint_exact_amount_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        BUDGET_BELOW_NEXT_LOT,
+        budget,
         TEN_THOUSAND_LOTS,
         999_999_999,
+        std::u64::max_value!(),
+    );
+
+    abort 999
+}
+
+#[test]
+fun budget_mint_at_exact_all_in_cost_cap_succeeds() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // The all-in cap bounds premium plus fees, so the cap that exactly equals
+    // this fill's total debit must pass — the passing side of the boundary the
+    // next test pins from above.
+    let budget = budget_below_next_lot(&mut fx, &market);
+    let expected_debit = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS).all_in_cost();
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        expected_debit,
+    );
+
+    assert_eq!(
+        fx.account_balance_bundle<DUSDC>(&account),
+        test_constants::mint_deposit() - expected_debit,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMax)]
+fun budget_mint_one_unit_over_all_in_cost_cap_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // The budget itself still fits: this cap sits one raw unit below the fill's
+    // total debit, so only the fee charged on top of the premium breaches it.
+    let budget = budget_below_next_lot(&mut fx, &market);
+    let expected_debit = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS).all_in_cost();
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        expected_debit - 1,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostCapRequired)]
+fun budget_mint_without_an_all_in_cost_cap_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Zero is not "uncapped": the budget mint has no disabling value, so it
+    // aborts on the missing cap rather than on the breached one.
+    let budget = budget_below_next_lot(&mut fx, &market);
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        0,
     );
 
     abort 999
@@ -180,7 +304,10 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
     );
 
     assert_eq!(quote.quantity(), LOT_CAP_QUANTITY);
-    assert_eq!(quote.net_premium(), LOT_CAP_NET_PREMIUM);
+    assert_eq!(
+        quote.net_premium(),
+        atm_quote_checked(&mut fx, &market, LOT_CAP_QUANTITY).net_premium(),
+    );
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -196,21 +323,24 @@ fun account_quote_caps_the_budget_to_the_account_balance() {
     let market = fx.take_market_bundle(expiry_id);
     let account = fx.take_account_bundle(&trader);
 
-    // A u64-max budget is capped to the deposit (1e9): at p = 0.5 and 1x the
-    // fill is 1e9 / 5_000 = 200_000 lots = 2e9 raw units, whose net premium is
-    // exactly the balance — the same sizing a mint would perform.
+    // A u64-max budget is capped to the deposit: the fill is the largest lot
+    // multiple the balance can pay for, so its premium fits the deposit and one
+    // more lot does not — the same sizing a mint would perform.
     let quote = fx.quote_mint_for_account_amount_bundle(
         &market,
         &account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         std::u64::max_value!(),
-        BALANCE_CAPPED_QUANTITY,
+        constants::position_lot_size!(),
         test_constants::leverage_one_x(),
     );
 
-    assert_eq!(quote.quantity(), BALANCE_CAPPED_QUANTITY);
-    assert_eq!(quote.net_premium(), test_constants::mint_deposit());
+    assert!(quote.net_premium() <= test_constants::mint_deposit());
+    let one_more_lot = quote.quantity() + constants::position_lot_size!();
+    assert!(
+        atm_quote_checked(&mut fx, &market, one_more_lot).net_premium() > test_constants::mint_deposit(),
+    );
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -226,11 +356,12 @@ fun budget_quote_matches_quantity_quote_for_the_sized_fill() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let market = fx.take_market_bundle(expiry_id);
 
+    let budget = budget_below_next_lot(&mut fx, &market);
     let budget_quote = fx.quote_mint_amount_bundle(
         &market,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        BUDGET_BELOW_NEXT_LOT,
+        budget,
         TEN_THOUSAND_LOTS,
         test_constants::leverage_one_x(),
     );

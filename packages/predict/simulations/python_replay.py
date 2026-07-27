@@ -535,7 +535,7 @@ def live_forward(spot: int, forward: int) -> int:
     # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
     # every live quote/valuation/liquidation is NOT the pushed forward, but is
     # re-derived from the live Pyth spot and the stored Block Scholes basis as
-    # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
+    # mul_down(spot, div_down(forward, spot)). That round-trip is lossy (two floors), so it
     # generally differs from `forward` by a few units. In the localnet parity flow
     # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
     # is exactly the forward the contracts price with.
@@ -745,10 +745,8 @@ def sqrt_u128(x: int) -> int:
     return g
 
 
-def sqrt_fixed(x: int, precision: int) -> int:
-    multiplier = FLOAT_SCALING // precision
-    scaled = x * multiplier * F
-    return sqrt_u128(scaled) // multiplier
+def sqrt_down(x: int) -> int:
+    return sqrt_u128(x * F)
 
 
 def normal_cdf_u128(x: int, x_negative: bool) -> int:
@@ -808,6 +806,44 @@ def normal_pdf(value: I64) -> int:
     return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
 
 
+def variance_sqrt_and_d2(a: I64, b: int, inner: int, k: I64) -> tuple[int, I64]:
+    """Total variance, sqrt(w) and d2 at u128/1e18, mirroring pricing.move.
+
+    `b` and `inner` are both 1e9-scaled, so their product IS the 1e18 variance
+    increment; narrowing it back to 1e9 would discard the whole low-variance
+    signal on a short-dated surface. The integer square root of a 1e18-scaled
+    value is its 1e9-scaled root, so sqrt(w) comes back at the scale the rest of
+    the formula uses. Returns (sqrt(w) @1e9, d2 @1e9).
+    """
+    increment = b * inner
+    a_scaled = a.magnitude * F
+    if a.is_negative:
+        if increment <= a_scaled:
+            raise ValueError("SVI total variance must be positive")
+        total_var = increment - a_scaled
+    else:
+        if increment + a_scaled == 0:
+            raise ValueError("SVI total variance must be positive")
+        total_var = increment + a_scaled
+    sqrt_var = sqrt_u128(total_var)
+
+    # d2 = -(k + w/2) / sqrt(w): the numerator stays at 1e18 and the divisor is the
+    # 1e9-scaled root, so the quotient lands at 1e9 with the sign tracked by hand.
+    k_scaled = k.magnitude * F
+    half_var = total_var // 2
+    if not k.is_negative:
+        numerator, numerator_negative = k_scaled + half_var, False
+    elif half_var >= k_scaled:
+        numerator, numerator_negative = half_var - k_scaled, False
+    else:
+        numerator, numerator_negative = k_scaled - half_var, True
+    # normal_cdf/normal_pdf saturate beyond |x| > 8; cap there so the magnitude
+    # stays inside u64 as w -> 0.
+    saturation = 8 * F + 1
+    d2_magnitude = min(numerator // sqrt_var, saturation)
+    return sqrt_var, I64(d2_magnitude, not numerator_negative)
+
+
 def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
     # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
@@ -822,21 +858,14 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     k_minus_m_squared = k_minus_m.square_scaled()
     sigma = svi["sigma"]
     sigma_squared = deepbook_mul(sigma, sigma)
-    sq = sqrt_fixed(k_minus_m_squared + sigma_squared, FLOAT_SCALING)
+    sq = sqrt_down(k_minus_m_squared + sigma_squared)
     rho = I64(svi["rho"], svi["rhoNegative"])
     rho_km = rho.mul_scaled(k_minus_m)
     inner = rho_km.add(I64(sq))
     if inner.is_negative:
         raise ValueError("SVI inner term cannot be negative")
-    wing_var = deepbook_mul(svi["b"], inner.magnitude)
     a = I64(svi["a"], svi.get("aNegative", False))
-    total_var_i64 = I64(wing_var).add(a)
-    if total_var_i64.is_negative or total_var_i64.magnitude == 0:
-        raise ValueError("SVI total variance must be positive")
-    total_var = total_var_i64.magnitude
-    sqrt_var = sqrt_fixed(total_var, FLOAT_SCALING)
-    d2_numerator = k.add(I64(total_var // 2))
-    d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
+    sqrt_var, d2 = variance_sqrt_and_d2(a, svi["b"], inner.magnitude, k)
     nd2 = normal_cdf(d2)
 
     slope_ratio = k_minus_m.div_scaled(I64(sq))
@@ -1410,7 +1439,7 @@ def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
     else:
         complement = FLOAT_SCALING - probability
         variance = deepbook_mul(probability, complement)
-        bernoulli_factor = sqrt_fixed(variance, FLOAT_SCALING)
+        bernoulli_factor = sqrt_down(variance)
         raw_fee = deepbook_mul(BASE_FEE, bernoulli_factor)
     base = raw_fee if raw_fee > MIN_FEE else MIN_FEE
     return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
