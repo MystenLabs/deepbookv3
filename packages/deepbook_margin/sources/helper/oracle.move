@@ -8,7 +8,7 @@ use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin_registry::Currency, vec_map::{Self, VecMap}};
+use sui::{clock::Clock, coin::CoinMetadata, coin_registry::Currency, vec_map::{Self, VecMap}};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
@@ -42,6 +42,19 @@ public struct ConversionConfig has copy, drop {
     base_decimals: u8,
     pyth_price: u64,
     pyth_decimals: u8,
+}
+
+/// Superseded by `new_coin_type_data_from_currency`, which reads decimals from
+/// `Currency` instead of trusting the caller-supplied `CoinMetadata`. Retained as an
+/// aborting stub because it is public in the deployed package: a `compatible` upgrade
+/// cannot drop a public function.
+public fun new_coin_type_data<T>(
+    _coin_metadata: &CoinMetadata<T>,
+    _price_feed_id: vector<u8>,
+    _max_conf_bps: u64,
+    _max_ewma_difference_bps: u64,
+): CoinTypeData {
+    abort 1337
 }
 
 /// Creates a new CoinTypeData struct of type T.

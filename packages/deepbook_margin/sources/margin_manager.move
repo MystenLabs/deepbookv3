@@ -13,6 +13,7 @@ use deepbook::{
         WithdrawCap,
         TradeProof,
         DeepBookPoolReferral,
+        DeepBookReferral,
     },
     constants,
     math,
@@ -492,6 +493,26 @@ public fun unset_margin_manager_referral<BaseAsset, QuoteAsset>(
 ) {
     self.validate_owner(ctx);
     self.balance_manager.unset_balance_manager_referral(pool_id, &self.trade_cap);
+}
+
+/// Superseded by `set_margin_manager_referral`, which takes a pool-scoped
+/// `DeepBookPoolReferral`. Retained as an aborting stub because it is public in the
+/// deployed package: a `compatible` upgrade cannot drop a public function.
+public fun set_referral<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _referral_cap: &DeepBookReferral,
+    _ctx: &mut TxContext,
+) {
+    abort
+}
+
+/// Superseded by `unset_margin_manager_referral`, which is pool-scoped. Retained as an
+/// aborting stub for the same reason as `set_referral`.
+public fun unset_referral<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _ctx: &mut TxContext,
+) {
+    abort
 }
 
 // === Public Functions - Margin Manager ===
@@ -1162,6 +1183,109 @@ public fun manager_state<BaseAsset, QuoteAsset>(
         current_price,
         lowest_trigger_above_price,
         highest_trigger_below_price,
+    )
+}
+
+/// Returns comprehensive state information for multiple margin managers.
+/// Same as manager_state but takes a vector and returns vectors of all values.
+/// All managers must be of the same type.
+public fun manager_states<BaseAsset, QuoteAsset>(
+    margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    clock: &Clock,
+): (
+    vector<ID>,
+    vector<ID>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u8>,
+    vector<u64>,
+    vector<u8>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+) {
+    let mut manager_ids = vector[];
+    let mut deepbook_pool_ids = vector[];
+    let mut risk_ratios = vector[];
+    let mut base_assets = vector[];
+    let mut quote_assets = vector[];
+    let mut base_debts = vector[];
+    let mut quote_debts = vector[];
+    let mut base_pyth_prices = vector[];
+    let mut base_pyth_decimals_vec = vector[];
+    let mut quote_pyth_prices = vector[];
+    let mut quote_pyth_decimals_vec = vector[];
+    let mut current_prices = vector[];
+    let mut lowest_trigger_above_prices = vector[];
+    let mut highest_trigger_below_prices = vector[];
+
+    margin_managers.do_ref!(|manager| {
+        let (
+            manager_id,
+            deepbook_pool_id,
+            risk_ratio,
+            base_asset,
+            quote_asset,
+            base_debt,
+            quote_debt,
+            base_pyth_price,
+            base_pyth_decimals,
+            quote_pyth_price,
+            quote_pyth_decimals,
+            current_price,
+            lowest_trigger_above_price,
+            highest_trigger_below_price,
+        ) = manager.manager_state(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+
+        manager_ids.push_back(manager_id);
+        deepbook_pool_ids.push_back(deepbook_pool_id);
+        risk_ratios.push_back(risk_ratio);
+        base_assets.push_back(base_asset);
+        quote_assets.push_back(quote_asset);
+        base_debts.push_back(base_debt);
+        quote_debts.push_back(quote_debt);
+        base_pyth_prices.push_back(base_pyth_price);
+        base_pyth_decimals_vec.push_back(base_pyth_decimals);
+        quote_pyth_prices.push_back(quote_pyth_price);
+        quote_pyth_decimals_vec.push_back(quote_pyth_decimals);
+        current_prices.push_back(current_price);
+        lowest_trigger_above_prices.push_back(lowest_trigger_above_price);
+        highest_trigger_below_prices.push_back(highest_trigger_below_price);
+    });
+
+    (
+        manager_ids,
+        deepbook_pool_ids,
+        risk_ratios,
+        base_assets,
+        quote_assets,
+        base_debts,
+        quote_debts,
+        base_pyth_prices,
+        base_pyth_decimals_vec,
+        quote_pyth_prices,
+        quote_pyth_decimals_vec,
+        current_prices,
+        lowest_trigger_above_prices,
+        highest_trigger_below_prices,
     )
 }
 
