@@ -62,7 +62,7 @@ fun liquidated_order_pays_zero_once_and_only_once() {
         test_constants::mint_quantity(),
         LEVERAGE_TWO_X,
     );
-    helpers::assert_atm_entry_probability(quote.entry_probability());
+    helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
     let mint_contribution = quote.net_premium();
     let order_id = fx.mint_bundle(
         &mut market,

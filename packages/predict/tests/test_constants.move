@@ -106,7 +106,9 @@ public fun default_expiry_ms(): u64 { 31_536_120_000 }
 /// `(default_strike_tick, +inf]` range).
 public fun default_live_price(): u64 { 100_000_000_000 }
 
-/// Default SVI `a` for live oracle test fixtures.
+/// Default SVI `a` for live oracle test fixtures. Back to the raw 1 the pricing
+/// reference mirrors: it needed doubling only while the roll-down floored at 1e9,
+/// where the fixtures' post-seed clock advance drove a raw 1 straight to zero.
 public fun default_svi_a(): u64 { 1 }
 
 /// Default SVI `b` for live oracle test fixtures.

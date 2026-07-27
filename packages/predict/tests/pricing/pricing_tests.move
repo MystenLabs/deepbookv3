@@ -14,20 +14,19 @@
 ///     Block Scholes forward one millisecond later;
 ///   - oracle provenance: every source timestamp is retained independently of
 ///     forward selection, with `0` reserved for an unusable normalized Pyth read.
-/// The interior binary value (Φ(d2)) carries fixed-point approximation error and
-/// is intentionally NOT asserted here (that needs the documented precision budget
-/// against an independent scipy reference — a separate, careful pass).
 #[test_only]
 module deepbook_predict::pricing_tests;
 
 use deepbook_predict::{
     constants,
     oracle_fixture,
+    pricing,
+    pricing_reference_data as ref_data,
     range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
 };
-use fixed_math::math::float_scaling as float;
+use fixed_math::{i64, math::float_scaling as float};
 use std::unit_test::assert_eq;
 
 // Forward == `default_live_price` (spot==forward, basis 1.0). The two scenario
@@ -69,6 +68,169 @@ const BLOCK_SCHOLES_FORWARD_SOURCE_MS: u64 = 119_003;
 const UNUSABLE_PYTH_SOURCE_MS: u64 = 119_001;
 const UNUSABLE_PYTH_SPOT: u64 = 0;
 const NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS: u64 = 0;
+const ROLL_DOWN_ANCHOR_MS: u64 = 120_000;
+const ROLL_DOWN_EXPIRY_MS: u64 = 120_100;
+const ROLL_DOWN_MIDPOINT_MS: u64 = 120_050;
+const SHORT_ROLL_DOWN_EXPIRY_MS: u64 = 180_000;
+const SHORT_ROLL_DOWN_MIDPOINT_MS: u64 = 150_000;
+const ODD_ROLL_DOWN_VALUE: u64 = 11;
+const BOUNDARY_ROLL_DOWN_VALUE: u64 = 100;
+const ONE_MS_ROLL_DOWN_VALUE: u64 = 1;
+/// `roll_down_to_1e18` results, hand-derived as `value * 1e9 * remaining / anchor`.
+/// 11 at the anchor; 11 halved is 5.5, which only exists at 1e18 — the 1e9 form
+/// floored it to 5, a 9.1% loss on the term that dominates short-dated variance.
+const ODD_AT_ANCHOR_1E18: u128 = 11_000_000_000;
+const ODD_HALVED_1E18: u128 = 5_500_000_000;
+/// 11 * 1e9 / 3 = 3_666_666_666.67 — the residual floor, now at 1e18 not 1e9.
+const ODD_THIRD_1E18: u128 = 3_666_666_666;
+const ONE_MS_1E18: u128 = 1_000_000_000;
+/// u64::MAX * 1e9. Reached at ratio 1 with both terms at u64::MAX, where the
+/// unreduced product is ~1.7e47 — far past u128, so this pins the u256 intermediate.
+const U64_MAX_1E18: u128 = 18_446_744_073_709_551_615_000_000_000;
+/// sqrt(w) for w = 5.5e9 at 1e18, i.e. isqrt(5_500_000_000). The 1e9 roll-down
+/// produced w = 5e9 here and sqrt 70_710, so this value is what the extra
+/// resolution is worth on the term pricing actually divides by.
+const HALVED_B_SQRT_VAR: u64 = 74_161;
+const UNIT_INNER: u64 = 1_000_000_000;
+const RETRANSMITTED_SVI_A: u64 = 2;
+const RETRANSMITTED_SVI_B: u64 = 0;
+const ZERO_SVI_SHAPE_PARAM: u64 = 0;
+
+#[test]
+fun roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution() {
+    let anchor_tte_ms = ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_ANCHOR_MS;
+
+    // At the anchor the fraction is 1, so the value is just restated at 1e18.
+    assert_eq!(
+        pricing::roll_down_to_1e18(ODD_ROLL_DOWN_VALUE, anchor_tte_ms, anchor_tte_ms),
+        ODD_AT_ANCHOR_1E18,
+    );
+
+    // 11 * 1e9 * 50 / 100 = 5.5e9. Half of an odd raw unit has no representation
+    // at 1e9 — the previous roll-down floored it to 5 — so this exact 5.5 is the
+    // resolution the 1e18 carry exists to keep.
+    assert_eq!(
+        pricing::roll_down_to_1e18(
+            ODD_ROLL_DOWN_VALUE,
+            ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_MIDPOINT_MS,
+            anchor_tte_ms,
+        ),
+        ODD_HALVED_1E18,
+    );
+
+    // 11 * 1e9 / 3 does not divide either: the floor still exists, it is just a
+    // billionth of the one it replaced.
+    assert_eq!(pricing::roll_down_to_1e18(ODD_ROLL_DOWN_VALUE, 1, 3), ODD_THIRD_1E18);
+}
+
+#[test]
+fun roll_down_handles_one_ms_boundary_and_u256_intermediates() {
+    let anchor_tte_ms = ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_ANCHOR_MS;
+
+    // u64::MAX * 1e9 * u64::MAX / u64::MAX. The unreduced product is ~1.7e47,
+    // three orders past u128, so an exact result here pins the u256 intermediate
+    // rather than any bound on the anchored horizon.
+    assert_eq!(
+        pricing::roll_down_to_1e18(
+            std::u64::max_value!(),
+            std::u64::max_value!(),
+            std::u64::max_value!(),
+        ),
+        U64_MAX_1E18,
+    );
+
+    // 100 * 1e9 * 1 / 100 = 1e9 exactly one millisecond before expiry.
+    assert_eq!(
+        pricing::roll_down_to_1e18(
+            BOUNDARY_ROLL_DOWN_VALUE,
+            ONE_MS_ROLL_DOWN_VALUE,
+            anchor_tte_ms,
+        ),
+        ONE_MS_1E18,
+    );
+}
+
+#[test]
+fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
+    // The roll-down above is only worth carrying if it survives into `sqrt(w)`.
+    // With `b` halved from 11 to 5.5 and `inner` at one, w is 5.5e9 at 1e18 and
+    // isqrt(5_500_000_000) = 74_161. The 1e9 roll-down floored b to 5, giving
+    // w = 5e9 and sqrt 70_710 — a 4.7% error on the divisor of d2.
+    let (sqrt_var, _d2) = pricing::variance_sqrt_and_d2_for_testing(
+        0,
+        false,
+        ODD_HALVED_1E18,
+        UNIT_INNER,
+        &i64::from_u64(0),
+    );
+    assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
+}
+
+#[test]
+fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        SHORT_ROLL_DOWN_EXPIRY_MS,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        RETRANSMITTED_SVI_A,
+        false,
+        RETRANSMITTED_SVI_B,
+        test_constants::default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+
+    fx.set_clock_for_testing(SHORT_ROLL_DOWN_MIDPOINT_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_MIDPOINT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_MIDPOINT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_MIDPOINT_MS,
+        RETRANSMITTED_SVI_A,
+        false,
+        RETRANSMITTED_SVI_B,
+        test_constants::default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.block_scholes_svi_params_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
+    // At the midpoint, the preserved anchor scales raw a=2 to effective a=1
+    // and b remains zero. At K=F, positive variance gives d2=-sqrt(1e-9)/2,
+    // checked against the generated first-principles reference. If the
+    // retransmit incorrectly reset the anchor, raw a=2 would remain unscaled.
+    test_helpers::assert_within(
+        pricer.range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        ),
+        ref_data::flat_surface_atm_up(),
+        ref_data::flat_surface_atm_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
 
 #[test]
 fun pricer_snapshots_all_oracle_source_timestamps() {
@@ -91,6 +253,10 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), PYTH_SOURCE_MS);
     assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
     assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), BLOCK_SCHOLES_FORWARD_SOURCE_MS);
+    assert_eq!(
+        pricer.block_scholes_svi_params_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
     assert_eq!(
         pricer.block_scholes_svi_source_timestamp_ms(),
         test_constants::live_source_timestamp_ms(),

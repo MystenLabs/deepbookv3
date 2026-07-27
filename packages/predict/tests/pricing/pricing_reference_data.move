@@ -348,13 +348,33 @@ public fun svi_event_digest(s: u64): vector<u8> {
 
 /// True UP digital at the flow fixtures' at-the-money strike, `Phi(d2) -
 /// phi(d2)*w'(k)/(2*sqrt(w))` evaluated in float64 from the fixture's SVI
-/// parameters. Independent of the contract.
+/// parameters, with `a` and `b` carrying the remaining-time roll-down for the
+/// far `default_expiry_ms` horizon (ratio 1 - 3.2e-8). Independent of the contract.
 public fun flow_fixture_atm_up(): u64 { 499_993_690 }
+
+/// Same, for fixtures built at `short_expiry_ms`. Their roll-down ratio is
+/// 120_000/121_000, so the rolled `a` is materially below the raw value and
+/// the digital sits off the far-horizon reference by more than its budget.
+public fun flow_fixture_short_expiry_atm_up(): u64 { 499_993_716 }
 
 /// Absolute budget for the above: `normal_cdf` is documented to 20 raw units
 /// and the d2 path adds under one. Derived from math.move's precision
 /// contract, never measured from contract output.
 public fun flow_fixture_atm_budget(): u64 { 21 }
+
+/// True UP digital at the forward for the flat `a = 1e-9, b = 0` surface,
+/// evaluated from `Phi(-sqrt(a)/2)` with Python stdlib `erf`. Independent
+/// of the contract and shared by the direct and rolled-surface tests.
+public fun flat_surface_atm_up(): u64 { 499_993_692 }
+
+/// Absolute budget for the flat-surface reference, derived from math.move's
+/// precision contract and never measured from contract output.
+public fun flat_surface_atm_budget(): u64 { 21 }
+
+/// True UP digital on the surface that separates the two ways of forming `w'`
+/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the
+/// budget below; narrowing it to 1e9 first misses by ~890 units.
+public fun w_prime_precision_surface_up(): u64 { 499_903_815 }
 
 /// True UP digital on the surface whose per-strike total variance is positive
 /// but floors to zero at 1e9 — the region the u128/1e18 variance path newly

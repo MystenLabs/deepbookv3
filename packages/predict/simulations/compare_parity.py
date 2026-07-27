@@ -19,6 +19,7 @@ OBSERVATIONAL_EVENT_FIELDS = {
     "block_scholes_spot_source_timestamp_ms",
     "block_scholes_forward_source_timestamp_ms",
     "block_scholes_svi_source_timestamp_ms",
+    "block_scholes_svi_params_timestamp_ms",
 }
 FLUSH_DIAGNOSTIC_FIELDS = {"pool_value", "active_market_nav"}
 

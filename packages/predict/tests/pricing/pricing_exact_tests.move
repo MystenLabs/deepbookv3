@@ -47,9 +47,6 @@ const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
-// Phi(-sqrt(1e-9)/2) * 1e9 — the true at-the-forward digital on the flat surface
-// above, from `0.5*(1+erf(d2/sqrt(2)))` in Python's stdlib.
-const FLAT_FORWARD_UP_REFERENCE: u64 = 499_993_692;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
 /// spot/forward, and assert `Pricer.range_price` matches the independent
@@ -145,7 +142,11 @@ fun flat_surface_at_the_forward_matches_true_math() {
     // to 20 raw units, and the d2 path adds under 1 more (the 1e18 variance and
     // its 1e9-scaled root together move d2 by ~6e-10, i.e. ~0.25 raw units of
     // probability), so 21 units bounds it.
-    test_helpers::assert_within(up, FLAT_FORWARD_UP_REFERENCE, 21);
+    test_helpers::assert_within(
+        up,
+        ref_data::flat_surface_atm_up(),
+        ref_data::flat_surface_atm_budget(),
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

@@ -25,10 +25,12 @@ public struct SVIParams has copy, drop, store {
     sigma: u64,
 }
 
-/// Source-native Block Scholes SVI fields; the lane supplies publication and recording timestamps.
+/// Source-native Block Scholes SVI fields. `params_timestamp_ms` remains fixed
+/// across exact normalized tuple retransmissions while the lane envelope advances.
 public struct RawSVI has copy, drop, store {
     bs_source_id: u32,
     expiry_ms: u64,
+    params_timestamp_ms: u64,
     svi: SVIParams,
 }
 
@@ -80,6 +82,15 @@ public fun normalized_svi(
     option::some(normalized_svi_from_read(&read.destroy_some()))
 }
 
+/// Source timestamp of the first accepted envelope carrying the latest exact
+/// normalized SVI tuple for `expiry_ms`.
+public fun params_timestamp_ms(feed: &BlockScholesSVIFeed, expiry_ms: u64): Option<u64> {
+    if (!feed.expiries.contains(expiry_ms)) return option::none();
+    let read = feed.expiries.borrow(expiry_ms).latest_read();
+    if (read.is_none()) return option::none();
+    option::some(read.destroy_some().read_value().params_timestamp_ms)
+}
+
 /// Exact source-native SVI read for external Move, PTB, and devInspect consumers.
 public fun raw_svi_at(
     feed: &BlockScholesSVIFeed,
@@ -112,6 +123,11 @@ public fun raw_bs_source_id(raw: &RawSVI): u32 {
 /// Return the quoted expiry timestamp for external raw-feed inspection.
 public fun raw_expiry_ms(raw: &RawSVI): u64 {
     raw.expiry_ms
+}
+
+/// Return when the currently stored normalized parameter tuple first appeared.
+public fun raw_params_timestamp_ms(raw: &RawSVI): u64 {
+    raw.params_timestamp_ms
 }
 
 /// Return the source-native SVI parameters for external raw-feed inspection.
@@ -153,10 +169,21 @@ public fun update(
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     assert!(update.svi_source_id() == feed.bs_source_id, EWrongSource);
 
-    let read = feed.new_read(&update, clock.timestamp_ms());
-    let expiry = read.read_value().expiry_ms;
+    let source_timestamp_ms = update.svi_published_at_ms();
+    let update_timestamp_ms = clock.timestamp_ms();
+    if (source_timestamp_ms == 0 || source_timestamp_ms > update_timestamp_ms) return;
+
+    let raw = feed.new_raw_svi(&update);
+    let expiry = raw.expiry_ms;
     let id = feed.id();
-    feed.update_expiry(expiry, id, read, ctx);
+    feed.update_expiry(
+        expiry,
+        id,
+        source_timestamp_ms,
+        update_timestamp_ms,
+        raw,
+        ctx,
+    );
 }
 
 /// Inserts a verifier-produced SVI observation at its exact source timestamp without changing `latest`.
@@ -206,36 +233,60 @@ fun new_read(
     update: &SVIUpdate,
     update_timestamp_ms: u64,
 ): OracleRead<RawSVI> {
+    let source_timestamp_ms = update.svi_published_at_ms();
     oracle_lane::new_read(
-        update.svi_published_at_ms(),
+        source_timestamp_ms,
         update_timestamp_ms,
-        RawSVI {
-            bs_source_id: feed.bs_source_id,
-            expiry_ms: update.svi_expiry_ms(),
-            svi: SVIParams {
-                a: i64::from_parts(update.svi_a_magnitude(), update.svi_a_is_negative()),
-                b: update.svi_b(),
-                rho: i64::from_parts(update.svi_rho_magnitude(), update.svi_rho_is_negative()),
-                m: i64::from_parts(update.svi_m_magnitude(), update.svi_m_is_negative()),
-                sigma: update.svi_sigma(),
-            },
-        },
+        feed.new_raw_svi(update),
     )
+}
+
+fun new_raw_svi(feed: &BlockScholesSVIFeed, update: &SVIUpdate): RawSVI {
+    RawSVI {
+        bs_source_id: feed.bs_source_id,
+        expiry_ms: update.svi_expiry_ms(),
+        params_timestamp_ms: update.svi_published_at_ms(),
+        svi: SVIParams {
+            a: i64::from_parts(update.svi_a_magnitude(), update.svi_a_is_negative()),
+            b: update.svi_b(),
+            rho: i64::from_parts(update.svi_rho_magnitude(), update.svi_rho_is_negative()),
+            m: i64::from_parts(update.svi_m_magnitude(), update.svi_m_is_negative()),
+            sigma: update.svi_sigma(),
+        },
+    }
 }
 
 fun update_expiry(
     feed: &mut BlockScholesSVIFeed,
     expiry_ms: u64,
     propbook_oracle_id: ID,
-    read: OracleRead<RawSVI>,
+    source_timestamp_ms: u64,
+    update_timestamp_ms: u64,
+    mut raw: RawSVI,
     ctx: &mut TxContext,
 ) {
     if (feed.expiries.contains(expiry_ms)) {
-        feed.expiries.borrow_mut(expiry_ms).update(read, propbook_oracle_id);
+        let lane = feed.expiries.borrow_mut(expiry_ms);
+        let latest = lane.latest_read();
+        if (latest.is_some()) {
+            let latest = latest.destroy_some();
+            if (source_timestamp_ms <= latest.read_source_timestamp_ms()) return;
+
+            let latest_raw = latest.read_value();
+            if (raw.svi == latest_raw.svi) {
+                raw.params_timestamp_ms = latest_raw.params_timestamp_ms;
+            };
+        };
+        lane.update(
+            oracle_lane::new_read(source_timestamp_ms, update_timestamp_ms, raw),
+            propbook_oracle_id,
+        );
     } else {
-        if (!read.read_has_valid_timestamp()) return;
         let mut lane = oracle_lane::new(ctx);
-        lane.update(read, propbook_oracle_id);
+        lane.update(
+            oracle_lane::new_read(source_timestamp_ms, update_timestamp_ms, raw),
+            propbook_oracle_id,
+        );
         feed.expiries.add(expiry_ms, lane);
     };
 }

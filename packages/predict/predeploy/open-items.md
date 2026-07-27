@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-21. **The single source of truth for open work.** Anything that
+Updated 2026-07-27. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -26,20 +26,6 @@ production verifier and confirm the scoped contracts still bind the authenticate
 payload to the expected source.
 
 ## Contract Findings
-
-### P-2: Near-expiry SVI freshness can overprice tails
-
-**Severity:** Medium.
-
-SVI total variance is consumed as variance-to-expiry, but the SVI freshness
-window is much wider than the final seconds/minutes before expiry. A stale but
-fresh-enough surface near expiry can materially overstate remaining uncertainty
-and misprice mint/redeem flows. The SVI skew-adjusted digital term shares this
-near-expiry sensitivity through its `1/sqrt(w)` denominator.
-
-**Action:** Add a minimum time-to-expiry live-pricing cutoff, scale SVI
-freshness with remaining time, or otherwise document and bound the accepted
-near-expiry pricing window.
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
 

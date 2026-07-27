@@ -42,11 +42,13 @@ public struct OrderMinted has copy, drop, store {
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
     minted_at_ms: u64,
-    /// Source timestamps of the oracle observations present when this mint was
-    /// priced. Pyth is `0` only when no usable normalized observation existed.
+    /// Oracle timestamps present when this mint was priced. The SVI parameter
+    /// timestamp is the first source time for the current tuple; its source
+    /// timestamp is the latest envelope. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
 }
 
@@ -74,11 +76,13 @@ public struct LiveOrderRedeemed has copy, drop, store {
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
     redeemed_at_ms: u64,
-    /// Source timestamps of the oracle observations present when this redemption
-    /// was priced. Pyth is `0` only when no usable normalized observation existed.
+    /// Oracle timestamps present when this redemption was priced. The SVI
+    /// parameter timestamp is the first source time for the current tuple; its
+    /// source timestamp is the latest envelope. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
 }
 
@@ -123,11 +127,13 @@ public struct OrderLiquidated has copy, drop, store {
     /// 1e9-scaled floor-to-live-value threshold used for this expiry.
     liquidation_ltv: u64,
     liquidated_at_ms: u64,
-    /// Source timestamps of the oracle observations present when this liquidation
-    /// was priced. Pyth is `0` only when no usable normalized observation existed.
+    /// Oracle timestamps present when this liquidation was priced. The SVI
+    /// parameter timestamp is the first source time for the current tuple; its
+    /// source timestamp is the latest envelope. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
 }
 
@@ -170,6 +176,7 @@ public(package) fun emit_order_minted(
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
         block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
+        block_scholes_svi_params_timestamp_ms: pricer.block_scholes_svi_params_timestamp_ms(),
         block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }
@@ -208,6 +215,7 @@ public(package) fun emit_live_order_redeemed(
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
         block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
+        block_scholes_svi_params_timestamp_ms: pricer.block_scholes_svi_params_timestamp_ms(),
         block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }
@@ -273,6 +281,7 @@ public(package) fun emit_order_liquidated(
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
         block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
+        block_scholes_svi_params_timestamp_ms: pricer.block_scholes_svi_params_timestamp_ms(),
         block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }

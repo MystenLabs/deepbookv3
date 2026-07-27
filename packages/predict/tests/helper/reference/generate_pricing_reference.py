@@ -380,6 +380,22 @@ FLOW_FIXTURE = {
     "m": 10 * F / F,                   # default_svi_m
     "sigma": 1_000_000 / F,            # default_svi_sigma
 }
+# The fixtures price a surface that has ALREADY rolled down: the SVI tuple is
+# seeded at `live_source_timestamp_ms` and the pricer loads at `now_ms`, so `a`
+# and `b` are scaled by `remaining_ms / anchor_tte_ms` before pricing. Modelling
+# that here is what makes the reference independent of the contract: it was
+# omitted while the roll-down floored at 1e9, because flooring snapped every
+# fixture ratio in [0.5, 1) onto the same effective `a` and the un-rolled value
+# agreed by construction (predeploy open item P-17).
+PARAMS_TIMESTAMP_MS = 119_000          # test_constants::live_source_timestamp_ms
+NOW_MS = 120_000                       # test_constants::now_ms
+DEFAULT_EXPIRY_MS = 31_536_120_000     # test_constants::default_expiry_ms
+SHORT_EXPIRY_MS = 240_000              # test_constants::short_expiry_ms
+
+
+def roll_down_ratio(expiry_ms):
+    """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`."""
+    return (expiry_ms - NOW_MS) / (expiry_ms - PARAMS_TIMESTAMP_MS)
 # A surface in the region the 1e18 variance path newly admits: its per-strike
 # total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
 # aborted `ENonPositiveVariance` here while the analytical minimum still passed the
@@ -392,6 +408,40 @@ ADMITTED_LOW_VARIANCE = {
     "m": 6_666_634 / F,
     "sigma": 5_000_000 / F,
 }
+
+
+# A surface that separates the two ways of forming `w'` in the skew correction.
+# `b` is carried at 1e18, so `w' = b * slope / 1e18`; narrowing `b` back to 1e9
+# first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
+# moves the digital by ~890 units against a 21-unit budget. Mirrors the fixture in
+# `pricing_guard_tests::w_prime_keeps_the_rolled_b_precision`, which seeds the
+# tuple at 120_000, advances the clock to 121_000, and retransmits it unchanged so
+# the anchor is preserved and `b` is genuinely non-integral at 1e9.
+W_PRIME_PRECISION_SURFACE = {
+    "a": 203 / F,
+    "b": 13 / F,
+    "rho": 1_000_000_000 / F,
+    "m": -831_439 / F,
+    "sigma": 5_000_000 / F,
+}
+# expiry 240_000, anchor 120_000, priced at 121_000.
+W_PRIME_REMAINING_MS, W_PRIME_ANCHOR_TTE_MS = 240_000 - 121_000, 240_000 - 120_000
+
+
+def w_prime_precision_surface_up():
+    """True UP digital at the forward for the `w'` precision surface."""
+    ratio = W_PRIME_REMAINING_MS / W_PRIME_ANCHOR_TTE_MS
+    a = W_PRIME_PRECISION_SURFACE["a"] * ratio
+    b = W_PRIME_PRECISION_SURFACE["b"] * ratio
+    rho, m, sigma = (W_PRIME_PRECISION_SURFACE[key] for key in ("rho", "m", "sigma"))
+    k = 0.0
+    x = k - m
+    sq = math.sqrt(x * x + sigma * sigma)
+    w = a + b * (rho * x + sq)
+    w_prime = b * (rho + x / sq)
+    S = math.sqrt(w)
+    d2 = -(k + w / 2.0) / S
+    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
 
 
 def admitted_low_variance_up():
@@ -408,16 +458,28 @@ def admitted_low_variance_up():
     return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
 
 
-# Budget for the flow fixtures' at-the-money digital: math.move documents
+# Budget for the synthetic at-the-money digitals: math.move documents
 # normal_cdf to 20 raw units, and the 1e18 variance path plus its 1e9-scaled root
 # move d2 by ~6e-10 (well under one raw unit of probability). Independent of any
 # contract output — never widen this to accommodate a measurement.
-FLOW_FIXTURE_BUDGET_UNITS = 21
+ATM_PRICING_BUDGET_UNITS = 21
 
 
-def flow_fixture_atm_up():
-    """True at-the-money UP digital for the flow fixtures, from first principles."""
-    a, b = FLOW_FIXTURE["a"], FLOW_FIXTURE["b"]
+def flat_surface_atm_up():
+    """True at-the-money UP digital for a=1e-9, b=0, from first principles."""
+    w = 1 / F
+    d2 = -math.sqrt(w) / 2.0
+    return round(phi(d2) * F)
+
+
+def flow_fixture_atm_up(expiry_ms=DEFAULT_EXPIRY_MS):
+    """True at-the-money UP digital for the flow fixtures, from first principles.
+
+    `a` and `b` carry the remaining-time roll-down for `expiry_ms`; `rho`, `m`
+    and `sigma` are not rolled.
+    """
+    ratio = roll_down_ratio(expiry_ms)
+    a, b = FLOW_FIXTURE["a"] * ratio, FLOW_FIXTURE["b"] * ratio
     rho, m, sigma = FLOW_FIXTURE["rho"], FLOW_FIXTURE["m"], FLOW_FIXTURE["sigma"]
     k = 0.0                                            # strike == live forward
     x = k - m
@@ -584,13 +646,35 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("/// True UP digital at the flow fixtures' at-the-money strike, `Phi(d2) -")
     w("/// phi(d2)*w\'(k)/(2*sqrt(w))` evaluated in float64 from the fixture\'s SVI")
-    w("/// parameters. Independent of the contract.")
+    w("/// parameters, with `a` and `b` carrying the remaining-time roll-down for the")
+    w("/// far `default_expiry_ms` horizon (ratio 1 - 3.2e-8). Independent of the contract.")
     w(f"public fun flow_fixture_atm_up(): u64 {{ {fmt_u64(flow_fixture_atm_up())} }}")
+    w("")
+    w("/// Same, for fixtures built at `short_expiry_ms`. Their roll-down ratio is")
+    w("/// 120_000/121_000, so the rolled `a` is materially below the raw value and")
+    w("/// the digital sits off the far-horizon reference by more than its budget.")
+    w("public fun flow_fixture_short_expiry_atm_up(): u64 { "
+      f"{fmt_u64(flow_fixture_atm_up(SHORT_EXPIRY_MS))} }}")
     w("")
     w("/// Absolute budget for the above: `normal_cdf` is documented to 20 raw units")
     w("/// and the d2 path adds under one. Derived from math.move\'s precision")
     w("/// contract, never measured from contract output.")
-    w(f"public fun flow_fixture_atm_budget(): u64 {{ {FLOW_FIXTURE_BUDGET_UNITS} }}")
+    w(f"public fun flow_fixture_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
+    w("")
+    w("/// True UP digital at the forward for the flat `a = 1e-9, b = 0` surface,")
+    w("/// evaluated from `Phi(-sqrt(a)/2)` with Python stdlib `erf`. Independent")
+    w("/// of the contract and shared by the direct and rolled-surface tests.")
+    w(f"public fun flat_surface_atm_up(): u64 {{ {fmt_u64(flat_surface_atm_up())} }}")
+    w("")
+    w("/// Absolute budget for the flat-surface reference, derived from math.move's")
+    w("/// precision contract and never measured from contract output.")
+    w(f"public fun flat_surface_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
+    w("")
+    w("/// True UP digital on the surface that separates the two ways of forming `w'`")
+    w("/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the")
+    w("/// budget below; narrowing it to 1e9 first misses by ~890 units.")
+    w("public fun w_prime_precision_surface_up(): u64 { "
+      f"{fmt_u64(w_prime_precision_surface_up())} }}")
     w("")
     w("/// True UP digital on the surface whose per-strike total variance is positive")
     w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")

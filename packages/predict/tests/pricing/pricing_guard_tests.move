@@ -32,7 +32,9 @@
 /// far below the BS spot (no LOWER basis bound), where the re-anchored
 /// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
 /// a boundary surface whose rounded analytical minimum is positive at load but
-/// whose concrete at-forward quote rounds total variance non-positive.
+/// whose concrete at-forward quote rounds total variance non-positive, and by a
+/// production-valid unchanged tuple whose remaining-time roll-down reaches zero
+/// one millisecond before expiry.
 /// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
 /// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
@@ -94,11 +96,28 @@ const ADMITTED_LOW_VARIANCE_M: u64 = 6_666_634;
 /// `normal_cdf` and `normal_pdf` saturate beyond `|8|`; the cap sits one raw unit
 /// past that so a capped value is unambiguously outside the live domain.
 const SATURATED_D2_MAGNITUDE: u64 = 8_000_000_001;
-/// w = 1e-9 at 1e18 (b * inner = 1e9), the smallest variance the load gate can
-/// admit: sqrt(w) is 31_622 and d2 stays far inside the cap.
-const WELL_CONDITIONED_B: u64 = 1_000;
+/// w = 1e-9 at 1e18 (`b * inner / 1e9` = 1e9), the smallest variance the load gate
+/// can admit: sqrt(w) is 31_622 and d2 stays far inside the cap. `b` is the rolled
+/// 1e18 form, so raw b = 1_000 arrives as 1_000 * 1e9.
+const WELL_CONDITIONED_B_1E18: u128 = 1_000_000_000_000;
 const WELL_CONDITIONED_INNER: u64 = 1_000_000;
 const WELL_CONDITIONED_SQRT_W: u64 = 31_622;
+/// The smallest representable variance: `b * inner / 1e9` = 1 raw unit at 1e18.
+const MINIMAL_B_1E18: u128 = 1_000_000_000;
+const MINIMAL_INNER: u64 = 1;
+
+/// A loadable surface (`|rho| == 1e9` zeroes min_increment, so it clears the gate
+/// on `a` alone) whose skew correction is live and whose small `sqrt(w)` amplifies
+/// it, separating the 1e18 and 1e9 forms of `w'`. `m` is negative.
+const W_PRIME_SURFACE_A: u64 = 203;
+const W_PRIME_SURFACE_B: u64 = 13;
+const W_PRIME_SURFACE_RHO: u64 = 1_000_000_000;
+const W_PRIME_SURFACE_M: u64 = 831_439;
+const W_PRIME_SURFACE_SIGMA: u64 = 5_000_000;
+/// Seed the tuple at `now_ms`, price one second later: the anchor is preserved by
+/// the identical retransmit, so the roll-down is live at 119_000/120_000.
+const W_PRIME_EXPIRY_MS: u64 = 240_000;
+const W_PRIME_PRICED_AT_MS: u64 = 121_000;
 
 const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
 const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
@@ -106,6 +125,11 @@ const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
 const NON_MONOTONE_LOW_TICK: u64 = 90;
 const NON_MONOTONE_HIGH_TICK: u64 = 95;
+const ROLL_DOWN_ZERO_VARIANCE_RAW_A: u64 = 1;
+const ROLL_DOWN_ZERO_VARIANCE_RAW_B: u64 = 0;
+const ROLL_DOWN_CLOCK_ADVANCE_MS: u64 = 1;
+const TERMINAL_ROLL_DOWN_REMAINING_MS: u64 = 1;
+const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 // === Abort guards ===
 
@@ -223,7 +247,7 @@ fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
 fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
-        test_constants::live_source_timestamp_ms()
+        test_constants::now_ms()
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
@@ -642,9 +666,14 @@ fun low_variance_surface_prices_where_the_1e9_path_aborted() {
 fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
     // w = 1 raw unit at 1e18, so sqrt(w) is 1 and d2 is the numerator itself:
     // k at its domain maximum would otherwise divide out to ~2e19, past u64.
-    let a = i64::from_u64(0);
     let k = i64::from_parts(20_000_000_000, true);
-    let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(&a, 1, 1, &k);
+    let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(
+        0,
+        false,
+        MINIMAL_B_1E18,
+        MINIMAL_INNER,
+        &k,
+    );
 
     assert_eq!(sqrt_var, 1);
     assert_eq!(d2.magnitude(), SATURATED_D2_MAGNITUDE);
@@ -652,13 +681,203 @@ fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
 
     // A well-conditioned input on the same path is untouched by the cap.
     let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(
-        &a,
-        WELL_CONDITIONED_B,
+        0,
+        false,
+        WELL_CONDITIONED_B_1E18,
         WELL_CONDITIONED_INNER,
         &i64::from_u64(0),
     );
     assert_eq!(sqrt_var, WELL_CONDITIONED_SQRT_W);
     assert!(d2.magnitude() < SATURATED_D2_MAGNITUDE);
+}
+
+/// Raw `a == 1` one millisecond past the parameter anchor. The 1e9 roll-down
+/// floored it straight to zero here and aborted `ENonPositiveVariance` on a
+/// surface whose variance is barely reduced; carrying the roll-down at 1e18
+/// leaves `a` at 0.9999833e-9 and the surface prices normally.
+///
+/// An identical retransmit at that later millisecond refreshes the envelope
+/// without resetting the anchor, so this is the real production sequence, not a
+/// contrived one. The expected value is the flat-surface reference: `b` is zero,
+/// so `w` is just the rolled `a`, and the roll-down moves the digital by well
+/// under one raw unit at this horizon.
+#[test]
+fun pre_expiry_roll_down_keeps_positive_variance() {
+    let expiry_ms = test_constants::now_ms() + test_constants::default_cadence_period_ms();
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        expiry_ms,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    fx.set_clock_for_testing(test_constants::now_ms() + ROLL_DOWN_CLOCK_ADVANCE_MS);
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms() + ROLL_DOWN_CLOCK_ADVANCE_MS,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        ref_data::flat_surface_atm_up(),
+        ref_data::flat_surface_atm_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted
+/// unchanged one millisecond before a one-year expiry. The retransmit refreshes
+/// every feed clock without moving the parameter anchor. At that horizon,
+/// `floor(1e9 * remaining_ms / anchor_tte_ms) == 0`, so the effective variance
+/// is non-positive and the accepted RP-21 response is the existing quote abort.
+#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
+fun terminal_roll_down_to_zero_aborts_before_expiry() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+
+    let terminal_source_timestamp_ms =
+        test_constants::default_expiry_ms() - TERMINAL_ROLL_DOWN_REMAINING_MS;
+    fx.set_clock_for_testing(terminal_source_timestamp_ms);
+    fx.set_pyth_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        terminal_source_timestamp_ms,
+    );
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        terminal_source_timestamp_ms,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        terminal_source_timestamp_ms,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        terminal_source_timestamp_ms,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    pricer.up_price(strike(test_constants::default_live_price()));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    abort EUnexpectedSuccess
+}
+
+/// Pins the rolled `b`'s precision through the SKEW CORRECTION, not just through
+/// the variance. `compute_nd2` forms `w' = b * slope / 1e18` with `b` at 1e18;
+/// narrowing `b` back to 1e9 first — the shape the variance path itself used to
+/// have — silently drops up to a raw unit of it.
+///
+/// The flow fixtures cannot catch that: their `slope` is ~5 raw units, so `w'`
+/// floors to zero and the correction term vanishes either way. And a fixture whose
+/// pricer loads at the parameter anchor cannot either, because at ratio 1 the
+/// rolled `b` is integral at 1e9 and both forms agree exactly. So this seeds the
+/// tuple, advances the clock, and retransmits it unchanged (which preserves the
+/// anchor) to get a genuinely non-integral rolled `b`. Carrying it at 1e18 lands
+/// 4 units from the independently generated digital; narrowing to 1e9 misses by
+/// ~890 — 42x the budget.
+#[test]
+fun w_prime_keeps_the_rolled_b_precision() {
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        W_PRIME_EXPIRY_MS,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        W_PRIME_SURFACE_A,
+        false,
+        W_PRIME_SURFACE_B,
+        W_PRIME_SURFACE_SIGMA,
+        W_PRIME_SURFACE_RHO,
+        false,
+        W_PRIME_SURFACE_M,
+        true,
+    );
+
+    fx.set_clock_for_testing(W_PRIME_PRICED_AT_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        W_PRIME_PRICED_AT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        W_PRIME_PRICED_AT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        W_PRIME_PRICED_AT_MS,
+        W_PRIME_SURFACE_A,
+        false,
+        W_PRIME_SURFACE_B,
+        W_PRIME_SURFACE_SIGMA,
+        W_PRIME_SURFACE_RHO,
+        false,
+        W_PRIME_SURFACE_M,
+        true,
+    );
+
+    let pricer = fx.load_pricer_bundle(&oracle);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        ref_data::w_prime_precision_surface_up(),
+        ref_data::flow_fixture_atm_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 // === Surface minimum-variance abort ===
