@@ -104,6 +104,19 @@ const WELL_CONDITIONED_SQRT_W: u64 = 31_622;
 const MINIMAL_B_1E18: u128 = 1_000_000_000;
 const MINIMAL_INNER: u64 = 1;
 
+/// A loadable surface (`|rho| == 1e9` zeroes min_increment, so it clears the gate
+/// on `a` alone) whose skew correction is live and whose small `sqrt(w)` amplifies
+/// it, separating the 1e18 and 1e9 forms of `w'`. `m` is negative.
+const W_PRIME_SURFACE_A: u64 = 203;
+const W_PRIME_SURFACE_B: u64 = 13;
+const W_PRIME_SURFACE_RHO: u64 = 1_000_000_000;
+const W_PRIME_SURFACE_M: u64 = 831_439;
+const W_PRIME_SURFACE_SIGMA: u64 = 5_000_000;
+/// Seed the tuple at `now_ms`, price one second later: the anchor is preserved by
+/// the identical retransmit, so the roll-down is live at 119_000/120_000.
+const W_PRIME_EXPIRY_MS: u64 = 240_000;
+const W_PRIME_PRICED_AT_MS: u64 = 121_000;
+
 const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
 const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
@@ -726,6 +739,76 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
         pricer.up_price(strike(test_constants::default_live_price())),
         ref_data::flat_surface_atm_up(),
         ref_data::flat_surface_atm_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// Pins the rolled `b`'s precision through the SKEW CORRECTION, not just through
+/// the variance. `compute_nd2` forms `w' = b * slope / 1e18` with `b` at 1e18;
+/// narrowing `b` back to 1e9 first — the shape the variance path itself used to
+/// have — silently drops up to a raw unit of it.
+///
+/// The flow fixtures cannot catch that: their `slope` is ~5 raw units, so `w'`
+/// floors to zero and the correction term vanishes either way. And a fixture whose
+/// pricer loads at the parameter anchor cannot either, because at ratio 1 the
+/// rolled `b` is integral at 1e9 and both forms agree exactly. So this seeds the
+/// tuple, advances the clock, and retransmits it unchanged (which preserves the
+/// anchor) to get a genuinely non-integral rolled `b`. Carrying it at 1e18 lands
+/// 4 units from the independently generated digital; narrowing to 1e9 misses by
+/// ~890 — 42x the budget.
+#[test]
+fun w_prime_keeps_the_rolled_b_precision() {
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        W_PRIME_EXPIRY_MS,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        W_PRIME_SURFACE_A,
+        false,
+        W_PRIME_SURFACE_B,
+        W_PRIME_SURFACE_SIGMA,
+        W_PRIME_SURFACE_RHO,
+        false,
+        W_PRIME_SURFACE_M,
+        true,
+    );
+
+    fx.set_clock_for_testing(W_PRIME_PRICED_AT_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        W_PRIME_PRICED_AT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        W_PRIME_PRICED_AT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        W_PRIME_PRICED_AT_MS,
+        W_PRIME_SURFACE_A,
+        false,
+        W_PRIME_SURFACE_B,
+        W_PRIME_SURFACE_SIGMA,
+        W_PRIME_SURFACE_RHO,
+        false,
+        W_PRIME_SURFACE_M,
+        true,
+    );
+
+    let pricer = fx.load_pricer_bundle(&oracle);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        ref_data::w_prime_precision_surface_up(),
+        ref_data::flow_fixture_atm_budget(),
     );
 
     oracle_fixture::return_oracle_bundle(oracle);

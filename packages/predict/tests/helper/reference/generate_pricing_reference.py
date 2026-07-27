@@ -410,6 +410,40 @@ ADMITTED_LOW_VARIANCE = {
 }
 
 
+# A surface that separates the two ways of forming `w'` in the skew correction.
+# `b` is carried at 1e18, so `w' = b * slope / 1e18`; narrowing `b` back to 1e9
+# first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
+# moves the digital by ~890 units against a 21-unit budget. Mirrors the fixture in
+# `pricing_guard_tests::w_prime_keeps_the_rolled_b_precision`, which seeds the
+# tuple at 120_000, advances the clock to 121_000, and retransmits it unchanged so
+# the anchor is preserved and `b` is genuinely non-integral at 1e9.
+W_PRIME_PRECISION_SURFACE = {
+    "a": 203 / F,
+    "b": 13 / F,
+    "rho": 1_000_000_000 / F,
+    "m": -831_439 / F,
+    "sigma": 5_000_000 / F,
+}
+# expiry 240_000, anchor 120_000, priced at 121_000.
+W_PRIME_REMAINING_MS, W_PRIME_ANCHOR_TTE_MS = 240_000 - 121_000, 240_000 - 120_000
+
+
+def w_prime_precision_surface_up():
+    """True UP digital at the forward for the `w'` precision surface."""
+    ratio = W_PRIME_REMAINING_MS / W_PRIME_ANCHOR_TTE_MS
+    a = W_PRIME_PRECISION_SURFACE["a"] * ratio
+    b = W_PRIME_PRECISION_SURFACE["b"] * ratio
+    rho, m, sigma = (W_PRIME_PRECISION_SURFACE[key] for key in ("rho", "m", "sigma"))
+    k = 0.0
+    x = k - m
+    sq = math.sqrt(x * x + sigma * sigma)
+    w = a + b * (rho * x + sq)
+    w_prime = b * (rho + x / sq)
+    S = math.sqrt(w)
+    d2 = -(k + w / 2.0) / S
+    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
+
+
 def admitted_low_variance_up():
     """True UP digital on the newly admitted low-variance surface, at the forward."""
     a, b = ADMITTED_LOW_VARIANCE["a"], ADMITTED_LOW_VARIANCE["b"]
@@ -640,6 +674,12 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")
     w("/// admits, where the previous pricer aborted `ENonPositiveVariance`.")
     w(f"public fun admitted_low_variance_up(): u64 {{ {fmt_u64(admitted_low_variance_up())} }}")
+    w("")
+    w("/// True UP digital on the surface that separates the two ways of forming `w'`")
+    w("/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the")
+    w("/// budget below; narrowing it to 1e9 first misses by ~570 units.")
+    w("public fun w_prime_precision_surface_up(): u64 { "
+      f"{fmt_u64(w_prime_precision_surface_up())} }}")
     return "\n".join(lines) + "\n"
 
 

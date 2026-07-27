@@ -862,12 +862,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   raw unit of `a`, and a short-dated `a` is only about ten raw units, so the
   truncation alone breached the ratified price-deviation bound (P-14's defect,
   one layer upstream). Freshness continues to use the latest envelope source
-  timestamp. If the roll-down still makes per-strike variance non-positive
-  before expiry — now only in the final `1 / (a * 1e9)` fraction of the anchored
-  horizon rather than on any post-anchor advance — the existing
-  `ENonPositiveVariance` guard aborts. This includes pool valuation. Recovery
-  is for the publisher to send a changed usable tuple, which resets the
-  parameter anchor, followed by retrying the affected action or flush.
+  timestamp. Carrying the roll-down at 1e18 substantially shrinks the terminal
+  rounding region in which the roll-down can drive per-strike variance
+  non-positive, but does not remove it, and the size of what remains is not a
+  single closed form — it depends on the sign of `a` and on cancellation between
+  `a` and `b·inner`, not on `a` alone. The existing `ENonPositiveVariance` guard
+  remains authoritative for that state, including in pool valuation. Recovery is
+  for the publisher to send a changed usable tuple, which resets the parameter
+  anchor, followed by retrying the affected action or flush.
 - **Reasoning:** transport freshness and parameter age answer different
   questions. A one-second retransmit proves the feed is live but does not make
   an unchanged variance-to-expiry calibration new. Preserving both timestamps
@@ -887,7 +889,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
   `identical_svi_retransmit_refreshes_source_without_moving_params_anchor`;
   `pricing_guard_tests.move` —
-  `pre_expiry_roll_down_keeps_positive_variance`.
+  `pre_expiry_roll_down_keeps_positive_variance` and
+  `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
+  correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
+  units against a 21-unit budget).
 - **Reopen when:** the provider changes tuple or timestamp semantics, an
   effective-zero surface materially interrupts LP flush liveness or lacks
   timely changed-tuple recovery, Predict adopts a calibrated non-linear horizon

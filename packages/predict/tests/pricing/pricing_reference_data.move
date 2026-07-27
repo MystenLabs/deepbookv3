@@ -371,6 +371,11 @@ public fun flat_surface_atm_up(): u64 { 499_993_692 }
 /// precision contract and never measured from contract output.
 public fun flat_surface_atm_budget(): u64 { 21 }
 
+/// True UP digital on the surface that separates the two ways of forming `w'`
+/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the
+/// budget below; narrowing it to 1e9 first misses by ~890 units.
+public fun w_prime_precision_surface_up(): u64 { 499_903_815 }
+
 /// True UP digital on the surface whose per-strike total variance is positive
 /// but floors to zero at 1e9 — the region the u128/1e18 variance path newly
 /// admits, where the previous pricer aborted `ENonPositiveVariance`.
