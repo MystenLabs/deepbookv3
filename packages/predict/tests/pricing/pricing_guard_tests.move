@@ -32,7 +32,9 @@
 /// far below the BS spot (no LOWER basis bound), where the re-anchored
 /// `spot * bs_forward / bs_spot` floors to 0. `ENonPositiveVariance` is pinned by
 /// a boundary surface whose rounded analytical minimum is positive at load but
-/// whose concrete at-forward quote rounds total variance non-positive.
+/// whose concrete at-forward quote rounds total variance non-positive, and by a
+/// production-valid unchanged tuple whose remaining-time roll-down reaches zero
+/// one millisecond before expiry.
 /// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
 /// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
@@ -126,6 +128,7 @@ const NON_MONOTONE_HIGH_TICK: u64 = 95;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_A: u64 = 1;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_B: u64 = 0;
 const ROLL_DOWN_CLOCK_ADVANCE_MS: u64 = 1;
+const TERMINAL_ROLL_DOWN_REMAINING_MS: u64 = 1;
 const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 // === Abort guards ===
@@ -743,6 +746,68 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+/// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted
+/// unchanged one millisecond before a one-year expiry. The retransmit refreshes
+/// every feed clock without moving the parameter anchor. At that horizon,
+/// `floor(1e9 * remaining_ms / anchor_tte_ms) == 0`, so the effective variance
+/// is non-positive and the accepted RP-21 response is the existing quote abort.
+#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
+fun terminal_roll_down_to_zero_aborts_before_expiry() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+
+    let terminal_source_timestamp_ms =
+        test_constants::default_expiry_ms() - TERMINAL_ROLL_DOWN_REMAINING_MS;
+    fx.set_clock_for_testing(terminal_source_timestamp_ms);
+    fx.set_pyth_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        terminal_source_timestamp_ms,
+    );
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        terminal_source_timestamp_ms,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        terminal_source_timestamp_ms,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        terminal_source_timestamp_ms,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    pricer.up_price(strike(test_constants::default_live_price()));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    abort EUnexpectedSuccess
 }
 
 /// Pins the rolled `b`'s precision through the SKEW CORRECTION, not just through

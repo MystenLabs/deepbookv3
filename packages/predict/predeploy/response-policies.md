@@ -889,7 +889,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
   `identical_svi_retransmit_refreshes_source_without_moving_params_anchor`;
   `pricing_guard_tests.move` —
-  `pre_expiry_roll_down_keeps_positive_variance` and
+  `pre_expiry_roll_down_keeps_positive_variance`,
+  `terminal_roll_down_to_zero_aborts_before_expiry`, and
   `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
   correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
   units against a 21-unit budget).

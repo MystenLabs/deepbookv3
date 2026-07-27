@@ -587,6 +587,7 @@ function normalizePricingSourceTimestamps(json: any): Record<string, string> {
         block_scholes_spot_source_timestamp_ms: decimal(json.block_scholes_spot_source_timestamp_ms),
         block_scholes_forward_source_timestamp_ms: decimal(json.block_scholes_forward_source_timestamp_ms),
         block_scholes_svi_source_timestamp_ms: decimal(json.block_scholes_svi_source_timestamp_ms),
+        block_scholes_svi_params_timestamp_ms: decimal(json.block_scholes_svi_params_timestamp_ms),
     };
 }
 

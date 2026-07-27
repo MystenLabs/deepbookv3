@@ -670,16 +670,16 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// precision contract and never measured from contract output.")
     w(f"public fun flat_surface_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
     w("")
+    w("/// True UP digital on the surface that separates the two ways of forming `w'`")
+    w("/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the")
+    w("/// budget below; narrowing it to 1e9 first misses by ~890 units.")
+    w("public fun w_prime_precision_surface_up(): u64 { "
+      f"{fmt_u64(w_prime_precision_surface_up())} }}")
+    w("")
     w("/// True UP digital on the surface whose per-strike total variance is positive")
     w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")
     w("/// admits, where the previous pricer aborted `ENonPositiveVariance`.")
     w(f"public fun admitted_low_variance_up(): u64 {{ {fmt_u64(admitted_low_variance_up())} }}")
-    w("")
-    w("/// True UP digital on the surface that separates the two ways of forming `w'`")
-    w("/// in the skew correction. Carrying the rolled `b` at 1e18 lands inside the")
-    w("/// budget below; narrowing it to 1e9 first misses by ~570 units.")
-    w("public fun w_prime_precision_surface_up(): u64 { "
-      f"{fmt_u64(w_prime_precision_surface_up())} }}")
     return "\n".join(lines) + "\n"
 
 
