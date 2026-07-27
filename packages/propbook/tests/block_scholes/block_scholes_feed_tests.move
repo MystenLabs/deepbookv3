@@ -8,7 +8,8 @@ use block_scholes_oracle::update::{Self, ForwardUpdate, SVIUpdate, SpotUpdate};
 use propbook::{
     block_scholes_forward_feed::{Self as forward_feed, BlockScholesForwardFeed},
     block_scholes_spot_feed::{Self as spot_feed, BlockScholesSpotFeed},
-    block_scholes_svi_feed::{Self as svi_feed, BlockScholesSVIFeed, SVIParams, SVIRead},
+    block_scholes_svi_feed::{Self as svi_feed, BlockScholesSVIFeed, SVIParams},
+    oracle_lane::OracleRead,
     registry::{Self, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::assert_eq;
@@ -127,10 +128,10 @@ fun svi_update_records_raw_and_normalized_latest() {
     assert_eq!(svi_feed::raw_bs_source_id(&raw), BS_SOURCE_ID);
     assert_eq!(svi_feed::raw_expiry_ms(&raw), EXPIRY_A);
     assert_eq!(svi_feed::raw_params_timestamp_ms(&raw), T_EARLY);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_EARLY);
     assert_svi_params(&svi_feed::raw_svi_params(&raw));
     assert_default_svi_read(
         &feed.normalized_svi(EXPIRY_A).destroy_some(),
-        T_EARLY,
         T_EARLY,
         LANDED_EARLY,
     );
@@ -152,9 +153,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
     clock.set_for_testing(LANDED_HIGH);
     feed.update(svi_update(BS_SOURCE_ID, EXPIRY_A, T_MID), &clock, scenario.ctx());
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_EARLY, T_MID, LANDED_HIGH);
-    assert_svi_params(&read.svi_params());
-    assert_eq!(svi_feed::raw_params_timestamp_ms(&feed.raw_svi(EXPIRY_A).read_value()), T_EARLY);
+    assert_svi_read_timestamps(&read, T_MID, LANDED_HIGH);
+    assert_svi_params(&read.read_value());
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_EARLY);
 
     feed.update(
         svi_update_with_params(
@@ -174,8 +175,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
         scenario.ctx(),
     );
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_LATE, T_LATE, LANDED_HIGH);
-    assert_eq!(read.svi_params().a().magnitude(), SVI_A_CHANGED);
+    assert_svi_read_timestamps(&read, T_LATE, LANDED_HIGH);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_LATE);
+    assert_eq!(read.read_value().a().magnitude(), SVI_A_CHANGED);
 
     feed.update(
         svi_update_with_params(
@@ -195,8 +197,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
         scenario.ctx(),
     );
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_B_CHANGED, T_B_CHANGED, LANDED_HIGH);
-    assert_eq!(read.svi_params().b(), SVI_B_CHANGED);
+    assert_svi_read_timestamps(&read, T_B_CHANGED, LANDED_HIGH);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_B_CHANGED);
+    assert_eq!(read.read_value().b(), SVI_B_CHANGED);
 
     feed.update(
         svi_update_with_params(
@@ -216,8 +219,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
         scenario.ctx(),
     );
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_RHO_CHANGED, T_RHO_CHANGED, LANDED_HIGH);
-    assert_eq!(read.svi_params().rho().magnitude(), SVI_RHO_CHANGED);
+    assert_svi_read_timestamps(&read, T_RHO_CHANGED, LANDED_HIGH);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_RHO_CHANGED);
+    assert_eq!(read.read_value().rho().magnitude(), SVI_RHO_CHANGED);
 
     feed.update(
         svi_update_with_params(
@@ -237,8 +241,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
         scenario.ctx(),
     );
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_M_CHANGED, T_M_CHANGED, LANDED_HIGH);
-    assert_eq!(read.svi_params().m().magnitude(), SVI_M_CHANGED);
+    assert_svi_read_timestamps(&read, T_M_CHANGED, LANDED_HIGH);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_M_CHANGED);
+    assert_eq!(read.read_value().m().magnitude(), SVI_M_CHANGED);
 
     feed.update(
         svi_update_with_params(
@@ -258,8 +263,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
         scenario.ctx(),
     );
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_SIGMA_CHANGED, T_SIGMA_CHANGED, LANDED_HIGH);
-    assert_eq!(read.svi_params().sigma(), SVI_SIGMA_CHANGED);
+    assert_svi_read_timestamps(&read, T_SIGMA_CHANGED, LANDED_HIGH);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_SIGMA_CHANGED);
+    assert_eq!(read.read_value().sigma(), SVI_SIGMA_CHANGED);
 
     feed.update(
         svi_update_with_params(
@@ -279,8 +285,9 @@ fun svi_retransmits_preserve_params_timestamp_and_each_param_change_resets_it() 
         scenario.ctx(),
     );
     let read = feed.normalized_svi(EXPIRY_A).destroy_some();
-    assert_svi_read_timestamps(&read, T_SIGMA_CHANGED, T_SIGMA_CHANGED, LANDED_HIGH);
-    assert_eq!(read.svi_params().sigma(), SVI_SIGMA_CHANGED);
+    assert_svi_read_timestamps(&read, T_SIGMA_CHANGED, LANDED_HIGH);
+    assert_eq!(feed.params_timestamp_ms(EXPIRY_A).destroy_some(), T_SIGMA_CHANGED);
+    assert_eq!(read.read_value().sigma(), SVI_SIGMA_CHANGED);
 
     clock.destroy_for_testing();
     return_shared(feed);
@@ -307,6 +314,7 @@ fun exact_inserts_do_not_mutate_latest_reads() {
     assert!(spot.normalized_spot().is_none());
     assert!(forward.normalized_forward(EXPIRY_A).is_none());
     assert!(svi.normalized_svi(EXPIRY_A).is_none());
+    assert!(svi.params_timestamp_ms(EXPIRY_A).is_none());
     assert_price_read(&spot.normalized_spot_at(T_EARLY).destroy_some(), SPOT, T_EARLY, LANDED_HIGH);
     assert_price_read(
         &forward.normalized_forward_at(EXPIRY_A, T_EARLY).destroy_some(),
@@ -317,8 +325,11 @@ fun exact_inserts_do_not_mutate_latest_reads() {
     assert_default_svi_read(
         &svi.normalized_svi_at(EXPIRY_A, T_EARLY).destroy_some(),
         T_EARLY,
-        T_EARLY,
         LANDED_HIGH,
+    );
+    assert_eq!(
+        svi_feed::raw_params_timestamp_ms(&svi.raw_svi_at(EXPIRY_A, T_EARLY).read_value()),
+        T_EARLY,
     );
     assert!(spot.normalized_spot_at(T_LATE).is_none());
     assert!(forward.normalized_forward_at(EXPIRY_A, T_LATE).is_none());
@@ -410,7 +421,7 @@ fun updates_accept_raw_values_without_pricing_envelope_validation() {
     assert_eq!(forward_feed::raw_forward_value(&forward.raw_forward(EXPIRY_A).read_value()), 0);
     assert!(spot.normalized_spot().is_none());
     assert!(forward.normalized_forward(EXPIRY_A).is_none());
-    let params = svi.normalized_svi(EXPIRY_A).destroy_some().svi_params();
+    let params = svi.normalized_svi(EXPIRY_A).destroy_some().read_value();
     assert_eq!(params.sigma(), 0);
     assert_eq!(params.rho().magnitude(), FLOAT_SCALING + 1);
     assert_eq!(params.m().magnitude(), FLOAT_SCALING + 2);
@@ -605,15 +616,15 @@ fun forward_and_svi_updates_store_independent_expiry_rows() {
     assert_default_svi_read(
         &svi.normalized_svi(EXPIRY_A).destroy_some(),
         T_EARLY,
-        T_EARLY,
         LANDED_HIGH,
     );
+    assert_eq!(svi.params_timestamp_ms(EXPIRY_A).destroy_some(), T_EARLY);
     assert_default_svi_read(
         &svi.normalized_svi(EXPIRY_B).destroy_some(),
         T_LATE,
-        T_LATE,
         LANDED_HIGH,
     );
+    assert_eq!(svi.params_timestamp_ms(EXPIRY_B).destroy_some(), T_LATE);
 
     clock.destroy_for_testing();
     return_shared(svi);
@@ -738,29 +749,21 @@ fun assert_price_read(
 }
 
 fun assert_default_svi_read(
-    read: &SVIRead,
-    expected_params_timestamp_ms: u64,
+    read: &OracleRead<SVIParams>,
     expected_source_timestamp_ms: u64,
     expected_update_timestamp_ms: u64,
 ) {
-    assert_svi_read_timestamps(
-        read,
-        expected_params_timestamp_ms,
-        expected_source_timestamp_ms,
-        expected_update_timestamp_ms,
-    );
-    assert_svi_params(&read.svi_params());
+    assert_svi_read_timestamps(read, expected_source_timestamp_ms, expected_update_timestamp_ms);
+    assert_svi_params(&read.read_value());
 }
 
 fun assert_svi_read_timestamps(
-    read: &SVIRead,
-    expected_params_timestamp_ms: u64,
+    read: &OracleRead<SVIParams>,
     expected_source_timestamp_ms: u64,
     expected_update_timestamp_ms: u64,
 ) {
-    assert_eq!(read.params_timestamp_ms(), expected_params_timestamp_ms);
-    assert_eq!(read.source_timestamp_ms(), expected_source_timestamp_ms);
-    assert_eq!(read.update_timestamp_ms(), expected_update_timestamp_ms);
+    assert_eq!(read.read_source_timestamp_ms(), expected_source_timestamp_ms);
+    assert_eq!(read.read_update_timestamp_ms(), expected_update_timestamp_ms);
 }
 
 fun assert_svi_params(params: &SVIParams) {

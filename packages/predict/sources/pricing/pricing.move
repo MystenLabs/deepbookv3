@@ -378,8 +378,10 @@ fun resolve_live_pricer(
     let svi_read = bs_svi.normalized_svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
-    let block_scholes_svi_params_timestamp_ms = svi_read.params_timestamp_ms();
-    let block_scholes_svi_source_timestamp_ms = svi_read.source_timestamp_ms();
+    // The normalized read and parameter anchor come from the same immutable
+    // shared-object version in this transaction.
+    let block_scholes_svi_params_timestamp_ms = bs_svi.params_timestamp_ms(expiry).destroy_some();
+    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_svi_source_timestamp_ms,
@@ -388,7 +390,7 @@ fun resolve_live_pricer(
         ),
         EBlockScholesSVIStale,
     );
-    let raw_svi = svi_read.svi_params();
+    let raw_svi = svi_read.read_value();
     assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
     let svi = roll_down_svi(
         &raw_svi,
