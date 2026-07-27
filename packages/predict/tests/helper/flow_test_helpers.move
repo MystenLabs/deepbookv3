@@ -795,7 +795,7 @@ public fun seed_bs_surface(
     forward: u64,
     source_timestamp_ms: u64,
 ) {
-    self.seed_bs_surface_with_svi(
+    self.seed_bs_surface_with_svi_source(
         market,
         bs,
         spot,
@@ -808,6 +808,7 @@ public fun seed_bs_surface(
         false,
         test_constants::default_svi_m(),
         false,
+        source_timestamp_ms,
         source_timestamp_ms,
     )
 }
@@ -846,6 +847,8 @@ public fun seed_bs_surface_with_svi_bundle(
 }
 
 /// Write split Block Scholes spot, forward, and explicit SVI rows for `market`.
+/// Prices use the supplied source timestamp; SVI uses the fixture clock so a
+/// freshly calibrated tuple begins at its actual pricing instant.
 public fun seed_bs_surface_with_svi(
     self: &mut Fixture,
     market: &ExpiryMarket,
@@ -861,6 +864,42 @@ public fun seed_bs_surface_with_svi(
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
     source_timestamp_ms: u64,
+) {
+    let svi_source_timestamp_ms = self.clock.timestamp_ms();
+    self.seed_bs_surface_with_svi_source(
+        market,
+        bs,
+        spot,
+        forward,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+        source_timestamp_ms,
+        svi_source_timestamp_ms,
+    );
+}
+
+fun seed_bs_surface_with_svi_source(
+    self: &mut Fixture,
+    market: &ExpiryMarket,
+    bs: &mut BlockScholesFeed,
+    spot: u64,
+    forward: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+    source_timestamp_ms: u64,
+    svi_source_timestamp_ms: u64,
 ) {
     bs
         .spot_mut()
@@ -886,7 +925,7 @@ public fun seed_bs_surface_with_svi(
             update::new_svi_update(
                 test_constants::pyth_feed_id(),
                 market.expiry(),
-                source_timestamp_ms,
+                svi_source_timestamp_ms,
                 svi_a_magnitude,
                 svi_a_is_negative,
                 svi_b,

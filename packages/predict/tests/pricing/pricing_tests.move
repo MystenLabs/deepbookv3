@@ -23,11 +23,12 @@ module deepbook_predict::pricing_tests;
 use deepbook_predict::{
     constants,
     oracle_fixture,
+    pricing,
     range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
 };
-use fixed_math::math::float_scaling as float;
+use fixed_math::{i64, math::float_scaling as float};
 use std::unit_test::assert_eq;
 
 // Forward == `default_live_price` (spot==forward, basis 1.0). The two scenario
@@ -69,6 +70,159 @@ const BLOCK_SCHOLES_FORWARD_SOURCE_MS: u64 = 119_003;
 const UNUSABLE_PYTH_SOURCE_MS: u64 = 119_001;
 const UNUSABLE_PYTH_SPOT: u64 = 0;
 const NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS: u64 = 0;
+const ROLL_DOWN_ANCHOR_MS: u64 = 120_000;
+const ROLL_DOWN_EXPIRY_MS: u64 = 120_100;
+const ROLL_DOWN_MIDPOINT_MS: u64 = 120_050;
+const SHORT_ROLL_DOWN_EXPIRY_MS: u64 = 180_000;
+const SHORT_ROLL_DOWN_MIDPOINT_MS: u64 = 150_000;
+const ODD_ROLL_DOWN_VALUE: u64 = 11;
+const HALF_ODD_ROLL_DOWN_VALUE: u64 = 5;
+const BOUNDARY_ROLL_DOWN_VALUE: u64 = 100;
+const ONE_MS_ROLL_DOWN_VALUE: u64 = 1;
+const ZERO_ROLL_DOWN_VALUE: u64 = 0;
+const HALF_U64_MAX: u64 = 9_223_372_036_854_775_807;
+const RETRANSMITTED_SVI_A: u64 = 2;
+const RETRANSMITTED_SVI_B: u64 = 0;
+const ZERO_SVI_SHAPE_PARAM: u64 = 0;
+
+#[test]
+fun roll_down_is_exact_at_anchor_and_rounds_signed_a_toward_zero() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let negative_a = i64::from_parts(ODD_ROLL_DOWN_VALUE, true);
+
+    let (at_anchor_a, at_anchor_b) = pricing::roll_down_ab(
+        negative_a,
+        ODD_ROLL_DOWN_VALUE,
+        ROLL_DOWN_ANCHOR_MS,
+        ROLL_DOWN_EXPIRY_MS,
+        oracle_fixture::clock(&fx),
+    );
+    assert_eq!(at_anchor_a, negative_a);
+    assert_eq!(at_anchor_b, ODD_ROLL_DOWN_VALUE);
+
+    fx.set_clock_for_testing(ROLL_DOWN_MIDPOINT_MS);
+    let (midpoint_a, midpoint_b) = pricing::roll_down_ab(
+        negative_a,
+        ODD_ROLL_DOWN_VALUE,
+        ROLL_DOWN_ANCHOR_MS,
+        ROLL_DOWN_EXPIRY_MS,
+        oracle_fixture::clock(&fx),
+    );
+    // floor(11 * 50 / 100) = 5; signed magnitude scaling therefore rounds
+    // negative `a` toward zero.
+    assert_eq!(midpoint_a, i64::from_parts(HALF_ODD_ROLL_DOWN_VALUE, true));
+    assert_eq!(midpoint_b, HALF_ODD_ROLL_DOWN_VALUE);
+
+    fx.finish();
+}
+
+#[test]
+fun roll_down_handles_expiry_boundaries_and_u128_intermediates() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    fx.set_clock_for_testing(ROLL_DOWN_MIDPOINT_MS);
+    let (wide_a, wide_b) = pricing::roll_down_ab(
+        i64::from_parts(std::u64::max_value!(), false),
+        std::u64::max_value!(),
+        ROLL_DOWN_ANCHOR_MS,
+        ROLL_DOWN_EXPIRY_MS,
+        oracle_fixture::clock(&fx),
+    );
+    // floor(u64::MAX * 50 / 100) = floor(u64::MAX / 2). The input product
+    // exceeds u64, so this exact result pins the u128 intermediate.
+    assert_eq!(wide_a, i64::from_parts(HALF_U64_MAX, false));
+    assert_eq!(wide_b, HALF_U64_MAX);
+
+    fx.set_clock_for_testing(ROLL_DOWN_EXPIRY_MS - 1);
+
+    let (one_ms_a, one_ms_b) = pricing::roll_down_ab(
+        i64::from_parts(BOUNDARY_ROLL_DOWN_VALUE, false),
+        BOUNDARY_ROLL_DOWN_VALUE,
+        ROLL_DOWN_ANCHOR_MS,
+        ROLL_DOWN_EXPIRY_MS,
+        oracle_fixture::clock(&fx),
+    );
+    // floor(100 * 1 / 100) = 1 exactly one millisecond before expiry.
+    assert_eq!(one_ms_a, i64::from_parts(ONE_MS_ROLL_DOWN_VALUE, false));
+    assert_eq!(one_ms_b, ONE_MS_ROLL_DOWN_VALUE);
+
+    fx.set_clock_for_testing(ROLL_DOWN_EXPIRY_MS);
+    let (expired_a, expired_b) = pricing::roll_down_ab(
+        i64::from_parts(std::u64::max_value!(), false),
+        std::u64::max_value!(),
+        ROLL_DOWN_ANCHOR_MS,
+        ROLL_DOWN_EXPIRY_MS,
+        oracle_fixture::clock(&fx),
+    );
+    assert_eq!(expired_a, i64::zero());
+    assert_eq!(expired_b, ZERO_ROLL_DOWN_VALUE);
+
+    fx.finish();
+}
+
+#[test]
+fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        SHORT_ROLL_DOWN_EXPIRY_MS,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        RETRANSMITTED_SVI_A,
+        false,
+        RETRANSMITTED_SVI_B,
+        test_constants::default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+
+    fx.set_clock_for_testing(SHORT_ROLL_DOWN_MIDPOINT_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_MIDPOINT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_MIDPOINT_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_MIDPOINT_MS,
+        RETRANSMITTED_SVI_A,
+        false,
+        RETRANSMITTED_SVI_B,
+        test_constants::default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.block_scholes_svi_params_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
+    // At the midpoint, the preserved anchor scales raw a=2 to effective a=1
+    // and b remains zero. At K=F, k=0, integer w/2=0 and w'=0, so d2=0 and
+    // the independently expected UP range price is N(0)=0.5 exactly. If the
+    // retransmit incorrectly reset the anchor, raw a=2 would remain unscaled.
+    assert_eq!(
+        pricer.range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        ),
+        float!() / 2,
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
 
 #[test]
 fun pricer_snapshots_all_oracle_source_timestamps() {
@@ -91,6 +245,10 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), PYTH_SOURCE_MS);
     assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
     assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), BLOCK_SCHOLES_FORWARD_SOURCE_MS);
+    assert_eq!(
+        pricer.block_scholes_svi_params_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
     assert_eq!(
         pricer.block_scholes_svi_source_timestamp_ms(),
         test_constants::live_source_timestamp_ms(),

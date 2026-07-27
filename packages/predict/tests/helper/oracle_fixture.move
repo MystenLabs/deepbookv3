@@ -324,7 +324,7 @@ public fun prepare_live_oracle(
     pyth: &mut PythFeed,
     live_price: u64,
 ) {
-    self.prepare_real_oracle(
+    self.prepare_real_oracle_with_svi_source(
         bs,
         pyth,
         live_price,
@@ -337,6 +337,7 @@ public fun prepare_live_oracle(
         false,
         test_constants::default_svi_m(),
         false,
+        test_constants::live_source_timestamp_ms(),
     );
 }
 
@@ -367,6 +368,40 @@ public fun prepare_real_oracle(
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
 ) {
+    let svi_source_timestamp_ms = self.clock.timestamp_ms();
+    self.prepare_real_oracle_with_svi_source(
+        bs,
+        pyth,
+        spot,
+        forward,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+        svi_source_timestamp_ms,
+    );
+}
+
+fun prepare_real_oracle_with_svi_source(
+    self: &mut OracleFixture,
+    bs: &mut BlockScholesFeed,
+    pyth: &mut PythFeed,
+    spot: u64,
+    forward: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+    svi_source_timestamp_ms: u64,
+) {
     let bs_source_id = bs.spot().bs_source_id();
     let live_ts = test_constants::live_source_timestamp_ms();
     store_pyth_spot(pyth, spot, live_ts, live_ts);
@@ -394,7 +429,7 @@ public fun prepare_real_oracle(
             update::new_svi_update(
                 bs_source_id,
                 self.expiry,
-                live_ts,
+                svi_source_timestamp_ms,
                 svi_a_magnitude,
                 svi_a_is_negative,
                 svi_b,
@@ -498,6 +533,44 @@ public fun set_bs_forward_for_testing_bundle(
     forward: u64,
 ) {
     self.set_bs_forward_for_testing(&mut oracle.bs, source_timestamp_ms, forward);
+}
+
+/// Overwrite only the BS SVI row for this fixture's expiry through the real
+/// ingest path.
+public fun set_bs_svi_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    let bs_source_id = oracle.bs.svi().bs_source_id();
+    oracle
+        .bs
+        .svi_mut()
+        .update(
+            update::new_svi_update(
+                bs_source_id,
+                self.expiry,
+                source_timestamp_ms,
+                svi_a_magnitude,
+                svi_a_is_negative,
+                svi_b,
+                svi_sigma,
+                svi_rho_magnitude,
+                svi_rho_is_negative,
+                svi_m_magnitude,
+                svi_m_is_negative,
+            ),
+            &self.clock,
+            self.scenario.ctx(),
+        );
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping

@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-21. This is the tracked register of **settled response-policy
+Updated 2026-07-27. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -173,7 +173,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   permanently. The bound is deliberate — settling on an arbitrarily stale mark
   is the worse outcome, and the window is compiled because the insert is
   permissionless and first-writer-wins. Both window edges are pinned in
-  propbook: `pyth_feed_tests.move` —
+  propbook: `packages/propbook/tests/pyth/pyth_feed_tests.move` —
   `insert_at_carry_within_window_claims_the_key`,
   `insert_at_carry_beyond_window_aborts`.
 - **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` (accepted
@@ -832,6 +832,59 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reopen when:** a surface is observed whose true total variance is positive
   but so small that `sqrt(w)` itself underflows the 1e9 result scale, or if the
   saturation cap is ever read by something other than `normal_cdf`/`normal_pdf`.
+
+---
+
+## RP-21: Unchanged SVI tuples roll down from their first source timestamp (resolves P-2)
+
+- **Trigger state:** the Block Scholes publisher retransmits an unchanged
+  normalized SVI tuple while time-to-expiry decreases, including inside the
+  wider SVI freshness window near expiry.
+- **Controller:** external × protocol clock — the publisher controls the
+  parameter tuple and envelope cadence; elapsed time is objective on-chain
+  state.
+- **Blast radius:** every live quote, mint, redeem, liquidation, and NAV read
+  for the tuple's expiry. Because a flush must value every active market, one
+  affected expiry blocks the pool-wide flush and all queued LP fills. Exact
+  settlement does not use SVI.
+- **Response:** proceed with anchored remaining-time roll-down. Propbook keeps
+  `params_timestamp_ms` fixed at the first accepted source timestamp carrying
+  the current exact normalized tuple while advancing `source_timestamp_ms` and
+  `update_timestamp_ms` on newer identical retransmits. Any normalized
+  parameter change resets the anchor to that update's source timestamp.
+  Predict computes
+  `a_eff = sign(a) * floor(abs(a) * remaining_ms / anchor_tte_ms)` and
+  `b_eff = floor(b * remaining_ms / anchor_tte_ms)` with `u128`
+  intermediates; `rho`, `m`, and `sigma` are unchanged. Freshness continues to
+  use the latest envelope source timestamp. If integer roll-down makes
+  per-strike variance non-positive before expiry, the existing
+  `ENonPositiveVariance` guard aborts. This includes pool valuation. Recovery
+  is for the publisher to send a changed usable tuple, which resets the
+  parameter anchor, followed by retrying the affected action or flush.
+- **Reasoning:** transport freshness and parameter age answer different
+  questions. A one-second retransmit proves the feed is live but does not make
+  an unchanged variance-to-expiry calibration new. Preserving both timestamps
+  lets the protocol reject an unavailable stream while consuming the current
+  tuple at the remaining horizon, without a separate near-expiry mode or
+  minimum-time cutoff. The pre-expiry variance abort is an explicitly accepted
+  mandatory-path interruption: it should be rare for provider-calibrated
+  surfaces, the low-frequency flush is retriable, and flooring variance to a
+  fabricated positive value would hide an unusable effective surface.
+- **Risk profile:** `BEST-GUESS` — the timestamp and arithmetic policy are
+  deterministic and pinned. The expected rarity and timely publisher recovery
+  are not measured; whether linear roll-down is the best calibration model is
+  deliberately owned by the still-open O-1 calibration work.
+- **Pinning tests:** `pricing_tests.move` —
+  `roll_down_is_exact_at_anchor_and_rounds_signed_a_toward_zero`,
+  `roll_down_handles_expiry_boundaries_and_u128_intermediates`, and
+  `identical_svi_retransmit_refreshes_source_without_moving_params_anchor`;
+  `pricing_guard_tests.move` —
+  `pre_expiry_roll_down_to_zero_variance_aborts`.
+- **Reopen when:** the provider changes tuple or timestamp semantics, an
+  effective-zero surface materially interrupts LP flush liveness or lacks
+  timely changed-tuple recovery, Predict adopts a calibrated non-linear horizon
+  transform, or live pricing stops consuming SVI total variance as
+  variance-to-expiry.
 
 ---
 

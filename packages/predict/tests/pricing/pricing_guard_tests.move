@@ -106,6 +106,10 @@ const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
 const NON_MONOTONE_LOW_TICK: u64 = 90;
 const NON_MONOTONE_HIGH_TICK: u64 = 95;
+const ROLL_DOWN_ZERO_VARIANCE_RAW_A: u64 = 1;
+const ROLL_DOWN_ZERO_VARIANCE_RAW_B: u64 = 0;
+const ROLL_DOWN_CLOCK_ADVANCE_MS: u64 = 1;
+const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 // === Abort guards ===
 
@@ -223,7 +227,7 @@ fun live_quote_with_fresh_spot_but_stale_forward_aborts() {
 fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     let (mut fx, mut oracle) = setup_live();
     let stale_now =
-        test_constants::live_source_timestamp_ms()
+        test_constants::now_ms()
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
@@ -659,6 +663,54 @@ fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
     );
     assert_eq!(sqrt_var, WELL_CONDITIONED_SQRT_W);
     assert!(d2.magnitude() < SATURATED_D2_MAGNITUDE);
+}
+
+/// Raw `a == 1` is valid at the parameter anchor, but direct integer roll-down
+/// floors it to zero one millisecond later. An identical retransmit at that
+/// later millisecond refreshes the envelope without resetting the anchor, so
+/// the existing quote-time variance guard remains the failure boundary.
+#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
+fun pre_expiry_roll_down_to_zero_variance_aborts() {
+    let expiry_ms = test_constants::now_ms() + test_constants::default_cadence_period_ms();
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        expiry_ms,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    fx.set_clock_for_testing(test_constants::now_ms() + ROLL_DOWN_CLOCK_ADVANCE_MS);
+    fx.set_bs_svi_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms() + ROLL_DOWN_CLOCK_ADVANCE_MS,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
+        false,
+        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
+        default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    pricer.up_price(strike(test_constants::default_live_price()));
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    abort EUnexpectedSuccess
 }
 
 // === Surface minimum-variance abort ===

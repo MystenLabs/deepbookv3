@@ -27,13 +27,24 @@ public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
     forward: u64,
-    svi: SVIParams,
+    svi: PricingSVI,
     /// Source timestamps of the oracle observations present when this snapshot
     /// was loaded. Pyth is `0` only when no usable normalized observation exists.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
+    /// First source envelope carrying the raw SVI tuple from which `svi` was rolled down.
+    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// Transaction-local SVI parameters after applying Predict's remaining-time roll-down.
+public struct PricingSVI has copy, drop {
+    a: I64,
+    b: u64,
+    rho: I64,
+    m: I64,
+    sigma: u64,
 }
 
 /// Canonical normalized Pyth spot read at one exact source timestamp.
@@ -129,8 +140,34 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
     pricer.block_scholes_forward_source_timestamp_ms
 }
 
+public(package) fun block_scholes_svi_params_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_svi_params_timestamp_ms
+}
+
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
+}
+
+/// Scale SVI `a` toward zero and `b` down by the fraction of anchored time
+/// remaining. At or after expiry both values are zero.
+public(package) fun roll_down_ab(
+    a: I64,
+    b: u64,
+    params_timestamp_ms: u64,
+    expiry_ms: u64,
+    clock: &Clock,
+): (I64, u64) {
+    // Live pricing rejects expiry first; saturation pins the policy boundary for
+    // this pure helper and avoids a post-expiry subtraction underflow.
+    let remaining_ms = expiry_ms.saturating_sub(clock.timestamp_ms());
+    if (remaining_ms == 0) return (i64::zero(), 0);
+
+    let anchor_tte_ms = expiry_ms - params_timestamp_ms;
+    let scaled_a_magnitude = scale_down(a.magnitude(), remaining_ms, anchor_tte_ms);
+    (
+        i64::from_parts(scaled_a_magnitude, a.is_negative()),
+        scale_down(b, remaining_ms, anchor_tte_ms),
+    )
 }
 
 public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
@@ -144,8 +181,10 @@ public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
 /// The supplied feeds must be the current Propbook bindings for the underlying,
 /// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
 /// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
-/// pricing-safe envelope. A fresh positive normalized Pyth spot reanchors the Block
-/// Scholes forward basis; a missing, non-normalizable, or stale Pyth spot is ignored.
+/// pricing-safe envelope. SVI `a` and `b` are then rolled down from the tuple's
+/// parameter timestamp to the current remaining time. A fresh positive normalized
+/// Pyth spot reanchors the Block Scholes forward basis; a missing, non-normalizable,
+/// or stale Pyth spot is ignored.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -339,7 +378,8 @@ fun resolve_live_pricer(
     let svi_read = bs_svi.normalized_svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
-    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
+    let block_scholes_svi_params_timestamp_ms = svi_read.params_timestamp_ms();
+    let block_scholes_svi_source_timestamp_ms = svi_read.source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_svi_source_timestamp_ms,
@@ -348,8 +388,14 @@ fun resolve_live_pricer(
         ),
         EBlockScholesSVIStale,
     );
-    let svi = svi_read.read_value();
-    assert_inputs_pricing_safe(bs_spot, bs_forward, &svi);
+    let raw_svi = svi_read.svi_params();
+    assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
+    let svi = roll_down_svi(
+        &raw_svi,
+        block_scholes_svi_params_timestamp_ms,
+        expiry,
+        clock,
+    );
 
     let pyth_spot = pyth.normalized_spot();
     let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
@@ -381,8 +427,29 @@ fun resolve_live_pricer(
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_params_timestamp_ms,
         block_scholes_svi_source_timestamp_ms,
     }
+}
+
+fun roll_down_svi(
+    svi: &SVIParams,
+    params_timestamp_ms: u64,
+    expiry_ms: u64,
+    clock: &Clock,
+): PricingSVI {
+    let (a, b) = roll_down_ab(svi.a(), svi.b(), params_timestamp_ms, expiry_ms, clock);
+    PricingSVI {
+        a,
+        b,
+        rho: svi.rho(),
+        m: svi.m(),
+        sigma: svi.sigma(),
+    }
+}
+
+fun scale_down(value: u64, numerator: u64, denominator: u64): u64 {
+    (((value as u128) * (numerator as u128)) / (denominator as u128)) as u64
 }
 
 fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {
@@ -427,7 +494,7 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+fun compute_range_price(svi: &PricingSVI, forward: u64, lower: Strike, higher: Strike): u64 {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
@@ -438,7 +505,7 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: St
 }
 
 /// Compute the adjusted UP digital probability for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
     if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
@@ -454,7 +521,7 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
+fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
     // Saturate ratios outside the fixed-point domain to their digital-probability
@@ -466,24 +533,24 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
     if (strike_ratio == 0) return math::float_scaling!();
     let k = math::ln(strike_ratio);
-    let m = svi_params.m();
+    let m = svi_params.m;
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = svi_params.sigma();
+    let sigma = svi_params.sigma;
     let sigma_squared = math::mul_down(sigma, sigma);
     let sqrt_input = k_minus_m_squared + sigma_squared;
     let sq = math::sqrt_down(sqrt_input);
     let sq_i64 = i64::from_u64(sq);
 
-    let rho = svi_params.rho();
+    let rho = svi_params.rho;
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
     // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let b = svi_params.b();
-    let a = svi_params.a();
+    let b = svi_params.b;
+    let a = svi_params.a;
     let (sqrt_var, d2) = variance_sqrt_and_d2(&a, b, inner.magnitude(), &k);
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
