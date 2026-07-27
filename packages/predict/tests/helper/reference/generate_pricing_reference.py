@@ -408,11 +408,18 @@ def admitted_low_variance_up():
     return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
 
 
-# Budget for the flow fixtures' at-the-money digital: math.move documents
+# Budget for the synthetic at-the-money digitals: math.move documents
 # normal_cdf to 20 raw units, and the 1e18 variance path plus its 1e9-scaled root
 # move d2 by ~6e-10 (well under one raw unit of probability). Independent of any
 # contract output — never widen this to accommodate a measurement.
-FLOW_FIXTURE_BUDGET_UNITS = 21
+ATM_PRICING_BUDGET_UNITS = 21
+
+
+def flat_surface_atm_up():
+    """True at-the-money UP digital for a=1e-9, b=0, from first principles."""
+    w = 1 / F
+    d2 = -math.sqrt(w) / 2.0
+    return round(phi(d2) * F)
 
 
 def flow_fixture_atm_up():
@@ -590,7 +597,16 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// Absolute budget for the above: `normal_cdf` is documented to 20 raw units")
     w("/// and the d2 path adds under one. Derived from math.move\'s precision")
     w("/// contract, never measured from contract output.")
-    w(f"public fun flow_fixture_atm_budget(): u64 {{ {FLOW_FIXTURE_BUDGET_UNITS} }}")
+    w(f"public fun flow_fixture_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
+    w("")
+    w("/// True UP digital at the forward for the flat `a = 1e-9, b = 0` surface,")
+    w("/// evaluated from `Phi(-sqrt(a)/2)` with Python stdlib `erf`. Independent")
+    w("/// of the contract and shared by the direct and rolled-surface tests.")
+    w(f"public fun flat_surface_atm_up(): u64 {{ {fmt_u64(flat_surface_atm_up())} }}")
+    w("")
+    w("/// Absolute budget for the flat-surface reference, derived from math.move's")
+    w("/// precision contract and never measured from contract output.")
+    w(f"public fun flat_surface_atm_budget(): u64 {{ {ATM_PRICING_BUDGET_UNITS} }}")
     w("")
     w("/// True UP digital on the surface whose per-strike total variance is positive")
     w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")

@@ -21,6 +21,7 @@ use deepbook_predict::{
     constants,
     oracle_fixture,
     pricing,
+    pricing_reference_data as ref_data,
     range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
@@ -182,15 +183,16 @@ fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
     assert_eq!(pricer.block_scholes_svi_params_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
     assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
     // At the midpoint, the preserved anchor scales raw a=2 to effective a=1
-    // and b remains zero. At K=F, k=0, integer w/2=0 and w'=0, so d2=0 and
-    // the independently expected UP range price is N(0)=0.5 exactly. If the
+    // and b remains zero. At K=F, positive variance gives d2=-sqrt(1e-9)/2,
+    // checked against the generated first-principles reference. If the
     // retransmit incorrectly reset the anchor, raw a=2 would remain unscaled.
-    assert_eq!(
+    test_helpers::assert_within(
         pricer.range_price(
             strike(test_constants::default_live_price()),
             strike(constants::pos_inf!()),
         ),
-        float!() / 2,
+        ref_data::flat_surface_atm_up(),
+        ref_data::flat_surface_atm_budget(),
     );
 
     oracle_fixture::return_oracle_bundle(oracle);

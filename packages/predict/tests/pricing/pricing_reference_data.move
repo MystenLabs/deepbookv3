@@ -356,6 +356,15 @@ public fun flow_fixture_atm_up(): u64 { 499_993_690 }
 /// contract, never measured from contract output.
 public fun flow_fixture_atm_budget(): u64 { 21 }
 
+/// True UP digital at the forward for the flat `a = 1e-9, b = 0` surface,
+/// evaluated from `Phi(-sqrt(a)/2)` with Python stdlib `erf`. Independent
+/// of the contract and shared by the direct and rolled-surface tests.
+public fun flat_surface_atm_up(): u64 { 499_993_692 }
+
+/// Absolute budget for the flat-surface reference, derived from math.move's
+/// precision contract and never measured from contract output.
+public fun flat_surface_atm_budget(): u64 { 21 }
+
 /// True UP digital on the surface whose per-strike total variance is positive
 /// but floors to zero at 1e9 — the region the u128/1e18 variance path newly
 /// admits, where the previous pricer aborted `ENonPositiveVariance`.
