@@ -39,9 +39,18 @@ public struct Pricer has copy, drop {
 }
 
 /// Transaction-local SVI parameters after applying Predict's remaining-time roll-down.
+///
+/// `a` and `b` are carried at **1e18**, not 1e9. The roll-down multiplies both by
+/// `remaining_ms / anchor_tte_ms`, and flooring that product at 1e9 discards up to
+/// a full raw unit — which a short-dated surface cannot afford, because its whole
+/// total variance is only about ten raw units at 1e9. Keeping the rolled values at
+/// 1e18 hands `variance_sqrt_and_d2` the same domain it already computes in.
 public struct PricingSVI has copy, drop {
-    a: I64,
-    b: u64,
+    /// Rolled-down SVI `a`, magnitude at 1e18, sign in `a_is_negative`.
+    a_magnitude: u128,
+    a_is_negative: bool,
+    /// Rolled-down SVI `b`, at 1e18.
+    b: u128,
     rho: I64,
     m: I64,
     sigma: u64,
@@ -148,18 +157,23 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
     pricer.block_scholes_svi_source_timestamp_ms
 }
 
-/// Scale SVI `a` toward zero and `b` down by the fraction of anchored time remaining.
-public(package) fun roll_down_ab(
-    a: I64,
-    b: u64,
-    remaining_ms: u64,
-    anchor_tte_ms: u64,
-): (I64, u64) {
-    let scaled_a_magnitude = math::mul_div_down(a.magnitude(), remaining_ms, anchor_tte_ms);
-    (
-        i64::from_parts(scaled_a_magnitude, a.is_negative()),
-        math::mul_div_down(b, remaining_ms, anchor_tte_ms),
-    )
+/// Scale one 1e9-scaled SVI magnitude down by the fraction of anchored time
+/// remaining, returning it at 1e18.
+///
+/// The roll-down result is kept at 1e18 because the fraction is applied to values
+/// that are themselves tiny on short-dated surfaces: a 1e9 floor here costs up to
+/// a whole raw unit of `a`, and a short-dated `a` is only about ten raw units, so
+/// the truncation alone moves the digital by percent-scale amounts. At 1e18 the
+/// same floor is a billionth of that.
+///
+/// The `u256` intermediate keeps the product exact for any `expiry_ms` rather than
+/// relying on a bound on the anchored horizon. The result is at most
+/// `value * 1e9 <= max_svi_input * 1e9`, so narrowing to `u128` never truncates.
+public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
+    let scaled =
+        (value as u256) * (math::float_scaling!() as u256) * (remaining_ms as u256)
+        / (anchor_tte_ms as u256);
+    scaled as u128
 }
 
 public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
@@ -434,10 +448,11 @@ fun roll_down_svi(
 ): PricingSVI {
     let remaining_ms = expiry_ms - clock.timestamp_ms();
     let anchor_tte_ms = expiry_ms - params_timestamp_ms;
-    let (a, b) = roll_down_ab(svi.a(), svi.b(), remaining_ms, anchor_tte_ms);
+    let a = svi.a();
     PricingSVI {
-        a,
-        b,
+        a_magnitude: roll_down_to_1e18(a.magnitude(), remaining_ms, anchor_tte_ms),
+        a_is_negative: a.is_negative(),
+        b: roll_down_to_1e18(svi.b(), remaining_ms, anchor_tte_ms),
         rho: svi.rho(),
         m: svi.m(),
         sigma: svi.sigma(),
@@ -542,21 +557,32 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b;
-    let a = svi_params.a;
-    let (sqrt_var, d2) = variance_sqrt_and_d2(&a, b, inner.magnitude(), &k);
+    let (sqrt_var, d2) = variance_sqrt_and_d2(
+        svi_params.a_magnitude,
+        svi_params.a_is_negative,
+        b,
+        inner.magnitude(),
+        &k,
+    );
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
-    let w_prime = i64::from_u64(b).mul_scaled(&slope);
+    // `b` is at 1e18 and `slope` at 1e9, so the product comes back down by 1e18
+    // to leave `w'` at 1e9. `b <= max_svi_input * 1e9` and `|slope| <= 2e9`, so
+    // the u128 product and the u64 narrowing both fit.
+    let w_prime_magnitude =
+        (
+            (b * (slope.magnitude() as u128)) / ((math::float_scaling!() as u128) * (math::float_scaling!() as u128)),
+        ) as u64;
     let nd2 = math::normal_cdf(&d2);
-    if (w_prime.is_zero()) return nd2;
+    if (w_prime_magnitude == 0) return nd2;
 
     let correction_magnitude = math::mul_div_down(
         math::normal_pdf(&d2),
-        w_prime.magnitude(),
+        w_prime_magnitude,
         2 * sqrt_var,
     );
-    let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
+    let correction = i64::from_parts(correction_magnitude, slope.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
@@ -565,23 +591,29 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
 
 /// Total variance `w`, its square root, and `d2`, carried at `u128` / 1e18.
 ///
-/// `b` and `inner` are both 1e9-scaled, so `b * inner` in u128 IS the 1e18
-/// variance increment: narrowing it back to 1e9 (as `math::mul_down` does)
+/// `a_magnitude` and `b` arrive already rolled down and already at 1e18, so the
+/// whole variance assembly stays in that domain: narrowing either back to 1e9
 /// discards the entire low-variance signal, because a five-minute surface has
-/// `w ~ 1e-8` — about ten raw units at 1e9. `sqrt_u128_down` of a 1e18 value is
+/// `w ~ 1e-8` — about ten raw units at 1e9. `inner` is 1e9-scaled, so `b * inner`
+/// comes back down by 1e9 to land at 1e18. `sqrt_u128_down` of a 1e18 value is
 /// its 1e9-scaled root, so `sqrt(w)` returns at the scale the rest of the
 /// formula reads. Returns `(sqrt(w), d2)`; aborts `ENonPositiveVariance` when
 /// `w <= 0`, which pricing requires because it divides by `sqrt(w)`.
-fun variance_sqrt_and_d2(a: &I64, b: u64, inner: u64, k: &I64): (u64, I64) {
+fun variance_sqrt_and_d2(
+    a_magnitude: u128,
+    a_is_negative: bool,
+    b: u128,
+    inner: u64,
+    k: &I64,
+): (u64, I64) {
     let scale = math::float_scaling!() as u128;
-    let increment = (b as u128) * (inner as u128);
-    let a_scaled = (a.magnitude() as u128) * scale;
-    let total_var = if (a.is_negative()) {
-        assert!(increment > a_scaled, ENonPositiveVariance);
-        increment - a_scaled
+    let increment = b * (inner as u128) / scale;
+    let total_var = if (a_is_negative) {
+        assert!(increment > a_magnitude, ENonPositiveVariance);
+        increment - a_magnitude
     } else {
-        assert!(increment + a_scaled > 0, ENonPositiveVariance);
-        increment + a_scaled
+        assert!(increment + a_magnitude > 0, ENonPositiveVariance);
+        increment + a_magnitude
     };
     let sqrt_var = math::sqrt_u128_down(total_var) as u64;
 
@@ -618,10 +650,11 @@ fun is_positive(value: &I64): bool {
 /// its own inputs rather than through a contrived surface (unit-tests rule 4).
 #[test_only]
 public(package) fun variance_sqrt_and_d2_for_testing(
-    a: &I64,
-    b: u64,
+    a_magnitude: u128,
+    a_is_negative: bool,
+    b: u128,
     inner: u64,
     k: &I64,
 ): (u64, I64) {
-    variance_sqrt_and_d2(a, b, inner, k)
+    variance_sqrt_and_d2(a_magnitude, a_is_negative, b, inner, k)
 }

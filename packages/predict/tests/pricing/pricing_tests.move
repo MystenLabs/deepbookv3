@@ -74,63 +74,96 @@ const ROLL_DOWN_MIDPOINT_MS: u64 = 120_050;
 const SHORT_ROLL_DOWN_EXPIRY_MS: u64 = 180_000;
 const SHORT_ROLL_DOWN_MIDPOINT_MS: u64 = 150_000;
 const ODD_ROLL_DOWN_VALUE: u64 = 11;
-const HALF_ODD_ROLL_DOWN_VALUE: u64 = 5;
 const BOUNDARY_ROLL_DOWN_VALUE: u64 = 100;
 const ONE_MS_ROLL_DOWN_VALUE: u64 = 1;
-const HALF_U64_MAX: u64 = 9_223_372_036_854_775_807;
+/// `roll_down_to_1e18` results, hand-derived as `value * 1e9 * remaining / anchor`.
+/// 11 at the anchor; 11 halved is 5.5, which only exists at 1e18 — the 1e9 form
+/// floored it to 5, a 9.1% loss on the term that dominates short-dated variance.
+const ODD_AT_ANCHOR_1E18: u128 = 11_000_000_000;
+const ODD_HALVED_1E18: u128 = 5_500_000_000;
+/// 11 * 1e9 / 3 = 3_666_666_666.67 — the residual floor, now at 1e18 not 1e9.
+const ODD_THIRD_1E18: u128 = 3_666_666_666;
+const ONE_MS_1E18: u128 = 1_000_000_000;
+/// u64::MAX * 1e9. Reached at ratio 1 with both terms at u64::MAX, where the
+/// unreduced product is ~1.7e47 — far past u128, so this pins the u256 intermediate.
+const U64_MAX_1E18: u128 = 18_446_744_073_709_551_615_000_000_000;
+/// sqrt(w) for w = 5.5e9 at 1e18, i.e. isqrt(5_500_000_000). The 1e9 roll-down
+/// produced w = 5e9 here and sqrt 70_710, so this value is what the extra
+/// resolution is worth on the term pricing actually divides by.
+const HALVED_B_SQRT_VAR: u64 = 74_161;
+const UNIT_INNER: u64 = 1_000_000_000;
 const RETRANSMITTED_SVI_A: u64 = 2;
 const RETRANSMITTED_SVI_B: u64 = 0;
 const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 #[test]
-fun roll_down_is_exact_at_anchor_and_rounds_signed_a_toward_zero() {
-    let negative_a = i64::from_parts(ODD_ROLL_DOWN_VALUE, true);
+fun roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution() {
     let anchor_tte_ms = ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_ANCHOR_MS;
 
-    let (at_anchor_a, at_anchor_b) = pricing::roll_down_ab(
-        negative_a,
-        ODD_ROLL_DOWN_VALUE,
-        anchor_tte_ms,
-        anchor_tte_ms,
+    // At the anchor the fraction is 1, so the value is just restated at 1e18.
+    assert_eq!(
+        pricing::roll_down_to_1e18(ODD_ROLL_DOWN_VALUE, anchor_tte_ms, anchor_tte_ms),
+        ODD_AT_ANCHOR_1E18,
     );
-    assert_eq!(at_anchor_a, negative_a);
-    assert_eq!(at_anchor_b, ODD_ROLL_DOWN_VALUE);
 
-    let (midpoint_a, midpoint_b) = pricing::roll_down_ab(
-        negative_a,
-        ODD_ROLL_DOWN_VALUE,
-        ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_MIDPOINT_MS,
-        anchor_tte_ms,
+    // 11 * 1e9 * 50 / 100 = 5.5e9. Half of an odd raw unit has no representation
+    // at 1e9 — the previous roll-down floored it to 5 — so this exact 5.5 is the
+    // resolution the 1e18 carry exists to keep.
+    assert_eq!(
+        pricing::roll_down_to_1e18(
+            ODD_ROLL_DOWN_VALUE,
+            ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_MIDPOINT_MS,
+            anchor_tte_ms,
+        ),
+        ODD_HALVED_1E18,
     );
-    // floor(11 * 50 / 100) = 5; signed magnitude scaling therefore rounds
-    // negative `a` toward zero.
-    assert_eq!(midpoint_a, i64::from_parts(HALF_ODD_ROLL_DOWN_VALUE, true));
-    assert_eq!(midpoint_b, HALF_ODD_ROLL_DOWN_VALUE);
+
+    // 11 * 1e9 / 3 does not divide either: the floor still exists, it is just a
+    // billionth of the one it replaced.
+    assert_eq!(pricing::roll_down_to_1e18(ODD_ROLL_DOWN_VALUE, 1, 3), ODD_THIRD_1E18);
 }
 
 #[test]
-fun roll_down_handles_one_ms_boundary_and_u128_intermediates() {
+fun roll_down_handles_one_ms_boundary_and_u256_intermediates() {
     let anchor_tte_ms = ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_ANCHOR_MS;
-    let (wide_a, wide_b) = pricing::roll_down_ab(
-        i64::from_parts(std::u64::max_value!(), false),
-        std::u64::max_value!(),
-        ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_MIDPOINT_MS,
-        anchor_tte_ms,
-    );
-    // floor(u64::MAX * 50 / 100) = floor(u64::MAX / 2). The input product
-    // exceeds u64, so this exact result pins the u128 intermediate.
-    assert_eq!(wide_a, i64::from_parts(HALF_U64_MAX, false));
-    assert_eq!(wide_b, HALF_U64_MAX);
 
-    let (one_ms_a, one_ms_b) = pricing::roll_down_ab(
-        i64::from_parts(BOUNDARY_ROLL_DOWN_VALUE, false),
-        BOUNDARY_ROLL_DOWN_VALUE,
-        ONE_MS_ROLL_DOWN_VALUE,
-        anchor_tte_ms,
+    // u64::MAX * 1e9 * u64::MAX / u64::MAX. The unreduced product is ~1.7e47,
+    // three orders past u128, so an exact result here pins the u256 intermediate
+    // rather than any bound on the anchored horizon.
+    assert_eq!(
+        pricing::roll_down_to_1e18(
+            std::u64::max_value!(),
+            std::u64::max_value!(),
+            std::u64::max_value!(),
+        ),
+        U64_MAX_1E18,
     );
-    // floor(100 * 1 / 100) = 1 exactly one millisecond before expiry.
-    assert_eq!(one_ms_a, i64::from_parts(ONE_MS_ROLL_DOWN_VALUE, false));
-    assert_eq!(one_ms_b, ONE_MS_ROLL_DOWN_VALUE);
+
+    // 100 * 1e9 * 1 / 100 = 1e9 exactly one millisecond before expiry.
+    assert_eq!(
+        pricing::roll_down_to_1e18(
+            BOUNDARY_ROLL_DOWN_VALUE,
+            ONE_MS_ROLL_DOWN_VALUE,
+            anchor_tte_ms,
+        ),
+        ONE_MS_1E18,
+    );
+}
+
+#[test]
+fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
+    // The roll-down above is only worth carrying if it survives into `sqrt(w)`.
+    // With `b` halved from 11 to 5.5 and `inner` at one, w is 5.5e9 at 1e18 and
+    // isqrt(5_500_000_000) = 74_161. The 1e9 roll-down floored b to 5, giving
+    // w = 5e9 and sqrt 70_710 — a 4.7% error on the divisor of d2.
+    let (sqrt_var, _d2) = pricing::variance_sqrt_and_d2_for_testing(
+        0,
+        false,
+        ODD_HALVED_1E18,
+        UNIT_INNER,
+        &i64::from_u64(0),
+    );
+    assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
 }
 
 #[test]

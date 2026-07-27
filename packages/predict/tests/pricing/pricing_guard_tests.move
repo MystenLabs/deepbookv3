@@ -94,11 +94,15 @@ const ADMITTED_LOW_VARIANCE_M: u64 = 6_666_634;
 /// `normal_cdf` and `normal_pdf` saturate beyond `|8|`; the cap sits one raw unit
 /// past that so a capped value is unambiguously outside the live domain.
 const SATURATED_D2_MAGNITUDE: u64 = 8_000_000_001;
-/// w = 1e-9 at 1e18 (b * inner = 1e9), the smallest variance the load gate can
-/// admit: sqrt(w) is 31_622 and d2 stays far inside the cap.
-const WELL_CONDITIONED_B: u64 = 1_000;
+/// w = 1e-9 at 1e18 (`b * inner / 1e9` = 1e9), the smallest variance the load gate
+/// can admit: sqrt(w) is 31_622 and d2 stays far inside the cap. `b` is the rolled
+/// 1e18 form, so raw b = 1_000 arrives as 1_000 * 1e9.
+const WELL_CONDITIONED_B_1E18: u128 = 1_000_000_000_000;
 const WELL_CONDITIONED_INNER: u64 = 1_000_000;
 const WELL_CONDITIONED_SQRT_W: u64 = 31_622;
+/// The smallest representable variance: `b * inner / 1e9` = 1 raw unit at 1e18.
+const MINIMAL_B_1E18: u128 = 1_000_000_000;
+const MINIMAL_INNER: u64 = 1;
 
 const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
 const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
@@ -646,9 +650,14 @@ fun low_variance_surface_prices_where_the_1e9_path_aborted() {
 fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
     // w = 1 raw unit at 1e18, so sqrt(w) is 1 and d2 is the numerator itself:
     // k at its domain maximum would otherwise divide out to ~2e19, past u64.
-    let a = i64::from_u64(0);
     let k = i64::from_parts(20_000_000_000, true);
-    let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(&a, 1, 1, &k);
+    let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(
+        0,
+        false,
+        MINIMAL_B_1E18,
+        MINIMAL_INNER,
+        &k,
+    );
 
     assert_eq!(sqrt_var, 1);
     assert_eq!(d2.magnitude(), SATURATED_D2_MAGNITUDE);
@@ -656,8 +665,9 @@ fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
 
     // A well-conditioned input on the same path is untouched by the cap.
     let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(
-        &a,
-        WELL_CONDITIONED_B,
+        0,
+        false,
+        WELL_CONDITIONED_B_1E18,
         WELL_CONDITIONED_INNER,
         &i64::from_u64(0),
     );
@@ -665,12 +675,18 @@ fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
     assert!(d2.magnitude() < SATURATED_D2_MAGNITUDE);
 }
 
-/// Raw `a == 1` is valid at the parameter anchor, but direct integer roll-down
-/// floors it to zero one millisecond later. An identical retransmit at that
-/// later millisecond refreshes the envelope without resetting the anchor, so
-/// the existing quote-time variance guard remains the failure boundary.
-#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
-fun pre_expiry_roll_down_to_zero_variance_aborts() {
+/// Raw `a == 1` one millisecond past the parameter anchor. The 1e9 roll-down
+/// floored it straight to zero here and aborted `ENonPositiveVariance` on a
+/// surface whose variance is barely reduced; carrying the roll-down at 1e18
+/// leaves `a` at 0.9999833e-9 and the surface prices normally.
+///
+/// An identical retransmit at that later millisecond refreshes the envelope
+/// without resetting the anchor, so this is the real production sequence, not a
+/// contrived one. The expected value is the flat-surface reference: `b` is zero,
+/// so `w` is just the rolled `a`, and the roll-down moves the digital by well
+/// under one raw unit at this horizon.
+#[test]
+fun pre_expiry_roll_down_keeps_positive_variance() {
     let expiry_ms = test_constants::now_ms() + test_constants::default_cadence_period_ms();
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
@@ -706,11 +722,14 @@ fun pre_expiry_roll_down_to_zero_variance_aborts() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    pricer.up_price(strike(test_constants::default_live_price()));
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        ref_data::flat_surface_atm_up(),
+        ref_data::flat_surface_atm_budget(),
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
-    abort EUnexpectedSuccess
 }
 
 // === Surface minimum-variance abort ===

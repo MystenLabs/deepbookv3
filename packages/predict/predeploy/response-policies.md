@@ -853,11 +853,18 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `update_timestamp_ms` on newer identical retransmits. Any normalized
   parameter change resets the anchor to that update's source timestamp.
   Predict computes
-  `a_eff = sign(a) * floor(abs(a) * remaining_ms / anchor_tte_ms)` and
-  `b_eff = floor(b * remaining_ms / anchor_tte_ms)` with `u128`
-  intermediates; `rho`, `m`, and `sigma` are unchanged. Freshness continues to
-  use the latest envelope source timestamp. If integer roll-down makes
-  per-strike variance non-positive before expiry, the existing
+  `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and
+  `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)`, both **at 1e18** with
+  a `u256` intermediate, and hands them to the variance path in that domain;
+  `rho`, `m`, and `sigma` are unchanged. The scaled results are carried at 1e18
+  rather than narrowed back to 1e9 because the roll-down multiplies terms that
+  are themselves tiny on short-dated surfaces — a 1e9 floor costs up to a whole
+  raw unit of `a`, and a short-dated `a` is only about ten raw units, so the
+  truncation alone breached the ratified price-deviation bound (P-14's defect,
+  one layer upstream). Freshness continues to use the latest envelope source
+  timestamp. If the roll-down still makes per-strike variance non-positive
+  before expiry — now only in the final `1 / (a * 1e9)` fraction of the anchored
+  horizon rather than on any post-anchor advance — the existing
   `ENonPositiveVariance` guard aborts. This includes pool valuation. Recovery
   is for the publisher to send a changed usable tuple, which resets the
   parameter anchor, followed by retrying the affected action or flush.
@@ -875,11 +882,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   are not measured; whether linear roll-down is the best calibration model is
   deliberately owned by the still-open O-1 calibration work.
 - **Pinning tests:** `pricing_tests.move` —
-  `roll_down_is_exact_at_anchor_and_rounds_signed_a_toward_zero`,
-  `roll_down_handles_one_ms_boundary_and_u128_intermediates`, and
+  `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
+  `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
+  `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
   `identical_svi_retransmit_refreshes_source_without_moving_params_anchor`;
   `pricing_guard_tests.move` —
-  `pre_expiry_roll_down_to_zero_variance_aborts`.
+  `pre_expiry_roll_down_keeps_positive_variance`.
 - **Reopen when:** the provider changes tuple or timestamp semantics, an
   effective-zero surface materially interrupts LP flush liveness or lacks
   timely changed-tuple recovery, Predict adopts a calibrated non-linear horizon

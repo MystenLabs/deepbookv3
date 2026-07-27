@@ -75,6 +75,16 @@ public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 /// would make every downstream assertion agree with itself and pass. The band is
 /// `normal_cdf`'s documented error, not a measurement — the pre-1e18 pricer sat
 /// 6,310 units out here, some 300x outside it.
+///
+// KNOWN-FAILING: P-17 — for `short_expiry_ms` fixtures only. `flow_fixture_atm_up`
+// models the surface WITHOUT the remaining-time roll-down, which was invisible
+// while the roll-down floored at 1e9: flooring snapped every fixture ratio in
+// [0.5, 1) onto the same effective `a`, so the un-rolled reference agreed by
+// construction. Carrying the roll-down at 1e18 makes the real ratio reach the
+// price, and the short-expiry fixtures (ratio 120_000/121_000) now sit ~52 units
+// out against a 21-unit budget. The reference must model the roll-down per fixture
+// horizon; that is a reference-design decision, so the tests stay RED per
+// unit-tests rule 15 rather than being re-tuned.
 public fun assert_atm_entry_probability(probability: u64) {
     test_helpers::assert_within(
         probability,
