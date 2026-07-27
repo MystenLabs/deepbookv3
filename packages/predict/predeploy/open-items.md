@@ -325,15 +325,6 @@ correctness today.
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.
 
-### H-5: Premium-budget mint omits probability and all-in-cost slippage caps
-
-**Severity:** Low.
-
-`expiry_market::mint_exact_amount` disables both slippage guards (`max_cost` and
-`max_probability` are unbounded), unlike `mint_exact_quantity`. Decide whether
-a premium-budget mint should also bound total fees/penalty and entry probability,
-and add optional guards if so.
-
 ### H-6: Maintainability backlog
 
 - Thread the cadence value group (tick_size, admission_tick_size,

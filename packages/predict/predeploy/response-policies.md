@@ -741,6 +741,45 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-19: Budget mint bounds all-in cost, not entry probability (resolves H-5)
+
+- **Trigger state:** a budget-sized mint (`expiry_market::mint_exact_amount`)
+  executes against an oracle that moved after the caller built the transaction,
+  so the fill's price per contract and its fees differ from what the caller saw.
+- **Controller:** market — the surface and the EWMA congestion state both move
+  between build and execution, and neither is caller-controlled.
+- **Blast radius:** one caller's own mint. No protocol-side or cross-user effect.
+- **Response:** `abort` (user-recoverable single-user action). The entrypoint
+  takes `max_cost`, the all-in ceiling on `net_premium + trader-paid fee +
+  builder_fee + EWMA penalty`, and aborts `EMintCostAboveMax` when the fill would
+  breach it. The cap is **required**: zero aborts `EMintCostCapRequired`, and no
+  value disables it — the budget shape exists to bound spend, so a caller opting
+  out of the total bound while asking for a bounded premium is incoherent. The
+  entrypoint deliberately does **not** take a `max_probability` bound.
+- **Reasoning:** `max_premium` bounds only the premium; fees and the congestion
+  surcharge are charged on top, so before this the total withdrawal was unbounded
+  on the one entrypoint whose entire purpose is bounding spend, and the surcharge
+  is derived from recent flow — precisely the term that moves between build and
+  execution. The probability half of H-5 is declined rather than deferred:
+  `min_quantity` evaluated against `max_premium` already bounds price per
+  contract from above (`max_premium / min_quantity`), so a separate probability
+  argument would express the same constraint twice on a public signature that
+  cannot be narrowed after deploy. `mint_exact_quantity` keeps both guards
+  optional because it has no budget term to bound price against.
+- **Risk profile:** n/a (bound semantics, not a probabilistic risk).
+- **Pinning tests:** `mint_exact_amount_tests.move` —
+  `budget_mint_at_exact_all_in_cost_cap_succeeds` (the cap equal to the fill's
+  exact debit passes), `budget_mint_one_unit_over_all_in_cost_cap_aborts` (one raw
+  unit below that debit aborts `EMintCostAboveMax`, breached only by the fee on
+  top of an affordable premium), and
+  `budget_mint_without_an_all_in_cost_cap_aborts` (zero aborts
+  `EMintCostCapRequired`, not the breach code).
+- **Reopen when:** the budget mint gains a sizing mode where `min_quantity` no
+  longer bounds price per contract, or a quote surface lands that lets callers
+  resolve entry probability at execution time.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

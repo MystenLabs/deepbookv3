@@ -15,6 +15,7 @@ module deepbook_predict::mint_exact_amount_tests;
 
 use deepbook_predict::{
     constants,
+    expiry_market,
     flow_test_helpers as helpers,
     strike_exposure,
     strike_exposure_config,
@@ -67,6 +68,7 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
         BUDGET_BELOW_NEXT_LOT,
         TEN_THOUSAND_LOTS,
         test_constants::leverage_one_x(),
+        std::u64::max_value!(),
     );
 
     assert_eq!(
@@ -97,6 +99,7 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
         BUDGET_AT_NEXT_LOT,
         NEXT_LOT_QUANTITY,
         test_constants::leverage_one_x(),
+        std::u64::max_value!(),
     );
 
     assert_eq!(
@@ -128,6 +131,7 @@ fun budget_fill_below_min_quantity_aborts() {
         BUDGET_BELOW_NEXT_LOT,
         TEN_THOUSAND_LOTS + constants::position_lot_size!(),
         test_constants::leverage_one_x(),
+        std::u64::max_value!(),
     );
 
     abort 999
@@ -153,6 +157,93 @@ fun budget_mint_with_leverage_below_one_x_aborts_with_domain_code() {
         BUDGET_BELOW_NEXT_LOT,
         TEN_THOUSAND_LOTS,
         999_999_999,
+        std::u64::max_value!(),
+    );
+
+    abort 999
+}
+
+#[test]
+fun budget_mint_at_exact_all_in_cost_cap_succeeds() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // The all-in cap bounds premium plus fees, so the cap that exactly equals
+    // this fill's total debit must pass — the passing side of the boundary the
+    // next test pins from above.
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        BUDGET_BELOW_NEXT_LOT,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        TEN_THOUSAND_LOTS_DEBIT,
+    );
+
+    assert_eq!(
+        fx.account_balance_bundle<DUSDC>(&account),
+        test_constants::mint_deposit() - TEN_THOUSAND_LOTS_DEBIT,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMax)]
+fun budget_mint_one_unit_over_all_in_cost_cap_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // The budget itself still fits: this cap sits one raw unit below the fill's
+    // total debit, so only the fee charged on top of the premium breaches it.
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        BUDGET_BELOW_NEXT_LOT,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        TEN_THOUSAND_LOTS_DEBIT - 1,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostCapRequired)]
+fun budget_mint_without_an_all_in_cost_cap_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Zero is not "uncapped": the budget mint has no disabling value, so it
+    // aborts on the missing cap rather than on the breached one.
+    fx.mint_exact_amount_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        BUDGET_BELOW_NEXT_LOT,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        0,
     );
 
     abort 999

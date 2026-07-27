@@ -198,6 +198,7 @@ fun mint_exact_amount_below_min_quantity_aborts() {
         ZERO_NET_PREMIUM_AMOUNT,
         constants::position_lot_size!(),
         LEVERAGE_ONE_X,
+        std::u64::max_value!(),
     );
 
     abort 999

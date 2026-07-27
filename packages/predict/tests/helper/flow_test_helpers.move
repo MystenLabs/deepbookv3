@@ -1193,7 +1193,7 @@ public fun mint_exact_quantity(
 }
 
 /// Mint the largest lot-rounded order through bundles for an explicit net-premium
-/// amount and minimum quantity.
+/// amount, minimum quantity, and all-in cost cap.
 public fun mint_exact_amount_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
@@ -1203,6 +1203,7 @@ public fun mint_exact_amount_bundle(
     amount: u64,
     min_quantity: u64,
     leverage: u64,
+    max_cost: u64,
 ): u256 {
     self.mint_exact_amount(
         &market.config,
@@ -1217,6 +1218,7 @@ public fun mint_exact_amount_bundle(
         amount,
         min_quantity,
         leverage,
+        max_cost,
     )
 }
 
@@ -1235,6 +1237,7 @@ public fun mint_exact_amount(
     amount: u64,
     min_quantity: u64,
     leverage: u64,
+    max_cost: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
     let pricer = market.load_live_pricer(
@@ -1256,6 +1259,7 @@ public fun mint_exact_amount(
         amount,
         min_quantity,
         leverage,
+        max_cost,
         root,
         &self.clock,
         self.scenario.ctx(),
