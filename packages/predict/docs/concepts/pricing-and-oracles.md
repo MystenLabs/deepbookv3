@@ -80,7 +80,7 @@ The provider's SVI `a` and `b` values describe variance over the horizon that re
     a_eff = sign(a) × floor(abs(a) × remaining_ms / anchor_tte_ms)
     b_eff = floor(b × remaining_ms / anchor_tte_ms)
 
-The multiplications use `u128` intermediates; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the parameter anchor the tuple is unchanged; an identical provider retransmit refreshes the feed's source timestamp but does not move the anchor, so elapsed time continues to reduce `a_eff` and `b_eff`. A changed normalized tuple establishes a new anchor. Live pricing is already forbidden at or after expiry; the roll-down helper defines both effective values as zero there.
+The multiplications use `u128` intermediates; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the parameter anchor the tuple is unchanged; an identical provider retransmit refreshes the feed's source timestamp but does not move the anchor, so elapsed time continues to reduce `a_eff` and `b_eff`. A changed normalized tuple establishes a new anchor. Live pricing is already forbidden at or after expiry.
 
 The raw tuple must pass Predict's existing pricing envelope before roll-down. If fixed-point flooring makes the effective per-strike total variance non-positive before expiry, the existing `ENonPositiveVariance` quote guard aborts. This policy addresses the age of an unchanged variance-to-expiry tuple; it does not claim that the provider's near-expiry calibration is accurate.
 

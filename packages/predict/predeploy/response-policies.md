@@ -876,7 +876,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   deliberately owned by the still-open O-1 calibration work.
 - **Pinning tests:** `pricing_tests.move` —
   `roll_down_is_exact_at_anchor_and_rounds_signed_a_toward_zero`,
-  `roll_down_handles_expiry_boundaries_and_u128_intermediates`, and
+  `roll_down_handles_one_ms_boundary_and_u128_intermediates`, and
   `identical_svi_retransmit_refreshes_source_without_moving_params_anchor`;
   `pricing_guard_tests.move` —
   `pre_expiry_roll_down_to_zero_variance_aborts`.

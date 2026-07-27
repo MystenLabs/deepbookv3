@@ -148,25 +148,17 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
     pricer.block_scholes_svi_source_timestamp_ms
 }
 
-/// Scale SVI `a` toward zero and `b` down by the fraction of anchored time
-/// remaining. At or after expiry both values are zero.
+/// Scale SVI `a` toward zero and `b` down by the fraction of anchored time remaining.
 public(package) fun roll_down_ab(
     a: I64,
     b: u64,
-    params_timestamp_ms: u64,
-    expiry_ms: u64,
-    clock: &Clock,
+    remaining_ms: u64,
+    anchor_tte_ms: u64,
 ): (I64, u64) {
-    // Live pricing rejects expiry first; saturation pins the policy boundary for
-    // this pure helper and avoids a post-expiry subtraction underflow.
-    let remaining_ms = expiry_ms.saturating_sub(clock.timestamp_ms());
-    if (remaining_ms == 0) return (i64::zero(), 0);
-
-    let anchor_tte_ms = expiry_ms - params_timestamp_ms;
-    let scaled_a_magnitude = scale_down(a.magnitude(), remaining_ms, anchor_tte_ms);
+    let scaled_a_magnitude = math::mul_div_down(a.magnitude(), remaining_ms, anchor_tte_ms);
     (
         i64::from_parts(scaled_a_magnitude, a.is_negative()),
-        scale_down(b, remaining_ms, anchor_tte_ms),
+        math::mul_div_down(b, remaining_ms, anchor_tte_ms),
     )
 }
 
@@ -440,7 +432,9 @@ fun roll_down_svi(
     expiry_ms: u64,
     clock: &Clock,
 ): PricingSVI {
-    let (a, b) = roll_down_ab(svi.a(), svi.b(), params_timestamp_ms, expiry_ms, clock);
+    let remaining_ms = expiry_ms - clock.timestamp_ms();
+    let anchor_tte_ms = expiry_ms - params_timestamp_ms;
+    let (a, b) = roll_down_ab(svi.a(), svi.b(), remaining_ms, anchor_tte_ms);
     PricingSVI {
         a,
         b,
@@ -448,10 +442,6 @@ fun roll_down_svi(
         m: svi.m(),
         sigma: svi.sigma(),
     }
-}
-
-fun scale_down(value: u64, numerator: u64, denominator: u64): u64 {
-    (((value as u128) * (numerator as u128)) / (denominator as u128)) as u64
 }
 
 fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock): bool {

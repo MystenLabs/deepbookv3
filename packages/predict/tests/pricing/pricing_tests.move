@@ -14,9 +14,6 @@
 ///     Block Scholes forward one millisecond later;
 ///   - oracle provenance: every source timestamp is retained independently of
 ///     forward selection, with `0` reserved for an unusable normalized Pyth read.
-/// The interior binary value (Φ(d2)) carries fixed-point approximation error and
-/// is intentionally NOT asserted here (that needs the documented precision budget
-/// against an independent scipy reference — a separate, careful pass).
 #[test_only]
 module deepbook_predict::pricing_tests;
 
@@ -79,7 +76,6 @@ const ODD_ROLL_DOWN_VALUE: u64 = 11;
 const HALF_ODD_ROLL_DOWN_VALUE: u64 = 5;
 const BOUNDARY_ROLL_DOWN_VALUE: u64 = 100;
 const ONE_MS_ROLL_DOWN_VALUE: u64 = 1;
-const ZERO_ROLL_DOWN_VALUE: u64 = 0;
 const HALF_U64_MAX: u64 = 9_223_372_036_854_775_807;
 const RETRANSMITTED_SVI_A: u64 = 2;
 const RETRANSMITTED_SVI_B: u64 = 0;
@@ -87,76 +83,53 @@ const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 #[test]
 fun roll_down_is_exact_at_anchor_and_rounds_signed_a_toward_zero() {
-    let mut fx = oracle_fixture::setup_oracle_default();
     let negative_a = i64::from_parts(ODD_ROLL_DOWN_VALUE, true);
+    let anchor_tte_ms = ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_ANCHOR_MS;
 
     let (at_anchor_a, at_anchor_b) = pricing::roll_down_ab(
         negative_a,
         ODD_ROLL_DOWN_VALUE,
-        ROLL_DOWN_ANCHOR_MS,
-        ROLL_DOWN_EXPIRY_MS,
-        oracle_fixture::clock(&fx),
+        anchor_tte_ms,
+        anchor_tte_ms,
     );
     assert_eq!(at_anchor_a, negative_a);
     assert_eq!(at_anchor_b, ODD_ROLL_DOWN_VALUE);
 
-    fx.set_clock_for_testing(ROLL_DOWN_MIDPOINT_MS);
     let (midpoint_a, midpoint_b) = pricing::roll_down_ab(
         negative_a,
         ODD_ROLL_DOWN_VALUE,
-        ROLL_DOWN_ANCHOR_MS,
-        ROLL_DOWN_EXPIRY_MS,
-        oracle_fixture::clock(&fx),
+        ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_MIDPOINT_MS,
+        anchor_tte_ms,
     );
     // floor(11 * 50 / 100) = 5; signed magnitude scaling therefore rounds
     // negative `a` toward zero.
     assert_eq!(midpoint_a, i64::from_parts(HALF_ODD_ROLL_DOWN_VALUE, true));
     assert_eq!(midpoint_b, HALF_ODD_ROLL_DOWN_VALUE);
-
-    fx.finish();
 }
 
 #[test]
-fun roll_down_handles_expiry_boundaries_and_u128_intermediates() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    fx.set_clock_for_testing(ROLL_DOWN_MIDPOINT_MS);
+fun roll_down_handles_one_ms_boundary_and_u128_intermediates() {
+    let anchor_tte_ms = ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_ANCHOR_MS;
     let (wide_a, wide_b) = pricing::roll_down_ab(
         i64::from_parts(std::u64::max_value!(), false),
         std::u64::max_value!(),
-        ROLL_DOWN_ANCHOR_MS,
-        ROLL_DOWN_EXPIRY_MS,
-        oracle_fixture::clock(&fx),
+        ROLL_DOWN_EXPIRY_MS - ROLL_DOWN_MIDPOINT_MS,
+        anchor_tte_ms,
     );
     // floor(u64::MAX * 50 / 100) = floor(u64::MAX / 2). The input product
     // exceeds u64, so this exact result pins the u128 intermediate.
     assert_eq!(wide_a, i64::from_parts(HALF_U64_MAX, false));
     assert_eq!(wide_b, HALF_U64_MAX);
 
-    fx.set_clock_for_testing(ROLL_DOWN_EXPIRY_MS - 1);
-
     let (one_ms_a, one_ms_b) = pricing::roll_down_ab(
         i64::from_parts(BOUNDARY_ROLL_DOWN_VALUE, false),
         BOUNDARY_ROLL_DOWN_VALUE,
-        ROLL_DOWN_ANCHOR_MS,
-        ROLL_DOWN_EXPIRY_MS,
-        oracle_fixture::clock(&fx),
+        ONE_MS_ROLL_DOWN_VALUE,
+        anchor_tte_ms,
     );
     // floor(100 * 1 / 100) = 1 exactly one millisecond before expiry.
     assert_eq!(one_ms_a, i64::from_parts(ONE_MS_ROLL_DOWN_VALUE, false));
     assert_eq!(one_ms_b, ONE_MS_ROLL_DOWN_VALUE);
-
-    fx.set_clock_for_testing(ROLL_DOWN_EXPIRY_MS);
-    let (expired_a, expired_b) = pricing::roll_down_ab(
-        i64::from_parts(std::u64::max_value!(), false),
-        std::u64::max_value!(),
-        ROLL_DOWN_ANCHOR_MS,
-        ROLL_DOWN_EXPIRY_MS,
-        oracle_fixture::clock(&fx),
-    );
-    assert_eq!(expired_a, i64::zero());
-    assert_eq!(expired_b, ZERO_ROLL_DOWN_VALUE);
-
-    fx.finish();
 }
 
 #[test]
