@@ -295,9 +295,21 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 		const tx = await pc.tx.mintAmount(
 			OWNER,
 			{ underlying: "BTC", expiryMs: EXPIRY, strike: 105_000, side: "up" },
-			{ spend: 10, minQuantity: 0.015 },
+			{ spend: 10, minQuantity: 0.015, maxCost: 10.5 },
 		);
 		expect(tx).toBeTruthy();
+	});
+
+	test("mintAmount converts the required maxCost ceiling to raw quote units", async () => {
+		const pc = new PredictClient({ network: "testnet", client: mockClient().client });
+		const tx = await pc.tx.mintAmount(
+			OWNER,
+			{ underlying: "BTC", expiryMs: EXPIRY, strike: 105_000, side: "up" },
+			{ spend: 10, minQuantity: 0.015, maxCost: 10.5 },
+		);
+		// A $10.50 all-in ceiling is 10_500_000 at USDC's six decimals, and lands
+		// at the argument position the contract reads the cap from.
+		expect(argPureBytes(tx, 2, 10)).toBe(b64(10_500_000n));
 	});
 
 	test("read.markets returns tradeable summaries", async () => {

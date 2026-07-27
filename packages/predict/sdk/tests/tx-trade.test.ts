@@ -98,7 +98,7 @@ test("mintExactQuantity: explicit maxCost/maxProbability override defaults", () 
 	expect(argPureBytes(tx, 2, 9)).not.toBe(U64_MAX_B64);
 });
 
-test("mintExactAmount: pricer → auth → mint, 12 args", () => {
+test("mintExactAmount: pricer → auth → mint, 13 args, required all-in cost cap", () => {
 	const tx = new Transaction();
 	mintExactAmount(cfg, tx, {
 		expiryMarketId: "0xabc",
@@ -108,6 +108,7 @@ test("mintExactAmount: pricer → auth → mint, 12 args", () => {
 		amountRaw: 5_000_000n,
 		minQuantityRaw: 1_000_000n,
 		leverageRaw: 1_000_000_000n,
+		maxCostRaw: 5_100_000n,
 		...feeds,
 	});
 	expect(targets(tx)).toEqual([
@@ -116,9 +117,15 @@ test("mintExactAmount: pricer → auth → mint, 12 args", () => {
 		`${cfg.packages.predict}::expiry_market::mint_exact_amount`,
 	]);
 	const mint = call(tx, 2);
-	expect(mint.arguments).toHaveLength(12);
+	expect(mint.arguments).toHaveLength(13);
 	expect(mint.arguments[2].$kind).toBe("Result"); // auth
 	expect(mint.arguments[4].$kind).toBe("Result"); // pricer
+	// The cap is passed through verbatim at the position the contract reads it,
+	// and is never defaulted to an uncapped sentinel.
+	expect(argPureBytes(tx, 2, 10)).toBe(
+		Buffer.from(bcs.u64().serialize(5_100_000n).toBytes()).toString("base64"),
+	);
+	expect(argPureBytes(tx, 2, 10)).not.toBe(U64_MAX_B64);
 });
 
 test("redeemLive: pricer → auth → redeem, 9 args, NO slippage-floor pair", () => {

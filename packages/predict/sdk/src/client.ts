@@ -83,10 +83,15 @@ export interface MintOptions {
 	maxProbability?: number;
 }
 
-/** Options for `mintAmount` (spend an exact amount, floor the quantity received). */
+/**
+ * Options for `mintAmount` (spend an exact amount, floor the quantity received).
+ * `spend` bounds the premium only — fees and the congestion surcharge are charged
+ * on top — so `maxCost` is the ceiling on the total debit and is required.
+ */
 export interface MintAmountOptions {
 	spend: number;
 	minQuantity: number;
+	maxCost: number;
 	leverage?: number;
 }
 
@@ -405,6 +410,7 @@ export class PredictClient {
 				amountRaw: usdcToRaw(opts.spend),
 				minQuantityRaw,
 				leverageRaw: leverageToRaw(opts.leverage ?? 1),
+				maxCostRaw: usdcToRaw(opts.maxCost),
 				...feeds,
 			});
 			return tx;

@@ -85,8 +85,10 @@ export function mintExactQuantity(
 
 // Mint by spending an exact `amountRaw` (raw quote units), enforcing a `minQuantityRaw`
 // floor on the position received, returning the new order id (u256). Command order is
-// pricer → auth → mint. Deployed sig `expiry_market.move:293` (`mint_exact_amount`, 12
-// moveCall args — note: no cost/probability ceilings, the floor is `min_quantity`).
+// pricer → auth → mint. Sig follows `expiry_market::mint_exact_amount` at head (13
+// moveCall args): fees and the congestion penalty are charged on top of `amountRaw`, so
+// `maxCostRaw` is the all-in ceiling and is REQUIRED — unlike `mintExactQuantity`'s
+// optional guards there is no disabling value, and the contract aborts on zero.
 export function mintExactAmount(
 	cfg: PredictConfig,
 	tx: Transaction,
@@ -98,6 +100,7 @@ export function mintExactAmount(
 		amountRaw: bigint;
 		minQuantityRaw: bigint;
 		leverageRaw: bigint;
+		maxCostRaw: bigint;
 	} & MarketFeeds,
 ): TransactionResult {
 	const pricer = loadLivePricer(cfg, tx, args);
@@ -115,6 +118,7 @@ export function mintExactAmount(
 			tx.pure.u64(args.amountRaw),
 			tx.pure.u64(args.minQuantityRaw),
 			tx.pure.u64(args.leverageRaw),
+			tx.pure.u64(args.maxCostRaw),
 			tx.object(ACCUMULATOR_ROOT_ID),
 			tx.object(CLOCK_ID),
 		],
