@@ -47,6 +47,9 @@ const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
 const FLAT_SVI_A: u64 = 1;
 const FLAT_SVI_B: u64 = 0;
+// Phi(-sqrt(1e-9)/2) * 1e9 — the true at-the-forward digital on the flat surface
+// above, from `0.5*(1+erf(d2/sqrt(2)))` in Python's stdlib.
+const FLAT_FORWARD_UP_REFERENCE: u64 = 499_993_692;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +
 /// spot/forward, and assert `Pricer.range_price` matches the independent
@@ -106,13 +109,16 @@ fun negative_svi_slope_clamps_adjusted_digital_to_one() {
     assert_eq!(skew_clamp_up_price(true), math::float_scaling!());
 }
 
-/// The single exact (`assert_eq!`) anchor. With `a` at one fixed-point ulp, `b == 0`,
-/// and spot == forward, half the total variance truncates to zero, so `d2 == 0`;
-/// the flat surface makes `w' == 0`. Therefore `Phi(d2) == 0.5 == 500_000_000`
-/// exactly. This is the one point where the binary price is representable exactly;
-/// every real-scenario point above carries fixed-point error and uses `assert_within`.
+/// The flat-surface at-the-forward digital, and the only test that drives the
+/// exact-zero slope branch (`b == 0` makes `w' == 0` identically).
+///
+/// With `a` at one fixed-point ulp and `b == 0`, `w == 1e-9` at every strike, and
+/// spot == forward gives `k == 0`, so the true digital is
+/// `Phi(-sqrt(w)/2) = 0.49999369217` — about 6,308 raw units BELOW one half.
+/// It is not exactly one half: an at-the-forward digital is only balanced in the
+/// zero-variance limit, and positive variance always shades it down.
 #[test]
-fun at_the_forward_is_exactly_one_half() {
+fun flat_surface_at_the_forward_matches_true_math() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(
@@ -134,8 +140,12 @@ fun at_the_forward_is_exactly_one_half() {
         strike(test_constants::default_live_price()),
         strike(constants::pos_inf!()),
     );
-    // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
-    assert_eq!(up, math::float_scaling!() / 2);
+    // Phi(-sqrt(1e-9)/2) at 1e9, from Python's stdlib erf (independent of the
+    // contract's Cody rational approximation). Budget: `normal_cdf` is documented
+    // to 20 raw units, and the d2 path adds under 1 more (the 1e18 variance and
+    // its 1e9-scaled root together move d2 by ~6e-10, i.e. ~0.25 raw units of
+    // probability), so 21 units bounds it.
+    test_helpers::assert_within(up, FLAT_FORWARD_UP_REFERENCE, 21);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

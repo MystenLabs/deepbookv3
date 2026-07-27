@@ -483,19 +483,8 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b();
-    let variance_increment = math::mul_down(b, inner.magnitude());
     let a = svi_params.a();
-    let total_var = i64::from_u64(variance_increment).add(&a);
-    // Total variance must be positive because pricing takes sqrt(w) below.
-    assert!(is_positive(&total_var), ENonPositiveVariance);
-    let total_var = total_var.magnitude();
-
-    let sqrt_var = math::sqrt_down(total_var);
-    let sqrt_var_i64 = i64::from_u64(sqrt_var);
-    let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = k.add(&half_var_i64);
-    let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
-    let d2 = d2.neg();
+    let (sqrt_var, d2) = variance_sqrt_and_d2(&a, b, inner.magnitude(), &k);
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
@@ -513,6 +502,50 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
+}
+
+/// Total variance `w`, its square root, and `d2`, carried at `u128` / 1e18.
+///
+/// `b` and `inner` are both 1e9-scaled, so `b * inner` in u128 IS the 1e18
+/// variance increment: narrowing it back to 1e9 (as `math::mul_down` does)
+/// discards the entire low-variance signal, because a five-minute surface has
+/// `w ~ 1e-8` — about ten raw units at 1e9. `sqrt_u128_down` of a 1e18 value is
+/// its 1e9-scaled root, so `sqrt(w)` returns at the scale the rest of the
+/// formula reads. Returns `(sqrt(w), d2)`; aborts `ENonPositiveVariance` when
+/// `w <= 0`, which pricing requires because it divides by `sqrt(w)`.
+fun variance_sqrt_and_d2(a: &I64, b: u64, inner: u64, k: &I64): (u64, I64) {
+    let scale = math::float_scaling!() as u128;
+    let increment = (b as u128) * (inner as u128);
+    let a_scaled = (a.magnitude() as u128) * scale;
+    let total_var = if (a.is_negative()) {
+        assert!(increment > a_scaled, ENonPositiveVariance);
+        increment - a_scaled
+    } else {
+        assert!(increment + a_scaled > 0, ENonPositiveVariance);
+        increment + a_scaled
+    };
+    let sqrt_var = math::sqrt_u128_down(total_var) as u64;
+
+    // d2 = -(k + w/2) / sqrt(w). The numerator stays at 1e18 and the divisor is
+    // the 1e9-scaled root, so the quotient lands at 1e9 with its sign tracked by
+    // hand — I64 cannot hold either operand at 1e18.
+    let k_scaled = (k.magnitude() as u128) * scale;
+    let half_var = total_var / 2;
+    let (numerator, numerator_negative) = if (!k.is_negative()) {
+        (k_scaled + half_var, false)
+    } else if (half_var >= k_scaled) {
+        (half_var - k_scaled, false)
+    } else {
+        (k_scaled - half_var, true)
+    };
+    // `normal_cdf` / `normal_pdf` saturate beyond |x| > 8, so cap the magnitude
+    // there: the quotient grows without bound as w -> 0 and would otherwise
+    // overflow the u64 cast.
+    let saturation = 8 * scale + 1;
+    let d2_magnitude = numerator / (sqrt_var as u128);
+    let d2_magnitude = if (d2_magnitude > saturation) saturation else d2_magnitude;
+
+    (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
 }
 
 fun is_positive(value: &I64): bool {

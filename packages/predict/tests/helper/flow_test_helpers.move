@@ -37,12 +37,14 @@ use deepbook_predict::{
     plp::{Self, PoolVault, PoolValuation},
     predict_account::{Self, PredictApp},
     pricing,
+    pricing_reference_data as ref_data,
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
     test_constants,
     test_helpers
 };
 use dusdc::dusdc::DUSDC;
+use fixed_math::math;
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_spot_feed::BlockScholesSpotFeed,
@@ -64,6 +66,29 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 /// A representative finite strike tick the flow tests mint against. Re-exported
 /// from `test_constants` so existing call sites keep one source of truth.
 public fun strike_tick(): u64 { test_constants::default_strike_tick() }
+
+/// Assert a quoted at-the-money entry probability against the independently
+/// generated true digital, within its documented budget.
+///
+/// Flow tests derive their expected premiums, cash and NAV from the quoted
+/// probability, so without this the derivation is self-referential: a wrong price
+/// would make every downstream assertion agree with itself and pass. The band is
+/// `normal_cdf`'s documented error, not a measurement — the pre-1e18 pricer sat
+/// 6,310 units out here, some 300x outside it.
+public fun assert_atm_entry_probability(probability: u64) {
+    test_helpers::assert_within(
+        probability,
+        ref_data::flow_fixture_atm_up(),
+        ref_data::flow_fixture_atm_budget(),
+    );
+}
+
+/// Same, for a range quoted on the complement side `(-inf, K]`. `UP + DOWN` is
+/// exactly `1e9` by construction (both are differences of the same `UP(K)`), so
+/// the complement is pinned exactly rather than needing its own reference.
+public fun assert_atm_complement_entry_probability(probability: u64) {
+    assert_atm_entry_probability(math::float_scaling!() - probability);
+}
 
 /// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`/
 /// `OracleRegistry`/`AccountRegistry` are real shared objects taken per-transaction,

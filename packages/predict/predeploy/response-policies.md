@@ -780,6 +780,47 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-20: Positive-variance and d2 guards move to the high-precision domain (resolves P-14)
+
+- **Trigger state:** a live pricing evaluation whose total variance is positive
+  but tiny — below `1e-9`, so it floored to zero at 1e9 — or whose `d2` magnitude
+  grows without bound as `w` approaches zero.
+- **Controller:** market. The SVI surface is vendor-published, and short-dated
+  markets legitimately carry `w ~ 1e-8`; no on-chain check can forbid a small but
+  genuine variance.
+- **Blast radius:** every priced path on the affected market — mint, live close,
+  liquidation threshold, and the NAV mark the pool-wide flush consumes. The
+  aborting form is therefore a flush-liveness risk, not a single-user one.
+- **Response:** the two guards keep their error codes but now evaluate in the
+  1e18 domain the variance path computes in.
+  - `ENonPositiveVariance` fires on the true sign of `a + b·inner` rather than on
+    its 1e9 truncation, so a surface whose variance is positive but under `1e-9`
+    prices instead of aborting. The previous abort was an artifact of the
+    truncation, not a degenerate surface.
+  - `d2` **saturates** at magnitude `8e9 + 1` instead of aborting when the
+    quotient would overflow `u64`. `normal_cdf` and `normal_pdf` already saturate
+    beyond `|8|`, so the cap is inside the domain where the result is already
+    pinned to its limit; the arithmetic can no longer abort there.
+- **Reasoning:** both changes only ever convert an abort into a priced result, on
+  a path that is mandatory (the flush values every active market in one PTB). Per
+  the blast-radius ladder, an abort over a market-controlled variable on a
+  mandatory path is the response we most want to remove. Neither widens what the
+  contract will *construct*: `assert_min_total_variance_positive` still rejects
+  surfaces at pricer load in the 1e9 domain, unchanged by this work.
+- **Risk profile:** the admitted new region is `0 < w < 1e-9`. Pricing there is
+  well-conditioned in the new domain — the 1e18 variance carries about nine more
+  significant digits than the value that used to floor to zero.
+- **Pinning tests:** `pricing_guard_tests.move` —
+  `boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts` still
+  aborts (the surface it pins is negative on the true value, not only after
+  truncation), and `zero_total_variance_aborts_at_load` pins the unchanged
+  construction gate.
+- **Reopen when:** a surface is observed whose true total variance is positive
+  but so small that `sqrt(w)` itself underflows the 1e9 result scale, or if the
+  saturation cap is ever read by something other than `normal_cdf`/`normal_pdf`.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
@@ -855,7 +896,7 @@ true-math reference), whose per-scenario analytic fixed-point tolerance sits wel
 inside 0.1% — but only where the dataset has scenarios. It must therefore cover
 the full deployed variance range, short-dated included, or the bound goes
 unenforced exactly where it is tightest: `1/sqrt(w)` conditioning makes low
-variance the worst case, which is the gap open item P-14 records. The NAV bound
+variance the worst case, which is the gap open item P-16 records. The NAV bound
 is guarded by the `current_nav_flow_tests` independent oracle. A pricer or
 valuation change that would breach either ceiling on any deployable surface is a
 defect to fix, not an accepted tradeoff — this is the line between negligible and

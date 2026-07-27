@@ -24,7 +24,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
-use fixed_math::math::float_scaling as float;
+use fixed_math::math::{Self, float_scaling as float};
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
@@ -33,21 +33,32 @@ use sui::test_scenario::return_shared;
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
 /// Idle seed large enough to fund several markets to the cash floor.
 const IDLE_SEED: u64 = 1_200_000_000_000;
-/// `value_expiry` sweeps each minted market back to the 10e9 cash target. With a
-/// 5m rebate reserve and 1e9 ATM liability, each active market contributes this NAV.
-const POST_VALUATION_MARKET_NAV: u64 = 8_995_000_000;
-/// Two markets each sweep 1.01e9 of mint premium + fees back to idle.
-const POST_VALUATION_IDLE: u64 = 1_182_020_000_000;
-const POST_VALUATION_PROFIT_CREDITS: u64 = 2_020_000_000;
-const POST_VALUATION_PROFIT_DEBITS: u64 = 20_000_000_000;
-/// Gross pool value is idle + active NAV = 1_200.01e9. Profit basis is 10m, so
-/// the protocol's 40% cut excludes 4m from LP NAV.
-const TWO_MARKET_POOL_NAV: u64 = 1_200_006_000_000;
+/// `value_expiry` sweeps each minted market back to its 10e9 cash target, so each
+/// market's NAV is that target less its live liability and rebate reserve, and the
+/// swept premium plus fees land in idle. Both markets are identical, so the two
+/// sides of the aggregation are pinned against each other and the pool mark is
+/// pinned against the ledger fields — none of it restates the digital, which is
+/// checked independently at each mint.
+const MARKET_CASH_TARGET: u64 = 10_000_000_000;
+const MINT_MIN_FEE: u64 = 10_000_000;
+const REBATE_AFTER_MINT: u64 = 5_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
 /// that mark is a very low but executable fair PLP price.
 const BELOW_MIN_PRICE_IDLE: u64 = 1_000_000_000;
 /// Large 1x order used to drive a fully-funded market underwater after a price jump.
 const UNDERWATER_QUANTITY: u64 = 500_000_000_000;
+/// Allocation that leaves the market's cash EXACTLY equal to the liability the
+/// deep-ITM reprice creates, so the market contributes a zero NAV. This is a
+/// knife edge by necessity: for a 1x order the mint's backing requirement and the
+/// deep-ITM liability are the same number, so cash below it cannot be minted and
+/// cash above it cannot value to zero. It is `UNDERWATER_QUANTITY` minus the
+/// at-the-money premium. This is a fixture INPUT, tuned to the exact integer the
+/// fixed-point pricer lands on (one unit above the true digital, well inside the
+/// documented budget) the same way a quantity is tuned to the lot size — the
+/// price itself is checked independently against `pricing_reference_data` before
+/// the mint, and the `cash_balance == UNDERWATER_QUANTITY` assertion below makes
+/// the tuning self-verifying rather than a silent assumption.
+const UNDERWATER_MARKET_ALLOCATION: u64 = 250_003_154_500;
 const UNDERWATER_TRADER_DEPOSIT: u64 = 400_000_000_000;
 const DEEP_ITM_LIVE_PRICE: u64 = 1_000_000_000_000;
 const REPRICE_MS: u64 = 121_000;
@@ -67,8 +78,8 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     bootstrap_pool(&mut fx, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
-    fund_market_with_order(&mut fx, &trader, e1);
-    fund_market_with_order(&mut fx, &trader, e2);
+    let premium = fund_market_with_order(&mut fx, &trader, e1);
+    assert_eq!(fund_market_with_order(&mut fx, &trader, e2), premium);
 
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
@@ -90,17 +101,40 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
         fx.scenario_mut().ctx(),
     );
 
-    // Hand-derived fixture values. This pins `finish_flush` reading the
-    // vault-owned ledger fields without copying the private `lp_pool_value` formula.
+    // Every expected value below is built from the fixture's own arithmetic and
+    // the mint premium, which was checked against the independent reference at
+    // mint time — nothing is read back out of the vault to predict itself.
+    //
+    // A 1x order's live worth is the same product as its premium, so a swept
+    // market holds its cash target less that worth and less the rebate withheld
+    // from the fee.
+    let expected_nav = MARKET_CASH_TARGET - premium - REBATE_AFTER_MINT;
+    let mint_cost = premium + MINT_MIN_FEE;
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
-    assert_eq!(nav1, POST_VALUATION_MARKET_NAV);
-    assert_eq!(nav2, POST_VALUATION_MARKET_NAV);
-    assert_eq!(vault.idle_balance(), POST_VALUATION_IDLE);
-    assert_eq!(vault.profit_basis_credits(), POST_VALUATION_PROFIT_CREDITS);
-    assert_eq!(vault.profit_basis_debits(), POST_VALUATION_PROFIT_DEBITS);
+    assert_eq!(nav1, expected_nav);
+    assert_eq!(nav2, expected_nav);
+
+    // Each market swept its premium and fee to idle; the funding it drew is the
+    // debit side of the profit basis.
+    assert_eq!(vault.profit_basis_credits(), 2 * mint_cost);
+    assert_eq!(vault.profit_basis_debits(), 2 * MARKET_CASH_TARGET);
+    assert_eq!(vault.idle_balance(), IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost);
     assert_eq!(vault.pending_protocol_profit(), 0);
-    assert_eq!(pool_nav, TWO_MARKET_POOL_NAV);
+
+    // The pool mark is gross value less the protocol's share of realised profit.
+    // This is the one line that mirrors `lp_pool_value`; every input to it is
+    // pinned above against fixture arithmetic, so the composition is all that is
+    // taken from the implementation.
+    let active = 2 * expected_nav;
+    let expected_exclusion = math::mul_down(
+        2 * mint_cost + active - 2 * MARKET_CASH_TARGET,
+        config_constants::default_protocol_reserve_profit_share!(),
+    );
+    assert_eq!(
+        pool_nav,
+        IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost + active - expected_exclusion,
+    );
 
     return_shared(config);
     return_shared(pyth);
@@ -501,12 +535,24 @@ fun fund_empty_market(fx: &mut helpers::Fixture, e: ID) {
 }
 
 /// Prepare + fund an already-created market and mint one 1x ATM up order into it.
-fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, e: ID) {
+/// Fund a market to its allocation and mint the standard 1x order into it,
+/// returning the premium paid. The quoted probability is checked against the
+/// independent reference here, so every expected value the caller derives from
+/// this premium rests on a verified price.
+fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, e: ID): u64 {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(e);
     let mut account = fx.take_account_bundle(trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.rebalance_expiry_cash_bundle(&mut market);
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        ONE_X_QUANTITY,
+        test_constants::leverage_one_x(),
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
     fx.mint_bundle(
         &mut market,
         &mut account,
@@ -517,6 +563,7 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
     );
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
+    quote.net_premium()
 }
 
 /// Build a production-created market whose full pool allocation is deployed into
@@ -525,7 +572,7 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
 /// `idle_remainder` is the only pool NAV left for `finish_flush`.
 fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
     let mut fx = helpers::setup_market_default();
-    let market_allocation = test_constants::default_max_expiry_allocation();
+    let market_allocation = UNDERWATER_MARKET_ALLOCATION;
     fx.set_template_zero_min_fee();
     fx.set_default_cadence_allocation(market_allocation, market_allocation);
     bootstrap_pool(&mut fx, market_allocation + idle_remainder);
@@ -537,6 +584,15 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.rebalance_expiry_cash_bundle(&mut market);
+    helpers::assert_atm_entry_probability(fx
+        .quote_mint_bundle(
+            &market,
+            helpers::strike_tick(),
+            constants::pos_inf_tick!(),
+            UNDERWATER_QUANTITY,
+            test_constants::leverage_one_x(),
+        )
+        .entry_probability());
     fx.mint_bundle(
         &mut market,
         &mut account,
@@ -545,6 +601,10 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
         UNDERWATER_QUANTITY,
         test_constants::leverage_one_x(),
     );
+    // The knife edge this fixture rests on, stated so it fails loudly rather than
+    // drifting: the deep-ITM liability is the full quantity, so a zero NAV needs
+    // the market holding exactly that much cash.
+    assert_eq!(helpers::market(&market).cash_balance(), UNDERWATER_QUANTITY);
     fx.set_clock_for_testing(REPRICE_MS);
     fx.prepare_live_oracle_bundle_at(&mut market, DEEP_ITM_LIVE_PRICE, REPRICE_SOURCE_TS);
 

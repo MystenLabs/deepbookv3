@@ -24,7 +24,8 @@ use deepbook_predict::{
     constants,
     oracle_fixture,
     range_codec::strike_for_testing as strike,
-    test_constants
+    test_constants,
+    test_helpers
 };
 use fixed_math::math::float_scaling as float;
 use std::unit_test::assert_eq;
@@ -33,6 +34,21 @@ use std::unit_test::assert_eq;
 // strikes straddle it.
 const STRIKE_BELOW: u64 = 90_000_000_000;
 const STRIKE_ABOVE: u64 = 110_000_000_000;
+
+/// The UP digital when the strike sits exactly on the live forward, for the
+/// default test surface (`a` 1e-9, `b` 1e-5, `rho` 1, `m` 10, `sigma` 1e-3):
+/// `Phi(-sqrt(w)/2) - phi(d2)*w'/(2*sqrt(w))` with `w = 1.0005e-9`, computed from
+/// Python's stdlib `erf` independently of the contract. It is ~6,310 raw units
+/// below one half — positive variance always shades an at-the-forward digital
+/// down, and only the zero-variance limit is balanced.
+///
+/// The tests below use it to identify WHICH spot/forward the pricer anchored to:
+/// anchoring elsewhere moves the strike off the money and the price far from this
+/// value, so the 21-unit band (`normal_cdf` is documented to 20, and the d2 path
+/// plus the truncated-to-zero skew term add under 1 between them) still
+/// discriminates the sources sharply.
+const AT_THE_FORWARD_UP: u64 = 499_993_690;
+const AT_THE_FORWARD_UP_BUDGET: u64 = 21;
 
 /// A Pyth print diverged +2% from the 100e9 Block Scholes spot/forward.
 /// Production-reachable: the Pyth feed applies no deviation cap against the
@@ -93,7 +109,11 @@ fun unusable_pyth_observation_uses_zero_timestamp_sentinel() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), NO_USABLE_PYTH_SOURCE_TIMESTAMP_MS);
-    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
@@ -184,7 +204,11 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
     let now = DIVERGED_PYTH_SOURCE_MS + pyth_budget + 1;
     fx.set_clock_for_testing(now);
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
     assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
 
     // Pyth still has no fresh aggregate, so it carries the same 102e9 print
@@ -197,7 +221,11 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
     // than snapping back to the frozen 102e9 re-anchor.
     let pricer = fx.load_pricer_bundle(&oracle);
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
-    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
     assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -235,13 +263,21 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     // forward = mul(102e9, 1.0) = floor(102e9 * 1e9 / 1e9) = 102e9 exactly.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget);
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), float!() / 2);
+    test_helpers::assert_within(
+        pricer.up_price(strike(DIVERGED_PYTH_SPOT)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
 
     // ONE ms past the boundary: Pyth is stale, the BS surface still fresh, so the
     // forward falls back to the stored Block Scholes forward = 100e9.
     fx.set_clock_for_testing(DIVERGED_PYTH_SOURCE_MS + pyth_budget + 1);
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.up_price(strike(test_constants::default_live_price())), float!() / 2);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
     assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
 

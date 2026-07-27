@@ -806,6 +806,44 @@ def normal_pdf(value: I64) -> int:
     return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
 
 
+def variance_sqrt_and_d2(a: I64, b: int, inner: int, k: I64) -> tuple[int, I64]:
+    """Total variance, sqrt(w) and d2 at u128/1e18, mirroring pricing.move.
+
+    `b` and `inner` are both 1e9-scaled, so their product IS the 1e18 variance
+    increment; narrowing it back to 1e9 would discard the whole low-variance
+    signal on a short-dated surface. The integer square root of a 1e18-scaled
+    value is its 1e9-scaled root, so sqrt(w) comes back at the scale the rest of
+    the formula uses. Returns (sqrt(w) @1e9, d2 @1e9).
+    """
+    increment = b * inner
+    a_scaled = a.magnitude * F
+    if a.is_negative:
+        if increment <= a_scaled:
+            raise ValueError("SVI total variance must be positive")
+        total_var = increment - a_scaled
+    else:
+        if increment + a_scaled == 0:
+            raise ValueError("SVI total variance must be positive")
+        total_var = increment + a_scaled
+    sqrt_var = sqrt_u128(total_var)
+
+    # d2 = -(k + w/2) / sqrt(w): the numerator stays at 1e18 and the divisor is the
+    # 1e9-scaled root, so the quotient lands at 1e9 with the sign tracked by hand.
+    k_scaled = k.magnitude * F
+    half_var = total_var // 2
+    if not k.is_negative:
+        numerator, numerator_negative = k_scaled + half_var, False
+    elif half_var >= k_scaled:
+        numerator, numerator_negative = half_var - k_scaled, False
+    else:
+        numerator, numerator_negative = k_scaled - half_var, True
+    # normal_cdf/normal_pdf saturate beyond |x| > 8; cap there so the magnitude
+    # stays inside u64 as w -> 0.
+    saturation = 8 * F + 1
+    d2_magnitude = min(numerator // sqrt_var, saturation)
+    return sqrt_var, I64(d2_magnitude, not numerator_negative)
+
+
 def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
     # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
@@ -826,15 +864,8 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     inner = rho_km.add(I64(sq))
     if inner.is_negative:
         raise ValueError("SVI inner term cannot be negative")
-    wing_var = deepbook_mul(svi["b"], inner.magnitude)
     a = I64(svi["a"], svi.get("aNegative", False))
-    total_var_i64 = I64(wing_var).add(a)
-    if total_var_i64.is_negative or total_var_i64.magnitude == 0:
-        raise ValueError("SVI total variance must be positive")
-    total_var = total_var_i64.magnitude
-    sqrt_var = sqrt_down(total_var)
-    d2_numerator = k.add(I64(total_var // 2))
-    d2 = d2_numerator.div_scaled(I64(sqrt_var)).neg()
+    sqrt_var, d2 = variance_sqrt_and_d2(a, svi["b"], inner.magnitude, k)
     nd2 = normal_cdf(d2)
 
     slope_ratio = k_minus_m.div_scaled(I64(sq))

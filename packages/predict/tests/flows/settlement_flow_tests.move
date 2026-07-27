@@ -29,20 +29,8 @@ const IDLE_SEED: u64 = 1_200_000_000_000;
 
 /// Per-trade fee floor for the default flow fixture.
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// Manager deposit left after the 1x mint premium and min fee.
-const POST_MINT_BALANCE: u64 = 495_000_000;
-/// In-range settled payout adds the full 1e9 quantity to POST_MINT_BALANCE.
-const POST_SETTLED_REDEEM_BALANCE: u64 = 1_495_000_000;
 /// Rebate reserve after one 5e6 trading fee at the default 50% rebate rate.
 const REBATE_AFTER_MINT: u64 = 2_500_000;
-/// seeded + mint principal + fee - full settled payout.
-const CASH_AFTER_WINNING_REDEEM: u64 = 299_505_000_000;
-/// seeded + mint principal + fee; losing settled redeem pays zero.
-const CASH_AFTER_LOSING_REDEEM: u64 = 300_505_000_000;
-/// Losing account recovers the full 2.5m rebate reserve at full benefit power.
-const POST_REBATE_CLAIM_BALANCE: u64 = 497_500_000;
-/// CASH_AFTER_LOSING_REDEEM minus the paid 2.5m rebate.
-const CASH_AFTER_REBATE_CLAIM: u64 = 300_502_500_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
 
@@ -327,6 +315,7 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -338,7 +327,7 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 1, 0, 0),
+        helpers::expected_manager_state(post_mint_balance(premium), MINT_MIN_FEE, 1, 0, 0),
     );
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
@@ -355,7 +344,7 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_SETTLED_REDEEM_BALANCE,
+            post_settled_redeem_balance(premium),
             MINT_MIN_FEE,
             0,
             0,
@@ -364,7 +353,7 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     );
     helpers::check_market_cash(
         helpers::market(&market),
-        helpers::expected_market_cash(CASH_AFTER_WINNING_REDEEM, 0, REBATE_AFTER_MINT),
+        helpers::expected_market_cash(cash_after_winning_redeem(premium), 0, REBATE_AFTER_MINT),
     );
 
     helpers::return_account_bundle(account);
@@ -456,6 +445,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -485,7 +475,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_SETTLED_REDEEM_BALANCE,
+            post_settled_redeem_balance(premium),
             MINT_MIN_FEE,
             0,
             0,
@@ -494,7 +484,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     );
     helpers::check_market_cash(
         helpers::market(&market),
-        helpers::expected_market_cash(CASH_AFTER_WINNING_REDEEM, 0, REBATE_AFTER_MINT),
+        helpers::expected_market_cash(cash_after_winning_redeem(premium), 0, REBATE_AFTER_MINT),
     );
 
     helpers::return_account_bundle(account);
@@ -504,7 +494,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
 
 #[test, expected_failure(abort_code = account_registry::EAppNotAuthorized)]
 fun deauthorized_predict_app_blocks_permissionless_rebate_claim() {
-    let (mut fx, expiry_id, trader) = prepare_settled_loss_with_inactive_rebate_stake();
+    let (mut fx, expiry_id, trader, _premium) = prepare_settled_loss_with_inactive_rebate_stake();
 
     fx.deauthorize_predict_app();
     fx.scenario_mut().next_epoch(test_constants::alice());
@@ -518,7 +508,7 @@ fun deauthorized_predict_app_blocks_permissionless_rebate_claim() {
 
 #[test]
 fun owner_auth_rebate_claim_survives_predict_app_deauth() {
-    let (mut fx, expiry_id, trader) = prepare_settled_loss_with_inactive_rebate_stake();
+    let (mut fx, expiry_id, trader, premium) = prepare_settled_loss_with_inactive_rebate_stake();
 
     fx.deauthorize_predict_app();
     fx.scenario_mut().next_epoch(test_constants::alice());
@@ -530,7 +520,7 @@ fun owner_auth_rebate_claim_survives_predict_app_deauth() {
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_REBATE_CLAIM_BALANCE,
+            post_mint_balance(premium) + REBATE_AFTER_MINT,
             0,
             0,
             config_constants::default_upper_benefit_power!(),
@@ -539,7 +529,7 @@ fun owner_auth_rebate_claim_survives_predict_app_deauth() {
     );
     helpers::check_market_cash(
         helpers::market(&market),
-        helpers::expected_market_cash(CASH_AFTER_REBATE_CLAIM, 0, 0),
+        helpers::expected_market_cash(cash_after_rebate_claim(premium), 0, 0),
     );
 
     helpers::return_account_bundle(account);
@@ -569,6 +559,7 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
     let mut account = fx.take_account_bundle(&trader);
     let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
+    let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -604,7 +595,13 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_SETTLED_REDEEM_BALANCE, MINT_MIN_FEE, 0, 0, 0),
+        helpers::expected_manager_state(
+            post_settled_redeem_balance(premium),
+            MINT_MIN_FEE,
+            0,
+            0,
+            0,
+        ),
     );
 
     helpers::return_account_bundle(account);
@@ -690,6 +687,50 @@ fun expired_unsettled_standalone_rebalance_moves_no_cash() {
 
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+/// Balances and market cash below are stated relative to the mint's net premium,
+/// read from the quote the mint pays. `quote_mint_tests` owns whether that cost
+/// composes correctly and `pricing_exact_tests` owns the price behind it; this
+/// file owns settlement, so it should not restate either as a literal.
+fun post_mint_balance(premium: u64): u64 {
+    test_constants::mint_deposit() - premium - MINT_MIN_FEE
+}
+
+/// An in-range settled payout returns the full quantity to the manager.
+fun post_settled_redeem_balance(premium: u64): u64 {
+    post_mint_balance(premium) + test_constants::mint_quantity()
+}
+
+/// Seeded expiry cash plus the mint principal and fee; a losing settled redeem
+/// pays zero, so the cash is unchanged by the redeem itself.
+fun cash_after_losing_redeem(premium: u64): u64 {
+    test_constants::default_seeded_expiry_cash() + premium + MINT_MIN_FEE
+}
+
+/// The winning redeem pays the full quantity out of that cash.
+fun cash_after_winning_redeem(premium: u64): u64 {
+    cash_after_losing_redeem(premium) - test_constants::mint_quantity()
+}
+
+/// The rebate claim pays the reserve out of that cash.
+fun cash_after_rebate_claim(premium: u64): u64 {
+    cash_after_losing_redeem(premium) - REBATE_AFTER_MINT
+}
+
+/// Net premium for the fixture's finite-range 1x mint, from the anonymous quote.
+fun finite_range_premium(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64 {
+    let quote = fx.quote_mint_bundle(
+        market,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    // The upper boundary is ~315 sigma out and clamps to zero, so this finite
+    // range prices as the at-the-money digital itself.
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    quote.net_premium()
 }
 
 fun settlement_inside_default_finite_range(): u64 {
@@ -797,7 +838,12 @@ fun unstake_deep_returns_all_staked_custody() {
     fx.finish();
 }
 
-fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, helpers::Trader) {
+fun prepare_settled_loss_with_inactive_rebate_stake(): (
+    helpers::Fixture,
+    ID,
+    helpers::Trader,
+    u64,
+) {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
@@ -806,6 +852,7 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, he
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -829,11 +876,11 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, he
     fx.check_manager_bundle(
         &account,
         expiry_id,
-        helpers::expected_manager_state(POST_MINT_BALANCE, MINT_MIN_FEE, 0, 0, 0),
+        helpers::expected_manager_state(post_mint_balance(premium), MINT_MIN_FEE, 0, 0, 0),
     );
     helpers::check_market_cash(
         helpers::market(&market),
-        helpers::expected_market_cash(CASH_AFTER_LOSING_REDEEM, 0, REBATE_AFTER_MINT),
+        helpers::expected_market_cash(cash_after_losing_redeem(premium), 0, REBATE_AFTER_MINT),
     );
 
     fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
@@ -846,7 +893,7 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, he
         &account,
         expiry_id,
         helpers::expected_manager_state(
-            POST_MINT_BALANCE,
+            post_mint_balance(premium),
             MINT_MIN_FEE,
             0,
             0,
@@ -856,7 +903,7 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (helpers::Fixture, ID, he
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
-    (fx, expiry_id, trader)
+    (fx, expiry_id, trader, premium)
 }
 
 /// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP
