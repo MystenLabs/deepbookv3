@@ -49,6 +49,7 @@ const EReferenceTickObservationMissing: u64 = 8;
 const EMintRedeemSameTimestamp: u64 = 10;
 const ERedeemProbabilityBelowMin: u64 = 11;
 const ERedeemProceedsBelowMin: u64 = 12;
+const EMintCostCapRequired: u64 = 13;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -458,10 +459,14 @@ public fun mint_exact_quantity(
 /// quantity and must meet `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
-/// `max_premium`. The sizing budget is first capped to the account's available
-/// DUSDC after settlement; fees still require additional available DUSDC at
-/// payment time. Any unspent premium dust remains in the account because order
-/// quantity must be an integer number of `position_lot_size` lots.
+/// `max_premium`, so `max_cost` — not `max_premium` — bounds the all-in DUSDC
+/// withdrawal (`net_premium + trader-paid fee + builder_fee + EWMA penalty`).
+/// `max_cost` is required: unlike `mint_exact_quantity`'s guards there is no
+/// value that disables it, because the budget shape exists to bound spend. The
+/// sizing budget is first capped to the account's available DUSDC after
+/// settlement; fees still require additional available DUSDC at payment time.
+/// Any unspent premium dust remains in the account because order quantity must
+/// be an integer number of `position_lot_size` lots.
 public fun mint_exact_amount(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -473,11 +478,13 @@ public fun mint_exact_amount(
     max_premium: u64,
     min_quantity: u64,
     leverage: u64,
+    max_cost: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
     market.assert_live_mint_allowed(config, pricer);
+    assert!(max_cost > 0, EMintCostCapRequired);
     wrapper.settle<DUSDC>(root, clock);
     let max_premium = max_premium.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
@@ -500,7 +507,9 @@ public fun mint_exact_amount(
         min_quantity,
         false,
         leverage,
-        std::u64::max_value!(),
+        max_cost,
+        // `min_quantity` against `max_premium` already bounds the price paid per
+        // contract, so the budget shape carries no separate probability cap.
         std::u64::max_value!(),
         clock,
         ctx,

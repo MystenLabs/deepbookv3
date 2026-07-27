@@ -27,13 +27,33 @@ public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
     forward: u64,
-    svi: SVIParams,
+    svi: PricingSVI,
     /// Source timestamps of the oracle observations present when this snapshot
     /// was loaded. Pyth is `0` only when no usable normalized observation exists.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
+    /// First source envelope carrying the raw SVI tuple from which `svi` was rolled down.
+    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// Transaction-local SVI parameters after applying Predict's remaining-time roll-down.
+///
+/// `a` and `b` are carried at **1e18**, not 1e9. The roll-down multiplies both by
+/// `remaining_ms / anchor_tte_ms`, and flooring that product at 1e9 discards up to
+/// a full raw unit — which a short-dated surface cannot afford, because its whole
+/// total variance is only about ten raw units at 1e9. Keeping the rolled values at
+/// 1e18 hands `variance_sqrt_and_d2` the same domain it already computes in.
+public struct PricingSVI has copy, drop {
+    /// Rolled-down SVI `a`, magnitude at 1e18, sign in `a_is_negative`.
+    a_magnitude: u128,
+    a_is_negative: bool,
+    /// Rolled-down SVI `b`, at 1e18.
+    b: u128,
+    rho: I64,
+    m: I64,
+    sigma: u64,
 }
 
 /// Canonical normalized Pyth spot read at one exact source timestamp.
@@ -129,8 +149,31 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
     pricer.block_scholes_forward_source_timestamp_ms
 }
 
+public(package) fun block_scholes_svi_params_timestamp_ms(pricer: &Pricer): u64 {
+    pricer.block_scholes_svi_params_timestamp_ms
+}
+
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
+}
+
+/// Scale one 1e9-scaled SVI magnitude down by the fraction of anchored time
+/// remaining, returning it at 1e18.
+///
+/// The roll-down result is kept at 1e18 because the fraction is applied to values
+/// that are themselves tiny on short-dated surfaces: a 1e9 floor here costs up to
+/// a whole raw unit of `a`, and a short-dated `a` is only about ten raw units, so
+/// the truncation alone moves the digital by percent-scale amounts. At 1e18 the
+/// same floor is a billionth of that.
+///
+/// The `u256` intermediate keeps the product exact for any `expiry_ms` rather than
+/// relying on a bound on the anchored horizon. The result is at most
+/// `value * 1e9 <= max_svi_input * 1e9`, so narrowing to `u128` never truncates.
+public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
+    let scaled =
+        (value as u256) * (math::float_scaling!() as u256) * (remaining_ms as u256)
+        / (anchor_tte_ms as u256);
+    scaled as u128
 }
 
 public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
@@ -144,8 +187,10 @@ public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
 /// The supplied feeds must be the current Propbook bindings for the underlying,
 /// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
 /// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
-/// pricing-safe envelope. A fresh positive normalized Pyth spot reanchors the Block
-/// Scholes forward basis; a missing, non-normalizable, or stale Pyth spot is ignored.
+/// pricing-safe envelope. SVI `a` and `b` are then rolled down from the tuple's
+/// parameter timestamp to the current remaining time. A fresh positive normalized
+/// Pyth spot reanchors the Block Scholes forward basis; a missing, non-normalizable,
+/// or stale Pyth spot is ignored.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -339,6 +384,9 @@ fun resolve_live_pricer(
     let svi_read = bs_svi.normalized_svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
+    // The normalized read and parameter anchor come from the same immutable
+    // shared-object version in this transaction.
+    let block_scholes_svi_params_timestamp_ms = bs_svi.params_timestamp_ms(expiry).destroy_some();
     let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
@@ -348,8 +396,14 @@ fun resolve_live_pricer(
         ),
         EBlockScholesSVIStale,
     );
-    let svi = svi_read.read_value();
-    assert_inputs_pricing_safe(bs_spot, bs_forward, &svi);
+    let raw_svi = svi_read.read_value();
+    assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
+    let svi = roll_down_svi(
+        &raw_svi,
+        block_scholes_svi_params_timestamp_ms,
+        expiry,
+        clock,
+    );
 
     let pyth_spot = pyth.normalized_spot();
     let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
@@ -381,7 +435,27 @@ fun resolve_live_pricer(
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_params_timestamp_ms,
         block_scholes_svi_source_timestamp_ms,
+    }
+}
+
+fun roll_down_svi(
+    svi: &SVIParams,
+    params_timestamp_ms: u64,
+    expiry_ms: u64,
+    clock: &Clock,
+): PricingSVI {
+    let remaining_ms = expiry_ms - clock.timestamp_ms();
+    let anchor_tte_ms = expiry_ms - params_timestamp_ms;
+    let a = svi.a();
+    PricingSVI {
+        a_magnitude: roll_down_to_1e18(a.magnitude(), remaining_ms, anchor_tte_ms),
+        a_is_negative: a.is_negative(),
+        b: roll_down_to_1e18(svi.b(), remaining_ms, anchor_tte_ms),
+        rho: svi.rho(),
+        m: svi.m(),
+        sigma: svi.sigma(),
     }
 }
 
@@ -427,7 +501,7 @@ fun min_svi_variance_increment(svi: &SVIParams): u64 {
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: Strike): u64 {
+fun compute_range_price(svi: &PricingSVI, forward: u64, lower: Strike, higher: Strike): u64 {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
@@ -438,7 +512,7 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: Strike, higher: St
 }
 
 /// Compute the adjusted UP digital probability for `strike`.
-fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
+fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
     if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
@@ -454,7 +528,7 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: Strike): u64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
+fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
     // Saturate ratios outside the fixed-point domain to their digital-probability
@@ -466,55 +540,120 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
     if (strike_ratio == 0) return math::float_scaling!();
     let k = math::ln(strike_ratio);
-    let m = svi_params.m();
+    let m = svi_params.m;
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = svi_params.sigma();
+    let sigma = svi_params.sigma;
     let sigma_squared = math::mul_down(sigma, sigma);
     let sqrt_input = k_minus_m_squared + sigma_squared;
     let sq = math::sqrt_down(sqrt_input);
     let sq_i64 = i64::from_u64(sq);
 
-    let rho = svi_params.rho();
+    let rho = svi_params.rho;
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
     // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
     // violates that invariant at the envelope boundary.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let b = svi_params.b();
-    let variance_increment = math::mul_down(b, inner.magnitude());
-    let a = svi_params.a();
-    let total_var = i64::from_u64(variance_increment).add(&a);
-    // Total variance must be positive because pricing takes sqrt(w) below.
-    assert!(is_positive(&total_var), ENonPositiveVariance);
-    let total_var = total_var.magnitude();
-
-    let sqrt_var = math::sqrt_down(total_var);
-    let sqrt_var_i64 = i64::from_u64(sqrt_var);
-    let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = k.add(&half_var_i64);
-    let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
-    let d2 = d2.neg();
+    let b = svi_params.b;
+    let (sqrt_var, d2) = variance_sqrt_and_d2(
+        svi_params.a_magnitude,
+        svi_params.a_is_negative,
+        b,
+        inner.magnitude(),
+        &k,
+    );
 
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
-    let w_prime = i64::from_u64(b).mul_scaled(&slope);
+    // `b` is at 1e18 and `slope` at 1e9, so the product comes back down by 1e18
+    // to leave `w'` at 1e9. `b <= max_svi_input * 1e9` and `|slope| <= 2e9`
+    // (`|rho| <= 1e9` and `|k - m| <= sq`), so the u128 product and the u64
+    // narrowing both fit.
+    let scale = math::float_scaling!() as u128;
+    let w_prime_magnitude = (b * (slope.magnitude() as u128) / (scale * scale)) as u64;
     let nd2 = math::normal_cdf(&d2);
-    if (w_prime.is_zero()) return nd2;
+    if (w_prime_magnitude == 0) return nd2;
 
     let correction_magnitude = math::mul_div_down(
         math::normal_pdf(&d2),
-        w_prime.magnitude(),
+        w_prime_magnitude,
         2 * sqrt_var,
     );
-    let correction = i64::from_parts(correction_magnitude, w_prime.is_negative());
+    let correction = i64::from_parts(correction_magnitude, slope.is_negative());
     let adjusted = i64::from_u64(nd2).sub(&correction);
     if (adjusted.is_negative()) return 0;
     if (adjusted.magnitude() > math::float_scaling!()) return math::float_scaling!();
     adjusted.magnitude()
 }
 
+/// Total variance `w`, its square root, and `d2`, carried at `u128` / 1e18.
+///
+/// `a_magnitude` and `b` arrive already rolled down and already at 1e18, so the
+/// whole variance assembly stays in that domain: narrowing either back to 1e9
+/// discards the entire low-variance signal, because a five-minute surface has
+/// `w ~ 1e-8` — about ten raw units at 1e9. `inner` is 1e9-scaled, so `b * inner`
+/// comes back down by 1e9 to land at 1e18. `sqrt_u128_down` of a 1e18 value is
+/// its 1e9-scaled root, so `sqrt(w)` returns at the scale the rest of the
+/// formula reads. Returns `(sqrt(w), d2)`; aborts `ENonPositiveVariance` when
+/// `w <= 0`, which pricing requires because it divides by `sqrt(w)`.
+fun variance_sqrt_and_d2(
+    a_magnitude: u128,
+    a_is_negative: bool,
+    b: u128,
+    inner: u64,
+    k: &I64,
+): (u64, I64) {
+    let scale = math::float_scaling!() as u128;
+    let increment = b * (inner as u128) / scale;
+    let total_var = if (a_is_negative) {
+        assert!(increment > a_magnitude, ENonPositiveVariance);
+        increment - a_magnitude
+    } else {
+        assert!(increment + a_magnitude > 0, ENonPositiveVariance);
+        increment + a_magnitude
+    };
+    let sqrt_var = math::sqrt_u128_down(total_var) as u64;
+
+    // d2 = -(k + w/2) / sqrt(w). The numerator stays at 1e18 and the divisor is
+    // the 1e9-scaled root, so the quotient lands at 1e9 with its sign tracked by
+    // hand — I64 cannot hold either operand at 1e18.
+    let k_scaled = (k.magnitude() as u128) * scale;
+    let half_var = total_var / 2;
+    let (numerator, numerator_negative) = if (!k.is_negative()) {
+        (k_scaled + half_var, false)
+    } else if (half_var >= k_scaled) {
+        (half_var - k_scaled, false)
+    } else {
+        (k_scaled - half_var, true)
+    };
+    // `normal_cdf` / `normal_pdf` saturate beyond |x| > 8, so cap the magnitude
+    // there: the quotient grows without bound as w -> 0 and would otherwise
+    // overflow the u64 cast.
+    let saturation = 8 * scale + 1;
+    let d2_magnitude = numerator / (sqrt_var as u128);
+    let d2_magnitude = if (d2_magnitude > saturation) saturation else d2_magnitude;
+
+    (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
+}
+
 fun is_positive(value: &I64): bool {
     !value.is_negative() && !value.is_zero()
+}
+
+/// Scalar-input view of `variance_sqrt_and_d2` for the unit tests. The d2
+/// saturation guards a `u128 -> u64` cast that no admissible SVI surface has been
+/// shown to reach — the pricer-load minimum-variance gate keeps `sqrt(w)` large
+/// enough that the quotient stays far inside `u64` — so the guard is exercised at
+/// its own inputs rather than through a contrived surface (unit-tests rule 4).
+#[test_only]
+public(package) fun variance_sqrt_and_d2_for_testing(
+    a_magnitude: u128,
+    a_is_negative: bool,
+    b: u128,
+    inner: u64,
+    k: &I64,
+): (u64, I64) {
+    variance_sqrt_and_d2(a_magnitude, a_is_negative, b, inner, k)
 }

@@ -23,48 +23,47 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
-/// Independent fixture costs for the at-the-money `mint_quantity()` (1e9) 1x
-/// mint, same derivation as `mint_redeem_guard_tests::ALL_IN_MINT_COST`: entry
-/// probability is the at-the-money digital Φ(0) = 0.5 exactly, and a 1x order
-/// fronts its full premium, so net_premium = floor(0.5 * 1e9) = 500_000_000;
-/// the fixture floors base_fee to 1, so the fee binds at min_fee (0.005) *
-/// quantity = 5_000_000; no builder code, no fee-incentive balance, and no EWMA
-/// variance exist here, so those components are zero. Total = 505_000_000.
-const ENTRY_PROBABILITY_ATM: u64 = 500_000_000;
-const NET_PREMIUM_ATM: u64 = 500_000_000;
+/// Independent fee components for the at-the-money `mint_quantity()` (1e9) 1x
+/// mint. The premium is read from the quote rather than written down as a
+/// literal — the exact integer a Cody rational approximation lands on cannot be
+/// derived independently, and a hand-written one encoded a rounding artifact as
+/// protocol economics until 1e18 variance exposed it (`Φ(0) = 0.5` was 6,310
+/// units from true). Each test therefore does BOTH: pins the quoted probability
+/// against the generated true-math digital within its documented budget
+/// (`assert_atm_entry_probability`), then asserts the fee composition and the
+/// account debit around it exactly. Neither half is sufficient alone — without
+/// the first, a wrong price would satisfy every assertion below it.
+///
+/// The fixture floors base_fee to 1, so the fee binds at min_fee (0.005) *
+/// quantity = 5_000_000; with no builder code, no fee-incentive balance, and no
+/// EWMA variance, every other component is zero.
 const MIN_TRADING_FEE: u64 = 5_000_000;
-const ALL_IN_MINT_COST: u64 = 505_000_000;
 
 /// Sponsoring the protocol-minimum incentive (10e6, fully allocated to the
 /// market by one live rebalance) leaves the balance far above the rate cap, so
 /// the subsidy binds at fee_incentive_subsidy_rate (0.2) * MIN_TRADING_FEE =
 /// 1_000_000 and the trader saves exactly that off the all-in cost.
 const SUBSIDY_AT_RATE_CAP: u64 = 1_000_000;
-const ALL_IN_WITH_SUBSIDY: u64 = 504_000_000;
 
 /// Builder fee for the ATM mint: min(builder_fee_multiplier (0.1) *
 /// MIN_TRADING_FEE, max_builder_fee_rate (0.005) * quantity (1e9)) =
 /// min(500_000, 5_000_000) = 500_000, paid on top of the anonymous cost.
 const BUILDER_FEE_ATM: u64 = 500_000;
-const ALL_IN_WITH_BUILDER: u64 = 505_500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
 
 /// Full-benefit stake (>= upper_benefit_power) earns the max fee discount:
 /// benefit_ratio = 1.0, discount_fraction = max_fee_discount (0.5), so the fee
 /// halves to 2_500_000 and the all-in cost drops by the same 2_500_000.
 const DISCOUNTED_TRADING_FEE: u64 = 2_500_000;
-const ALL_IN_WITH_FULL_STAKE_DISCOUNT: u64 = 502_500_000;
 
 /// The congestion surcharge is flat once it fires: default_ewma_penalty_rate
 /// (0.001) * quantity (1e9) = 1_000_000, independent of the z-score magnitude.
 /// Same value as `ewma_tests::EXPECTED_PENALTY`.
 const EWMA_PENALTY_FLAT: u64 = 1_000_000;
-const ALL_IN_WITH_PENALTY: u64 = 506_000_000;
 /// Small first mint whose only job is folding the gas-2000 observation into the
-/// market's EWMA: premium 0.5 * 1e8 = 50_000_000 plus min fee 0.005 * 1e8 =
-/// 500_000.
+/// market's EWMA. Its cost is measured from the account balance rather than
+/// derived, since the flow under test is the spike mint that follows it.
 const VARIANCE_SEED_QUANTITY: u64 = 100_000_000;
-const VARIANCE_SEED_COST: u64 = 50_500_000;
 const GAS_SEED: u64 = 2_000;
 const GAS_SPIKE: u64 = 3_000;
 /// One second past the fixture's `now_ms()`: a distinct millisecond for the
@@ -93,13 +92,16 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    assert_eq!(quote.entry_probability(), ENTRY_PROBABILITY_ATM);
-    assert_eq!(quote.net_premium(), NET_PREMIUM_ATM);
+    // A 1x order fronts its full premium, and `mint_quantity()` is exactly one
+    // contract, so the premium is the entry probability with nothing to round.
+    let premium = quote.net_premium();
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    assert_eq!(premium, quote.entry_probability());
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), 0);
     assert_eq!(quote.builder_fee(), 0);
     assert_eq!(quote.penalty_fee(), 0);
-    assert_eq!(quote.all_in_cost(), ALL_IN_MINT_COST);
+    assert_eq!(quote.all_in_cost(), premium + MIN_TRADING_FEE);
 
     // The quote is the exact debit: minting with max_cost == all_in_cost
     // succeeds and withdraws exactly the independently derived total.
@@ -117,7 +119,7 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - ALL_IN_MINT_COST,
+        test_constants::mint_deposit() - (premium + MIN_TRADING_FEE),
     );
 
     helpers::return_account_bundle(account);
@@ -156,8 +158,10 @@ fun account_quote_matches_anonymous_without_stake_or_builder() {
     assert_eq!(for_account.trading_fee(), anonymous.trading_fee());
     assert_eq!(for_account.fee_incentive_subsidy(), anonymous.fee_incentive_subsidy());
     assert_eq!(for_account.builder_fee(), anonymous.builder_fee());
+    helpers::assert_atm_entry_probability(anonymous.entry_probability());
     assert_eq!(for_account.penalty_fee(), anonymous.penalty_fee());
-    assert_eq!(for_account.all_in_cost(), ALL_IN_MINT_COST);
+    assert_eq!(for_account.all_in_cost(), anonymous.net_premium() + MIN_TRADING_FEE);
+    assert_eq!(for_account.all_in_cost(), anonymous.all_in_cost());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -185,9 +189,11 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
         test_constants::leverage_one_x(),
     );
     // The expiry still collects the full fee; the sponsor covers the subsidy.
+    helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_RATE_CAP);
-    assert_eq!(quote.all_in_cost(), ALL_IN_WITH_SUBSIDY);
+    let with_subsidy = quote.net_premium() + MIN_TRADING_FEE - SUBSIDY_AT_RATE_CAP;
+    assert_eq!(quote.all_in_cost(), with_subsidy);
 
     let order = fx.mint_exact_quantity_bundle(
         &mut market,
@@ -203,7 +209,7 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - ALL_IN_WITH_SUBSIDY,
+        test_constants::mint_deposit() - with_subsidy,
     );
 
     helpers::return_account_bundle(account);
@@ -231,8 +237,10 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
+    let premium = anonymous.net_premium();
+    helpers::assert_atm_entry_probability(anonymous.entry_probability());
     assert_eq!(anonymous.builder_fee(), 0);
-    assert_eq!(anonymous.all_in_cost(), ALL_IN_MINT_COST);
+    assert_eq!(anonymous.all_in_cost(), premium + MIN_TRADING_FEE);
 
     let for_account = fx.quote_mint_for_account_bundle(
         &market,
@@ -243,7 +251,8 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         test_constants::leverage_one_x(),
     );
     assert_eq!(for_account.builder_fee(), BUILDER_FEE_ATM);
-    assert_eq!(for_account.all_in_cost(), ALL_IN_WITH_BUILDER);
+    let with_builder = premium + MIN_TRADING_FEE + BUILDER_FEE_ATM;
+    assert_eq!(for_account.all_in_cost(), with_builder);
 
     let order = fx.mint_exact_quantity_bundle(
         &mut market,
@@ -259,7 +268,7 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - ALL_IN_WITH_BUILDER,
+        test_constants::mint_deposit() - with_builder,
     );
 
     helpers::return_account_bundle(account);
@@ -293,8 +302,9 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
+    helpers::assert_atm_entry_probability(same_epoch.entry_probability());
     assert_eq!(same_epoch.trading_fee(), MIN_TRADING_FEE);
-    assert_eq!(same_epoch.all_in_cost(), ALL_IN_MINT_COST);
+    assert_eq!(same_epoch.all_in_cost(), same_epoch.net_premium() + MIN_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -312,7 +322,8 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    assert_eq!(stale.all_in_cost(), ALL_IN_MINT_COST);
+    let premium = stale.net_premium();
+    assert_eq!(stale.all_in_cost(), premium + MIN_TRADING_FEE);
 
     // The mint rolls the stake first, so the stale quote as max_cost cannot
     // abort and the actual debit is the discounted total.
@@ -329,7 +340,7 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - ALL_IN_WITH_FULL_STAKE_DISCOUNT,
+        test_constants::mint_deposit() - (premium + DISCOUNTED_TRADING_FEE),
     );
 
     // Post-roll, the account quote reads the active stake and matches the
@@ -343,7 +354,7 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         test_constants::leverage_one_x(),
     );
     assert_eq!(rolled.trading_fee(), DISCOUNTED_TRADING_FEE);
-    assert_eq!(rolled.all_in_cost(), ALL_IN_WITH_FULL_STAKE_DISCOUNT);
+    assert_eq!(rolled.all_in_cost(), rolled.net_premium() + DISCOUNTED_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -386,6 +397,7 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         std::u64::max_value!(),
         std::u64::max_value!(),
     );
+    let balance_after_seed = fx.account_balance_bundle<DUSDC>(&account);
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
 
@@ -414,8 +426,10 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.penalty_fee(), EWMA_PENALTY_FLAT);
-    assert_eq!(quote.all_in_cost(), ALL_IN_WITH_PENALTY);
+    let with_penalty = quote.net_premium() + MIN_TRADING_FEE + EWMA_PENALTY_FLAT;
+    assert_eq!(quote.all_in_cost(), with_penalty);
 
     let order = fx.mint_exact_quantity_bundle(
         &mut market,
@@ -429,10 +443,7 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
     );
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
-    assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - VARIANCE_SEED_COST - ALL_IN_WITH_PENALTY,
-    );
+    assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_after_seed - with_penalty);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

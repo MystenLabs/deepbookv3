@@ -174,6 +174,22 @@ public fun sqrt_down(x: u64): u64 {
     sqrt_u128_down((x as u128) * F) as u64
 }
 
+/// Integer square root of a raw `u128`, rounded down. A `1e18`-scaled input returns its `1e9`-scaled square root, which is how a caller carrying a value at `1e18` takes its root without first narrowing to `1e9`.
+public fun sqrt_u128_down(x: u128): u128 {
+    if (x == 0) return 0;
+    if (x < 4) return 1;
+    let mut g = sqrt_initial_guess_u128(x);
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    if (g > x / g) { g = g - 1; };
+    g
+}
+
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
 public fun pow10(n: u64): u64 {
     assert!(n <= 18, EPow10ExponentTooLarge);
@@ -322,22 +338,6 @@ fun normalize(x: u64): (u64, u64) {
 /// Multiply two 1e9-scaled values using a u128 intermediate.
 fun mul_scaled_u128(x: u128, y: u128): u128 {
     x * y / F
-}
-
-/// Integer square root of a u128 value, rounded down.
-fun sqrt_u128_down(x: u128): u128 {
-    if (x == 0) return 0;
-    if (x < 4) return 1;
-    let mut g = sqrt_initial_guess_u128(x);
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    g = (g + x / g) / 2;
-    if (g > x / g) { g = g - 1; };
-    g
 }
 
 /// Initial power-of-two guess for Newton square root.

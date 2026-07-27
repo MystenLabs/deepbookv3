@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-21. **The single source of truth for open work.** Anything that
+Updated 2026-07-27. **The single source of truth for open work.** Anything that
 needs conscious attention — a bug, a suspicion, an undecided question, an audit
 finding — lands here first; if it is not on this list, it does not need
 addressing. An item that needs measurement carries its experiment plan inline
@@ -26,20 +26,6 @@ production verifier and confirm the scoped contracts still bind the authenticate
 payload to the expected source.
 
 ## Contract Findings
-
-### P-2: Near-expiry SVI freshness can overprice tails
-
-**Severity:** Medium.
-
-SVI total variance is consumed as variance-to-expiry, but the SVI freshness
-window is much wider than the final seconds/minutes before expiry. A stale but
-fresh-enough surface near expiry can materially overstate remaining uncertainty
-and misprice mint/redeem flows. The SVI skew-adjusted digital term shares this
-near-expiry sensitivity through its `1/sqrt(w)` denominator.
-
-**Action:** Add a minimum time-to-expiry live-pricing cutoff, scale SVI
-freshness with remaining time, or otherwise document and bound the accepted
-near-expiry pricing window.
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
 
@@ -143,42 +129,29 @@ bound and accept the aggregation residual in the rounding policy, add a
 regression covering both directions, and narrow every exact-NAV claim to the
 accepted bound. (2026-07-17 clean-room gap audit)
 
-### P-14: Short-dated up_price breaches the 0.1% price-deviation bound — variance increment floored to 1e9
+### P-16: The pricing reference does not cover the deployed variance range
 
 **Severity:** Medium.
 
-The `up_price` on short-dated markets breaches the ratified 0.1% price-deviation
-bound (`response-policies.md § Pricing and valuation deviation bounds`).
-`pricing::compute_nd2` forms the SVI variance increment as `math::mul_down(b, inner)`
-= `(b · inner) / 1e9`, truncating the sub-unit fraction to an integer 1e9 unit.
-At the low total variance of short-dated markets that fraction is a material
-share of total variance, so `total_var` is biased systematically downward
-(truncation toward zero, not zero-mean noise). `up_price` feeds entry price, the
-live NAV mark, and liquidation thresholds, so the breach is a systematic mark
-bias, not noise.
+The ratified price-deviation bound (`response-policies.md § Pricing and valuation
+deviation bounds`) is enforced by the generated pricing reference, so it is only
+enforced where that dataset has scenarios. The committed scenario corpus is a
+single real market whose total variance bottoms out near `w ≈ 4e-7`, while
+deployed one-minute and five-minute cadences reach `w ≈ 1e-8` — the regime where
+`1/sqrt(w)` conditioning makes the bound tightest and where an evaluation defect
+is least likely to show up anywhere else.
 
-Measured against a 30-digit reference over a moneyness grid on real Block Scholes
-SVI surfaces (1c–99c band): one-minute worst-case relative error **1.12%**
-(absolute 5.15e-4); five-minute (the dominant published cadence) worst-case
-**3.28%** (absolute 2.09e-3); daily below 0.27%. One-minute and five-minute
-exceed the 0.1% ceiling; daily is within it. A worst-case one-minute surface at
-`k = -0.0005` discards 0.806 of 51.806 raw variance-increment units (1.56%):
-`up_price` 0.89080 versus 0.89028 exact.
+This is what let P-14 (short-dated `up_price` biased by the 1e9 variance
+truncation, resolved by the u128/1e18 variance path) reach a release candidate:
+every scenario the reference could check sat five orders of magnitude above the
+regime that was wrong. The generator now carries one short-dated scenario at the
+corpus minimum, which demonstrates the fix but is not coverage — it is one point,
+and it does not reach `1e-8`.
 
-The breach went undetected because **the deviation bound is only enforced where
-the pricing reference has scenarios** — the current dataset is a single
-moderate-variance market (`sqrt(w) ≈ 0.008–0.017`, `w ≈ 1e-4`), roughly five
-orders of magnitude above the short-dated regime (`w ≈ 1e-8`). Reachable on any
-deployed one-minute or five-minute cadence (`CadenceConfig.window_size > 0`); the
-near-expiry no-leverage gate (P-2, O-1) caps admission leverage but does not
-disable pricing.
-
-**Action:** two parts. (1) Carry the variance, `sqrt(w)`, and `d2` computation at
-u128 / 1e18 precision instead of flooring the `b · inner` product to 1e9, which
-brings short-dated error back under the 0.1% bound. (2) Add short-dated scenarios
-to the generated pricing reference so the bound is actually enforced at `w ≈
-1e-8` — without them the fix has no regression guard where the bound is tightest
-(`1/sqrt(w)` conditioning).
+**Action:** extend the scenario corpus to span the deployed variance range,
+including one-minute and five-minute surfaces, so the deviation bound is checked
+where it binds. This needs source rows at those cadences; the current CSV does
+not contain them, so it is a data-collection task before it is a generator task.
 
 ## Access and Governance
 
@@ -324,15 +297,6 @@ correctness today.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.
-
-### H-5: Premium-budget mint omits probability and all-in-cost slippage caps
-
-**Severity:** Low.
-
-`expiry_market::mint_exact_amount` disables both slippage guards (`max_cost` and
-`max_probability` are unbounded), unlike `mint_exact_quantity`. Decide whether
-a premium-budget mint should also bound total fees/penalty and entry probability,
-and add optional guards if so.
 
 ### H-6: Maintainability backlog
 
