@@ -809,12 +809,26 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   surfaces at pricer load in the 1e9 domain, unchanged by this work.
 - **Risk profile:** the admitted new region is `0 < w < 1e-9`. Pricing there is
   well-conditioned in the new domain — the 1e18 variance carries about nine more
-  significant digits than the value that used to floor to zero.
+  significant digits than the value that used to floor to zero. The `d2` cap is
+  defensive rather than observed: the load gate holds the analytical minimum
+  variance at or above one raw unit at 1e9, which bounds `sqrt(w)` from below, and
+  over 249,313 admissible sampled surfaces the largest unclamped `|d2|` was
+  1.4e14 against a `u64` ceiling of 1.8e19. That is headroom, not a proof — `b`
+  ranges to 100e9, so the rounding slack in `inner` is large enough in principle
+  to drive `w` lower — so the cap stays and is pinned at its own inputs.
 - **Pinning tests:** `pricing_guard_tests.move` —
+  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a loadable
+  surface whose per-strike variance is positive but floors to zero at 1e9 (the
+  region this policy admits) and asserts the independently generated digital;
+  `d2_saturates_at_the_normal_clamp_instead_of_overflowing` drives the cap at the
+  helper's scalar inputs, where a `w` of one raw unit at 1e18 makes the quotient
+  exceed `u64` (unit-tests rule 4 — the guard is exercised at its own inputs
+  because no admissible surface has been shown to reach it);
   `boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts` still
   aborts (the surface it pins is negative on the true value, not only after
   truncation), and `zero_total_variance_aborts_at_load` pins the unchanged
-  construction gate.
+  construction gate. Both new tests were mutation-checked: restoring the coarse
+  1e9 rejection fails the first two, and deleting the cap fails the second.
 - **Reopen when:** a surface is observed whose true total variance is positive
   but so small that `sqrt(w)` itself underflows the 1e9 result scale, or if the
   saturation cap is ever read by something other than `normal_cdf`/`normal_pdf`.

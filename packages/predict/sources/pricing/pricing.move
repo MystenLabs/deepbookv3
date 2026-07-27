@@ -551,3 +551,18 @@ fun variance_sqrt_and_d2(a: &I64, b: u64, inner: u64, k: &I64): (u64, I64) {
 fun is_positive(value: &I64): bool {
     !value.is_negative() && !value.is_zero()
 }
+
+/// Scalar-input view of `variance_sqrt_and_d2` for the unit tests. The d2
+/// saturation guards a `u128 -> u64` cast that no admissible SVI surface has been
+/// shown to reach — the pricer-load minimum-variance gate keeps `sqrt(w)` large
+/// enough that the quotient stays far inside `u64` — so the guard is exercised at
+/// its own inputs rather than through a contrived surface (unit-tests rule 4).
+#[test_only]
+public(package) fun variance_sqrt_and_d2_for_testing(
+    a: &I64,
+    b: u64,
+    inner: u64,
+    k: &I64,
+): (u64, I64) {
+    variance_sqrt_and_d2(a, b, inner, k)
+}

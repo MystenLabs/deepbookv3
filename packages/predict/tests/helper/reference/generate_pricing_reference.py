@@ -380,6 +380,34 @@ FLOW_FIXTURE = {
     "m": 10 * F / F,                   # default_svi_m
     "sigma": 1_000_000 / F,            # default_svi_sigma
 }
+# A surface in the region the 1e18 variance path newly admits: its per-strike
+# total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
+# aborted `ENonPositiveVariance` here while the analytical minimum still passed the
+# load gate (min_increment 3 against a = -2). Mirrors the fixture in
+# `pricing_guard_tests::low_variance_surface_prices_where_the_1e9_path_aborted`.
+ADMITTED_LOW_VARIANCE = {
+    "a": -2 / F,
+    "b": 1_000 / F,
+    "rho": 800_000_000 / F,
+    "m": 6_666_634 / F,
+    "sigma": 5_000_000 / F,
+}
+
+
+def admitted_low_variance_up():
+    """True UP digital on the newly admitted low-variance surface, at the forward."""
+    a, b = ADMITTED_LOW_VARIANCE["a"], ADMITTED_LOW_VARIANCE["b"]
+    rho, m, sigma = (ADMITTED_LOW_VARIANCE[key] for key in ("rho", "m", "sigma"))
+    k = 0.0
+    x = k - m
+    sq = math.sqrt(x * x + sigma * sigma)
+    w = a + b * (rho * x + sq)
+    w_prime = b * (rho + x / sq)
+    S = math.sqrt(w)
+    d2 = -(k + w / 2.0) / S
+    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
+
+
 # Budget for the flow fixtures' at-the-money digital: math.move documents
 # normal_cdf to 20 raw units, and the 1e18 variance path plus its 1e9-scaled root
 # move d2 by ~6e-10 (well under one raw unit of probability). Independent of any
@@ -563,6 +591,11 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// and the d2 path adds under one. Derived from math.move\'s precision")
     w("/// contract, never measured from contract output.")
     w(f"public fun flow_fixture_atm_budget(): u64 {{ {FLOW_FIXTURE_BUDGET_UNITS} }}")
+    w("")
+    w("/// True UP digital on the surface whose per-strike total variance is positive")
+    w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")
+    w("/// admits, where the previous pricer aborted `ENonPositiveVariance`.")
+    w(f"public fun admitted_low_variance_up(): u64 {{ {fmt_u64(admitted_low_variance_up())} }}")
     return "\n".join(lines) + "\n"
 
 

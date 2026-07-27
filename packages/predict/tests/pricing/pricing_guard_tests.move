@@ -50,7 +50,7 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use fixed_math::math::float_scaling as float;
+use fixed_math::{i64, math::float_scaling as float};
 use propbook::{
     block_scholes_forward_feed::BlockScholesForwardFeed,
     block_scholes_svi_feed::BlockScholesSVIFeed,
@@ -81,6 +81,25 @@ const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
 const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
 const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
 const NONPOSITIVE_MIN_VARIANCE_A_MAG: u64 = 5_000_001;
+/// A surface whose per-strike total variance is positive but under one raw unit
+/// at 1e9: `b * inner` is 2_999_999_000 at 1e18 and `a` is -2, so the 1e9 path
+/// saw exactly zero while the true variance is 1e-9. `min_increment` is 3, so
+/// `min_total_var` is 1 and the surface loads.
+const ADMITTED_LOW_VARIANCE_A_MAG: u64 = 2;
+const ADMITTED_LOW_VARIANCE_B: u64 = 1_000;
+const ADMITTED_LOW_VARIANCE_SIGMA: u64 = 5_000_000;
+const ADMITTED_LOW_VARIANCE_RHO: u64 = 800_000_000;
+const ADMITTED_LOW_VARIANCE_M: u64 = 6_666_634;
+
+/// `normal_cdf` and `normal_pdf` saturate beyond `|8|`; the cap sits one raw unit
+/// past that so a capped value is unambiguously outside the live domain.
+const SATURATED_D2_MAGNITUDE: u64 = 8_000_000_001;
+/// w = 1e-9 at 1e18 (b * inner = 1e9), the smallest variance the load gate can
+/// admit: sqrt(w) is 31_622 and d2 stays far inside the cap.
+const WELL_CONDITIONED_B: u64 = 1_000;
+const WELL_CONDITIONED_INNER: u64 = 1_000_000;
+const WELL_CONDITIONED_SQRT_W: u64 = 31_622;
+
 const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
 const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
@@ -564,6 +583,82 @@ fun boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts() {
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
     abort EUnexpectedSuccess
+}
+
+/// The other side of that boundary, and the region the u128/1e18 variance path
+/// newly admits (RP-20). This surface's per-strike total variance is positive but
+/// smaller than one raw unit at 1e9, so the pre-1e18 pricer computed
+/// `floor(b*inner/1e9) + a == 0` and aborted `ENonPositiveVariance` on a variance
+/// that was never actually non-positive. The analytical minimum still clears the
+/// load gate by one unit (min_increment 3 against `a = -2`), so the surface is
+/// production-loadable rather than a contrived one.
+///
+/// Expected value is the independently generated true digital for this surface,
+/// within the same documented budget the other pricing assertions use.
+#[test]
+fun low_variance_surface_prices_where_the_1e9_path_aborted() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ADMITTED_LOW_VARIANCE_A_MAG,
+        true,
+        ADMITTED_LOW_VARIANCE_B,
+        ADMITTED_LOW_VARIANCE_SIGMA,
+        ADMITTED_LOW_VARIANCE_RHO,
+        false,
+        ADMITTED_LOW_VARIANCE_M,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        ref_data::admitted_low_variance_up(),
+        ref_data::flow_fixture_atm_budget(),
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// The `d2` saturation from RP-20, exercised at the helper's own scalar inputs.
+///
+/// `d2` is `(k + w/2) / sqrt(w)` with the numerator carried at 1e18 and the
+/// divisor at 1e9, so as `w` collapses the quotient grows without bound and the
+/// narrowing cast to the `I64` magnitude would abort. `normal_cdf` and
+/// `normal_pdf` are already saturated everywhere past `|8|`, so the value is
+/// capped there instead: the arithmetic cannot abort, and no reachable price
+/// changes because the caller was already on the clamp.
+///
+/// Driven directly rather than through a surface: the pricer-load gate keeps the
+/// minimum total variance at or above one raw unit at 1e9, which bounds `sqrt(w)`
+/// from below and holds the quotient inside `u64` for every admissible surface
+/// sampled. The guard is defence against that bound being wrong, so it is pinned
+/// where it can actually be driven.
+#[test]
+fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
+    // w = 1 raw unit at 1e18, so sqrt(w) is 1 and d2 is the numerator itself:
+    // k at its domain maximum would otherwise divide out to ~2e19, past u64.
+    let a = i64::from_u64(0);
+    let k = i64::from_parts(20_000_000_000, true);
+    let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(&a, 1, 1, &k);
+
+    assert_eq!(sqrt_var, 1);
+    assert_eq!(d2.magnitude(), SATURATED_D2_MAGNITUDE);
+    assert!(!d2.is_negative());
+
+    // A well-conditioned input on the same path is untouched by the cap.
+    let (sqrt_var, d2) = pricing::variance_sqrt_and_d2_for_testing(
+        &a,
+        WELL_CONDITIONED_B,
+        WELL_CONDITIONED_INNER,
+        &i64::from_u64(0),
+    );
+    assert_eq!(sqrt_var, WELL_CONDITIONED_SQRT_W);
+    assert!(d2.magnitude() < SATURATED_D2_MAGNITUDE);
 }
 
 // === Surface minimum-variance abort ===
