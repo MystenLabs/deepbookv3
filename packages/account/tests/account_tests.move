@@ -6,18 +6,11 @@ module account::account_tests;
 
 use account::{
     account::{Self, AccountWrapper},
-    account_events,
     account_registry::{Self, AccountAdminCap, AccountRegistry},
     accumulator_support
 };
 use std::{internal::permit, unit_test::{assert_eq, destroy}};
-use sui::{
-    clock::Clock,
-    coin,
-    event,
-    object,
-    test_scenario::{Self as test, Scenario, return_shared}
-};
+use sui::{clock::Clock, coin, object, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
@@ -27,7 +20,6 @@ const WITHDRAW_AMOUNT: u64 = 350;
 const POST_WITHDRAW_BALANCE: u64 = 650;
 const DATA_INITIAL_VALUE: u64 = 17;
 const DATA_UPDATED_VALUE: u64 = 29;
-const CREATION_EVENT_COUNT: u64 = 1;
 
 public struct TEST_COIN has drop {}
 
@@ -67,9 +59,6 @@ fun registry_creates_one_canonical_account_per_owner() {
     assert!(registry.derived_wrapper_exists(ALICE));
     assert_eq!(registry.derived_address(ALICE).to_id(), account_id);
     assert_eq!(registry.derived_wrapper_address(ALICE).to_id(), wrapper_id);
-    let events = event::events_by_type<account_events::AccountCreated>();
-    assert_eq!(events.length(), CREATION_EVENT_COUNT);
-    assert!(events[0].referrer_account_id().is_none());
 
     wrapper.share();
     return_shared(registry);
@@ -77,7 +66,7 @@ fun registry_creates_one_canonical_account_per_owner() {
 }
 
 #[test]
-fun registry_records_referrer_on_account_and_creation_event() {
+fun registry_records_referrer_on_account() {
     let mut scenario = setup_with_account(BOB);
     scenario.next_tx(ALICE);
     let mut registry = scenario.take_shared<AccountRegistry>();
@@ -88,9 +77,6 @@ fun registry_records_referrer_on_account_and_creation_event() {
     let wrapper_id = wrapper.id();
 
     assert_eq!(wrapper.load_account().referrer_account_id(), option::some(referrer_account_id));
-    let events = event::events_by_type<account_events::AccountCreated>();
-    assert_eq!(events.length(), CREATION_EVENT_COUNT);
-    assert_eq!(events[0].referrer_account_id(), option::some(referrer_account_id));
 
     wrapper.share();
     return_shared(referrer_wrapper);

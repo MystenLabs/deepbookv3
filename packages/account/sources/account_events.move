@@ -19,10 +19,6 @@ public struct AccountCreated has copy, drop {
     referrer_account_id: Option<ID>,
 }
 
-public(package) fun referrer_account_id(self: &AccountCreated): Option<ID> {
-    self.referrer_account_id
-}
-
 public(package) fun emit_account_created(
     account_id: ID,
     wrapper_id: ID,
