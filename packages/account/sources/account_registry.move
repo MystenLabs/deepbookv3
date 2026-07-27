@@ -6,7 +6,7 @@
 /// `account::account` owns wrapper construction, custody, accumulator settlement, and app-data invariants.
 module account::account_registry;
 
-use account::{account::{Self, AccountWrapper, Auth}, account_events};
+use account::{account::{Self, Account, AccountWrapper, Auth}, account_events};
 use std::{internal::Permit, type_name};
 use sui::{derived_object, dynamic_field as df};
 
@@ -73,7 +73,17 @@ public fun derived_wrapper_exists(registry: &AccountRegistry, owner: address): b
 /// Creates the sender's canonical account and wrapper, aborting if either derived ID is already claimed.
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
-    registry.new_for_owner(owner, false, ctx)
+    registry.new_for_owner(owner, false, option::none(), ctx)
+}
+
+/// Creates the sender's canonical account and permanently records the supplied account as its referrer.
+public fun new_with_referrer(
+    registry: &mut AccountRegistry,
+    referrer: &Account,
+    ctx: &mut TxContext,
+): AccountWrapper {
+    let owner = ctx.sender();
+    registry.new_for_owner(owner, false, option::some(referrer.account_id()), ctx)
 }
 
 /// Creates the canonical account owned by `owner_uid`'s object address, aborting if either derived ID is already claimed.
@@ -83,7 +93,7 @@ public fun new_self_owned(
     ctx: &mut TxContext,
 ): AccountWrapper {
     let owner = owner_uid.to_inner().to_address();
-    registry.new_for_owner(owner, true, ctx)
+    registry.new_for_owner(owner, true, option::none(), ctx)
 }
 
 /// Returns whether `App` may request package-issued mutable account authority.
@@ -129,6 +139,7 @@ fun new_for_owner(
     registry: &mut AccountRegistry,
     owner: address,
     self_owned: bool,
+    referrer_account_id: Option<ID>,
     ctx: &mut TxContext,
 ): AccountWrapper {
     registry.assert_account_does_not_exist(owner);
@@ -137,6 +148,7 @@ fun new_for_owner(
         AccountWrapperKey(owner),
         AccountKey(owner),
         owner,
+        referrer_account_id,
         ctx,
     );
     account_events::emit_account_created(
@@ -144,6 +156,7 @@ fun new_for_owner(
         wrapper.id(),
         owner,
         self_owned,
+        referrer_account_id,
     );
     wrapper
 }
