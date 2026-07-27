@@ -8,7 +8,7 @@ use deepbook_margin::{
     margin_manager::MarginManager,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle
+    oracle::{Self, PythReading}
 };
 use pyth::price_info::PriceInfoObject;
 use std::type_name;
@@ -48,11 +48,30 @@ public fun update_current_price<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ) {
-    // Calculate current price using safe oracle (with staleness, confidence, EWMA checks)
+    // Safe reads: staleness, feed id, confidence and EWMA are all enforced here.
+    let base_reading = oracle::read_price<BaseAsset>(base_price_info_object, registry, clock);
+    let quote_reading = oracle::read_price<QuoteAsset>(quote_price_info_object, registry, clock);
+
+    update_current_price_core<BaseAsset, QuoteAsset>(
+        registry,
+        pool,
+        base_reading,
+        quote_reading,
+        clock,
+    )
+}
+
+public(package) fun update_current_price_core<BaseAsset, QuoteAsset>(
+    registry: &mut MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_reading: PythReading,
+    quote_reading: PythReading,
+    clock: &Clock,
+) {
     let price = oracle::calculate_price<BaseAsset, QuoteAsset>(
         registry,
-        oracle::read_price<BaseAsset>(base_price_info_object, registry, clock),
-        oracle::read_price<QuoteAsset>(quote_price_info_object, registry, clock),
+        base_reading,
+        quote_reading,
     );
 
     registry.update_current_price(pool.id(), price, clock);
@@ -158,14 +177,14 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 // borrow-floor check allows.
 
 /// Places a limit order in the pool.
-public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
+public(package) fun place_limit_order_v2_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -207,8 +226,8 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         clock,
     );
 
@@ -216,14 +235,14 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
 }
 
 /// Places a market order in the pool.
-public fun place_market_order_v2<BaseAsset, QuoteAsset>(
+public(package) fun place_market_order_v2_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -265,8 +284,8 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         clock,
     );
 
@@ -274,14 +293,14 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
 }
 
 /// Places a reduce-only order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
+public(package) fun place_reduce_only_limit_order_v2_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -322,10 +341,10 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     // The reduce-only quantity predicate above already guarantees the manager
     // has debt on the relevant side, so `risk_ratio` is safe to compute (no
     // divide-by-zero in `risk_ratio_int`).
-    let risk_ratio_before = margin_manager.risk_ratio(
+    let risk_ratio_before = margin_manager.risk_ratio_core(
         registry,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -371,8 +390,8 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         clock,
         risk_ratio_before,
     );
@@ -391,14 +410,14 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
 /// callable for existing integrators; its reduce-only *direction* guard matches
 /// the other entries — a bid needs base (short-side) debt, the ask needs quote
 /// (long-side) debt and sells up to gross base held — with no size cap.
-public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
+public(package) fun place_reduce_only_market_order_v2_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -441,10 +460,10 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     // The reduce-only quantity predicate above already guarantees the manager
     // has debt on the relevant side, so `risk_ratio` is safe to compute (no
     // divide-by-zero in `risk_ratio_int`).
-    let risk_ratio_before = margin_manager.risk_ratio(
+    let risk_ratio_before = margin_manager.risk_ratio_core(
         registry,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -472,8 +491,8 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         clock,
         risk_ratio_before,
     );
@@ -491,14 +510,14 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
 /// absorbs the slippage (still bounded by the `assert_price` band), and lets a
 /// manager in the `liquidation..min_borrow` band climb out — it cannot reach
 /// the borrow floor in a single swap.
-public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+public(package) fun place_reduce_only_market_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -540,10 +559,10 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
 
     registry.assert_price(pool.id(), effective_price, is_bid, clock);
 
-    let risk_ratio_before = margin_manager.risk_ratio(
+    let risk_ratio_before = margin_manager.risk_ratio_core(
         registry,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -573,8 +592,8 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         risk_ratio_before,
         clock,
         ctx,
@@ -597,14 +616,14 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
 /// deleverages so the net ratio holds. The resting remainder only locks balance
 /// (counted in assets), so it doesn't move the ratio. Unfilled-and-resting
 /// behaves exactly like `place_reduce_only_limit_order_v2` (nothing to repay).
-public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
+public(package) fun place_reduce_only_limit_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -639,10 +658,10 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
         ENotReduceOnlyOrder,
     );
 
-    let risk_ratio_before = margin_manager.risk_ratio(
+    let risk_ratio_before = margin_manager.risk_ratio_core(
         registry,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -683,8 +702,8 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         risk_ratio_before,
         clock,
         ctx,
@@ -712,14 +731,14 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
 /// (surplus is the manager's own holding) and `assert_price` still bounds
 /// slippage. Requires margin trading enabled; in reduce-only mode use
 /// `place_reduce_only_market_order_and_repay_loan`.
-public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+public(package) fun place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -747,10 +766,10 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         margin_manager.borrowed_base_shares() > 0
         || margin_manager.borrowed_quote_shares() > 0
     ) {
-        margin_manager.risk_ratio(
+        margin_manager.risk_ratio_core(
             registry,
-            base_oracle,
-            quote_oracle,
+            base_reading,
+            quote_reading,
             pool,
             base_margin_pool,
             quote_margin_pool,
@@ -786,8 +805,8 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         risk_ratio_before,
         clock,
         ctx,
@@ -1060,8 +1079,8 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     clock: &Clock,
 ) {
     if (
@@ -1071,10 +1090,10 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
         return
     };
 
-    let risk_ratio_after = margin_manager.risk_ratio(
+    let risk_ratio_after = margin_manager.risk_ratio_core(
         registry,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -1097,15 +1116,15 @@ fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     clock: &Clock,
     risk_ratio_before: u64,
 ) {
-    let risk_ratio_after = margin_manager.risk_ratio(
+    let risk_ratio_after = margin_manager.risk_ratio_core(
         registry,
-        base_oracle,
-        quote_oracle,
+        base_reading,
+        quote_reading,
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -1128,8 +1147,8 @@ fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     risk_ratio_before: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -1150,10 +1169,269 @@ fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
             pool,
             base_margin_pool,
             quote_margin_pool,
-            base_oracle,
-            quote_oracle,
+            base_reading,
+            quote_reading,
             clock,
             risk_ratio_before,
         );
     };
+}
+
+// === Legacy Pyth entrypoints ===
+// Frozen signatures. Bodies delegate to the shared cores above.
+
+public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    place_limit_order_v2_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+public fun place_market_order_v2<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    place_market_order_v2_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
+}
+
+public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    place_reduce_only_limit_order_v2_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    place_reduce_only_market_order_v2_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
+}
+
+public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    place_reduce_only_market_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
+}
+
+public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    place_reduce_only_limit_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
+        registry,
+        margin_manager,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
 }
