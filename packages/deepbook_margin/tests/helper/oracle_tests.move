@@ -7,6 +7,7 @@ module deepbook_margin::oracle_tests;
 use deepbook_margin::{
     margin_registry::{Self, MarginRegistry},
     oracle::{
+        read_price,
         calculate_usd_currency_amount,
         calculate_target_currency_amount,
         calculate_usd_price,
@@ -203,10 +204,9 @@ fun test_calculate_usd_price_invalid_confidence_too_high() {
 
     // This should fail with EInvalidPythPriceConf
     calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     destroy(admin_cap);
@@ -248,10 +248,9 @@ fun test_calculate_usd_price_valid_confidence_at_limit() {
 
     // This should succeed
     let usd_price = calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     // 1 USDC at $100 = $100 (with 9 decimals for USD representation)
@@ -296,10 +295,9 @@ fun test_calculate_target_amount_invalid_confidence() {
 
     // This should fail with EInvalidPythPriceConf
     calculate_target_amount<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         100_000_000_000, // $100 USD (9 decimals)
-        &clock,
     );
 
     destroy(admin_cap);
@@ -373,10 +371,9 @@ fun test_ewma_price_difference_too_high() {
 
     // This should fail with EInvalidPythPrice
     calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     destroy(admin_cap);
@@ -418,10 +415,9 @@ fun test_ewma_price_difference_too_low() {
 
     // This should fail with EInvalidPythPrice
     calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     destroy(admin_cap);
@@ -463,10 +459,9 @@ fun test_ewma_price_difference_at_upper_limit() {
 
     // This should succeed
     let usd_price = calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     // 1 USDC at $115 = $115 (with 9 decimals for USD representation)
@@ -511,10 +506,9 @@ fun test_ewma_price_difference_at_lower_limit() {
 
     // This should succeed
     let usd_price = calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     // 1 USDC at $85 = $85 (with 9 decimals for USD representation)
@@ -560,10 +554,9 @@ fun test_confidence_check_with_high_price_no_overflow() {
 
     // This should succeed with u128 casting preventing overflow
     let usd_price = calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     // 1 USDC at $1M = $1M (with 9 decimals for USD representation)
@@ -610,10 +603,9 @@ fun test_ewma_check_with_high_price_no_overflow() {
 
     // This should succeed with u128 casting preventing overflow
     let usd_price = calculate_usd_price<USDC>(
-        &price_info,
+        read_price<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     // 1 USDC at $1.1M = $1.1M (with 9 decimals for USD representation)

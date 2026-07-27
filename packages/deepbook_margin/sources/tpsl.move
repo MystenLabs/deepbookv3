@@ -4,7 +4,11 @@
 module deepbook_margin::tpsl;
 
 use deepbook::{constants, pool::Pool};
-use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
+use deepbook_margin::{
+    margin_constants,
+    margin_registry::MarginRegistry,
+    oracle::{calculate_price, read_price}
+};
 use pyth::price_info::PriceInfoObject;
 use sui::{clock::Clock, event};
 
@@ -278,9 +282,8 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
 
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
-        base_price_info_object,
-        quote_price_info_object,
-        clock,
+        read_price<BaseAsset>(base_price_info_object, registry, clock),
+        read_price<QuoteAsset>(quote_price_info_object, registry, clock),
     );
 
     let trigger_below_price = condition.trigger_below_price;

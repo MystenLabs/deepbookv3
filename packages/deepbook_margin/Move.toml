@@ -9,6 +9,10 @@ deepbook = { local = "../deepbook" }
 
 # Pyth dependency
 pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-mainnet" }
+# Pyth Pro: a separate on-chain package, not an upgrade of the above. Both are
+# linked at once so the legacy entrypoints keep their frozen signatures.
+pyth_pro = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-pro-compatible-contract-mainnet", rename-from = "pyth" }
 
 [dep-replacements.testnet]
 pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
+pyth_pro = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-pro-compatible-contract-testnet", rename-from = "pyth" }

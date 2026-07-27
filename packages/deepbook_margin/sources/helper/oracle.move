@@ -7,6 +7,7 @@ module deepbook_margin::oracle;
 use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
+use pyth_pro::{price_info::PriceInfoObject as PriceInfoObjectPro, pyth as pyth_pro_api};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, coin::CoinMetadata, coin_registry::Currency, vec_map::{Self, VecMap}};
 
@@ -42,6 +43,24 @@ public struct ConversionConfig has copy, drop {
     base_decimals: u8,
     pyth_price: u64,
     pyth_decimals: u8,
+}
+
+/// A price already read out of a Pyth `PriceInfoObject` and validated against this
+/// package's config. Carrying the value rather than the object is what lets the
+/// legacy feed and Pyth Pro share one pricing path: the two feeds are distinct Move
+/// types, but a reading taken from either is the same value. Every guard lives in the
+/// reader that produces it, so anything downstream of here is pure arithmetic.
+public struct PythReading has copy, drop {
+    price: u64,
+    decimals: u8,
+}
+
+public(package) fun price(self: &PythReading): u64 {
+    self.price
+}
+
+public(package) fun decimals(self: &PythReading): u8 {
+    self.decimals
 }
 
 /// Superseded by `new_coin_type_data_from_currency`, which reads decimals from
@@ -100,16 +119,14 @@ public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): Pyt
 /// Calculates the USD price of a given asset or debt amount.
 /// 9 decimals are used for USD representation.
 public(package) fun calculate_usd_price<T>(
-    price_info_object: &PriceInfoObject,
+    reading: PythReading,
     registry: &MarginRegistry,
     amount: u64,
-    clock: &Clock,
 ): u64 {
     let config = price_config<T>(
-        price_info_object,
+        reading,
         registry,
         true,
-        clock,
     );
 
     config.calculate_usd_currency_amount(
@@ -141,27 +158,24 @@ public(package) fun calculate_usd_currency_amount(
 /// Returns the price accounting for the decimal difference between the two assets.
 public(package) fun calculate_price<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    clock: &Clock,
+    base_reading: PythReading,
+    quote_reading: PythReading,
 ): u64 {
     let base_decimals = get_decimals<BaseAsset>(registry);
     let quote_decimals = get_decimals<QuoteAsset>(registry);
 
     let base_amount = 10u64.pow(base_decimals);
     let base_usd_price = calculate_usd_price<BaseAsset>(
-        base_price_info_object,
+        base_reading,
         registry,
         base_amount,
-        clock,
     );
 
     let quote_amount = 10u64.pow(quote_decimals);
     let quote_usd_price = calculate_usd_price<QuoteAsset>(
-        quote_price_info_object,
+        quote_reading,
         registry,
         quote_amount,
-        clock,
     );
     let price_ratio = math::div(base_usd_price, quote_usd_price);
 
@@ -187,22 +201,19 @@ public(package) fun calculate_price<BaseAsset, QuoteAsset>(
 /// Calculates the amount in target currency based on amount in asset A.
 public(package) fun calculate_target_currency<AssetA, AssetB>(
     registry: &MarginRegistry,
-    price_info_object_a: &PriceInfoObject,
-    price_info_object_b: &PriceInfoObject,
+    reading_a: PythReading,
+    reading_b: PythReading,
     amount: u64,
-    clock: &Clock,
 ): u64 {
     let usd_value = calculate_usd_price<AssetA>(
-        price_info_object_a,
+        reading_a,
         registry,
         amount,
-        clock,
     );
     let target_value = calculate_target_amount<AssetB>(
-        price_info_object_b,
+        reading_b,
         registry,
         usd_value,
-        clock,
     );
 
     target_value
@@ -210,16 +221,14 @@ public(package) fun calculate_target_currency<AssetA, AssetB>(
 
 /// Calculates the amount in target currency based on usd amount
 public(package) fun calculate_target_amount<T>(
-    price_info_object: &PriceInfoObject,
+    reading: PythReading,
     registry: &MarginRegistry,
     usd_amount: u64,
-    clock: &Clock,
 ): u64 {
     let config = price_config<T>(
-        price_info_object,
+        reading,
         registry,
         false,
-        clock,
     );
 
     calculate_target_currency_amount(
@@ -248,95 +257,12 @@ public(package) fun calculate_target_currency_amount(
     target_currency_amount
 }
 
-public(package) fun calculate_usd_price_unsafe<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    amount: u64,
-): u64 {
-    let config = price_config_unsafe<T>(price_info_object, registry, true);
-    config.calculate_usd_currency_amount(amount)
-}
-
-public(package) fun calculate_price_unsafe<BaseAsset, QuoteAsset>(
-    registry: &MarginRegistry,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-): u64 {
-    let base_decimals = get_decimals<BaseAsset>(registry);
-    let quote_decimals = get_decimals<QuoteAsset>(registry);
-
-    let base_amount = 10u64.pow(base_decimals);
-    let base_usd_price = calculate_usd_price_unsafe<BaseAsset>(
-        base_price_info_object,
-        registry,
-        base_amount,
-    );
-
-    let quote_amount = 10u64.pow(quote_decimals);
-    let quote_usd_price = calculate_usd_price_unsafe<QuoteAsset>(
-        quote_price_info_object,
-        registry,
-        quote_amount,
-    );
-    let price_ratio = math::div(base_usd_price, quote_usd_price);
-
-    if (base_decimals > quote_decimals) {
-        let decimal_diff = base_decimals - quote_decimals;
-        let divisor = 10u128.pow(decimal_diff);
-        let price = (price_ratio as u128) / divisor;
-        assert!(price <= constants::max_price() as u128, EInvalidPrice);
-        price as u64
-    } else if (quote_decimals > base_decimals) {
-        let decimal_diff = quote_decimals - base_decimals;
-        let multiplier = 10u128.pow(decimal_diff);
-        let price = (price_ratio as u128) * multiplier;
-        assert!(price <= constants::max_price() as u128, EInvalidPrice);
-        price as u64
-    } else {
-        price_ratio
-    }
-}
-
-public(package) fun calculate_target_currency_unsafe<AssetA, AssetB>(
-    registry: &MarginRegistry,
-    price_info_object_a: &PriceInfoObject,
-    price_info_object_b: &PriceInfoObject,
-    amount: u64,
-): u64 {
-    let usd_value = calculate_usd_price_unsafe<AssetA>(price_info_object_a, registry, amount);
-    let target_value = calculate_target_amount_unsafe<AssetB>(
-        price_info_object_b,
-        registry,
-        usd_value,
-    );
-    target_value
-}
-
-public(package) fun calculate_target_amount_unsafe<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    usd_amount: u64,
-): u64 {
-    let config = price_config_unsafe<T>(price_info_object, registry, false);
-    calculate_target_currency_amount(config, usd_amount)
-}
-
 fun price_config<T>(
-    price_info_object: &PriceInfoObject,
+    reading: PythReading,
     registry: &MarginRegistry,
     is_usd_price_config: bool,
-    clock: &Clock,
 ): ConversionConfig {
-    let (pyth_price, pyth_decimals, pyth_conf, type_config) = get_validated_pyth_price<T>(
-        price_info_object,
-        registry,
-        clock,
-    );
-
-    assert!(
-        (pyth_conf as u128) * 10_000 <= (type_config.max_conf_bps as u128) * (pyth_price as u128),
-        EInvalidPythPriceConf,
-    );
+    let type_config = registry.get_config_for_type<T>();
 
     let target_decimals = if (is_usd_price_config) {
         9
@@ -352,64 +278,18 @@ fun price_config<T>(
     ConversionConfig {
         target_decimals,
         base_decimals,
-        pyth_price,
-        pyth_decimals,
+        pyth_price: reading.price,
+        pyth_decimals: reading.decimals,
     }
 }
 
-fun price_config_unsafe<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    is_usd_price_config: bool,
-): ConversionConfig {
-    let (pyth_price, pyth_decimals) = get_pyth_price_unsafe<T>(
-        price_info_object,
-        registry,
-    );
-    let type_config = registry.get_config_for_type<T>();
-
-    let target_decimals = if (is_usd_price_config) {
-        9
-    } else {
-        type_config.decimals
-    };
-    let base_decimals = if (is_usd_price_config) {
-        type_config.decimals
-    } else {
-        9
-    };
-
-    ConversionConfig {
-        target_decimals,
-        base_decimals,
-        pyth_price,
-        pyth_decimals,
-    }
-}
-
-/// Gets the raw Pyth price for a given asset
-/// Returns (pyth_price, pyth_decimals)
-public(package) fun get_pyth_price<T>(
+/// Reads a fully validated price from the legacy Pyth feed: staleness, feed id,
+/// confidence interval, and EWMA deviation.
+public(package) fun read_price<T>(
     price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
     clock: &Clock,
-): (u64, u8) {
-    let (pyth_price, pyth_decimals, _, _) = get_validated_pyth_price<T>(
-        price_info_object,
-        registry,
-        clock,
-    );
-
-    (pyth_price, pyth_decimals)
-}
-
-/// Helper function to get and validate Pyth price data
-/// Returns (pyth_price, pyth_decimals, pyth_conf, type_config)
-fun get_validated_pyth_price<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    clock: &Clock,
-): (u64, u8, u64, CoinTypeData) {
+): PythReading {
     let config = registry.get_config<PythConfig>();
     let type_config = registry.get_config_for_type<T>();
 
@@ -419,49 +299,108 @@ fun get_validated_pyth_price<T>(
         config.max_age_secs,
     );
     let price_info = price_info_object.get_price_info_from_price_info_object();
+    let ewma_price_object = price_info.get_price_feed().get_ema_price();
 
-    // verify that the price feed id matches the one we have in our config.
+    validate_reading(
+        price_info.get_price_identifier().get_bytes(),
+        price.get_price().get_magnitude_if_positive(),
+        price.get_expo().get_magnitude_if_negative() as u8,
+        price.get_conf(),
+        ewma_price_object.get_price().get_magnitude_if_positive(),
+        type_config,
+    )
+}
+
+/// Legacy Pyth feed without staleness, confidence, or EWMA validation.
+/// Only the price feed id is checked.
+public(package) fun read_price_unsafe<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+): PythReading {
+    let type_config = registry.get_config_for_type<T>();
+    let price = pyth::get_price_unsafe(price_info_object);
+    let price_info = price_info_object.get_price_info_from_price_info_object();
+
+    validate_feed_id(price_info.get_price_identifier().get_bytes(), type_config);
+
+    PythReading {
+        price: price.get_price().get_magnitude_if_positive(),
+        decimals: price.get_expo().get_magnitude_if_negative() as u8,
+    }
+}
+
+/// `read_price` against Pyth Pro. Pyth Pro is a separate published package, so its
+/// `PriceInfoObject` is a distinct Move type; the validation is identical.
+public(package) fun read_price_pro<T>(
+    price_info_object: &PriceInfoObjectPro,
+    registry: &MarginRegistry,
+    clock: &Clock,
+): PythReading {
+    let config = registry.get_config<PythConfig>();
+    let type_config = registry.get_config_for_type<T>();
+
+    let price = pyth_pro_api::get_price_no_older_than(
+        price_info_object,
+        clock,
+        config.max_age_secs,
+    );
+    let price_info = price_info_object.get_price_info_from_price_info_object();
+    let ewma_price_object = price_info.get_price_feed().get_ema_price();
+
+    validate_reading(
+        price_info.get_price_identifier().get_bytes(),
+        price.get_price().get_magnitude_if_positive(),
+        price.get_expo().get_magnitude_if_negative() as u8,
+        price.get_conf(),
+        ewma_price_object.get_price().get_magnitude_if_positive(),
+        type_config,
+    )
+}
+
+/// `read_price_unsafe` against Pyth Pro.
+public(package) fun read_price_pro_unsafe<T>(
+    price_info_object: &PriceInfoObjectPro,
+    registry: &MarginRegistry,
+): PythReading {
+    let type_config = registry.get_config_for_type<T>();
+    let price = pyth_pro_api::get_price_unsafe(price_info_object);
+    let price_info = price_info_object.get_price_info_from_price_info_object();
+
+    validate_feed_id(price_info.get_price_identifier().get_bytes(), type_config);
+
+    PythReading {
+        price: price.get_price().get_magnitude_if_positive(),
+        decimals: price.get_expo().get_magnitude_if_negative() as u8,
+    }
+}
+
+/// Shared guards for a validated reading, so both feeds enforce one policy.
+fun validate_reading(
+    price_feed_id: vector<u8>,
+    pyth_price: u64,
+    pyth_decimals: u8,
+    pyth_conf: u64,
+    ewma_price: u64,
+    type_config: CoinTypeData,
+): PythReading {
+    validate_feed_id(price_feed_id, type_config);
+
     assert!(
-        price_info.get_price_identifier().get_bytes() == type_config.price_feed_id,
-        EPriceFeedIdMismatch,
+        (pyth_conf as u128) * 10_000 <= (type_config.max_conf_bps as u128) * (pyth_price as u128),
+        EInvalidPythPriceConf,
     );
 
-    let pyth_price = price.get_price().get_magnitude_if_positive();
-    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
-    let pyth_conf = price.get_conf();
-
-    // verify that the ewma price is not too different from the pyth price
-    let ewma_price_object = price_info.get_price_feed().get_ema_price();
-    let ewma_price = ewma_price_object.get_price().get_magnitude_if_positive();
     assert!(
         (pyth_price as u128) * 10_000 <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) &&
         (pyth_price as u128) * 10_000 >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128),
         EInvalidPythPrice,
     );
 
-    (pyth_price, pyth_decimals, pyth_conf, type_config)
+    PythReading { price: pyth_price, decimals: pyth_decimals }
 }
 
-/// Gets Pyth price data without staleness or confidence validation.
-/// Only validates price feed ID. Returns (pyth_price, pyth_decimals)
-public(package) fun get_pyth_price_unsafe<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-): (u64, u8) {
-    let type_config = registry.get_config_for_type<T>();
-
-    let price = pyth::get_price_unsafe(price_info_object);
-    let price_info = price_info_object.get_price_info_from_price_info_object();
-
-    assert!(
-        price_info.get_price_identifier().get_bytes() == type_config.price_feed_id,
-        EPriceFeedIdMismatch,
-    );
-
-    let pyth_price = price.get_price().get_magnitude_if_positive();
-    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
-
-    (pyth_price, pyth_decimals)
+fun validate_feed_id(price_feed_id: vector<u8>, type_config: CoinTypeData) {
+    assert!(price_feed_id == type_config.price_feed_id, EPriceFeedIdMismatch);
 }
 
 /// Gets the configuration for a given currency type.

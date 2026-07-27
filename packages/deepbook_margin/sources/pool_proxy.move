@@ -51,9 +51,8 @@ public fun update_current_price<BaseAsset, QuoteAsset>(
     // Calculate current price using safe oracle (with staleness, confidence, EWMA checks)
     let price = oracle::calculate_price<BaseAsset, QuoteAsset>(
         registry,
-        base_price_info_object,
-        quote_price_info_object,
-        clock,
+        oracle::read_price<BaseAsset>(base_price_info_object, registry, clock),
+        oracle::read_price<QuoteAsset>(quote_price_info_object, registry, clock),
     );
 
     registry.update_current_price(pool.id(), price, clock);
