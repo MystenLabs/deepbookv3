@@ -729,7 +729,7 @@ fun finite_range_premium(fx: &mut helpers::Fixture, market: &helpers::MarketBund
     );
     // The upper boundary is ~315 sigma out and clamps to zero, so this finite
     // range prices as the at-the-money digital itself.
-    helpers::assert_atm_entry_probability(quote.entry_probability());
+    helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
     quote.net_premium()
 }
 

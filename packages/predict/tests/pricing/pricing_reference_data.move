@@ -348,8 +348,14 @@ public fun svi_event_digest(s: u64): vector<u8> {
 
 /// True UP digital at the flow fixtures' at-the-money strike, `Phi(d2) -
 /// phi(d2)*w'(k)/(2*sqrt(w))` evaluated in float64 from the fixture's SVI
-/// parameters. Independent of the contract.
+/// parameters, with `a` and `b` carrying the remaining-time roll-down for the
+/// far `default_expiry_ms` horizon (ratio 1 - 3.2e-8). Independent of the contract.
 public fun flow_fixture_atm_up(): u64 { 499_993_690 }
+
+/// Same, for fixtures built at `short_expiry_ms`. Their roll-down ratio is
+/// 120_000/121_000, so the rolled `a` is materially below the raw value and
+/// the digital sits off the far-horizon reference by more than its budget.
+public fun flow_fixture_short_expiry_atm_up(): u64 { 499_993_716 }
 
 /// Absolute budget for the above: `normal_cdf` is documented to 20 raw units
 /// and the d2 path adds under one. Derived from math.move's precision

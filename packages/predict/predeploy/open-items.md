@@ -129,37 +129,6 @@ bound and accept the aggregation residual in the rounding policy, add a
 regression covering both directions, and narrow every exact-NAV claim to the
 accepted bound. (2026-07-17 clean-room gap audit)
 
-### P-17: The flow-fixture pricing reference does not model the roll-down
-
-**Severity:** Medium. **Expected-failing tests:** the
-`assert_atm_entry_probability` assertions reached from `short_expiry_ms`
-fixtures — `lifecycle_tests::one_x_lifecycle_fund_mint`,
-`settled_solvency_boundary_tests::finite_range_partial_close_preserves_live_solvency`,
-`no_double_pay_liquidation_tests::liquidated_order_pays_zero_once_and_only_once`,
-and the four `settlement_flow_tests` that price through `finite_range_premium`.
-
-`pricing_reference_data::flow_fixture_atm_up` evaluates the fixture surface at its
-raw `a` and `b`, with no remaining-time roll-down. That was invisible while the
-roll-down floored at 1e9: flooring snapped every fixture whose
-`remaining_ms / anchor_tte_ms` fell in `[0.5, 1)` onto the same effective `a`, so
-an un-rolled reference agreed with a rolled contract by construction, and the flow
-suite could not detect a roll-down defect at all. The same quantization is why
-`default_svi_a` had to be doubled to 2 when the roll-down landed — a raw 1 floored
-to 0 on any post-seed clock advance.
-
-Carrying the roll-down at 1e18 removes the quantizer, so the true ratio now reaches
-the price. The far `default_expiry_ms` fixtures are unaffected (ratio ≈ 1 − 3e-8,
-under one raw unit). The `short_expiry_ms` fixtures run at ratio
-`120_000 / 121_000` and land ~52 units from the reference against its 21-unit
-budget.
-
-**Action:** make the reference model the roll-down per fixture horizon — emit one
-`flow_fixture_atm_up` per distinct `(params_timestamp_ms, now_ms, expiry_ms)`
-triple the fixtures use, and route `assert_atm_entry_probability` to the matching
-one — or re-anchor the fixtures so the pricer loads at the parameter timestamp and
-the ratio is exactly 1. Which of the two is right is a reference-design decision,
-so the tests are left RED per unit-tests rule 15 rather than re-tuned.
-
 ### P-16: The pricing reference does not cover the deployed variance range
 
 **Severity:** Medium.

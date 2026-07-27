@@ -380,6 +380,22 @@ FLOW_FIXTURE = {
     "m": 10 * F / F,                   # default_svi_m
     "sigma": 1_000_000 / F,            # default_svi_sigma
 }
+# The fixtures price a surface that has ALREADY rolled down: the SVI tuple is
+# seeded at `live_source_timestamp_ms` and the pricer loads at `now_ms`, so `a`
+# and `b` are scaled by `remaining_ms / anchor_tte_ms` before pricing. Modelling
+# that here is what makes the reference independent of the contract: it was
+# omitted while the roll-down floored at 1e9, because flooring snapped every
+# fixture ratio in [0.5, 1) onto the same effective `a` and the un-rolled value
+# agreed by construction (predeploy open item P-17).
+PARAMS_TIMESTAMP_MS = 119_000          # test_constants::live_source_timestamp_ms
+NOW_MS = 120_000                       # test_constants::now_ms
+DEFAULT_EXPIRY_MS = 31_536_120_000     # test_constants::default_expiry_ms
+SHORT_EXPIRY_MS = 240_000              # test_constants::short_expiry_ms
+
+
+def roll_down_ratio(expiry_ms):
+    """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`."""
+    return (expiry_ms - NOW_MS) / (expiry_ms - PARAMS_TIMESTAMP_MS)
 # A surface in the region the 1e18 variance path newly admits: its per-strike
 # total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
 # aborted `ENonPositiveVariance` here while the analytical minimum still passed the
@@ -422,9 +438,14 @@ def flat_surface_atm_up():
     return round(phi(d2) * F)
 
 
-def flow_fixture_atm_up():
-    """True at-the-money UP digital for the flow fixtures, from first principles."""
-    a, b = FLOW_FIXTURE["a"], FLOW_FIXTURE["b"]
+def flow_fixture_atm_up(expiry_ms=DEFAULT_EXPIRY_MS):
+    """True at-the-money UP digital for the flow fixtures, from first principles.
+
+    `a` and `b` carry the remaining-time roll-down for `expiry_ms`; `rho`, `m`
+    and `sigma` are not rolled.
+    """
+    ratio = roll_down_ratio(expiry_ms)
+    a, b = FLOW_FIXTURE["a"] * ratio, FLOW_FIXTURE["b"] * ratio
     rho, m, sigma = FLOW_FIXTURE["rho"], FLOW_FIXTURE["m"], FLOW_FIXTURE["sigma"]
     k = 0.0                                            # strike == live forward
     x = k - m
@@ -591,8 +612,15 @@ def emit_move(scenarios, scen_points, budget_units):
     w("")
     w("/// True UP digital at the flow fixtures' at-the-money strike, `Phi(d2) -")
     w("/// phi(d2)*w\'(k)/(2*sqrt(w))` evaluated in float64 from the fixture\'s SVI")
-    w("/// parameters. Independent of the contract.")
+    w("/// parameters, with `a` and `b` carrying the remaining-time roll-down for the")
+    w("/// far `default_expiry_ms` horizon (ratio 1 - 3.2e-8). Independent of the contract.")
     w(f"public fun flow_fixture_atm_up(): u64 {{ {fmt_u64(flow_fixture_atm_up())} }}")
+    w("")
+    w("/// Same, for fixtures built at `short_expiry_ms`. Their roll-down ratio is")
+    w("/// 120_000/121_000, so the rolled `a` is materially below the raw value and")
+    w("/// the digital sits off the far-horizon reference by more than its budget.")
+    w("public fun flow_fixture_short_expiry_atm_up(): u64 { "
+      f"{fmt_u64(flow_fixture_atm_up(SHORT_EXPIRY_MS))} }}")
     w("")
     w("/// Absolute budget for the above: `normal_cdf` is documented to 20 raw units")
     w("/// and the d2 path adds under one. Derived from math.move\'s precision")

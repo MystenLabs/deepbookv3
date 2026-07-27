@@ -46,7 +46,7 @@ fun one_x_lifecycle_fund_mint() {
         test_constants::mint_quantity(),
         test_constants::leverage_one_x(),
     );
-    helpers::assert_atm_entry_probability(quote.entry_probability());
+    helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
     let premium = quote.net_premium();
     let order_id = fx.mint_bundle(
         &mut market,
