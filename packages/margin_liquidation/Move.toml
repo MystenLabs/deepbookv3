@@ -4,8 +4,12 @@ edition = "2024.alpha"
 version = "0.0.1"
 
 [dependencies]
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main"}
 deepbook = { local = "../deepbook" }
 deepbook_margin = { local = "../deepbook_margin" }
 
-[addresses]
-margin_liquidation = "0x0"
+# Pyth dependency
+pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-mainnet" }
+
+[dep-replacements.testnet]
+pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
