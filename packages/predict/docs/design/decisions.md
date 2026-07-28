@@ -470,7 +470,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   comparison, so the choice has to stay reversible from data rather than be
   frozen by a package upgrade. This does not supersede the Pyth-stale fallback
   decision above: under the default setting that fallback is unchanged, and with
-  the setting off there is nothing to fall back from.
+  the setting off there is nothing to fall back from. It does narrow that entry's
+  one sub-claim that an oversized normalized Pyth spot "still aborts under
+  Predict's pricing envelope" — `EPythSpotInvalid` guards the value the re-anchor
+  consumes, so with the setting off an oversized print is ignored along with every
+  other Pyth print instead of aborting.
 - **One global switch, live-read, valuation-locked.** It sits in `PricingConfig`
   with the freshness windows rather than in the per-expiry template snapshot, so
   it is not a contract term and it moves for every market at once — the same
@@ -480,7 +484,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   live markets on the same underlying disagree about the forward and produce a
   mixed pool NAV for no calibration benefit.
 - **No cross-source deviation guard comes with it.** Flipping the setting can move
-  every live mark by the current Pyth-vs-Block-Scholes divergence, bounded only by
-  the pricing-safe envelope both formulas already pass. Adding a band here would
+  every live mark by the current Pyth-vs-Block-Scholes divergence. Nothing bounds
+  that divergence directly: the envelope bounds each formula's inputs, and the
+  re-anchored forward is deliberately not re-checked against it (its own bound is
+  the basis factor, `forward <= 100 × pyth_spot`). Adding a band here would
   reintroduce exactly the state-triggered abort over an externally-controlled
   variable that response policy RP-5 removed. Disclosed in `docs/risks.md` instead.

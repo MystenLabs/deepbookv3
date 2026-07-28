@@ -26,7 +26,7 @@ Two timestamps are recorded on every accepted update, and the distinction is loa
 
 The generic Propbook lane records a latest update only when the generation timestamp is positive, not in the future relative to the on-chain landing time, and strictly advances the previous latest row. Future, zero, stale, or duplicate generation timestamps are no-ops rather than aborts — so a carried price leaves `latest` untouched and cannot renew Predict's freshness window. Freshness is a read-time concern: Predict compares the `source_timestamp_ms` in the returned `OracleRead` against the current clock and the configured freshness window.
 
-Because that window is measured against generation time, a Pyth stall longer than `pyth_spot_freshness_ms` correctly expires the Pyth spot and live pricing falls back to the Block Scholes forward, rather than re-anchoring the forward on a frozen spot.
+Because that window is measured against generation time, a Pyth stall longer than `pyth_spot_freshness_ms` correctly expires the Pyth spot and live pricing falls back to the Block Scholes forward, rather than re-anchoring the forward on a frozen spot. That is the behaviour while `use_pyth_spot_for_forward` is set; with it clear there is no re-anchor for a stall to resurrect in the first place.
 
 `PythFeed` deliberately does not decide whether Pyth is authoritative, derive a forward, or settle anything. It ingests, time-stamps, and exposes raw plus normalized source facts; freshness and feed binding are the consumer's responsibility.
 
