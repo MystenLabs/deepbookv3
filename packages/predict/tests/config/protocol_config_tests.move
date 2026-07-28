@@ -97,6 +97,16 @@ fun bump_version_watermark_at_current_version_aborts() {
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_use_pyth_spot_for_forward_during_valuation_aborts() {
+    // The flush marks every active market against one live-forward formula; letting
+    // the source change mid-valuation would mix two marks into one NAV.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.begin_valuation();
+    config.set_use_pyth_spot_for_forward(&admin_cap, false);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_pyth_spot_freshness_during_valuation_aborts() {
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     config.begin_valuation();
