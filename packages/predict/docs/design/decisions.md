@@ -466,12 +466,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `PricingConfig.use_pyth_spot_for_forward` selects between carrying the Block
   Scholes basis on the fresh Pyth spot (`pyth_spot × bs.forward / bs.spot`, the
   default and the prior fixed behaviour) and using the Block Scholes forward
-  directly. *Rationale:* calibration measures the Block Scholes forward as the
-  more accurate of the two, but two facts block adopting it outright — settlement
-  prices off Pyth, not off the Block Scholes spot, so pricing off Block Scholes
-  alone splits the live mark from the settlement source; and the Pyth spot's
-  freshness advantage over the Block Scholes forward has never been measured
-  against that accuracy gap. Colocation and other latency work can move that
+  directly. *Rationale:* off-chain calibration work reports the Block Scholes
+  forward as the more accurate input (not yet recorded under
+  `predeploy/evidence/` — treat it as a working result, not a measured one), but
+  two facts block adopting it outright — settlement prices off Pyth, not off the
+  Block Scholes spot, so pricing off Block Scholes alone splits the live mark
+  from the settlement source; and the Pyth spot's freshness advantage over the
+  Block Scholes forward has never been measured against that accuracy gap. Colocation and other latency work can move that
   comparison, so the choice has to stay reversible from data rather than be
   frozen by a package upgrade. This does not supersede the Pyth-stale fallback
   decision above: under the default setting that fallback is unchanged, and with

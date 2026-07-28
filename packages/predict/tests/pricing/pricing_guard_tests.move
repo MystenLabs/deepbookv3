@@ -322,7 +322,7 @@ fun fresh_pyth_spot_above_pricing_ceiling_aborts() {
 /// this file still passes under that change, so this is the pin.
 #[test]
 fun pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off() {
-    let (mut fx, mut oracle) = setup_live();
+    let (fx, mut oracle) = setup_live();
     fx.set_use_pyth_spot_for_forward_bundle(&mut oracle, false);
     let oversized_source_ms = test_constants::live_source_timestamp_ms() + 1;
     fx.set_pyth_bundle(&mut oracle, MAX_PRICING_SPOT + 1, oversized_source_ms);
