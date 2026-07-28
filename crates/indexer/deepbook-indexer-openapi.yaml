@@ -79,11 +79,11 @@ paths:
       tags: [Pyth]
       summary: Latest parsed Pyth Pro price updates
       description: |
-        Hermes-like HTTP interface backed by an authenticated Pyth Pro
-        background poller. The handler reads an in-memory snapshot and never
-        makes an upstream request. Feed IDs are numeric Pyth Pro IDs configured
-        on the server. This parsed response does not contain signed binary
-        payloads for on-chain use.
+        Hermes-like HTTP interface backed by authenticated Pyth Pro requests.
+        The first request after the server-local cache expires loads every
+        allowed feed into one timestamped snapshot. Concurrent misses share
+        that load, and requests within the cache TTL read it from memory. This
+        parsed response does not contain signed binary payloads for on-chain use.
       operationId: getLatestPythPriceUpdates
       parameters:
         - in: query
@@ -97,7 +97,7 @@ paths:
               minimum: 0
           style: form
           explode: true
-          description: Repeatable server-configured numeric Pyth Pro feed IDs.
+          description: Repeatable numeric Pyth Pro feed IDs from the server allowlist.
         - in: query
           name: parsed
           schema: { type: boolean, default: true }
@@ -105,7 +105,7 @@ paths:
         - in: query
           name: ignore_invalid_price_ids
           schema: { type: boolean, default: false }
-          description: Omit IDs not configured in the latest-price poller.
+          description: Omit IDs not present in the server allowlist.
       responses:
         "200":
           description: Parsed Hermes-like price response.
@@ -114,11 +114,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/PythPriceResponse"
         "400":
-          description: Invalid query or latest feed ID is not configured.
+          description: Invalid query or latest feed ID is not allowed.
+        "429":
+          description: Pyth Pro rate limit response.
         "503":
-          description: Pyth Pro is not configured or the snapshot is warming up.
+          description: Pyth Pro is not configured.
         "502":
-          description: The latest-price snapshot is stale.
+          description: Pyth Pro could not be reached or returned an invalid response.
 
   /pyth/updates/price/{publish_time}:
     get:
@@ -150,7 +152,7 @@ paths:
               minimum: 0
           style: form
           explode: true
-          description: Repeatable server-configured numeric Pyth Pro feed IDs.
+          description: Repeatable numeric Pyth Pro feed IDs from the server allowlist.
         - in: query
           name: parsed
           schema: { type: boolean, default: true }
@@ -167,7 +169,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/PythPriceResponse"
         "400":
-          description: Invalid query, timestamp, or feed ID is not configured.
+          description: Invalid query, timestamp, or feed ID is not allowed.
         "404":
           description: Pyth Pro has no price for a requested feed and timestamp.
         "429":

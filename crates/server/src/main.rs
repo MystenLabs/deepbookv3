@@ -5,8 +5,8 @@ use clap::Parser;
 use deepbook_server::pyth::{
     PythChartHistoryConfig, PythProConfig, DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES,
     DEFAULT_CHART_HISTORY_CACHE_TTL_SECS, DEFAULT_CHART_HISTORY_MAX_RANGE_SECS,
-    DEFAULT_HISTORY_CACHE_MAX_ENTRIES, DEFAULT_HISTORY_CACHE_TTL_SECS, DEFAULT_MAX_STALENESS_MS,
-    DEFAULT_POLL_INTERVAL_MS, DEFAULT_PRO_HISTORY_URL, DEFAULT_PRO_URL,
+    DEFAULT_HISTORY_CACHE_MAX_ENTRIES, DEFAULT_HISTORY_CACHE_TTL_SECS, DEFAULT_LATEST_CACHE_TTL_MS,
+    DEFAULT_PRO_HISTORY_URL, DEFAULT_PRO_URL,
 };
 use deepbook_server::server::run_server;
 use std::{net::SocketAddr, time::Duration};
@@ -65,15 +65,12 @@ struct Args {
     /// Authenticated Pyth Pro Router API base URL.
     #[clap(env, long, default_value = DEFAULT_PRO_URL)]
     pyth_pro_url: Url,
-    /// Pyth Pro numeric feed IDs refreshed by the latest-price poller.
+    /// Comma-separated Pyth Pro numeric feed IDs the public routes may serve.
     #[clap(env, long, value_delimiter = ',')]
-    pyth_pro_feed_ids: Vec<u32>,
-    /// Interval between Pyth Pro latest-price refreshes, in milliseconds.
-    #[clap(env, long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
-    pyth_pro_poll_interval_ms: u64,
-    /// Maximum age of the latest-price snapshot, in milliseconds.
-    #[clap(env, long, default_value_t = DEFAULT_MAX_STALENESS_MS)]
-    pyth_pro_max_staleness_ms: u64,
+    pyth_pro_allowed_feed_ids: Vec<u32>,
+    /// Cache lifetime for the shared latest-price snapshot, in milliseconds.
+    #[clap(env, long, default_value_t = DEFAULT_LATEST_CACHE_TTL_MS)]
+    pyth_pro_latest_cache_ttl_ms: u64,
     /// Cache lifetime for historical Pyth Pro prices, in seconds.
     #[clap(env, long, default_value_t = DEFAULT_HISTORY_CACHE_TTL_SECS)]
     pyth_pro_history_cache_ttl_secs: u64,
@@ -118,9 +115,8 @@ async fn main() -> Result<(), anyhow::Error> {
         live_ohclv_max_fills,
         admin_tokens,
         pyth_pro_url,
-        pyth_pro_feed_ids,
-        pyth_pro_poll_interval_ms,
-        pyth_pro_max_staleness_ms,
+        pyth_pro_allowed_feed_ids,
+        pyth_pro_latest_cache_ttl_ms,
         pyth_pro_history_cache_ttl_secs,
         pyth_pro_history_cache_max_entries,
         pyth_pro_history_url,
@@ -133,9 +129,8 @@ async fn main() -> Result<(), anyhow::Error> {
     // process arguments or clap's help output.
     let pyth_pro_api_key = std::env::var("PYTH_PRO_API_KEY").ok();
     let pyth_pro_config = PythProConfig {
-        feed_ids: pyth_pro_feed_ids,
-        poll_interval: Duration::from_millis(pyth_pro_poll_interval_ms),
-        max_staleness: Duration::from_millis(pyth_pro_max_staleness_ms),
+        allowed_feed_ids: pyth_pro_allowed_feed_ids,
+        latest_cache_ttl: Duration::from_millis(pyth_pro_latest_cache_ttl_ms),
         history_cache_ttl: Duration::from_secs(pyth_pro_history_cache_ttl_secs),
         history_cache_max_entries: pyth_pro_history_cache_max_entries,
         chart_history: PythChartHistoryConfig {

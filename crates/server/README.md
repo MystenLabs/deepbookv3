@@ -106,12 +106,11 @@ Configure the server with:
   environment and must remain in deployment secrets.
 - `PYTH_PRO_URL` — optional Router API base URL; defaults to
   `https://pyth-lazer-0.dourolabs.app/v1`.
-- `PYTH_PRO_FEED_IDS` — comma-separated numeric feed IDs the public routes are
-  allowed to serve and the background task refreshes. Other IDs are rejected
-  unless `ignore_invalid_price_ids=true`.
-- `PYTH_PRO_POLL_INTERVAL_MS` — latest refresh interval; defaults to `1000`.
-- `PYTH_PRO_MAX_STALENESS_MS` — maximum age of the latest successful snapshot;
-  defaults to `5000`.
+- `PYTH_PRO_ALLOWED_FEED_IDS` — comma-separated numeric feed IDs the public
+  price routes are allowed to serve. Other IDs are rejected unless
+  `ignore_invalid_price_ids=true`.
+- `PYTH_PRO_LATEST_CACHE_TTL_MS` — lifetime of the shared latest-price
+  snapshot; defaults to `1000`.
 - `PYTH_PRO_HISTORY_CACHE_TTL_SECS` — historical entry lifetime; defaults to
   `86400`.
 - `PYTH_PRO_HISTORY_CACHE_MAX_ENTRIES` — maximum historical
@@ -129,15 +128,36 @@ Configure the server with:
 - `PYTH_PRO_CHART_HISTORY_MAX_RANGE_SECS` — maximum `to - from` span accepted
   by the chart-history route; defaults to `86400` (24 hours).
 
-One background task requests all configured latest feeds in a single Pyth Pro
-call every polling interval, then atomically publishes the parsed snapshot.
-This polling is intentionally demand-independent so the first HTTP request has
-predictable latency; it only starts when both an API key and feed allowlist are
-configured, and the interval is tunable. Latest HTTP requests only read that
-snapshot and reuse serialized responses for repeated queries. Historical prices
-use a bounded Moka cache keyed by numeric feed ID and microsecond timestamp. A
-request containing several IDs fetches all cache misses in one Pyth Pro call,
-and concurrent requests for the same timestamp share the load.
+Latest prices are loaded on demand. The first request after the cache TTL
+expires fetches every allowed feed in one Pyth Pro call and stores the snapshot
+in memory with its fetch time. Moka coalesces concurrent misses into that same
+load, including requests for different feed subsets. Requests during the next
+second reuse the snapshot and cached serialized response; no Pyth quota is
+spent while the DeepBook server is idle. Historical prices use a separate
+bounded Moka cache keyed by numeric feed ID and microsecond timestamp. A request
+containing several IDs fetches all cache misses in one Pyth Pro call, and
+concurrent requests for the same timestamp share the load.
+
+The allowlists corresponding to the Pyth feeds currently exposed by
+`@mysten/deepbook-v3` are:
+
+| Network | SDK coin | Pyth Pro feed ID |
+| --- | --- | ---: |
+| Mainnet | DEEP | 173 |
+| Mainnet | SUI | 11 |
+| Mainnet | USDC | 7 |
+| Mainnet | WAL | 624 |
+| Mainnet | SUIUSDE | 2998 |
+| Mainnet | XBTC | 1598 |
+| Mainnet | USDSUI | 3049 |
+| Testnet | DEEP | 173 |
+| Testnet | SUI | 11 |
+| Testnet | DBUSDC | 7 |
+| Testnet | DBTC | 1 |
+
+The testnet SDK currently points its DEEP entry at a Hermes beta HFT feed.
+Pyth Pro feed 446 is the direct HFT symbol match but is inactive, so the
+testnet deployment uses the active DEEP/USD feed 173 for that coin instead.
 
 Chart history uses a separate bounded Moka cache keyed by canonical
 `(symbol, resolution, from, to)`. Symbol casing and minute-aligned query bounds
@@ -160,20 +180,20 @@ the repository root:
 ```bash
 export DATABASE_URL="postgres://postgres:postgrespw@localhost:5432/deepbook"
 export PYTH_PRO_API_KEY="<your-api-key>"
-export PYTH_PRO_FEED_IDS="1,2"
+export PYTH_PRO_ALLOWED_FEED_IDS="1,7,11,173"
 export PYTH_PRO_HISTORY_SYMBOLS="Crypto.BTC/USD,Crypto.ETH/USD"
 cargo run -p deepbook-server
 ```
 
 Keep the real API key in your local environment or secret manager; do not add
-it to the repository. The latest-price route returns `503` until the first
-background refresh succeeds.
+it to the repository. The first latest-price request may take one upstream
+round trip; requests sharing its cache window are served from memory.
 
-Example, using numeric Pyth Pro feed IDs `1` and `2`:
+Example, using numeric Pyth Pro feed IDs `1` and `7`:
 
 ```bash
 curl \
-  "http://localhost:9008/pyth/updates/price/latest?ids[]=1&ids[]=2&parsed=true"
+  "http://localhost:9008/pyth/updates/price/latest?ids[]=1&ids[]=7&parsed=true"
 
 curl \
   "http://localhost:9008/pyth/updates/price/1700000000?ids[]=1&parsed=true"

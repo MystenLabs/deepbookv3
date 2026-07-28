@@ -4,7 +4,7 @@
 use super::{
     client::PythProClient,
     config::{PythProConfig, LATEST_PRICE_PATH, PRICE_AT_TIMESTAMP_PATH, TRADINGVIEW_HISTORY_PATH},
-    error::{response_with_retry_after, PythError},
+    error::PythError,
     models::{
         normalize_history_symbol, ChartHistoryQuery, PriceQuery, PriceResponse, PriceUpdate,
         MICROS_PER_SECOND,
@@ -24,17 +24,14 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{
-    sync::{watch, Mutex},
-    time::{Instant, MissedTickBehavior},
-};
+use tokio::{sync::Mutex, time::Instant};
 use url::Url;
 
 const LATEST_RESPONSE_CACHE_MAX_ENTRIES: u64 = 128;
 
 struct LatestSnapshot {
     prices: HashMap<u32, Arc<PriceUpdate>>,
-    refreshed_at: Instant,
+    fetched_at: Instant,
     serialized_responses: Cache<Vec<u32>, Bytes>,
 }
 
@@ -48,9 +45,8 @@ struct HistoricalPriceKey {
 #[derive(Clone)]
 pub struct PythProxy {
     client: PythProClient,
-    feed_ids: Arc<HashSet<u32>>,
-    latest_snapshot: watch::Receiver<Option<Arc<LatestSnapshot>>>,
-    max_staleness: Duration,
+    allowed_feed_ids: Arc<Vec<u32>>,
+    latest: Cache<(), Arc<LatestSnapshot>>,
     history: Cache<HistoricalPriceKey, Arc<PriceUpdate>>,
     // A timestamp-scoped guard lets one upstream request batch all feed IDs
     // missing at that timestamp. Moka's per-key `try_get_with` cannot coalesce
@@ -68,12 +64,8 @@ impl PythProxy {
         mut config: PythProConfig,
     ) -> Result<Self, anyhow::Error> {
         anyhow::ensure!(
-            !config.poll_interval.is_zero(),
-            "Pyth Pro poll interval must be greater than zero"
-        );
-        anyhow::ensure!(
-            !config.max_staleness.is_zero(),
-            "Pyth Pro maximum staleness must be greater than zero"
+            !config.latest_cache_ttl.is_zero(),
+            "Pyth Pro latest cache TTL must be greater than zero"
         );
         anyhow::ensure!(
             !config.history_cache_ttl.is_zero(),
@@ -96,8 +88,8 @@ impl PythProxy {
             "Pyth Pro chart history maximum range must be greater than zero"
         );
 
-        config.feed_ids.sort_unstable();
-        config.feed_ids.dedup();
+        config.allowed_feed_ids.sort_unstable();
+        config.allowed_feed_ids.dedup();
         config.chart_history.symbols = config
             .chart_history
             .symbols
@@ -118,9 +110,9 @@ impl PythProxy {
                 "No Pyth Pro API key configured (PYTH_PRO_API_KEY); Pyth routes will return HTTP 503"
             );
         }
-        if config.feed_ids.is_empty() {
+        if config.allowed_feed_ids.is_empty() {
             tracing::warn!(
-                "No Pyth Pro feed IDs configured (PYTH_PRO_FEED_IDS); Pyth price routes cannot serve feeds"
+                "No Pyth Pro feed IDs configured (PYTH_PRO_ALLOWED_FEED_IDS); Pyth price routes cannot serve feeds"
             );
         }
         if config.chart_history.symbols.is_empty() {
@@ -129,6 +121,10 @@ impl PythProxy {
             );
         }
 
+        let latest = Cache::builder()
+            .max_capacity(1)
+            .time_to_live(config.latest_cache_ttl)
+            .build();
         let history = Cache::builder()
             .max_capacity(config.history_cache_max_entries)
             .time_to_live(config.history_cache_ttl)
@@ -141,22 +137,10 @@ impl PythProxy {
             .max_capacity(config.chart_history.cache_max_entries)
             .time_to_live(config.chart_history.cache_ttl)
             .build();
-        let (latest_sender, latest_snapshot) = watch::channel(None);
-
-        if client.is_configured() && !config.feed_ids.is_empty() {
-            spawn_latest_poller(
-                client.clone(),
-                config.feed_ids.clone(),
-                config.poll_interval,
-                latest_sender,
-            );
-        }
-
         Ok(Self {
             client,
-            feed_ids: Arc::new(config.feed_ids.into_iter().collect()),
-            latest_snapshot,
-            max_staleness: config.max_staleness,
+            allowed_feed_ids: Arc::new(config.allowed_feed_ids),
+            latest,
             history,
             history_load_guards,
             chart_history_symbols: Arc::new(config.chart_history.symbols.into_iter().collect()),
@@ -172,13 +156,11 @@ impl PythProxy {
             .ok_or(PythError::NotConfigured)
     }
 
-    #[cfg(test)]
-    pub(super) fn has_latest_snapshot(&self) -> bool {
-        self.latest_snapshot.borrow().is_some()
-    }
-
-    fn unconfigured_ids(&self, feed_ids: &[u32]) -> Option<Vec<u32>> {
-        if feed_ids.iter().all(|id| self.feed_ids.contains(id)) {
+    fn disallowed_ids(&self, feed_ids: &[u32]) -> Option<Vec<u32>> {
+        if feed_ids
+            .iter()
+            .all(|id| self.allowed_feed_ids.binary_search(id).is_ok())
+        {
             return None;
         }
 
@@ -187,7 +169,7 @@ impl PythProxy {
             feed_ids
                 .iter()
                 .copied()
-                .filter(|id| !self.feed_ids.contains(id) && seen.insert(*id))
+                .filter(|id| self.allowed_feed_ids.binary_search(id).is_err() && seen.insert(*id))
                 .collect(),
         )
     }
@@ -198,29 +180,34 @@ impl PythProxy {
         }
 
         if !query.ignore_invalid_price_ids {
-            if let Some(invalid_ids) = self.unconfigured_ids(&query.ids) {
+            if let Some(invalid_ids) = self.disallowed_ids(&query.ids) {
                 return (
                     StatusCode::BAD_REQUEST,
-                    format!("latest prices are not configured for feed IDs {invalid_ids:?}"),
+                    format!("latest prices are not allowed for feed IDs {invalid_ids:?}"),
                 )
                     .into_response();
             }
         }
 
-        let Some(snapshot) = self.latest_snapshot.borrow().clone() else {
-            return response_with_retry_after(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Pyth Pro latest prices are warming up",
-                Some("1"),
-            );
+        let client = self.client.clone();
+        let allowed_feed_ids = self.allowed_feed_ids.clone();
+        // Every query shares one snapshot key. Moka both expires it after the
+        // configured TTL and coalesces concurrent misses into one upstream
+        // request, even when callers ask for different feed subsets.
+        let snapshot = match self
+            .latest
+            .try_get_with((), async move {
+                load_latest_snapshot(client, allowed_feed_ids).await
+            })
+            .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(error) => return (*error).clone().into_response(),
         };
-        if snapshot.refreshed_at.elapsed() > self.max_staleness {
-            return (
-                StatusCode::BAD_GATEWAY,
-                "Pyth Pro latest-price snapshot is stale",
-            )
-                .into_response();
-        }
+        tracing::trace!(
+            cache_age_ms = snapshot.fetched_at.elapsed().as_millis(),
+            "Serving Pyth Pro latest-price snapshot"
+        );
 
         let response_key = query.ids.clone();
         let response_cache = snapshot.serialized_responses.clone();
@@ -256,10 +243,10 @@ impl PythProxy {
 
         let unique_ids = query.unique_ids();
         if !query.ignore_invalid_price_ids {
-            if let Some(invalid_ids) = self.unconfigured_ids(&unique_ids) {
+            if let Some(invalid_ids) = self.disallowed_ids(&unique_ids) {
                 return (
                     StatusCode::BAD_REQUEST,
-                    format!("historical prices are not configured for feed IDs {invalid_ids:?}"),
+                    format!("historical prices are not allowed for feed IDs {invalid_ids:?}"),
                 )
                     .into_response();
             }
@@ -276,7 +263,7 @@ impl PythProxy {
         let mut missing_ids = Vec::new();
         for feed_id in unique_ids
             .into_iter()
-            .filter(|id| self.feed_ids.contains(id))
+            .filter(|id| self.allowed_feed_ids.binary_search(id).is_ok())
         {
             let key = HistoricalPriceKey {
                 feed_id,
@@ -398,77 +385,39 @@ impl PythProxy {
     }
 }
 
-/// Intentionally demand-independent so the first request is served from memory
-/// with predictable latency. It only runs when an API key and feed allowlist
-/// are configured, and operators can tune the polling interval.
-fn spawn_latest_poller(
+async fn load_latest_snapshot(
     client: PythProClient,
-    feed_ids: Vec<u32>,
-    poll_interval: Duration,
-    latest_sender: watch::Sender<Option<Arc<LatestSnapshot>>>,
-) {
-    tokio::spawn(async move {
-        let configured_feed_ids: HashSet<_> = feed_ids.iter().copied().collect();
-        let mut ticker = tokio::time::interval(poll_interval);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-        loop {
-            tokio::select! {
-                _ = latest_sender.closed() => break,
-                _ = ticker.tick() => {
-                    match client.latest(feed_ids.clone()).await {
-                        Ok(payload) => {
-                            let mut prices = HashMap::with_capacity(feed_ids.len());
-                            let mut invalid = None;
-                            for feed in payload.price_feeds {
-                                let feed_id = feed.price_feed_id;
-                                if !configured_feed_ids.contains(&feed_id) {
-                                    continue;
-                                }
-                                match PriceUpdate::try_from(feed) {
-                                    Ok(price) => {
-                                        prices.insert(feed_id, Arc::new(price));
-                                    }
-                                    Err(error) => {
-                                        invalid = Some(error);
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if let Some(error) = invalid {
-                                tracing::error!(%error, "Invalid latest Pyth Pro price");
-                                continue;
-                            }
-                            let missing: Vec<_> = feed_ids
-                                .iter()
-                                .filter(|id| !prices.contains_key(id))
-                                .copied()
-                                .collect();
-                            if !missing.is_empty() {
-                                tracing::error!(
-                                    ?missing,
-                                    "Pyth Pro latest response omitted configured feeds"
-                                );
-                                continue;
-                            }
-
-                            latest_sender.send_replace(Some(Arc::new(LatestSnapshot {
-                                prices,
-                                refreshed_at: Instant::now(),
-                                serialized_responses: Cache::builder()
-                                    .max_capacity(LATEST_RESPONSE_CACHE_MAX_ENTRIES)
-                                    .build(),
-                            })));
-                        }
-                        Err(error) => {
-                            tracing::error!(%error, "Pyth Pro latest-price refresh failed");
-                        }
-                    }
-                }
-            }
+    allowed_feed_ids: Arc<Vec<u32>>,
+) -> Result<Arc<LatestSnapshot>, PythError> {
+    let payload = client.latest(allowed_feed_ids.as_ref().clone()).await?;
+    let mut prices = HashMap::with_capacity(allowed_feed_ids.len());
+    for feed in payload.price_feeds {
+        let feed_id = feed.price_feed_id;
+        if allowed_feed_ids.binary_search(&feed_id).is_err() {
+            continue;
         }
-    });
+        let price = PriceUpdate::try_from(feed).map_err(PythError::InvalidResponse)?;
+        prices.insert(feed_id, Arc::new(price));
+    }
+
+    let missing: Vec<_> = allowed_feed_ids
+        .iter()
+        .filter(|id| !prices.contains_key(id))
+        .copied()
+        .collect();
+    if !missing.is_empty() {
+        return Err(PythError::InvalidResponse(format!(
+            "latest response omitted allowed feed IDs {missing:?}"
+        )));
+    }
+
+    Ok(Arc::new(LatestSnapshot {
+        prices,
+        fetched_at: Instant::now(),
+        serialized_responses: Cache::builder()
+            .max_capacity(LATEST_RESPONSE_CACHE_MAX_ENTRIES)
+            .build(),
+    }))
 }
 
 fn serialize_price_response(prices: Vec<PriceUpdate>) -> Result<Bytes, PythError> {

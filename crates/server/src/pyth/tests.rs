@@ -26,11 +26,7 @@ use std::{
     },
     time::Duration,
 };
-use tokio::{
-    net::TcpListener,
-    task::JoinHandle,
-    time::{sleep, timeout},
-};
+use tokio::{net::TcpListener, task::JoinHandle, time::sleep};
 use url::Url;
 
 const TEST_TIMESTAMP_US: u64 = 1_700_000_000_123_456;
@@ -147,9 +143,8 @@ async fn spawn_mock(mock: MockPyth) -> (Url, JoinHandle<()>) {
 
 fn test_config(feed_ids: Vec<u32>) -> PythProConfig {
     PythProConfig {
-        feed_ids,
-        poll_interval: Duration::from_secs(60),
-        max_staleness: Duration::from_secs(30),
+        allowed_feed_ids: feed_ids,
+        latest_cache_ttl: Duration::from_secs(1),
         history_cache_ttl: Duration::from_secs(60),
         history_cache_max_entries: 100,
         chart_history: PythChartHistoryConfig {
@@ -161,21 +156,8 @@ fn test_config(feed_ids: Vec<u32>) -> PythProConfig {
     }
 }
 
-async fn wait_for_latest(proxy: &PythProxy) {
-    timeout(Duration::from_secs(1), async {
-        loop {
-            if proxy.has_latest_snapshot() {
-                return;
-            }
-            sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("latest-price poller did not populate the snapshot");
-}
-
 #[tokio::test]
-async fn latest_handler_reads_only_the_background_snapshot() {
+async fn latest_handler_loads_lazily_and_shares_one_ttl_snapshot() {
     let mock = MockPyth {
         delay: Duration::from_millis(40),
         ..Default::default()
@@ -187,17 +169,23 @@ async fn latest_handler_reads_only_the_background_snapshot() {
         test_config(vec![1, 2]),
     )
     .unwrap();
-    let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy.clone()))).await;
-    let url = server_url
+    assert_eq!(mock.latest_requests.load(Ordering::SeqCst), 0);
+    let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
+    let both_url = server_url
         .join("/pyth/updates/price/latest?ids%5B%5D=2&ids%5B%5D=1&parsed=true")
         .unwrap();
+    let one_url = server_url
+        .join("/pyth/updates/price/latest?ids%5B%5D=1&parsed=true")
+        .unwrap();
 
-    let warming = reqwest::get(url.clone()).await.unwrap();
-    assert_eq!(warming.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(warming.headers().get(RETRY_AFTER).unwrap(), "1");
-
-    wait_for_latest(&proxy).await;
-    let responses = join_all((0..20).map(|_| reqwest::get(url.clone()))).await;
+    let responses = join_all((0..20).map(|index| {
+        reqwest::get(if index % 2 == 0 {
+            both_url.clone()
+        } else {
+            one_url.clone()
+        })
+    }))
+    .await;
     for response in responses {
         let response = response.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -208,7 +196,7 @@ async fn latest_handler_reads_only_the_background_snapshot() {
     }
     assert_eq!(mock.latest_requests.load(Ordering::SeqCst), 1);
 
-    let response = reqwest::get(url).await.unwrap();
+    let response = reqwest::get(both_url.clone()).await.unwrap();
     let json = response.json::<Value>().await.unwrap();
     assert_eq!(json["parsed"][0]["id"], "2");
     assert_eq!(json["parsed"][1]["id"], "1");
@@ -217,41 +205,91 @@ async fn latest_handler_reads_only_the_background_snapshot() {
         TEST_TIMESTAMP_US.to_string()
     );
 
-    let captured = mock.captured.lock().unwrap();
-    assert_eq!(captured[0].0, "/v1/latest_price");
-    assert_eq!(captured[0].1, "Bearer test-key");
-    assert_eq!(captured[0].2["priceFeedIds"], json!([1, 2]));
-    assert_eq!(captured[0].2["channel"], "fixed_rate@1000ms");
-    assert_eq!(captured[0].2["parsed"], true);
-    assert!(captured[0].2.get("timestamp").is_none());
+    {
+        let captured = mock.captured.lock().unwrap();
+        assert_eq!(captured[0].0, "/v1/latest_price");
+        assert_eq!(captured[0].1, "Bearer test-key");
+        assert_eq!(captured[0].2["priceFeedIds"], json!([1, 2]));
+        assert_eq!(captured[0].2["channel"], "fixed_rate@1000ms");
+        assert_eq!(captured[0].2["parsed"], true);
+        assert!(captured[0].2.get("timestamp").is_none());
+    }
+
+    sleep(Duration::from_millis(1_100)).await;
+    assert_eq!(
+        reqwest::get(both_url).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(mock.latest_requests.load(Ordering::SeqCst), 2);
 
     server_task.abort();
     upstream_task.abort();
 }
 
 #[tokio::test]
-async fn stale_latest_snapshot_is_not_served() {
+async fn latest_errors_are_not_cached() {
+    #[derive(Clone, Default)]
+    struct Count(Arc<AtomicUsize>);
+
+    async fn rate_limited(State(count): State<Count>) -> impl IntoResponse {
+        count.0.fetch_add(1, Ordering::SeqCst);
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(RETRY_AFTER, "3")],
+            "rate limited",
+        )
+    }
+
+    let count = Count::default();
+    let upstream = Router::new()
+        .route("/v1/latest_price", post(rate_limited))
+        .with_state(count.clone());
+    let (upstream_url, upstream_task) = spawn(upstream).await;
+    let proxy = PythProxy::new(
+        upstream_url.join("/v1").unwrap(),
+        Some("test-key".to_owned()),
+        test_config(vec![1]),
+    )
+    .unwrap();
+    let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
+    let url = server_url
+        .join("/pyth/updates/price/latest?ids%5B%5D=1")
+        .unwrap();
+
+    for _ in 0..2 {
+        let response = reqwest::get(url.clone()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers().get(RETRY_AFTER).unwrap(), "3");
+        assert_eq!(response.text().await.unwrap(), "rate limited");
+    }
+    assert_eq!(count.0.load(Ordering::SeqCst), 2);
+
+    server_task.abort();
+    upstream_task.abort();
+}
+
+#[tokio::test]
+async fn price_routes_reject_disallowed_feeds_without_loading() {
     let mock = MockPyth::default();
-    let (upstream_url, upstream_task) = spawn_mock(mock).await;
-    let mut config = test_config(vec![1]);
-    config.max_staleness = Duration::from_millis(20);
-    let proxy = PythProxy::new(upstream_url, Some("test-key".to_owned()), config).unwrap();
-    wait_for_latest(&proxy).await;
-    sleep(Duration::from_millis(30)).await;
+    let (upstream_url, upstream_task) = spawn_mock(mock.clone()).await;
+    let proxy = PythProxy::new(
+        upstream_url,
+        Some("test-key".to_owned()),
+        test_config(vec![1]),
+    )
+    .unwrap();
     let (server_url, server_task) = spawn(Router::new().nest("/pyth", routes(proxy))).await;
 
-    let response = reqwest::get(
-        server_url
-            .join("/pyth/updates/price/latest?ids%5B%5D=1")
-            .unwrap(),
-    )
-    .await
-    .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    assert_eq!(
-        response.text().await.unwrap(),
-        "Pyth Pro latest-price snapshot is stale"
-    );
+    for path in [
+        "/pyth/updates/price/latest?ids%5B%5D=2",
+        "/pyth/updates/price/1700000000?ids%5B%5D=2",
+    ] {
+        let response = reqwest::get(server_url.join(path).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(response.text().await.unwrap().contains("not allowed"));
+    }
+    assert_eq!(mock.latest_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(mock.history_requests.load(Ordering::SeqCst), 0);
 
     server_task.abort();
     upstream_task.abort();
@@ -416,18 +454,19 @@ async fn chart_history_normalizes_and_coalesces_requests() {
     }
     assert_eq!(mock.chart_history_requests.load(Ordering::SeqCst), 1);
 
-    let captured = mock.chart_history_captured.lock().unwrap();
-    assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0].0, "/v1/fixed_rate@200ms/history");
-    assert_eq!(captured[0].2, "Bearer test-key");
-    let query: HashMap<_, _> = url::form_urlencoded::parse(captured[0].1.as_bytes())
-        .into_owned()
-        .collect();
-    assert_eq!(query["symbol"], "crypto.btc/usd");
-    assert_eq!(query["resolution"], "1");
-    assert_eq!(query["from"], "1700000100");
-    assert_eq!(query["to"], "1700003640");
-    drop(captured);
+    {
+        let captured = mock.chart_history_captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].0, "/v1/fixed_rate@200ms/history");
+        assert_eq!(captured[0].2, "Bearer test-key");
+        let query: HashMap<_, _> = url::form_urlencoded::parse(captured[0].1.as_bytes())
+            .into_owned()
+            .collect();
+        assert_eq!(query["symbol"], "crypto.btc/usd");
+        assert_eq!(query["resolution"], "1");
+        assert_eq!(query["from"], "1700000100");
+        assert_eq!(query["to"], "1700003640");
+    }
 
     let equivalent_url = server_url
         .join(
@@ -493,6 +532,20 @@ fn chart_history_max_range_must_be_nonzero() {
     assert_eq!(
         error.to_string(),
         "Pyth Pro chart history maximum range must be greater than zero"
+    );
+}
+
+#[test]
+fn latest_cache_ttl_must_be_nonzero() {
+    let mut config = test_config(Vec::new());
+    config.latest_cache_ttl = Duration::ZERO;
+
+    let error = PythProxy::new(Url::parse(DEFAULT_PRO_URL).unwrap(), None, config)
+        .err()
+        .expect("zero latest cache TTL must be rejected");
+    assert_eq!(
+        error.to_string(),
+        "Pyth Pro latest cache TTL must be greater than zero"
     );
 }
 

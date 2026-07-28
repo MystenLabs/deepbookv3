@@ -6,8 +6,7 @@ use url::Url;
 
 pub const DEFAULT_PRO_URL: &str = "https://pyth-lazer-0.dourolabs.app/v1";
 pub const DEFAULT_PRO_HISTORY_URL: &str = "https://pyth.dourolabs.app/v1";
-pub const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
-pub const DEFAULT_MAX_STALENESS_MS: u64 = 5_000;
+pub const DEFAULT_LATEST_CACHE_TTL_MS: u64 = 1_000;
 pub const DEFAULT_HISTORY_CACHE_TTL_SECS: u64 = 86_400;
 pub const DEFAULT_HISTORY_CACHE_MAX_ENTRIES: u64 = 10_000;
 pub const DEFAULT_CHART_HISTORY_CACHE_TTL_SECS: u64 = 60;
@@ -46,9 +45,8 @@ impl Default for PythChartHistoryConfig {
 
 #[derive(Clone, Debug)]
 pub struct PythProConfig {
-    pub feed_ids: Vec<u32>,
-    pub poll_interval: Duration,
-    pub max_staleness: Duration,
+    pub allowed_feed_ids: Vec<u32>,
+    pub latest_cache_ttl: Duration,
     pub history_cache_ttl: Duration,
     pub history_cache_max_entries: u64,
     pub chart_history: PythChartHistoryConfig,
@@ -57,9 +55,8 @@ pub struct PythProConfig {
 impl Default for PythProConfig {
     fn default() -> Self {
         Self {
-            feed_ids: Vec::new(),
-            poll_interval: Duration::from_millis(DEFAULT_POLL_INTERVAL_MS),
-            max_staleness: Duration::from_millis(DEFAULT_MAX_STALENESS_MS),
+            allowed_feed_ids: Vec::new(),
+            latest_cache_ttl: Duration::from_millis(DEFAULT_LATEST_CACHE_TTL_MS),
             history_cache_ttl: Duration::from_secs(DEFAULT_HISTORY_CACHE_TTL_SECS),
             history_cache_max_entries: DEFAULT_HISTORY_CACHE_MAX_ENTRIES,
             chart_history: PythChartHistoryConfig::default(),
