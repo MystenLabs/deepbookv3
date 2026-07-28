@@ -4,11 +4,11 @@
     {
       "id": "settled-d031-oracle-guards",
       "expect": "settled",
-      "why": "D031: the oracle basis/deviation drift guards were REMOVED by design — the BS operator is trusted (block_scholes_oracle::update is an unsigned stub). A finding that re-proposes them must be tagged settled (D031), not raised as new.",
-      "severity": "High", "title": "BS spot/forward/SVI pushes are accepted without a basis or deviation sanity guard",
-      "location": "packages/predict/sources/pricing/pricing.move (surface envelope) + block_scholes_oracle/sources/update.move",
-      "claim": "A compromised oracle operator can push an arbitrary forward/sigma and move the binary price with no on-chain deviation bound.",
-      "scenario": "Operator pushes a forward far from spot; pricing accepts it within the forward>0 / |rho|<=1 / sigma-band envelope and mints/redeems at a manipulated probability.",
+      "why": "D031: the oracle basis/deviation drift guards were REMOVED by design — Block Scholes is trusted for data quality (values are provider-signed via the external bs_oracle verifier; the relayer is untrusted). A finding that re-proposes the guards must be tagged settled (D031), not raised as new.",
+      "severity": "High", "title": "BS spot/forward/SVI observations are accepted without a basis or deviation sanity guard",
+      "location": "packages/predict/sources/pricing/pricing.move (surface envelope) + propbook/sources/feeds/block_scholes_store.move",
+      "claim": "A compromised provider signer can push an arbitrary forward/sigma and move the binary price with no on-chain deviation bound.",
+      "scenario": "A signed batch carries a forward far from spot; pricing accepts it within the forward>0 / |rho|<=1 / sigma-band envelope and mints/redeems at a manipulated probability.",
       "impact": "correctness", "confidence": "high",
       "recommendation": "Add a max basis/deviation guard vs Pyth spot.",
       "settled_ref": "", "evidence": "pricing envelope enforces forward>0/basis/|rho|<=1/sigma-band only; no deviation cap"

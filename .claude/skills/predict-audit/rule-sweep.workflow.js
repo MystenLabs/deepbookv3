@@ -36,7 +36,7 @@ const groundTruth = A.groundTruth || '(none provided)'
 const maxFindings = A.maxFindings || 12
 const FILES = Array.isArray(A.files) && A.files.length ? A.files : null
 
-const ALL = 'all four packages (predict + propbook + account + block_scholes_oracle) sources, and tests where the rule names tests'
+const ALL = 'all three packages (predict + propbook + account) sources, and tests where the rule names tests'
 
 // Mechanical/local rule families (refreshed to the post-split module map; contextual 6/8/9 moved to the walk).
 const RULE_FAMILIES = [

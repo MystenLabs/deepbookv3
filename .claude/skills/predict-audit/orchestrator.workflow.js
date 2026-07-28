@@ -148,7 +148,7 @@ const focusBlock = FILES
   : ''
 
 function finderPrompt(lane, round, known) {
-  return `You are the "${lane.key}" lens of a deep, prior-aware smart-contract audit of DeepBook Predict and its split-out sibling packages (propbook, block_scholes_oracle, account). This is a MAXIMAL last-line-of-defense audit — be exhaustive.
+  return `You are the "${lane.key}" lens of a deep, prior-aware smart-contract audit of DeepBook Predict and its split-out sibling packages (propbook, account). This is a MAXIMAL last-line-of-defense audit — be exhaustive.
 
 FIRST read these two files and follow them exactly:
   1. ${SKILL}/primer.md          (protocol, current module map, scope, prior-awareness, empirical toolbox, report format)

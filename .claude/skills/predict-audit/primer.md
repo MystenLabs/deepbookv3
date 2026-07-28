@@ -4,9 +4,10 @@ Neutral, binding orientation for every audit lens. Read this in full before your
 NO risk opinions — only the protocol, scope, the **current** module map, the glossary, the empirical
 toolbox, the discipline, and the report format. If you cannot read this file, stop and ask for it.
 
-> This map reflects the **post-split** code (oracle extracted to `propbook` + `block_scholes_oracle`,
-> math to `fixed_math`, custody to `account`). The older `.claude/predict-review/` files predate this
-> rework — do not trust their module names. Trust the tree below; verify against current HEAD.
+> This map reflects the **post-split** code (oracle extracted to `propbook`, math to `fixed_math`,
+> custody to `account`; Block Scholes data is signature-verified by the external `bs_oracle` package).
+> The older `.claude/predict-review/` files predate this rework — do not trust their module names.
+> Trust the tree below; verify against current HEAD.
 
 ---
 
@@ -15,15 +16,18 @@ A trader opens **leveraged binary (cash-or-nothing range digital) positions** on
 lands in a strike range at a fixed expiry. Positions are minted/redeemed in DUSDC against a per-expiry
 `ExpiryMarket`; a strike-exposure engine tracks payout liability and NAV; an LP vault (PLP) funds the
 backing and is priced against a full-pool NAV. Prices come from Pyth Lazer (signed spot) plus
-operator-pushed Block-Scholes spot/forward/SVI surface data — both now served by the standalone
+provider-signed Block Scholes spot/forward/SVI surface data — both now served by the standalone
 `propbook` package, which `predict` consumes but does not own.
 
 ## Scope (read-only)
-- Audit the Move **source** of four packages: `packages/{predict,propbook,block_scholes_oracle,account}/sources/**`. Scope is FIXED to these four — do NOT broaden to deepbook core or other repo packages. Upgrade / object-layout migration correctness is out of scope (pre-deploy).
+- Audit the Move **source** of three packages: `packages/{predict,propbook,account}/sources/**`. Scope is FIXED to these three — do NOT broaden to deepbook core or other repo packages. Upgrade / object-layout migration correctness is out of scope (pre-deploy).
 - IGNORE every `packages/*/build/**` (generated copies). Treat `tests/**` as reference (and as coverage
   evidence) unless your lens says otherwise.
-- Never modify source. You may read dependency source (`deepbook`, `dusdc`, `pyth_lazer`, `fixed_math`)
-  to understand cross-package trust, but every finding must be about the four in-scope packages.
+- Never modify source. You may read dependency source (`deepbook`, `dusdc`, `pyth_lazer`, `bs_oracle`,
+  `fixed_math`) to understand cross-package trust, but every finding must be about the three in-scope
+  packages. `bs_oracle` is Block Scholes' externally owned signature verifier (git-pinned; linked on
+  testnet via `dep-replacements`, never republished): read it to reason about the trust boundary — its
+  internals are the provider's to audit.
 
 ## Actors / roles
 - **Trader** — acts through `predict_account` (wraps an `account::Account` for DUSDC custody); authorizes
@@ -69,15 +73,16 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 - `strike_exposure/index/liquidation_book.move` — paged, priority-sorted liquidation candidate index + passive-watermark scan.
 - `events/` — `order_events`, `vault_events`, `builder_code_events`, `config_events` (structs only).
 
-### `propbook` (7 modules — the extracted oracle)
-- `registry.move` — `OracleRegistry`: source/feed creation (`create_and_share_pyth_feed`, `create_and_share_block_scholes_{spot,forward,svi}_feed`), per-underlying/per-expiry feed binding + typed lookups.
+### `propbook` (6 modules — the extracted oracle)
+- `registry.move` — `OracleRegistry`: Pyth feed creation + binding (`create_and_share_pyth_feed`, `bind_pyth_to_underlying`) and the admin-gated `create_and_share_block_scholes_stores`, which creates one underlying's value/SVI store pair canonical-at-creation (no separate BS bind step); typed canonical lookups.
 - `feeds/pyth_feed.move` — Pyth Lazer spot ingestion (normalize, stale/future/zero gating) + exact-timestamp minute history used for **settlement**.
-- `feeds/block_scholes_spot_feed.move`, `feeds/block_scholes_forward_feed.move`, `feeds/block_scholes_svi_feed.move` — the three split BS surface feeds (one object per (source, expiry) for forward/svi; spot is per-source). Store raw BS source fields; the pricing-safe envelope is enforced by the consumer in `predict::pricing`.
-- `oracle_lane/oracle_lane.move` — generic per-lane observation store (latest + exact-timestamp inserts) shared by the feeds.
+- `feeds/block_scholes_sid.move` — derives the Block Scholes series id (version | kind | underlying | value scale | expiry) from a slot's own identity; the shared client/package sid contract. Reads derive the id they want — nothing accepts one from a caller — so a valid observation can only land in the slot it was signed for.
+- `feeds/block_scholes_store.move` — the two per-underlying stores (`BlockScholesValueStore` = spot + forwards, one signed value batch; `BlockScholesSVIStore` = SVI sets, its own signed batch), keyed by signed sid. Writes enter only through `apply_{value,svi}_batch`, which take the verifier's hot-potato batch by value; per-series ordering is lexicographic on (model time, envelope time), so the stored observation is relayer-submission-order-independent; malformed timestamps (model after envelope), foreign, stale, and duplicate entries are skipped, never aborted. Values stay raw `u128` at provider scale — the pricing-safe envelope is enforced by the consumer in `predict::pricing`.
+- `oracle_lane/oracle_lane.move` — generic per-lane observation store (latest + exact-timestamp inserts) used by the Pyth feed.
 - `constants.move` — propbook constants/sentinels.
 
-### `block_scholes_oracle` (1 module — the BS update payload)
-- `update.move` — the Block-Scholes update struct family (`SpotUpdate`/`ForwardUpdate`/`SVIUpdate`, `SVIParams`) and constructors. **NOTE: a stub — values are operator-supplied, not signature-verified** (see settled D031 trust model; lens 03/08 trace what gates it).
+### External dependency: `bs_oracle` (Block Scholes' signature verifier — trust boundary, not audited surface)
+- Block Scholes publishes and owns this package (git-pinned dep; linked on testnet via `dep-replacements`, never republished — a republish would change the `type_name::original_id` domain separator and reject every provider signature). `verify::verify_and_create_{value,svi}_batch` checks a secp256k1/keccak signature against the shared `SignerRegistry` and mints hot-potato `ValueBatch`/`SviBatch` — holding one IS the proof of a valid provider signature, so the relayer that lands it is untrusted by construction. Read it for trust-boundary reasoning (lens 03/08); findings about its internals belong to the provider.
 
 ### `account` (3 modules — extracted custody)
 - `account.move` — `Account` object + `Auth` (owner/app kinds); stored-balance deposit/withdraw; `settle` at the wrapper address; app-auth via `Permit`.
