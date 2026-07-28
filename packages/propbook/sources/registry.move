@@ -10,6 +10,7 @@ module propbook::registry;
 use propbook::{
     block_scholes_forward_feed::{Self, BlockScholesForwardFeed},
     block_scholes_spot_feed::{Self, BlockScholesSpotFeed},
+    block_scholes_store,
     block_scholes_svi_feed::{Self, BlockScholesSVIFeed},
     pyth_feed::{Self, PythFeed}
 };
@@ -23,6 +24,7 @@ const EBindingAlreadyExists: u64 = 4;
 const EBlockScholesSpotNotBound: u64 = 5;
 const EWrongBlockScholesSource: u64 = 6;
 const EBindingNotFound: u64 = 7;
+const EBlockScholesStoresAlreadyExist: u64 = 8;
 
 // Stable discriminators stored in source keys, binding keys, metadata, and events.
 public(package) macro fun kind_pyth(): u8 {
@@ -68,6 +70,16 @@ public struct OracleRegistry has key {
     bindings: Table<OracleBindingKey, OracleMetadata>,
     /// Provider/source pair to the sole underlying it may serve.
     source_bindings: Table<OracleSourceKey, u32>,
+    /// Underlying to its Block Scholes store pair. Stores carry no source id — a signed series
+    /// names its own underlying — so they bind directly here rather than through the source
+    /// catalog, and an underlying has at most one pair for its lifetime.
+    block_scholes_stores: Table<u32, BlockScholesStorePair>,
+}
+
+/// The two shared objects holding one underlying's Block Scholes series.
+public struct BlockScholesStorePair has copy, drop, store {
+    value_store_id: ID,
+    svi_store_id: ID,
 }
 
 /// Unique identity of a provider source within one oracle kind.
@@ -106,6 +118,13 @@ public struct OracleBound has copy, drop {
     source_id: u32,
     propbook_oracle_id: ID,
     value_kind: u8,
+}
+
+/// Records the creation of an underlying's canonical Block Scholes store pair.
+public struct BlockScholesStoresRegistered has copy, drop {
+    propbook_underlying_id: u32,
+    value_store_id: ID,
+    svi_store_id: ID,
 }
 
 /// Records an atomic replacement of an existing canonical binding slot.
@@ -194,6 +213,32 @@ public fun propbook_pyth_id_for_underlying(
     propbook_underlying_id: u32,
 ): Option<ID> {
     registry.canonical_oracle_id(pyth_binding_key(propbook_underlying_id))
+}
+
+/// Resolves the canonical Block Scholes value store, which a consumer checks its argument against
+/// before pricing from it: a store names its own underlying, but only this binding says which store
+/// is the one for that underlying.
+public fun propbook_block_scholes_value_store_id_for_underlying(
+    registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+): Option<ID> {
+    if (!registry.block_scholes_stores.contains(propbook_underlying_id)) {
+        option::none()
+    } else {
+        option::some(registry.block_scholes_stores.borrow(propbook_underlying_id).value_store_id)
+    }
+}
+
+/// Resolves the canonical Block Scholes SVI store. Same trust role as the value store binding.
+public fun propbook_block_scholes_svi_store_id_for_underlying(
+    registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+): Option<ID> {
+    if (!registry.block_scholes_stores.contains(propbook_underlying_id)) {
+        option::none()
+    } else {
+        option::some(registry.block_scholes_stores.borrow(propbook_underlying_id).svi_store_id)
+    }
 }
 
 /// Resolves the canonical Block Scholes spot feed for external composition or discovery.
@@ -291,6 +336,36 @@ public fun create_and_share_pyth_feed(
     let propbook_pyth_id = pyth_feed::create_and_share(pyth_source_id, ctx);
     registry.record_source(source_key, propbook_pyth_id);
     propbook_pyth_id
+}
+
+/// Create and share this underlying's Block Scholes store pair and record it as canonical.
+/// Admin-gated and once per underlying: the binding is what lets a consumer reject a store it was
+/// not meant to price from, so a second pair would leave two stores each able to claim the
+/// underlying with nothing to choose between them.
+public fun create_and_share_block_scholes_stores(
+    registry: &mut OracleRegistry,
+    _admin_cap: &RegistryAdminCap,
+    propbook_underlying_id: u32,
+    ctx: &mut TxContext,
+): (ID, ID) {
+    assert!(
+        !registry.block_scholes_stores.contains(propbook_underlying_id),
+        EBlockScholesStoresAlreadyExist,
+    );
+    let value_store_id = block_scholes_store::create_and_share_value_store(
+        propbook_underlying_id,
+        ctx,
+    );
+    let svi_store_id = block_scholes_store::create_and_share_svi_store(propbook_underlying_id, ctx);
+    registry
+        .block_scholes_stores
+        .add(propbook_underlying_id, BlockScholesStorePair { value_store_id, svi_store_id });
+    event::emit(BlockScholesStoresRegistered {
+        propbook_underlying_id,
+        value_store_id,
+        svi_store_id,
+    });
+    (value_store_id, svi_store_id)
 }
 
 /// Create and share the Propbook BS spot wrapper for `bs_source_id`, then record
@@ -601,6 +676,7 @@ fun new(ctx: &mut TxContext): OracleRegistry {
         sources: table::new(ctx),
         bindings: table::new(ctx),
         source_bindings: table::new(ctx),
+        block_scholes_stores: table::new(ctx),
     }
 }
 

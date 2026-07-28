@@ -268,21 +268,15 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
         admin_cap,
         propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     ) = setup_registered_feeds();
     let period_ms = constants::five_minutes_ms!();
     let expected_expiry = 2 * period_ms;
 
     scenario.next_tx(test_constants::admin());
     bind_pyth_spot_and_surface(
-        &scenario,
+        &mut scenario,
         &propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     );
     scenario.next_tx(test_constants::admin());
 
@@ -381,19 +375,13 @@ fun create_expiry_market_skips_occupied_lower_rank_collision() {
         admin_cap,
         propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_pyth_spot_and_surface(
-        &scenario,
+        &mut scenario,
         &propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     );
     scenario.next_tx(test_constants::admin());
 
@@ -536,9 +524,6 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
         admin_cap,
         _propbook_admin_cap,
         _pyth_id,
-        _bs_spot_id,
-        _bs_forward_id,
-        _bs_svi_id,
     ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
@@ -562,18 +547,17 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_manager::EBlockScholesSpotFeedNotBoundToUnderlying)]
-fun create_expiry_market_with_unbound_block_scholes_spot_feed_aborts() {
-    // Only the Pyth feed is bound to the underlying; the BS spot check then fails.
+/// An underlying with a bound Pyth feed but no Block Scholes store pair has nowhere to price from,
+/// so market creation must refuse it. There is no "registered but unbound" store state to test
+/// separately: a pair is created and bound in one step.
+#[test, expected_failure(abort_code = market_manager::EBlockScholesValueStoreNotBoundToUnderlying)]
+fun create_expiry_market_without_block_scholes_stores_aborts() {
     let (
         mut scenario,
         registry_id,
         admin_cap,
         propbook_admin_cap,
         pyth_id,
-        _bs_spot_id,
-        _bs_forward_id,
-        _bs_svi_id,
     ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
@@ -600,49 +584,10 @@ fun create_expiry_market_with_unbound_block_scholes_spot_feed_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_manager::EBlockScholesForwardFeedNotBoundToUnderlying)]
-fun create_expiry_market_with_unbound_block_scholes_surface_aborts() {
-    // Pyth and BS spot are bound, but no forward/SVI surface is bound for the
-    // underlying, so the forward check fails first.
-    let (
-        mut scenario,
-        registry_id,
-        admin_cap,
-        propbook_admin_cap,
-        pyth_id,
-        bs_spot_id,
-        _bs_forward_id,
-        _bs_svi_id,
-    ) = setup_registered_feeds();
-
-    scenario.next_tx(test_constants::admin());
-    bind_pyth_and_spot(&scenario, &propbook_admin_cap, pyth_id, bs_spot_id);
-
-    scenario.next_tx(test_constants::admin());
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(test_constants::now_ms());
-    let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
-    let mut vault = scenario.take_shared<PoolVault>();
-    let oracle_registry = scenario.take_shared<OracleRegistry>();
-    let config = scenario.take_shared<ProtocolConfig>();
-    let lifecycle_cap = reg.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
-    let _expiry_id = reg.create_and_share_expiry_market(
-        &mut vault,
-        &config,
-        &oracle_registry,
-        &lifecycle_cap,
-        test_constants::propbook_underlying_id(),
-        test_constants::default_cadence_id(),
-        &clock,
-        scenario.ctx(),
-    );
-    abort 999
-}
-
 /// Init all registries, approve the canonical underlying + default cadence, and create
 /// the base real propbook feeds (catalog-only, NOT yet bound to an underlying).
 /// Returns positioned for the caller to bind (or not) then create the market.
-fun setup_registered_feeds(): (Scenario, ID, AdminCap, RegistryAdminCap, ID, ID, ID, ID) {
+fun setup_registered_feeds(): (Scenario, ID, AdminCap, RegistryAdminCap, ID) {
     let (mut scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
     plp::init_for_testing(scenario.ctx());
     propbook_registry::init_for_testing(scenario.ctx());
@@ -670,33 +615,9 @@ fun setup_registered_feeds(): (Scenario, ID, AdminCap, RegistryAdminCap, ID, ID,
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
-    let bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
-    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
-    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
     return_shared(oracle_registry);
 
-    (
-        scenario,
-        registry_id,
-        admin_cap,
-        propbook_admin_cap,
-        pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
-    )
+    (scenario, registry_id, admin_cap, propbook_admin_cap, pyth_id)
 }
 
 fun setup_bound_creation_context(
@@ -717,19 +638,13 @@ fun setup_bound_creation_context(
         admin_cap,
         propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     ) = setup_registered_feeds();
 
     scenario.next_tx(test_constants::admin());
     bind_pyth_spot_and_surface(
-        &scenario,
+        &mut scenario,
         &propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     );
     scenario.next_tx(test_constants::admin());
     destroy(propbook_admin_cap);
@@ -827,41 +742,21 @@ fun bind_pyth_and_spot(
 }
 
 /// Bind all permanent feeds to the canonical underlying.
-fun bind_pyth_spot_and_surface(
-    scenario: &Scenario,
-    admin_cap: &RegistryAdminCap,
-    pyth_id: ID,
-    bs_spot_id: ID,
-    bs_forward_id: ID,
-    bs_svi_id: ID,
-) {
+fun bind_pyth_spot_and_surface(scenario: &mut Scenario, admin_cap: &RegistryAdminCap, pyth_id: ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
-    let bs_forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
-    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         admin_cap,
         &pyth,
         test_constants::propbook_underlying_id(),
     );
-    propbook_registry::bind_block_scholes_spot_to_underlying(
+    propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         admin_cap,
-        &bs_spot,
         test_constants::propbook_underlying_id(),
+        scenario.ctx(),
     );
-    propbook_registry::bind_block_scholes_surface_to_underlying(
-        &mut oracle_registry,
-        admin_cap,
-        &bs_forward,
-        &bs_svi,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
 }

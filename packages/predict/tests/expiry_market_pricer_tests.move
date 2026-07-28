@@ -6,6 +6,7 @@
 module deepbook_predict::expiry_market_pricer_tests;
 
 use deepbook_predict::{expiry_market, oracle_fixture, pricing, test_constants};
+use propbook::block_scholes_store as bs_store;
 use std::unit_test::assert_eq;
 
 const REBOUND_SOURCE_ID: u32 = 2;
@@ -22,8 +23,7 @@ fun current_nav_rejects_pricer_loaded_for_another_market() {
         oracle_fixture::config(&oracle).pricing_config(),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
-        oracle_fixture::bs(&oracle).spot(),
-        oracle_fixture::bs(&oracle).forward(),
+        oracle_fixture::bs(&oracle).values(),
         oracle_fixture::bs(&oracle).svi(),
         oracle_fixture::pyth(&oracle).id(),
         test_constants::propbook_underlying_id(),
@@ -46,8 +46,7 @@ fun liquidate_rejects_pricer_loaded_for_another_market() {
         oracle_fixture::config(&oracle).pricing_config(),
         oracle_fixture::oracle_registry(&oracle),
         oracle_fixture::pyth(&oracle),
-        oracle_fixture::bs(&oracle).spot(),
-        oracle_fixture::bs(&oracle).forward(),
+        oracle_fixture::bs(&oracle).values(),
         oracle_fixture::bs(&oracle).svi(),
         oracle_fixture::pyth(&oracle).id(),
         test_constants::propbook_underlying_id(),
@@ -84,8 +83,10 @@ fun load_live_pricer_uses_rebound_feeds_for_existing_market() {
     fx.finish();
 }
 
+/// A Pyth rebind leaves the Block Scholes stores alone — a pair is canonical for its underlying for
+/// life — so the bundle's setters keep landing in the same stores and the values read straight back.
 #[test]
-fun rebound_bundle_bs_setters_use_rebound_source_id() {
+fun rebound_bundle_bs_setters_still_land_in_the_underlyings_stores() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let rebound_ids = fx.create_and_rebind_oracle(REBOUND_SOURCE_ID);
     let mut oracle = fx.take_oracle_bundle_by_ids(rebound_ids);
@@ -102,13 +103,15 @@ fun rebound_bundle_bs_setters_use_rebound_source_id() {
         test_constants::default_live_price(),
     );
 
-    let raw_spot = oracle_fixture::bs(&oracle).spot().raw_spot().read_value();
-    assert_eq!(raw_spot.raw_bs_source_id(), REBOUND_SOURCE_ID);
-    assert_eq!(raw_spot.raw_spot_value(), test_constants::default_live_price());
+    let spot = bs_store::spot(oracle_fixture::bs(&oracle).values()).destroy_some();
+    assert_eq!(spot.read_value(), test_constants::default_live_price() as u128);
+    assert_eq!(spot.read_published_at_ms(), REBOUND_SETTER_SOURCE_TIMESTAMP_MS);
 
-    let raw_forward = oracle_fixture::bs(&oracle).forward().raw_forward(fx.expiry()).read_value();
-    assert_eq!(raw_forward.raw_bs_source_id(), REBOUND_SOURCE_ID);
-    assert_eq!(raw_forward.raw_forward_value(), test_constants::default_live_price());
+    let forward = bs_store::forward(
+        oracle_fixture::bs(&oracle).values(),
+        fx.expiry(),
+    ).destroy_some();
+    assert_eq!(forward.read_value(), test_constants::default_live_price() as u128);
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }

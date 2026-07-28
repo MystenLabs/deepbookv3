@@ -53,16 +53,12 @@ use deepbook_predict::{
     test_helpers
 };
 use fixed_math::{i64, math::float_scaling as float};
-use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
-    registry::{Self as propbook_registry, OracleRegistry}
-};
+use propbook::block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore};
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
 const EUnexpectedSuccess: u64 = 999;
-const SECOND_SOURCE_ID: u32 = 2;
+const FOREIGN_UNDERLYING_ID: u32 = 2;
 
 /// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
 /// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
@@ -267,34 +263,41 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesForwardFeed)]
-fun live_pricer_with_wrong_forward_feed_aborts() {
+/// A store for another underlying is a real, registry-created store that simply is not the one
+/// bound to this market's underlying. Predict must reject it on the binding rather than on the
+/// store's own claim about itself.
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
+fun live_pricer_with_another_underlyings_value_store_aborts() {
     let (mut fx, oracle) = setup_live();
     oracle_fixture::return_oracle_bundle(oracle);
-    let wrong_forward_id = create_wrong_forward_feed(&mut fx);
+    let (foreign_values_id, _foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+        FOREIGN_UNDERLYING_ID,
+    );
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
-    let wrong_forward = fx
+    let foreign_values = fx
         .scenario_mut()
-        .take_shared_by_id<BlockScholesForwardFeed>(
-            wrong_forward_id,
+        .take_shared_by_id<BlockScholesValueStore>(
+            foreign_values_id,
         );
-    load_pricer_with_forward(&fx, &oracle, &wrong_forward);
+    load_pricer_with_values(&fx, &oracle, &foreign_values);
 
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSVIFeed)]
-fun live_pricer_with_wrong_svi_feed_aborts() {
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSVIStore)]
+fun live_pricer_with_another_underlyings_svi_store_aborts() {
     let (mut fx, oracle) = setup_live();
     oracle_fixture::return_oracle_bundle(oracle);
-    let wrong_svi_id = create_wrong_svi_feed(&mut fx);
+    let (_foreign_values_id, foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+        FOREIGN_UNDERLYING_ID,
+    );
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
-    let wrong_svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIFeed>(wrong_svi_id);
-    load_pricer_with_svi(&fx, &oracle, &wrong_svi);
+    let foreign_svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIStore>(foreign_svi_id);
+    load_pricer_with_svi(&fx, &oracle, &foreign_svi);
 
     abort EUnexpectedSuccess
 }
@@ -1008,41 +1011,16 @@ fun load_pricer_with_full_svi_and_spot(
     fx.finish();
 }
 
-fun create_wrong_forward_feed(fx: &mut OracleFixture): ID {
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    return_shared(oracle_registry);
-    wrong_forward_id
-}
-
-fun create_wrong_svi_feed(fx: &mut OracleFixture): ID {
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    return_shared(oracle_registry);
-    wrong_svi_id
-}
-
-fun load_pricer_with_forward(
+fun load_pricer_with_values(
     fx: &OracleFixture,
     oracle: &OracleBundle,
-    forward: &BlockScholesForwardFeed,
+    values: &BlockScholesValueStore,
 ) {
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
         oracle_fixture::pyth(oracle),
-        oracle_fixture::bs(oracle).spot(),
-        forward,
+        values,
         oracle_fixture::bs(oracle).svi(),
         fx.expiry_id(),
         test_constants::propbook_underlying_id(),
@@ -1051,13 +1029,12 @@ fun load_pricer_with_forward(
     );
 }
 
-fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockScholesSVIFeed) {
+fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockScholesSVIStore) {
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
         oracle_fixture::pyth(oracle),
-        oracle_fixture::bs(oracle).spot(),
-        oracle_fixture::bs(oracle).forward(),
+        oracle_fixture::bs(oracle).values(),
         svi,
         fx.expiry_id(),
         test_constants::propbook_underlying_id(),

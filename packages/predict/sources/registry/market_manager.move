@@ -21,9 +21,8 @@ const ECadenceWindowExceeded: u64 = 5;
 const EInvalidDeploymentExpiry: u64 = 6;
 const EInvalidCadenceConfig: u64 = 7;
 const EPythFeedNotBoundToUnderlying: u64 = 8;
-const EBlockScholesSpotFeedNotBoundToUnderlying: u64 = 9;
-const EBlockScholesForwardFeedNotBoundToUnderlying: u64 = 10;
-const EBlockScholesSVIFeedNotBoundToUnderlying: u64 = 11;
+const EBlockScholesValueStoreNotBoundToUnderlying: u64 = 9;
+const EBlockScholesSVIStoreNotBoundToUnderlying: u64 = 10;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size, allocation cap, and initial cash target are
@@ -200,25 +199,20 @@ public(package) fun next_deployable_market(
                 propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
                 EPythFeedNotBoundToUnderlying,
             );
+            // Spot and forward share the value store; SVI has its own. Both bindings remain
+            // explicit prerequisites here, so a market cannot be created for an underlying that has
+            // nowhere to price from.
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_spot_id_for_underlying(propbook_underlying_id)
+                    .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
                     .is_some(),
-                EBlockScholesSpotFeedNotBoundToUnderlying,
+                EBlockScholesValueStoreNotBoundToUnderlying,
             );
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_forward_id_for_underlying(propbook_underlying_id)
+                    .propbook_block_scholes_svi_store_id_for_underlying(propbook_underlying_id)
                     .is_some(),
-                EBlockScholesForwardFeedNotBoundToUnderlying,
-            );
-            // Propbook binds the forward and SVI surface together; both bindings
-            // remain explicit prerequisites at this boundary.
-            assert!(
-                propbook_registry
-                    .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
-                    .is_some(),
-                EBlockScholesSVIFeedNotBoundToUnderlying,
+                EBlockScholesSVIStoreNotBoundToUnderlying,
             );
 
             return DeployableMarket {

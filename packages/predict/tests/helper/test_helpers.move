@@ -125,41 +125,29 @@ public fun finish_registry_test(
 /// so the production `registry::create_and_share_expiry_market` binding check passes.
 /// Operates within the CURRENT transaction; all feeds must already be shared.
 /// The caller keeps the propbook `RegistryAdminCap` for later rebind flows.
+/// Bind Pyth and create this underlying's Block Scholes store pair.
+/// Stores are created and bound in one step: a pair is canonical by construction, so there is no
+/// separate binding to make.
 public fun bind_feeds_to_underlying(
-    scenario: &Scenario,
+    scenario: &mut Scenario,
     propbook_admin_cap: &RegistryAdminCap,
     pyth_id: ID,
-    bs_spot_id: ID,
-    bs_forward_id: ID,
-    bs_svi_id: ID,
-) {
+): (ID, ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
     let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
-    let bs_forward = scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
-    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         propbook_admin_cap,
         &pyth,
         test_constants::propbook_underlying_id(),
     );
-    propbook_registry::bind_block_scholes_spot_to_underlying(
+    let (bs_values_id, bs_svi_id) = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         propbook_admin_cap,
-        &bs_spot,
         test_constants::propbook_underlying_id(),
+        scenario.ctx(),
     );
-    propbook_registry::bind_block_scholes_surface_to_underlying(
-        &mut oracle_registry,
-        propbook_admin_cap,
-        &bs_forward,
-        &bs_svi,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
+    (bs_values_id, bs_svi_id)
 }

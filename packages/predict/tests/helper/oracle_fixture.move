@@ -16,7 +16,7 @@
 #[test_only]
 module deepbook_predict::oracle_fixture;
 
-use block_scholes_oracle::update;
+use bs_oracle::verify;
 use deepbook_predict::{
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
@@ -30,9 +30,8 @@ use deepbook_predict::{
     test_helpers
 };
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
+    block_scholes_sid,
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
@@ -50,8 +49,7 @@ public struct OracleFixture {
     lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
     pyth_id: ID,
-    bs_spot_id: ID,
-    bs_forward_id: ID,
+    bs_values_id: ID,
     bs_svi_id: ID,
     expiry_id: ID,
     expiry: u64,
@@ -68,8 +66,7 @@ public struct OracleBundle {
 /// Feed IDs for a transaction-local oracle bundle.
 public struct OracleBundleIds has copy, drop {
     pyth_id: ID,
-    bs_spot_id: ID,
-    bs_forward_id: ID,
+    bs_values_id: ID,
     bs_svi_id: ID,
 }
 
@@ -108,35 +105,17 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
-    let bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
-    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
-    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
     return_shared(oracle_registry);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
-    // tx2: bind all pricing feeds to the canonical underlying.
+    // tx2: bind Pyth and create the canonical Block Scholes store pair for the underlying.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    test_helpers::bind_feeds_to_underlying(
-        &scenario,
+    let (bs_values_id, bs_svi_id) = test_helpers::bind_feeds_to_underlying(
+        &mut scenario,
         &propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     );
 
     // tx3: create the expiry market on the unfunded vault through the registry.
@@ -177,8 +156,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         lifecycle_cap,
         clock,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
+        bs_values_id,
         bs_svi_id,
         expiry_id,
         expiry,
@@ -198,8 +176,7 @@ public fun setup_oracle_default(): OracleFixture {
 public fun take_oracle_bundle(self: &mut OracleFixture): OracleBundle {
     let ids = OracleBundleIds {
         pyth_id: self.pyth_id,
-        bs_spot_id: self.bs_spot_id,
-        bs_forward_id: self.bs_forward_id,
+        bs_values_id: self.bs_values_id,
         bs_svi_id: self.bs_svi_id,
     };
     self.take_oracle_bundle_by_ids(ids)
@@ -208,13 +185,12 @@ public fun take_oracle_bundle(self: &mut OracleFixture): OracleBundle {
 /// Take oracle/config objects for explicit feed IDs. Used by binding-replacement
 /// tests where the market stays fixed but Propbook's current feed objects change.
 public fun take_oracle_bundle_by_ids(self: &mut OracleFixture, ids: OracleBundleIds): OracleBundle {
-    let OracleBundleIds { pyth_id, bs_spot_id, bs_forward_id, bs_svi_id } = ids;
+    let OracleBundleIds { pyth_id, bs_values_id, bs_svi_id } = ids;
     OracleBundle {
         pyth: self.scenario.take_shared_by_id<PythFeed>(pyth_id),
         bs: bs_feed::new(
-            self.scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id),
-            self.scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id),
-            self.scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id),
+            self.scenario.take_shared_by_id<BlockScholesValueStore>(bs_values_id),
+            self.scenario.take_shared_by_id<BlockScholesSVIStore>(bs_svi_id),
         ),
         oracle_registry: self.scenario.take_shared<OracleRegistry>(),
         config: self.scenario.take_shared<ProtocolConfig>(),
@@ -225,25 +201,12 @@ public fun take_oracle_bundle_by_ids(self: &mut OracleFixture, ids: OracleBundle
 /// fixture's underlying to them. The existing market stores only the underlying
 /// ID, so later `take_oracle_bundle_by_ids` calls can prove Predict follows the
 /// new current binding without recreating the market.
+/// Only the Pyth binding is replaced: a Block Scholes store pair is created canonical for its
+/// underlying and never rebound, so the returned ids keep the fixture's original stores.
 public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): OracleBundleIds {
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let pyth_id = propbook_registry::create_and_share_pyth_feed(
-        &mut oracle_registry,
-        source_id,
-        self.scenario.ctx(),
-    );
-    let bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
-        &mut oracle_registry,
-        source_id,
-        self.scenario.ctx(),
-    );
-    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        source_id,
-        self.scenario.ctx(),
-    );
-    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
         &mut oracle_registry,
         source_id,
         self.scenario.ctx(),
@@ -253,31 +216,36 @@ public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): O
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_spot = self.scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
-    let bs_forward = self.scenario.take_shared_by_id<BlockScholesForwardFeed>(bs_forward_id);
-    let bs_svi = self.scenario.take_shared_by_id<BlockScholesSVIFeed>(bs_svi_id);
     propbook_registry::replace_pyth_binding_for_underlying(
         &mut oracle_registry,
         &self.propbook_admin_cap,
         &pyth,
         test_constants::propbook_underlying_id(),
     );
-    propbook_registry::replace_block_scholes_bindings_for_underlying(
-        &mut oracle_registry,
-        &self.propbook_admin_cap,
-        &bs_spot,
-        &bs_forward,
-        &bs_svi,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_svi);
-    return_shared(bs_forward);
-    return_shared(bs_spot);
     return_shared(pyth);
     return_shared(oracle_registry);
 
     self.scenario.next_tx(test_constants::admin());
-    OracleBundleIds { pyth_id, bs_spot_id, bs_forward_id, bs_svi_id }
+    OracleBundleIds { pyth_id, bs_values_id: self.bs_values_id, bs_svi_id: self.bs_svi_id }
+}
+
+/// Create a Block Scholes store pair bound to a different underlying, for tests proving Predict
+/// rejects a store that is not the one bound to the market's underlying.
+public fun create_foreign_block_scholes_stores(
+    self: &mut OracleFixture,
+    propbook_underlying_id: u32,
+): (ID, ID) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let (value_store_id, svi_store_id) = propbook_registry::create_and_share_block_scholes_stores(
+        &mut oracle_registry,
+        &self.propbook_admin_cap,
+        propbook_underlying_id,
+        self.scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+    self.scenario.next_tx(test_constants::admin());
+    (value_store_id, svi_store_id)
 }
 
 /// Return the shared objects taken by `take_oracle_bundle`.
@@ -300,8 +268,7 @@ public fun load_pricer(
         config.pricing_config(),
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         self.expiry_id,
         test_constants::propbook_underlying_id(),
@@ -402,46 +369,40 @@ fun prepare_real_oracle_with_svi_source(
     svi_m_is_negative: bool,
     svi_source_timestamp_ms: u64,
 ) {
-    let bs_source_id = bs.spot().bs_source_id();
     let live_ts = test_constants::live_source_timestamp_ms();
     store_pyth_spot(pyth, spot, live_ts, live_ts);
-    bs
-        .spot_mut()
-        .update(
-            update::new_spot_update(bs_source_id, live_ts, spot),
-            &self.clock,
-        );
-    bs
-        .forward_mut()
-        .update(
-            update::new_forward_update(
-                bs_source_id,
-                self.expiry,
+    let underlying = test_constants::propbook_underlying_id();
+    // Spot and forward ride one value batch, as they do on the wire.
+    apply_value_batch_updates(
+        bs,
+        vector[
+            verify::new_value_update_for_testing(
+                block_scholes_sid::spot(underlying),
                 live_ts,
-                forward,
+                spot as u128,
             ),
-            &self.clock,
-            self.scenario.ctx(),
-        );
-    bs
-        .svi_mut()
-        .update(
-            update::new_svi_update(
-                bs_source_id,
-                self.expiry,
-                svi_source_timestamp_ms,
-                svi_a_magnitude,
-                svi_a_is_negative,
-                svi_b,
-                svi_sigma,
-                svi_rho_magnitude,
-                svi_rho_is_negative,
-                svi_m_magnitude,
-                svi_m_is_negative,
+            verify::new_value_update_for_testing(
+                block_scholes_sid::forward(underlying, self.expiry),
+                live_ts,
+                forward as u128,
             ),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+        ],
+        live_ts,
+        &self.clock,
+    );
+    self.apply_svi_batch(
+        bs,
+        svi_source_timestamp_ms,
+        svi_source_timestamp_ms,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
 }
 
 /// Seed a fresh explicit oracle surface through an oracle bundle.
@@ -476,19 +437,17 @@ public fun prepare_real_oracle_bundle(
 }
 
 /// Overwrite only the BS spot row through the real ingest path.
+/// `source_timestamp_ms` stamps both provider clocks — the series moved, so its model time and the
+/// envelope carrying it are the same. Use `retransmit_bs_svi_for_testing` for the case where they
+/// differ.
 public fun set_bs_spot_for_testing(
     self: &OracleFixture,
     bs: &mut BlockScholesFeed,
     source_timestamp_ms: u64,
     spot: u64,
 ) {
-    let bs_source_id = bs.spot().bs_source_id();
-    bs
-        .spot_mut()
-        .update(
-            update::new_spot_update(bs_source_id, source_timestamp_ms, spot),
-            &self.clock,
-        );
+    let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
+    apply_value_batch(bs, sid, source_timestamp_ms, source_timestamp_ms, spot, &self.clock);
 }
 
 /// Overwrite only the BS spot row through an oracle bundle.
@@ -510,19 +469,8 @@ public fun set_bs_forward_for_testing(
     source_timestamp_ms: u64,
     forward: u64,
 ) {
-    let bs_source_id = bs.forward().bs_source_id();
-    bs
-        .forward_mut()
-        .update(
-            update::new_forward_update(
-                bs_source_id,
-                self.expiry,
-                source_timestamp_ms,
-                forward,
-            ),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    let sid = block_scholes_sid::forward(test_constants::propbook_underlying_id(), self.expiry);
+    apply_value_batch(bs, sid, source_timestamp_ms, source_timestamp_ms, forward, &self.clock);
 }
 
 /// Overwrite only the BS forward row through an oracle bundle.
@@ -550,27 +498,51 @@ public fun set_bs_svi_for_testing_bundle(
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
 ) {
-    let bs_source_id = oracle.bs.svi().bs_source_id();
-    oracle
-        .bs
-        .svi_mut()
-        .update(
-            update::new_svi_update(
-                bs_source_id,
-                self.expiry,
-                source_timestamp_ms,
-                svi_a_magnitude,
-                svi_a_is_negative,
-                svi_b,
-                svi_sigma,
-                svi_rho_magnitude,
-                svi_rho_is_negative,
-                svi_m_magnitude,
-                svi_m_is_negative,
-            ),
-            &self.clock,
-            self.scenario.ctx(),
-        );
+    self.apply_svi_batch(
+        &mut oracle.bs,
+        source_timestamp_ms,
+        source_timestamp_ms,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
+}
+
+/// Re-send an unchanged SVI tuple in a later batch: the envelope advances while the tuple keeps the
+/// model time it was first calibrated at. This is what a provider retransmission looks like, and it
+/// is the sequence the roll-down anchors on.
+public fun retransmit_bs_svi_for_testing(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    self.apply_svi_batch(
+        &mut oracle.bs,
+        model_timestamp_ms,
+        published_at_ms,
+        svi_a_magnitude,
+        svi_a_is_negative,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
+    );
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
@@ -680,9 +652,7 @@ public fun scenario_mut(self: &mut OracleFixture): &mut Scenario { &mut self.sce
 
 public fun pyth_id(self: &OracleFixture): ID { self.pyth_id }
 
-public fun bs_spot_id(self: &OracleFixture): ID { self.bs_spot_id }
-
-public fun bs_forward_id(self: &OracleFixture): ID { self.bs_forward_id }
+public fun bs_values_id(self: &OracleFixture): ID { self.bs_values_id }
 
 public fun bs_svi_id(self: &OracleFixture): ID { self.bs_svi_id }
 
@@ -700,8 +670,7 @@ public fun finish(self: OracleFixture) {
         lifecycle_cap,
         clock,
         pyth_id: _,
-        bs_spot_id: _,
-        bs_forward_id: _,
+        bs_values_id: _,
         bs_svi_id: _,
         expiry_id: _,
         expiry: _,
@@ -711,6 +680,78 @@ public fun finish(self: OracleFixture) {
     destroy(admin_cap);
     clock.destroy_for_testing();
     scenario.end();
+}
+
+/// Land one value observation through the real verified-batch path.
+fun apply_value_batch(
+    bs: &mut BlockScholesFeed,
+    sid: u256,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    value: u64,
+    clock: &Clock,
+) {
+    apply_value_batch_updates(
+        bs,
+        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
+        published_at_ms,
+        clock,
+    );
+}
+
+/// Land a whole value batch, for callers seeding more than one series at once.
+fun apply_value_batch_updates(
+    bs: &mut BlockScholesFeed,
+    updates: vector<verify::ValueUpdate>,
+    published_at_ms: u64,
+    clock: &Clock,
+) {
+    bs
+        .values_mut()
+        .apply_value_batch(
+            verify::new_value_batch_for_testing(published_at_ms, updates),
+            clock,
+        );
+}
+
+/// Land one SVI observation through the real verified-batch path.
+fun apply_svi_batch(
+    self: &OracleFixture,
+    bs: &mut BlockScholesFeed,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    svi_a_magnitude: u64,
+    svi_a_is_negative: bool,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
+) {
+    let sid = block_scholes_sid::svi(test_constants::propbook_underlying_id(), self.expiry);
+    bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                published_at_ms,
+                vector[
+                    verify::new_svi_for_testing(
+                        sid,
+                        model_timestamp_ms,
+                        svi_a_magnitude as u128,
+                        svi_a_is_negative,
+                        svi_b as u128,
+                        svi_sigma as u128,
+                        svi_rho_magnitude as u128,
+                        svi_rho_is_negative,
+                        svi_m_magnitude as u128,
+                        svi_m_is_negative,
+                    ),
+                ],
+            ),
+            &self.clock,
+        );
 }
 
 fun store_pyth_spot(
