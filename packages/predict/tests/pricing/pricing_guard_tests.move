@@ -324,11 +324,8 @@ fun fresh_pyth_spot_above_pricing_ceiling_aborts() {
 fun pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_use_pyth_spot_for_forward_bundle(&mut oracle, false);
-    fx.set_pyth_bundle(
-        &mut oracle,
-        MAX_PRICING_SPOT + 1,
-        test_constants::live_source_timestamp_ms() + 1,
-    );
+    let oversized_source_ms = test_constants::live_source_timestamp_ms() + 1;
+    fx.set_pyth_bundle(&mut oracle, MAX_PRICING_SPOT + 1, oversized_source_ms);
 
     // Loads, and on the stored Block Scholes forward: the at-the-forward digital is
     // the default surface's, unaffected by the oversized print.
@@ -338,6 +335,10 @@ fun pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off() {
         ref_data::flow_fixture_atm_up(),
         ref_data::flow_fixture_atm_budget(),
     );
+    // Ignored for the forward, still snapshotted for provenance: an out-of-envelope
+    // print is not a missing observation, so it must not read back as the `0`
+    // sentinel that means "no usable normalized Pyth read".
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), oversized_source_ms);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

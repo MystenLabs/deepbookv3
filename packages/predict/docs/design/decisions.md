@@ -251,6 +251,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  normalized Pyth spot still aborts under Predict's pricing envelope. BS spot, forward,
 	  and SVI are independent Propbook feeds, so price freshness and SVI freshness remain
 	  separate policy windows.
+	  *Now conditional:* both statements above describe the default only. "Switchable
+	  live-forward source" below made the formula an admin setting, so with
+	  `use_pyth_spot_for_forward` clear the Block Scholes forward is used on every load,
+	  no fresh Pyth spot re-anchors it, and an oversized normalized Pyth spot is ignored
+	  rather than aborting — `EPythSpotInvalid` guards only the value the re-anchor consumes.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
