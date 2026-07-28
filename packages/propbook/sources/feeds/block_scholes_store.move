@@ -58,9 +58,6 @@ public struct BlockScholesValueStore has key {
     /// forward-only after a package upgrade.
     version: u64,
     values: Table<u256, BsRead<u128>>,
-    /// Greatest envelope time accepted for this underlying, so a store whose series have all gone
-    /// quiet is still visibly running.
-    last_batch_ts_ms: u64,
 }
 
 /// Latest SVI observations for one underlying, keyed by series id.
@@ -69,7 +66,6 @@ public struct BlockScholesSVIStore has key {
     propbook_underlying_id: u32,
     version: u64,
     svis: Table<u256, BsRead<SVIParams>>,
-    last_batch_ts_ms: u64,
 }
 
 /// Emitted only for observations that were stored, so its presence means the series advanced.
@@ -117,17 +113,6 @@ public fun value_store_version(store: &BlockScholesValueStore): u64 {
 
 public fun svi_store_version(store: &BlockScholesSVIStore): u64 {
     store.version
-}
-
-/// Returns the greatest envelope time accepted for this underlying's value series.
-/// A consumer reading this alongside a series' own `published_at_ms` can tell a feed that is
-/// running but unchanged from one that has stopped.
-public fun value_store_last_batch_ts_ms(store: &BlockScholesValueStore): u64 {
-    store.last_batch_ts_ms
-}
-
-public fun svi_store_last_batch_ts_ms(store: &BlockScholesSVIStore): u64 {
-    store.last_batch_ts_ms
 }
 
 /// Returns the latest spot observation for this store's underlying, or `none` if none has landed.
@@ -227,7 +212,6 @@ public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBat
         i = i + 1;
     };
 
-    if (matched > 0) store.record_value_batch(published_at_ms);
     event::emit(BlockScholesBatchIngested {
         propbook_oracle_id: store.value_store_id(),
         published_at_ms,
@@ -285,7 +269,6 @@ public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, cl
         i = i + 1;
     };
 
-    if (matched > 0) store.record_svi_batch(published_at_ms);
     event::emit(BlockScholesBatchIngested {
         propbook_oracle_id: store.svi_store_id(),
         published_at_ms,
@@ -319,7 +302,6 @@ public(package) fun create_and_share_value_store(
         propbook_underlying_id,
         version: constants::current_version!(),
         values: table::new(ctx),
-        last_batch_ts_ms: 0,
     };
     let id = store.value_store_id();
     transfer::share_object(store);
@@ -336,7 +318,6 @@ public(package) fun create_and_share_svi_store(
         propbook_underlying_id,
         version: constants::current_version!(),
         svis: table::new(ctx),
-        last_batch_ts_ms: 0,
     };
     let id = store.svi_store_id();
     transfer::share_object(store);
@@ -398,21 +379,6 @@ fun apply_svi(
         sid,
         BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, value },
     )
-}
-
-/// Record that a batch carrying this underlying's series was accepted at `published_at_ms`.
-/// Separate from applying observations because a batch in which every series was unchanged still
-/// proves the feed is running.
-fun record_value_batch(store: &mut BlockScholesValueStore, published_at_ms: u64) {
-    if (published_at_ms > store.last_batch_ts_ms) {
-        store.last_batch_ts_ms = published_at_ms;
-    };
-}
-
-fun record_svi_batch(store: &mut BlockScholesSVIStore, published_at_ms: u64) {
-    if (published_at_ms > store.last_batch_ts_ms) {
-        store.last_batch_ts_ms = published_at_ms;
-    };
 }
 
 fun read<Value: copy + drop + store>(

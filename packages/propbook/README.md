@@ -154,9 +154,10 @@ a fresher envelope — the retransmission that refreshes freshness without
 moving the model anchor. A model time later than its own envelope is provider
 garbage and is skipped, mirroring the Pyth lane's
 `EFeedTimestampAfterEnvelope`; that bound is also what keeps Predict's SVI
-roll-down anchor strictly before any live market's expiry. A store also
-records the greatest accepted envelope time, so a feed whose series have all
-gone quiet is still visibly running.
+roll-down anchor strictly before any live market's expiry. The stores keep no
+aggregate liveness field: each series' own `published_at_ms` is the freshness
+signal consumers read, and provider-wide liveness is monitored off-chain from
+the per-batch `BlockScholesBatchIngested` events.
 
 Values are stored exactly as the verifier produced them (`u128`, provider
 scale). Propbook intentionally does not enforce Predict's pricing-safe numeric
