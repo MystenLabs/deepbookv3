@@ -11,8 +11,9 @@
 /// their ids; SVI has its own store because it arrives as an independently signed batch.
 module propbook::block_scholes_store;
 
+use bs_oracle::verify::{Self, ValueBatch, SviBatch};
 use propbook::{block_scholes_sid, constants};
-use sui::{event, table::{Self, Table}};
+use sui::{clock::Clock, event, table::{Self, Table}};
 
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
@@ -76,6 +77,20 @@ public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy
     propbook_oracle_id: ID,
     sid: u256,
     observation: Observation,
+}
+
+/// Emitted once per ingested batch, whether or not anything was stored.
+/// The envelope time advances on every provider flush, so this is what shows the feed is running
+/// during a stretch where no series moved and no observation event is emitted.
+public struct BlockScholesBatchIngested has copy, drop {
+    propbook_oracle_id: ID,
+    published_at_ms: u64,
+    /// Observations carried by the batch, including those for other underlyings.
+    update_count: u64,
+    /// Observations naming a series this store holds.
+    matched: u64,
+    /// Observations that became their series' latest.
+    applied: u64,
 }
 
 // === Read Functions ===
@@ -180,6 +195,106 @@ public fun svi_m_is_negative(params: &SVIParams): bool {
 
 // === Write Functions ===
 
+/// Ingest a verified batch of spot and forward observations.
+/// The batch is taken by value rather than as its unpacked updates so the envelope time comes from
+/// inside the signature: a caller passing that time separately could inflate it to make a stale
+/// series look current or to claim a stopped feed is alive. Holding a `ValueBatch` at all is proof
+/// of a valid Block Scholes signature, so this never sees keys, bytes, or the signer registry.
+public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBatch, clock: &Clock) {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    let published_at_ms = verify::value_batch_timestamp(&batch);
+    let recorded_at_ms = clock.timestamp_ms();
+    let updates = verify::into_value_updates(batch);
+
+    let update_count = updates.length();
+    let mut matched = 0;
+    let mut applied = 0;
+    let mut i = 0;
+    while (i < update_count) {
+        let update = &updates[i];
+        let sid = verify::value_sid(update);
+        if (store.holds_series(sid)) {
+            matched = matched + 1;
+            let stored = store.apply_value(
+                sid,
+                verify::value_timestamp(update),
+                published_at_ms,
+                recorded_at_ms,
+                verify::value_v(update),
+            );
+            if (stored) applied = applied + 1;
+        };
+        i = i + 1;
+    };
+
+    if (matched > 0) store.record_value_batch(published_at_ms);
+    event::emit(BlockScholesBatchIngested {
+        propbook_oracle_id: store.value_store_id(),
+        published_at_ms,
+        update_count,
+        matched,
+        applied,
+    });
+}
+
+/// Ingest a verified batch of SVI observations. Same batch-by-value reasoning as
+/// `apply_value_batch`.
+public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, clock: &Clock) {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    let published_at_ms = verify::svi_batch_timestamp(&batch);
+    let recorded_at_ms = clock.timestamp_ms();
+    let updates = verify::into_svi_updates(batch);
+
+    let update_count = updates.length();
+    let mut matched = 0;
+    let mut applied = 0;
+    let mut i = 0;
+    while (i < update_count) {
+        let update = &updates[i];
+        let sid = verify::svi_sid(update);
+        if (store.svi_holds_series(sid)) {
+            matched = matched + 1;
+            let (
+                a_magnitude,
+                a_is_negative,
+                b,
+                sigma,
+                rho_magnitude,
+                rho_is_negative,
+                m_magnitude,
+                m_is_negative,
+            ) = verify::svi_fields(update);
+            let stored = store.apply_svi(
+                sid,
+                verify::svi_timestamp(update),
+                published_at_ms,
+                recorded_at_ms,
+                SVIParams {
+                    a_magnitude,
+                    a_is_negative,
+                    b,
+                    sigma,
+                    rho_magnitude,
+                    rho_is_negative,
+                    m_magnitude,
+                    m_is_negative,
+                },
+            );
+            if (stored) applied = applied + 1;
+        };
+        i = i + 1;
+    };
+
+    if (matched > 0) store.record_svi_batch(published_at_ms);
+    event::emit(BlockScholesBatchIngested {
+        propbook_oracle_id: store.svi_store_id(),
+        published_at_ms,
+        update_count,
+        matched,
+        applied,
+    });
+}
+
 /// Migrate this store to the running package version. Forward-only:
 /// `current_version!()` is compiled into each package version's bytecode.
 public fun migrate_value_store(store: &mut BlockScholesValueStore) {
@@ -228,11 +343,24 @@ public(package) fun create_and_share_svi_store(
     id
 }
 
+// === Private Functions ===
+
+/// Whether `sid` names a series this store holds.
+/// One definition of "belongs here", used both to refuse a foreign observation and to decide
+/// whether a batch carried this underlying's feed at all.
+fun holds_series(store: &BlockScholesValueStore, sid: u256): bool {
+    belongs(store.propbook_underlying_id, sid)
+}
+
+fun svi_holds_series(store: &BlockScholesSVIStore, sid: u256): bool {
+    belongs(store.propbook_underlying_id, sid)
+}
+
 /// Store one verified spot or forward observation, returning whether it was kept.
 /// Returns `false` rather than aborting when the series belongs to another underlying, when the
 /// clocks are unusable, or when the observation does not advance the series: one batch carries many
 /// series, and a single unusable entry must not discard the rest of them.
-public(package) fun apply_value(
+fun apply_value(
     store: &mut BlockScholesValueStore,
     sid: u256,
     model_timestamp_ms: u64,
@@ -253,7 +381,7 @@ public(package) fun apply_value(
 
 /// Store one verified SVI observation, returning whether it was kept. Same skip rules as
 /// `apply_value`.
-public(package) fun apply_svi(
+fun apply_svi(
     store: &mut BlockScholesSVIStore,
     sid: u256,
     model_timestamp_ms: u64,
@@ -275,42 +403,17 @@ public(package) fun apply_svi(
 /// Record that a batch carrying this underlying's series was accepted at `published_at_ms`.
 /// Separate from applying observations because a batch in which every series was unchanged still
 /// proves the feed is running.
-public(package) fun record_value_batch(store: &mut BlockScholesValueStore, published_at_ms: u64) {
+fun record_value_batch(store: &mut BlockScholesValueStore, published_at_ms: u64) {
     if (published_at_ms > store.last_batch_ts_ms) {
         store.last_batch_ts_ms = published_at_ms;
     };
 }
 
-public(package) fun record_svi_batch(store: &mut BlockScholesSVIStore, published_at_ms: u64) {
+fun record_svi_batch(store: &mut BlockScholesSVIStore, published_at_ms: u64) {
     if (published_at_ms > store.last_batch_ts_ms) {
         store.last_batch_ts_ms = published_at_ms;
     };
 }
-
-/// Assemble source-native SVI parameters from a verified update's fields.
-public(package) fun new_svi_params(
-    a_magnitude: u128,
-    a_is_negative: bool,
-    b: u128,
-    sigma: u128,
-    rho_magnitude: u128,
-    rho_is_negative: bool,
-    m_magnitude: u128,
-    m_is_negative: bool,
-): SVIParams {
-    SVIParams {
-        a_magnitude,
-        a_is_negative,
-        b,
-        sigma,
-        rho_magnitude,
-        rho_is_negative,
-        m_magnitude,
-        m_is_negative,
-    }
-}
-
-// === Private Functions ===
 
 fun read<Value: copy + drop + store>(
     reads: &Table<u256, BsRead<Value>>,
@@ -326,6 +429,23 @@ fun read<Value: copy + drop + store>(
 /// Keeps `read` as the series' latest observation when it belongs here and advances the series.
 /// The series id is the slot key, so this decides only whether to keep an observation, never where
 /// it goes.
+fun belongs(propbook_underlying_id: u32, sid: u256): bool {
+    block_scholes_sid::underlying(sid) == propbook_underlying_id
+}
+
+/// The batch event's fields exist for off-chain consumers, which decode them rather than calling
+/// Move, so this reader exists only so tests can assert the counts are right.
+#[test_only]
+public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u64, u64, u64, u64) {
+    (
+        event.propbook_oracle_id,
+        event.published_at_ms,
+        event.update_count,
+        event.matched,
+        event.applied,
+    )
+}
+
 fun apply<Value: copy + drop + store>(
     reads: &mut Table<u256, BsRead<Value>>,
     propbook_oracle_id: ID,
@@ -333,7 +453,7 @@ fun apply<Value: copy + drop + store>(
     sid: u256,
     read: BsRead<Value>,
 ): bool {
-    if (block_scholes_sid::underlying(sid) != propbook_underlying_id) return false;
+    if (!belongs(propbook_underlying_id, sid)) return false;
     if (read.published_at_ms == 0 || read.published_at_ms > read.recorded_at_ms) return false;
 
     if (reads.contains(sid)) {
