@@ -54,7 +54,7 @@ function makeSource(): { source: MarketSource; mode: string } {
 
 async function main() {
   const feeds = await waitForFeeds();
-  console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviFeedId.slice(0, 10)}`);
+  console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviStoreId.slice(0, 10)}`);
 
   // Warm a ROLLING grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the launcher sets
   // it from the keeper's cadence set). gridNow() = the next `count` boundaries of each period from
@@ -106,8 +106,9 @@ async function main() {
       const digest = await submit(
         buildOracleRefreshGridTx(
           {
-            pythFeedId: feeds.pythFeedId, bsSpotFeedId: feeds.bsSpotFeedId,
-            bsForwardFeedId: feeds.bsForwardFeedId, bsSviFeedId: feeds.bsSviFeedId,
+            pythFeedId: feeds.pythFeedId,
+            bsValueStoreId: feeds.bsValueStoreId,
+            bsSviStoreId: feeds.bsSviStoreId,
           },
           snap.spot1e9, grid, ts,
         ),

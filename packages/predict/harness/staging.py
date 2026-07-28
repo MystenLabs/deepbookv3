@@ -39,12 +39,35 @@ def _stage_git_dep(name: str, spec: dict, dest: Path) -> None:
     if (cache / "Move.toml").is_file():
         shutil.copytree(cache, dest, ignore=_IGNORE, dirs_exist_ok=True)
         return
-    # Fallback: shallow-clone the branch and copy the subdir.
+    # Fallback: shallow-clone the branch (or, for a commit pin, shallow-fetch the
+    # exact rev — `git clone --branch` cannot take a SHA) and copy the subdir.
     checkout = dest.parent / f"{name}_repo"
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", spec["branch"], spec["repo"], str(checkout)],
-        check=True,
-        capture_output=True,
-    )
+    if "rev" in spec:
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(checkout), "fetch", "-q", "--depth", "1", spec["repo"], spec["rev"]],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(checkout), "checkout", "-q", "FETCH_HEAD"],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "--branch",
+                spec["branch"],
+                spec["repo"],
+                str(checkout),
+            ],
+            check=True,
+            capture_output=True,
+        )
     shutil.copytree(checkout / spec["subdir"], dest, ignore=_IGNORE, dirs_exist_ok=True)
     shutil.rmtree(checkout, ignore_errors=True)

@@ -15,10 +15,8 @@ import {
   PROTOCOL_CONFIG_ID,
   address,
   bareFlushTx,
-  bindBlockScholesSurfaceToUnderlyingTx,
   bindFeedsToUnderlyingTx,
   createAccountTx,
-  createBlockScholesSurfaceFeedsTx,
   createExpiryMarketTx,
   deriveAccountWrapperId,
   executeAndWait,
@@ -30,6 +28,7 @@ import {
   registerUnderlyingAndCreateFeedsTx,
   requestSupplyTx,
   seedOracleTx,
+  setBlockScholesSignerTx,
   setCadenceConfigTx,
   setOracleFreshnessTx,
   updatePythTrustedSignerTx,
@@ -53,9 +52,8 @@ export const eventField = (b: any, name: string, field: string): string => {
 
 export interface Feeds {
   pythFeedId: string;
-  bsSpotFeedId: string;
-  bsForwardFeedId: string;
-  bsSviFeedId: string;
+  bsValueStoreId: string;
+  bsSviStoreId: string;
 }
 export interface Snap {
   pythSpot: number;
@@ -150,15 +148,13 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
     console.log("[setup] re-attaching to existing feeds.json");
   } else {
     await executeAndWait(updatePythTrustedSignerTx(), "trusted-signer");
+    await executeAndWait(setBlockScholesSignerTx(), "bs-signer");
     const feedsR = await executeAndWait(registerUnderlyingAndCreateFeedsTx(1), "feeds");
     const pythFeedId = found(feedsR, "pyth_feed::PythFeed");
-    const bsSpotFeedId = found(feedsR, "block_scholes_spot_feed::BlockScholesSpotFeed");
-    await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId, bsSpotFeedId }), "bind-spot");
-    const surfR = await executeAndWait(createBlockScholesSurfaceFeedsTx(), "surface");
-    const bsForwardFeedId = found(surfR, "block_scholes_forward_feed::BlockScholesForwardFeed");
-    const bsSviFeedId = found(surfR, "block_scholes_svi_feed::BlockScholesSVIFeed");
-    await executeAndWait(bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }), "bind-surface");
-    feeds = { pythFeedId, bsSpotFeedId, bsForwardFeedId, bsSviFeedId };
+    const bsValueStoreId = found(feedsR, "block_scholes_store::BlockScholesValueStore");
+    const bsSviStoreId = found(feedsR, "block_scholes_store::BlockScholesSVIStore");
+    await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind-spot");
+    feeds = { pythFeedId, bsValueStoreId, bsSviStoreId };
     // Publish the feed ids so the updater (a separate process) can stream onto them.
     if (feedsPath) atomicWriteFile(feedsPath, JSON.stringify(feeds));
   }
