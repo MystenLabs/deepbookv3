@@ -557,3 +557,127 @@ fun assert_metadata(
     assert_eq!(registry::source_id(&metadata), expected_source_id);
     assert_eq!(registry::propbook_oracle_id(&metadata), expected_oracle_id);
 }
+
+// === Block Scholes stores ===
+
+#[test]
+fun create_block_scholes_stores_records_both_lookups() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let (value_store_id, svi_store_id) = registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        scenario.ctx(),
+    );
+
+    assert_eq!(
+        registry.propbook_block_scholes_value_store_id_for_underlying(BTC_UNDERLYING_ID),
+        option::some(value_store_id),
+    );
+    assert_eq!(
+        registry.propbook_block_scholes_svi_store_id_for_underlying(BTC_UNDERLYING_ID),
+        option::some(svi_store_id),
+    );
+    assert!(value_store_id != svi_store_id);
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+/// The binding is what lets a consumer reject a store it was not meant to price from, so an
+/// underlying with no pair resolves to nothing rather than to some default.
+#[test]
+fun store_lookups_are_none_for_an_underlying_without_a_pair() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        scenario.ctx(),
+    );
+
+    assert!(
+        registry.propbook_block_scholes_value_store_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
+    );
+    assert!(
+        registry.propbook_block_scholes_svi_store_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
+    );
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+/// One pair per underlying for life: a second pair would leave two stores each able to claim the
+/// underlying with nothing to choose between them.
+#[test, expected_failure(abort_code = registry::EBlockScholesStoresAlreadyExist)]
+fun creating_a_second_store_pair_for_an_underlying_aborts() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        scenario.ctx(),
+    );
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        scenario.ctx(),
+    );
+
+    abort
+}
+
+/// Underlyings are independent: a pair for one neither blocks nor leaks into another.
+#[test]
+fun each_underlying_gets_its_own_store_pair() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let (btc_value_id, _btc_svi_id) = registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        scenario.ctx(),
+    );
+    let (eth_value_id, _eth_svi_id) = registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        ETH_UNDERLYING_ID,
+        scenario.ctx(),
+    );
+
+    assert!(btc_value_id != eth_value_id);
+    assert_eq!(
+        registry.propbook_block_scholes_value_store_id_for_underlying(BTC_UNDERLYING_ID),
+        option::some(btc_value_id),
+    );
+    assert_eq!(
+        registry.propbook_block_scholes_value_store_id_for_underlying(ETH_UNDERLYING_ID),
+        option::some(eth_value_id),
+    );
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}

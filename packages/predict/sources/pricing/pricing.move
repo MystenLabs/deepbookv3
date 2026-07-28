@@ -31,7 +31,8 @@ public struct Pricer has copy, drop {
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
-    /// First source envelope carrying the raw SVI tuple from which `svi` was rolled down.
+    /// Provider model time of the raw SVI tuple from which `svi` was rolled down, held fixed
+    /// across retransmissions of an unchanged tuple.
     block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
 }

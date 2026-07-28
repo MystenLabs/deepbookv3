@@ -878,7 +878,7 @@ public fun seed_bs_surface_with_svi(
 }
 
 fun seed_bs_surface_with_svi_source(
-    self: &mut Fixture,
+    self: &Fixture,
     market: &ExpiryMarket,
     bs: &mut BlockScholesFeed,
     spot: u64,

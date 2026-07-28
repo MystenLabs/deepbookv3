@@ -166,6 +166,8 @@ fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
     assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
 }
 
+/// A retransmission carries the tuple's original model time in a newer envelope, so
+/// the roll-down anchor holds while freshness advances.
 #[test]
 fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
     let mut fx = oracle_fixture::setup_oracle(
@@ -199,8 +201,9 @@ fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
         SHORT_ROLL_DOWN_MIDPOINT_MS,
         test_constants::default_live_price(),
     );
-    fx.set_bs_svi_for_testing_bundle(
+    fx.retransmit_bs_svi_for_testing(
         &mut oracle,
+        ROLL_DOWN_ANCHOR_MS,
         SHORT_ROLL_DOWN_MIDPOINT_MS,
         RETRANSMITTED_SVI_A,
         false,

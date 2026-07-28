@@ -55,7 +55,6 @@ use deepbook_predict::{
 use fixed_math::{i64, math::float_scaling as float};
 use propbook::block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore};
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
 
 const EUnexpectedSuccess: u64 = 999;
 const FOREIGN_UNDERLYING_ID: u32 = 2;
@@ -110,8 +109,8 @@ const W_PRIME_SURFACE_B: u64 = 13;
 const W_PRIME_SURFACE_RHO: u64 = 1_000_000_000;
 const W_PRIME_SURFACE_M: u64 = 831_439;
 const W_PRIME_SURFACE_SIGMA: u64 = 5_000_000;
-/// Seed the tuple at `now_ms`, price one second later: the anchor is preserved by
-/// the identical retransmit, so the roll-down is live at 119_000/120_000.
+/// Seed the tuple at `now_ms`, price one second later: the retransmit pins the
+/// model time to the seed, so the roll-down is live at 119_000/120_000.
 const W_PRIME_EXPIRY_MS: u64 = 240_000;
 const W_PRIME_PRICED_AT_MS: u64 = 121_000;
 
@@ -752,8 +751,8 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
 }
 
 /// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted
-/// unchanged one millisecond before a one-year expiry. The retransmit refreshes
-/// every feed clock without moving the parameter anchor. At that horizon,
+/// one millisecond before a one-year expiry — the envelope advances while the
+/// tuple keeps its original model time. At that horizon,
 /// `floor(1e9 * remaining_ms / anchor_tte_ms) == 0`, so the effective variance
 /// is non-positive and the accepted RP-21 response is the existing quote abort.
 #[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
@@ -792,8 +791,9 @@ fun terminal_roll_down_to_zero_aborts_before_expiry() {
         terminal_source_timestamp_ms,
         test_constants::default_live_price(),
     );
-    fx.set_bs_svi_for_testing_bundle(
+    fx.retransmit_bs_svi_for_testing(
         &mut oracle,
+        test_constants::now_ms(),
         terminal_source_timestamp_ms,
         ROLL_DOWN_ZERO_VARIANCE_RAW_A,
         false,
@@ -822,8 +822,8 @@ fun terminal_roll_down_to_zero_aborts_before_expiry() {
 /// floors to zero and the correction term vanishes either way. And a fixture whose
 /// pricer loads at the parameter anchor cannot either, because at ratio 1 the
 /// rolled `b` is integral at 1e9 and both forms agree exactly. So this seeds the
-/// tuple, advances the clock, and retransmits it unchanged (which preserves the
-/// anchor) to get a genuinely non-integral rolled `b`. Carrying it at 1e18 lands
+/// tuple, advances the clock, and retransmits it with its model time pinned to
+/// the seed to get a genuinely non-integral rolled `b`. Carrying it at 1e18 lands
 /// 4 units from the independently generated digital; narrowing to 1e9 misses by
 /// ~890 — 42x the budget.
 #[test]
@@ -859,8 +859,9 @@ fun w_prime_keeps_the_rolled_b_precision() {
         W_PRIME_PRICED_AT_MS,
         test_constants::default_live_price(),
     );
-    fx.set_bs_svi_for_testing_bundle(
+    fx.retransmit_bs_svi_for_testing(
         &mut oracle,
+        test_constants::now_ms(),
         W_PRIME_PRICED_AT_MS,
         W_PRIME_SURFACE_A,
         false,

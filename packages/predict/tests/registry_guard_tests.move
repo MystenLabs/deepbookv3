@@ -713,34 +713,6 @@ fun bind_only_pyth(scenario: &Scenario, admin_cap: &RegistryAdminCap, pyth_id: I
     return_shared(oracle_registry);
 }
 
-/// Bind the global Pyth and BS spot feeds to the canonical underlying, leaving
-/// the BS forward/SVI surface unbound.
-fun bind_pyth_and_spot(
-    scenario: &Scenario,
-    admin_cap: &RegistryAdminCap,
-    pyth_id: ID,
-    bs_spot_id: ID,
-) {
-    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_spot = scenario.take_shared_by_id<BlockScholesSpotFeed>(bs_spot_id);
-    propbook_registry::bind_pyth_to_underlying(
-        &mut oracle_registry,
-        admin_cap,
-        &pyth,
-        test_constants::propbook_underlying_id(),
-    );
-    propbook_registry::bind_block_scholes_spot_to_underlying(
-        &mut oracle_registry,
-        admin_cap,
-        &bs_spot,
-        test_constants::propbook_underlying_id(),
-    );
-    return_shared(bs_spot);
-    return_shared(pyth);
-    return_shared(oracle_registry);
-}
-
 /// Bind all permanent feeds to the canonical underlying.
 fun bind_pyth_spot_and_surface(scenario: &mut Scenario, admin_cap: &RegistryAdminCap, pyth_id: ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();

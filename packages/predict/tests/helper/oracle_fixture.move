@@ -4,15 +4,16 @@
 /// Minimal production-valid feed bring-up for `pricing` error-path and exact-pricing
 /// tests.
 ///
-/// Stands up the standalone propbook feeds — `PythFeed`, BS spot, BS forward, and
-/// BS SVI — and an `ExpiryMarket` for one expiry through the production
+/// Stands up the standalone propbook oracles — `PythFeed` plus the per-underlying Block
+/// Scholes store pair — and an `ExpiryMarket` for one expiry through the production
 /// `registry::create_and_share_expiry_market` path. This reaches the pricing/freshness guards
 /// more cheaply than the full `flow_test_helpers` market: no manager setup or
 /// expiry-cash seeding. The Pyth spot is seeded through
 /// `pyth_feed::record_raw_for_testing` because a real `pyth_lazer::Update` has no
-/// public Move constructor; the BS feeds use the stub verifier's split public update
-/// constructors. `ProtocolConfig`/`Registry`/`OracleRegistry` are taken
-/// per-transaction (never held), mirroring `flow_test_helpers`.
+/// public Move constructor; the stores are seeded through the verifier's test-only
+/// batch constructors, driving the same batch entries a relayer calls.
+/// `ProtocolConfig`/`Registry`/`OracleRegistry` are taken per-transaction (never
+/// held), mirroring `flow_test_helpers`.
 #[test_only]
 module deepbook_predict::oracle_fixture;
 
@@ -354,7 +355,7 @@ public fun prepare_real_oracle(
 }
 
 fun prepare_real_oracle_with_svi_source(
-    self: &mut OracleFixture,
+    self: &OracleFixture,
     bs: &mut BlockScholesFeed,
     pyth: &mut PythFeed,
     spot: u64,
