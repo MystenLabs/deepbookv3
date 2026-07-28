@@ -15,7 +15,6 @@ fi
 
 DUSDC_DIR="$PACKAGES_DIR/dusdc"
 FIXED_MATH_DIR="$PACKAGES_DIR/fixed_math"
-BLOCK_SCHOLES_ORACLE_DIR="$PACKAGES_DIR/block_scholes_oracle"
 PROPBOOK_DIR="$PACKAGES_DIR/propbook"
 RUNS_DIR="$SCRIPT_DIR/runs"
 BUILD_ENV="sim"
@@ -206,10 +205,10 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$DUSDC_DIR/Move.lock" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
+  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$DUSDC_DIR/Move.lock" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$FIXED_MATH_DIR/Published.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$FIXED_MATH_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
     if [ -f "$f.bak" ]; then
       mv "$f.bak" "$f"
     fi
@@ -321,6 +320,22 @@ copy_move_dep() {
   cp -R "$checkout/$subdir" "$dest"
 }
 
+# Like copy_move_dep, but pinned to a commit SHA (which `git clone --branch`
+# cannot fetch): shallow-fetch the exact rev instead.
+copy_move_dep_rev() {
+  local name="$1" repo="$2" rev="$3" subdir="$4" cache_path="$5" dest="$6"
+  if [ -d "$cache_path/sources" ]; then
+    cp -R "$cache_path" "$dest"
+    return
+  fi
+
+  local checkout="$DEPS_DIR/${name}_repo"
+  git init -q "$checkout"
+  git -C "$checkout" fetch -q --depth 1 "$repo" "$rev"
+  git -C "$checkout" checkout -q FETCH_HEAD
+  cp -R "$checkout/$subdir" "$dest"
+}
+
 # --- 1. Genesis ---
 echo "==> Generating fresh genesis..."
 rm -rf "$CONFIG_DIR"
@@ -391,12 +406,14 @@ done
   LOCAL_PYTH_SIGNER_PRIVATE_KEY=$(json_field "$LOCAL_PYTH_CONFIG" signerPrivateKey)
   LOCAL_PYTH_SIGNER_PUBLIC_KEY=$(json_field "$LOCAL_PYTH_CONFIG" signerPublicKey)
   LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS=$(json_field "$LOCAL_PYTH_CONFIG" signerExpiresAtSeconds)
+  LOCAL_BS_SIGNER_PRIVATE_KEY=$(json_field "$LOCAL_PYTH_CONFIG" bsSignerPrivateKey)
+  LOCAL_BS_SIGNER_PUBLIC_KEY=$(json_field "$LOCAL_PYTH_CONFIG" bsSignerPublicKey)
   echo "    Local Pyth guardian: $LOCAL_PYTH_GUARDIAN_ADDRESS"
 
   find "$PACKAGES_DIR" -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml "$FIXED_MATH_DIR/Published.toml" "$BLOCK_SCHOLES_ORACLE_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml "$FIXED_MATH_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
     [ -f "$f" ] && cp "$f" "$f.bak"
   done
 
@@ -445,30 +462,17 @@ done
 
   mv "$FIXED_MATH_DIR/Move.toml.bak" "$FIXED_MATH_DIR/Move.toml"
 
-  # Publish block_scholes_oracle (stub BS signed-data verifier; leaf, no deps).
-  # Consumed by propbook's split BS feed updates and predict test fixtures.
-  echo "==> Phase 2a2: Publishing block_scholes_oracle..."
-  inject_env "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml" "$CHAIN_ID"
-  cp "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock" "$BLOCK_SCHOLES_ORACLE_DIR/Move.lock.bak"
-
-  BLOCK_SCHOLES_ORACLE_OUTPUT=$(publish_package "$BLOCK_SCHOLES_ORACLE_DIR" "Block Scholes Oracle")
-  check_publish "$BLOCK_SCHOLES_ORACLE_OUTPUT" "Block Scholes Oracle"
-
-  BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$(echo "$BLOCK_SCHOLES_ORACLE_OUTPUT" | extract_published_package_id)
-  echo "    Block Scholes Oracle: $BLOCK_SCHOLES_ORACLE_PACKAGE_ID"
-
-  mv "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml.bak" "$BLOCK_SCHOLES_ORACLE_DIR/Move.toml"
-
   # test-publish regenerates `[pinned.sim.*]` entries in predict/Move.lock with
   # instance-specific local paths. Snapshot so cleanup restores it to pristine.
   cp "$PREDICT_DIR/Move.lock" "$PREDICT_DIR/Move.lock.bak"
 
-  echo "==> Phase 2b: Publishing Wormhole and Pyth Lazer..."
+  echo "==> Phase 2b: Publishing Wormhole, Pyth Lazer, and the Block Scholes verifier..."
   DEPS_DIR="$INSTANCE_DIR/deps"
   rm -rf "$DEPS_DIR"
   mkdir -p "$DEPS_DIR"
   WORMHOLE_DIR="$DEPS_DIR/wormhole"
   PYTH_LAZER_DIR="$DEPS_DIR/pyth_lazer"
+  BS_ORACLE_DIR="$DEPS_DIR/bs_oracle"
   copy_move_dep \
     wormhole \
     "https://github.com/pyth-network/wormhole.git" \
@@ -549,26 +553,58 @@ PY
   echo "    Pyth Lazer: $PYTH_LAZER_PACKAGE_ID"
   echo "    Pyth Lazer State: $PYTH_LAZER_STATE_ID"
 
-  # Publish propbook (owns the extracted Pyth + Block Scholes feeds and the shared
-  # OracleRegistry, created+shared at package init). Like predict it depends on the
-  # git pyth_lazer/wormhole packages, so redirect those to the locally published
-  # copies via [dep-replacements.sim]. Its local deps (fixed_math, block_scholes_oracle)
-  # resolve through the shared pubfile, like deepbook/dusdc.
+  # Publish the real Block Scholes verifier (`bs_oracle`, the git dep propbook and
+  # predict pin), unmodified. Its `init` shares a `SignerRegistry` and sends the
+  # publisher an `AdminCap`; the sim registers its own per-instance secp256k1 key
+  # via `set_signer` (from sim.ts setup) and signs every batch it submits — the
+  # same local-trusted-signer model as the Pyth guardian above.
+  BS_ORACLE_REV="d55026cc8b69df8a64da71568dad8e37b1370fe2"
+  copy_move_dep_rev \
+    bs_oracle \
+    "https://github.com/blockscholes/sui-signed-oracle.git" \
+    "$BS_ORACLE_REV" \
+    "move/bs_oracle" \
+    "$HOME/.move/git/https___github_com_blockscholes_sui-signed-oracle_git_$BS_ORACLE_REV/move/bs_oracle" \
+    "$BS_ORACLE_DIR"
+
+  inject_env "$BS_ORACLE_DIR/Move.toml" "$CHAIN_ID"
+  BS_ORACLE_OUTPUT=$(publish_package "$BS_ORACLE_DIR" "Block Scholes verifier")
+  check_publish "$BS_ORACLE_OUTPUT" "Block Scholes verifier"
+  BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$(echo "$BS_ORACLE_OUTPUT" | extract_published_package_id)
+  BS_SIGNER_REGISTRY_ID=$(echo "$BS_ORACLE_OUTPUT" | extract_created_object_id "registry::SignerRegistry")
+  BS_ADMIN_CAP_ID=$(echo "$BS_ORACLE_OUTPUT" | extract_created_object_id "registry::AdminCap")
+  echo "    Block Scholes verifier: $BLOCK_SCHOLES_ORACLE_PACKAGE_ID"
+  echo "    Block Scholes SignerRegistry: $BS_SIGNER_REGISTRY_ID"
+
+  # Publish propbook (owns the extracted Pyth feed + Block Scholes stores and the
+  # shared OracleRegistry, created+shared at package init). Like predict it depends
+  # on the git pyth_lazer/wormhole/bs_oracle packages, so redirect those to the
+  # locally published copies via [dep-replacements.sim] (the pubfile maps by source
+  # identity, so a git dep never resolves to a package published from a staged
+  # path). Its local dep (fixed_math) resolves through the shared pubfile, like
+  # deepbook/dusdc.
   echo "==> Phase 2c: Publishing propbook..."
   inject_env "$PROPBOOK_DIR/Move.toml" "$CHAIN_ID"
   cp "$PROPBOOK_DIR/Move.lock" "$PROPBOOK_DIR/Move.lock.bak"
-  python3 - "$PROPBOOK_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
+  python3 - "$PROPBOOK_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BS_ORACLE_DIR" "$BLOCK_SCHOLES_ORACLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
 import pathlib, re, sys
 toml_path = pathlib.Path(sys.argv[1])
 pyth_lazer_path = sys.argv[2]
 pyth_lazer_pkg_id = sys.argv[3]
 wormhole_path = sys.argv[4]
 wormhole_pkg_id = sys.argv[5]
-build_env = sys.argv[6]
+bs_oracle_path = sys.argv[6]
+bs_oracle_pkg_id = sys.argv[7]
+build_env = sys.argv[8]
 text = toml_path.read_text()
 text = re.sub(
     r"pyth_lazer = \{ git[^}]*\}",
     f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
+    text,
+)
+text = re.sub(
+    r"bs_oracle = \{ git[^}]*\}",
+    f'bs_oracle = {{ local = "{bs_oracle_path}" }}',
     text,
 )
 text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
@@ -578,6 +614,8 @@ text = text.rstrip() + (
     f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
     f'wormhole = {{ local = "{wormhole_path}", '
     f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
+    f'bs_oracle = {{ local = "{bs_oracle_path}", '
+    f'published-at = "{bs_oracle_pkg_id}", original-id = "{bs_oracle_pkg_id}" }}\n'
 )
 toml_path.write_text(text)
 PY
@@ -602,23 +640,30 @@ PY
   # Publish predict
   echo "==> Phase 3: Publishing predict..."
 
-  # Only the git deps (pyth_lazer/wormhole) need source+address redirection for the
-  # sim env — they mirror predict's [dep-replacements.testnet]. The local deps
-  # (deepbook, dusdc, fixed_math, propbook, block_scholes_oracle, token) resolve
+  # Only the git deps (pyth_lazer/wormhole/bs_oracle) need source+address
+  # redirection for the sim env — they mirror predict's [dep-replacements.testnet].
+  # The remaining deps (local deepbook, dusdc, fixed_math, propbook, token) resolve
   # through the shared pubfile, so they are not injected here.
   inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
-  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
+  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BS_ORACLE_DIR" "$BLOCK_SCHOLES_ORACLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
 import pathlib, re, sys
 toml_path = pathlib.Path(sys.argv[1])
 pyth_lazer_path = sys.argv[2]
 pyth_lazer_pkg_id = sys.argv[3]
 wormhole_path = sys.argv[4]
 wormhole_pkg_id = sys.argv[5]
-build_env = sys.argv[6]
+bs_oracle_path = sys.argv[6]
+bs_oracle_pkg_id = sys.argv[7]
+build_env = sys.argv[8]
 text = toml_path.read_text()
 text = re.sub(
     r"pyth_lazer = \{ git[^}]*\}",
     f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
+    text,
+)
+text = re.sub(
+    r"bs_oracle = \{ git[^}]*\}",
+    f'bs_oracle = {{ local = "{bs_oracle_path}" }}',
     text,
 )
 text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
@@ -628,6 +673,8 @@ text = text.rstrip() + (
     f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
     f'wormhole = {{ local = "{wormhole_path}", '
     f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
+    f'bs_oracle = {{ local = "{bs_oracle_path}", '
+    f'published-at = "{bs_oracle_pkg_id}", original-id = "{bs_oracle_pkg_id}" }}\n'
 )
 toml_path.write_text(text)
 PY
@@ -684,6 +731,10 @@ ACCOUNT_REGISTRY_ID=$ACCOUNT_REGISTRY_ID
 ACCOUNT_ADMIN_CAP_ID=$ACCOUNT_ADMIN_CAP_ID
 FIXED_MATH_PACKAGE_ID=$FIXED_MATH_PACKAGE_ID
 BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$BLOCK_SCHOLES_ORACLE_PACKAGE_ID
+BS_SIGNER_REGISTRY_ID=$BS_SIGNER_REGISTRY_ID
+BS_ADMIN_CAP_ID=$BS_ADMIN_CAP_ID
+LOCAL_BS_SIGNER_PRIVATE_KEY=$LOCAL_BS_SIGNER_PRIVATE_KEY
+LOCAL_BS_SIGNER_PUBLIC_KEY=$LOCAL_BS_SIGNER_PUBLIC_KEY
 PROPBOOK_PACKAGE_ID=$PROPBOOK_PACKAGE_ID
 ORACLE_REGISTRY_ID=$ORACLE_REGISTRY_ID
 ORACLE_REGISTRY_ADMIN_CAP_ID=$ORACLE_REGISTRY_ADMIN_CAP_ID

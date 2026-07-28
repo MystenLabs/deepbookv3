@@ -122,12 +122,11 @@ export interface SimState {
     // in MarketCreated. Stored as a decimal string so state.json stays plain JSON.
     expiryMs: string;
     // Propbook feeds replace the in-package oracle + Pyth source. There is no
-    // writer cap anymore; BS updates are permissionless via verified split `Update`
-    // values.
+    // writer cap anymore; BS updates are permissionless verified batches, ingested
+    // into the underlying's sid-keyed value/SVI store pair.
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
     // The sender's canonical derived account wrapper (replaces the predict manager).
     // Owner auth is minted per-call from the tx sender, so there are no capital caps.
     accountWrapperId: string;

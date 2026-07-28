@@ -8,12 +8,16 @@ import {
     ACCOUNT_REGISTRY_ID,
     ADMIN_CAP_ID,
     BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+    BS_ADMIN_CAP_ID,
+    BS_SIGNER_REGISTRY_ID,
     DUSDC_CURRENCY_ID,
     DUSDC_PACKAGE_ID,
     LOCAL_PYTH_GOVERNANCE_CHAIN,
     LOCAL_PYTH_GOVERNANCE_CONTRACT,
     LOCAL_PYTH_GUARDIAN_PRIVATE_KEY,
     LOCAL_PYTH_RECEIVER_CHAIN,
+    LOCAL_BS_SIGNER_PRIVATE_KEY,
+    LOCAL_BS_SIGNER_PUBLIC_KEY,
     LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS,
     LOCAL_PYTH_SIGNER_PRIVATE_KEY,
     LOCAL_PYTH_SIGNER_PUBLIC_KEY,
@@ -32,8 +36,11 @@ import {
     WORMHOLE_STATE_ID,
     getSigner,
 } from "./env.js";
+import { forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
+import { signedSviBatchBytes, signedValueBatchBytes } from "./localBlockScholes.js";
 import {
     type LocalPythConfig,
+    hexToBytes,
     lazerUpdateFromConfig,
     updateTrustedSignerVaaFromConfig,
 } from "./localPyth.js";
@@ -324,19 +331,20 @@ function generateAuth(tx: Transaction) {
 }
 
 // Note: `predict_math` was renamed to `fixed_math`, but the harness no longer makes
-// any direct fixed_math/i64 Move call — the old oracle path built SVI `i64`s via
-// `i64::from_parts`; the propbook BS updates now take magnitude+sign primitives
-// directly (`block_scholes_oracle::update::new_svi_update`). So there is no
-// `fixedMathTarget` helper. The rename still matters for the localnet publish flow
-// and the named-address dependency (see run.sh).
+// any direct fixed_math/i64 Move call — the BS updates carry magnitude+sign
+// primitives (`bs_oracle::verify` SVI updates). So there is no `fixedMathTarget`
+// helper. The rename still matters for the localnet publish flow and the
+// named-address dependency (see run.sh).
 
 // propbook owns the extracted Pyth spot and split Block Scholes feeds.
 function propbookTarget(module: string, fn: string): `${string}::${string}::${string}` {
     return `${PROPBOOK_PACKAGE_ID}::${module}::${fn}`;
 }
 
-// `block_scholes_oracle` is the STUB BS signed-data verifier that mints the
-// verified split updates consumed by the Block Scholes Propbook feeds.
+// `bs_oracle` is the real Block Scholes signature verifier, published unmodified.
+// Batches are minted only by `verify_and_create_*_batch` over locally signed
+// bytes (see localBlockScholes.ts) and ingested through the production
+// `block_scholes_store::apply_*_batch` path.
 function bsOracleTarget(module: string, fn: string): `${string}::${string}::${string}` {
     return `${BLOCK_SCHOLES_ORACLE_PACKAGE_ID}::${module}::${fn}`;
 }
@@ -397,20 +405,15 @@ export async function nextOneMonthExpiryMs(): Promise<bigint> {
     return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
 }
 
-interface BlockScholesSurfaceFeedIds {
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
-}
-
-// One oracle refresh now writes all propbook feeds: a permissionless Pyth Lazer
-// spot update plus independent BS spot, forward, and SVI updates for the market's
-// expiry. There is no in-package oracle and no writer cap anymore.
+// One oracle refresh writes all propbook slots: a permissionless Pyth Lazer spot
+// update, one BS value batch carrying spot + forward (they share a batch on the
+// real wire), and one BS SVI batch for the market's expiry. Routing is by the
+// signed sid inside each update; the two per-underlying stores are the only BS
+// objects the refresh touches.
 interface OracleRefreshParams {
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
     expiry: bigint;
     spot: bigint;
     forward: bigint;
@@ -431,9 +434,8 @@ interface MintParams {
     protocolConfigId: string;
     wrapperId: string;
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
     strike: bigint;
     isUp: boolean;
     quantity: bigint;
@@ -445,9 +447,8 @@ interface RedeemParams {
     protocolConfigId: string;
     wrapperId: string;
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
     orderId: string;
     closeQuantity: bigint;
 }
@@ -456,9 +457,8 @@ interface LivePricerParams {
     expiryMarketId: string;
     protocolConfigId: string;
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
 }
 
 // Inputs to drive one privileged full-pool flush (the async LP drain).
@@ -467,9 +467,8 @@ export interface FlushParams {
     protocolConfigId: string;
     expiryMarketId: string;
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
     lifecycleCapId: string;
 }
 
@@ -529,59 +528,76 @@ function addPythFeedUpdate(
     });
 }
 
-// Block Scholes updates for one expiry: build the STUB verified split updates,
-// then ingest them into the independent Propbook BS spot, forward, and SVI feeds.
+// Block Scholes updates for one expiry: sign real batches with the local signer
+// key (registered on the localnet `SignerRegistry`), mint the hot-potato batches
+// through the verifier, and ingest them through the production
+// `block_scholes_store::apply_*_batch` path. Spot and forward share one value
+// batch, as they do on the real wire; SVI rides its own batch. The sim always
+// sends fresh data, so `publishedAtMs` serves as both the envelope (published-at)
+// and per-update (model) timestamp.
 function addBlockScholesUpdates(
     tx: Transaction,
     params: OracleRefreshParams,
     publishedAtMs: bigint,
 ): void {
-    const spotUpdate = tx.moveCall({
-        target: bsOracleTarget("update", "new_spot_update"),
+    const valueMessage = signedValueBatchBytes({
+        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+        batchTimestampMs: publishedAtMs,
+        updates: [
+            {
+                sid: spotSid(BS_UNDERLYING_ID),
+                timestampMs: publishedAtMs,
+                value: params.spot,
+            },
+            {
+                sid: forwardSid(BS_UNDERLYING_ID, params.expiry),
+                timestampMs: publishedAtMs,
+                value: params.forward,
+            },
+        ],
+    });
+    const valueBatch = tx.moveCall({
+        target: bsOracleTarget("verify", "verify_and_create_value_batch"),
         arguments: [
-            tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(publishedAtMs),
-            tx.pure.u64(params.spot),
+            tx.object(BS_SIGNER_REGISTRY_ID),
+            tx.pure.vector("u8", Array.from(valueMessage)),
         ],
     });
     tx.moveCall({
-        target: propbookTarget("block_scholes_spot_feed", "update"),
-        arguments: [tx.object(params.bsSpotFeedId), spotUpdate, tx.object(CLOCK_ID)],
+        target: propbookTarget("block_scholes_store", "apply_value_batch"),
+        arguments: [tx.object(params.bsValueStoreId), valueBatch, tx.object(CLOCK_ID)],
     });
 
-    const forwardUpdate = tx.moveCall({
-        target: bsOracleTarget("update", "new_forward_update"),
+    const sviMessage = signedSviBatchBytes({
+        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+        batchTimestampMs: publishedAtMs,
+        updates: [
+            {
+                sid: sviSid(BS_UNDERLYING_ID, params.expiry),
+                timestampMs: publishedAtMs,
+                aMagnitude: params.svi.a,
+                aNegative: params.svi.aNegative,
+                b: params.svi.b,
+                sigma: params.svi.sigma,
+                rhoMagnitude: params.svi.rho,
+                rhoNegative: params.svi.rhoNegative,
+                mMagnitude: params.svi.m,
+                mNegative: params.svi.mNegative,
+            },
+        ],
+    });
+    const sviBatch = tx.moveCall({
+        target: bsOracleTarget("verify", "verify_and_create_svi_batch"),
         arguments: [
-            tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(params.expiry),
-            tx.pure.u64(publishedAtMs),
-            tx.pure.u64(params.forward),
+            tx.object(BS_SIGNER_REGISTRY_ID),
+            tx.pure.vector("u8", Array.from(sviMessage)),
         ],
     });
     tx.moveCall({
-        target: propbookTarget("block_scholes_forward_feed", "update"),
-        arguments: [tx.object(params.bsForwardFeedId), forwardUpdate, tx.object(CLOCK_ID)],
-    });
-
-    const sviUpdate = tx.moveCall({
-        target: bsOracleTarget("update", "new_svi_update"),
-        arguments: [
-            tx.pure.u32(BS_UNDERLYING_ID),
-            tx.pure.u64(params.expiry),
-            tx.pure.u64(publishedAtMs),
-            tx.pure.u64(params.svi.a),
-            tx.pure.bool(params.svi.aNegative),
-            tx.pure.u64(params.svi.b),
-            tx.pure.u64(params.svi.sigma),
-            tx.pure.u64(params.svi.rho),
-            tx.pure.bool(params.svi.rhoNegative),
-            tx.pure.u64(params.svi.m),
-            tx.pure.bool(params.svi.mNegative),
-        ],
-    });
-    tx.moveCall({
-        target: propbookTarget("block_scholes_svi_feed", "update"),
-        arguments: [tx.object(params.bsSviFeedId), sviUpdate, tx.object(CLOCK_ID)],
+        target: propbookTarget("block_scholes_store", "apply_svi_batch"),
+        arguments: [tx.object(params.bsSviStoreId), sviBatch, tx.object(CLOCK_ID)],
     });
 }
 
@@ -602,9 +618,8 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
-            tx.object(params.bsSpotFeedId),
-            tx.object(params.bsForwardFeedId),
-            tx.object(params.bsSviFeedId),
+            tx.object(params.bsValueStoreId),
+            tx.object(params.bsSviStoreId),
             tx.object(CLOCK_ID),
         ],
     });
@@ -635,9 +650,8 @@ function addFlush(tx: Transaction, params: FlushParams): void {
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
-            tx.object(params.bsSpotFeedId),
-            tx.object(params.bsForwardFeedId),
-            tx.object(params.bsSviFeedId),
+            tx.object(params.bsValueStoreId),
+            tx.object(params.bsSviStoreId),
             tx.object(CLOCK_ID),
         ],
     });
@@ -734,10 +748,10 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
     return tx;
 }
 
-// Admin-approve one Propbook underlying for Predict and permissionlessly create
-// the permanent Pyth spot feed plus the permanent BS spot feed. The permanent BS
-// forward/SVI surface feeds are created after this transaction so their IDs can be
-// captured from object changes.
+// Admin-approve one Propbook underlying for Predict, permissionlessly create the
+// permanent Pyth spot feed, and admin-create the underlying's Block Scholes store
+// pair. The stores are canonical at creation (their registry binding is made in
+// the same call), so no separate BS bind step exists.
 export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -755,21 +769,12 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
         arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(feedId)],
     });
     tx.moveCall({
-        target: propbookTarget("registry", "create_and_share_block_scholes_spot_feed"),
-        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
-    });
-    return tx;
-}
-
-export function createBlockScholesSurfaceFeedsTx(): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: propbookTarget("registry", "create_and_share_block_scholes_forward_feed"),
-        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
-    });
-    tx.moveCall({
-        target: propbookTarget("registry", "create_and_share_block_scholes_svi_feed"),
-        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(BS_UNDERLYING_ID)],
+        target: propbookTarget("registry", "create_and_share_block_scholes_stores"),
+        arguments: [
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
+            tx.pure.u32(BS_UNDERLYING_ID),
+        ],
     });
     return tx;
 }
@@ -804,13 +809,10 @@ export function setCadenceConfigTx(params: {
     return tx;
 }
 
-// Admin-bind the Pyth spot feed and BS spot feed to one canonical Propbook
-// underlying. Must run after the feeds are shared. The permanent BS forward/SVI
-// surface is bound separately before market creation.
-export function bindFeedsToUnderlyingTx(params: {
-    pythFeedId: string;
-    bsSpotFeedId: string;
-}): Transaction {
+// Admin-bind the Pyth spot feed to one canonical Propbook underlying. Must run
+// after the feed is shared. The Block Scholes stores need no bind step: their
+// binding is made when the pair is created (registerUnderlyingAndCreateFeedsTx).
+export function bindFeedsToUnderlyingTx(params: { pythFeedId: string }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: propbookTarget("registry", "bind_pyth_to_underlying"),
@@ -818,32 +820,6 @@ export function bindFeedsToUnderlyingTx(params: {
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.object(params.pythFeedId),
-            tx.pure.u32(BS_UNDERLYING_ID),
-        ],
-    });
-    tx.moveCall({
-        target: propbookTarget("registry", "bind_block_scholes_spot_to_underlying"),
-        arguments: [
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
-            tx.object(params.bsSpotFeedId),
-            tx.pure.u32(BS_UNDERLYING_ID),
-        ],
-    });
-    return tx;
-}
-
-export function bindBlockScholesSurfaceToUnderlyingTx(
-    params: Pick<BlockScholesSurfaceFeedIds, "bsForwardFeedId" | "bsSviFeedId">,
-): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: propbookTarget("registry", "bind_block_scholes_surface_to_underlying"),
-        arguments: [
-            tx.object(ORACLE_REGISTRY_ID),
-            tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
-            tx.object(params.bsForwardFeedId),
-            tx.object(params.bsSviFeedId),
             tx.pure.u32(BS_UNDERLYING_ID),
         ],
     });
@@ -909,17 +885,33 @@ export function updatePythTrustedSignerTx(): Transaction {
     return tx;
 }
 
-// Seed the split Block Scholes feeds (and Pyth spot) for the market's expiry. Market
+// Register the per-instance local signer key on the verifier's `SignerRegistry`
+// (the sim published `bs_oracle`, so it holds the `AdminCap`). After this, only
+// batches signed by localBlockScholes.ts verify — the BS analogue of
+// `updatePythTrustedSignerTx`.
+export function setBlockScholesSignerTx(): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: bsOracleTarget("registry", "set_signer"),
+        arguments: [
+            tx.object(BS_SIGNER_REGISTRY_ID),
+            tx.object(BS_ADMIN_CAP_ID),
+            tx.pure.vector("u8", Array.from(hexToBytes(LOCAL_BS_SIGNER_PUBLIC_KEY))),
+        ],
+    });
+    return tx;
+}
+
+// Seed the Block Scholes stores (and Pyth spot) for the market's expiry. Market
 // creation itself reads NO spot now (absolute ticks need no grid centering), but a
-// fresh BS price/SVI source set must exist before the first mint and before any
-// flush valuation can price `current_nav`. The permanent forward/SVI feeds must
-// already be created and bound before market creation, but seeding the per-expiry
-// feed rows happens after the market is created.
+// fresh BS price/SVI series set must exist before the first mint and before any
+// flush valuation can price `current_nav`. The store pair exists from underlying
+// registration; seeding the per-expiry series rows happens after the market is
+// created (its expiry fixes their sids).
 export async function seedOracleTx(params: {
     pythFeedId: string;
-    bsSpotFeedId: string;
-    bsForwardFeedId: string;
-    bsSviFeedId: string;
+    bsValueStoreId: string;
+    bsSviStoreId: string;
     expiry: bigint;
     spot: bigint;
     forward: bigint;
@@ -932,8 +924,9 @@ export async function seedOracleTx(params: {
 
 // Create the expiry market for one Propbook underlying. No spot is read at
 // creation. The registry validates, against propbook's canonical binding, that
-// Pyth + Block Scholes feeds are bound to `BS_UNDERLYING_ID` (run
-// `bindFeedsToUnderlyingTx` first). `create_and_share_expiry_market` returns one ID and
+// the Pyth feed and the Block Scholes store pair are bound to `BS_UNDERLYING_ID`
+// (run `bindFeedsToUnderlyingTx` first; the store pair binds at creation).
+// `create_and_share_expiry_market` returns one ID and
 // registers the market with the vault as a zero-cash accounting row (not mintable
 // until `rebalance_expiry_cash` funds it).
 export function createExpiryMarketTx(params: {
