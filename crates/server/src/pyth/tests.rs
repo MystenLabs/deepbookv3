@@ -204,6 +204,11 @@ async fn latest_handler_loads_lazily_and_shares_one_ttl_snapshot() {
         json["parsed"][0]["metadata"]["publish_time_us"],
         TEST_TIMESTAMP_US.to_string()
     );
+    assert_eq!(json["parsed"][0]["price"]["publish_time"], 1_700_000_000);
+    assert_eq!(
+        json["parsed"][0]["ema_price"]["publish_time"],
+        1_700_000_000
+    );
 
     {
         let captured = mock.captured.lock().unwrap();
@@ -335,6 +340,11 @@ async fn historical_cache_is_keyed_by_feed_and_timestamp() {
     let json = partial_miss.json::<Value>().await.unwrap();
     assert_eq!(json["parsed"][0]["id"], "2");
     assert_eq!(json["parsed"][1]["id"], "3");
+    assert_eq!(
+        json["parsed"][0]["metadata"]["publish_time_us"],
+        "1700000000000000"
+    );
+    assert_eq!(json["parsed"][0]["price"]["publish_time"], 1_700_000_000);
     assert_eq!(mock.history_requests.load(Ordering::SeqCst), 2);
 
     let captured = mock.captured.lock().unwrap();
