@@ -85,6 +85,15 @@ async function main() {
   const start = Date.now();
   let pushes = 0;
   let skips = 0;
+  // Dual-clock accounting: per series, how often the provider re-sent an unchanged model time
+  // (a pinned retransmission) vs advanced it. This is the empirical probe for the on-chain
+  // model-time freshness contract — a provider that pins a series past the freshness window
+  // would halt pricing, and this summary is where that behavior becomes visible.
+  const lastFwdTs = new Map<number, number>();
+  const lastSviTs = new Map<number, number>();
+  let pinnedFwd = 0;
+  let pinnedSvi = 0;
+  let missingTs = 0;
   while (!shutdown && (DURATION_MS === 0 || Date.now() - start < DURATION_MS)) {
     await sleep(LOOP_MS);
     source.ensureExpiries(gridNow()); // roll the warmed grid forward as boundaries pass
@@ -92,16 +101,25 @@ async function main() {
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
     const ts = await clampedSourceTimestampMs(snap.publishedAtMs);
     if (ts === null) { skips++; continue; }
-    const grid = [...snap.expiries.entries()].map(([expiry, e]) => ({
-      expiry: BigInt(expiry),
-      forward: to1e9(e.forward),
-      svi: {
-        a: to1e9(Math.abs(e.svi.alpha)), aNegative: e.svi.alpha < 0,
-        b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
-        rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
-        m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
-      },
-    }));
+    const grid = [...snap.expiries.entries()].map(([expiry, e]) => {
+      if (e.forwardTsMs === 0 || e.sviTsMs === 0) missingTs++;
+      if (lastFwdTs.get(expiry) === e.forwardTsMs && e.forwardTsMs !== 0) pinnedFwd++;
+      if (lastSviTs.get(expiry) === e.sviTsMs && e.sviTsMs !== 0) pinnedSvi++;
+      lastFwdTs.set(expiry, e.forwardTsMs);
+      lastSviTs.set(expiry, e.sviTsMs);
+      return {
+        expiry: BigInt(expiry),
+        forward: to1e9(e.forward),
+        forwardTsMs: BigInt(e.forwardTsMs),
+        svi: {
+          a: to1e9(Math.abs(e.svi.alpha)), aNegative: e.svi.alpha < 0,
+          b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
+          rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
+          m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
+        },
+        sviTsMs: BigInt(e.sviTsMs),
+      };
+    });
     try {
       const digest = await submit(
         buildOracleRefreshGridTx(
@@ -132,6 +150,10 @@ async function main() {
   }
   source.stop();
   console.log(`\n[updater] done: ${pushes} pushes, ${skips} skips over ${((Date.now() - start) / 1000).toFixed(0)}s`);
+  console.log(
+    `[updater] dual-clock: ${pinnedFwd} pinned fwd + ${pinnedSvi} pinned svi retransmissions observed` +
+    (missingTs > 0 ? ` (${missingTs} entries lacked a provider timestamp — signed at the envelope)` : ""),
+  );
   if (pushes === 0 && mode !== "replay") throw new Error("no successful pushes");
   console.log("=== UPDATER OK: real-data oracle stream landed on-chain ===");
 }

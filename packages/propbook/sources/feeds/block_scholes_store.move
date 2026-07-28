@@ -183,9 +183,10 @@ public fun svi_m_is_negative(params: &SVIParams): bool {
 
 /// Ingest a verified batch of spot and forward observations.
 /// The batch is taken by value rather than as its unpacked updates so the envelope time comes from
-/// inside the signature: a caller passing that time separately could inflate it to make a stale
-/// series look current or to claim a stopped feed is alive. Holding a `ValueBatch` at all is proof
-/// of a valid Block Scholes signature, so this never sees keys, bytes, or the signer registry.
+/// inside the signature: it breaks ties between retransmissions of the same model data and feeds
+/// the batch events, so a caller must not be able to fabricate it. Holding a `ValueBatch` at all is
+/// proof of a valid Block Scholes signature, so this never sees keys, bytes, or the signer
+/// registry.
 public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBatch, clock: &Clock) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
     let published_at_ms = verify::value_batch_timestamp(&batch);

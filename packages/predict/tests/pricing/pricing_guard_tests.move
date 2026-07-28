@@ -262,6 +262,61 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     abort EUnexpectedSuccess
 }
 
+/// The same dual-clock rule as the SVI test below, for the spot series: a retransmission pinned
+/// to an aged model time is stale no matter how fresh its envelope.
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_a_freshly_retransmitted_but_aged_spot_model_aborts() {
+    let (mut fx, mut oracle) = setup_live();
+    let model_ms = test_constants::live_source_timestamp_ms();
+    let stale_now =
+        model_ms
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    fx.retransmit_bs_spot_for_testing(
+        &mut oracle,
+        model_ms,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// And for the forward series: the spot is genuinely fresh, the forward's fresh envelope carries
+/// an aged model time, and the quote aborts on the forward's model age.
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_a_freshly_retransmitted_but_aged_forward_model_aborts() {
+    let (mut fx, mut oracle) = setup_live();
+    let model_ms = test_constants::live_source_timestamp_ms();
+    let stale_now =
+        model_ms
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
+    fx.retransmit_bs_forward_for_testing(
+        &mut oracle,
+        model_ms,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
 /// A fresh envelope must not make old model data economically usable: a retransmission re-sends
 /// the tuple's original model time, so once that model age exceeds the window the SVI is stale no
 /// matter how recently it was republished.

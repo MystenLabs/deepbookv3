@@ -664,12 +664,17 @@ export function buildOracleRefreshTx(params: OracleRefreshParams, sourceTimestam
 
 // Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then a
 // single BS value batch (spot + every forward) and a single BS SVI batch (every
-// SVI set). Pre-warms the whole boundary grid in a single transaction at one
-// (clamped) source timestamp.
+// SVI set). Pre-warms the whole boundary grid in a single transaction under one
+// (clamped) envelope timestamp, while each series keeps its own provider model
+// time — the clock the on-chain stores order and age series by.
 export interface GridExpiry {
     expiry: bigint;
     forward: bigint;
+    /// Provider model time of the forward ("as of"); 0 = unknown, use the envelope.
+    forwardTsMs: bigint;
     svi: OracleRefreshParams["svi"];
+    /// Provider model time of the SVI tuple; 0 = unknown, use the envelope.
+    sviTsMs: bigint;
 }
 
 export function buildOracleRefreshGridTx(
@@ -685,7 +690,11 @@ export function buildOracleRefreshGridTx(
 
 // Add a grid refresh (one value batch + one SVI batch) to an existing PTB, so a
 // priced op (flush valuation, liquidation) reads fresh inputs within the same
-// atomic transaction rather than depending on a separate earlier refresh.
+// atomic transaction rather than depending on a separate earlier refresh. Each
+// series carries its own provider model time; a series whose model time is
+// unknown gets the envelope, and one that momentarily postdates the envelope
+// (cross-stream clock skew) is skipped this push rather than clamped — the store
+// would refuse it as malformed, and the next push lands it honestly.
 function addOracleRefreshGrid(
     tx: Transaction,
     feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
@@ -693,21 +702,31 @@ function addOracleRefreshGrid(
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
 ): void {
+    const seriesTs = (tsMs: bigint): bigint | null => {
+        if (tsMs <= 0n) return sourceTimestampMs;
+        if (tsMs > sourceTimestampMs) return null;
+        return tsMs;
+    };
     addPythFeedUpdate(tx, feeds.pythFeedId, spot, sourceTimestampMs);
-    addBsBatches(
-        tx,
-        feeds,
-        sourceTimestampMs,
-        [
-            { sid: spotSid(BS_UNDERLYING_ID), timestampMs: sourceTimestampMs, value: spot },
-            ...grid.map((g) => ({
+    const valueUpdates = [
+        { sid: spotSid(BS_UNDERLYING_ID), timestampMs: sourceTimestampMs, value: spot },
+    ];
+    for (const g of grid) {
+        const ts = seriesTs(g.forwardTsMs);
+        if (ts !== null) {
+            valueUpdates.push({
                 sid: forwardSid(BS_UNDERLYING_ID, g.expiry),
-                timestampMs: sourceTimestampMs,
+                timestampMs: ts,
                 value: g.forward,
-            })),
-        ],
-        grid.map((g) => sviBatchUpdate(g.expiry, g.svi, sourceTimestampMs)),
-    );
+            });
+        }
+    }
+    const sviUpdates = [];
+    for (const g of grid) {
+        const ts = seriesTs(g.sviTsMs);
+        if (ts !== null) sviUpdates.push(sviBatchUpdate(g.expiry, g.svi, ts));
+    }
+    addBsBatches(tx, feeds, sourceTimestampMs, valueUpdates, sviUpdates);
 }
 
 // Permissionless Pyth Lazer spot update: parse+verify the signed Lazer payload,

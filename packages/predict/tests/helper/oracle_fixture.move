@@ -484,6 +484,38 @@ public fun set_bs_forward_for_testing_bundle(
     self.set_bs_forward_for_testing(&mut oracle.bs, source_timestamp_ms, forward);
 }
 
+/// Retransmit the BS spot pinned to its original model time inside a newer envelope.
+public fun retransmit_bs_spot_for_testing(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    spot: u64,
+) {
+    let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
+    apply_value_batch(&mut oracle.bs, sid, model_timestamp_ms, published_at_ms, spot, &self.clock);
+}
+
+/// Retransmit the BS forward for this fixture's expiry pinned to its original model time inside a
+/// newer envelope.
+public fun retransmit_bs_forward_for_testing(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    forward: u64,
+) {
+    let sid = block_scholes_sid::forward(test_constants::propbook_underlying_id(), self.expiry);
+    apply_value_batch(
+        &mut oracle.bs,
+        sid,
+        model_timestamp_ms,
+        published_at_ms,
+        forward,
+        &self.clock,
+    );
+}
+
 /// Overwrite only the BS SVI row for this fixture's expiry through the real
 /// ingest path.
 public fun set_bs_svi_for_testing_bundle(
