@@ -48,6 +48,10 @@ macro fun decimals_shift(): u8 {
     200
 }
 
+macro fun underlying_mask(): u256 {
+    0xffffffff
+}
+
 // === Public Functions ===
 
 /// Returns the series id of the spot feed for `propbook_underlying_id`.
@@ -64,6 +68,13 @@ public fun forward(propbook_underlying_id: u32, expiry_ms: u64): u256 {
 /// Returns the series id of the SVI feed for `propbook_underlying_id` at `expiry_ms`.
 public fun svi(propbook_underlying_id: u32, expiry_ms: u64): u256 {
     encode(kind_svi!(), propbook_underlying_id, expiry_ms)
+}
+
+/// Returns the underlying a series id was assigned to.
+/// Reads derive whole ids rather than decoding them; this exists so a store holding one
+/// underlying's series can recognize an id that belongs to another and leave it alone.
+public fun underlying(sid: u256): u32 {
+    ((sid >> underlying_shift!()) & underlying_mask!()) as u32
 }
 
 // === Private Functions ===
