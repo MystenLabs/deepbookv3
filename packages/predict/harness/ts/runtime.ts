@@ -679,12 +679,13 @@ export interface GridExpiry {
 
 export function buildOracleRefreshGridTx(
     feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
-    spot: bigint,
+    pythSpot1e9: bigint,
+    bsSpot: { value1e9: bigint; tsMs: bigint },
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
 ): Transaction {
     const tx = new Transaction();
-    addOracleRefreshGrid(tx, feeds, spot, grid, sourceTimestampMs);
+    addOracleRefreshGrid(tx, feeds, pythSpot1e9, bsSpot, grid, sourceTimestampMs);
     return tx;
 }
 
@@ -698,7 +699,8 @@ export function buildOracleRefreshGridTx(
 function addOracleRefreshGrid(
     tx: Transaction,
     feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
-    spot: bigint,
+    pythSpot1e9: bigint,
+    bsSpot: { value1e9: bigint; tsMs: bigint },
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
 ): void {
@@ -707,10 +709,18 @@ function addOracleRefreshGrid(
         if (tsMs > sourceTimestampMs) return null;
         return tsMs;
     };
-    addPythFeedUpdate(tx, feeds.pythFeedId, spot, sourceTimestampMs);
-    const valueUpdates = [
-        { sid: spotSid(BS_UNDERLYING_ID), timestampMs: sourceTimestampMs, value: spot },
-    ];
+    addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, sourceTimestampMs);
+    // The BS spot slot carries Block Scholes' own signed spot series at its own model
+    // time — a separate observation from the Pyth spot above.
+    const valueUpdates = [];
+    const spotTs = seriesTs(bsSpot.tsMs);
+    if (spotTs !== null) {
+        valueUpdates.push({
+            sid: spotSid(BS_UNDERLYING_ID),
+            timestampMs: spotTs,
+            value: bsSpot.value1e9,
+        });
+    }
     for (const g of grid) {
         const ts = seriesTs(g.forwardTsMs);
         if (ts !== null) {
@@ -726,7 +736,9 @@ function addOracleRefreshGrid(
         const ts = seriesTs(g.sviTsMs);
         if (ts !== null) sviUpdates.push(sviBatchUpdate(g.expiry, g.svi, ts));
     }
-    addBsBatches(tx, feeds, sourceTimestampMs, valueUpdates, sviUpdates);
+    if (valueUpdates.length > 0 || sviUpdates.length > 0) {
+        addBsBatches(tx, feeds, sourceTimestampMs, valueUpdates, sviUpdates);
+    }
 }
 
 // Permissionless Pyth Lazer spot update: parse+verify the signed Lazer payload,
@@ -801,25 +813,28 @@ function addBsBatches(
     valueUpdates: BsValueUpdate[],
     sviUpdates: BsSviUpdate[],
 ): void {
-    const valueMessage = signedValueBatchBytes({
-        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
-        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-        batchTimestampMs: publishedAtMs,
-        updates: valueUpdates,
-    });
-    const valueBatch = tx.moveCall({
-        target: bsOracleTarget("verify", "verify_and_create_value_batch"),
-        arguments: [
-            tx.object(BS_SIGNER_REGISTRY_ID),
-            tx.pure.vector("u8", Array.from(valueMessage)),
-        ],
-    });
-    tx.moveCall({
-        target: propbookTarget("block_scholes_store", "apply_value_batch"),
-        arguments: [tx.object(stores.bsValueStoreId), valueBatch, tx.object(CLOCK_ID)],
-    });
+    // The verifier rejects an empty batch, so each side is only built when it has entries.
+    if (valueUpdates.length > 0) {
+        const valueMessage = signedValueBatchBytes({
+            signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+            verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+            batchTimestampMs: publishedAtMs,
+            updates: valueUpdates,
+        });
+        const valueBatch = tx.moveCall({
+            target: bsOracleTarget("verify", "verify_and_create_value_batch"),
+            arguments: [
+                tx.object(BS_SIGNER_REGISTRY_ID),
+                tx.pure.vector("u8", Array.from(valueMessage)),
+            ],
+        });
+        tx.moveCall({
+            target: propbookTarget("block_scholes_store", "apply_value_batch"),
+            arguments: [tx.object(stores.bsValueStoreId), valueBatch, tx.object(CLOCK_ID)],
+        });
+    }
 
-    if (sviUpdates.length === 0) return; // the verifier rejects an empty batch
+    if (sviUpdates.length === 0) return;
     const sviMessage = signedSviBatchBytes({
         signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
         verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,

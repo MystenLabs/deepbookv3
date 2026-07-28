@@ -263,7 +263,9 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
 }
 
 /// The same dual-clock rule as the SVI test below, for the spot series: a retransmission pinned
-/// to an aged model time is stale no matter how fresh its envelope.
+/// to an aged model time is stale no matter how fresh its envelope. The forward is refreshed at
+/// the same clock so the aged spot is the ONLY stale input — otherwise a freshness regression to
+/// envelope time would slide past the spot and still abort on the co-stale seeded forward.
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
 fun live_quote_with_a_freshly_retransmitted_but_aged_spot_model_aborts() {
     let (mut fx, mut oracle) = setup_live();
@@ -273,6 +275,11 @@ fun live_quote_with_a_freshly_retransmitted_but_aged_spot_model_aborts() {
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
     fx.set_clock_for_testing(stale_now);
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        stale_now,
+        test_constants::default_live_price(),
+    );
     fx.retransmit_bs_spot_for_testing(
         &mut oracle,
         model_ms,

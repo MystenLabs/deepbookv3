@@ -91,6 +91,8 @@ async function main() {
   // would halt pricing, and this summary is where that behavior becomes visible.
   const lastFwdTs = new Map<number, number>();
   const lastSviTs = new Map<number, number>();
+  let lastBsSpotTs = 0;
+  let pinnedSpot = 0;
   let pinnedFwd = 0;
   let pinnedSvi = 0;
   let missingTs = 0;
@@ -99,8 +101,19 @@ async function main() {
     source.ensureExpiries(gridNow()); // roll the warmed grid forward as boundaries pass
     const snap = source.latest();
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
-    const ts = await clampedSourceTimestampMs(snap.publishedAtMs);
+    // The envelope is when WE (the relayer) package the batch: base it on the freshest
+    // input clock so no series' model time postdates it merely from cross-stream skew.
+    let latestInputMs = Number(snap.publishedAtMs);
+    if (snap.bsSpotTsMs > latestInputMs) latestInputMs = snap.bsSpotTsMs;
+    for (const e of snap.expiries.values()) {
+      if (e.forwardTsMs > latestInputMs) latestInputMs = e.forwardTsMs;
+      if (e.sviTsMs > latestInputMs) latestInputMs = e.sviTsMs;
+    }
+    const ts = await clampedSourceTimestampMs(BigInt(latestInputMs));
     if (ts === null) { skips++; continue; }
+    if (snap.bsSpotTsMs !== 0 && snap.bsSpotTsMs === lastBsSpotTs) pinnedSpot++;
+    if (snap.bsSpotTsMs === 0) missingTs++;
+    lastBsSpotTs = snap.bsSpotTsMs;
     const grid = [...snap.expiries.entries()].map(([expiry, e]) => {
       if (e.forwardTsMs === 0 || e.sviTsMs === 0) missingTs++;
       if (lastFwdTs.get(expiry) === e.forwardTsMs && e.forwardTsMs !== 0) pinnedFwd++;
@@ -128,7 +141,9 @@ async function main() {
             bsValueStoreId: feeds.bsValueStoreId,
             bsSviStoreId: feeds.bsSviStoreId,
           },
-          snap.spot1e9, grid, ts,
+          snap.spot1e9,
+          { value1e9: snap.bsSpot1e9, tsMs: BigInt(snap.bsSpotTsMs) },
+          grid, ts,
         ),
         signer,
       );
@@ -137,6 +152,8 @@ async function main() {
       // spurious guard aborts that look like harness failures.
       atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
         spot1e9: snap.spot1e9.toString(),
+        bsSpot1e9: snap.bsSpot1e9.toString(),
+        bsSpotTsMs: snap.bsSpotTsMs,
         publishedAtMs: ts.toString(),
         expiries: Object.fromEntries([...snap.expiries.entries()]),
       }));
@@ -151,7 +168,7 @@ async function main() {
   source.stop();
   console.log(`\n[updater] done: ${pushes} pushes, ${skips} skips over ${((Date.now() - start) / 1000).toFixed(0)}s`);
   console.log(
-    `[updater] dual-clock: ${pinnedFwd} pinned fwd + ${pinnedSvi} pinned svi retransmissions observed` +
+    `[updater] dual-clock: ${pinnedSpot} pinned spot + ${pinnedFwd} pinned fwd + ${pinnedSvi} pinned svi retransmissions observed` +
     (missingTs > 0 ? ` (${missingTs} entries lacked a provider timestamp — signed at the envelope)` : ""),
   );
   if (pushes === 0 && mode !== "replay") throw new Error("no successful pushes");

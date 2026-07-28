@@ -44,6 +44,8 @@ async function main() {
     const json = JSON.stringify({
       spot1e9: snap.spot1e9.toString(),
       publishedAtMs: snap.publishedAtMs.toString(),
+      bsSpot1e9: snap.bsSpot1e9.toString(),
+      bsSpotTsMs: snap.bsSpotTsMs,
       expiries: Object.fromEntries([...snap.expiries.entries()]),
     });
     atomicWriteFile(HUB_SNAPSHOT, json);

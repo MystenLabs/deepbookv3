@@ -278,9 +278,6 @@ correctness today.
 
 ### H-3: Smaller cleanup items
 
-- Dedupe the byte-identical `update_expiry`/`insert_expiry_at` lane-table
-  helpers (and shared guard preamble) across the BS forward/SVI/spot feeds into
-  a generic `oracle_lane` helper.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.
