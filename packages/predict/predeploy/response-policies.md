@@ -847,12 +847,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   for the tuple's expiry. Because a flush must value every active market, one
   affected expiry blocks the pool-wide flush and all queued LP fills. Exact
   settlement does not use SVI.
-- **Response:** proceed with anchored remaining-time roll-down. Propbook keeps
-  `params_timestamp_ms` fixed at the first accepted source timestamp carrying
-  the current exact normalized tuple while advancing `source_timestamp_ms` and
-  `update_timestamp_ms` on newer identical retransmits. Any normalized
-  parameter change resets the anchor to that update's source timestamp.
-  Predict computes
+- **Response:** proceed with anchored remaining-time roll-down. The provider
+  stamps each tuple with its model timestamp (`model_timestamp_ms`) and holds
+  it fixed across retransmissions of an unchanged tuple; the store orders each
+  series by that model time (the batch envelope only breaks ties between
+  retransmissions), so the roll-down anchor is the tuple's own signed model
+  time and a changed tuple carries a new one. Predict computes
   `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and
   `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)`, both **at 1e18** with
   a `u256` intermediate, and hands them to the variance path in that domain;
@@ -861,15 +861,19 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   are themselves tiny on short-dated surfaces — a 1e9 floor costs up to a whole
   raw unit of `a`, and a short-dated `a` is only about ten raw units, so the
   truncation alone breached the ratified price-deviation bound (P-14's defect,
-  one layer upstream). Freshness continues to use the latest envelope source
-  timestamp. Carrying the roll-down at 1e18 substantially shrinks the terminal
-  rounding region in which the roll-down can drive per-strike variance
-  non-positive, but does not remove it, and the size of what remains is not a
-  single closed form — it depends on the sign of `a` and on cancellation between
-  `a` and `b·inner`, not on `a` alone. The existing `ENonPositiveVariance` guard
-  remains authoritative for that state, including in pool valuation. Recovery is
-  for the publisher to send a changed usable tuple, which resets the parameter
-  anchor, followed by retrying the affected action or flush.
+  one layer upstream). Freshness uses the same model timestamp: a retransmission
+  refreshes nothing economically, so an unchanged tuple ages out of the SVI
+  freshness window (default 60s, configurable up to a 120s maximum) and pricing
+  halts until the publisher re-derives the tuple. That bound also caps the
+  roll-down attenuation at `anchor_tte / remaining <= 1 + freshness / remaining`,
+  which puts the floor-to-zero arm (`anchor_tte >= 1e9 * remaining_ms`) out of
+  reach of any live quote; the residual non-positive-variance cases are the
+  sign/cancellation ones — they depend on the sign of `a` and on cancellation
+  between `a` and `b·inner`, not on `a` alone. The existing
+  `ENonPositiveVariance` guard remains authoritative for that state, including
+  in pool valuation. Recovery is for the publisher to send a changed usable
+  tuple, which carries a new model anchor, followed by retrying the affected
+  action or flush.
 - **Reasoning:** transport freshness and parameter age answer different
   questions. A one-second retransmit proves the feed is live but does not make
   an unchanged variance-to-expiry calibration new. Preserving both timestamps
@@ -887,10 +891,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
   `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
   `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
-  `identical_svi_retransmit_refreshes_source_without_moving_params_anchor`;
+  `identical_svi_retransmit_holds_the_anchor_and_the_source_time`;
   `pricing_guard_tests.move` —
   `pre_expiry_roll_down_keeps_positive_variance`,
-  `terminal_roll_down_to_zero_aborts_before_expiry`, and
+  `terminal_roll_down_to_zero_is_preempted_by_model_freshness`, and
   `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
   correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
   units against a 21-unit budget).

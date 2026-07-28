@@ -145,19 +145,19 @@ caller.
 
 Each stored observation carries three clocks: the provider model time the
 series data is "as of" (held fixed across retransmissions of an unchanged
-value; the provider's per-series replay key), the batch envelope time
-(advances on every provider flush; freshness keys on it), and the Sui
-execution time. A series' latest observation is ordered lexicographically on
-(model time, envelope time): newer model data always wins regardless of the
-order a relayer lands batches in, and an equal model time advances only with
-a fresher envelope — the retransmission that refreshes freshness without
-moving the model anchor. A model time later than its own envelope is provider
-garbage and is skipped, mirroring the Pyth lane's
-`EFeedTimestampAfterEnvelope`; that bound is also what keeps Predict's SVI
-roll-down anchor strictly before any live market's expiry. The stores keep no
-aggregate liveness field: each series' own `published_at_ms` is the freshness
-signal consumers read, and provider-wide liveness is monitored off-chain from
-the per-batch `BlockScholesBatchIngested` events.
+value; the provider's per-series replay key and the clock consumers price
+from), the batch envelope time (transport metadata, advancing on every
+provider flush), and the Sui execution time. A series' latest observation is
+ordered lexicographically on (model time, envelope time): newer model data
+always wins regardless of the order a relayer lands batches in, and an equal
+model time advances only with a fresher envelope — a retransmission updates
+transport metadata without making the data economically newer. A model time
+later than its own envelope is provider garbage and is skipped, mirroring the
+Pyth lane's `EFeedTimestampAfterEnvelope`; that bound is also what keeps
+Predict's SVI roll-down anchor strictly before any live market's expiry. The
+stores keep no aggregate liveness field: consumers assert freshness on each
+series' own `model_timestamp_ms`, and provider-wide liveness is monitored
+off-chain from the per-batch `BlockScholesBatchIngested` events.
 
 Values are stored exactly as the verifier produced them (`u128`, provider
 scale). Propbook intentionally does not enforce Predict's pricing-safe numeric

@@ -11,6 +11,8 @@ const VALID_PYTH_SPOT_FRESHNESS_MS: u64 = 5_000;
 const VALID_BLOCK_SCHOLES_PRICE_FRESHNESS_MS: u64 = 4_000;
 const VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS: u64 = 30_000;
 const FRESHNESS_ABOVE_MAX: u64 = 60_001;
+// The SVI window has its own, wider maximum (120s).
+const SVI_FRESHNESS_ABOVE_MAX: u64 = 120_001;
 
 // === Construction and getters ===
 
@@ -130,6 +132,6 @@ fun set_block_scholes_svi_freshness_ms_zero_aborts() {
 #[test, expected_failure(abort_code = config_constants::EInvalidBlockScholesSVIFreshnessMs)]
 fun set_block_scholes_svi_freshness_ms_above_max_aborts() {
     let mut config = pricing_config::new();
-    config.set_block_scholes_svi_freshness_ms(FRESHNESS_ABOVE_MAX);
+    config.set_block_scholes_svi_freshness_ms(SVI_FRESHNESS_ABOVE_MAX);
     abort 999
 }

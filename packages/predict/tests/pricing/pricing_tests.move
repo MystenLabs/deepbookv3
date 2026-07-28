@@ -53,6 +53,9 @@ const AT_THE_FORWARD_UP_BUDGET: u64 = 21;
 /// Production-reachable: the Pyth feed applies no deviation cap against the
 /// Block Scholes surface, so the live forward tracks the diverged spot.
 const DIVERGED_PYTH_SPOT: u64 = 102_000_000_000;
+// The boundary tests below need a Pyth window strictly shorter than the BS price window; the
+// production defaults are equal (10s each), so the tests tighten Pyth explicitly.
+const TIGHT_PYTH_FRESHNESS_MS: u64 = 2_000;
 
 /// Source timestamp for the diverged Pyth print. Strictly newer than the bootstrap
 /// tick's `live_source_timestamp_ms` (99_000) so the feed accepts the overwrite
@@ -166,10 +169,11 @@ fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
     assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
 }
 
-/// A retransmission carries the tuple's original model time in a newer envelope, so
-/// the roll-down anchor holds while freshness advances.
+/// A retransmission carries the tuple's original model time in a newer envelope. The envelope is
+/// transport, not new data: the roll-down anchor AND the economic source time both hold, and
+/// pricing keeps working only because the model age is still inside the freshness window.
 #[test]
-fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
+fun identical_svi_retransmit_holds_the_anchor_and_the_source_time() {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -216,8 +220,7 @@ fun identical_svi_retransmit_refreshes_source_without_moving_params_anchor() {
     );
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.block_scholes_svi_params_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
-    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
     // At the midpoint, the preserved anchor scales raw a=2 to effective a=1
     // and b remains zero. At K=F, positive variance gives d2=-sqrt(1e-9)/2,
     // checked against the generated first-principles reference. If the
@@ -256,10 +259,6 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
     assert_eq!(pricer.pyth_spot_source_timestamp_ms(), PYTH_SOURCE_MS);
     assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
     assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), BLOCK_SCHOLES_FORWARD_SOURCE_MS);
-    assert_eq!(
-        pricer.block_scholes_svi_params_timestamp_ms(),
-        test_constants::live_source_timestamp_ms(),
-    );
     assert_eq!(
         pricer.block_scholes_svi_source_timestamp_ms(),
         test_constants::live_source_timestamp_ms(),
@@ -364,6 +363,7 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
     let mut oracle = fx.take_oracle_bundle();
     // Block Scholes spot = forward = 100e9, so basis = 1.0 exactly.
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.set_pyth_spot_freshness_for_testing(&mut oracle, TIGHT_PYTH_FRESHNESS_MS);
     fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS);
 
     let pyth_budget = oracle_fixture::config(&oracle).pricing_config().pyth_spot_freshness_ms();
@@ -416,12 +416,13 @@ fun live_forward_switches_source_exactly_at_pyth_staleness_boundary() {
     // Block Scholes spot = forward = 100e9, so basis = div(100e9, 100e9) = 1.0
     // exactly.
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.set_pyth_spot_freshness_for_testing(&mut oracle, TIGHT_PYTH_FRESHNESS_MS);
     // Overwrite only the Pyth print with the diverged spot at a strictly-newer
     // source timestamp (freshness uses min(source, update) = 99_500).
     fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS);
 
-    // The stale-Pyth/fresh-Block-Scholes window exists because the Pyth budget
-    // (default 2_000 ms) is strictly shorter than the BS price budget (3_000 ms).
+    // The stale-Pyth/fresh-Block-Scholes window exists because the test tightens
+    // the Pyth budget strictly below the BS price budget.
     let pyth_budget = oracle_fixture::config(&oracle).pricing_config().pyth_spot_freshness_ms();
     assert!(
         pyth_budget

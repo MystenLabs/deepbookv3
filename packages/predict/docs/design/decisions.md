@@ -271,8 +271,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  a series id encodes kind, underlying, value scale, and expiry, so a valid
 	  observation can only land in the slot it was signed for. Each observation
 	  carries the provider's model time and batch-envelope time separately:
-	  freshness keys on the envelope, the SVI roll-down anchors on the model time,
-	  replacing on-chain change-detection that reconstructed the anchor.
+	  freshness and the SVI roll-down anchor both key on the model time — the
+	  envelope is transport metadata — replacing on-chain change-detection that
+	  reconstructed the anchor.
   *Rationale:* authenticity moves from the writer to the data, closing predeploy
   gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted
   writer (retains our own key custody in the trust set), and an on-chain

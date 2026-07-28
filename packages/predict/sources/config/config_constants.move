@@ -264,7 +264,7 @@ public(package) fun assert_max_entry_probability(value: u64) {
     );
 }
 
-public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
+public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 10_000 }
 
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
 
@@ -279,7 +279,7 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 3_000 }
+public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 10_000 }
 
 public(package) macro fun min_block_scholes_price_freshness_ms(): u64 { 1 }
 
@@ -300,7 +300,7 @@ public(package) macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000
 public(package) macro fun min_block_scholes_svi_freshness_ms(): u64 { 1 }
 
 public(package) macro fun max_block_scholes_svi_freshness_ms(): u64 {
-    deepbook_predict::constants::one_minute_ms!()
+    2 * deepbook_predict::constants::one_minute_ms!()
 }
 
 public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {

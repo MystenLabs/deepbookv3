@@ -641,6 +641,16 @@ public fun oracle_registry(oracle: &OracleBundle): &OracleRegistry { &oracle.ora
 
 public fun config(oracle: &OracleBundle): &ProtocolConfig { &oracle.config }
 
+/// Tighten the live Pyth freshness window below the Block Scholes price window, restoring the
+/// stale-Pyth/fresh-BS gap that the equal production defaults no longer provide.
+public fun set_pyth_spot_freshness_for_testing(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    value: u64,
+) {
+    oracle.config.set_pyth_spot_freshness_ms(&self.admin_cap, value);
+}
+
 public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }
 
 public fun clock(self: &OracleFixture): &Clock { &self.clock }

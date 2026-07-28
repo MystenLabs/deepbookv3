@@ -262,6 +262,48 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     abort EUnexpectedSuccess
 }
 
+/// A fresh envelope must not make old model data economically usable: a retransmission re-sends
+/// the tuple's original model time, so once that model age exceeds the window the SVI is stale no
+/// matter how recently it was republished.
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
+fun live_quote_with_a_freshly_retransmitted_but_aged_svi_model_aborts() {
+    let (mut fx, mut oracle) = setup_live();
+    let model_ms = test_constants::live_source_timestamp_ms();
+    let stale_now =
+        model_ms
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+    // Identical retransmit: the seeded tuple pinned to its original model time in a fresh envelope.
+    fx.retransmit_bs_svi_for_testing(
+        &mut oracle,
+        model_ms,
+        stale_now,
+        test_constants::default_svi_a(),
+        false,
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
 /// A store for another underlying is a real, registry-created store that simply is not the one
 /// bound to this market's underlying. Predict must reject it on the binding rather than on the
 /// store's own claim about itself.
@@ -750,13 +792,13 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
     fx.finish();
 }
 
-/// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted
-/// one millisecond before a one-year expiry — the envelope advances while the
-/// tuple keeps its original model time. At that horizon,
-/// `floor(1e9 * remaining_ms / anchor_tte_ms) == 0`, so the effective variance
-/// is non-positive and the accepted RP-21 response is the existing quote abort.
-#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
-fun terminal_roll_down_to_zero_aborts_before_expiry() {
+/// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted one millisecond
+/// before a one-year expiry — the envelope advances while the tuple keeps its original model time.
+/// Flooring the rolled variance to zero needs `anchor_tte_ms >= 1e9 * remaining_ms` — a model
+/// anchor years older than any admissible freshness window — so model-time freshness pre-empts
+/// RP-21's zero-variance response: the quote aborts stale long before the terminal region.
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
+fun terminal_roll_down_to_zero_is_preempted_by_model_freshness() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(

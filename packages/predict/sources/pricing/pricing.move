@@ -28,12 +28,13 @@ public struct Pricer has copy, drop {
     svi: PricingSVI,
     /// Source timestamps of the oracle observations present when this snapshot
     /// was loaded. Pyth is `0` only when no usable normalized observation exists.
+    /// The Block Scholes ones are the provider's model times — when each series' data is "as of",
+    /// held fixed across retransmissions of an unchanged value. They are the economic clocks:
+    /// freshness is asserted against them and the SVI one anchors the roll-down; the batch
+    /// envelope time is transport metadata and never reaches the `Pricer`.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
-    /// Provider model time of the raw SVI tuple from which `svi` was rolled down, held fixed
-    /// across retransmissions of an unchanged tuple.
-    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
 }
 
@@ -160,10 +161,6 @@ public(package) fun block_scholes_spot_source_timestamp_ms(pricer: &Pricer): u64
 
 public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_forward_source_timestamp_ms
-}
-
-public(package) fun block_scholes_svi_params_timestamp_ms(pricer: &Pricer): u64 {
-    pricer.block_scholes_svi_params_timestamp_ms
 }
 
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
@@ -360,9 +357,11 @@ fun resolve_live_pricer(
     let bs_spot_read = bs_store::spot(bs_values);
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
-    // Freshness reads the batch envelope, not the series' own model time: an unchanged series is
-    // republished with its original model time, so a healthy quiet feed would otherwise age out.
-    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_published_at_ms();
+    // Freshness reads the series' own model time, never the batch envelope: retransmitting an
+    // unchanged value re-sends its original model time, and a fresh envelope must not make old
+    // model data economically usable — data the provider has not re-derived within the window
+    // ages out and pricing halts, which is the intended fail-closed posture.
+    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_spot_source_timestamp_ms,
@@ -376,7 +375,7 @@ fun resolve_live_pricer(
     let bs_forward_read = bs_store::forward(bs_values, expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
-    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_published_at_ms();
+    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_forward_source_timestamp_ms,
@@ -390,11 +389,9 @@ fun resolve_live_pricer(
     let svi_read = bs_store::svi(bs_svi, expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
-    // The provider stamps the tuple with the time its data is "as of" and holds that time fixed
-    // while the tuple does not move, so the roll-down anchor comes from the same read as the
-    // parameters rather than being reconstructed from their history.
-    let block_scholes_svi_params_timestamp_ms = svi_read.read_model_timestamp_ms();
-    let block_scholes_svi_source_timestamp_ms = svi_read.read_published_at_ms();
+    // One clock serves both jobs: the model time the freshness gate just accepted is also the
+    // roll-down anchor, so the parameters and their anchor always come from the same read.
+    let block_scholes_svi_source_timestamp_ms = svi_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_svi_source_timestamp_ms,
@@ -407,7 +404,7 @@ fun resolve_live_pricer(
     assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
     let svi = roll_down_svi(
         &raw_svi,
-        block_scholes_svi_params_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms,
         expiry,
         clock,
     );
@@ -442,7 +439,6 @@ fun resolve_live_pricer(
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms,
-        block_scholes_svi_params_timestamp_ms,
         block_scholes_svi_source_timestamp_ms,
     }
 }
