@@ -15,6 +15,7 @@ diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_js
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
 bcs.workspace = true
 anyhow.workspace = true
+moka = { version = "0.12", features = ["future"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 url.workspace = true
@@ -23,6 +24,7 @@ sui-futures.workspace = true
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
 axum = { version = "0.7", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sui-pg-db.workspace = true
 tower-http = { version = "0.5", features = ["cors"] }
 sui-rpc = "0.3.1"
