@@ -18,6 +18,11 @@ block_scholes_oracle = { local = "../block_scholes_oracle" }
 # verifier." Use `rev = "sui-testnet"` for testnet because Wormhole is
 # custom-deployed there.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+# Block Scholes signed-oracle verifier. `bs_oracle::verify` mints the batch types
+# that propbook's Block Scholes feeds consume, so the Move type system enforces
+# "this value carries a valid Block Scholes signature" — the same gating shape as
+# `pyth_lazer`. Pinned to a commit rather than a branch.
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "d55026cc8b69df8a64da71568dad8e37b1370fe2" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
 # for typechecking only; `dep-replacements` tells `sui client publish` to link
@@ -27,3 +32,4 @@ pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subd
 [dep-replacements.testnet]
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
 wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "sui-testnet", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "d55026cc8b69df8a64da71568dad8e37b1370fe2", published-at = "0xfea992ee94b84dcb9a7aacffddf703c514804205e3fa234e22ccbac0914b837b", original-id = "0xfea992ee94b84dcb9a7aacffddf703c514804205e3fa234e22ccbac0914b837b" }
