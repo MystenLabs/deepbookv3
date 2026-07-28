@@ -401,6 +401,63 @@ fun carried_pyth_price_does_not_resurrect_the_live_reanchor() {
     fx.finish();
 }
 
+/// Decision-pinned: `use_pyth_spot_for_forward` selects which source builds the
+/// live forward, and the choice is reversible. Nothing about the oracle state or
+/// the clock changes across the three loads below — only the admin setting — so
+/// the at-the-money strike moving between the 102e9 Pyth anchor and the 100e9
+/// Block Scholes forward isolates the formula switch itself. With the switch off
+/// a fresh, in-envelope Pyth print is inert for pricing while its provenance is
+/// still retained on the `Pricer`.
+#[test]
+fun use_pyth_spot_for_forward_selects_the_live_forward_source() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    // Block Scholes spot = forward = 100e9, so basis = 1.0 exactly.
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    // A +2% Pyth print, 500 ms old at the fixture clock: inside the Pyth window
+    // and well inside the (longer) Block Scholes one, so the switch is the only
+    // thing that can decide the source here.
+    fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, DIVERGED_PYTH_SOURCE_MS);
+    assert!(oracle_fixture::config(&oracle).pricing_config().use_pyth_spot_for_forward());
+
+    // Default on: the fresh spot carries the basis, so forward = mul(102e9, 1.0)
+    // = 102e9 and the diverged strike is the at-the-money one.
+    let pricer = fx.load_pricer_bundle(&oracle);
+    test_helpers::assert_within(
+        pricer.up_price(strike(DIVERGED_PYTH_SPOT)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+
+    // Off: same oracle rows, same clock, forward = the stored Block Scholes
+    // forward = 100e9. The 102e9 strike is now 2% out of the money and prices at
+    // zero on this near-zero-variance surface.
+    fx.set_use_pyth_spot_for_forward_bundle(&mut oracle, false);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+    assert_eq!(pricer.up_price(strike(DIVERGED_PYTH_SPOT)), 0);
+    // The spot is out of the forward, not out of the snapshot: trade events still
+    // report which Pyth observation was current when the quote was taken.
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), DIVERGED_PYTH_SOURCE_MS);
+
+    // Back on: the same admin path restores the re-anchor, so the switch is a
+    // reversible policy knob and not a one-way migration.
+    fx.set_use_pyth_spot_for_forward_bundle(&mut oracle, true);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    test_helpers::assert_within(
+        pricer.up_price(strike(DIVERGED_PYTH_SPOT)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 /// Decision-pinned: the live forward switches source exactly at the Pyth
 /// staleness boundary (`pricing::load_live_pricer`, fallback documented in-code).
 /// While Pyth is fresh — inclusive: `now − freshness_ts == max_age` — the

@@ -663,6 +663,15 @@ public fun return_expiry_market(market: ExpiryMarket) {
     return_shared(market);
 }
 
+/// Flip the live-forward source selector through the real admin entrypoint.
+public fun set_use_pyth_spot_for_forward_bundle(
+    self: &OracleFixture,
+    oracle: &mut OracleBundle,
+    enabled: bool,
+) {
+    oracle.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled);
+}
+
 // === Accessors ===
 
 public fun pyth(oracle: &OracleBundle): &PythFeed { &oracle.pyth }

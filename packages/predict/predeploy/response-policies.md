@@ -906,6 +906,45 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-22: `EPythSpotInvalid` is scoped to the re-anchoring branch (DBU-670)
+
+- **Trigger state:** the normalized Pyth spot exceeds Predict's pricing-safe
+  ceiling (`max_pricing_spot!()`, `u64::MAX / 100`) during a live pricing load.
+- **Controller:** external — the Pyth Lazer publisher controls the printed spot.
+- **Blast radius:** every live-pricing path, including the mandatory pool flush
+  (`plp::value_expiry` → `expiry_market::load_live_pricer`), so an oversized
+  print can stop all LP supply and withdraw fills, not just one trade.
+- **Response:** **abort while the re-anchor is selected, skip while it is not.**
+  With `use_pyth_spot_for_forward` set, an oversized spot aborts as before. With
+  it clear the spot feeds nothing, so the print is ignored along with every other
+  Pyth print and pricing continues on the Block Scholes forward. Which response
+  applies is an `AdminCap` setting read at the time of the load, so it is
+  protocol policy, not a property of the print.
+- **Reasoning:** the ceiling is not a validity judgement about Pyth data — it is
+  the arithmetic precondition for `mul_div_down(spot, bs_forward, bs_spot)`
+  staying inside u64 (co-designed with `max_pricing_basis_factor!()`). It has
+  exactly one consumer, on one branch. Enforcing it on a branch that never reads
+  the value would turn a publisher-controlled variable into an abort on the
+  mandatory flush for no arithmetic benefit — the abort-over-skip direction the
+  blast-radius ladder reserves for single-user, user-recoverable actions. The
+  guard therefore lives with the multiplication it bounds. This makes the abort
+  *conditionally* reachable rather than removing it: the ladder position moves
+  from abort to skip only in the mode that does not consume the value.
+- **Risk profile:** `BEST-GUESS` — an oversized normalized spot needs a print
+  above `~1.8e17` at 1e9 scaling; reachability is a publisher-integrity question
+  and is unmeasured. The response split itself is deterministic and pinned.
+- **Pinning tests:** `pricing_guard_tests.move` —
+  `fresh_pyth_spot_above_pricing_ceiling_aborts` (re-anchor selected: aborts) and
+  `pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off` (re-anchor
+  deselected: prices off the Block Scholes forward and still snapshots the Pyth
+  source timestamp, so the print is ignored rather than treated as absent).
+- **Reopen when:** any consumer of the normalized Pyth spot is added outside the
+  re-anchoring branch (the ceiling would then need to move or be duplicated), or
+  a cross-source deviation guard lands and changes which side of the ladder an
+  out-of-envelope print belongs on (RP-5).
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

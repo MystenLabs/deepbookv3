@@ -1,0 +1,62 @@
+apiVersion: dashboard.mysten.io/v1alpha1
+kind: Service
+metadata:
+  id: deepbook
+  displayName: DeepBook Core
+  description: DeepBook core indexer and API server deployments.
+spec:
+  sourcePath: crates
+  components:
+    - id: deepbook-indexer
+      displayName: DeepBook Indexer
+      sourcePath: crates/indexer
+      dockerfile: docker/deepbook-indexer/Dockerfile
+    - id: deepbook-server
+      displayName: DeepBook API Server
+      sourcePath: crates/server
+      dockerfile: docker/deepbook-server/Dockerfile
+  pulumi:
+    repoUrl: https://github.com/MystenLabs/sui-operations.git
+    projectPath: pulumi/apps/deepbook
+    defaultRef: main
+    environments:
+      - name: mainnet
+        displayName: Mainnet
+        stackName: mysten/deepbook/mainnet
+        replicaControls:
+          - componentId: deepbook-server
+            pulumiConfigPath: /config/deepbook:serverReplicas
+            minReplicas: 1
+            maxReplicas: 10
+        imagePins:
+          - componentId: deepbook-indexer
+            imageConfigPath: /config/deepbook:indexerImage
+          - componentId: deepbook-server
+            imageConfigPath: /config/deepbook:serverImage
+        observability:
+          cluster: gke-workloads-primary-use4
+          namespace: deepbook-mainnet
+          containers:
+            - deepbook-indexer
+            - deepbook-server
+          logsDatasource: mysten-logs-workloads-primary
+      - name: testnet
+        displayName: Testnet
+        stackName: mysten/deepbook/testnet
+        replicaControls:
+          - componentId: deepbook-server
+            pulumiConfigPath: /config/deepbook:serverReplicas
+            minReplicas: 0
+            maxReplicas: 10
+        imagePins:
+          - componentId: deepbook-indexer
+            imageConfigPath: /config/deepbook:indexerImage
+          - componentId: deepbook-server
+            imageConfigPath: /config/deepbook:serverImage
+        observability:
+          cluster: gke-workloads-secondary-use4
+          namespace: deepbook-testnet
+          containers:
+            - deepbook-indexer
+            - deepbook-server
+          logsDatasource: mysten-logs-workloads-secondary

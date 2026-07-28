@@ -251,6 +251,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 	  normalized Pyth spot still aborts under Predict's pricing envelope. BS spot, forward,
 	  and SVI are independent Propbook feeds, so price freshness and SVI freshness remain
 	  separate policy windows.
+	  *Now conditional:* both statements above describe the default only. "Switchable
+	  live-forward source" below made the formula an admin setting, so with
+	  `use_pyth_spot_for_forward` clear the Block Scholes forward is used on every load,
+	  no fresh Pyth spot re-anchors it, and an oversized normalized Pyth spot is ignored
+	  rather than aborting — `EPythSpotInvalid` guards only the value the re-anchor consumes.
 - **Predict does not version-gate the feeds.** The propbook feeds carry their own
   package version and a forward-only `migrate`; Predict reads them and never asserts
   their version. *Rationale:* an external, independently-upgraded package owns its
@@ -472,3 +477,40 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   not. O-1's stated mitigations remain recalibrating the near-expiry surface or
   blocking the affected market shape outright; it stays OPEN, and near-expiry markets
   are still gated on it. Bounding the residual 1x exposure is a separate decision.
+
+## Switchable live-forward source (recent)
+
+- **The live-forward formula is an admin setting, not a hard-coded choice.**
+  `PricingConfig.use_pyth_spot_for_forward` selects between carrying the Block
+  Scholes basis on the fresh Pyth spot (`pyth_spot × bs.forward / bs.spot`, the
+  default and the prior fixed behaviour) and using the Block Scholes forward
+  directly. *Rationale:* off-chain calibration work reports the Block Scholes
+  forward as the more accurate input (not yet recorded under
+  `predeploy/evidence/` — treat it as a working result, not a measured one), but
+  two facts block adopting it outright — settlement prices off Pyth, not off the
+  Block Scholes spot, so pricing off Block Scholes alone splits the live mark
+  from the settlement source; and the Pyth spot's freshness advantage over the
+  Block Scholes forward has never been measured against that accuracy gap. Colocation and other latency work can move that
+  comparison, so the choice has to stay reversible from data rather than be
+  frozen by a package upgrade. This does not supersede the Pyth-stale fallback
+  decision above: under the default setting that fallback is unchanged, and with
+  the setting off there is nothing to fall back from. It does narrow that entry's
+  one sub-claim that an oversized normalized Pyth spot "still aborts under
+  Predict's pricing envelope" — `EPythSpotInvalid` guards the value the re-anchor
+  consumes, so with the setting off an oversized print is ignored along with every
+  other Pyth print instead of aborting.
+- **One global switch, live-read, valuation-locked.** It sits in `PricingConfig`
+  with the freshness windows rather than in the per-expiry template snapshot, so
+  it is not a contract term and it moves for every market at once — the same
+  reasoning that makes the freshness thresholds live. The setter carries
+  `assert_not_valuation_in_progress`, so a single flush marks every market against
+  one formula. *Rejected:* a per-market or per-expiry selector, which would let two
+  live markets on the same underlying disagree about the forward and produce a
+  mixed pool NAV for no calibration benefit.
+- **No cross-source deviation guard comes with it.** Flipping the setting can move
+  every live mark by the current Pyth-vs-Block-Scholes divergence. Nothing bounds
+  that divergence directly: the envelope bounds each formula's inputs, and the
+  re-anchored forward is deliberately not re-checked against it (its own bound is
+  the basis factor, `forward <= 100 × pyth_spot`). Adding a band here would
+  reintroduce exactly the state-triggered abort over an externally-controlled
+  variable that response policy RP-5 removed. Disclosed in `docs/risks.md` instead.

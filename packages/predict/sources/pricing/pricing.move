@@ -5,9 +5,10 @@
 ///
 /// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
 /// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
-/// Scholes spot, forward, and SVI observations. A fresh positive Pyth spot reanchors
-/// the Block Scholes forward basis; otherwise pricing uses that forward directly.
-/// Exact-history reads do not apply live freshness policy.
+/// Scholes spot, forward, and SVI observations. The live forward comes from one of
+/// two admin-selected sources (`PricingConfig.use_pyth_spot_for_forward`): a fresh
+/// positive Pyth spot carrying the Block Scholes basis, or the Block Scholes forward
+/// directly. Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
@@ -198,9 +199,10 @@ public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
 /// and the market must be pre-expiry. Block Scholes spot, forward, and SVI inputs
 /// must normalize, pass their fixed wall-clock freshness thresholds, and fit the
 /// pricing-safe envelope. SVI `a` and `b` are then rolled down from the tuple's
-/// parameter timestamp to the current remaining time. A fresh positive normalized
-/// Pyth spot reanchors the Block Scholes forward basis; a missing, non-normalizable,
-/// or stale Pyth spot is ignored.
+/// parameter timestamp to the current remaining time. Under
+/// `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot reanchors the
+/// Block Scholes forward basis, and a missing, non-normalizable, or stale Pyth spot
+/// is ignored; with it off the Block Scholes forward is always used directly.
 public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
@@ -343,8 +345,9 @@ fun assert_current_pyth(
 }
 
 /// Resolve live forward and SVI inputs and retain every feed's source timestamp.
-/// A fresh positive normalized Pyth spot re-anchors the Block Scholes forward
-/// basis; otherwise the Block Scholes forward is used directly.
+/// Under `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot
+/// re-anchors the Block Scholes forward basis; otherwise the Block Scholes
+/// forward is used directly.
 fun resolve_live_pricer(
     config: &PricingConfig,
     pyth: &PythFeed,
@@ -409,6 +412,9 @@ fun resolve_live_pricer(
         clock,
     );
 
+    // Read whatever the config does with it: the Pyth observation is retained on
+    // every `Pricer` for trade-event provenance, including while
+    // `use_pyth_spot_for_forward` keeps it out of the forward.
     let pyth_spot = pyth.normalized_spot();
     let pyth_spot_source_timestamp_ms = if (pyth_spot.is_some()) {
         pyth_spot.borrow().read_source_timestamp_ms()
@@ -417,7 +423,8 @@ fun resolve_live_pricer(
     };
     let mut forward = bs_forward;
     if (
-        pyth_spot.is_some()
+        config.use_pyth_spot_for_forward()
+            && pyth_spot.is_some()
             && timestamp_is_fresh(
                 pyth_spot_source_timestamp_ms,
                 config.pyth_spot_freshness_ms(),

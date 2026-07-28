@@ -412,6 +412,37 @@ fun fresh_pyth_spot_above_pricing_ceiling_aborts() {
     abort EUnexpectedSuccess
 }
 
+/// The companion of the test above, and the reason `EPythSpotInvalid` sits inside
+/// the re-anchor branch rather than above it: the ceiling guards the value the
+/// re-anchor multiplies, so with `use_pyth_spot_for_forward` clear an oversized
+/// print is ignored like any other Pyth print instead of taking down live pricing.
+/// Hoisting the assert out of the branch would let one bad Pyth print abort the
+/// mandatory pool flush in the mode that never reads Pyth — every other test in
+/// this file still passes under that change, so this is the pin.
+#[test]
+fun pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off() {
+    let (fx, mut oracle) = setup_live();
+    fx.set_use_pyth_spot_for_forward_bundle(&mut oracle, false);
+    let oversized_source_ms = test_constants::live_source_timestamp_ms() + 1;
+    fx.set_pyth_bundle(&mut oracle, MAX_PRICING_SPOT + 1, oversized_source_ms);
+
+    // Loads, and on the stored Block Scholes forward: the at-the-forward digital is
+    // the default surface's, unaffected by the oversized print.
+    let pricer = fx.load_pricer_bundle(&oracle);
+    test_helpers::assert_within(
+        pricer.up_price(strike(test_constants::default_live_price())),
+        ref_data::flow_fixture_atm_up(),
+        ref_data::flow_fixture_atm_budget(),
+    );
+    // Ignored for the forward, still snapshotted for provenance: an out-of-envelope
+    // print is not a missing observation, so it must not read back as the `0`
+    // sentinel that means "no usable normalized Pyth read".
+    assert_eq!(pricer.pyth_spot_source_timestamp_ms(), oversized_source_ms);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 // === Price-tail saturation (replaces the deleted strike-ratio aborts) ===
 
 /// Deep-ITM up tail: a strike far below the forward underflows the strike ratio to

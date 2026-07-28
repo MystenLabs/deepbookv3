@@ -17,6 +17,8 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - Simplification opportunities, especially one-use helpers, wide tuples, unnecessary structs, duplicated state, boolean-mode helpers, and wrappers that only reroute.
 - Redundancies to remove, including duplicated assertions, duplicated accounting calculations, stale compatibility paths, and dead comments/imports/functions created by the diff.
 - Architectural bottlenecks and new chokepoints introduced by the change.
+- Removing a defensive guard requires a documented upstream replacement; undocumented upstream behavior is not sufficient.
+- Before implementing a custom cache, loader, single-flight mechanism, or eviction policy, check existing dependencies and the ecosystem for a maintained primitive. Prefer library semantics (for example, Moka's `try_get_with`) unless a documented requirement such as cross-key batching cannot be expressed with them.
 - Flow and branching friction: trace the affected flows end to end and identify new dependencies, surprising sequencing, non-landable intermediate states, or branches that now do too much.
 - Intuitive behavior: check whether names, public APIs, events, and state transitions match what a protocol integrator or maintainer would expect.
 - Check the diff against the rule corpus loaded at Review Scope (`move.md`, `predict-contracts.md`, `unit-tests.md`) rather than from memory — those files own the rule text (ownership boundaries, producer-fact/lossy-transform placement, loop-invariant hoists, guard duty inventories, the response-policy blast-radius ladder); violations are findings, and this file does not restate them.

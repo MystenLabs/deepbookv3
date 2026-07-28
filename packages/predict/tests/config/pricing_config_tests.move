@@ -27,6 +27,28 @@ fun defaults_are_the_deployed_values() {
     destroy(config);
 }
 
+// === use_pyth_spot_for_forward ===
+
+#[test]
+fun default_forward_source_is_the_pyth_reanchored_basis() {
+    // Asserted as the literal, not against the default macro: the ratified default
+    // is that live pricing carries the Block Scholes basis on the Pyth spot, and a
+    // macro-vs-getter comparison would pass whichever way that default was flipped.
+    let config = pricing_config::new();
+    assert!(config.use_pyth_spot_for_forward());
+    destroy(config);
+}
+
+#[test]
+fun set_use_pyth_spot_for_forward_toggles_both_ways() {
+    let mut config = pricing_config::new();
+    config.set_use_pyth_spot_for_forward(false);
+    assert!(!config.use_pyth_spot_for_forward());
+    config.set_use_pyth_spot_for_forward(true);
+    assert!(config.use_pyth_spot_for_forward());
+    destroy(config);
+}
+
 // === set_pyth_spot_freshness_ms ===
 
 #[test]

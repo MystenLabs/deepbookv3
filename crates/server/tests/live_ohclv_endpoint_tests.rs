@@ -13,7 +13,10 @@ use tokio::time::sleep;
 use tower::ServiceExt;
 use url::Url;
 
-use deepbook_server::server::{make_router, AppState};
+use deepbook_server::{
+    pyth::{PythProConfig, DEFAULT_PRO_URL},
+    server::{make_router, AppState},
+};
 
 const POOL_NAME: &str = "BASE_USDC";
 const POOL_ID: &str = "pool-1";
@@ -74,6 +77,9 @@ async fn setup(candles: &[MaterializedCandle]) -> (TempDb, Db, Arc<AppState>, Ro
             None,
             None,
             100,
+            Url::parse(DEFAULT_PRO_URL).unwrap(),
+            None,
+            PythProConfig::default(),
         )
         .await
         .unwrap(),

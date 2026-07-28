@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored oracle freshness config for Predict quotes.
+/// Stored oracle source-selection and freshness config for Predict quotes.
 ///
 /// ProtocolConfig owns this mutable policy. Pricing reads it when resolving
 /// live probabilities for mint and redeem flows.
@@ -9,8 +9,14 @@ module deepbook_predict::pricing_config;
 
 use deepbook_predict::config_constants;
 
-/// Freshness parameters used when resolving live Predict probabilities.
+/// Source selection and freshness parameters used when resolving live Predict
+/// probabilities.
 public struct PricingConfig has store {
+    /// Selects which live-forward formula pricing uses. True carries the Block
+    /// Scholes basis on a fresh Pyth spot (`pyth_spot * bs_forward / bs_spot`);
+    /// false uses the Block Scholes forward directly and no Pyth spot, fresh or
+    /// not, moves a quote.
+    use_pyth_spot_for_forward: bool,
     /// Fixed wall-clock maximum age for Pyth spot; it does not vary with time to expiry.
     pyth_spot_freshness_ms: u64,
     /// Fixed wall-clock maximum age for Block Scholes spot and forward; it does not vary with time to expiry.
@@ -20,6 +26,10 @@ public struct PricingConfig has store {
 }
 
 // === Public-Package Functions ===
+
+public(package) fun use_pyth_spot_for_forward(config: &PricingConfig): bool {
+    config.use_pyth_spot_for_forward
+}
 
 public(package) fun pyth_spot_freshness_ms(config: &PricingConfig): u64 {
     config.pyth_spot_freshness_ms
@@ -35,10 +45,15 @@ public(package) fun block_scholes_svi_freshness_ms(config: &PricingConfig): u64 
 
 public(package) fun new(): PricingConfig {
     PricingConfig {
+        use_pyth_spot_for_forward: config_constants::default_use_pyth_spot_for_forward!(),
         pyth_spot_freshness_ms: config_constants::default_pyth_spot_freshness_ms!(),
         block_scholes_price_freshness_ms: config_constants::default_block_scholes_price_freshness_ms!(),
         block_scholes_svi_freshness_ms: config_constants::default_block_scholes_svi_freshness_ms!(),
     }
+}
+
+public(package) fun set_use_pyth_spot_for_forward(config: &mut PricingConfig, enabled: bool) {
+    config.use_pyth_spot_for_forward = enabled;
 }
 
 public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, value: u64) {

@@ -77,8 +77,10 @@ grid, no boundary indices).
   pre-floor product `quantity × range_probability` is the **gross value**
   (code `gross_value`) — the collateral value securing the financing.
 - **Forward** — the model's forecast of the underlying at expiry, the input the
-  range probability is differenced off. Predict builds it as `spot × basis` when
-  the Pyth spot is fresh and falls back to the Block Scholes forward otherwise.
+  range probability is differenced off. The admin setting
+  `use_pyth_spot_for_forward` picks its source: on (the default) Predict builds
+  it as `spot × basis` when the Pyth spot is fresh and falls back to the Block
+  Scholes forward otherwise; off, it is always the Block Scholes forward.
   Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
 - **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
   the spot to the forward when live spot is applied. Code: derived in `pricing`
