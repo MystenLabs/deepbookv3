@@ -26,7 +26,7 @@ spec:
         replicaControls:
           - componentId: deepbook-server
             pulumiConfigPath: /config/deepbook:serverReplicas
-            minReplicas: 0
+            minReplicas: 1
             maxReplicas: 10
         imagePins:
           - componentId: deepbook-indexer
