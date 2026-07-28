@@ -94,17 +94,14 @@ Predict reads it but does not own it.
   updated permissionlessly from a verified Lazer payload (`update`). Predict
   reads `normalized_spot()` and the read's `source_timestamp_ms`. Code module
   `propbook::pyth_feed`.
-- **`BlockScholesSpotFeed`** — one source-level BS spot object plus exact
-  timestamp history. Predict reads `normalized_spot()` and the read's
-  `source_timestamp_ms`. Code module `propbook::block_scholes_spot_feed`.
-- **`BlockScholesForwardFeed`** — one BS forward object per source id, with
-  per-expiry rows plus exact timestamp history. Predict reads
-  `normalized_forward(expiry_ms)` and the read's `source_timestamp_ms`. Code module
-  `propbook::block_scholes_forward_feed`.
-- **`BlockScholesSVIFeed`** — one BS SVI object per source id, with per-expiry
-  rows plus exact timestamp history. Predict reads `normalized_svi(expiry_ms)`
-  and the read's `source_timestamp_ms`. Code module
-  `propbook::block_scholes_svi_feed`.
+- **`BlockScholesValueStore`** — one per-underlying store of the latest BS spot
+  and forward observations, keyed by signed series id. Predict reads `spot()` /
+  `forward(expiry_ms)` and each read's `published_at_ms`. Code module
+  `propbook::block_scholes_store`.
+- **`BlockScholesSVIStore`** — one per-underlying store of the latest BS SVI
+  parameter sets, keyed by signed series id. Predict reads `svi(expiry_ms)`,
+  its `published_at_ms` for freshness, and its `model_timestamp_ms` as the
+  roll-down anchor. Code module `propbook::block_scholes_store`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are
   differenced off. Predict enforces its pricing-safe SVI envelope at read time

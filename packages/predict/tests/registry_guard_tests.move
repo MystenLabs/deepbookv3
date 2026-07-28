@@ -30,9 +30,6 @@ use deepbook_predict::{
     test_helpers
 };
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
     pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };

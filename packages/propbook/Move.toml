@@ -9,9 +9,6 @@ version = "0.0.1"
 
 [dependencies]
 fixed_math = { local = "../fixed_math" }
-# STUB BS signed-data verifier (leaf, no deps). Mints the verified `Update` that
-# propbook's split Block Scholes feed updates consume, mirroring `pyth_lazer`.
-block_scholes_oracle = { local = "../block_scholes_oracle" }
 # Official Pyth Lazer Sui package. Used by `propbook::pyth_feed::update`
 # to consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
 # package-scoped, so the Move type system enforces "this value came from Pyth's

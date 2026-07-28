@@ -11,32 +11,19 @@ decision graduates to `response-policies.md`. There is no third destination.
 Raw audit output stays in ignored agent scratchpads; this file is the tracked
 manifest.
 
-## Deploy Gates
-
-### S-4: Production Block Scholes verifier must replace the development stub
-
-**Severity:** Deploy gate.
-
-The repository dependency is a development stub and is not the verifier intended
-for deployment. Propbook's public BS write paths accept verifier-produced update
-objects and rely on their constructor boundary for authenticity; source id,
-timestamp, freshness, and Predict's pricing-safe envelope do not replace that
-proof. Before a value-bearing deployment, replace the dependency with the
-production verifier and confirm the scoped contracts still bind the authenticated
-payload to the expected source.
-
 ## Contract Findings
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
 
-**Severity:** Low / adjacent to S-4.
+**Severity:** Low.
 
-The BS spot/forward read projections return `none` for zero values, but the write
-path accepts and stores raw zero values. A bad push can blank the latest read and
-transiently DoS priced flows until a valid push lands.
+The BS stores keep signed values verbatim, including zero: a signed zero spot or
+forward prices as `EBlockScholesInputsInvalid` at the pricing envelope until a
+newer batch replaces it. Only the registered Block Scholes signer can produce
+such a value, so this is a provider-quality residual, not a relayer surface.
 
-**Action:** Restore write-time nonzero/normalizable guards for BS spot and
-forward updates, or document that the production verifier/source guarantees this.
+**Action:** Restore write-time nonzero guards for BS spot and forward
+observations, or document that the provider guarantees this.
 
 **2026-07-07 extension — settlement lane, permanent brick.** The same
 write-time normalizability gap reaches settlement, not just live reads. A

@@ -262,6 +262,23 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   overflow risk (built, then fully reverted). Revisit only if the drift and overflow
   are solved AND skew is shown to help LPs.
 
+- **The Block Scholes feeds became signed-series stores gated by the production
+	  verifier.** The three per-source feed objects and the stub
+	  `block_scholes_oracle` package were replaced by two per-underlying stores
+	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs,
+	  written only through batch types the `bs_oracle` signature verifier mints.
+	  Holding a verified batch is the provenance proof, so relayers are untrusted;
+	  a series id encodes kind, underlying, value scale, and expiry, so a valid
+	  observation can only land in the slot it was signed for. Each observation
+	  carries the provider's model time and batch-envelope time separately:
+	  freshness keys on the envelope, the SVI roll-down anchors on the model time,
+	  replacing on-chain change-detection that reconstructed the anchor.
+  *Rationale:* authenticity moves from the writer to the data, closing predeploy
+  gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted
+  writer (retains our own key custody in the trust set), and an on-chain
+  sid→slot mapping table (a registration step per new expiry on the market-roll
+  path; deriving the id from the slot's own identity needs no state).
+
 ## One canonical strike representation — absolute ticks (recent)
 
 - **There is exactly one strike interpretation protocol-wide: an absolute integer

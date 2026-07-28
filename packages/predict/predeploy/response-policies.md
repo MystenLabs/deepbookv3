@@ -210,14 +210,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity
   cannot be resolved by a consumer-side band. The real mitigation is the
-  verifier: permissionless BS pushes are not production-safe until the stub is
-  replaced (deploy gate S-4).
-- **Risk profile:** `BEST-GUESS`; bounded only by the envelope. Gated by S-4
-  before value-bearing deployment.
+  verifier: BS observations now enter only through signature-verified batches
+  (S-4 resolved), so the residual is provider quality, not push access.
+- **Risk profile:** `BEST-GUESS`; bounded only by the envelope and the
+  provider's signing integrity.
 - **Pinning tests:** not yet catalogued — fill in when this entry is next
   touched.
-- **Reopen when:** the production verifier lands (S-4) — revisit whether any
-  cross-feed sanity band is then worth reintroducing as a skip, not an abort.
+- **Reopen when:** live signed-feed data shows provider excursions the envelope
+  admits — revisit whether any cross-feed sanity band is worth reintroducing as
+  a skip, not an abort (S-4 resolved: the verifier landed).
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -559,9 +560,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   poison the single LP mark used for both supply and withdraw, while allowing
   the inverted segment through can overstate pool NAV.
 - **Risk profile:** `BEST-GUESS` — reachability depends on the BS publisher
-  sending an arbitrageable surface that also intersects the active book.
-  Production safety depends on replacing the stub verifier before value-bearing
-  deployment (S-4).
+  signing an arbitrageable surface that also intersects the active book
+  (S-4 resolved: only the registered signer can produce observations).
 - **Pinning tests:** `pricing_guard_tests.move` —
   `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
   `current_nav_flow_tests.move` —
