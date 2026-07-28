@@ -117,9 +117,9 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     } else if (
         type_name::with_defining_ids<DepositAsset>() == type_name::with_defining_ids<BaseAsset>()
     ) {
-        option::some(oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry))
+        option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock))
     } else {
-        option::some(oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry))
+        option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock))
     };
 
     margin_manager::deposit_core<BaseAsset, QuoteAsset, DepositAsset>(

@@ -451,9 +451,9 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     let event_reading = if (!emits_collateral_event<BaseAsset, QuoteAsset, DepositAsset>()) {
         option::none()
     } else if (type_name::with_defining_ids<DepositAsset>() == type_name::with_defining_ids<BaseAsset>()) {
-        option::some(read_price_unsafe<BaseAsset>(base_oracle, registry))
+        option::some(read_price<BaseAsset>(base_oracle, registry, clock))
     } else {
-        option::some(read_price_unsafe<QuoteAsset>(quote_oracle, registry))
+        option::some(read_price<QuoteAsset>(quote_oracle, registry, clock))
     };
 
     deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
@@ -1968,10 +1968,11 @@ public(package) fun execute_conditional_orders_v3_core<BaseAsset, QuoteAsset>(
 public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    /// Unvalidated read of the deposited asset's own feed, used only for the
-    /// telemetry event. `none` for a DEEP deposit, which emits nothing - so adding
-    /// collateral never depends on the oracle, and cannot be blocked by a stale or
-    /// wide-confidence feed on the asset being deposited or the other side.
+    // Validated read of the deposited asset's own feed, for the telemetry event.
+    // `none` for a DEEP deposit, which emits no event. Only the deposited side is
+    // read, so the other feed being stale cannot block a collateral top-up, and the
+    // confidence bound does not apply to a read that never reaches `price_config` -
+    // both matching the behaviour before Pyth Pro.
     event_reading: Option<PythReading>,
     coin: Coin<DepositAsset>,
     clock: &Clock,

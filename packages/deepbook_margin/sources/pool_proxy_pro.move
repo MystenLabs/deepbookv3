@@ -63,14 +63,28 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
+    // A debt-free manager needs no price: every consumer below is debt-gated, so
+    // reading eagerly would let a stale feed block an order that used to succeed.
+    let (base_reading, quote_reading) = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        (
+            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     pool_proxy::place_limit_order_v2_core<BaseAsset, QuoteAsset>(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        base_reading,
+        quote_reading,
         client_order_id,
         order_type,
         self_matching_option,
@@ -100,14 +114,28 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
+    // A debt-free manager needs no price: every consumer below is debt-gated, so
+    // reading eagerly would let a stale feed block an order that used to succeed.
+    let (base_reading, quote_reading) = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        (
+            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     pool_proxy::place_market_order_v2_core<BaseAsset, QuoteAsset>(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        base_reading,
+        quote_reading,
         client_order_id,
         self_matching_option,
         quantity,
@@ -282,14 +310,28 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
+    // A debt-free manager needs no price: every consumer below is debt-gated, so
+    // reading eagerly would let a stale feed block an order that used to succeed.
+    let (base_reading, quote_reading) = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        (
+            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     pool_proxy::place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        base_reading,
+        quote_reading,
         client_order_id,
         self_matching_option,
         quantity,

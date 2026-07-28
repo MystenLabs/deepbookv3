@@ -183,8 +183,8 @@ public(package) fun place_limit_order_v2_core<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    base_reading: Option<PythReading>,
+    quote_reading: Option<PythReading>,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -241,8 +241,8 @@ public(package) fun place_market_order_v2_core<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    base_reading: Option<PythReading>,
+    quote_reading: Option<PythReading>,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -586,14 +586,16 @@ public(package) fun place_reduce_only_market_order_and_repay_loan_core<BaseAsset
     // place_market_order settles the taker fill into the manager's balance, so
     // the proceeds are drawable: repay the settled proceeds (+ idle balance) into
     // the debt side, then gate on the net (post-repay) monotonic ratio.
+    // Reduce-only requires debt (`ENotReduceOnlyOrder`), so readings are always
+    // present here, unlike the non-reduce-only entries which may pass `none`.
     repay_debt_then_assert_monotonic(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_reading,
-        quote_reading,
+        option::some(base_reading),
+        option::some(quote_reading),
         risk_ratio_before,
         clock,
         ctx,
@@ -696,14 +698,16 @@ public(package) fun place_reduce_only_limit_order_and_repay_loan_core<BaseAsset,
     // Repay the settled taker fills (+ idle balance) before the monotonic gate,
     // so a crossing reduce-only limit deleverages instead of aborting; a
     // fully-resting order has no taker proceeds, so this repays nothing.
+    // Reduce-only requires debt (`ENotReduceOnlyOrder`), so readings are always
+    // present here, unlike the non-reduce-only entries which may pass `none`.
     repay_debt_then_assert_monotonic(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_reading,
-        quote_reading,
+        option::some(base_reading),
+        option::some(quote_reading),
         risk_ratio_before,
         clock,
         ctx,
@@ -737,8 +741,8 @@ public(package) fun place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    base_reading: Option<PythReading>,
+    quote_reading: Option<PythReading>,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -768,8 +772,8 @@ public(package) fun place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset
     ) {
         margin_manager.risk_ratio_core(
             registry,
-            base_reading,
-            quote_reading,
+            *base_reading.borrow(),
+            *quote_reading.borrow(),
             pool,
             base_margin_pool,
             quote_margin_pool,
@@ -1079,8 +1083,10 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    // `none` when the manager is debt-free: the gate below returns before any price
+    // is needed, so an order from a debt-free manager must not require a fresh feed.
+    base_reading: Option<PythReading>,
+    quote_reading: Option<PythReading>,
     clock: &Clock,
 ) {
     if (
@@ -1092,8 +1098,8 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
 
     let risk_ratio_after = margin_manager.risk_ratio_core(
         registry,
-        base_reading,
-        quote_reading,
+        *base_reading.borrow(),
+        *quote_reading.borrow(),
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -1147,8 +1153,8 @@ fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    base_reading: Option<PythReading>,
+    quote_reading: Option<PythReading>,
     risk_ratio_before: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -1169,8 +1175,8 @@ fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
             pool,
             base_margin_pool,
             quote_margin_pool,
-            base_reading,
-            quote_reading,
+            *base_reading.borrow(),
+            *quote_reading.borrow(),
             clock,
             risk_ratio_before,
         );
@@ -1199,14 +1205,28 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
+    // A debt-free manager needs no price: every consumer below is debt-gated, so
+    // reading eagerly would let a stale feed block an order that used to succeed.
+    let (base_reading, quote_reading) = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        (
+            option::some(oracle::read_price<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     place_limit_order_v2_core<BaseAsset, QuoteAsset>(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        base_reading,
+        quote_reading,
         client_order_id,
         order_type,
         self_matching_option,
@@ -1236,14 +1256,28 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
+    // A debt-free manager needs no price: every consumer below is debt-gated, so
+    // reading eagerly would let a stale feed block an order that used to succeed.
+    let (base_reading, quote_reading) = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        (
+            option::some(oracle::read_price<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     place_market_order_v2_core<BaseAsset, QuoteAsset>(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        base_reading,
+        quote_reading,
         client_order_id,
         self_matching_option,
         quantity,
@@ -1418,14 +1452,28 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
+    // A debt-free manager needs no price: every consumer below is debt-gated, so
+    // reading eagerly would let a stale feed block an order that used to succeed.
+    let (base_reading, quote_reading) = if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        (
+            option::some(oracle::read_price<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset>(
         registry,
         margin_manager,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price<QuoteAsset>(quote_oracle, registry, clock),
+        base_reading,
+        quote_reading,
         client_order_id,
         self_matching_option,
         quantity,
