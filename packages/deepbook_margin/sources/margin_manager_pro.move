@@ -12,6 +12,7 @@ module deepbook_margin::margin_manager_pro;
 
 use deepbook::{order_info::OrderInfo, pool::Pool};
 use deepbook_margin::{
+    margin_constants,
     margin_manager::{Self, MarginManager},
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
@@ -19,6 +20,7 @@ use deepbook_margin::{
     tpsl::{Condition, PendingOrder}
 };
 use pyth_pro::price_info::PriceInfoObject as PriceInfoObjectPro;
+use std::type_name;
 use sui::{clock::Clock, coin::Coin};
 
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
@@ -108,11 +110,22 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let event_reading = if (
+        !margin_manager::emits_collateral_event<BaseAsset, QuoteAsset, DepositAsset>()
+    ) {
+        option::none()
+    } else if (
+        type_name::with_defining_ids<DepositAsset>() == type_name::with_defining_ids<BaseAsset>()
+    ) {
+        option::some(oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry))
+    } else {
+        option::some(oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry))
+    };
+
     margin_manager::deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
         self,
         registry,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        event_reading,
         coin,
         clock,
         ctx,
@@ -131,13 +144,36 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
+    let (risk_base_reading, risk_quote_reading) = if (
+        self.withdraw_needs_risk_check(base_margin_pool, quote_margin_pool)
+    ) {
+        (
+            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+    let (event_base_reading, event_quote_reading) = if (
+        margin_manager::emits_collateral_event<BaseAsset, QuoteAsset, WithdrawAsset>()
+    ) {
+        (
+            option::some(oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry)),
+            option::some(oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     margin_manager::withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
         self,
         registry,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        risk_base_reading,
+        risk_quote_reading,
+        event_base_reading,
+        event_quote_reading,
         pool,
         withdraw_amount,
         clock,
@@ -227,6 +263,11 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): u64 {
+    // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
+    // ratio is MAX regardless of price. Returning here keeps a stale feed from
+    // breaking a read-only query, as it did before Pyth Pro.
+    if (self.has_no_margin_pool()) return margin_constants::max_risk_ratio();
+
     margin_manager::risk_ratio_core<BaseAsset, QuoteAsset>(
         self,
         registry,
@@ -249,7 +290,12 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): u64 {
-    margin_manager::risk_ratio_unsafe_core<BaseAsset, QuoteAsset>(
+    // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
+    // ratio is MAX regardless of price. Returning here keeps a stale feed from
+    // breaking a read-only query, as it did before Pyth Pro.
+    if (self.has_no_margin_pool()) return margin_constants::max_risk_ratio();
+
+    margin_manager::risk_ratio_core<BaseAsset, QuoteAsset>(
         self,
         registry,
         oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry),

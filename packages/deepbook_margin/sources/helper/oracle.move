@@ -53,6 +53,11 @@ public struct ConversionConfig has copy, drop {
 public struct PythReading has copy, drop {
     price: u64,
     decimals: u8,
+    /// `some` only for validated reads. The confidence bound is a *pricing* guard,
+    /// not a read guard: it is asserted in `price_config`, so a reading taken purely
+    /// for telemetry (the deposit event) is never rejected for a wide interval.
+    /// Unvalidated reads carry `none` and skip the check, as they always have.
+    conf: Option<u64>,
 }
 
 public(package) fun price(self: &PythReading): u64 {
@@ -264,6 +269,16 @@ fun price_config<T>(
 ): ConversionConfig {
     let type_config = registry.get_config_for_type<T>();
 
+    // Validated readings carry a confidence bound; unvalidated ones never did.
+    reading
+        .conf
+        .do_ref!(
+            |conf| assert!(
+                (*conf as u128) * 10_000 <= (type_config.max_conf_bps as u128) * (reading.price as u128),
+                EInvalidPythPriceConf,
+            ),
+        );
+
     let target_decimals = if (is_usd_price_config) {
         9
     } else {
@@ -326,6 +341,7 @@ public(package) fun read_price_unsafe<T>(
     PythReading {
         price: price.get_price().get_magnitude_if_positive(),
         decimals: price.get_expo().get_magnitude_if_negative() as u8,
+        conf: option::none(),
     }
 }
 
@@ -371,6 +387,7 @@ public(package) fun read_price_pro_unsafe<T>(
     PythReading {
         price: price.get_price().get_magnitude_if_positive(),
         decimals: price.get_expo().get_magnitude_if_negative() as u8,
+        conf: option::none(),
     }
 }
 
@@ -386,17 +403,12 @@ fun validate_reading(
     validate_feed_id(price_feed_id, type_config);
 
     assert!(
-        (pyth_conf as u128) * 10_000 <= (type_config.max_conf_bps as u128) * (pyth_price as u128),
-        EInvalidPythPriceConf,
-    );
-
-    assert!(
         (pyth_price as u128) * 10_000 <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) &&
         (pyth_price as u128) * 10_000 >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128),
         EInvalidPythPrice,
     );
 
-    PythReading { price: pyth_price, decimals: pyth_decimals }
+    PythReading { price: pyth_price, decimals: pyth_decimals, conf: option::some(pyth_conf) }
 }
 
 fun validate_feed_id(price_feed_id: vector<u8>, type_config: CoinTypeData) {

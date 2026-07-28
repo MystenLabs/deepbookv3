@@ -162,7 +162,7 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 //
 // Each v2 entry mirrors its v1 counterpart and additionally recomputes
 // `risk_ratio` after the order settles (using Pyth via the public
-// `MarginManager::risk_ratio` helper). For non-reduce-only entries the
+// `margin_manager::risk_ratio_core` helper). For non-reduce-only entries the
 // post-trade ratio must be at least `min_open_risk_ratio` — a floor between
 // liquidation and the borrow floor, so a max-leverage open can absorb the
 // opening trade's spread (which lands the ratio just under `min_borrow`)

@@ -448,11 +448,18 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    let event_reading = if (!emits_collateral_event<BaseAsset, QuoteAsset, DepositAsset>()) {
+        option::none()
+    } else if (type_name::with_defining_ids<DepositAsset>() == type_name::with_defining_ids<BaseAsset>()) {
+        option::some(read_price_unsafe<BaseAsset>(base_oracle, registry))
+    } else {
+        option::some(read_price_unsafe<QuoteAsset>(quote_oracle, registry))
+    };
+
     deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
         self,
         registry,
-        read_price<BaseAsset>(base_oracle, registry, clock),
-        read_price<QuoteAsset>(quote_oracle, registry, clock),
+        event_reading,
         coin,
         clock,
         ctx,
@@ -473,13 +480,36 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
+    let (risk_base_reading, risk_quote_reading) = if (
+        self.withdraw_needs_risk_check(base_margin_pool, quote_margin_pool)
+    ) {
+        (
+            option::some(read_price<BaseAsset>(base_oracle, registry, clock)),
+            option::some(read_price<QuoteAsset>(quote_oracle, registry, clock)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+    let (event_base_reading, event_quote_reading) = if (
+        emits_collateral_event<BaseAsset, QuoteAsset, WithdrawAsset>()
+    ) {
+        (
+            option::some(read_price_unsafe<BaseAsset>(base_oracle, registry)),
+            option::some(read_price_unsafe<QuoteAsset>(quote_oracle, registry)),
+        )
+    } else {
+        (option::none(), option::none())
+    };
+
     withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
         self,
         registry,
         base_margin_pool,
         quote_margin_pool,
-        read_price<BaseAsset>(base_oracle, registry, clock),
-        read_price<QuoteAsset>(quote_oracle, registry, clock),
+        risk_base_reading,
+        risk_quote_reading,
+        event_base_reading,
+        event_quote_reading,
         pool,
         withdraw_amount,
         clock,
@@ -617,6 +647,11 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): u64 {
+    // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
+    // ratio is MAX regardless of price. Returning here keeps a stale feed from
+    // breaking a read-only query, as it did before Pyth Pro.
+    if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
+
     risk_ratio_core<BaseAsset, QuoteAsset>(
         self,
         registry,
@@ -641,7 +676,12 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): u64 {
-    risk_ratio_unsafe_core<BaseAsset, QuoteAsset>(
+    // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
+    // ratio is MAX regardless of price. Returning here keeps a stale feed from
+    // breaking a read-only query, as it did before Pyth Pro.
+    if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
+
+    risk_ratio_core<BaseAsset, QuoteAsset>(
         self,
         registry,
         read_price_unsafe<BaseAsset>(base_oracle, registry),
@@ -1740,6 +1780,34 @@ fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
+/// True when the manager holds no borrow position, so `risk_ratio` is MAX without
+/// consulting the oracle.
+public(package) fun has_no_margin_pool<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): bool {
+    self.margin_pool_id.is_none()
+}
+
+/// True when `withdraw` runs a risk check - the manager has debt in one of the two
+/// pools. Kept beside the core so the wrapper's lazy read and the core's branch
+/// cannot disagree.
+public(package) fun withdraw_needs_risk_check<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+): bool {
+    self.margin_pool_id.contains(&base_margin_pool.id())
+        || self.margin_pool_id.contains(&quote_margin_pool.id())
+}
+
+/// True when a deposit/withdraw of `Asset` emits a collateral event. A DEEP move in a
+/// base/quote pool emits nothing and needs no oracle read at all.
+public(package) fun emits_collateral_event<BaseAsset, QuoteAsset, Asset>(): bool {
+    let asset_type = type_name::with_defining_ids<Asset>();
+    asset_type == type_name::with_defining_ids<BaseAsset>()
+        || asset_type == type_name::with_defining_ids<QuoteAsset>()
+}
+
 // === Shared cores ===
 // Bodies factored out so the legacy and Pyth Pro entrypoints run identical logic;
 // only the reader that produced the `PythReading` differs.
@@ -1900,8 +1968,11 @@ public(package) fun execute_conditional_orders_v3_core<BaseAsset, QuoteAsset>(
 public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    /// Unvalidated read of the deposited asset's own feed, used only for the
+    /// telemetry event. `none` for a DEEP deposit, which emits nothing - so adding
+    /// collateral never depends on the oracle, and cannot be blocked by a stale or
+    /// wide-confidence feed on the asset being deposited or the other side.
+    event_reading: Option<PythReading>,
     coin: Coin<DepositAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -1920,11 +1991,7 @@ public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
     // or quote assets.
     if (!deposit_base_asset && !deposit_quote_asset) return;
 
-    let reading = if (deposit_base_asset) {
-        base_reading
-    } else {
-        quote_reading
-    };
+    let reading = event_reading.borrow();
     let (pyth_price, pyth_decimals) = (reading.price(), reading.decimals());
 
     event::emit(DepositCollateralEvent {
@@ -1937,13 +2004,20 @@ public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
     });
 }
 
+/// `risk_*_reading` are validated reads, needed only when the manager carries debt.
+/// `event_*_reading` are unvalidated reads used solely for the telemetry event, and
+/// only when a base/quote asset is withdrawn. Both are `none` otherwise, so a
+/// debt-free withdrawal never touches the oracle - matching the pre-Pyth-Pro
+/// behaviour, where a stale feed could not block a user reclaiming collateral.
 public(package) fun withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_reading: PythReading,
-    quote_reading: PythReading,
+    risk_base_reading: Option<PythReading>,
+    risk_quote_reading: Option<PythReading>,
+    event_base_reading: Option<PythReading>,
+    event_quote_reading: Option<PythReading>,
     pool: &Pool<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
     clock: &Clock,
@@ -1965,8 +2039,8 @@ public(package) fun withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
     if (self.margin_pool_id.contains(&base_margin_pool.id())) {
         let risk_ratio = self.risk_ratio_int(
             registry,
-            base_reading,
-            quote_reading,
+            *risk_base_reading.borrow(),
+            *risk_quote_reading.borrow(),
             pool,
             base_margin_pool,
             clock,
@@ -1975,8 +2049,8 @@ public(package) fun withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
     } else if (self.margin_pool_id.contains(&quote_margin_pool.id())) {
         let risk_ratio = self.risk_ratio_int(
             registry,
-            base_reading,
-            quote_reading,
+            *risk_base_reading.borrow(),
+            *risk_quote_reading.borrow(),
             pool,
             quote_margin_pool,
             clock,
@@ -2009,8 +2083,8 @@ public(package) fun withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
         _,
     ) = self.manager_state_core(
         registry,
-        base_reading,
-        quote_reading,
+        *event_base_reading.borrow(),
+        *event_quote_reading.borrow(),
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -2329,38 +2403,6 @@ public(package) fun risk_ratio_core<BaseAsset, QuoteAsset>(
     }
 }
 
-public(package) fun risk_ratio_unsafe_core<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    base_reading: PythReading,
-    quote_reading: PythReading,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    clock: &Clock,
-): u64 {
-    let debt_is_base = self.borrowed_base_shares > 0;
-    if (debt_is_base) {
-        self.risk_ratio_int(
-            registry,
-            base_reading,
-            quote_reading,
-            pool,
-            base_margin_pool,
-            clock,
-        )
-    } else {
-        self.risk_ratio_int(
-            registry,
-            base_reading,
-            quote_reading,
-            pool,
-            quote_margin_pool,
-            clock,
-        )
-    }
-}
-
 public(package) fun manager_state_core<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -2383,7 +2425,7 @@ public(package) fun manager_state_core<BaseAsset, QuoteAsset>(
     } else {
         (0, 0)
     };
-    let risk_ratio = self.risk_ratio_unsafe_core(
+    let risk_ratio = self.risk_ratio_core(
         registry,
         base_reading,
         quote_reading,

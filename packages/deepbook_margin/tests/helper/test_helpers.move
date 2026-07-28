@@ -22,6 +22,13 @@ use deepbook_margin::{
     test_constants::{Self, USDC, USDT, BTC, SUI}
 };
 use pyth::{i64, price, price_feed, price_identifier, price_info::{Self, PriceInfoObject}};
+use pyth_pro::{
+    i64 as i64_pro,
+    price as price_pro,
+    price_feed as price_feed_pro,
+    price_identifier as price_identifier_pro,
+    price_info::{Self as price_info_pro, PriceInfoObject as PriceInfoObjectPro}
+};
 use std::unit_test::destroy;
 use sui::{
     clock::{Self, Clock},
@@ -1618,4 +1625,31 @@ public fun execute_conditional_orders_v3_for_test<BaseAsset, QuoteAsset>(
         clock,
         scenario.ctx(),
     )
+}
+
+/// Pyth Pro twin of `build_pyth_price_info_object`. Pyth Pro is a separately
+/// published package, so its `PriceInfoObject` is a distinct Move type and needs its
+/// own constructor even though the shape is identical.
+public fun build_pyth_pro_price_info_object(
+    scenario: &mut Scenario,
+    id: vector<u8>,
+    price_value: u64,
+    conf_value: u64,
+    exp_value: u64,
+    timestamp: u64,
+): PriceInfoObjectPro {
+    let price_id = price_identifier_pro::from_byte_vec(id);
+    let price = price_pro::new(
+        i64_pro::new(price_value, false),
+        conf_value,
+        i64_pro::new(exp_value, true),
+        timestamp,
+    );
+    let price_feed = price_feed_pro::new(price_id, price, price);
+    let price_info = price_info_pro::new_price_info(
+        timestamp - 2,
+        timestamp - 1,
+        price_feed,
+    );
+    price_info_pro::new_price_info_object_for_test(price_info, scenario.ctx())
 }
