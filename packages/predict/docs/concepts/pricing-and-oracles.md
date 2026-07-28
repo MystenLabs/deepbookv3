@@ -101,28 +101,32 @@ For single order/range quotes, range-price differencing is saturating: if a clam
 
 ## Resolving the live forward
 
-Every live pricing path resolves a single `(forward, SVIParams)` tuple before pricing any strike. The BS spot/forward price inputs must be fresh, and the SVI params must be fresh under their own looser window. Given those BS inputs, the forward is resolved by whether the Pyth spot is fresh:
+Every live pricing path resolves a single `(forward, SVIParams)` tuple before pricing any strike. The BS spot/forward price inputs must be fresh, and the SVI params must be fresh under their own looser window. Given those BS inputs, the forward is resolved by the admin-set source selector and, when that selector is on, by whether the Pyth spot is fresh:
 
 ```mermaid
 flowchart TD
     A[BS spot and forward present and fresh?] -- no --> X[abort EBlockScholesPriceUnavailable / EBlockScholesPriceStale]
     A -- yes --> S[SVI present and fresh?]
     S -- no --> Y[abort EBlockScholesSVIUnavailable / EBlockScholesSVIStale]
-    S -- yes --> B{normalized Pyth spot fresh?}
+    S -- yes --> P{use_pyth_spot_for_forward?}
+    P -- no --> D
+    P -- yes --> B{normalized Pyth spot fresh?}
     B -- yes --> C["forward = pyth_spot x basis(expiry)<br/>basis = bs.forward / bs.spot"]
-    B -- no --> D["forward = bs.forward(expiry)<br/>(Block Scholes fallback)"]
+    B -- no --> D["forward = bs.forward(expiry)<br/>(Block Scholes forward)"]
     C --> E[forward + time-rolled bs.svi]
     D --> E
 ```
 
 The rules:
 
-- **Pyth spot is canonical for spot when fresh and usable.** When `normalized_spot()` returns a positive spot and its source timestamp is fresh, the live forward is rebuilt from it: `forward = pyth_spot × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
-- **Missing, stale, or unusable Pyth spot falls back to Block Scholes.** If Pyth has no normalized latest spot, the normalized spot is non-positive/unrepresentable, or its source timestamp is stale, pricing falls back to the fresh `BlockScholesForwardFeed` value directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
-- **Oversized normalized Pyth spot is still rejected.** A normalized Pyth spot above Predict's pricing envelope aborts with `EPythSpotInvalid`; this is a consumer-side fixed-point safety bound, not a Propbook validity rule.
-- **The Block Scholes inputs have no fallback.** BS spot, BS forward, and SVI must be present and fresh either way. An absent input — never published, or a stored value that does not normalize (e.g. zero) — aborts with `EBlockScholesPriceUnavailable` (spot/forward) or `EBlockScholesSVIUnavailable` (SVI); a present-but-stale input aborts with `EBlockScholesPriceStale` or `EBlockScholesSVIStale`.
+- **`use_pyth_spot_for_forward` picks the formula.** This admin setting (default on) decides whether the Pyth spot enters live pricing at all. With it off, the forward is the fresh `BlockScholesForwardFeed` value on every load, the Pyth spot is read but unused, and the two rules below do not apply. Calibration is what moves this setting: the Block Scholes forward is the more accurate input measured on its own, while the Pyth spot is the fresher one and is also the settlement price — so which formula wins depends on latency that has not been measured yet. See [configuration](../design/configuration.md) for how the setting is applied.
+- **Pyth spot is canonical for spot when fresh and usable.** With the setting on, when `normalized_spot()` returns a positive spot and its source timestamp is fresh, the live forward is rebuilt from it: `forward = pyth_spot × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
+- **Missing, stale, or unusable Pyth spot falls back to Block Scholes.** With the setting on, if Pyth has no normalized latest spot, the normalized spot is non-positive/unrepresentable, or its source timestamp is stale, pricing falls back to the fresh `BlockScholesForwardFeed` value directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
+- **Oversized normalized Pyth spot is still rejected.** A normalized Pyth spot above Predict's pricing envelope aborts with `EPythSpotInvalid`; this is a consumer-side fixed-point safety bound, not a Propbook validity rule. It is only reached on the re-anchoring branch, since that is the only branch that uses the value.
+- **The Block Scholes inputs have no fallback.** BS spot, BS forward, and SVI must be present and fresh under every setting. An absent input — never published, or a stored value that does not normalize (e.g. zero) — aborts with `EBlockScholesPriceUnavailable` (spot/forward) or `EBlockScholesSVIUnavailable` (SVI); a present-but-stale input aborts with `EBlockScholesPriceStale` or `EBlockScholesSVIStale`.
+- **The Pyth source timestamp is snapshotted either way.** `Pricer` retains the source timestamp of the current normalized Pyth observation (`0` when there is no usable one) whether or not the forward used it, so trade events report the same oracle provenance under both settings.
 
-Note the asymmetry: the Block Scholes forward/SVI source set is mandatory and gated by hard aborts, while the Pyth spot is an optimization that degrades to the Block Scholes forward when absent, stale, or not positively normalizable.
+Note the asymmetry: the Block Scholes forward/SVI source set is mandatory and gated by hard aborts, while the Pyth spot is an optimization — one that degrades to the Block Scholes forward when absent, stale, or not positively normalizable, and that an admin can switch off outright.
 
 ## Ownership: market binding/liveness vs. pricing freshness
 
@@ -139,7 +143,7 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 **Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against the `source_timestamp_ms` of its normalized `OracleRead`:
 
-- **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward.
+- **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward. Only consulted while `use_pyth_spot_for_forward` is set.
 - **Block Scholes price freshness** (`block_scholes_price_freshness_ms`) — how recent the BS spot and expiry forward must be to compute the fallback forward and Pyth-reanchored basis.
 - **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the latest accepted SVI provider envelope must be. Freshness uses `source_timestamp_ms`, while remaining-time roll-down independently uses the preserved `params_timestamp_ms` of the current normalized tuple. This window is intentionally looser than BS price freshness because SVI changes more slowly.
 

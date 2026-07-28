@@ -264,6 +264,11 @@ public(package) fun assert_max_entry_probability(value: u64) {
     );
 }
 
+/// Live pricing anchors the Block Scholes forward on the Pyth spot by default;
+/// `false` prices off the Block Scholes forward directly. No bounds helper: a
+/// bool has no invalid value.
+public(package) macro fun default_use_pyth_spot_for_forward(): bool { true }
+
 public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }

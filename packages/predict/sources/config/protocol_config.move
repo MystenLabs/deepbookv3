@@ -182,6 +182,19 @@ public fun set_template_max_entry_probability(
     config.strike_exposure_template_config.set_max_entry_probability(value);
 }
 
+/// Select which source the live forward is built from: `true` carries the Block
+/// Scholes basis on a fresh Pyth spot, `false` uses the Block Scholes forward
+/// directly. Locked during valuation so one flush marks every market on one formula.
+public fun set_use_pyth_spot_for_forward(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_use_pyth_spot_for_forward(enabled);
+}
+
 /// Set the live Pyth spot freshness threshold.
 public fun set_pyth_spot_freshness_ms(
     config: &mut ProtocolConfig,

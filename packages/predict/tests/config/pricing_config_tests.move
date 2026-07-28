@@ -17,6 +17,10 @@ const FRESHNESS_ABOVE_MAX: u64 = 60_001;
 #[test]
 fun defaults_match_config_constants() {
     let config = pricing_config::new();
+    // Asserted as the literal, not against the default macro: the ratified default
+    // is that live pricing carries the Block Scholes basis on the Pyth spot, and a
+    // macro-vs-getter comparison would pass whichever way that default was flipped.
+    assert!(config.use_pyth_spot_for_forward());
     assert_eq!(
         config.pyth_spot_freshness_ms(),
         config_constants::default_pyth_spot_freshness_ms!(),
@@ -29,6 +33,18 @@ fun defaults_match_config_constants() {
         config.block_scholes_svi_freshness_ms(),
         config_constants::default_block_scholes_svi_freshness_ms!(),
     );
+    destroy(config);
+}
+
+// === set_use_pyth_spot_for_forward ===
+
+#[test]
+fun set_use_pyth_spot_for_forward_toggles_both_ways() {
+    let mut config = pricing_config::new();
+    config.set_use_pyth_spot_for_forward(false);
+    assert!(!config.use_pyth_spot_for_forward());
+    config.set_use_pyth_spot_for_forward(true);
+    assert!(config.use_pyth_spot_for_forward());
     destroy(config);
 }
 
