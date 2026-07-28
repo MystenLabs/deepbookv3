@@ -24,10 +24,10 @@ const ENotNewerVersion: u64 = 1;
 /// feed from a stopped one.
 public struct BsRead<Value: copy + drop + store> has copy, drop, store {
     /// Provider time the series data is "as of", held fixed across retransmissions of a value that
-    /// has not changed.
+    /// has not changed. The provider's per-series replay key: ordering keys on this first.
     model_timestamp_ms: u64,
     /// Envelope time of the batch this observation arrived in, advancing on every provider flush.
-    /// Ordering, replay, and freshness all key on this.
+    /// Freshness keys on this; ordering falls back to it only between equal model times.
     published_at_ms: u64,
     /// Sui clock time when the accepting transaction executed.
     recorded_at_ms: u64,
@@ -446,6 +446,15 @@ public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u64, u
     )
 }
 
+/// Ordering is lexicographic on (model time, envelope time) — the provider names the per-series
+/// model time as the replay key and the envelope only as liveness, and never promises that a later
+/// flush carries later model times. Keying on the pair makes the stored observation the same
+/// whatever order a relayer lands honestly signed batches in: newer model data always wins, even
+/// arriving in an older envelope (whose honest, older publish time it then carries), and an equal
+/// model time advances only with a fresher envelope (the retransmission that refreshes freshness
+/// without moving the model anchor). A model time after its own envelope is provider garbage —
+/// data cannot be "as of" later than its publish — and admitting it would let the pricing
+/// roll-down anchor land on or past expiry, so it is skipped like any other unusable entry.
 fun apply<Value: copy + drop + store>(
     reads: &mut Table<u256, BsRead<Value>>,
     propbook_oracle_id: ID,
@@ -455,10 +464,15 @@ fun apply<Value: copy + drop + store>(
 ): bool {
     if (!belongs(propbook_underlying_id, sid)) return false;
     if (read.published_at_ms == 0 || read.published_at_ms > read.recorded_at_ms) return false;
+    if (read.model_timestamp_ms > read.published_at_ms) return false;
 
     if (reads.contains(sid)) {
         let latest = reads.borrow_mut(sid);
-        if (read.published_at_ms <= latest.published_at_ms) return false;
+        let advances =
+            read.model_timestamp_ms > latest.model_timestamp_ms ||
+            (read.model_timestamp_ms == latest.model_timestamp_ms &&
+                read.published_at_ms > latest.published_at_ms);
+        if (!advances) return false;
         *latest = read;
     } else {
         reads.add(sid, read);

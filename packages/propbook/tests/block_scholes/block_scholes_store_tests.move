@@ -38,10 +38,12 @@ const FORWARD_B: u128 = 51_500_000_000_000;
 // Provider clocks. `MODEL_*` is when a series' data is "as of"; `PUBLISHED_*` is the envelope time
 // of the batch carrying it, which advances on every flush whether or not the series moved.
 const MODEL_EARLY: u64 = 100;
+const MODEL_MID: u64 = 200;
 const MODEL_LATE: u64 = 300;
 const PUBLISHED_EARLY: u64 = 100;
 const PUBLISHED_MID: u64 = 200;
 const PUBLISHED_LATE: u64 = 300;
+const PUBLISHED_LATER: u64 = 400;
 const CHAIN_TIME_MS: u64 = 1_000;
 
 const SVI_A_MAG: u128 = 40_000_000;
@@ -208,6 +210,176 @@ fun an_older_batch_leaves_the_stored_observation_intact() {
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
+    scenario.end();
+}
+
+/// The provider never promises that a later flush carries later model times, so a fresher envelope
+/// alone must not be able to roll a series' model data back.
+#[test]
+fun a_newer_envelope_with_an_older_model_time_cannot_roll_the_series_back() {
+    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut value_store,
+        PUBLISHED_LATE,
+        vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT)],
+        &chain_clock,
+    );
+    apply_values(
+        &mut value_store,
+        PUBLISHED_LATER,
+        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        &chain_clock,
+    );
+
+    let read = store::spot(&value_store).destroy_some();
+    assert_eq!(read.read_value(), SPOT);
+    assert_eq!(read.read_model_timestamp_ms(), MODEL_LATE);
+    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    // The refused batch still carried this underlying's series, so the feed is visibly running.
+    assert_eq!(value_store.value_store_last_batch_ts_ms(), PUBLISHED_LATER);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+/// Newer model data is the better observation whichever flush carried it; it lands even from an
+/// older envelope, and freshness then honestly reflects that envelope's publish time.
+#[test]
+fun newer_model_data_in_an_older_envelope_still_lands() {
+    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut value_store,
+        PUBLISHED_LATE,
+        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        &chain_clock,
+    );
+    apply_values(
+        &mut value_store,
+        PUBLISHED_MID,
+        vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT_LATER)],
+        &chain_clock,
+    );
+
+    let read = store::spot(&value_store).destroy_some();
+    assert_eq!(read.read_value(), SPOT_LATER);
+    assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
+    assert_eq!(read.read_published_at_ms(), PUBLISHED_MID);
+    assert_eq!(value_store.value_store_last_batch_ts_ms(), PUBLISHED_LATE);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+/// The relayer chooses submission order, so the stored observation must be the same for any order
+/// of the same signed batches — otherwise ordering becomes a lever over the data.
+#[test]
+fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
+    let mut scenario = test::begin(ADMIN);
+    let forward_id = store::create_and_share_value_store(UNDERLYING_ID, scenario.ctx());
+    let reversed_id = store::create_and_share_value_store(UNDERLYING_ID, scenario.ctx());
+    scenario.next_tx(ADMIN);
+    let mut forward_store = scenario.take_shared_by_id<BlockScholesValueStore>(forward_id);
+    let mut reversed_store = scenario.take_shared_by_id<BlockScholesValueStore>(reversed_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut forward_store,
+        PUBLISHED_MID,
+        vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT)],
+        &chain_clock,
+    );
+    apply_values(
+        &mut forward_store,
+        PUBLISHED_LATE,
+        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        &chain_clock,
+    );
+
+    apply_values(
+        &mut reversed_store,
+        PUBLISHED_LATE,
+        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        &chain_clock,
+    );
+    apply_values(
+        &mut reversed_store,
+        PUBLISHED_MID,
+        vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT)],
+        &chain_clock,
+    );
+
+    let forward_read = store::spot(&forward_store).destroy_some();
+    let reversed_read = store::spot(&reversed_store).destroy_some();
+    assert_eq!(forward_read.read_value(), reversed_read.read_value());
+    assert_eq!(forward_read.read_model_timestamp_ms(), reversed_read.read_model_timestamp_ms());
+    assert_eq!(forward_read.read_published_at_ms(), reversed_read.read_published_at_ms());
+    assert_eq!(forward_read.read_value(), SPOT);
+    assert_eq!(forward_read.read_model_timestamp_ms(), MODEL_MID);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(forward_store);
+    return_shared(reversed_store);
+    scenario.end();
+}
+
+/// Data cannot be "as of" later than its own publish time; storing such an entry would let the
+/// pricing roll-down anchor land on or past a live market's expiry. The garbage entry is dropped
+/// while its valid neighbour still lands.
+#[test]
+fun a_model_time_after_its_own_envelope_is_skipped() {
+    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut value_store,
+        PUBLISHED_EARLY,
+        vector[
+            spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER),
+            forward_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
+        ],
+        &chain_clock,
+    );
+
+    assert!(store::spot(&value_store).is_none());
+    assert_eq!(store::forward(&value_store, EXPIRY_A).destroy_some().read_value(), FORWARD_A);
+
+    let events = event::events_by_type<store::BlockScholesBatchIngested>();
+    let (_, _, update_count, matched, applied) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(update_count, 2);
+    assert_eq!(matched, 2);
+    assert_eq!(applied, 1);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
+fun an_svi_model_time_after_its_own_envelope_is_skipped() {
+    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_svis(
+        &mut svi_store,
+        PUBLISHED_EARLY,
+        vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_LATE)],
+        &chain_clock,
+    );
+
+    assert!(store::svi(&svi_store, EXPIRY_A).is_none());
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
     scenario.end();
 }
 
@@ -535,33 +707,35 @@ fun an_ingested_batch_reports_what_it_carried_matched_and_stored() {
     scenario.end();
 }
 
-/// Every update in a batch shares the envelope time, so a batch naming one series twice cannot have
-/// its second entry advance that series. The first entry owns the slot.
+/// A batch naming one series twice resolves by model time, like everything else: an equal model
+/// time cannot displace the first entry (the envelope is shared, so nothing advances), while a
+/// strictly newer valid model time is newer data and wins.
 #[test]
-fun a_series_repeated_within_one_batch_keeps_its_first_entry() {
+fun a_series_repeated_within_one_batch_resolves_by_model_time() {
     let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
-        PUBLISHED_EARLY,
+        PUBLISHED_LATE,
         vector[
             spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT),
-            spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER),
+            spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER),
+            spot_update(UNDERLYING_ID, MODEL_MID, SPOT_LATER),
         ],
         &chain_clock,
     );
 
     let read = store::spot(&value_store).destroy_some();
-    assert_eq!(read.read_value(), SPOT);
-    assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
+    assert_eq!(read.read_value(), SPOT_LATER);
+    assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
     let (_, _, update_count, matched, applied) = store::batch_ingested_fields(&events[0]);
-    assert_eq!(update_count, 2);
-    assert_eq!(matched, 2);
-    assert_eq!(applied, 1);
+    assert_eq!(update_count, 3);
+    assert_eq!(matched, 3);
+    assert_eq!(applied, 2);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);

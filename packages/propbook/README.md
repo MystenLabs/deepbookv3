@@ -145,8 +145,16 @@ caller.
 
 Each stored observation carries three clocks: the provider model time the
 series data is "as of" (held fixed across retransmissions of an unchanged
-value), the batch envelope time (advances on every provider flush; ordering,
-replay, and freshness key on it), and the Sui execution time. A store also
+value; the provider's per-series replay key), the batch envelope time
+(advances on every provider flush; freshness keys on it), and the Sui
+execution time. A series' latest observation is ordered lexicographically on
+(model time, envelope time): newer model data always wins regardless of the
+order a relayer lands batches in, and an equal model time advances only with
+a fresher envelope — the retransmission that refreshes freshness without
+moving the model anchor. A model time later than its own envelope is provider
+garbage and is skipped, mirroring the Pyth lane's
+`EFeedTimestampAfterEnvelope`; that bound is also what keeps Predict's SVI
+roll-down anchor strictly before any live market's expiry. A store also
 records the greatest accepted envelope time, so a feed whose series have all
 gone quiet is still visibly running.
 
