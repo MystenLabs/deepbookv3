@@ -11,7 +11,7 @@
 #[test_only]
 module deepbook_margin::margin_manager_pro_tests;
 
-use deepbook::{pool::Pool, registry::Registry};
+use deepbook::{constants, order_info::OrderInfo, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_constants,
     margin_manager::{Self, MarginManager},
@@ -28,7 +28,8 @@ use deepbook_margin::{
         setup_btc_usd_deepbook_margin,
         return_shared_2,
         destroy_2,
-    }
+    },
+    tpsl
 };
 use sui::test_scenario::{Self as test, return_shared};
 
@@ -396,6 +397,219 @@ fun borrow_quote_pro_takes_a_loan() {
     assert!(mm.borrowed_quote_shares() > 0);
 
     test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+/// A healthy manager cannot be liquidated. Asserts the Pro `liquidate` reaches the
+/// shared core's solvency gate rather than some other path.
+#[test, expected_failure(abort_code = deepbook_margin::margin_manager::ECannotLiquidate)]
+fun liquidate_pro_rejects_a_healthy_manager() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_pro(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_pro::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_pro::borrow_quote<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        10_000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    let (b, q, r) = margin_manager_pro::liquidate<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        &mut usdc_pool,
+        &mut pool,
+        mint_coin<USDC>(1_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    sui::coin::burn_for_testing(b);
+    sui::coin::burn_for_testing(q);
+    sui::coin::burn_for_testing(r);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+/// With no conditional orders registered, both Pro executors return an empty batch.
+/// Exercises the delegation into the shared cores for v2 and v3.
+#[test]
+fun execute_conditional_orders_pro_with_no_orders_returns_empty() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_pro(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    let v2: vector<OrderInfo> = margin_manager_pro::execute_conditional_orders_v2<BTC, USDC>(
+        &mut mm,
+        &mut pool,
+        &btc_pool,
+        &usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(v2.is_empty());
+
+    let v3: vector<OrderInfo> = margin_manager_pro::execute_conditional_orders_v3<BTC, USDC>(
+        &mut mm,
+        &mut pool,
+        &mut btc_pool,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(v3.is_empty());
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+/// Registers a conditional order through the Pro entrypoint and reads it back.
+#[test]
+fun add_conditional_order_pro_registers_the_order() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        _usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_pro(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+
+    let condition = tpsl::new_condition(true, 90_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100_000_000_000,
+        1 * btc_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    margin_manager_pro::add_conditional_order<BTC, USDC>(
+        &mut mm,
+        &pool,
+        &btc_price,
+        &usdc_price,
+        &registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 1);
+
     return_shared_2!(mm, pool);
     destroy_2!(btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
