@@ -272,8 +272,36 @@ public fun setup_everything(): (Fixture, ID, Trader) {
     )
 }
 
+/// `setup_everything` with the inventory fee weight snapshotted into the expiry.
+/// The weight ships disabled and the snapshot has no live setter, so the
+/// template must be set before the market is created.
+public fun setup_everything_with_fee_weight(
+    sensitivity: u64,
+    capital_fraction: u64,
+): (Fixture, ID, Trader) {
+    let mut fx = setup_market_default();
+    fx.set_template_inventory_fee_weight(sensitivity, capital_fraction);
+    fx.fund_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+        test_constants::default_manager_deposit(),
+    )
+}
+
 fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
+    fx.fund_live_market(expiry_ms, live_price, deposit)
+}
+
+/// The shared bring-up tail: create the expiry, fund a trader, seed the live
+/// oracle and expiry cash. Takes the fixture by value and hands it back so every
+/// variant composes the same sequence rather than copying it.
+fun fund_live_market(
+    mut fx: Fixture,
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+): (Fixture, ID, Trader) {
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -491,6 +519,22 @@ public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_max_admission_leverage(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Enable the inventory fee weight for expiries created after this call. The
+/// weight ships disabled and the per-expiry snapshot has no live setter, so this
+/// must run before `create_expiry`.
+public fun set_template_inventory_fee_weight(
+    self: &mut Fixture,
+    sensitivity: u64,
+    capital_fraction: u64,
+) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_inventory_fee_sensitivity(&self.admin_cap, sensitivity);
+    config.set_template_inventory_capital_fraction(&self.admin_cap, capital_fraction);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }

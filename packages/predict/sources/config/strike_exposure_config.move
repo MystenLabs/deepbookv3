@@ -10,7 +10,7 @@
 module deepbook_predict::strike_exposure_config;
 
 use deepbook_predict::{config_constants, constants};
-use fixed_math::math;
+use fixed_math::{i64::I64, math};
 
 const EOrderBelowLiquidationThreshold: u64 = 0;
 const EEntryProbabilityOutOfBounds: u64 = 1;
@@ -50,6 +50,14 @@ public struct StrikeExposureConfig has store {
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
     no_leverage_window_ms: u64,
+    /// Fraction of the expiry's own allocated capital at which the inventory fee
+    /// weight reaches full strength. The normalizing depth is derived per expiry
+    /// (`inventory_depth_lots`), so a bigger market absorbs a proportionally
+    /// bigger position before its fee moves by the same amount.
+    inventory_capital_fraction: u64,
+    /// How far the inventory weight may move the fee, as a fraction of the
+    /// unweighted fee. `0` pins the weight at 1 and disables the mechanism.
+    inventory_fee_sensitivity: u64,
 }
 
 /// Mint admission outcome: the net premium charged for the order and the static
@@ -99,6 +107,84 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
+}
+
+public(package) fun inventory_fee_sensitivity(config: &StrikeExposureConfig): u64 {
+    config.inventory_fee_sensitivity
+}
+
+/// Net one-sided directional position, in position lots, at which the inventory
+/// fee weight reaches full strength for an expiry funded with `allocated_capital`.
+///
+/// Derived rather than configured, so the weight self-scales with the market and
+/// no operator has to hand-size a depth per expiry. The conversion to lots is
+/// exact: `allocated_capital` is DUSDC base units, and one lot of a one-sided
+/// position is `position_lot_size` base units of max payout — what the pool
+/// actually has at risk against it.
+///
+/// Returns `0` when the expiry's share of the fraction is under one lot; callers
+/// treat that as full strength, since any position at all exceeds the depth.
+public(package) fun inventory_depth_lots(
+    config: &StrikeExposureConfig,
+    allocated_capital: u64,
+): u64 {
+    math::mul_down(config.inventory_capital_fraction, allocated_capital)
+        / constants::position_lot_size!()
+}
+
+/// Multiplier applied to the unweighted trading fee for a trade that leaves the
+/// pool holding `post_trade_aggregate`, in FLOAT_SCALING.
+///
+/// `1 ± sensitivity · min(1, |aggregate| / depth)`, where the depth is
+/// `inventory_depth_lots(allocated_capital)`: dearer when the trade
+/// deepens the pool's existing directional lean, cheaper when it offsets one.
+/// Exactly `1.0` — today's fee, unchanged — whenever the mechanism is disabled,
+/// the book ends flat, or the trade is directionally neutral (a two-sided range,
+/// where the pool is short one boundary and long the other).
+///
+/// The weight multiplies the assembled fee, so it scales a rate that `min_fee`
+/// has already floored: a discounted trade can settle below `min_fee · quantity`.
+/// That is deliberate — `min_fee` floors the unweighted rate, and the weight is a
+/// policy multiplier on top of it, bounded strictly positive by
+/// `max_inventory_fee_sensitivity`.
+///
+/// Reading the POST-trade aggregate is what makes the weight undodgeable by
+/// sequencing: a trade is always charged against the position it leaves behind,
+/// so an order that overshoots from one lean into the opposite one pays for the
+/// exposure it just created rather than being rewarded for the one it cleared.
+public(package) fun inventory_fee_weight(
+    config: &StrikeExposureConfig,
+    post_trade_aggregate: &I64,
+    trade_delta: &I64,
+    allocated_capital: u64,
+): u64 {
+    let float_scaling = math::float_scaling!();
+    if (
+        config.inventory_fee_sensitivity == 0
+            || trade_delta.is_zero()
+            || post_trade_aggregate.is_zero()
+    ) return float_scaling;
+
+    // Checked, and `None` means full strength: a zero depth (an expiry funded
+    // below one lot) or a ratio too large for `u64` both mean the position
+    // dwarfs the depth. Aborting here would brick an under-funded expiry's
+    // trade path.
+    let loading = math::try_mul_div_down(
+        post_trade_aggregate.magnitude(),
+        float_scaling,
+        config.inventory_depth_lots(allocated_capital),
+    )
+        .destroy_or!(float_scaling)
+        .min(float_scaling);
+    // Bounded by `max_inventory_fee_sensitivity < 1.0`, so the subtraction
+    // cannot underflow and the weight stays strictly positive.
+    let swing = math::mul_down(config.inventory_fee_sensitivity, loading);
+
+    if (trade_delta.is_negative() == post_trade_aggregate.is_negative()) {
+        float_scaling + swing
+    } else {
+        float_scaling - swing
+    }
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -196,6 +282,8 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
+        inventory_capital_fraction: config_constants::default_inventory_capital_fraction!(),
+        inventory_fee_sensitivity: config_constants::default_inventory_fee_sensitivity!(),
     }
 }
 
@@ -212,6 +300,8 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         no_leverage_window_ms: config.no_leverage_window_ms,
+        inventory_capital_fraction: config.inventory_capital_fraction,
+        inventory_fee_sensitivity: config.inventory_fee_sensitivity,
     }
 }
 
@@ -265,6 +355,16 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {
     config_constants::assert_no_leverage_window_ms(window_ms);
     config.no_leverage_window_ms = window_ms;
+}
+
+public(package) fun set_inventory_capital_fraction(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_capital_fraction(value);
+    config.inventory_capital_fraction = value;
+}
+
+public(package) fun set_inventory_fee_sensitivity(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_fee_sensitivity(value);
+    config.inventory_fee_sensitivity = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.

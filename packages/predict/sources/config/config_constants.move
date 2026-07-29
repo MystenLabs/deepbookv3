@@ -33,6 +33,8 @@ const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
 const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
+const EInvalidInventoryCapitalFraction: u64 = 26;
+const EInvalidInventoryFeeSensitivity: u64 = 27;
 
 // === Fees ===
 
@@ -190,6 +192,60 @@ public(package) fun assert_no_leverage_window_ms(value: u64) {
     assert!(
         value >= min_no_leverage_window_ms!() && value <= max_no_leverage_window_ms!(),
         EInvalidNoLeverageWindowMs,
+    );
+}
+
+// === Inventory Fee Weight ===
+
+/// Fraction of an expiry's own allocated capital at which the inventory fee
+/// weight reaches full strength.
+///
+/// The normalizing depth is derived, not configured in absolute size: an expiry
+/// funded with twice the capital absorbs twice the directional position before
+/// weighting the fee by the same amount. Half the expiry's allocation by default.
+public(package) macro fun default_inventory_capital_fraction(): u64 { 500_000_000 }
+
+/// Nonzero: a zero fraction would make any position at all reach full weight.
+/// Disable the weight with `inventory_fee_sensitivity = 0` instead.
+public(package) macro fun min_inventory_capital_fraction(): u64 { 1 }
+
+/// The pool cannot take more one-sided directional risk on an expiry than that
+/// expiry's whole capital budget, so normalizing past 100% of it is unreachable.
+public(package) macro fun max_inventory_capital_fraction(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_inventory_capital_fraction(value: u64) {
+    assert!(
+        value >= min_inventory_capital_fraction!()
+            && value <= max_inventory_capital_fraction!(),
+        EInvalidInventoryCapitalFraction,
+    );
+}
+
+/// How far the inventory weight may move the trading fee, as a fraction of the
+/// unweighted fee. The weight is `1 ± sensitivity·loading`, so `0.5` means a
+/// trade into a fully-loaded book pays 1.5x and one that offsets it pays 0.5x.
+///
+/// Ships at `0`, which pins the weight at exactly `1` and reproduces today's fee
+/// for every trade. Whether leaning the fee on inventory improves LP outcomes is
+/// an open question that wants live flow to answer, so it is enabled per expiry
+/// by an admin rather than at launch.
+public(package) macro fun default_inventory_fee_sensitivity(): u64 { 0 }
+
+public(package) macro fun min_inventory_fee_sensitivity(): u64 { 0 }
+
+/// Strictly below 1.0: at `1.0` a fully-offsetting trade would pay exactly zero
+/// fee, and anything above it would owe the trader a rebate — which makes a
+/// round trip through the vault profitable and is a drain, not an inducement.
+/// The ceiling is what lets the weight subtract without underflowing.
+public(package) macro fun max_inventory_fee_sensitivity(): u64 { 500_000_000 }
+
+public(package) fun assert_inventory_fee_sensitivity(value: u64) {
+    assert!(
+        value >= min_inventory_fee_sensitivity!()
+            && value <= max_inventory_fee_sensitivity!(),
+        EInvalidInventoryFeeSensitivity,
     );
 }
 

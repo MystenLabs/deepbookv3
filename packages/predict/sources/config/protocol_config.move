@@ -191,6 +191,28 @@ public fun set_template_max_entry_probability(
     config.strike_exposure_template_config.set_max_entry_probability(value);
 }
 
+/// Set the fraction of an expiry's allocated capital at which the inventory fee
+/// weight reaches full strength, snapshotted by newly created expiry markets.
+public fun set_template_inventory_capital_fraction(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_capital_fraction(value);
+}
+
+/// Set how far the inventory weight may move the trading fee, snapshotted by
+/// newly created expiry markets. `0` snapshots the weight off.
+public fun set_template_inventory_fee_sensitivity(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_fee_sensitivity(value);
+}
+
 /// Select which source the live forward is built from: `true` carries the Block
 /// Scholes basis on a fresh Pyth spot, `false` uses the Block Scholes forward
 /// directly. Locked during valuation so one flush marks every market on one formula.

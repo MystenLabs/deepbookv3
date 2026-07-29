@@ -29,7 +29,7 @@ use deepbook_predict::{
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
-use fixed_math::math;
+use fixed_math::{i64::I64, math};
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
@@ -181,6 +181,15 @@ public fun tick_size(market: &ExpiryMarket): u64 {
 /// Return the admission-grid step for SDK and devInspect range construction.
 public fun admission_tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.admission_tick_size()
+}
+
+/// Return the pool's net directional position against this expiry, in position
+/// lots, signed in UP-probability space: negative means the pool is net short
+/// UP, so trades that deepen that lean pay a weighted-up fee. Public for SDK and
+/// devInspect reads — this is the state that explains a fee sitting off its
+/// unweighted value.
+public fun directional_aggregate(market: &ExpiryMarket): I64 {
+    market.strike_exposure.directional_aggregate()
 }
 
 /// Return the admitted reference tick for SDK and devInspect range construction.
@@ -858,6 +867,7 @@ public(package) fun create_and_share(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    allocated_capital: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -876,6 +886,7 @@ public(package) fun create_and_share(
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
+            allocated_capital,
             strike_exposure_config,
             ctx,
         ),
@@ -989,7 +1000,7 @@ fun compute_mint_quote(
 ): MintQuote {
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
-    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let raw_fee_amount = market.strike_exposure.mint_trading_fee(terms, clock);
     let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
@@ -1136,14 +1147,7 @@ fun redeem(
         // the stake discount always leaves a discounted staker a positive net
         // even when the raw fee exceeds the payout (discount-then-clamp could
         // net them exactly zero).
-        let fee_amount = market
-            .strike_exposure
-            .trading_fee(
-                range_probability,
-                close_quantity,
-                clock,
-            )
-            .min(redeem_amount);
+        let fee_amount = market.strike_exposure.close_trading_fee(&terms, clock).min(redeem_amount);
         let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
 
         // The redeem payment decomposition, computed in full before any cash moves:

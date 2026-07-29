@@ -23,7 +23,7 @@ use deepbook_predict::{
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
 };
-use fixed_math::math;
+use fixed_math::{i64::{Self, I64}, math};
 use sui::clock::Clock;
 
 const EInvalidCloseQuantity: u64 = 0;
@@ -59,6 +59,19 @@ public struct StrikeExposure has store {
     liquidation: LiquidationBook,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
+    /// Net directional position the pool holds against this expiry's traders, in
+    /// position lots, signed in UP-probability space: negative means the pool is
+    /// net short UP. Maintained by `directional_lots` at every book mutation —
+    /// mint adds, and live close, liquidation, and settled close all release — so
+    /// it is the net live one-sided position in every phase. Read only to weight
+    /// the trading fee.
+    directional_aggregate: I64,
+    /// Pool capital budgeted to this expiry at creation (`max_expiry_allocation`),
+    /// in DUSDC base units. Normalizes the directional aggregate, so the fee
+    /// weight scales with the market rather than a hand-set constant.
+    /// Snapshotted and immutable: a depth that moved with LP flows would reprice
+    /// open interest with no trade occurring.
+    allocated_capital: u64,
 }
 
 /// Pure mint terms for one prospective live mint: the priced tick range,
@@ -268,24 +281,52 @@ public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
     exposure.reference_tick
 }
 
-/// Return the raw per-trade fee for a live price and quantity.
+/// Return the pool's net directional position against this expiry, in position
+/// lots. Negative means the pool is net short UP.
+public(package) fun directional_aggregate(exposure: &StrikeExposure): I64 {
+    exposure.directional_aggregate
+}
+
+/// Return the raw per-trade fee for a prospective mint, weighted by the
+/// directional position the mint would leave the pool holding.
 ///
-/// Fee collection is expiry-market payment accounting; exposure only owns the
-/// snapshotted config needed to price it.
-public(package) fun trading_fee(
+/// Fee collection is expiry-market payment accounting; exposure owns the
+/// snapshotted config that prices it and the inventory the weight reads.
+public(package) fun mint_trading_fee(
     exposure: &StrikeExposure,
-    probability: u64,
-    quantity: u64,
+    terms: &MintTerms,
     clock: &Clock,
 ): u64 {
-    exposure
-        .config
-        .trading_fee(
-            exposure.expiry_ms,
-            probability,
-            quantity,
-            clock.timestamp_ms(),
-        )
+    exposure.weighted_trading_fee(
+        &directional_lots(terms.lower_tick, terms.higher_tick, terms.quantity),
+        terms.entry_probability,
+        terms.quantity,
+        clock,
+    )
+}
+
+/// Return the raw per-trade fee for a prospective live close, weighted by the
+/// directional position the close would leave the pool holding. A close releases
+/// the slice's own weight, so flow that flattens the book is charged less.
+///
+/// Aborts unless the outcome is `Live`; only a live close pays a trading fee.
+public(package) fun close_trading_fee(
+    exposure: &StrikeExposure,
+    terms: &CloseTerms,
+    clock: &Clock,
+): u64 {
+    let live = terms.live_terms();
+    let released = directional_lots(
+        terms.order.lower_tick(),
+        terms.order.higher_tick(),
+        live.close_quantity,
+    ).neg();
+    exposure.weighted_trading_fee(
+        &released,
+        live.range_probability,
+        live.close_quantity,
+        clock,
+    )
 }
 
 /// Return whether a leveraged order remains in the liquidation index. One-x
@@ -385,6 +426,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 
     exposure.liquidation.insert_order(&allocated_order);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity, floor_shares);
+    exposure.apply_directional_delta(&directional_lots(lower_tick, higher_tick, quantity));
 
     allocated_order
 }
@@ -531,6 +573,7 @@ public(package) fun new(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    allocated_capital: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
@@ -547,6 +590,8 @@ public(package) fun new(
         settled_payout_liability: 0,
         liquidation: liquidation_book::new(ctx),
         payout: strike_payout_tree::new(ctx),
+        directional_aggregate: i64::zero(),
+        allocated_capital,
     }
 }
 
@@ -651,6 +696,7 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
 /// index and release its quoted payout from the settled liability.
 fun process_settled_close(exposure: &mut StrikeExposure, order: &Order, payout: u64) {
     exposure.liquidation.remove_order(order);
+    exposure.release_directional_delta(order, order.quantity());
     // Settlement liability and individual payouts use the same integer quantity
     // and floor atoms, so the subtraction is additive without rounding dust.
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
@@ -675,6 +721,7 @@ fun process_live_close(
             remove_floor_shares,
         );
     exposure.liquidation.remove_order(order);
+    exposure.release_directional_delta(order, close_quantity);
 
     // The survivor keeps exactly what the closed slice did not remove:
     // conservation by construction, with `order::replacement` re-validating
@@ -734,6 +781,7 @@ fun apply_liquidation(
             order.quantity(),
             order.floor_shares(),
         );
+    exposure.release_directional_delta(order, order.quantity());
 
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
@@ -753,6 +801,67 @@ fun gross_order_value(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
 /// static floor. The reserve independently backs the order's full net payout.
 fun under_liquidation_floor(exposure: &StrikeExposure, gross_value: u64, floor_amount: u64): bool {
     gross_value <= math::div_down(floor_amount, exposure.config.liquidation_ltv())
+}
+
+/// Price the unweighted fee from the snapshotted config, then apply the
+/// inventory weight for the position this trade leaves behind.
+fun weighted_trading_fee(
+    exposure: &StrikeExposure,
+    delta: &I64,
+    probability: u64,
+    quantity: u64,
+    clock: &Clock,
+): u64 {
+    let fee = exposure
+        .config
+        .trading_fee(
+            exposure.expiry_ms,
+            probability,
+            quantity,
+            clock.timestamp_ms(),
+        );
+    let weight = exposure
+        .config
+        .inventory_fee_weight(
+            &exposure.directional_aggregate.add(delta),
+            delta,
+            exposure.allocated_capital,
+        );
+
+    math::mul_down(fee, weight)
+}
+
+/// Return `quantity` of `order`'s range to the pool, undoing exactly the
+/// directional weight the mint of that slice added.
+fun release_directional_delta(exposure: &mut StrikeExposure, order: &Order, quantity: u64) {
+    let released = directional_lots(order.lower_tick(), order.higher_tick(), quantity).neg();
+    exposure.apply_directional_delta(&released);
+}
+
+fun apply_directional_delta(exposure: &mut StrikeExposure, delta: &I64) {
+    exposure.directional_aggregate = exposure.directional_aggregate.add(delta);
+}
+
+/// Net directional position, in position lots, that the pool takes on when a
+/// trader buys `quantity` of `(lower_tick, higher_tick]`.
+///
+/// The pool is short what the trader is long: short `P(lower)`, long `P(higher)`.
+/// Only finite boundaries carry directional risk, because `P(-inf) = 1` and
+/// `P(+inf) = 0` are constants — so a one-sided binary moves the aggregate by its
+/// full size, while a two-sided range is directionally flat and leaves it alone.
+///
+/// This is the single owned evaluator for the aggregate: mint, live close, and
+/// liquidation all route through it, so a removal subtracts bit-equal what the
+/// insert added. It reads only atoms that round-trip losslessly through the
+/// packed order id (the boundary ticks and a whole number of lots) and no oracle
+/// state whatsoever, so the aggregate cannot drift as the surface moves. Any
+/// price-dependent weighting belongs at read time.
+fun directional_lots(lower_tick: u64, higher_tick: u64, quantity: u64): I64 {
+    let lots = quantity / constants::position_lot_size!();
+    let long_leg = if (higher_tick == constants::pos_inf_tick!()) 0 else lots;
+    let short_leg = if (lower_tick == 0) 0 else lots;
+
+    i64::from_u64(long_leg).sub(&i64::from_u64(short_leg))
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {

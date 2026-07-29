@@ -19,6 +19,7 @@ module deepbook_predict::protocol_config_bounds_tests;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     config_constants,
+    constants,
     flow_test_helpers as helpers,
     protocol_config::{Self, ProtocolConfig},
     test_constants
@@ -28,6 +29,10 @@ use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 /// Create a real shared `ProtocolConfig` (all template values at defaults) and
 /// an `AdminCap`, ready for admin setter calls in the next transaction.
+/// A representative per-expiry allocation, for observing the capital fraction
+/// through the depth it derives.
+const TEMPLATE_TEST_ALLOCATION: u64 = 250_000_000_000;
+
 fun new_shared_config(): (Scenario, AdminCap, ID) {
     let mut scenario = test::begin(test_constants::admin());
     let config_id = protocol_config::create_and_share(scenario.ctx());
@@ -264,6 +269,14 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         &admin_cap,
         config_constants::min_backing_buffer_lambda!(),
     );
+    config.set_template_inventory_capital_fraction(
+        &admin_cap,
+        config_constants::min_inventory_capital_fraction!(),
+    );
+    config.set_template_inventory_fee_sensitivity(
+        &admin_cap,
+        config_constants::min_inventory_fee_sensitivity!(),
+    );
 
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::min_base_fee!());
@@ -281,6 +294,14 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.liquidation_ltv(), config_constants::min_liquidation_ltv!());
     assert_eq!(snapshot.max_admission_leverage(), config_constants::min_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
+    assert_eq!(
+        snapshot.inventory_fee_sensitivity(),
+        config_constants::min_inventory_fee_sensitivity!(),
+    );
+    // The capital fraction has no getter; its snapshot is observable through the
+    // depth it derives. At the minimum fraction a realistic allocation rounds to
+    // a zero-lot depth.
+    assert_eq!(snapshot.inventory_depth_lots(TEMPLATE_TEST_ALLOCATION), 0);
     destroy(snapshot);
 
     // Envelope ceilings. max entry probability goes up first so min entry
@@ -314,6 +335,14 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         &admin_cap,
         config_constants::max_backing_buffer_lambda!(),
     );
+    config.set_template_inventory_capital_fraction(
+        &admin_cap,
+        config_constants::max_inventory_capital_fraction!(),
+    );
+    config.set_template_inventory_fee_sensitivity(
+        &admin_cap,
+        config_constants::max_inventory_fee_sensitivity!(),
+    );
 
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::max_base_fee!());
@@ -331,6 +360,15 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.liquidation_ltv(), config_constants::max_liquidation_ltv!());
     assert_eq!(snapshot.max_admission_leverage(), config_constants::max_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
+    assert_eq!(
+        snapshot.inventory_fee_sensitivity(),
+        config_constants::max_inventory_fee_sensitivity!(),
+    );
+    // At a 100% capital fraction the depth is the whole allocation in lots.
+    assert_eq!(
+        snapshot.inventory_depth_lots(TEMPLATE_TEST_ALLOCATION),
+        TEMPLATE_TEST_ALLOCATION / constants::position_lot_size!(),
+    );
     destroy(snapshot);
 
     return_shared(config);
