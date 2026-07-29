@@ -21,8 +21,7 @@ const ECadenceWindowExceeded: u64 = 5;
 const EInvalidDeploymentExpiry: u64 = 6;
 const EInvalidCadenceConfig: u64 = 7;
 const EPythFeedNotBoundToUnderlying: u64 = 8;
-const EBlockScholesValueStoreNotBoundToUnderlying: u64 = 9;
-const EBlockScholesSVIStoreNotBoundToUnderlying: u64 = 10;
+const EBlockScholesStoresNotBoundToUnderlying: u64 = 9;
 
 /// Market uniqueness key. Predict permits one market per Propbook underlying and
 /// expiry; the market's tick size, allocation cap, and initial cash target are
@@ -199,20 +198,15 @@ public(package) fun next_deployable_market(
                 propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
                 EPythFeedNotBoundToUnderlying,
             );
-            // Spot and forward share the value store; SVI has its own. Both bindings remain
-            // explicit prerequisites here, so a market cannot be created for an underlying that has
-            // nowhere to price from.
+            // Spot and forward share the value store; SVI has its own. Propbook creates and
+            // registers the pair atomically (one registry row), so one existence check covers
+            // both stores — a market cannot be created for an underlying that has nowhere to
+            // price from.
             assert!(
                 propbook_registry
                     .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
                     .is_some(),
-                EBlockScholesValueStoreNotBoundToUnderlying,
-            );
-            assert!(
-                propbook_registry
-                    .propbook_block_scholes_svi_store_id_for_underlying(propbook_underlying_id)
-                    .is_some(),
-                EBlockScholesSVIStoreNotBoundToUnderlying,
+                EBlockScholesStoresNotBoundToUnderlying,
             );
 
             return DeployableMarket {

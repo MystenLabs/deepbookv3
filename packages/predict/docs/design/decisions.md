@@ -231,6 +231,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
+  *Superseded (in part):* the three Block Scholes feed objects and the stub-verifier
+  caveat above were retired by the signed-store cutover — see "The Block Scholes
+  feeds became signed-series stores gated by the production verifier" below. The
+  extraction itself, the no-writer-capability intent, and the Propbook boundary stand.
 - **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
   `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
   oracle object IDs. `pricing` validates passed feeds against Propbook's current

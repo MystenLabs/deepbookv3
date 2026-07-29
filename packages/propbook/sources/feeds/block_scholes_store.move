@@ -11,7 +11,7 @@
 /// their ids; SVI has its own store because it arrives as an independently signed batch.
 module propbook::block_scholes_store;
 
-use bs_oracle::verify::{Self, ValueBatch, SviBatch};
+use bs_oracle::verify::{ValueBatch, SviBatch};
 use propbook::{block_scholes_sid, constants};
 use sui::{clock::Clock, event, table::{Self, Table}};
 
@@ -189,9 +189,9 @@ public fun svi_m_is_negative(params: &SVIParams): bool {
 /// registry.
 public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBatch, clock: &Clock) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = verify::value_batch_timestamp(&batch);
+    let published_at_ms = batch.value_batch_timestamp();
     let recorded_at_ms = clock.timestamp_ms();
-    let updates = verify::into_value_updates(batch);
+    let updates = batch.into_value_updates();
 
     let update_count = updates.length();
     let mut matched = 0;
@@ -199,15 +199,15 @@ public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBat
     let mut i = 0;
     while (i < update_count) {
         let update = &updates[i];
-        let sid = verify::value_sid(update);
+        let sid = update.value_sid();
         if (store.holds_series(sid)) {
             matched = matched + 1;
             let stored = store.apply_value(
                 sid,
-                verify::value_timestamp(update),
+                update.value_timestamp(),
                 published_at_ms,
                 recorded_at_ms,
-                verify::value_v(update),
+                update.value_v(),
             );
             if (stored) applied = applied + 1;
         };
@@ -227,9 +227,9 @@ public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBat
 /// `apply_value_batch`.
 public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, clock: &Clock) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = verify::svi_batch_timestamp(&batch);
+    let published_at_ms = batch.svi_batch_timestamp();
     let recorded_at_ms = clock.timestamp_ms();
-    let updates = verify::into_svi_updates(batch);
+    let updates = batch.into_svi_updates();
 
     let update_count = updates.length();
     let mut matched = 0;
@@ -237,7 +237,7 @@ public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, cl
     let mut i = 0;
     while (i < update_count) {
         let update = &updates[i];
-        let sid = verify::svi_sid(update);
+        let sid = update.svi_sid();
         if (store.svi_holds_series(sid)) {
             matched = matched + 1;
             let (
@@ -249,10 +249,10 @@ public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, cl
                 rho_is_negative,
                 m_magnitude,
                 m_is_negative,
-            ) = verify::svi_fields(update);
+            ) = update.svi_fields();
             let stored = store.apply_svi(
                 sid,
-                verify::svi_timestamp(update),
+                update.svi_timestamp(),
                 published_at_ms,
                 recorded_at_ms,
                 SVIParams {

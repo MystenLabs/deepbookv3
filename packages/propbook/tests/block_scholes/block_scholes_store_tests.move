@@ -200,7 +200,7 @@ fun one_batch_fills_spot_and_every_forward_expiry_independently() {
 
 #[test]
 fun reads_are_none_before_anything_lands() {
-    let (mut scenario, value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, value_id, svi_id) = setup_stores(UNDERLYING_ID);
     let value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
 
@@ -737,7 +737,7 @@ fun a_series_repeated_within_one_batch_resolves_by_model_time() {
 
 #[test]
 fun a_new_store_reports_its_underlying_and_running_version() {
-    let (mut scenario, value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, value_id, svi_id) = setup_stores(UNDERLYING_ID);
     let value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
 
@@ -755,7 +755,7 @@ fun a_new_store_reports_its_underlying_and_running_version() {
 
 #[test, expected_failure(abort_code = store::ENotNewerVersion)]
 fun migrating_a_value_store_already_at_the_running_version_aborts() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
 
     store::migrate_value_store(&mut value_store);
@@ -765,7 +765,7 @@ fun migrating_a_value_store_already_at_the_running_version_aborts() {
 
 #[test, expected_failure(abort_code = store::ENotNewerVersion)]
 fun migrating_an_svi_store_already_at_the_running_version_aborts() {
-    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
 
     store::migrate_svi_store(&mut svi_store);

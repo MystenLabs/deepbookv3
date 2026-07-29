@@ -547,7 +547,7 @@ fun create_expiry_market_with_unbound_pyth_feed_aborts() {
 /// An underlying with a bound Pyth feed but no Block Scholes store pair has nowhere to price from,
 /// so market creation must refuse it. There is no "registered but unbound" store state to test
 /// separately: a pair is created and bound in one step.
-#[test, expected_failure(abort_code = market_manager::EBlockScholesValueStoreNotBoundToUnderlying)]
+#[test, expected_failure(abort_code = market_manager::EBlockScholesStoresNotBoundToUnderlying)]
 fun create_expiry_market_without_block_scholes_stores_aborts() {
     let (
         mut scenario,

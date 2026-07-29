@@ -14,7 +14,7 @@ module deepbook_predict::pricing;
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
 use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
-    block_scholes_store::{Self as bs_store, BlockScholesSVIStore, BlockScholesValueStore},
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -320,13 +320,13 @@ fun assert_current_oracles(
     assert!(
         propbook_registry
             .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_store::value_store_id(bs_values)),
+            .contains(&bs_values.value_store_id()),
         EWrongBlockScholesValueStore,
     );
     assert!(
         propbook_registry
             .propbook_block_scholes_svi_store_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_store::svi_store_id(bs_svi)),
+            .contains(&bs_svi.svi_store_id()),
         EWrongBlockScholesSVIStore,
     );
 }
@@ -357,7 +357,7 @@ fun resolve_live_pricer(
     expiry: u64,
     clock: &Clock,
 ): Pricer {
-    let bs_spot_read = bs_store::spot(bs_values);
+    let bs_spot_read = bs_values.spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
     // Freshness reads the series' own model time, never the batch envelope: retransmitting an
@@ -375,7 +375,7 @@ fun resolve_live_pricer(
     );
     let bs_spot = narrow_price(bs_spot_read.read_value());
 
-    let bs_forward_read = bs_store::forward(bs_values, expiry);
+    let bs_forward_read = bs_values.forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_model_timestamp_ms();
@@ -389,7 +389,7 @@ fun resolve_live_pricer(
     );
     let bs_forward = narrow_price(bs_forward_read.read_value());
 
-    let svi_read = bs_store::svi(bs_svi, expiry);
+    let svi_read = bs_svi.svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
     // One clock serves both jobs: the model time the freshness gate just accepted is also the
@@ -458,7 +458,7 @@ fun narrow_price(value: u128): u64 {
 
 /// Narrow a stored Block Scholes tuple to Predict's pricing widths, keeping the provider's
 /// magnitude-and-sign form for the signed parameters.
-fun narrow_svi(svi: &bs_store::SVIParams): RawSVI {
+fun narrow_svi(svi: &SVIParams): RawSVI {
     RawSVI {
         a: i64::from_parts(svi.svi_a_magnitude() as u64, svi.svi_a_is_negative()),
         b: svi.svi_b() as u64,

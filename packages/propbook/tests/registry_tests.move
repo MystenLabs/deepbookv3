@@ -17,8 +17,6 @@ const ETH_UNDERLYING_ID: u32 = 2;
 const PYTH_SOURCE_A: u32 = 10;
 const PYTH_SOURCE_B: u32 = 11;
 const PYTH_SOURCE_UNKNOWN: u32 = 99;
-const BS_SOURCE_A: u32 = 20;
-const BS_SOURCE_B: u32 = 21;
 
 #[test]
 fun bind_pyth_to_underlying_records_typed_lookup_and_metadata() {
