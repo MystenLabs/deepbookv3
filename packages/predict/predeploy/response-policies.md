@@ -418,7 +418,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-12: An LP request that misses its limit is refunded by the flush that reaches it (resolves P-7)
+## RP-12: LP request attempts are admin-tunable and ship at one — fill-or-kill (resolves P-7)
 
 - **Trigger state:** a queued LP supply or withdraw request reaches the head of
   its FIFO queue during a flush, the frozen mark is executable, but the quoted
@@ -431,46 +431,60 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   the user unbounded slippage; leaving one queued at the head holds up every
   request behind it, so the head-of-queue policy is a pool-wide liveness control,
   not a per-user UX knob.
-- **Response:** protocol-cancel and refund on the miss, then keep draining. The
-  head is popped, its escrow returned, and `RequestCancelled.reason = 2` emitted;
-  the drain continues to the next request in the same flush. A miss spends one
-  unit of that queue's processed budget, exactly like a fill. Every head is
-  therefore resolved by the flush that reaches it, and no request can be held
-  over. The user cannot modify a queued limit; changing price protection means
-  submitting a new request.
+- **Response:** the attempt count is admin-tunable
+  (`protocol_config::set_lp_request_limit_flush_attempts`, bounds 1–3) and
+  **ships at 1**. At 1 a miss protocol-cancels and refunds immediately — the head
+  is popped, its escrow returned, `RequestCancelled.reason = 2` emitted, and the
+  drain continues to the next request in the same flush. A miss spends one unit of
+  that queue's processed budget, exactly like a fill, so every head is resolved by
+  the flush that reaches it and nothing is held over. Above 1 a missing head
+  instead stays queued, emits `RequestLimitMissed`, and stops that queue for the
+  flush, refunding on its final attempt. The user cannot modify a queued limit;
+  changing price protection means submitting a new request.
 - **Reasoning:** the queue is shared, so the cost of retrying a miss is paid by
-  everyone behind it, not by the requester. The superseded policy (carry for
-  three flush attempts, stop the queue each time) reasoned only about an honest
+  everyone behind it, not by the requester. The superseded policy (a compiled
+  three attempts, stopping the queue on each miss) reasoned only about an honest
   too-tight limit and concluded expiry "bounds queue blockage". It does not: the
   bound is per request, and requests compose. `min_output` is unbounded at
   admission and escrow is refunded in full, so anyone could pre-stuff a queue
   with minimum-sized requests carrying an unsatisfiable limit and delay every
   later LP by ~2 flushes per request for the price of gas — measured at 2N+1
   flushes of total blockage for N requests, so 201 flushes with no honest LP exit
-  at N=100 (external audit, issue #42). Fill-or-kill at the reaching flush removes
-  the amplification and the blocking together: a griefing request now costs the
-  same single budget unit as an honest one and is gone. The lost affordance is a
-  resting limit — an LP whose limit misses re-submits instead of waiting up to
-  three flushes.
-- **Risk profile:** `MEASURED` for the liveness property — the blockage the
+  at N=100 (external audit, issue #42). Shipping at 1 removes the amplification
+  and the blocking together: a griefing request costs the same single budget unit
+  as an honest one and is gone. The affordance given up is a resting limit, and
+  keeping the attempt count as config rather than deleting the retry keeps that
+  recoverable without an upgrade — the number is a tuning parameter for LP-queue
+  liveness alongside flush cadence. The ceiling of 3 is deliberate: it caps the
+  worst case an operator can create at the pre-fix behaviour, so raising the knob
+  can never be worse than what was measured.
+- **Risk profile:** `MEASURED` at the shipped setting — the blockage the
   superseded policy allowed was reproduced and quantified at 2N+1 flushes for N
   limit-missing requests
   (`evidence/rp12-lp-queue-head-of-line-2026-07-29.md`), and the pinning tests
-  below hold the queue open against the same shape. `BEST-GUESS` for the UX cost:
-  how often an honest limit misses depends on flush cadence and NAV volatility,
-  which are still unmeasured, and each miss now costs a round trip rather than a
-  wait.
+  below hold the queue open at one attempt while also pinning that the blocking
+  returns above it. `BEST-GUESS` for the UX cost: how often an honest limit misses
+  depends on flush cadence and NAV volatility, which are still unmeasured, and at
+  one attempt each miss costs a round trip rather than a wait. **The knob is a
+  liveness control, not a UX preference** — raising it above 1 knowingly re-enables
+  head-of-line blocking (bounded by the ceiling) and should follow a measured miss
+  rate rather than an intuition about volatility.
 - **Pinning tests:** `lp_book_tests.move` —
   `supply_limit_miss_refunds_at_the_flush_that_reaches_it`,
   `supply_limit_miss_does_not_block_later_requests`,
-  `withdraw_limit_miss_refunds_at_the_flush_that_reaches_it`, and
-  `withdraw_limit_miss_does_not_block_later_requests`.
+  `withdraw_limit_miss_refunds_at_the_flush_that_reaches_it`,
+  `withdraw_limit_miss_does_not_block_later_requests`, and, for the tunable path,
+  `supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts`,
+  `supply_limit_expires_after_three_misses_at_three_attempts`, and
+  `raising_attempts_reintroduces_head_of_line_blocking`. The shipped default and
+  the bounds are pinned in `risk_config_tests.move`.
 - **Reopen when:** measured miss rates on a live cadence show honest LPs
-  re-submitting often enough to want a resting limit back — in which case the
-  retry must live somewhere that cannot block the primary queue (a separate
-  retry queue), never at the head; or LP request limits become mutable in-place;
-  or a per-account pending-request cap is added, which bounds queue spam but is
-  not a substitute for this policy because accounts are permissionless.
+  re-submitting often enough to want a resting limit back. Raising the attempt
+  count is the cheap, bounded lever; the durable answer is a retry that cannot
+  block the primary queue (a separate retry queue), after which the ceiling can be
+  revisited. Also reopen if LP request limits become mutable in-place, or if a
+  per-account pending-request cap is added — that bounds queue spam but is not a
+  substitute here, because accounts are permissionless.
 
 ---
 

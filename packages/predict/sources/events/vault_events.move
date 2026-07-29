@@ -117,6 +117,23 @@ public struct RequestCancelled has copy, drop, store {
     requests_pending_after: u64,
 }
 
+/// Emitted when a queued LP request reaches the head during a flush, the frozen mark
+/// output misses its request-time limit, and it has attempts left so it stays queued.
+/// Only reachable when `ProtocolConfig` allows more than one attempt; at the default
+/// of one, a miss refunds immediately and reports as `RequestCancelled`.
+public struct RequestLimitMissed has copy, drop, store {
+    pool_vault_id: ID,
+    account_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+    quoted_output: u64,
+    min_output: u64,
+    missed_flushes: u64,
+    max_misses: u64,
+}
+
 /// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
 /// `shares_minted` PLP were delivered to `recipient`. `account_id` is the
 /// owning account (carried from the queued request so the fill is self-contained;
@@ -361,6 +378,32 @@ public(package) fun emit_request_cancelled(
         is_supply,
         reason,
         requests_pending_after,
+    });
+}
+
+public(package) fun emit_request_limit_missed(
+    pool_vault_id: ID,
+    account_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+    quoted_output: u64,
+    min_output: u64,
+    missed_flushes: u64,
+    max_misses: u64,
+) {
+    event::emit(RequestLimitMissed {
+        pool_vault_id,
+        account_id,
+        recipient,
+        index,
+        amount,
+        is_supply,
+        quoted_output,
+        min_output,
+        missed_flushes,
+        max_misses,
     });
 }
 

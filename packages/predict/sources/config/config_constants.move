@@ -31,6 +31,7 @@ const EInvalidMaxAdmissionLeverage: u64 = 20;
 const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
+const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 
 // === Fees ===
 
@@ -66,6 +67,33 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     assert!(
         value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
         EInvalidTradeLiquidationBudget,
+    );
+}
+
+// === LP Request Queue ===
+
+/// Frozen-mark attempts a queued LP request gets before the protocol cancels and
+/// refunds it. The default of 1 is fill-or-kill: the flush that reaches a request
+/// either fills it or refunds it, so no request can hold the queue head.
+///
+/// Every attempt beyond the first leaves a request queued at the head and stops
+/// that queue for the flush, which is a shared-liveness cost, not a per-user one:
+/// N requests carrying a limit no mark can satisfy block every later LP for
+/// `2N+1` flushes (`predeploy/evidence/rp12-lp-queue-head-of-line-2026-07-29.md`).
+/// The maximum is therefore deliberately tight — raising it trades LP-queue
+/// liveness for a resting-limit affordance, and is an operator decision that
+/// should follow measured miss rates. See RP-12.
+public(package) macro fun default_lp_request_limit_flush_attempts(): u64 { 1 }
+
+public(package) macro fun min_lp_request_limit_flush_attempts(): u64 { 1 }
+
+public(package) macro fun max_lp_request_limit_flush_attempts(): u64 { 3 }
+
+public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
+    assert!(
+        value >= min_lp_request_limit_flush_attempts!()
+            && value <= max_lp_request_limit_flush_attempts!(),
+        EInvalidLpRequestLimitFlushAttempts,
     );
 }
 

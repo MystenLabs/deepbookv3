@@ -2,8 +2,10 @@
 
 **Item:** RP-12 (register annex evidence) · **Instrument:** Move unit repro on `origin/main` `e4f27843` · **Date:** 2026-07-29
 
-Status: measured on the pre-fix code; the fix in this change makes the measured
-blockage structurally unreachable, and the pinning tests below hold it there.
+Status: measured on the pre-fix code, where three attempts were compiled in. The
+attempt count is now admin-tunable and ships at 1, at which the measured blockage
+cannot occur; the numbers below are what an operator re-enables, bounded by the
+configured ceiling, if they raise it.
 
 ## What Was Measured
 
@@ -60,9 +62,14 @@ Provenance: external audit issue #42.
 
 `packages/predict/tests/plp/lp_book_tests.move` —
 `supply_limit_miss_does_not_block_later_requests` and
-`withdraw_limit_miss_does_not_block_later_requests` stage the same shape and
-assert the later request fills in the *same* flush that refunds the unfillable
-head; `supply_limit_miss_refunds_at_the_flush_that_reaches_it` and
-`withdraw_limit_miss_refunds_at_the_flush_that_reaches_it` pin the single-request
-case. All four fail if the head-holding `break` is restored (verified by
-mutation, 2026-07-29).
+`withdraw_limit_miss_does_not_block_later_requests` stage the same shape at the
+shipped attempt count and assert the later request fills in the *same* flush that
+refunds the unfillable head; `supply_limit_miss_refunds_at_the_flush_that_reaches_it`
+and `withdraw_limit_miss_refunds_at_the_flush_that_reaches_it` pin the
+single-request case. All four fail if the head-holding `break` is restored at one
+attempt (verified by mutation, 2026-07-29).
+
+`raising_attempts_reintroduces_head_of_line_blocking` pins the other direction:
+at three attempts the honest request behind an unfillable head is not reached for
+two further flushes. The table above is therefore not just history — it is the
+cost of the knob, and the suite fails if that stops being true.

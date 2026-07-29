@@ -37,6 +37,11 @@ public struct ProtocolConfig has key {
     protocol_reserve_profit_share: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
+    /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
+    /// protocol cancels and refunds it. `1` (the default) is fill-or-kill; above
+    /// that a missing request rests at the queue head and stops that queue for the
+    /// flush, so this is an LP-queue liveness knob (RP-12).
+    lp_request_limit_flush_attempts: u64,
     expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
     stake_config: StakeConfig,
@@ -249,6 +254,20 @@ public fun set_trade_liquidation_budget(
     config.trade_liquidation_budget = budget;
 }
 
+/// Set how many frozen-mark attempts a queued LP request gets before it is
+/// cancelled and refunded. `1` is fill-or-kill. Raising it lets a request rest at
+/// the head across flushes, which stops that queue each time it misses — see RP-12
+/// for the liveness cost that buys.
+public fun set_lp_request_limit_flush_attempts(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    attempts: u64,
+) {
+    config.assert_version();
+    config_constants::assert_lp_request_limit_flush_attempts(attempts);
+    config.lp_request_limit_flush_attempts = attempts;
+}
+
 /// Set the EWMA gas-price penalty parameters.
 public fun set_ewma_params(
     config: &mut ProtocolConfig,
@@ -318,6 +337,10 @@ public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 
 
 public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
     config.trade_liquidation_budget
+}
+
+public(package) fun lp_request_limit_flush_attempts(config: &ProtocolConfig): u64 {
+    config.lp_request_limit_flush_attempts
 }
 
 public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
@@ -427,6 +450,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
+        lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),
         stake_config: stake_config::new(),
