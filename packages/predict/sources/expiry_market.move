@@ -728,6 +728,14 @@ public fun set_mint_paused(
 /// Settle from Propbook's exact positive normalized Pyth spot at expiry and
 /// materialize terminal payout liability. Permissionless and idempotent; a missing
 /// or non-normalizable observation leaves the market unsettled.
+///
+/// Blocked while a full-pool valuation is in progress. The flush freezes each
+/// market's sweep-vs-value branch at snapshot time, and settling mid-flush would
+/// move a market off the branch it was frozen on — harmless when the flush was one
+/// atomic PTB, reachable now that valuation spans transactions. This cannot deadlock
+/// against the flush: `plp::snapshot_expiry_pricer` refuses to snapshot an
+/// expired-unsettled market, and that abort reverts the whole (atomic) snapshot
+/// transaction, so settlement is always due strictly before a flush can hold the lock.
 public fun try_settle(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -736,6 +744,7 @@ public fun try_settle(
     clock: &Clock,
 ): bool {
     config.assert_version();
+    config.assert_not_valuation_in_progress();
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
 

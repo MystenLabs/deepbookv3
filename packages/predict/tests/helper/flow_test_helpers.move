@@ -1919,18 +1919,18 @@ public fun liquidate_order_bundle(
     )
 }
 
-public fun value_expiry(
+/// Freeze one market's oracle state into the in-flight flush. Belongs in the same
+/// transaction as `start_flush` and `seal_snapshot`.
+public fun snapshot_expiry_pricer(
     self: &mut Fixture,
-    valuation: &mut PoolValuation,
     vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
+    market: &ExpiryMarket,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ) {
-    valuation.value_expiry(
-        vault,
+    vault.snapshot_expiry_pricer(
         market,
         config,
         oracle_registry,
@@ -1942,21 +1942,34 @@ public fun value_expiry(
     );
 }
 
+/// Freeze one expiry's pricer through a market bundle.
+public fun snapshot_expiry_pricer_bundle(self: &mut Fixture, market: &mut MarketBundle) {
+    market
+        .vault
+        .snapshot_expiry_pricer(
+            &market.market,
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.values(),
+            market.bs.svi(),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+}
+
+/// Close the snapshot stage; valuation may then span transactions.
+public fun seal_snapshot(vault: &mut PoolVault, config: &ProtocolConfig) {
+    vault.seal_valuation_snapshot(config);
+}
+
+public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
+    vault.value_expiry(market, config);
+}
+
 /// Value one expiry through a market bundle.
-public fun value_expiry_bundle(
-    self: &mut Fixture,
-    valuation: &mut PoolValuation,
-    market: &mut MarketBundle,
-) {
-    self.value_expiry(
-        valuation,
-        &mut market.vault,
-        &mut market.market,
-        &market.config,
-        &market.oracle_registry,
-        &market.pyth,
-        &market.bs,
-    );
+public fun value_expiry_bundle(market: &mut MarketBundle) {
+    value_expiry(&mut market.vault, &mut market.market, &market.config);
 }
 
 public fun rebalance_expiry_cash(
@@ -2150,39 +2163,43 @@ public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
 
 /// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`), the
 /// sole flush-start authority. Acquires the shared `Registry` to mint the lifecycle
-/// proof internally, so callers need not thread it. The returned hot potato is
-/// threaded through `plp::value_expiry` × N then `plp::finish_flush`.
-public fun start_flush(
-    self: &mut Fixture,
-    config: &mut ProtocolConfig,
-    vault: &PoolVault,
-): PoolValuation {
+/// proof internally, so callers need not thread it. The flush state now lives on the
+/// vault, so callers drive `snapshot_expiry_pricer` × N → `seal_snapshot` →
+/// `value_expiry` × N → `finish_flush` without threading a potato.
+public fun start_flush(self: &mut Fixture, config: &mut ProtocolConfig, vault: &mut PoolVault) {
     let registry = self.scenario.take_shared<Registry>();
     let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
     return_shared(registry);
-    plp::start_pool_valuation(config, vault, proof)
+    plp::start_pool_valuation(config, vault, proof, &self.clock);
 }
 
-/// Start a pool-NAV flush through a market bundle.
-public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle): PoolValuation {
-    self.start_flush(&mut market.config, &market.vault)
+/// Start a pool-NAV flush through a single-market bundle, running the whole snapshot
+/// stage (start → snapshot that market → seal) so the caller can go straight to
+/// `value_expiry_bundle`. Multi-market tests must drive the stages individually.
+public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle) {
+    let registry = self.scenario.take_shared<Registry>();
+    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    return_shared(registry);
+    plp::start_pool_valuation(&mut market.config, &mut market.vault, proof, &self.clock);
+    self.snapshot_expiry_pricer_bundle(market);
+    seal_snapshot(&mut market.vault, &market.config);
 }
 
 /// Finish a pool-NAV flush through a market bundle.
 public fun finish_flush_bundle(
     self: &mut Fixture,
-    valuation: PoolValuation,
     market: &mut MarketBundle,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
 ): u64 {
-    valuation.finish_flush(
-        &mut market.vault,
-        &mut market.config,
-        supply_budget,
-        withdraw_budget,
-        self.scenario.ctx(),
-    )
+    market
+        .vault
+        .finish_flush(
+            &mut market.config,
+            supply_budget,
+            withdraw_budget,
+            self.scenario.ctx(),
+        )
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===
