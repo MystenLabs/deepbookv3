@@ -1376,6 +1376,84 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   output scale changes, or a strike/forward pair is admitted whose `|k|` exceeds
   44.4 (impossible while both are `u64` at 1e9).
 
+## RP-XX-A: Full-pool valuation is resumable across transactions (resolves C-1)
+
+- **Trigger state:** the sum of dynamic-field children the flush must load —
+  dominated by distinct strike ticks, one `Table<tick,PayoutNode>` child each —
+  approaches Sui's `object_runtime_max_num_cached_objects` (1,000 per
+  transaction, cumulative across every command in the PTB). The old flush valued
+  every active market in one atomic PTB, so this was a joint sum across markets:
+  two markets at 586 nodes each aborted at 1,172 combined
+  (`evidence/c1-object-cache-flush-2026-07-07.md`).
+- **Controller:** external — a Sui protocol constant. Verified network-invariant
+  on 2026-07-29: set once in `sui-protocol-config/src/lib.rs` with no
+  version-gated override, alongside `object_runtime_max_num_store_entries` at the
+  same 1,000. Only system transactions get 16×.
+- **Blast radius:** on overflow the flush aborts `MEMORY_LIMIT_EXCEEDED` inside
+  `dynamic_field::borrow_child_object`, so no market is valued and the LP
+  supply/withdraw queues stay frozen pool-wide until the books shrink. Reachable
+  adversarially, not only by organic growth: reusing one lower boundary and
+  varying the upper mints one new node per order, and at the compiled floors
+  (`min_net_premium` 1 DUSDC, entry band [1%, 99%], `min_fee` 0.5% on quantity)
+  ~999 orders cost ~1,000 DUSDC of premium that is ~99% likely to pay back plus
+  ~5 DUSDC of fees. Reported externally as deepbookv3 issue #45.
+- **Response:** rung 3 — restructure so the joint budget cannot exist. The flush
+  splits into an atomic snapshot stage (`start_pool_valuation` →
+  `snapshot_expiry_pricer` × N → `seal_valuation_snapshot`, which reads oracles
+  and walks no trees) and a resumable valuation stage (`value_expiry` × N, any
+  number of transactions), then `finish_flush`. Each transaction now carries one
+  market's children instead of the pool's.
+- **Reasoning:** exact NAV requires pricing every distinct boundary off the live
+  oracle, so the child count is `>=` distinct boundaries by construction and
+  cannot be cached away without reintroducing the rejected approximate-NAV band
+  (audit L10). Bounding the joint sum on-chain instead would either serialize
+  every boundary-creating mint through the vault or split 1,000 across 24 markets
+  into an unusable ~41 each. Making valuation resumable removes the joint
+  constraint rather than budgeting it. Freezing one `Pricer` per market during
+  the atomic snapshot stage is what preserves the single exact mark: the
+  valuation stage reads no oracle and no clock, so the pool is marked at the
+  snapshot instant regardless of how many transactions it spans. This overturns
+  the `*Rejected:* a multi-tx crank` clause of the async-LP decision
+  (`docs/design/decisions.md`); the overturn is recorded there.
+- **Risk profile:** `MEASURED` for the failure this removes
+  (`evidence/c1-object-cache-flush-2026-07-07.md`); `UNMEASURED` for the new
+  per-transaction ceiling — see C-4, which owns sizing `max_payout_tree_nodes`
+  against a single-market `value_expiry` budget. The joint bound is gone; the
+  per-market one is now well-posed and open.
+- **Superseded measurement trail (retained as C-1's provenance):** the model that
+  called the flush computation-bound came from `evidence/c1-nav-stress-2026-06-30.md`
+  (pre-memo single-market OOG at ~4,580 orders) and
+  `evidence/c1-price-memo-2026-07-01.md` (post-memo, a full 5,000-order book at
+  ~47–54% of the compute wall), re-measured under skew-adjusted pricing in
+  `evidence/c1-skew-gas-2026-07-09.md` (~2.2% steeper per-order slope, 51% of the
+  wall). Those compute figures still stand for a SINGLE market and feed C-4's
+  per-transaction sizing; they were superseded only as a model of the pool total,
+  which the object-cache finding showed binds first.
+- **Duty inventory (state the potato used to guarantee, and what carries it now):**
+  the hot potato forced the valuation lock to release in its own transaction. It
+  no longer can, and the lock gates the whole mutation surface, so an abandoned
+  flush would freeze the protocol. Carried by `abort_valuation` (permissionless
+  once `max_valuation_window_ms` has elapsed) and `abort_valuation_privileged`
+  (immediate, on the lifecycle authority that started it); partial NAV is
+  discarded because frozen marks are sound only as a simultaneous set. The potato
+  also bound a valuation to its vault (`EWrongPoolVault`); the valuation is now a
+  field of that vault, so the mismatch is unrepresentable. Lifecycle drift across
+  transactions is closed by gating `try_settle` on the lock — deadlock-free
+  because `snapshot_expiry_pricer` refuses an expired-unsettled market and that
+  abort reverts the atomic snapshot transaction.
+- **Pinning tests:** `pool_valuation_flow_tests.move` —
+  `valuation_split_across_transactions_marks_at_the_snapshot_instant` (moves the
+  Pyth spot between two `value_expiry` transactions and asserts the pool mark is
+  unchanged, with a guard assertion proving a live re-read would have marked it
+  differently, so the test cannot pass vacuously),
+  `seal_aborts_when_an_active_market_has_no_frozen_pricer`,
+  `value_expiry_before_seal_aborts`,
+  `finish_aborts_when_a_snapshotted_market_is_unvalued`.
+- **Reopen when:** Sui raises or removes the cached-objects limit (the split
+  stays correct but stops being load-bearing), or a market's own
+  `value_expiry` is measured to exceed one transaction's budget at the caps —
+  which is C-4, not a reopen of this entry.
+
 ---
 
 ## Rounding policy (R1–R3)
