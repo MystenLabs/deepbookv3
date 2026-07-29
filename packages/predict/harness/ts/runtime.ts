@@ -652,6 +652,21 @@ export async function clampedSourceTimestampMs(realMs: bigint): Promise<bigint |
     return ts;
 }
 
+// The same clamp for the Pyth leg, on its own monotonic cursor. The Pyth spot must be
+// stamped with Pyth's OWN stream clock, never the cross-stream envelope: the envelope
+// is the max over every input clock, so stamping Pyth with it lets Block Scholes
+// activity keep a stalled Pyth stream artificially fresh on-chain — and the contract's
+// Pyth-stale → BS-forward fallback can then never be exercised in a run. Returns null
+// when Pyth has nothing newer; the caller skips the Pyth leg and the feed ages honestly.
+let lastPythTimestampMs = 0n;
+export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | null> {
+    const clockMax = (await clockTimestampMs()) - 1n;
+    const ts = realMs < clockMax ? realMs : clockMax;
+    if (ts <= lastPythTimestampMs) return null;
+    lastPythTimestampMs = ts;
+    return ts;
+}
+
 // Build one combined oracle refresh (re-signed Pyth spot + BS spot/forward/SVI for
 // one expiry) at a caller-provided source timestamp. Same calls as addOracleRefresh
 // but stamps real (clamped) provider time instead of deriving it from the Clock.
@@ -680,12 +695,13 @@ export interface GridExpiry {
 export function buildOracleRefreshGridTx(
     feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
     pythSpot1e9: bigint,
+    pythTsMs: bigint | null,
     bsSpot: { value1e9: bigint; tsMs: bigint },
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
 ): Transaction {
     const tx = new Transaction();
-    addOracleRefreshGrid(tx, feeds, pythSpot1e9, bsSpot, grid, sourceTimestampMs);
+    addOracleRefreshGrid(tx, feeds, pythSpot1e9, pythTsMs, bsSpot, grid, sourceTimestampMs);
     return tx;
 }
 
@@ -696,10 +712,16 @@ export function buildOracleRefreshGridTx(
 // unknown gets the envelope, and one that momentarily postdates the envelope
 // (cross-stream clock skew) is skipped this push rather than clamped — the store
 // would refuse it as malformed, and the next push lands it honestly.
+// The Pyth spot is stamped with Pyth's own stream clock (`pythTsMs`), never the
+// envelope: the envelope is the max over every input clock, so reusing it would let
+// Block Scholes activity keep a stalled Pyth stream artificially fresh on-chain. A
+// null `pythTsMs` (Pyth has nothing newer) skips the Pyth leg so the feed ages
+// honestly and the Pyth-stale → BS-forward fallback stays reachable in a run.
 function addOracleRefreshGrid(
     tx: Transaction,
     feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
     pythSpot1e9: bigint,
+    pythTsMs: bigint | null,
     bsSpot: { value1e9: bigint; tsMs: bigint },
     grid: GridExpiry[],
     sourceTimestampMs: bigint,
@@ -709,7 +731,7 @@ function addOracleRefreshGrid(
         if (tsMs > sourceTimestampMs) return null;
         return tsMs;
     };
-    addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, sourceTimestampMs);
+    if (pythTsMs !== null) addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, pythTsMs);
     // The BS spot slot carries Block Scholes' own signed spot series at its own model
     // time — a separate observation from the Pyth spot above.
     const valueUpdates = [];

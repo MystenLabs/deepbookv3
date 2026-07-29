@@ -12,7 +12,7 @@ import { getSigner, getSignerForAddress } from "./env.js";
 import { atomicWriteFile } from "./io.js";
 import { type MarketSource, DirectWsSource, HubSource, ReplaySource } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
-import { buildOracleRefreshGridTx, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
+import { buildOracleRefreshGridTx, clampedPythTimestampMs, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
 
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = run until SIGTERM
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
@@ -111,6 +111,11 @@ async function main() {
     }
     const ts = await clampedSourceTimestampMs(BigInt(latestInputMs));
     if (ts === null) { skips++; continue; }
+    // Pyth rides its OWN stream clock, not the envelope above: stamping the cached Pyth
+    // value with the cross-stream max would keep a stalled Pyth stream artificially fresh
+    // on-chain. A stalled stream returns null here — the push proceeds without the Pyth
+    // leg and the feed ages out honestly, keeping the BS-forward fallback exercisable.
+    const pythTs = await clampedPythTimestampMs(snap.publishedAtMs);
     if (snap.bsSpotTsMs !== 0 && snap.bsSpotTsMs === lastBsSpotTs) pinnedSpot++;
     if (snap.bsSpotTsMs === 0) missingTs++;
     lastBsSpotTs = snap.bsSpotTsMs;
@@ -142,6 +147,7 @@ async function main() {
             bsSviStoreId: feeds.bsSviStoreId,
           },
           snap.spot1e9,
+          pythTs,
           { value1e9: snap.bsSpot1e9, tsMs: BigInt(snap.bsSpotTsMs) },
           grid, ts,
         ),
