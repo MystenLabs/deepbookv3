@@ -9,7 +9,7 @@ use propbook::{
     registry::{Self, OracleMetadata, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::{Self as test, Scenario, return_shared};
+use sui::{event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
 const BTC_UNDERLYING_ID: u32 = 1;
@@ -232,6 +232,15 @@ fun create_block_scholes_stores_records_both_lookups() {
         option::some(svi_store_id),
     );
     assert!(value_store_id != svi_store_id);
+
+    let events = event::events_by_type<registry::BlockScholesStoresRegistered>();
+    assert_eq!(events.length(), 1);
+    let (event_underlying_id, event_value_id, event_svi_id) = registry::stores_registered_fields(
+        &events[0],
+    );
+    assert_eq!(event_underlying_id, BTC_UNDERLYING_ID);
+    assert_eq!(event_value_id, value_store_id);
+    assert_eq!(event_svi_id, svi_store_id);
 
     return_shared(registry);
     destroy(admin_cap);

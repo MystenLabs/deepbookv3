@@ -84,7 +84,7 @@ grid, no boundary indices).
   Code: built in `pricing` from Pyth spot plus the BS spot/forward/SVI feeds.
 - **Basis** — the Block Scholes `forward / spot` ratio for an expiry; it carries
   the spot to the forward when live spot is applied. Code: derived in `pricing`
-  from `BlockScholesForwardFeed / BlockScholesSpotFeed`.
+  from the `BlockScholesValueStore` forward and spot series.
 
 ## Oracles (propbook feeds)
 

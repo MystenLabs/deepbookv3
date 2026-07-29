@@ -401,6 +401,15 @@ fun belongs(propbook_underlying_id: u32, sid: u256): bool {
     block_scholes_sid::underlying(sid) == propbook_underlying_id
 }
 
+/// Same off-chain-consumer reasoning as `batch_ingested_fields`: this reader exists only so tests
+/// can assert the emitted observation is the one that was stored.
+#[test_only]
+public fun observation_recorded_fields<Observation: copy + drop>(
+    event: &BlockScholesObservationRecorded<Observation>,
+): (ID, u256, Observation) {
+    (event.propbook_oracle_id, event.sid, event.observation)
+}
+
 /// The batch event's fields exist for off-chain consumers, which decode them rather than calling
 /// Move, so this reader exists only so tests can assert the counts are right.
 #[test_only]

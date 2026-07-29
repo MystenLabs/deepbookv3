@@ -81,6 +81,37 @@ fun a_spot_observation_lands_with_all_three_clocks() {
     scenario.end();
 }
 
+/// Off-chain monitoring reads stored-series liveness from the observation event, so what it
+/// reports must be exactly what was stored: this store's id, the series' own sid, and the kept
+/// observation with all three clocks.
+#[test]
+fun a_stored_observation_is_what_its_event_reports() {
+    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut value_store,
+        PUBLISHED_EARLY,
+        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        &chain_clock,
+    );
+
+    let events = event::events_by_type<store::BlockScholesObservationRecorded<BsRead<u128>>>();
+    assert_eq!(events.length(), 1);
+    let (oracle_id, sid, observation) = store::observation_recorded_fields(&events[0]);
+    assert_eq!(oracle_id, value_id);
+    assert_eq!(sid, block_scholes_sid::spot(UNDERLYING_ID));
+    assert_eq!(observation.read_value(), SPOT);
+    assert_eq!(observation.read_model_timestamp_ms(), MODEL_EARLY);
+    assert_eq!(observation.read_published_at_ms(), PUBLISHED_EARLY);
+    assert_eq!(observation.read_recorded_at_ms(), CHAIN_TIME_MS);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
 #[test]
 fun a_newer_batch_replaces_the_stored_observation() {
     let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
@@ -492,6 +523,30 @@ fun an_envelope_time_after_chain_time_is_skipped() {
     );
 
     assert!(store::spot(&value_store).is_none());
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+/// The just-inside edge of the same skip: an envelope stamped at exactly the chain's clock is a
+/// real observation and lands.
+#[test]
+fun an_envelope_time_at_exactly_chain_time_lands() {
+    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut value_store,
+        CHAIN_TIME_MS,
+        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        &chain_clock,
+    );
+
+    let read = store::spot(&value_store).destroy_some();
+    assert_eq!(read.read_value(), SPOT);
+    assert_eq!(read.read_published_at_ms(), CHAIN_TIME_MS);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);

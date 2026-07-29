@@ -17,7 +17,7 @@ Sui distinguishes three object dispositions. Predict uses all three deliberately
 - **Owned objects** belong to a single address and can only be used by that address's transactions. Predict's capabilities are owned objects, which is how delegated authority is granted and held.
 - **Derived objects** are created at a deterministic address from a parent's `UID` plus a typed key (`derived_object::claim`). Predict derives `BuilderCode` from the registry's `UID`; the account package derives `AccountWrapper` / `Account` identities from its own `AccountRegistry`.
 
-The protocol is constructed at package publish: the `registry` module's `init` creates and shares the `Registry`, creates and shares the `ProtocolConfig`, and transfers a single `AdminCap` to the deployer. The `plp` module's `init` registers the PLP coin type and creates and shares the `PoolVault`. Per-expiry `ExpiryMarket` objects are created later through a registry entrypoint. The oracle feeds (`PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, `BlockScholesSVIFeed`) are external objects created permissionlessly in the `propbook` package, not by Predict.
+The protocol is constructed at package publish: the `registry` module's `init` creates and shares the `Registry`, creates and shares the `ProtocolConfig`, and transfers a single `AdminCap` to the deployer. The `plp` module's `init` registers the PLP coin type and creates and shares the `PoolVault`. Per-expiry `ExpiryMarket` objects are created later through a registry entrypoint. The oracle objects (`PythFeed`, `BlockScholesValueStore`, `BlockScholesSVIStore`) are external objects owned by the `propbook` package, not by Predict — the Pyth feed is created permissionlessly, while the Block Scholes store pair is created admin-gated, once per underlying.
 
 ## Shared objects
 
@@ -102,9 +102,8 @@ graph TD
     subgraph propbook (external oracle package)
         OR[OracleRegistry<br/>canonical bindings]
         PF[PythFeed<br/>global spot]
-        BSS[BlockScholesSpotFeed<br/>source spot]
-        BSF[BlockScholesForwardFeed<br/>source forward surface]
-        BSV[BlockScholesSVIFeed<br/>source SVI surface]
+        BVS[BlockScholesValueStore<br/>spot + forward series]
+        BSV[BlockScholesSVIStore<br/>SVI series]
     end
 
     subgraph Owned caps
@@ -124,13 +123,11 @@ graph TD
     AREG -->|Predict app-auth<br/>for settled automation| AW
 
     OR -->|canonical Pyth| PF
-    OR -->|canonical BS spot| BSS
-    OR -->|canonical BS forward| BSF
-    OR -->|canonical BS SVI| BSV
+    OR -->|canonical BS value store| BVS
+    OR -->|canonical BS SVI store| BSV
     EM -.->|stores underlying id| OR
     EM -.->|live pricing reads| PF
-    EM -.->|live pricing reads| BSS
-    EM -.->|live pricing reads| BSF
+    EM -.->|live pricing reads| BVS
     EM -.->|live pricing reads| BSV
 
     ADMIN --> CFG
@@ -151,16 +148,16 @@ graph TD
 
 ## The binding mesh
 
-A priced trade composes an `ExpiryMarket`, Propbook's `OracleRegistry`, the current propbook feeds (`PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, `BlockScholesSVIFeed`), and an account loaded from `AccountWrapper`; the protocol must guarantee they belong together:
+A priced trade composes an `ExpiryMarket`, Propbook's `OracleRegistry`, the current propbook oracle objects (`PythFeed`, `BlockScholesValueStore`, `BlockScholesSVIStore`), and an account loaded from `AccountWrapper`; the protocol must guarantee they belong together:
 
 - **Underlying approval.** Predict's `Registry`, through its `MarketManager.underlying_configs`, records each admin-approved Propbook underlying ID and deployment watermarks. This row gates which underlyings Predict will build markets on; Propbook owns source IDs, source-object discovery, and canonical source-to-underlying binding.
-- **Creation-time coverage.** `create_and_share_expiry_market` takes Propbook's `&OracleRegistry` and a `propbook_underlying_id`, then asserts that Propbook currently has canonical Pyth, BS spot, BS forward, and BS SVI bindings for that underlying and deployable expiry. It snapshots the underlying ID, cadence tick size, and admission tick size (plus the deployable expiry and reference-tick source timestamp). Pairing spot, forward, and SVI to one underlying/expiry is therefore a Propbook registry claim, not a market-deployer claim.
-- **Live priced-flow binding.** Every priced flow passes the current Propbook registry plus feed objects to `pricing::load_live_pricer`, which checks the feed object IDs against Propbook's current canonical bindings for the market's underlying and expiry.
+- **Creation-time coverage.** `create_and_share_expiry_market` takes Propbook's `&OracleRegistry` and a `propbook_underlying_id`, then asserts that Propbook currently has canonical Pyth, BS value store, and BS SVI store bindings for that underlying and deployable expiry. It snapshots the underlying ID, cadence tick size, and admission tick size (plus the deployable expiry and reference-tick source timestamp). Pairing spot, forward, and SVI to one underlying/expiry is therefore a Propbook registry claim, not a market-deployer claim.
+- **Live priced-flow binding.** Every priced flow passes the current Propbook registry plus oracle objects to `pricing::load_live_pricer`, which checks the object IDs against Propbook's current canonical bindings for the market's underlying and expiry.
 - **Live pricing liveness.** `pricing::load_live_pricer` rejects a live price for a market whose expiry has passed. The keeper composes `expiry_market::try_settle` before settlement-dependent consumers; it records the exact Propbook Pyth spot and terminal payout liability when available. If exact data is still absent, the past-expiry market remains pending settlement, standalone rebalance moves no cash, and the market cannot be live-valued.
 - **Market → pool.** `create_and_share_expiry_market` registers the new expiry in `PoolVault`'s active-expiry ledger as a zero-cash accounting row. The market is not mintable until `plp::rebalance_expiry_cash` funds it from idle; the expiry never pulls from the pool itself.
 - **Account → market.** Positions are keyed by `(expiry_market_id, order_id)` inside Predict account data, so an order minted by one expiry can only be redeemed against that same expiry's market. Owner auth or Predict app-auth controls who can load the account for the flow; the position key controls which market/order pair the loaded account may mutate.
 
-`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or exact-history `ExactSpotRead`; the propbook feeds own their source payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
+`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or exact-history `ExactSpotRead`; the propbook oracle objects own their stored payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
 
 ## Oracle feeds (external, in `propbook`)
 

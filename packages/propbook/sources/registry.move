@@ -27,14 +27,6 @@ public(package) macro fun value_kind_spot(): u8 {
     0
 }
 
-public(package) macro fun value_kind_forward(): u8 {
-    1
-}
-
-public(package) macro fun value_kind_svi(): u8 {
-    2
-}
-
 /// Root capability authorized to choose and replace canonical oracle bindings.
 /// The package exposes no on-chain revocation or rotation mechanism for it.
 public struct RegistryAdminCap has key, store {
@@ -491,4 +483,11 @@ fun pyth_binding_key(propbook_underlying_id: u32): OracleBindingKey {
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx);
+}
+
+/// The event's fields exist for off-chain discovery, so this reader exists only so tests can
+/// assert the reported pair is the one the registry bound.
+#[test_only]
+public fun stores_registered_fields(event: &BlockScholesStoresRegistered): (u32, ID, ID) {
+    (event.propbook_underlying_id, event.value_store_id, event.svi_store_id)
 }
