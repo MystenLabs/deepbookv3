@@ -29,7 +29,7 @@ manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D
 deps = { MoveStdlib = "MoveStdlib_1" }
 
 [pinned.testnet.bs_oracle]
-source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "d55026cc8b69df8a64da71568dad8e37b1370fe2" }
+source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "11d952488bc50f3a2526549a8cd6d4817ae20cc7" }
 use_environment = "testnet"
 manifest_digest = "DEA31E1A46DEA12556D3F73C993DD95B71A42720CD2A5FAA7BA794DE8BD6F7AC"
 deps = { MoveStdlib = "MoveStdlib_1", Sui = "Sui_1" }
@@ -43,7 +43,7 @@ deps = { std = "MoveStdlib", sui = "Sui" }
 [pinned.testnet.propbook]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "85CC0FDAFAA44E193635832510A9598F610D7A16D6B7FF58882D3F1A0590A3EC"
+manifest_digest = "528B73B4F35368C44B52CE8DC930D69320B5A3901E7F2E7BF408A3B9CC3F7D42"
 deps = { bs_oracle = "bs_oracle", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
 
 [pinned.testnet.pyth_lazer]

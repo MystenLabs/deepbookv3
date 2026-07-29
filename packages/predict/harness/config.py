@@ -50,7 +50,7 @@ LOCAL_CLOSURE = [
 ]
 
 # Pin of the real Block Scholes verifier, matching propbook/predict Move.toml.
-BS_ORACLE_REV = "d55026cc8b69df8a64da71568dad8e37b1370fe2"
+BS_ORACLE_REV = "11d952488bc50f3a2526549a8cd6d4817ae20cc7"
 
 # Upstream git deps that get dep-replaced to locally-published addresses. Staged
 # from the ~/.move clone cache, falling back to a shallow clone of the branch

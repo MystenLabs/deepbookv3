@@ -558,7 +558,7 @@ PY
   # publisher an `AdminCap`; the sim registers its own per-instance secp256k1 key
   # via `set_signer` (from sim.ts setup) and signs every batch it submits — the
   # same local-trusted-signer model as the Pyth guardian above.
-  BS_ORACLE_REV="d55026cc8b69df8a64da71568dad8e37b1370fe2"
+  BS_ORACLE_REV="11d952488bc50f3a2526549a8cd6d4817ae20cc7"
   copy_move_dep_rev \
     bs_oracle \
     "https://github.com/blockscholes/sui-signed-oracle.git" \
