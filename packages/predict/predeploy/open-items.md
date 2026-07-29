@@ -399,82 +399,32 @@ trust coupling.
 
 ## Capacity and Liveness Findings
 
-### C-1: Full-pool flush has no joint valuation budget
+### C-4: Per-market `value_expiry` node budget is unsized against one transaction
 
-**Severity:** Medium / must be accepted or fixed before deployment.
+**Severity:** Medium / must be sized or accepted before deployment.
 
-The flush values every active market in one PTB. Current independent caps
-(`24` live markets, `1000` payout nodes, `5000` leveraged orders per market) do
-not compose into a single-PTB budget — and the binding limit is object-count,
-not compute (corrected 2026-07-07; see the model below). The NAV price memo
-removed the single-market pre-cap OOG; the remaining deploy blocker is the
-pool-total case. The missing bound is a joint sum across all active markets, not
-another isolated per-market cap.
+RP-25 removed the *joint* flush budget: valuation is resumable, so each
+`value_expiry` carries one market's dynamic-field children instead of the pool's.
+The *per-market* budget is now well-posed and unverified. One market's caps do not
+obviously fit one transaction's 1,000-child limit: `max_payout_tree_nodes` alone is
+1,000, before `ceil(max_active_leveraged_orders / 64)` = 79 liquidation-book pages
+and the market's base children. Under the old single-PTB flush one market at 982
+nodes already aborted (`evidence/c1-object-cache-flush-2026-07-07.md`), though that
+run also carried the rest of the flush's commands, so it bounds the per-market
+figure loosely from above and cannot be read as the answer.
 
-**Capacity model (corrected 2026-07-07 — the binding wall is object-count, not compute):**
+**Plan (decision rule pre-registered):** re-run `ts/strategies/treeNodeSweep.ts`
+against the resumable flush, filling ONE market and valuing it in its own
+transaction, to find the node count at which a single `value_expiry` aborts. If the
+measured ceiling is below `max_payout_tree_nodes` + pages + base, lower
+`max_payout_tree_nodes` to leave the measured base-child headroom and follow with
+one run that reaches the new boundary. If it is above, record the headroom and
+close this item with a register entry.
 
-- The binding wall for the pool total is the Sui **object-runtime cached-objects
-  limit: 1,000 dynamic-field child objects per transaction**
-  (`object_runtime_max_num_cached_objects`; a protocol constant, taken as
-  network-invariant). The flush loads each market's payout-tree nodes and
-  liquidation-book pages as dynamic-field children, and the object-runtime cache
-  **accumulates across every `value_expiry` command in the one PTB**. On overflow
-  it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object` —
-  a framework error whose true cause is this limit. It binds at 16–50% of the 5M
-  compute cap, so the pool flush is object-count-bound, not computation-bound
-  (`evidence/c1-object-cache-flush-2026-07-07.md`).
-- Driver = distinct payout-tree nodes: one `Table<tick,PayoutNode>` child per
-  distinct strike tick, and `walk_linear` loads every node. Node count = distinct
-  ticks, NOT order count (the tree aggregates by boundary) — which is why
-  single-market runs at narrow strikes never reached it despite large books.
-  Liquidation-book pages (`ceil(leveraged_orders / 64)`) are a minor contributor.
-- Confirmed cumulative, not per-command: two 1× markets at 586 nodes each —
-  neither near 1,000 — abort the flush at ~1,172 combined; a single 1× market
-  crosses at ~982 nodes (`evidence/c1-object-cache-flush-2026-07-07.md`).
-- Superseded conclusion: the 2026-07-01 model called the flush
-  computation-bound. That holds for the SINGLE market (a full 5,000-order book
-  values at ~47–54% of the compute cap, `evidence/c1-price-memo-2026-07-01.md`;
-  pre-memo that single market OOG'd at ~4,580 orders,
-  `evidence/c1-nav-stress-2026-06-30.md`) but not the pool total. Earlier
-  pool-total runs hit
-  `expiry_cash::EInsufficientCash` (capital) at ~92% compute before reaching the
-  object wall; raising the allocation cap removed that mask and exposed the
-  1,000-child limit.
-- Skew-adjusted pricing re-measured the single-market compute cost on 2026-07-09:
-  the per-order flush slope rose 2.2% (~480K → ~491K computation units) and a
-  full 5,000-order book used 51% of the compute wall. This does not change the
-  pool-total conclusion above: the object-cache limit binds first
-  (`evidence/c1-skew-gas-2026-07-09.md`).
-- Expired-unswept markets leave the active set only inside a successful
-  `value_expiry`/sweep, so the flush's active tail is not bounded by the
-  live-market creation cap.
-- Capacity law:
-  `sum_over_active_markets(distinct_ticks + ceil(leveraged_orders / 64) + base_children)
-  < 1,000 dynamic-field children per flush PTB` — a joint sum across all active
-  markets, dominated by distinct strike ticks.
+**Note:** the cap is also what deepbookv3 issue #45 reports as a mint-side denial
+of new strike ranges; it is a deliberate bound, and whatever number this item
+settles on is the one that answer should quote.
 
-**Fix options (reframed for the object-count wall):** shrink the per-market
-NAV-walk child footprint (e.g. cache tree aggregates so `walk_linear` need not
-load every node) · a joint active-market×node budget enforced at creation/roll ·
-valuation resumable across PTBs (partial state instead of a hot potato) · an
-out-of-flush settled sweep/deactivate path (bounds the active tail) · documented
-operator throttling (an off-chain acceptance, not an on-chain guarantee).
-
-**Plan — runs that finish the number (decision rules pre-registered
-2026-07-02):**
-
-The binding wall is now identified (object-cache, 2026-07-07 above); the compute
-runs below are superseded for the pool total (compute is not the wall), and what
-remains open is the FIX, not the measurement. Retained for context:
-
-- Historical payout-tree probes — DONE 2026-07-07: filling one 1× market to the node cap
-  and two markets to 586 each proved the pool-total wall is the object-runtime
-  cached-objects limit, cumulative across the PTB, not compute
-  (`evidence/c1-object-cache-flush-2026-07-07.md`). The `c_node`/compute terms are
-  moot for the pool total — object count binds first.
-- Historical worst-branch and pool-total compute probes are superseded by the object-count result above, and their one-off strategy files were retired. If a fix needs a fresh boundary measurement, extend the retained `packages/predict/harness/ts/strategies/capacity.ts` family rather than restoring the old probes.
-- Any final cap change is followed by one run that reaches the new boundary
-  and proves the flush stays under the safety target.
 
 ## Oracle Calibration
 
