@@ -17,16 +17,16 @@ use deepbook_predict::{
     test_constants
 };
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
 
 // A source id distinct from `test_constants::pyth_feed_id()` (= 1), for the
-// unrelated second feed that the wrong-feed binding tests pass.
+// unrelated second Pyth feed the wrong-feed binding test passes.
 const SECOND_SOURCE_ID: u32 = 2;
+// An underlying the market is not for, whose store pair the wrong-store test passes.
+const FOREIGN_UNDERLYING_ID: u32 = 2;
 
 /// Mint after the market has expired (clock == expiry) must be rejected by the
 /// live-pricing boundary before any trade mutation.
@@ -135,39 +135,24 @@ fun redeem_with_wrong_pyth_feed_aborts() {
     abort 999
 }
 
-/// Minting with the CORRECT Pyth feed but the WRONG Block Scholes feed must abort:
-/// the pricing boundary checks the Pyth binding first, then the BS binding, so a
-/// correct Pyth + unrelated BS feed reaches the second assert.
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSpotFeed)]
-fun mint_with_wrong_block_scholes_feed_aborts() {
+/// Minting with the CORRECT Pyth feed but Block Scholes stores belonging to ANOTHER underlying must
+/// abort: the pricing boundary checks the Pyth binding first, then the store binding, so a correct
+/// Pyth plus unrelated stores reaches the second assert.
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
+fun mint_with_another_underlyings_block_scholes_stores_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
+    let (foreign_values_id, foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+        FOREIGN_UNDERLYING_ID,
     );
-    let wrong_bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    let wrong_bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    sui::test_scenario::return_shared(oracle_registry);
 
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     let wrong_bs = helpers::block_scholes_feed_for_testing(
-        fx.scenario_mut().take_shared_by_id<BlockScholesSpotFeed>(wrong_bs_spot_id),
-        fx.scenario_mut().take_shared_by_id<BlockScholesForwardFeed>(wrong_bs_forward_id),
-        fx.scenario_mut().take_shared_by_id<BlockScholesSVIFeed>(wrong_bs_svi_id),
+        fx.scenario_mut().take_shared_by_id<BlockScholesValueStore>(foreign_values_id),
+        fx.scenario_mut().take_shared_by_id<BlockScholesSVIStore>(foreign_svi_id),
     );
 
     fx.mint_bundle_with_bs(

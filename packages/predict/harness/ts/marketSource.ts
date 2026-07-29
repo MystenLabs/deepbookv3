@@ -23,10 +23,26 @@ export interface Svi {
   m: number;
   sigma: number;
 }
+// One expiry's provider data with each series' own model timestamp — when that data is "as of",
+// pinned by the provider across retransmissions of an unchanged value. The on-chain stores order
+// and age series by this clock, so discarding it would collapse the dual-clock contract the
+// updater exists to exercise.
+export interface ExpiryData {
+  forward: number;
+  forwardTsMs: number;
+  svi: Svi;
+  sviTsMs: number;
+}
 export interface MarketSnapshot {
+  /// Pyth spot (the Pyth lane's input), stamped by the Pyth stream.
   spot1e9: bigint;
   publishedAtMs: bigint;
-  expiries: Map<number, { forward: number; svi: Svi }>;
+  /// Block Scholes' own signed spot series (`index.px`) with its provider model time — a
+  /// separate observation from the Pyth spot, so the BS spot slot carries BS data, not a
+  /// Pyth value relabeled.
+  bsSpot1e9: bigint;
+  bsSpotTsMs: number;
+  expiries: Map<number, ExpiryData>;
 }
 export interface MarketSource {
   start(expiries: number[]): Promise<void>;
@@ -35,25 +51,41 @@ export interface MarketSource {
   stop(): void;
 }
 
-// Parse a snapshot JSON object ({spot1e9, publishedAtMs, expiries:{ms:{forward,svi}}}) into a
-// MarketSnapshot. mapByPosition remaps the recorded expiries onto `wanted` by sorted index
+// Parse a snapshot JSON object ({spot1e9, publishedAtMs, expiries:{ms:{forward,forwardTsMs,svi,
+// sviTsMs}}}) into a MarketSnapshot. Older recordings without per-series timestamps fall back to
+// the publish time. mapByPosition remaps the recorded expiries onto `wanted` by sorted index
 // (replay); otherwise it filters to exactly the wanted expiries (hub).
 function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketSnapshot {
-  const expiries = new Map<number, { forward: number; svi: Svi }>();
+  const publishedAtMs = Number(h.publishedAtMs);
+  const entry = (e: any): ExpiryData => ({
+    forward: e.forward,
+    forwardTsMs: Number(e.forwardTsMs ?? publishedAtMs),
+    svi: e.svi,
+    sviTsMs: Number(e.sviTsMs ?? publishedAtMs),
+  });
+  const expiries = new Map<number, ExpiryData>();
   if (mapByPosition) {
     const recorded = Object.keys(h.expiries ?? {}).map(Number).sort((a, b) => a - b);
     const sortedWanted = [...wanted].sort((a, b) => a - b);
     for (let i = 0; i < sortedWanted.length && i < recorded.length; i++) {
       const e = h.expiries[String(recorded[i])];
-      if (e) expiries.set(sortedWanted[i], { forward: e.forward, svi: e.svi });
+      if (e) expiries.set(sortedWanted[i], entry(e));
     }
   } else {
     for (const ms of wanted) {
       const e = h.expiries?.[String(ms)];
-      if (e) expiries.set(ms, { forward: e.forward, svi: e.svi });
+      if (e) expiries.set(ms, entry(e));
     }
   }
-  return { spot1e9: BigInt(h.spot1e9), publishedAtMs: BigInt(h.publishedAtMs), expiries };
+  return {
+    spot1e9: BigInt(h.spot1e9),
+    publishedAtMs: BigInt(h.publishedAtMs),
+    // Recordings that predate the separate BS spot lane carried only the Pyth spot; fall
+    // back to it so old hubs/replays keep working.
+    bsSpot1e9: BigInt(h.bsSpot1e9 ?? h.spot1e9),
+    bsSpotTsMs: Number(h.bsSpotTsMs ?? publishedAtMs),
+    expiries,
+  };
 }
 
 const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
@@ -105,8 +137,9 @@ export class DirectWsSource implements MarketSource {
   #bs: WebSocket | null = null;
   #spot1e9: bigint | null = null;
   #spotMs = 0n;
-  #fwd = new Map<number, number>();
-  #svi = new Map<number, Svi>();
+  #bsSpot: { v: number; tsMs: number } | null = null;
+  #fwd = new Map<number, { v: number; tsMs: number }>();
+  #svi = new Map<number, { svi: Svi; tsMs: number }>();
   #expiries: number[] = [];
   #bsOpen = false;
   #bsSubId = 0;
@@ -147,10 +180,19 @@ export class DirectWsSource implements MarketSource {
       }
       if (f.method !== "subscription") return;
       const list = Array.isArray(f.params) ? f.params : f.params ? [f.params] : [];
-      for (const entry of list) for (const v of entry?.data?.values || []) {
-        const sid: string = v.sid || "";
-        if (sid.startsWith("fwd_") && Number.isFinite(Number(v.v))) this.#fwd.set(Number(sid.slice(4)), Number(v.v));
-        else if (sid.startsWith("svi_")) this.#svi.set(Number(sid.slice(4)), { alpha: +v.alpha || 0, beta: +v.beta || 0, rho: +v.rho || 0, m: +v.m || 0, sigma: +v.sigma || 0 });
+      for (const entry of list) {
+        // Provider source timestamp (format option `timestamp: "ms"`) rides the delivery
+        // entry's `data`, one per group flush, and applies to every value it carries — the
+        // same read the production oracle-collector uses. A per-value `timestamp` wins if the
+        // provider ever adds one; 0 when absent, and the consumer substitutes the publish time.
+        const entryTsMs = Number(entry?.data?.timestamp ?? 0) || 0;
+        for (const v of entry?.data?.values || []) {
+          const sid: string = v.sid || "";
+          const tsMs = Number(v.timestamp ?? entryTsMs) || 0;
+          if (sid.startsWith("fwd_") && Number.isFinite(Number(v.v))) this.#fwd.set(Number(sid.slice(4)), { v: Number(v.v), tsMs });
+          else if (sid.startsWith("svi_")) this.#svi.set(Number(sid.slice(4)), { svi: { alpha: +v.alpha || 0, beta: +v.beta || 0, rho: +v.rho || 0, m: +v.m || 0, sigma: +v.sigma || 0 }, tsMs });
+          else if (sid.startsWith("spot_") && Number.isFinite(Number(v.v))) this.#bsSpot = { v: Number(v.v), tsMs };
+        }
       }
     });
     ws.on("error", (e) => console.warn("[bs] socket error:", String(e).slice(0, 120)));
@@ -168,13 +210,21 @@ export class DirectWsSource implements MarketSource {
     if (!ws) return;
     const fmt = { timestamp: "ms", hexify: false, decimals: 9 };
     const active = this.#expiries.filter((ms) => ms > Date.now()); // future-only; passed boundaries evicted
-    this.#bsSubId += 2;
+    this.#bsSubId += 3;
+    // The signed BS spot series (`index.px`) — a real observation with its own model time,
+    // NOT the Pyth spot relabeled; the on-chain BS spot slot is fed from this. Re-sent with
+    // the grid for simplicity (replace-wholesale makes it idempotent).
     ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId, method: "subscribe", params: [{
+      frequency: "1000ms", retransmit_frequency: "1000ms", client_id: "spot",
+      batch: [{ sid: "spot_BTC", feed: "index.px", asset: "spot", base_asset: "BTC", quote_asset: "USD" }],
+      options: { format: fmt },
+    }] }));
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId + 1, method: "subscribe", params: [{
       frequency: "1000ms", client_id: "forwards",
       batch: active.map((ms) => ({ sid: `fwd_${ms}`, feed: "mark.px", asset: "future", base_asset: "BTC", expiry: isoSec(ms) })),
       options: { format: fmt },
     }] }));
-    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId + 1, method: "subscribe", params: [{
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId + 2, method: "subscribe", params: [{
       frequency: "1000ms", retransmit_frequency: "1000ms", client_id: "svi",
       batch: active.map((ms) => ({ sid: `svi_${ms}`, feed: "model.params", exchange: "composite", asset: "option", base_asset: "BTC", model: "SVI", expiry: isoSec(ms) })),
       options: { format: fmt },
@@ -193,14 +243,27 @@ export class DirectWsSource implements MarketSource {
   }
 
   latest(): MarketSnapshot | null {
-    if (this.#spot1e9 == null) return null;
-    const expiries = new Map<number, { forward: number; svi: Svi }>();
+    if (this.#spot1e9 == null || this.#bsSpot == null) return null;
+    const expiries = new Map<number, ExpiryData>();
     for (const ms of this.#expiries) {
       const forward = this.#fwd.get(ms);
       const svi = this.#svi.get(ms);
-      if (forward != null && svi) expiries.set(ms, { forward, svi });
+      if (forward != null && svi) {
+        expiries.set(ms, {
+          forward: forward.v,
+          forwardTsMs: forward.tsMs,
+          svi: svi.svi,
+          sviTsMs: svi.tsMs,
+        });
+      }
     }
-    return { spot1e9: this.#spot1e9, publishedAtMs: this.#spotMs, expiries };
+    return {
+      spot1e9: this.#spot1e9,
+      publishedAtMs: this.#spotMs,
+      bsSpot1e9: BigInt(Math.round(this.#bsSpot.v * 1e9)),
+      bsSpotTsMs: this.#bsSpot.tsMs,
+      expiries,
+    };
   }
 
   stop(): void {
@@ -248,7 +311,24 @@ export class ReplaySource implements MarketSource {
     if (this.#records.length === 0) return null;
     const h = this.#records[Math.min(this.#i, this.#records.length - 1)];
     this.#i++;
-    return { ...snapshotFrom(h, this.#wanted, true), publishedAtMs: BigInt(Date.now()) };
+    const snap = snapshotFrom(h, this.#wanted, true);
+    // Rebase EVERY clock by one offset so relative ages survive the replay. Refreshing only
+    // the envelope hands the store fresh batches whose model times still carry the
+    // recording's absolute age — the store accepts them and Predict immediately rejects
+    // them as stale.
+    const nowMs = Date.now();
+    const offsetMs = nowMs - Number(snap.publishedAtMs);
+    const shift = (tsMs: number): number => (tsMs > 0 ? tsMs + offsetMs : 0);
+    const expiries = new Map<number, ExpiryData>();
+    for (const [ms, e] of snap.expiries) {
+      expiries.set(ms, { ...e, forwardTsMs: shift(e.forwardTsMs), sviTsMs: shift(e.sviTsMs) });
+    }
+    return {
+      ...snap,
+      publishedAtMs: BigInt(nowMs),
+      bsSpotTsMs: shift(snap.bsSpotTsMs),
+      expiries,
+    };
   }
   stop(): void {}
 }

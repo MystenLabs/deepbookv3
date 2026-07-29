@@ -124,42 +124,45 @@ carry still lands on `latest` with its true age, where read-time freshness ages 
 
 A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvelope`).
 
-## Block Scholes Feeds
+## Block Scholes Stores
 
-Block Scholes data is split across three shared-object types:
+Block Scholes data lives in two per-underlying shared objects:
 
-- `block_scholes_spot_feed::BlockScholesSpotFeed`: one source-level spot stream
-  per Block Scholes source id.
-- `block_scholes_forward_feed::BlockScholesForwardFeed`: one source-level
-  forward object per Block Scholes source id, with per-expiry lanes.
-- `block_scholes_svi_feed::BlockScholesSVIFeed`: one source-level SVI object per
-  Block Scholes source id, with per-expiry lanes.
+- `block_scholes_store::BlockScholesValueStore`: latest spot and forward
+  observations, keyed by signed series id (spot and forward ride one signed
+  value batch and are separated only by their ids).
+- `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets,
+  keyed by signed series id (SVI arrives as its own signed batch).
 
-The spot feed wraps one `OracleLane`; the forward and SVI feeds keep a table of
-`expiry_ms -> OracleLane`. Every BS value still uses the same mutation pattern as
-Pyth: latest update, exact timestamp insert, and generic lane events.
+Writes are permissionless and enter only through `apply_value_batch` /
+`apply_svi_batch`, which take a batch type that only the Block Scholes
+verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid
+provider signature, so the relayer that lands it is untrusted. A series id
+names its own slot (`block_scholes_sid` derives ids from kind, underlying,
+value scale, and expiry), so nothing on the write path decides where a value
+belongs, and reads derive the id they want rather than accepting one from a
+caller.
 
-The BS payloads store raw source fields:
+Each stored observation carries three clocks: the provider model time the
+series data is "as of" (held fixed across retransmissions of an unchanged
+value; the provider's per-series replay key and the clock consumers price
+from), the batch envelope time (transport metadata, advancing on every
+provider flush), and the Sui execution time. A series' latest observation is
+ordered lexicographically on (model time, envelope time): newer model data
+always wins regardless of the order a relayer lands batches in, and an equal
+model time advances only with a fresher envelope — a retransmission updates
+transport metadata without making the data economically newer. A model time
+later than its own envelope is provider garbage and is skipped, mirroring the
+Pyth lane's `EFeedTimestampAfterEnvelope`; that bound is also what keeps
+Predict's SVI roll-down anchor strictly before any live market's expiry. The
+stores keep no aggregate liveness field: consumers assert freshness on each
+series' own `model_timestamp_ms`, and provider-wide liveness is monitored
+off-chain from the per-batch `BlockScholesBatchIngested` events.
 
-- `bs_source_id`
-- `expiry_ms` for forward and SVI feeds
-- spot, forward, or SVI params, depending on the feed
-
-Propbook intentionally does not enforce Predict's pricing-safe numeric envelope
-on BS ingestion. Consumers such as Predict must validate spot, forward, basis,
-SVI bounds, and liveness before using the values in pricing math.
-
-Important caveat: `block_scholes_oracle::update` is currently a stub verifier.
-Its `Update` values are forgeable until the real BS signature verifier replaces
-the stub. Permissionless BS live updates and exact inserts are not production-safe
-while this is true.
-
-Binding caveat: Propbook binds the source-level BS spot feed first, then binds
-the permanent forward/SVI surface pair with
-`registry::bind_block_scholes_surface_to_underlying`. That function asserts that
-the forward feed, SVI feed, and already-bound spot feed all share the same
-`bs_source_id`, so consumers do not accidentally combine BS spot/basis data from
-different sources for one underlying.
+Values are stored exactly as the verifier produced them (`u128`, provider
+scale). Propbook intentionally does not enforce Predict's pricing-safe numeric
+envelope on ingestion: consumers such as Predict must validate spot, forward,
+basis, SVI bounds, and liveness before pricing from the values.
 
 ## Registry And Identifiers
 
@@ -176,7 +179,7 @@ Identifier pattern:
 - Source id: source-native identifier, such as `pyth_source_id` or
   `bs_source_id`.
 - Propbook oracle object id: shared object id for the Propbook wrapper, such as
-  `propbook_pyth_id` or `propbook_block_scholes_spot_id`.
+  `propbook_pyth_id`.
 - Propbook underlying id: canonical underlying identifier chosen by Propbook
   governance, such as the id used to mean BTC.
 - Source underlying id: source-specific representation of the same underlying,
@@ -201,16 +204,12 @@ unbound intermediate state:
 
 - `replace_pyth_binding_for_underlying` replaces the active Pyth feed for one
   Propbook underlying.
-- `replace_block_scholes_bindings_for_underlying` replaces BS spot, forward, and
-  SVI atomically. All three replacement feeds must share one `bs_source_id`, so
-  consumers never read a mixed-source BS surface through the canonical lookup.
 
-If an underlying has only a BS spot binding and no forward/SVI surface yet, the
-atomic BS replacement call aborts because there is no complete surface to replace.
-Recover by creating the missing forward/SVI wrappers for the current spot source,
-binding that surface, then replacing all three BS bindings atomically. Predict
-market creation requires the full Pyth + BS set, so no Predict market can already
-depend on a spot-only Propbook state.
+Block Scholes stores sit outside the source catalog: a signed series names its
+own underlying, so `create_and_share_block_scholes_stores` creates the pair and
+records it as canonical in one admin-gated step, and an underlying keeps that
+pair for its lifetime — there is no store rebinding. Predict market creation
+requires Pyth bound plus both stores present.
 
 Source assignment remains sticky: once a source key has been assigned to an
 underlying, that source key can only be reused for the same underlying. Replacing
@@ -229,12 +228,10 @@ Typical discovery question:
 > What is the Propbook Pyth oracle object for BTC?
 
 Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
-equivalent BS spot lookup is
-`propbook_block_scholes_spot_id_for_underlying(registry, propbook_underlying_id)`.
-The BS surface lookups are
-`propbook_block_scholes_forward_id_for_underlying(registry, propbook_underlying_id)`
+Block Scholes store lookups are
+`propbook_block_scholes_value_store_id_for_underlying(registry, propbook_underlying_id)`
 and
-`propbook_block_scholes_svi_id_for_underlying(registry, propbook_underlying_id)`.
+`propbook_block_scholes_svi_store_id_for_underlying(registry, propbook_underlying_id)`.
 
 ## Events
 

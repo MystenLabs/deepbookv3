@@ -31,9 +31,7 @@ import {
     POOL_VAULT_ID,
     PROTOCOL_CONFIG_ID,
     address,
-    bindBlockScholesSurfaceToUnderlyingTx,
     bindFeedsToUnderlyingTx,
-    createBlockScholesSurfaceFeedsTx,
     createAccountTx,
     createExpiryMarketTx,
     depositToAccountTx,
@@ -54,6 +52,7 @@ import {
     requestSupplyTx,
     requestWithdrawTx,
     seedOracleTx,
+    setBlockScholesSignerTx,
     setCadenceConfigTx,
     setTemplateExpiryFeeConfigTx,
     setTemplateMaxAdmissionLeverageTx,
@@ -342,15 +341,6 @@ function booleanField(value: unknown): boolean {
     return Boolean(value);
 }
 
-function signedI64(value: any): string {
-    const fields = value?.fields ?? value ?? {};
-    const magnitude = BigInt(decimal(fields.magnitude ?? fields.value ?? 0));
-    const isNegative = booleanField(
-        fields.is_negative ?? fields.isNegative ?? fields.negative ?? false,
-    );
-    return signedValue(magnitude, isNegative);
-}
-
 function orderSequence(orderId: string): string {
     return (BigInt(orderId) & ORDER_SEQUENCE_MASK).toString();
 }
@@ -493,71 +483,39 @@ function normalizePythObservation(event: any): Record<string, unknown> {
     };
 }
 
-interface PendingBlockScholesObservation {
-    spot?: string;
-    forward?: string;
-    svi?: {
-        a: string;
-        b: string;
-        rho: string;
-        m: string;
-        sigma: string;
-    };
+// One oracle refresh lands as two `BlockScholesBatchIngested` events (one value
+// batch carrying spot + forward, one SVI batch). The event carries counts, not
+// values, so the parity row's values come from the refresh inputs on the scenario
+// row; the event assertions confirm the chain accepted every update. The values
+// remain chain-checked downstream: order/flush parity round-trips the stored
+// series through on-chain `load_live_pricer`.
+function assertBlockScholesBatchIngested(event: any): void {
+    const json = event.parsedJson ?? {};
+    const updateCount = BigInt(decimal(json.update_count));
+    const matched = BigInt(decimal(json.matched));
+    const applied = BigInt(decimal(json.applied));
+    if (updateCount === 0n || matched !== updateCount || applied !== updateCount) {
+        throw new Error(
+            `Block Scholes batch not fully applied: update_count=${updateCount} matched=${matched} applied=${applied}`,
+        );
+    }
 }
 
-// The on-chain BS feeds are split into spot, forward, and SVI observations. Keep
-// the parity artifact shape stable by collapsing the three events from one refresh
-// back into the synthetic surface update the Python replay emits.
-function completeBlockScholesObservation(
-    pending: PendingBlockScholesObservation,
-): Record<string, unknown> | null {
-    if (pending.spot === undefined || pending.forward === undefined || pending.svi === undefined) {
-        return null;
-    }
+// Rebuild the synthetic surface update the Python replay emits from the row's
+// own refresh inputs (a mint row carries them inline; every other action under
+// `oracleRefresh`).
+function blockScholesSurfaceUpdateFromRow(row: ScenarioRow): Record<string, unknown> {
+    const o = row.action === "oracle_mint_ptb" ? row : row.oracleRefresh;
     return {
         type: "block_scholes_surface_updated",
-        spot: pending.spot,
-        forward: pending.forward,
-        a: pending.svi.a,
-        b: pending.svi.b,
-        rho: pending.svi.rho,
-        m: pending.svi.m,
-        sigma: pending.svi.sigma,
+        spot: o.spot.toString(),
+        forward: o.forward.toString(),
+        a: signedValue(o.a, o.aNegative),
+        b: o.b.toString(),
+        rho: signedValue(o.rho, o.rhoNegative),
+        m: signedValue(o.m, o.mNegative),
+        sigma: o.sigma.toString(),
     };
-}
-
-function recordBlockScholesSpot(
-    pending: PendingBlockScholesObservation,
-    event: any,
-): Record<string, unknown> | null {
-    const raw = eventObservationValue(event);
-    pending.spot = decimal(raw.spot);
-    return completeBlockScholesObservation(pending);
-}
-
-function recordBlockScholesForward(
-    pending: PendingBlockScholesObservation,
-    event: any,
-): Record<string, unknown> | null {
-    const raw = eventObservationValue(event);
-    pending.forward = decimal(raw.forward);
-    return completeBlockScholesObservation(pending);
-}
-
-function recordBlockScholesSVI(
-    pending: PendingBlockScholesObservation,
-    event: any,
-): Record<string, unknown> | null {
-    const raw = eventObservationValue(event);
-    const svi = raw.svi?.fields ?? raw.svi ?? {};
-    pending.svi = {
-        a: signedI64(svi.a),
-        b: decimal(svi.b),
-        rho: signedI64(svi.rho),
-        m: signedI64(svi.m),
-        sigma: decimal(svi.sigma),
-    };
-    return completeBlockScholesObservation(pending);
 }
 
 function normalizeOrderMinted(event: any, orderRef: string | null): Record<string, unknown> {
@@ -587,7 +545,6 @@ function normalizePricingSourceTimestamps(json: any): Record<string, string> {
         block_scholes_spot_source_timestamp_ms: decimal(json.block_scholes_spot_source_timestamp_ms),
         block_scholes_forward_source_timestamp_ms: decimal(json.block_scholes_forward_source_timestamp_ms),
         block_scholes_svi_source_timestamp_ms: decimal(json.block_scholes_svi_source_timestamp_ms),
-        block_scholes_svi_params_timestamp_ms: decimal(json.block_scholes_svi_params_timestamp_ms),
     };
 }
 
@@ -780,7 +737,7 @@ function normalizeUpdates(
     mintOrderRefs = row.action === "oracle_mint_ptb" ? [row.orderRef] : [],
 ): Record<string, unknown>[] {
     const updates: Record<string, unknown>[] = [];
-    let pendingBs: PendingBlockScholesObservation = {};
+    let pendingBsBatches = 0;
     let mintIndex = 0;
     for (const event of receipt.events) {
         const fullType = String(event.type ?? "");
@@ -790,32 +747,14 @@ function normalizeUpdates(
             fullType.includes("::pyth_feed::RawSpot")
         )
             updates.push(normalizePythObservation(event));
-        else if (
-            fullType.includes("::oracle_lane::ObservationRecorded") &&
-            fullType.includes("::block_scholes_spot_feed::RawSpot")
-        ) {
-            const update = recordBlockScholesSpot(pendingBs, event);
-            if (update !== null) {
-                updates.push(update);
-                pendingBs = {};
-            }
-        } else if (
-            fullType.includes("::oracle_lane::ObservationRecorded") &&
-            fullType.includes("::block_scholes_forward_feed::RawForward")
-        ) {
-            const update = recordBlockScholesForward(pendingBs, event);
-            if (update !== null) {
-                updates.push(update);
-                pendingBs = {};
-            }
-        } else if (
-            fullType.includes("::oracle_lane::ObservationRecorded") &&
-            fullType.includes("::block_scholes_svi_feed::RawSVI")
-        ) {
-            const update = recordBlockScholesSVI(pendingBs, event);
-            if (update !== null) {
-                updates.push(update);
-                pendingBs = {};
+        else if (fullType.includes("::block_scholes_store::BlockScholesBatchIngested")) {
+            assertBlockScholesBatchIngested(event);
+            pendingBsBatches++;
+            // The second batch of a refresh (value, then SVI) completes the
+            // synthetic surface update.
+            if (pendingBsBatches === 2) {
+                updates.push(blockScholesSurfaceUpdateFromRow(row));
+                pendingBsBatches = 0;
             }
         } else if (name === "OrderLiquidated")
             updates.push(normalizeOrderLiquidated(event, aliases));
@@ -840,12 +779,8 @@ function normalizeUpdates(
         else if (name === "ExpiryProfitMaterialized")
             updates.push(normalizeExpiryProfitMaterialized(event));
     }
-    if (
-        pendingBs.spot !== undefined ||
-        pendingBs.forward !== undefined ||
-        pendingBs.svi !== undefined
-    ) {
-        throw new Error("incomplete split Block Scholes observation set in transaction events");
+    if (pendingBsBatches !== 0) {
+        throw new Error("incomplete Block Scholes batch pair in transaction events");
     }
     if (mintIndex !== mintOrderRefs.length) {
         throw new Error(`expected ${mintOrderRefs.length} OrderMinted events, saw ${mintIndex}`);
@@ -1323,9 +1258,9 @@ async function setupSimulation(
     const lifecycleCapId: string = lifecycleCapChange.objectId;
     console.log(`[${ts()}]   LifecycleCap: ${lifecycleCapId}`);
 
-    // Admin-approve the Propbook underlying and create the global Pyth + BS spot
-    // feeds. Per-expiry BS forward/SVI feeds are created once the next cadence
-    // expiry is known.
+    // Admin-approve the Propbook underlying, create the global Pyth feed, and
+    // create the underlying's Block Scholes store pair (canonical at creation —
+    // every expiry's series lives in these two stores, keyed by sid).
     result = await executeAndWait(
         registerUnderlyingAndCreateFeedsTx(1),
         "register_underlying_and_create_feeds",
@@ -1334,22 +1269,27 @@ async function setupSimulation(
         (change: any) =>
             change.type === "created" && change.objectType.includes("pyth_feed::PythFeed"),
     );
-    const bsSpotFeedChange = result.objectChanges.find(
+    const bsValueStoreChange = result.objectChanges.find(
         (change: any) =>
             change.type === "created" &&
-            change.objectType.includes("block_scholes_spot_feed::BlockScholesSpotFeed"),
+            change.objectType.includes("block_scholes_store::BlockScholesValueStore"),
+    );
+    const bsSviStoreChange = result.objectChanges.find(
+        (change: any) =>
+            change.type === "created" &&
+            change.objectType.includes("block_scholes_store::BlockScholesSVIStore"),
     );
     const pythFeedId: string = pythFeedChange.objectId;
-    const bsSpotFeedId: string = bsSpotFeedChange.objectId;
+    const bsValueStoreId: string = bsValueStoreChange.objectId;
+    const bsSviStoreId: string = bsSviStoreChange.objectId;
     console.log(`[${ts()}]   PythFeed: ${pythFeedId}`);
-    console.log(`[${ts()}]   BlockScholesSpotFeed: ${bsSpotFeedId}`);
-
-    // Admin-bind global Pyth and BS spot to the canonical underlying (separate tx:
-    // the feeds must already be shared).
-    await executeAndWait(
-        bindFeedsToUnderlyingTx({ pythFeedId, bsSpotFeedId }),
-        "bind_feeds_to_underlying",
+    console.log(
+        `[${ts()}]   BlockScholes stores: values=${bsValueStoreId} svi=${bsSviStoreId}`,
     );
+
+    // Admin-bind global Pyth to the canonical underlying (separate tx: the feed
+    // must already be shared).
+    await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind_feeds_to_underlying");
     console.log(`[${ts()}]   Global feeds bound to underlying`);
 
     await executeAndWait(
@@ -1384,33 +1324,10 @@ async function setupSimulation(
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
     console.log(`[${ts()}]   Pyth trusted signer configured`);
 
+    await executeAndWait(setBlockScholesSignerTx(), "set_block_scholes_signer");
+    console.log(`[${ts()}]   Block Scholes local signer registered`);
+
     const expectedExpiryMs = await nextOneMonthExpiryMs();
-    result = await executeAndWait(
-        createBlockScholesSurfaceFeedsTx(),
-        "create_block_scholes_surface_feeds",
-    );
-    const bsForwardFeedChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" &&
-            change.objectType.includes("block_scholes_forward_feed::BlockScholesForwardFeed"),
-    );
-    const bsSviFeedChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" &&
-            change.objectType.includes("block_scholes_svi_feed::BlockScholesSVIFeed"),
-    );
-    const bsForwardFeedId: string = bsForwardFeedChange.objectId;
-    const bsSviFeedId: string = bsSviFeedChange.objectId;
-    console.log(
-        `[${ts()}]   BlockScholes surface feeds: forward=${bsForwardFeedId} svi=${bsSviFeedId}`,
-    );
-
-    await executeAndWait(
-        bindBlockScholesSurfaceToUnderlyingTx({ bsForwardFeedId, bsSviFeedId }),
-        "bind_block_scholes_surface_feeds",
-    );
-    console.log(`[${ts()}]   BlockScholes surface feeds bound to underlying`);
-
     result = await executeAndWait(
         createExpiryMarketTx({
             poolVaultId,
@@ -1433,14 +1350,13 @@ async function setupSimulation(
     }
     console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId} expiry=${expiryMsString}`);
 
-    // Seed the split Block Scholes feeds + Pyth spot for the on-chain
-    // cadence-created expiry so pricing has fresh spot/forward/SVI inputs.
+    // Seed the Block Scholes stores + Pyth spot for the on-chain cadence-created
+    // expiry so pricing has fresh spot/forward/SVI inputs.
     await executeAndWait(
         await seedOracleTx({
             pythFeedId,
-            bsSpotFeedId,
-            bsForwardFeedId,
-            bsSviFeedId,
+            bsValueStoreId,
+            bsSviStoreId,
             expiry: expiryMs,
             spot: seed.spot,
             forward: seed.forward,
@@ -1497,9 +1413,8 @@ async function setupSimulation(
             protocolConfigId,
             expiryMarketId,
             pythFeedId,
-            bsSpotFeedId,
-            bsForwardFeedId,
-            bsSviFeedId,
+            bsValueStoreId,
+            bsSviStoreId,
             lifecycleCapId,
             expiry: expiryMs,
             spot: seed.spot,
@@ -1522,9 +1437,8 @@ async function setupSimulation(
         expiryMarketId,
         expiryMs: expiryMsString,
         pythFeedId,
-        bsSpotFeedId,
-        bsForwardFeedId,
-        bsSviFeedId,
+        bsValueStoreId,
+        bsSviStoreId,
         accountWrapperId,
         lifecycleCapId,
         initialExpiryCash: initialExpiryCash.toString(),
@@ -1542,9 +1456,8 @@ function mintParamsFromRow(row: MintRow, state: SimState, alignedStrike: bigint)
         protocolConfigId: state.protocolConfigId,
         wrapperId: state.accountWrapperId,
         pythFeedId: state.pythFeedId,
-        bsSpotFeedId: state.bsSpotFeedId,
-        bsForwardFeedId: state.bsForwardFeedId,
-        bsSviFeedId: state.bsSviFeedId,
+        bsValueStoreId: state.bsValueStoreId,
+        bsSviStoreId: state.bsSviStoreId,
         strike: alignedStrike,
         isUp: row.isUp,
         quantity: row.quantity,
@@ -1562,9 +1475,8 @@ async function executeStressMintBatch(
         () =>
             refreshOracleAndMintBatchTx({
                 pythFeedId: state.pythFeedId,
-                bsSpotFeedId: state.bsSpotFeedId,
-                bsForwardFeedId: state.bsForwardFeedId,
-                bsSviFeedId: state.bsSviFeedId,
+                bsValueStoreId: state.bsValueStoreId,
+                bsSviStoreId: state.bsSviStoreId,
                 expiry: BigInt(state.expiryMs),
                 spot: row.spot,
                 forward: row.forward,
@@ -1625,9 +1537,8 @@ async function executeRow(
                     protocolConfigId: state.protocolConfigId,
                     wrapperId: state.accountWrapperId,
                     pythFeedId: state.pythFeedId,
-                    bsSpotFeedId: state.bsSpotFeedId,
-                    bsForwardFeedId: state.bsForwardFeedId,
-                    bsSviFeedId: state.bsSviFeedId,
+                    bsValueStoreId: state.bsValueStoreId,
+                    bsSviStoreId: state.bsSviStoreId,
                     expiry: BigInt(state.expiryMs),
                     orderId,
                     closeQuantity: row.closeQuantity,
@@ -1729,9 +1640,8 @@ async function executeScenario(
                     protocolConfigId: state.protocolConfigId,
                     expiryMarketId: state.expiryMarketId,
                     pythFeedId: state.pythFeedId,
-                    bsSpotFeedId: state.bsSpotFeedId,
-                    bsForwardFeedId: state.bsForwardFeedId,
-                    bsSviFeedId: state.bsSviFeedId,
+                    bsValueStoreId: state.bsValueStoreId,
+                    bsSviStoreId: state.bsSviStoreId,
                     lifecycleCapId: state.lifecycleCapId,
                     expiry: BigInt(state.expiryMs),
                     spot: oracle.spot,

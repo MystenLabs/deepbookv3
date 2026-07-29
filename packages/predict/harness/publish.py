@@ -64,13 +64,24 @@ def rewrite_consumer(
     pyth_lazer_id: str,
     wormhole_local: Path,
     wormhole_id: str,
+    bs_oracle_local: Path,
+    bs_oracle_id: str,
     build_env: str = config.BUILD_ENV,
 ) -> None:
-    """propbook + predict: git pyth_lazer -> staged local, dep-replacements for both."""
+    """propbook + predict: git pyth_lazer/bs_oracle -> staged locals, dep-replacements for all.
+
+    The pubfile maps by source identity, so a git dep never resolves to a package
+    published from a staged path — every git dep needs the explicit redirect.
+    """
     text = toml_path.read_text()
     text = re.sub(
         r"pyth_lazer = \{ git[^}]*\}",
         f'pyth_lazer = {{ local = "{pyth_lazer_local}" }}',
+        text,
+    )
+    text = re.sub(
+        r"bs_oracle = \{ git[^}]*\}",
+        f'bs_oracle = {{ local = "{bs_oracle_local}" }}',
         text,
     )
     text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
@@ -80,6 +91,8 @@ def rewrite_consumer(
         f'published-at = "{pyth_lazer_id}", original-id = "{pyth_lazer_id}" }}\n'
         f'wormhole = {{ local = "{wormhole_local}", '
         f'published-at = "{wormhole_id}", original-id = "{wormhole_id}" }}\n'
+        f'bs_oracle = {{ local = "{bs_oracle_local}", '
+        f'published-at = "{bs_oracle_id}", original-id = "{bs_oracle_id}" }}\n'
     )
     toml_path.write_text(text)
 
@@ -158,6 +171,7 @@ def publish_closure(
     deps = workspace / "deps"
     wormhole_dir = deps / "wormhole"
     pyth_dir = deps / "pyth_lazer"
+    bs_oracle_dir = deps / "bs_oracle"
 
     packages: dict[str, str] = {}
     objects: dict[str, str | None] = {}
@@ -175,9 +189,8 @@ def publish_closure(
     objects["dusdc_currency"] = _created(ch, "coin_registry::Currency", "dusdc::DUSDC")
     objects["treasury_cap"] = _created(ch, "TreasuryCap")
 
-    # fixed_math, block_scholes_oracle (leaves)
+    # fixed_math (leaf)
     packages["fixed_math"] = _published_id(publish(pkg / "fixed_math"))
-    packages["block_scholes_oracle"] = _published_id(publish(pkg / "block_scholes_oracle"))
 
     # wormhole (git dep): env only. Capture the caps setup::complete consumes.
     wch = publish(wormhole_dir)
@@ -193,7 +206,16 @@ def publish_closure(
     packages["pyth_lazer"] = _published_id(pch)
     objects["pyth_lazer_upgrade_cap"] = _created(pch, "UpgradeCap")
 
-    # propbook: rewrite git pyth_lazer -> staged + dep-replacements, then publish
+    # bs_oracle (git dep): the real Block Scholes verifier, published unmodified.
+    # Its init shares a SignerRegistry and sends the publisher an AdminCap; the
+    # harness registers its per-instance local signer key via set_signer (TS setup)
+    # and signs every batch it submits.
+    bch = publish(bs_oracle_dir)
+    packages["block_scholes_oracle"] = _published_id(bch)
+    objects["bs_signer_registry"] = _created(bch, "registry::SignerRegistry")
+    objects["bs_admin_cap"] = _created(bch, "registry::AdminCap")
+
+    # propbook: rewrite git pyth_lazer/bs_oracle -> staged + dep-replacements, then publish
     inject_env(pkg / "propbook" / "Move.toml", chain_id)
     rewrite_consumer(
         pkg / "propbook" / "Move.toml",
@@ -201,6 +223,8 @@ def publish_closure(
         packages["pyth_lazer"],
         wormhole_dir,
         packages["wormhole"],
+        bs_oracle_dir,
+        packages["block_scholes_oracle"],
     )
     ch = _test_publish(client_config, pkg / "propbook", pubfile, linked=False, gas_budget=gas_budget)
     packages["propbook"] = _published_id(ch)
@@ -215,6 +239,8 @@ def publish_closure(
         packages["pyth_lazer"],
         wormhole_dir,
         packages["wormhole"],
+        bs_oracle_dir,
+        packages["block_scholes_oracle"],
     )
     ch = _test_publish(client_config, pkg / "predict", pubfile, linked=False, gas_budget=gas_budget)
     packages["predict"] = _published_id(ch)

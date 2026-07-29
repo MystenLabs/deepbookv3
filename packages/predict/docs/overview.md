@@ -39,7 +39,7 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 | `AccountWrapper` / `Account` | Account-package custody plus Predict app data: positions, stake mirror, builder attribution | shared wrapper |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
-Oracle data is **not** a Predict object: the `PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, and `BlockScholesSVIFeed` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed feed objects against Propbook's current canonical bindings for that underlying and then reads the expiry row from the forward/SVI surfaces.
+Oracle data is **not** a Predict object: the `PythFeed`, `BlockScholesValueStore`, and `BlockScholesSVIStore` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed oracle objects against Propbook's current canonical bindings for that underlying and then reads the expiry's forward and SVI series from the stores.
 
 Capabilities are owned objects: `AdminCap` (global policy, plus genesis-bootstrapping the pool), `MarketLifecycleCap` (market creation and the sole authority to start the pool flush), and `PauseCap` (one-way emergency brake). User/account authority comes from the account package: owner `Auth` gates live trading and direct account actions, while Predict app-auth gates permissionless settled automation. Block Scholes updates are submitted through propbook, not Predict. Detail in [architecture](./design/architecture.md).
 

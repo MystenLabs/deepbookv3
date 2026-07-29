@@ -17,7 +17,7 @@ Sui distinguishes three object dispositions. Predict uses all three deliberately
 - **Owned objects** belong to a single address and can only be used by that address's transactions. Predict's capabilities are owned objects, which is how delegated authority is granted and held.
 - **Derived objects** are created at a deterministic address from a parent's `UID` plus a typed key (`derived_object::claim`). Predict derives `BuilderCode` from the registry's `UID`; the account package derives `AccountWrapper` / `Account` identities from its own `AccountRegistry`.
 
-The protocol is constructed at package publish: the `registry` module's `init` creates and shares the `Registry`, creates and shares the `ProtocolConfig`, and transfers a single `AdminCap` to the deployer. The `plp` module's `init` registers the PLP coin type and creates and shares the `PoolVault`. Per-expiry `ExpiryMarket` objects are created later through a registry entrypoint. The oracle feeds (`PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, `BlockScholesSVIFeed`) are external objects created permissionlessly in the `propbook` package, not by Predict.
+The protocol is constructed at package publish: the `registry` module's `init` creates and shares the `Registry`, creates and shares the `ProtocolConfig`, and transfers a single `AdminCap` to the deployer. The `plp` module's `init` registers the PLP coin type and creates and shares the `PoolVault`. Per-expiry `ExpiryMarket` objects are created later through a registry entrypoint. The oracle objects (`PythFeed`, `BlockScholesValueStore`, `BlockScholesSVIStore`) are external objects owned by the `propbook` package, not by Predict — the Pyth feed is created permissionlessly, while the Block Scholes store pair is created admin-gated, once per underlying.
 
 ## Shared objects
 
@@ -102,9 +102,8 @@ graph TD
     subgraph propbook (external oracle package)
         OR[OracleRegistry<br/>canonical bindings]
         PF[PythFeed<br/>global spot]
-        BSS[BlockScholesSpotFeed<br/>source spot]
-        BSF[BlockScholesForwardFeed<br/>source forward surface]
-        BSV[BlockScholesSVIFeed<br/>source SVI surface]
+        BVS[BlockScholesValueStore<br/>spot + forward series]
+        BSV[BlockScholesSVIStore<br/>SVI series]
     end
 
     subgraph Owned caps
@@ -124,13 +123,11 @@ graph TD
     AREG -->|Predict app-auth<br/>for settled automation| AW
 
     OR -->|canonical Pyth| PF
-    OR -->|canonical BS spot| BSS
-    OR -->|canonical BS forward| BSF
-    OR -->|canonical BS SVI| BSV
+    OR -->|canonical BS value store| BVS
+    OR -->|canonical BS SVI store| BSV
     EM -.->|stores underlying id| OR
     EM -.->|live pricing reads| PF
-    EM -.->|live pricing reads| BSS
-    EM -.->|live pricing reads| BSF
+    EM -.->|live pricing reads| BVS
     EM -.->|live pricing reads| BSV
 
     ADMIN --> CFG
@@ -151,27 +148,26 @@ graph TD
 
 ## The binding mesh
 
-A priced trade composes an `ExpiryMarket`, Propbook's `OracleRegistry`, the current propbook feeds (`PythFeed`, `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, `BlockScholesSVIFeed`), and an account loaded from `AccountWrapper`; the protocol must guarantee they belong together:
+A priced trade composes an `ExpiryMarket`, Propbook's `OracleRegistry`, the current propbook oracle objects (`PythFeed`, `BlockScholesValueStore`, `BlockScholesSVIStore`), and an account loaded from `AccountWrapper`; the protocol must guarantee they belong together:
 
 - **Underlying approval.** Predict's `Registry`, through its `MarketManager.underlying_configs`, records each admin-approved Propbook underlying ID and deployment watermarks. This row gates which underlyings Predict will build markets on; Propbook owns source IDs, source-object discovery, and canonical source-to-underlying binding.
-- **Creation-time coverage.** `create_and_share_expiry_market` takes Propbook's `&OracleRegistry` and a `propbook_underlying_id`, then asserts that Propbook currently has canonical Pyth, BS spot, BS forward, and BS SVI bindings for that underlying and deployable expiry. It snapshots the underlying ID, cadence tick size, and admission tick size (plus the deployable expiry and reference-tick source timestamp). Pairing spot, forward, and SVI to one underlying/expiry is therefore a Propbook registry claim, not a market-deployer claim.
-- **Live priced-flow binding.** Every priced flow passes the current Propbook registry plus feed objects to `pricing::load_live_pricer`, which checks the feed object IDs against Propbook's current canonical bindings for the market's underlying and expiry.
+- **Creation-time coverage.** `create_and_share_expiry_market` takes Propbook's `&OracleRegistry` and a `propbook_underlying_id`, then asserts that Propbook currently has canonical Pyth, BS value store, and BS SVI store bindings for that underlying and deployable expiry. It snapshots the underlying ID, cadence tick size, and admission tick size (plus the deployable expiry and reference-tick source timestamp). Pairing spot, forward, and SVI to one underlying/expiry is therefore a Propbook registry claim, not a market-deployer claim.
+- **Live priced-flow binding.** Every priced flow passes the current Propbook registry plus oracle objects to `pricing::load_live_pricer`, which checks the object IDs against Propbook's current canonical bindings for the market's underlying and expiry.
 - **Live pricing liveness.** `pricing::load_live_pricer` rejects a live price for a market whose expiry has passed. The keeper composes `expiry_market::try_settle` before settlement-dependent consumers; it records the exact Propbook Pyth spot and terminal payout liability when available. If exact data is still absent, the past-expiry market remains pending settlement, standalone rebalance moves no cash, and the market cannot be live-valued.
 - **Market → pool.** `create_and_share_expiry_market` registers the new expiry in `PoolVault`'s active-expiry ledger as a zero-cash accounting row. The market is not mintable until `plp::rebalance_expiry_cash` funds it from idle; the expiry never pulls from the pool itself.
 - **Account → market.** Positions are keyed by `(expiry_market_id, order_id)` inside Predict account data, so an order minted by one expiry can only be redeemed against that same expiry's market. Owner auth or Predict app-auth controls who can load the account for the flow; the position key controls which market/order pair the loaded account may mutate.
 
-`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or exact-history `ExactSpotRead`; the propbook feeds own their source payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
+`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or exact-history `ExactSpotRead`; the propbook oracle objects own their stored payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
 
 ## Oracle feeds (external, in `propbook`)
 
 The live oracle data is fully outside Predict, in standalone, Predict-unaware shared objects in the `propbook` package. Predict reads them; it owns no oracle object, writer capability, or ingest path.
 
 - **`propbook::pyth_feed::PythFeed`** — one global source-native Pyth payload per Pyth Lazer feed ID plus exact timestamp inserts. Updated permissionlessly by anyone holding a verified `pyth_lazer::Update` (`update`); the verified update is its own provenance proof, so there is no writer cap. Predict reads `normalized_spot()` and the read's `source_timestamp_ms`, while raw source fields remain available through raw getters.
-- **`propbook::block_scholes_spot_feed::BlockScholesSpotFeed`** — one source-level BS spot payload plus exact timestamp inserts.
-- **`propbook::block_scholes_forward_feed::BlockScholesForwardFeed`** — one source-level BS forward surface with per-expiry rows plus exact timestamp inserts.
-- **`propbook::block_scholes_svi_feed::BlockScholesSVIFeed`** — one source-level BS SVI surface with per-expiry rows plus exact timestamp inserts.
+- **`propbook::block_scholes_store::BlockScholesValueStore`** — one per-underlying store of the latest BS spot and per-expiry forward observations, keyed by signed series id. Updated permissionlessly through a verified `bs_oracle` value batch — the batch type is the provenance proof, so there is no writer cap.
+- **`propbook::block_scholes_store::BlockScholesSVIStore`** — one per-underlying store of the latest per-expiry BS SVI parameter sets, same signed-batch gating.
 
-Propbook binds the BS spot feed first, then binds the permanent forward/SVI surface pair with a same-`bs_source_id` invariant. `pricing.move` owns all raw feed ingress: it issues exact-history Pyth reads for reference tick and settlement, and resolves the live forward from the full feed set. Which source builds the live forward is the admin setting `use_pyth_spot_for_forward`. While it is set (the default), a present and fresh normalized Pyth spot gives `forward = pyth_spot * (bs.forward / bs.spot)`, a missing, stale, or non-positive/unrepresentable spot falls back to the normalized Block Scholes `forward` for the market expiry, and an oversized normalized Pyth spot aborts under Predict's pricing envelope. While it is clear, that Block Scholes `forward` is used on every load and the Pyth spot is read for provenance only — so the envelope's *Pyth* spot ceiling is never reached, because nothing consumes the value (the envelope's other bounds, including the same ceiling applied to the Block Scholes forward, still run on every load). BS spot and forward must be fresh under `block_scholes_price_freshness_ms`, and SVI must be fresh under the looser `block_scholes_svi_freshness_ms`. The feeds carry their own package version and a forward-only `migrate`; Predict does **not** gate them under its version set. See [pricing and oracles](../concepts/pricing-and-oracles.md).
+Propbook creates an underlying's store pair once through its registry and records it as canonical; Predict checks the stores it is handed against that binding. `pricing.move` owns all raw oracle ingress: it issues exact-history Pyth reads for reference tick and settlement, and resolves the live forward from the full feed set. Which source builds the live forward is the admin setting `use_pyth_spot_for_forward`. While it is set (the default), a present and fresh normalized Pyth spot gives `forward = pyth_spot * (bs.forward / bs.spot)`, a missing, stale, or non-positive/unrepresentable spot falls back to the normalized Block Scholes `forward` for the market expiry, and an oversized normalized Pyth spot aborts under Predict's pricing envelope. While it is clear, that Block Scholes `forward` is used on every load and the Pyth spot is read for provenance only — so the envelope's *Pyth* spot ceiling is never reached, because nothing consumes the value (the envelope's other bounds, including the same ceiling applied to the Block Scholes forward, still run on every load). BS spot and forward must be fresh under `block_scholes_price_freshness_ms`, and SVI must be fresh under the looser `block_scholes_svi_freshness_ms` — freshness and the SVI roll-down anchor both key on each observation's own model time; the batch-envelope time is transport metadata pricing never reads. The stores carry their own package version and a forward-only `migrate`; Predict does **not** gate them under its version set. See [pricing and oracles](../concepts/pricing-and-oracles.md).
 
 ## The pool, NAV, and the async LP layer
 

@@ -12,7 +12,7 @@ import { getSigner, getSignerForAddress } from "./env.js";
 import { atomicWriteFile } from "./io.js";
 import { type MarketSource, DirectWsSource, HubSource, ReplaySource } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
-import { buildOracleRefreshGridTx, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
+import { buildOracleRefreshGridTx, clampedPythTimestampMs, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
 
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = run until SIGTERM
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
@@ -54,7 +54,7 @@ function makeSource(): { source: MarketSource; mode: string } {
 
 async function main() {
   const feeds = await waitForFeeds();
-  console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviFeedId.slice(0, 10)}`);
+  console.log(`[updater] feeds from keeper: pyth=${feeds.pythFeedId.slice(0, 10)} svi=${feeds.bsSviStoreId.slice(0, 10)}`);
 
   // Warm a ROLLING grid of boundary expiries. GRID_SPEC = "periodMs:count,..." (the launcher sets
   // it from the keeper's cadence set). gridNow() = the next `count` boundaries of each period from
@@ -85,31 +85,71 @@ async function main() {
   const start = Date.now();
   let pushes = 0;
   let skips = 0;
+  // Dual-clock accounting: per series, how often the provider re-sent an unchanged model time
+  // (a pinned retransmission) vs advanced it. This is the empirical probe for the on-chain
+  // model-time freshness contract — a provider that pins a series past the freshness window
+  // would halt pricing, and this summary is where that behavior becomes visible.
+  const lastFwdTs = new Map<number, number>();
+  const lastSviTs = new Map<number, number>();
+  let lastBsSpotTs = 0;
+  let pinnedSpot = 0;
+  let pinnedFwd = 0;
+  let pinnedSvi = 0;
+  let missingTs = 0;
   while (!shutdown && (DURATION_MS === 0 || Date.now() - start < DURATION_MS)) {
     await sleep(LOOP_MS);
     source.ensureExpiries(gridNow()); // roll the warmed grid forward as boundaries pass
     const snap = source.latest();
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
-    const ts = await clampedSourceTimestampMs(snap.publishedAtMs);
+    // The envelope is when WE (the relayer) package the batch: base it on the freshest
+    // input clock so no series' model time postdates it merely from cross-stream skew.
+    let latestInputMs = Number(snap.publishedAtMs);
+    if (snap.bsSpotTsMs > latestInputMs) latestInputMs = snap.bsSpotTsMs;
+    for (const e of snap.expiries.values()) {
+      if (e.forwardTsMs > latestInputMs) latestInputMs = e.forwardTsMs;
+      if (e.sviTsMs > latestInputMs) latestInputMs = e.sviTsMs;
+    }
+    const ts = await clampedSourceTimestampMs(BigInt(latestInputMs));
     if (ts === null) { skips++; continue; }
-    const grid = [...snap.expiries.entries()].map(([expiry, e]) => ({
-      expiry: BigInt(expiry),
-      forward: to1e9(e.forward),
-      svi: {
-        a: to1e9(Math.abs(e.svi.alpha)), aNegative: e.svi.alpha < 0,
-        b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
-        rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
-        m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
-      },
-    }));
+    // Pyth rides its OWN stream clock, not the envelope above: stamping the cached Pyth
+    // value with the cross-stream max would keep a stalled Pyth stream artificially fresh
+    // on-chain. A stalled stream returns null here — the push proceeds without the Pyth
+    // leg and the feed ages out honestly, keeping the BS-forward fallback exercisable.
+    const pythTs = await clampedPythTimestampMs(snap.publishedAtMs);
+    if (snap.bsSpotTsMs !== 0 && snap.bsSpotTsMs === lastBsSpotTs) pinnedSpot++;
+    if (snap.bsSpotTsMs === 0) missingTs++;
+    lastBsSpotTs = snap.bsSpotTsMs;
+    const grid = [...snap.expiries.entries()].map(([expiry, e]) => {
+      if (e.forwardTsMs === 0 || e.sviTsMs === 0) missingTs++;
+      if (lastFwdTs.get(expiry) === e.forwardTsMs && e.forwardTsMs !== 0) pinnedFwd++;
+      if (lastSviTs.get(expiry) === e.sviTsMs && e.sviTsMs !== 0) pinnedSvi++;
+      lastFwdTs.set(expiry, e.forwardTsMs);
+      lastSviTs.set(expiry, e.sviTsMs);
+      return {
+        expiry: BigInt(expiry),
+        forward: to1e9(e.forward),
+        forwardTsMs: BigInt(e.forwardTsMs),
+        svi: {
+          a: to1e9(Math.abs(e.svi.alpha)), aNegative: e.svi.alpha < 0,
+          b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
+          rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
+          m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
+        },
+        sviTsMs: BigInt(e.sviTsMs),
+      };
+    });
     try {
       const digest = await submit(
         buildOracleRefreshGridTx(
           {
-            pythFeedId: feeds.pythFeedId, bsSpotFeedId: feeds.bsSpotFeedId,
-            bsForwardFeedId: feeds.bsForwardFeedId, bsSviFeedId: feeds.bsSviFeedId,
+            pythFeedId: feeds.pythFeedId,
+            bsValueStoreId: feeds.bsValueStoreId,
+            bsSviStoreId: feeds.bsSviStoreId,
           },
-          snap.spot1e9, grid, ts,
+          snap.spot1e9,
+          pythTs,
+          { value1e9: snap.bsSpot1e9, tsMs: BigInt(snap.bsSpotTsMs) },
+          grid, ts,
         ),
         signer,
       );
@@ -118,6 +158,8 @@ async function main() {
       // spurious guard aborts that look like harness failures.
       atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
         spot1e9: snap.spot1e9.toString(),
+        bsSpot1e9: snap.bsSpot1e9.toString(),
+        bsSpotTsMs: snap.bsSpotTsMs,
         publishedAtMs: ts.toString(),
         expiries: Object.fromEntries([...snap.expiries.entries()]),
       }));
@@ -131,6 +173,10 @@ async function main() {
   }
   source.stop();
   console.log(`\n[updater] done: ${pushes} pushes, ${skips} skips over ${((Date.now() - start) / 1000).toFixed(0)}s`);
+  console.log(
+    `[updater] dual-clock: ${pinnedSpot} pinned spot + ${pinnedFwd} pinned fwd + ${pinnedSvi} pinned svi retransmissions observed` +
+    (missingTs > 0 ? ` (${missingTs} entries lacked a provider timestamp — signed at the envelope)` : ""),
+  );
   if (pushes === 0 && mode !== "replay") throw new Error("no successful pushes");
   console.log("=== UPDATER OK: real-data oracle stream landed on-chain ===");
 }

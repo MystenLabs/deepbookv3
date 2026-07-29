@@ -4,16 +4,15 @@ Predict prices its range digitals (binary options) off external Propbook feeds a
 
 ## Propbook feeds
 
-Predict separates the *spot* of the underlying asset, the forward surface, and the SVI shape of the implied distribution into separate permanent `propbook` feed objects. Forward and SVI values are keyed by expiry inside those feeds. The feeds are permissionless to update — the design intent is that a verified provider payload is its own provenance proof (the current `block_scholes_oracle` payload is an unvalidated stub until the production verifier lands; see risks.md) — and none of them knows anything about Predict, markets, expiries, or positions.
+Predict separates the *spot* of the underlying asset, the forward surface, and the SVI shape of the implied distribution into permanent `propbook` oracle objects. Updates are permissionless: a verified provider payload is its own provenance proof — Pyth through its on-chain verifier, Block Scholes through the `bs_oracle` signature verifier, whose batch types only it can mint — so the relayer that lands one is untrusted. None of these objects knows anything about Predict, markets, or positions.
 
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |
 | Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
-| Block Scholes spot | `propbook::block_scholes_spot_feed::BlockScholesSpotFeed` | One source-level BS spot stream plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
-| Block Scholes forward | `propbook::block_scholes_forward_feed::BlockScholesForwardFeed` | One source-level forward object with per-expiry streams plus exact timestamp inserts | `normalized_forward(expiry_ms)` and its `OracleRead` timestamp |
-| SVI params | `propbook::block_scholes_svi_feed::BlockScholesSVIFeed` | One source-level SVI object with per-expiry streams plus exact timestamp inserts | `normalized_svi(expiry_ms)` and its `OracleRead` timestamps, plus `params_timestamp_ms(expiry_ms)` |
+| Block Scholes spot + forward | `propbook::block_scholes_store::BlockScholesValueStore` | One per-underlying store of the latest spot and per-expiry forward observations, keyed by signed series id | `spot()` / `forward(expiry_ms)` and each read's `model_timestamp_ms` |
+| SVI params | `propbook::block_scholes_store::BlockScholesSVIStore` | One per-underlying store of the latest per-expiry SVI parameter sets, keyed by signed series id | `svi(expiry_ms)` and its `model_timestamp_ms` |
 
-The `pricing` module is a stateless read layer over these feeds. It resolves them on demand, checks BS price and SVI freshness, computes prices, and never mutates feed, pool, expiry, or position state.
+The `pricing` module is a stateless read layer over these objects. It resolves them on demand, checks BS price and SVI freshness, computes prices, and never mutates oracle, pool, expiry, or position state.
 
 ### Pyth Lazer spot (`PythFeed`)
 
@@ -32,13 +31,13 @@ Because that window is measured against generation time, a Pyth stall longer tha
 
 ### Block Scholes spot, forward, and SVI
 
-Block Scholes data is split into three feed types. A `BlockScholesSpotFeed`, `BlockScholesForwardFeed`, and `BlockScholesSVIFeed` each exist once per BS source id. The forward and SVI feeds keep per-expiry rows internally, so the oracle objects are permanent while updates can target any expiry. The Propbook registry binds the source-level BS spot first, then binds the permanent forward/SVI surface pair with `bind_block_scholes_surface_to_underlying`, which asserts that the forward feed, SVI feed, and already-bound spot feed all share the same `bs_source_id`.
+Block Scholes data lives in two per-underlying stores. A `BlockScholesValueStore` holds the latest spot and per-expiry forward observations; a `BlockScholesSVIStore` holds the latest per-expiry SVI parameter sets. Spot and forward share one store because they arrive in one signed value batch; SVI arrives as its own signed batch. Every observation is keyed by the series id the provider signed — an id that encodes kind, underlying, value scale, and expiry — so a valid observation can only ever land in the slot it was signed for, and Predict derives the id it wants rather than trusting routing from the caller. The Propbook registry creates an underlying's store pair once, admin-gated, and records it as canonical; Predict checks the store it is handed against that binding.
 
-Predict uses the latest fresh BS spot and the latest fresh expiry forward to compute the **basis** = `forward / spot`. That basis lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)). The spot and forward are independent lanes, so they have independent timestamps, but both must be fresh under the BS price freshness window before Predict uses either one.
+Predict uses the latest fresh BS spot and the latest fresh expiry forward to compute the **basis** = `forward / spot`. That basis lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)). Spot and forward are independent series with independent clocks, but both must be fresh under the BS price freshness window before Predict uses either one.
 
-The SVI curve is described by five stochastic-volatility-inspired parameters in `SVIParams`:
+The SVI curve is described by five stochastic-volatility-inspired parameters, stored source-native (`u128` magnitude-plus-sign) and narrowed to Predict's pricing widths where the `Pricer` is built:
 
-| Param | Type | Role in `w(k)` |
+| Param | Pricing type | Role in `w(k)` |
 | --- | --- | --- |
 | `a` | `I64` (signed) | Added directly to total variance |
 | `b` | `u64` | Scales the wing term |
@@ -48,11 +47,11 @@ The SVI curve is described by five stochastic-volatility-inspired parameters in 
 
 `a`, `rho`, and `m` are signed because the baseline variance, wing tilt, and smile-center offset can each point either direction; `b` and `sigma` remain unsigned. `I64` is the signed fixed-point type from the shared `fixed_math` package (the renamed `predict_math`), a magnitude-plus-sign type with normalized zero. (The "Role" column describes each parameter's place in the variance formula below; the standard raw-SVI reading — `a` baseline variance, `b` wing slope, `rho` skew, `m` horizontal shift, `sigma` curvature — is consistent with it.)
 
-SVI is its own per-expiry lane and has a looser freshness threshold than BS spot/forward. Its normalized `OracleRead` retains the standard timestamps: `source_timestamp_ms` is the latest accepted provider-envelope timestamp and `update_timestamp_ms` is when that envelope landed on chain. The feed separately exposes `params_timestamp_ms`, the first source timestamp that carried the current exact normalized five-parameter tuple. A newer retransmit of the same normalized tuple advances the read timestamps while preserving the parameter anchor; changing any one parameter resets the anchor to the new source timestamp. A push whose publisher timestamp does not advance its lane is a clean no-op rather than an abort, so one transaction can refresh multiple BS feeds without an ordering race on one non-advancing feed reverting the whole batch.
+SVI is its own per-expiry series and has a looser freshness threshold than BS spot/forward. Each stored observation carries the provider's two clocks directly: `model_timestamp_ms` is the time the series data is "as of" — the clock pricing freshness asserts against and the SVI roll-down anchors on — and `published_at_ms` is the batch envelope time, transport metadata advancing on every provider flush. A retransmission of an unchanged tuple arrives with a newer envelope and its original model time, so it refreshes nothing economically: data the provider has not re-derived within the freshness window ages out and pricing halts. A batch whose entries do not advance a series is a clean skip rather than an abort, so concurrent relayers and replayed batches cannot fail each other or roll a series back.
 
-The feed validates source identity and records the source-native payload. It does not impose Predict's full pricing-safe envelope at ingest; Predict applies its own read-time checks before using the row for pricing.
+The stores validate the series id and record the source-native payload. They do not impose Predict's pricing-safe envelope at ingest; Predict applies its own read-time checks before using a row for pricing.
 
-The feed also exposes `insert_at` for exact timestamp history. Predict reads that history for terminal settlement through `normalized_spot_at(expiry)` (see [Settlement](#settlement)).
+Terminal settlement reads exact Pyth history through `normalized_spot_at(expiry)` (see [Settlement](#settlement)); the Block Scholes stores keep latest values only.
 
 ## From SVI to a range probability
 
@@ -73,14 +72,14 @@ The endpoints carry sentinel handling so open-ended ranges work without special-
 
 ### SVI remaining-time roll-down
 
-The provider's SVI `a` and `b` values describe variance over the horizon that remained when the current tuple first appeared. Let `T_params` be that tuple's `params_timestamp_ms`, `T_expiry` the market expiry, and `t` the current Sui clock. Before evaluating any strike, Predict derives:
+The provider's SVI `a` and `b` values describe variance over the horizon that remained when the current tuple first appeared. Let `T_params` be that tuple's `model_timestamp_ms`, `T_expiry` the market expiry, and `t` the current Sui clock. Before evaluating any strike, Predict derives:
 
     remaining_ms = T_expiry - t
     anchor_tte_ms = T_expiry - T_params
     a_eff_1e18 = sign(a) × floor(abs(a) × 1e9 × remaining_ms / anchor_tte_ms)
     b_eff_1e18 = floor(b × 1e9 × remaining_ms / anchor_tte_ms)
 
-The multiplications use `u256` intermediates and produce 1e18-scaled `u128` magnitudes; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the parameter anchor the tuple is unchanged at 1e18 precision; an identical provider retransmit refreshes the feed's source timestamp but does not move the anchor, so elapsed time continues to reduce `a_eff` and `b_eff`. A changed normalized tuple establishes a new anchor. Live pricing is already forbidden at or after expiry.
+The multiplications use `u256` intermediates and produce 1e18-scaled `u128` magnitudes; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the parameter anchor the tuple is unchanged at 1e18 precision; an identical provider retransmit refreshes only the stored observation's envelope/transport timestamp — neither the anchor nor the economic source time move, and freshness keys on that same model timestamp, so elapsed time continues to reduce `a_eff` and `b_eff` until the tuple either ages out of the SVI freshness window or the provider re-derives it, which carries a new model anchor. Live pricing is already forbidden at or after expiry.
 
 The raw tuple must pass Predict's existing pricing envelope before roll-down. If fixed-point flooring makes the effective per-strike total variance non-positive before expiry, the existing `ENonPositiveVariance` quote guard aborts. This policy addresses the age of an unchanged variance-to-expiry tuple; it does not claim that the provider's near-expiry calibration is accurate.
 
@@ -119,9 +118,9 @@ flowchart TD
 
 The rules:
 
-- **`use_pyth_spot_for_forward` picks the formula.** This admin setting (default on) decides whether the Pyth spot enters live pricing at all. With it off, the forward is the fresh `BlockScholesForwardFeed` value on every load, the Pyth spot is read but unused, and the two rules below do not apply. Calibration is what moves this setting. The two inputs trade off along axes that have not been measured against each other: the Block Scholes forward is the model's own forward, while the Pyth spot is the higher-frequency price and is also what settlement prints against. Neither the accuracy comparison nor the latency comparison is recorded under `predeploy/evidence/` yet, which is why the choice is a setting rather than a decision. See [configuration](../design/configuration.md) for how the setting is applied.
+- **`use_pyth_spot_for_forward` picks the formula.** This admin setting (default on) decides whether the Pyth spot enters live pricing at all. With it off, the forward is the fresh Block Scholes forward observation on every load, the Pyth spot is read but unused, and the two rules below do not apply. Calibration is what moves this setting. The two inputs trade off along axes that have not been measured against each other: the Block Scholes forward is the model's own forward, while the Pyth spot is the higher-frequency price and is also what settlement prints against. Neither the accuracy comparison nor the latency comparison is recorded under `predeploy/evidence/` yet, which is why the choice is a setting rather than a decision. See [configuration](../design/configuration.md) for how the setting is applied.
 - **Pyth spot is canonical for spot when fresh and usable.** With the setting on, when `normalized_spot()` returns a positive spot and its source timestamp is fresh, the live forward is rebuilt from it: `forward = pyth_spot × basis(expiry)`. This anchors valuation to the highest-frequency price while still using Block Scholes for the forward shape.
-- **Missing, stale, or unusable Pyth spot falls back to Block Scholes.** With the setting on, if Pyth has no normalized latest spot, the normalized spot is non-positive/unrepresentable, or its source timestamp is stale, pricing falls back to the fresh `BlockScholesForwardFeed` value directly. The protocol keeps pricing rather than halting, on the second feed's recent forward.
+- **Missing, stale, or unusable Pyth spot falls back to Block Scholes.** With the setting on, if Pyth has no normalized latest spot, the normalized spot is non-positive/unrepresentable, or its source timestamp is stale, pricing falls back to the fresh Block Scholes forward observation directly. The protocol keeps pricing rather than halting, on the second source's recent forward.
 - **Oversized normalized Pyth spot is still rejected.** A normalized Pyth spot above Predict's pricing envelope aborts with `EPythSpotInvalid`; this is a consumer-side fixed-point safety bound, not a Propbook validity rule. It is only reached on the re-anchoring branch, since that is the only branch that uses the value.
 - **The Block Scholes inputs have no fallback.** BS spot, BS forward, and SVI must be present and fresh under every setting. An absent input — never published, or a stored value that does not normalize (e.g. zero) — aborts with `EBlockScholesPriceUnavailable` (spot/forward) or `EBlockScholesSVIUnavailable` (SVI); a present-but-stale input aborts with `EBlockScholesPriceStale` or `EBlockScholesSVIStale`.
 - **The Pyth source timestamp is snapshotted either way.** `Pricer` retains the source timestamp of the current normalized Pyth observation (`0` when there is no usable one) whether or not the forward used it, so trade events report the same oracle provenance under both settings.
@@ -141,11 +140,11 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 `pricing` reads feed state on demand and validates it at read time rather than trusting a writer kept it fresh. The relevant bounds:
 
-**Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against the `source_timestamp_ms` of its normalized `OracleRead`:
+**Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against its observation's source time (Pyth's normalized `source_timestamp_ms`; the Block Scholes reads' `model_timestamp_ms`):
 
 - **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward. Only consulted while `use_pyth_spot_for_forward` is set.
 - **Block Scholes price freshness** (`block_scholes_price_freshness_ms`) — how recent the BS spot and expiry forward must be to compute the fallback forward and Pyth-reanchored basis.
-- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the latest accepted SVI provider envelope must be. Freshness uses `source_timestamp_ms`, while remaining-time roll-down independently uses the preserved `params_timestamp_ms` of the current normalized tuple. This window is intentionally looser than BS price freshness because SVI changes more slowly.
+- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the SVI tuple's own model time must be; the same clock anchors the remaining-time roll-down, so an unchanged retransmitted tuple ages out rather than being rejuvenated by delivery. This window is intentionally looser than BS price freshness because SVI changes more slowly, and its configurable maximum is wider (120s vs 60s).
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 

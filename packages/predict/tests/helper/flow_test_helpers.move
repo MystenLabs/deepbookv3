@@ -24,7 +24,7 @@ use account::{
     account::{Self, AccountWrapper},
     account_registry::{Self, AccountRegistry, AccountAdminCap}
 };
-use block_scholes_oracle::update;
+use bs_oracle::verify;
 use deepbook_predict::{
     accumulator_support,
     admin::AdminCap,
@@ -46,9 +46,8 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
+    block_scholes_sid,
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
@@ -119,8 +118,7 @@ public struct Fixture {
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
-    bs_spot_id: ID,
-    bs_forward_id: ID,
+    bs_values_id: ID,
     bs_svi_id: ID,
 }
 
@@ -201,21 +199,6 @@ public fun setup_market(tick: u64): Fixture {
         test_constants::pyth_feed_id(),
         scenario.ctx(),
     );
-    let bs_spot_id = propbook_registry::create_and_share_block_scholes_spot_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
-    let bs_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
-    let bs_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        test_constants::pyth_feed_id(),
-        scenario.ctx(),
-    );
     return_shared(oracle_registry);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
@@ -224,13 +207,10 @@ public fun setup_market(tick: u64): Fixture {
     // and capture the vault id.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    test_helpers::bind_feeds_to_underlying(
-        &scenario,
+    let (bs_values_id, bs_svi_id) = test_helpers::bind_feeds_to_underlying(
+        &mut scenario,
         &propbook_admin_cap,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
-        bs_svi_id,
     );
     let mut registry = scenario.take_shared<Registry>();
     let mut config = scenario.take_shared<ProtocolConfig>();
@@ -262,8 +242,7 @@ public fun setup_market(tick: u64): Fixture {
         clock,
         vault_id,
         pyth_id,
-        bs_spot_id,
-        bs_forward_id,
+        bs_values_id,
         bs_svi_id,
     }
 }
@@ -551,9 +530,8 @@ public fun return_market_bundle(bundle: MarketBundle) {
 /// Take the split Block Scholes feeds as one transaction-local bundle.
 public fun take_bs(self: &Fixture): BlockScholesFeed {
     bs_feed::new(
-        self.scenario.take_shared_by_id<BlockScholesSpotFeed>(self.bs_spot_id),
-        self.scenario.take_shared_by_id<BlockScholesForwardFeed>(self.bs_forward_id),
-        self.scenario.take_shared_by_id<BlockScholesSVIFeed>(self.bs_svi_id),
+        self.scenario.take_shared_by_id<BlockScholesValueStore>(self.bs_values_id),
+        self.scenario.take_shared_by_id<BlockScholesSVIStore>(self.bs_svi_id),
     )
 }
 
@@ -562,13 +540,12 @@ public fun return_bs(bs: BlockScholesFeed) {
     bs.return_feed();
 }
 
-/// Bundle explicitly-created split Block Scholes feeds for wrong-feed tests.
+/// Bundle explicitly-created Block Scholes stores for wrong-store tests.
 public fun block_scholes_feed_for_testing(
-    spot: BlockScholesSpotFeed,
-    forward: BlockScholesForwardFeed,
-    svi: BlockScholesSVIFeed,
+    values: BlockScholesValueStore,
+    svi: BlockScholesSVIStore,
 ): BlockScholesFeed {
-    bs_feed::new(spot, forward, svi)
+    bs_feed::new(values, svi)
 }
 
 /// Create a replacement Propbook Pyth feed and rebind the fixture's underlying to
@@ -901,7 +878,7 @@ public fun seed_bs_surface_with_svi(
 }
 
 fun seed_bs_surface_with_svi_source(
-    self: &mut Fixture,
+    self: &Fixture,
     market: &ExpiryMarket,
     bs: &mut BlockScholesFeed,
     spot: u64,
@@ -917,42 +894,49 @@ fun seed_bs_surface_with_svi_source(
     source_timestamp_ms: u64,
     svi_source_timestamp_ms: u64,
 ) {
+    let underlying = test_constants::propbook_underlying_id();
+    // Spot and forward ride one value batch, as they do on the wire.
     bs
-        .spot_mut()
-        .update(
-            update::new_spot_update(test_constants::pyth_feed_id(), source_timestamp_ms, spot),
-            &self.clock,
-        );
-    bs
-        .forward_mut()
-        .update(
-            update::new_forward_update(
-                test_constants::pyth_feed_id(),
-                market.expiry(),
+        .values_mut()
+        .apply_value_batch(
+            verify::new_value_batch_for_testing(
                 source_timestamp_ms,
-                forward,
+                vector[
+                    verify::new_value_update_for_testing(
+                        block_scholes_sid::spot(underlying),
+                        source_timestamp_ms,
+                        spot as u128,
+                    ),
+                    verify::new_value_update_for_testing(
+                        block_scholes_sid::forward(underlying, market.expiry()),
+                        source_timestamp_ms,
+                        forward as u128,
+                    ),
+                ],
             ),
             &self.clock,
-            self.scenario.ctx(),
         );
     bs
         .svi_mut()
-        .update(
-            update::new_svi_update(
-                test_constants::pyth_feed_id(),
-                market.expiry(),
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
                 svi_source_timestamp_ms,
-                svi_a_magnitude,
-                svi_a_is_negative,
-                svi_b,
-                svi_sigma,
-                svi_rho_magnitude,
-                svi_rho_is_negative,
-                svi_m_magnitude,
-                svi_m_is_negative,
+                vector[
+                    verify::new_svi_for_testing(
+                        block_scholes_sid::svi(underlying, market.expiry()),
+                        svi_source_timestamp_ms,
+                        svi_a_magnitude as u128,
+                        svi_a_is_negative,
+                        svi_b as u128,
+                        svi_sigma as u128,
+                        svi_rho_magnitude as u128,
+                        svi_rho_is_negative,
+                        svi_m_magnitude as u128,
+                        svi_m_is_negative,
+                    ),
+                ],
             ),
             &self.clock,
-            self.scenario.ctx(),
         );
 }
 
@@ -1089,8 +1073,7 @@ public fun quote_mint_bundle(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
-            market.bs.spot(),
-            market.bs.forward(),
+            market.bs.values(),
             market.bs.svi(),
             &self.clock,
         );
@@ -1127,8 +1110,7 @@ public fun quote_mint_amount_bundle(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
-            market.bs.spot(),
-            market.bs.forward(),
+            market.bs.values(),
             market.bs.svi(),
             &self.clock,
         );
@@ -1164,8 +1146,7 @@ public fun quote_mint_for_account_bundle(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
-            market.bs.spot(),
-            market.bs.forward(),
+            market.bs.values(),
             market.bs.svi(),
             &self.clock,
         );
@@ -1205,8 +1186,7 @@ public fun quote_mint_for_account_amount_bundle(
             &market.config,
             &market.oracle_registry,
             &market.pyth,
-            market.bs.spot(),
-            market.bs.forward(),
+            market.bs.values(),
             market.bs.svi(),
             &self.clock,
         );
@@ -1250,8 +1230,7 @@ public fun mint_exact_quantity(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1324,8 +1303,7 @@ public fun mint_exact_amount(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1367,8 +1345,7 @@ public fun redeem(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1600,8 +1577,7 @@ public fun liquidate(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1635,8 +1611,7 @@ public fun liquidate_order(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1676,8 +1651,7 @@ public fun value_expiry(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1811,8 +1785,7 @@ public fun current_nav(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     );
@@ -1855,8 +1828,7 @@ public fun load_pricer(
         config,
         oracle_registry,
         pyth,
-        bs.spot(),
-        bs.forward(),
+        bs.values(),
         bs.svi(),
         &self.clock,
     )
@@ -2129,7 +2101,27 @@ public fun vault_id(self: &Fixture): ID { self.vault_id }
 
 public fun pyth_id(self: &Fixture): ID { self.pyth_id }
 
-public fun bs_spot_id(self: &Fixture): ID { self.bs_spot_id }
+/// Create a Block Scholes store pair bound to another underlying, for tests proving Predict
+/// rejects a store that is not the one bound to the market it is pricing.
+public fun create_foreign_block_scholes_stores(
+    self: &mut Fixture,
+    propbook_underlying_id: u32,
+): (ID, ID) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let (value_store_id, svi_store_id) = propbook_registry::create_and_share_block_scholes_stores(
+        &mut oracle_registry,
+        &self.propbook_admin_cap,
+        propbook_underlying_id,
+        self.scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+    (value_store_id, svi_store_id)
+}
+
+public fun propbook_admin_cap(self: &Fixture): &RegistryAdminCap { &self.propbook_admin_cap }
+
+public fun bs_values_id(self: &Fixture): ID { self.bs_values_id }
 
 /// Tear down the fixture and all owned objects. The shared Registry/ProtocolConfig/
 /// OracleRegistry are returned by the flow test and reclaimed by `end`.
@@ -2143,8 +2135,7 @@ public fun finish(self: Fixture) {
         clock,
         vault_id: _,
         pyth_id: _,
-        bs_spot_id: _,
-        bs_forward_id: _,
+        bs_values_id: _,
         bs_svi_id: _,
     } = self;
     lifecycle_cap.destroy();

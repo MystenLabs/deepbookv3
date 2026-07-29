@@ -53,16 +53,11 @@ use deepbook_predict::{
     test_helpers
 };
 use fixed_math::{i64, math::float_scaling as float};
-use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
-    registry::{Self as propbook_registry, OracleRegistry}
-};
+use propbook::block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore};
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
 
 const EUnexpectedSuccess: u64 = 999;
-const SECOND_SOURCE_ID: u32 = 2;
+const FOREIGN_UNDERLYING_ID: u32 = 2;
 
 /// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
 /// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
@@ -114,8 +109,8 @@ const W_PRIME_SURFACE_B: u64 = 13;
 const W_PRIME_SURFACE_RHO: u64 = 1_000_000_000;
 const W_PRIME_SURFACE_M: u64 = 831_439;
 const W_PRIME_SURFACE_SIGMA: u64 = 5_000_000;
-/// Seed the tuple at `now_ms`, price one second later: the anchor is preserved by
-/// the identical retransmit, so the roll-down is live at 119_000/120_000.
+/// Seed the tuple at `now_ms`, price one second later: the retransmit pins the
+/// model time to the seed, so the roll-down is live at 119_000/120_000.
 const W_PRIME_EXPIRY_MS: u64 = 240_000;
 const W_PRIME_PRICED_AT_MS: u64 = 121_000;
 
@@ -267,34 +262,145 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesForwardFeed)]
-fun live_pricer_with_wrong_forward_feed_aborts() {
+/// The same dual-clock rule as the SVI test below, for the spot series: a retransmission pinned
+/// to an aged model time is stale no matter how fresh its envelope. The forward is refreshed at
+/// the same clock so the aged spot is the ONLY stale input — otherwise a freshness regression to
+/// envelope time would slide past the spot and still abort on the co-stale seeded forward.
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_a_freshly_retransmitted_but_aged_spot_model_aborts() {
+    let (mut fx, mut oracle) = setup_live();
+    let model_ms = test_constants::live_source_timestamp_ms();
+    let stale_now =
+        model_ms
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+    fx.retransmit_bs_spot_for_testing(
+        &mut oracle,
+        model_ms,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// And for the forward series: the spot is genuinely fresh, the forward's fresh envelope carries
+/// an aged model time, and the quote aborts on the forward's model age.
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_a_freshly_retransmitted_but_aged_forward_model_aborts() {
+    let (mut fx, mut oracle) = setup_live();
+    let model_ms = test_constants::live_source_timestamp_ms();
+    let stale_now =
+        model_ms
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
+    fx.retransmit_bs_forward_for_testing(
+        &mut oracle,
+        model_ms,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// A fresh envelope must not make old model data economically usable: a retransmission re-sends
+/// the tuple's original model time, so once that model age exceeds the window the SVI is stale no
+/// matter how recently it was republished.
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
+fun live_quote_with_a_freshly_retransmitted_but_aged_svi_model_aborts() {
+    let (mut fx, mut oracle) = setup_live();
+    let model_ms = test_constants::live_source_timestamp_ms();
+    let stale_now =
+        model_ms
+        + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
+        + 1;
+    fx.set_clock_for_testing(stale_now);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, stale_now, test_constants::default_live_price());
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        stale_now,
+        test_constants::default_live_price(),
+    );
+    // Identical retransmit: the seeded tuple pinned to its original model time in a fresh envelope.
+    fx.retransmit_bs_svi_for_testing(
+        &mut oracle,
+        model_ms,
+        stale_now,
+        test_constants::default_svi_a(),
+        false,
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// A store for another underlying is a real, registry-created store that simply is not the one
+/// bound to this market's underlying. Predict must reject it on the binding rather than on the
+/// store's own claim about itself.
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
+fun live_pricer_with_another_underlyings_value_store_aborts() {
     let (mut fx, oracle) = setup_live();
     oracle_fixture::return_oracle_bundle(oracle);
-    let wrong_forward_id = create_wrong_forward_feed(&mut fx);
+    let (foreign_values_id, _foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+        FOREIGN_UNDERLYING_ID,
+    );
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
-    let wrong_forward = fx
+    let foreign_values = fx
         .scenario_mut()
-        .take_shared_by_id<BlockScholesForwardFeed>(
-            wrong_forward_id,
+        .take_shared_by_id<BlockScholesValueStore>(
+            foreign_values_id,
         );
-    load_pricer_with_forward(&fx, &oracle, &wrong_forward);
+    load_pricer_with_values(&fx, &oracle, &foreign_values);
 
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSVIFeed)]
-fun live_pricer_with_wrong_svi_feed_aborts() {
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesSVIStore)]
+fun live_pricer_with_another_underlyings_svi_store_aborts() {
     let (mut fx, oracle) = setup_live();
     oracle_fixture::return_oracle_bundle(oracle);
-    let wrong_svi_id = create_wrong_svi_feed(&mut fx);
+    let (_foreign_values_id, foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+        FOREIGN_UNDERLYING_ID,
+    );
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
-    let wrong_svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIFeed>(wrong_svi_id);
-    load_pricer_with_svi(&fx, &oracle, &wrong_svi);
+    let foreign_svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIStore>(foreign_svi_id);
+    load_pricer_with_svi(&fx, &oracle, &foreign_svi);
 
     abort EUnexpectedSuccess
 }
@@ -779,13 +885,13 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
     fx.finish();
 }
 
-/// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted
-/// unchanged one millisecond before a one-year expiry. The retransmit refreshes
-/// every feed clock without moving the parameter anchor. At that horizon,
-/// `floor(1e9 * remaining_ms / anchor_tte_ms) == 0`, so the effective variance
-/// is non-positive and the accepted RP-21 response is the existing quote abort.
-#[test, expected_failure(abort_code = pricing::ENonPositiveVariance)]
-fun terminal_roll_down_to_zero_aborts_before_expiry() {
+/// A raw-valid `a = 1e-9, b = 0` tuple anchored at `now_ms`, then retransmitted one millisecond
+/// before a one-year expiry — the envelope advances while the tuple keeps its original model time.
+/// Flooring the rolled variance to zero needs `anchor_tte_ms >= 1e9 * remaining_ms` — a model
+/// anchor years older than any admissible freshness window — so model-time freshness pre-empts
+/// RP-21's zero-variance response: the quote aborts stale long before the terminal region.
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
+fun terminal_roll_down_to_zero_is_preempted_by_model_freshness() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(
@@ -820,8 +926,9 @@ fun terminal_roll_down_to_zero_aborts_before_expiry() {
         terminal_source_timestamp_ms,
         test_constants::default_live_price(),
     );
-    fx.set_bs_svi_for_testing_bundle(
+    fx.retransmit_bs_svi_for_testing(
         &mut oracle,
+        test_constants::now_ms(),
         terminal_source_timestamp_ms,
         ROLL_DOWN_ZERO_VARIANCE_RAW_A,
         false,
@@ -850,8 +957,8 @@ fun terminal_roll_down_to_zero_aborts_before_expiry() {
 /// floors to zero and the correction term vanishes either way. And a fixture whose
 /// pricer loads at the parameter anchor cannot either, because at ratio 1 the
 /// rolled `b` is integral at 1e9 and both forms agree exactly. So this seeds the
-/// tuple, advances the clock, and retransmits it unchanged (which preserves the
-/// anchor) to get a genuinely non-integral rolled `b`. Carrying it at 1e18 lands
+/// tuple, advances the clock, and retransmits it with its model time pinned to
+/// the seed to get a genuinely non-integral rolled `b`. Carrying it at 1e18 lands
 /// 4 units from the independently generated digital; narrowing to 1e9 misses by
 /// ~890 — 42x the budget.
 #[test]
@@ -887,8 +994,9 @@ fun w_prime_keeps_the_rolled_b_precision() {
         W_PRIME_PRICED_AT_MS,
         test_constants::default_live_price(),
     );
-    fx.set_bs_svi_for_testing_bundle(
+    fx.retransmit_bs_svi_for_testing(
         &mut oracle,
+        test_constants::now_ms(),
         W_PRIME_PRICED_AT_MS,
         W_PRIME_SURFACE_A,
         false,
@@ -1039,41 +1147,16 @@ fun load_pricer_with_full_svi_and_spot(
     fx.finish();
 }
 
-fun create_wrong_forward_feed(fx: &mut OracleFixture): ID {
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_forward_id = propbook_registry::create_and_share_block_scholes_forward_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    return_shared(oracle_registry);
-    wrong_forward_id
-}
-
-fun create_wrong_svi_feed(fx: &mut OracleFixture): ID {
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let wrong_svi_id = propbook_registry::create_and_share_block_scholes_svi_feed(
-        &mut oracle_registry,
-        SECOND_SOURCE_ID,
-        fx.scenario_mut().ctx(),
-    );
-    return_shared(oracle_registry);
-    wrong_svi_id
-}
-
-fun load_pricer_with_forward(
+fun load_pricer_with_values(
     fx: &OracleFixture,
     oracle: &OracleBundle,
-    forward: &BlockScholesForwardFeed,
+    values: &BlockScholesValueStore,
 ) {
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
         oracle_fixture::pyth(oracle),
-        oracle_fixture::bs(oracle).spot(),
-        forward,
+        values,
         oracle_fixture::bs(oracle).svi(),
         fx.expiry_id(),
         test_constants::propbook_underlying_id(),
@@ -1082,13 +1165,12 @@ fun load_pricer_with_forward(
     );
 }
 
-fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockScholesSVIFeed) {
+fun load_pricer_with_svi(fx: &OracleFixture, oracle: &OracleBundle, svi: &BlockScholesSVIStore) {
     let _pricer = pricing::load_live_pricer(
         oracle_fixture::config(oracle).pricing_config(),
         oracle_fixture::oracle_registry(oracle),
         oracle_fixture::pyth(oracle),
-        oracle_fixture::bs(oracle).spot(),
-        oracle_fixture::bs(oracle).forward(),
+        oracle_fixture::bs(oracle).values(),
         svi,
         fx.expiry_id(),
         test_constants::propbook_underlying_id(),

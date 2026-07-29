@@ -14,9 +14,7 @@ module deepbook_predict::pricing;
 use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
 use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::{BlockScholesSVIFeed, SVIParams},
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -31,12 +29,29 @@ public struct Pricer has copy, drop {
     svi: PricingSVI,
     /// Source timestamps of the oracle observations present when this snapshot
     /// was loaded. Pyth is `0` only when no usable normalized observation exists.
+    /// The Block Scholes ones are the provider's model times — when each series' data is "as of",
+    /// held fixed across retransmissions of an unchanged value. They are the economic clocks:
+    /// freshness is asserted against them and the SVI one anchors the roll-down; the batch
+    /// envelope time is transport metadata and never reaches the `Pricer`.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
-    /// First source envelope carrying the raw SVI tuple from which `svi` was rolled down.
-    block_scholes_svi_params_timestamp_ms: u64,
     block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// Block Scholes SVI parameters at Predict's own widths, before roll-down.
+///
+/// The provider carries every parameter at 128 bits; Predict prices `rho`, `m`, and `sigma` at 64,
+/// so the narrowing happens once where the `Pricer` is built and every bound below reads these
+/// widths. A provider value too large for them aborts on the narrowing itself — Move's own overflow
+/// guard — and everything representable is then bounded semantically by
+/// `assert_inputs_pricing_safe`, whose limits are far tighter than the widths.
+public struct RawSVI has copy, drop {
+    a: I64,
+    b: u64,
+    rho: I64,
+    m: I64,
+    sigma: u64,
 }
 
 /// Transaction-local SVI parameters after applying Predict's remaining-time roll-down.
@@ -91,16 +106,15 @@ const EBlockScholesPriceStale: u64 = 4;
 const EBlockScholesInputsInvalid: u64 = 5;
 const EPythSpotInvalid: u64 = 6;
 const EWrongPythFeed: u64 = 7;
-const EWrongBlockScholesSpotFeed: u64 = 8;
+const EWrongBlockScholesValueStore: u64 = 8;
 const ELivePricingExpired: u64 = 9;
 const EBlockScholesSVIStale: u64 = 10;
-const EWrongBlockScholesForwardFeed: u64 = 11;
-const EWrongBlockScholesSVIFeed: u64 = 12;
-const ETickNotInPriceMemo: u64 = 13;
-const EBlockScholesPriceUnavailable: u64 = 14;
-const EBlockScholesSVIUnavailable: u64 = 15;
-const EBlockScholesMinVarianceInvalid: u64 = 16;
-const ENonMonotonePriceMemo: u64 = 17;
+const EWrongBlockScholesSVIStore: u64 = 11;
+const ETickNotInPriceMemo: u64 = 12;
+const EBlockScholesPriceUnavailable: u64 = 13;
+const EBlockScholesSVIUnavailable: u64 = 14;
+const EBlockScholesMinVarianceInvalid: u64 = 15;
+const ENonMonotonePriceMemo: u64 = 16;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -150,10 +164,6 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
     pricer.block_scholes_forward_source_timestamp_ms
 }
 
-public(package) fun block_scholes_svi_params_timestamp_ms(pricer: &Pricer): u64 {
-    pricer.block_scholes_svi_params_timestamp_ms
-}
-
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
 }
@@ -197,9 +207,8 @@ public(package) fun load_live_pricer(
     config: &PricingConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     expiry: u64,
@@ -209,16 +218,14 @@ public(package) fun load_live_pricer(
         propbook_registry,
         propbook_underlying_id,
         pyth,
-        bs_spot,
-        bs_forward,
+        bs_values,
         bs_svi,
     );
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
     resolve_live_pricer(
         config,
         pyth,
-        bs_spot,
-        bs_forward,
+        bs_values,
         bs_svi,
         expiry_market_id,
         expiry,
@@ -300,32 +307,27 @@ fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
     abort ETickNotInPriceMemo
 }
 
+/// A store names the underlying it holds, but only the registry says which store is the one for
+/// that underlying, so the binding is checked here rather than taking the object's own word.
 fun assert_current_oracles(
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
 ) {
     assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
     assert!(
         propbook_registry
-            .propbook_block_scholes_spot_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_spot.id()),
-        EWrongBlockScholesSpotFeed,
+            .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
+            .contains(&bs_values.value_store_id()),
+        EWrongBlockScholesValueStore,
     );
     assert!(
         propbook_registry
-            .propbook_block_scholes_forward_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_forward.id()),
-        EWrongBlockScholesForwardFeed,
-    );
-    assert!(
-        propbook_registry
-            .propbook_block_scholes_svi_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_svi.id()),
-        EWrongBlockScholesSVIFeed,
+            .propbook_block_scholes_svi_store_id_for_underlying(propbook_underlying_id)
+            .contains(&bs_svi.svi_store_id()),
+        EWrongBlockScholesSVIStore,
     );
 }
 
@@ -349,17 +351,20 @@ fun assert_current_pyth(
 fun resolve_live_pricer(
     config: &PricingConfig,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
     expiry_market_id: ID,
     expiry: u64,
     clock: &Clock,
 ): Pricer {
-    let bs_spot_read = bs_spot.normalized_spot();
+    let bs_spot_read = bs_values.spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
-    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
+    // Freshness reads the series' own model time, never the batch envelope: retransmitting an
+    // unchanged value re-sends its original model time, and a fresh envelope must not make old
+    // model data economically usable — data the provider has not re-derived within the window
+    // ages out and pricing halts, which is the intended fail-closed posture.
+    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_spot_source_timestamp_ms,
@@ -368,12 +373,12 @@ fun resolve_live_pricer(
         ),
         EBlockScholesPriceStale,
     );
-    let bs_spot = bs_spot_read.read_value();
+    let bs_spot = narrow_price(bs_spot_read.read_value());
 
-    let bs_forward_read = bs_forward.normalized_forward(expiry);
+    let bs_forward_read = bs_values.forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
-    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
+    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_forward_source_timestamp_ms,
@@ -382,15 +387,14 @@ fun resolve_live_pricer(
         ),
         EBlockScholesPriceStale,
     );
-    let bs_forward = bs_forward_read.read_value();
+    let bs_forward = narrow_price(bs_forward_read.read_value());
 
-    let svi_read = bs_svi.normalized_svi(expiry);
+    let svi_read = bs_svi.svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
-    // The normalized read and parameter anchor come from the same immutable
-    // shared-object version in this transaction.
-    let block_scholes_svi_params_timestamp_ms = bs_svi.params_timestamp_ms(expiry).destroy_some();
-    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
+    // One clock serves both jobs: the model time the freshness gate just accepted is also the
+    // roll-down anchor, so the parameters and their anchor always come from the same read.
+    let block_scholes_svi_source_timestamp_ms = svi_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_svi_source_timestamp_ms,
@@ -399,11 +403,11 @@ fun resolve_live_pricer(
         ),
         EBlockScholesSVIStale,
     );
-    let raw_svi = svi_read.read_value();
+    let raw_svi = narrow_svi(&svi_read.read_value());
     assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
     let svi = roll_down_svi(
         &raw_svi,
-        block_scholes_svi_params_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms,
         expiry,
         clock,
     );
@@ -442,13 +446,50 @@ fun resolve_live_pricer(
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms,
-        block_scholes_svi_params_timestamp_ms,
         block_scholes_svi_source_timestamp_ms,
     }
 }
 
+/// Narrow one Block Scholes price to Predict's pricing width. See `RawSVI` on why the narrowing is
+/// unguarded.
+fun narrow_price(value: u128): u64 {
+    value as u64
+}
+
+/// Narrow a stored Block Scholes tuple to Predict's pricing widths, keeping the provider's
+/// magnitude-and-sign form for the signed parameters.
+fun narrow_svi(svi: &SVIParams): RawSVI {
+    RawSVI {
+        a: i64::from_parts(svi.svi_a_magnitude() as u64, svi.svi_a_is_negative()),
+        b: svi.svi_b() as u64,
+        rho: i64::from_parts(svi.svi_rho_magnitude() as u64, svi.svi_rho_is_negative()),
+        m: i64::from_parts(svi.svi_m_magnitude() as u64, svi.svi_m_is_negative()),
+        sigma: svi.svi_sigma() as u64,
+    }
+}
+
+fun a(svi: &RawSVI): I64 {
+    svi.a
+}
+
+fun b(svi: &RawSVI): u64 {
+    svi.b
+}
+
+fun rho(svi: &RawSVI): I64 {
+    svi.rho
+}
+
+fun m(svi: &RawSVI): I64 {
+    svi.m
+}
+
+fun sigma(svi: &RawSVI): u64 {
+    svi.sigma
+}
+
 fun roll_down_svi(
-    svi: &SVIParams,
+    svi: &RawSVI,
     params_timestamp_ms: u64,
     expiry_ms: u64,
     clock: &Clock,
@@ -471,7 +512,7 @@ fun timestamp_is_fresh(source_timestamp_ms: u64, max_age_ms: u64, clock: &Clock)
     source_timestamp_ms > 0 && source_timestamp_ms <= now && now - source_timestamp_ms <= max_age_ms
 }
 
-fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
+fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
     assert!(spot > 0 && forward > 0, EBlockScholesInputsInvalid);
     assert!(forward <= max_pricing_spot!(), EBlockScholesInputsInvalid);
     // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
@@ -488,7 +529,7 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &SVIParams) {
     assert_min_total_variance_positive(svi);
 }
 
-fun assert_min_total_variance_positive(svi: &SVIParams) {
+fun assert_min_total_variance_positive(svi: &RawSVI) {
     let min_variance_increment = min_svi_variance_increment(svi);
     let a = svi.a();
     let min_total_var = i64::from_u64(min_variance_increment).add(&a);
@@ -498,7 +539,7 @@ fun assert_min_total_variance_positive(svi: &SVIParams) {
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
 // `x = k - m`. This returns the smallest possible non-`a` part over all strikes:
 // `b * sigma * sqrt(1 - rho^2)`, or 0 at the `|rho| == 1` boundary.
-fun min_svi_variance_increment(svi: &SVIParams): u64 {
+fun min_svi_variance_increment(svi: &RawSVI): u64 {
     let rho_mag = svi.rho().magnitude();
     if (rho_mag == math::float_scaling!()) return 0;
 

@@ -75,7 +75,7 @@ user-facing overview; this file is the editing-critical knowledge.
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**
   (NOT 1e9). Leverage and probability are `1e9`-scaled. Mixing these is the #1 scaling bug.
-- Real-time only: the localnet `Clock` is not warpable (README § Note). Testnet oracle freshness is 10s (vs the contract's 2s/3s default) — the one config divergence.
+- Real-time only: the localnet `Clock` is not warpable (README § Note). The contract freshness defaults now match testnet's configured 10s (Pyth spot + BS price), so there is no config divergence; BS pricing freshness keys on each observation's provider model time, not the batch envelope.
 
 ## Resilience invariants
 - Shared files (`snapshot/feeds/markets.json`, `hub-snapshot.json`) are written with

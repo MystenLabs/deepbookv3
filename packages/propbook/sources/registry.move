@@ -7,12 +7,7 @@
 /// Registry operations are not version-gated because each feed owns its write version and migration path.
 module propbook::registry;
 
-use propbook::{
-    block_scholes_forward_feed::{Self, BlockScholesForwardFeed},
-    block_scholes_spot_feed::{Self, BlockScholesSpotFeed},
-    block_scholes_svi_feed::{Self, BlockScholesSVIFeed},
-    pyth_feed::{Self, PythFeed}
-};
+use propbook::{block_scholes_store, pyth_feed::{Self, PythFeed}};
 use sui::{event, table::{Self, Table}};
 
 const ESourceAlreadyExists: u64 = 0;
@@ -20,37 +15,16 @@ const ESourceNotFound: u64 = 1;
 const EInvalidOracleObject: u64 = 2;
 const ESourceAlreadyBound: u64 = 3;
 const EBindingAlreadyExists: u64 = 4;
-const EBlockScholesSpotNotBound: u64 = 5;
-const EWrongBlockScholesSource: u64 = 6;
-const EBindingNotFound: u64 = 7;
+const EBindingNotFound: u64 = 5;
+const EBlockScholesStoresAlreadyExist: u64 = 6;
 
 // Stable discriminators stored in source keys, binding keys, metadata, and events.
 public(package) macro fun kind_pyth(): u8 {
     0
 }
 
-public(package) macro fun kind_block_scholes_spot(): u8 {
-    1
-}
-
-public(package) macro fun kind_block_scholes_forward(): u8 {
-    2
-}
-
-public(package) macro fun kind_block_scholes_svi(): u8 {
-    3
-}
-
 public(package) macro fun value_kind_spot(): u8 {
     0
-}
-
-public(package) macro fun value_kind_forward(): u8 {
-    1
-}
-
-public(package) macro fun value_kind_svi(): u8 {
-    2
 }
 
 /// Root capability authorized to choose and replace canonical oracle bindings.
@@ -68,6 +42,16 @@ public struct OracleRegistry has key {
     bindings: Table<OracleBindingKey, OracleMetadata>,
     /// Provider/source pair to the sole underlying it may serve.
     source_bindings: Table<OracleSourceKey, u32>,
+    /// Underlying to its Block Scholes store pair. Stores carry no source id — a signed series
+    /// names its own underlying — so they bind directly here rather than through the source
+    /// catalog, and an underlying has at most one pair for its lifetime.
+    block_scholes_stores: Table<u32, BlockScholesStorePair>,
+}
+
+/// The two shared objects holding one underlying's Block Scholes series.
+public struct BlockScholesStorePair has copy, drop, store {
+    value_store_id: ID,
+    svi_store_id: ID,
 }
 
 /// Unique identity of a provider source within one oracle kind.
@@ -108,6 +92,13 @@ public struct OracleBound has copy, drop {
     value_kind: u8,
 }
 
+/// Records the creation of an underlying's canonical Block Scholes store pair.
+public struct BlockScholesStoresRegistered has copy, drop {
+    propbook_underlying_id: u32,
+    value_store_id: ID,
+    svi_store_id: ID,
+}
+
 /// Records an atomic replacement of an existing canonical binding slot.
 public struct OracleRebound has copy, drop {
     propbook_underlying_id: u32,
@@ -141,51 +132,9 @@ public fun contains_pyth_source(registry: &OracleRegistry, pyth_source_id: u32):
     registry.contains_source(pyth_source_key(pyth_source_id))
 }
 
-/// Returns whether the Block Scholes spot wrapper exists in the external source catalog.
-public fun contains_block_scholes_spot_source(registry: &OracleRegistry, bs_source_id: u32): bool {
-    registry.contains_source(block_scholes_spot_source_key(bs_source_id))
-}
-
-/// Returns whether the Block Scholes forward wrapper exists in the external source catalog.
-public fun contains_block_scholes_forward_source(
-    registry: &OracleRegistry,
-    bs_source_id: u32,
-): bool {
-    registry.contains_source(block_scholes_forward_source_key(bs_source_id))
-}
-
-/// Returns whether the Block Scholes SVI wrapper exists in the external source catalog.
-public fun contains_block_scholes_svi_source(registry: &OracleRegistry, bs_source_id: u32): bool {
-    registry.contains_source(block_scholes_svi_source_key(bs_source_id))
-}
-
 /// Resolves a registered Pyth source wrapper for external composition or discovery.
 public fun propbook_pyth_id_for_source(registry: &OracleRegistry, pyth_source_id: u32): Option<ID> {
     registry.source_oracle_id(pyth_source_key(pyth_source_id))
-}
-
-/// Resolves a registered Block Scholes spot wrapper for external composition or discovery.
-public fun propbook_block_scholes_spot_id_for_source(
-    registry: &OracleRegistry,
-    bs_source_id: u32,
-): Option<ID> {
-    registry.source_oracle_id(block_scholes_spot_source_key(bs_source_id))
-}
-
-/// Resolves a registered Block Scholes forward wrapper for external composition or discovery.
-public fun propbook_block_scholes_forward_id_for_source(
-    registry: &OracleRegistry,
-    bs_source_id: u32,
-): Option<ID> {
-    registry.source_oracle_id(block_scholes_forward_source_key(bs_source_id))
-}
-
-/// Resolves a registered Block Scholes SVI wrapper for external composition or discovery.
-public fun propbook_block_scholes_svi_id_for_source(
-    registry: &OracleRegistry,
-    bs_source_id: u32,
-): Option<ID> {
-    registry.source_oracle_id(block_scholes_svi_source_key(bs_source_id))
 }
 
 /// Resolves the canonical Pyth feed for external composition or discovery.
@@ -196,28 +145,30 @@ public fun propbook_pyth_id_for_underlying(
     registry.canonical_oracle_id(pyth_binding_key(propbook_underlying_id))
 }
 
-/// Resolves the canonical Block Scholes spot feed for external composition or discovery.
-public fun propbook_block_scholes_spot_id_for_underlying(
+/// Resolves the canonical Block Scholes value store, which a consumer checks its argument against
+/// before pricing from it: a store names its own underlying, but only this binding says which store
+/// is the one for that underlying.
+public fun propbook_block_scholes_value_store_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
 ): Option<ID> {
-    registry.canonical_oracle_id(block_scholes_spot_binding_key(propbook_underlying_id))
+    if (!registry.block_scholes_stores.contains(propbook_underlying_id)) {
+        option::none()
+    } else {
+        option::some(registry.block_scholes_stores.borrow(propbook_underlying_id).value_store_id)
+    }
 }
 
-/// Resolves the canonical Block Scholes forward feed for external composition or discovery.
-public fun propbook_block_scholes_forward_id_for_underlying(
+/// Resolves the canonical Block Scholes SVI store. Same trust role as the value store binding.
+public fun propbook_block_scholes_svi_store_id_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
 ): Option<ID> {
-    registry.canonical_oracle_id(block_scholes_forward_binding_key(propbook_underlying_id))
-}
-
-/// Resolves the canonical Block Scholes SVI feed for external composition or discovery.
-public fun propbook_block_scholes_svi_id_for_underlying(
-    registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-): Option<ID> {
-    registry.canonical_oracle_id(block_scholes_svi_binding_key(propbook_underlying_id))
+    if (!registry.block_scholes_stores.contains(propbook_underlying_id)) {
+        option::none()
+    } else {
+        option::some(registry.block_scholes_stores.borrow(propbook_underlying_id).svi_store_id)
+    }
 }
 
 /// Returns the canonical Pyth binding metadata for external composition or inspection.
@@ -226,30 +177,6 @@ public fun pyth_metadata_for_underlying(
     propbook_underlying_id: u32,
 ): Option<OracleMetadata> {
     registry.canonical_metadata(pyth_binding_key(propbook_underlying_id))
-}
-
-/// Returns the canonical Block Scholes spot binding metadata for external composition or inspection.
-public fun block_scholes_spot_metadata_for_underlying(
-    registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-): Option<OracleMetadata> {
-    registry.canonical_metadata(block_scholes_spot_binding_key(propbook_underlying_id))
-}
-
-/// Returns the canonical Block Scholes forward binding metadata for external composition or inspection.
-public fun block_scholes_forward_metadata_for_underlying(
-    registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-): Option<OracleMetadata> {
-    registry.canonical_metadata(block_scholes_forward_binding_key(propbook_underlying_id))
-}
-
-/// Returns the canonical Block Scholes SVI binding metadata for external composition or inspection.
-public fun block_scholes_svi_metadata_for_underlying(
-    registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-): Option<OracleMetadata> {
-    registry.canonical_metadata(block_scholes_svi_binding_key(propbook_underlying_id))
 }
 
 /// Return the bound underlying ID for external registry discovery.
@@ -293,47 +220,34 @@ public fun create_and_share_pyth_feed(
     propbook_pyth_id
 }
 
-/// Create and share the Propbook BS spot wrapper for `bs_source_id`, then record
-/// it in the source catalog. Permissionless: a duplicate source aborts before
-/// object creation.
-public fun create_and_share_block_scholes_spot_feed(
+/// Create and share this underlying's Block Scholes store pair and record it as canonical.
+/// Admin-gated and once per underlying: the binding is what lets a consumer reject a store it was
+/// not meant to price from, so a second pair would leave two stores each able to claim the
+/// underlying with nothing to choose between them.
+public fun create_and_share_block_scholes_stores(
     registry: &mut OracleRegistry,
-    bs_source_id: u32,
+    _admin_cap: &RegistryAdminCap,
+    propbook_underlying_id: u32,
     ctx: &mut TxContext,
-): ID {
-    let source_key = block_scholes_spot_source_key(bs_source_id);
-    assert_source_available(registry, source_key);
-    let propbook_spot_id = block_scholes_spot_feed::create_and_share(bs_source_id, ctx);
-    registry.record_source(source_key, propbook_spot_id);
-    propbook_spot_id
-}
-
-/// Create and share the Propbook BS forward wrapper for `bs_source_id`, then
-/// record it in the source catalog.
-public fun create_and_share_block_scholes_forward_feed(
-    registry: &mut OracleRegistry,
-    bs_source_id: u32,
-    ctx: &mut TxContext,
-): ID {
-    let source_key = block_scholes_forward_source_key(bs_source_id);
-    assert_source_available(registry, source_key);
-    let propbook_forward_id = block_scholes_forward_feed::create_and_share(bs_source_id, ctx);
-    registry.record_source(source_key, propbook_forward_id);
-    propbook_forward_id
-}
-
-/// Create and share the Propbook BS SVI wrapper for `bs_source_id`, then record
-/// it in the source catalog.
-public fun create_and_share_block_scholes_svi_feed(
-    registry: &mut OracleRegistry,
-    bs_source_id: u32,
-    ctx: &mut TxContext,
-): ID {
-    let source_key = block_scholes_svi_source_key(bs_source_id);
-    assert_source_available(registry, source_key);
-    let propbook_svi_id = block_scholes_svi_feed::create_and_share(bs_source_id, ctx);
-    registry.record_source(source_key, propbook_svi_id);
-    propbook_svi_id
+): (ID, ID) {
+    assert!(
+        !registry.block_scholes_stores.contains(propbook_underlying_id),
+        EBlockScholesStoresAlreadyExist,
+    );
+    let value_store_id = block_scholes_store::create_and_share_value_store(
+        propbook_underlying_id,
+        ctx,
+    );
+    let svi_store_id = block_scholes_store::create_and_share_svi_store(propbook_underlying_id, ctx);
+    registry
+        .block_scholes_stores
+        .add(propbook_underlying_id, BlockScholesStorePair { value_store_id, svi_store_id });
+    event::emit(BlockScholesStoresRegistered {
+        propbook_underlying_id,
+        value_store_id,
+        svi_store_id,
+    });
+    (value_store_id, svi_store_id)
 }
 
 /// Admin-bind this Pyth source feed to a canonical Propbook underlying.
@@ -367,106 +281,6 @@ public fun replace_pyth_binding_for_underlying(
         pyth_source_key(pyth_feed::pyth_source_id(feed)),
         pyth_feed::id(feed),
         pyth_binding_key(propbook_underlying_id),
-    );
-}
-
-/// Admin-bind this BS spot source feed to a canonical Propbook underlying.
-public fun bind_block_scholes_spot_to_underlying(
-    registry: &mut OracleRegistry,
-    admin_cap: &RegistryAdminCap,
-    feed: &BlockScholesSpotFeed,
-    propbook_underlying_id: u32,
-) {
-    registry.bind_oracle(
-        admin_cap,
-        block_scholes_spot_source_key(block_scholes_spot_feed::bs_source_id(feed)),
-        block_scholes_spot_feed::id(feed),
-        block_scholes_spot_binding_key(propbook_underlying_id),
-    );
-}
-
-/// Admin-bind this BS forward/SVI surface pair to a canonical Propbook underlying.
-/// The underlying's BS spot feed must already be bound, and all three BS feeds
-/// must come from the same source id.
-public fun bind_block_scholes_surface_to_underlying(
-    registry: &mut OracleRegistry,
-    admin_cap: &RegistryAdminCap,
-    forward_feed: &BlockScholesForwardFeed,
-    svi_feed: &BlockScholesSVIFeed,
-    propbook_underlying_id: u32,
-) {
-    let bs_source_id = block_scholes_forward_feed::bs_source_id(forward_feed);
-    assert!(
-        bs_source_id == block_scholes_svi_feed::bs_source_id(svi_feed),
-        EWrongBlockScholesSource,
-    );
-    registry.assert_bound_block_scholes_spot_source(propbook_underlying_id, bs_source_id);
-
-    let forward_source_key = block_scholes_forward_source_key(bs_source_id);
-    let svi_source_key = block_scholes_svi_source_key(bs_source_id);
-    let forward_binding_key = block_scholes_forward_binding_key(propbook_underlying_id);
-    let svi_binding_key = block_scholes_svi_binding_key(propbook_underlying_id);
-
-    registry.bind_oracle(
-        admin_cap,
-        forward_source_key,
-        block_scholes_forward_feed::id(forward_feed),
-        forward_binding_key,
-    );
-    registry.bind_oracle(
-        admin_cap,
-        svi_source_key,
-        block_scholes_svi_feed::id(svi_feed),
-        svi_binding_key,
-    );
-}
-
-/// Admin-replace all canonical Block Scholes feeds for a Propbook underlying.
-///
-/// Spot, forward, and SVI are replaced atomically and must all come from the same
-/// `bs_source_id`, preserving the same-source surface invariant consumers rely on.
-public fun replace_block_scholes_bindings_for_underlying(
-    registry: &mut OracleRegistry,
-    admin_cap: &RegistryAdminCap,
-    spot_feed: &BlockScholesSpotFeed,
-    forward_feed: &BlockScholesForwardFeed,
-    svi_feed: &BlockScholesSVIFeed,
-    propbook_underlying_id: u32,
-) {
-    let bs_source_id = block_scholes_spot_feed::bs_source_id(spot_feed);
-    assert!(
-        bs_source_id == block_scholes_forward_feed::bs_source_id(forward_feed),
-        EWrongBlockScholesSource,
-    );
-    assert!(
-        bs_source_id == block_scholes_svi_feed::bs_source_id(svi_feed),
-        EWrongBlockScholesSource,
-    );
-
-    let spot_source_key = block_scholes_spot_source_key(bs_source_id);
-    let forward_source_key = block_scholes_forward_source_key(bs_source_id);
-    let svi_source_key = block_scholes_svi_source_key(bs_source_id);
-    let spot_binding_key = block_scholes_spot_binding_key(propbook_underlying_id);
-    let forward_binding_key = block_scholes_forward_binding_key(propbook_underlying_id);
-    let svi_binding_key = block_scholes_svi_binding_key(propbook_underlying_id);
-
-    registry.replace_oracle(
-        admin_cap,
-        spot_source_key,
-        block_scholes_spot_feed::id(spot_feed),
-        spot_binding_key,
-    );
-    registry.replace_oracle(
-        admin_cap,
-        forward_source_key,
-        block_scholes_forward_feed::id(forward_feed),
-        forward_binding_key,
-    );
-    registry.replace_oracle(
-        admin_cap,
-        svi_source_key,
-        block_scholes_svi_feed::id(svi_feed),
-        svi_binding_key,
     );
 }
 
@@ -601,6 +415,7 @@ fun new(ctx: &mut TxContext): OracleRegistry {
         sources: table::new(ctx),
         bindings: table::new(ctx),
         source_bindings: table::new(ctx),
+        block_scholes_stores: table::new(ctx),
     }
 }
 
@@ -648,43 +463,10 @@ fun record_source_binding_if_missing(
     };
 }
 
-fun assert_bound_block_scholes_spot_source(
-    registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-    bs_source_id: u32,
-) {
-    let spot_metadata = registry.canonical_metadata(
-        block_scholes_spot_binding_key(propbook_underlying_id),
-    );
-    assert!(spot_metadata.is_some(), EBlockScholesSpotNotBound);
-    assert!(spot_metadata.destroy_some().source_id == bs_source_id, EWrongBlockScholesSource);
-}
-
 fun pyth_source_key(pyth_source_id: u32): OracleSourceKey {
     OracleSourceKey {
         oracle_kind: kind_pyth!(),
         source_id: pyth_source_id,
-    }
-}
-
-fun block_scholes_spot_source_key(bs_source_id: u32): OracleSourceKey {
-    OracleSourceKey {
-        oracle_kind: kind_block_scholes_spot!(),
-        source_id: bs_source_id,
-    }
-}
-
-fun block_scholes_forward_source_key(bs_source_id: u32): OracleSourceKey {
-    OracleSourceKey {
-        oracle_kind: kind_block_scholes_forward!(),
-        source_id: bs_source_id,
-    }
-}
-
-fun block_scholes_svi_source_key(bs_source_id: u32): OracleSourceKey {
-    OracleSourceKey {
-        oracle_kind: kind_block_scholes_svi!(),
-        source_id: bs_source_id,
     }
 }
 
@@ -696,33 +478,16 @@ fun pyth_binding_key(propbook_underlying_id: u32): OracleBindingKey {
     }
 }
 
-fun block_scholes_spot_binding_key(propbook_underlying_id: u32): OracleBindingKey {
-    OracleBindingKey {
-        propbook_underlying_id,
-        oracle_kind: kind_block_scholes_spot!(),
-        value_kind: value_kind_spot!(),
-    }
-}
-
-fun block_scholes_forward_binding_key(propbook_underlying_id: u32): OracleBindingKey {
-    OracleBindingKey {
-        propbook_underlying_id,
-        oracle_kind: kind_block_scholes_forward!(),
-        value_kind: value_kind_forward!(),
-    }
-}
-
-fun block_scholes_svi_binding_key(propbook_underlying_id: u32): OracleBindingKey {
-    OracleBindingKey {
-        propbook_underlying_id,
-        oracle_kind: kind_block_scholes_svi!(),
-        value_kind: value_kind_svi!(),
-    }
-}
-
 // === Test-Only Functions ===
 
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) {
     init(ctx);
+}
+
+/// The event's fields exist for off-chain discovery, so this reader exists only so tests can
+/// assert the reported pair is the one the registry bound.
+#[test_only]
+public fun stores_registered_fields(event: &BlockScholesStoresRegistered): (u32, ID, ID) {
+    (event.propbook_underlying_id, event.value_store_id, event.svi_store_id)
 }

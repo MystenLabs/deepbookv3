@@ -31,9 +31,7 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -214,17 +212,15 @@ public fun load_live_pricer(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
     clock: &Clock,
 ): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
         propbook_registry,
         pyth,
-        bs_spot,
-        bs_forward,
+        bs_values,
         bs_svi,
         market.id(),
         market.propbook_underlying_id,

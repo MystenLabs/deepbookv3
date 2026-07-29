@@ -44,15 +44,17 @@ LOCAL_CLOSURE = [
     "fixed_math",
     "dusdc",
     "account",
-    "block_scholes_oracle",
     "propbook",
     "token",
     "predict",
 ]
 
+# Pin of the real Block Scholes verifier, matching propbook/predict Move.toml.
+BS_ORACLE_REV = "11d952488bc50f3a2526549a8cd6d4817ae20cc7"
+
 # Upstream git deps that get dep-replaced to locally-published addresses. Staged
-# from the ~/.move branch-clone cache (immutable-rev guarantee intentionally
-# dropped for now), falling back to a shallow clone of the branch.
+# from the ~/.move clone cache, falling back to a shallow clone of the branch
+# (or, when pinned by `rev`, a shallow fetch of that exact commit).
 _MOVE_CACHE = Path.home() / ".move"
 GIT_DEPS = {
     "wormhole": {
@@ -73,6 +75,20 @@ GIT_DEPS = {
         / "lazer"
         / "contracts"
         / "sui",
+    },
+    # The real Block Scholes verifier, published unmodified. The harness holds the
+    # publisher AdminCap, registers a per-instance local signer key on the shared
+    # SignerRegistry, and signs every batch it submits (same model as the local
+    # Pyth trusted signer).
+    "bs_oracle": {
+        "repo": "https://github.com/blockscholes/sui-signed-oracle.git",
+        "rev": BS_ORACLE_REV,
+        "subdir": "move/bs_oracle",
+        "cache": _MOVE_CACHE
+        / "git"
+        / f"https___github_com_blockscholes_sui-signed-oracle_git_{BS_ORACLE_REV}"
+        / "move"
+        / "bs_oracle",
     },
 }
 

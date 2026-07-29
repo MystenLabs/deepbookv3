@@ -30,9 +30,7 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
-    block_scholes_forward_feed::BlockScholesForwardFeed,
-    block_scholes_spot_feed::BlockScholesSpotFeed,
-    block_scholes_svi_feed::BlockScholesSVIFeed,
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
     registry::OracleRegistry
 };
@@ -231,9 +229,8 @@ public fun value_expiry(
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
-    bs_spot: &BlockScholesSpotFeed,
-    bs_forward: &BlockScholesForwardFeed,
-    bs_svi: &BlockScholesSVIFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
     clock: &Clock,
 ) {
     config.assert_version();
@@ -248,8 +245,7 @@ public fun value_expiry(
             config,
             propbook_registry,
             pyth,
-            bs_spot,
-            bs_forward,
+            bs_values,
             bs_svi,
             clock,
         );

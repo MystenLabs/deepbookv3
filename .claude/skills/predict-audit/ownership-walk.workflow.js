@@ -51,7 +51,6 @@ const MAP_UNITS = [
   { key: 'predict-events', pkg: 'predict', paths: 'sources/events' },
   { key: 'propbook', pkg: 'propbook', paths: 'sources' },
   { key: 'account', pkg: 'account', paths: 'sources' },
-  { key: 'block_scholes_oracle', pkg: 'block_scholes_oracle', paths: 'sources' },
 ]
 const wantUnits = Array.isArray(A.units) ? A.units : null
 // Scope is REQUIRED. The old no-arg fall-through walked every unit — the most expensive shape as the

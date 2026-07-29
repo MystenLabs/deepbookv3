@@ -55,8 +55,14 @@ export const ORACLE_REGISTRY_ID = requireEnv("ORACLE_REGISTRY_ID");
 // propbook `RegistryAdminCap`, minted to the publisher at propbook init. Needed to
 // admin-bind the Pyth + BS feeds to a canonical underlying before market creation.
 export const ORACLE_REGISTRY_ADMIN_CAP_ID = requireEnv("ORACLE_REGISTRY_ADMIN_CAP_ID");
-// STUB Block Scholes signed-data verifier package (mints the verified `Update`).
+// Real Block Scholes signature verifier (`bs_oracle`), published unmodified. The
+// harness holds the publisher `AdminCap`, registers its own per-instance signer
+// key on the shared `SignerRegistry`, and signs every batch it submits.
 export const BLOCK_SCHOLES_ORACLE_PACKAGE_ID = requireEnv("BLOCK_SCHOLES_ORACLE_PACKAGE_ID");
+export const BS_SIGNER_REGISTRY_ID = requireEnv("BS_SIGNER_REGISTRY_ID");
+export const BS_ADMIN_CAP_ID = requireEnv("BS_ADMIN_CAP_ID");
+export const LOCAL_BS_SIGNER_PRIVATE_KEY = requireEnv("LOCAL_BS_SIGNER_PRIVATE_KEY");
+export const LOCAL_BS_SIGNER_PUBLIC_KEY = requireEnv("LOCAL_BS_SIGNER_PUBLIC_KEY");
 export const DUSDC_PACKAGE_ID = requireEnv("DUSDC_PACKAGE_ID");
 export const DUSDC_CURRENCY_ID = requireEnv("DUSDC_CURRENCY_ID");
 export const TREASURY_CAP_ID = requireEnv("TREASURY_CAP_ID");

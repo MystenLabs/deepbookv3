@@ -23,11 +23,12 @@ from . import config
 
 # GUARD modules: a Move abort here is an EXPECTED business precondition (admission, expiry,
 # freshness, slippage, balance, oracle binding) that a trader/keeper legitimately trips.
+# `block_scholes_store` is propbook's BS ingest/read surface; `verify` is bs_oracle's
+# signature verifier (a bad relayer payload legitimately aborts there).
 GUARD_MODULES = {
     "pricing", "expiry_market", "strike_exposure", "strike_exposure_config",
     "predict_account", "pricing_config", "config_constants", "protocol_config",
-    "registry", "market_manager", "pyth_feed", "block_scholes_spot_feed",
-    "block_scholes_forward_feed", "block_scholes_svi_feed",
+    "registry", "market_manager", "pyth_feed", "block_scholes_store", "verify",
 }
 # INVARIANT modules: arithmetic / accounting / index / custody. A healthy run NEVER aborts
 # here, so a hit is a likely contract bug and is flagged regardless of code. (These were

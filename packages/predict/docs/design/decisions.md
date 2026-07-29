@@ -231,6 +231,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   needed. *Rejected:* keeping the bespoke in-package oracle with an `AdminCap`-minted
   writer cap. The math package `predict_math` was renamed `fixed_math` to match its
   now-shared, Predict-unaware role.
+  *Superseded (in part):* the three Block Scholes feed objects and the stub-verifier
+  caveat above were retired by the signed-store cutover — see "The Block Scholes
+  feeds became signed-series stores gated by the production verifier" below. The
+  extraction itself, the no-writer-capability intent, and the Propbook boundary stand.
 - **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
   `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
   oracle object IDs. `pricing` validates passed feeds against Propbook's current
@@ -266,6 +270,24 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   inventory — the aggregate drifts when the SVI surface moves and it carried an `i64`
   overflow risk (built, then fully reverted). Revisit only if the drift and overflow
   are solved AND skew is shown to help LPs.
+
+- **The Block Scholes feeds became signed-series stores gated by the production
+	  verifier.** The three per-source feed objects and the stub
+	  `block_scholes_oracle` package were replaced by two per-underlying stores
+	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs,
+	  written only through batch types the `bs_oracle` signature verifier mints.
+	  Holding a verified batch is the provenance proof, so relayers are untrusted;
+	  a series id encodes kind, underlying, value scale, and expiry, so a valid
+	  observation can only land in the slot it was signed for. Each observation
+	  carries the provider's model time and batch-envelope time separately:
+	  freshness and the SVI roll-down anchor both key on the model time — the
+	  envelope is transport metadata — replacing on-chain change-detection that
+	  reconstructed the anchor.
+  *Rationale:* authenticity moves from the writer to the data, closing predeploy
+  gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted
+  writer (retains our own key custody in the trust set), and an on-chain
+  sid→slot mapping table (a registration step per new expiry on the market-roll
+  path; deriving the id from the slot's own identity needs no state).
 
 ## One canonical strike representation — absolute ticks (recent)
 
