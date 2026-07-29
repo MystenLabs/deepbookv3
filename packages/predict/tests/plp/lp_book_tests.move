@@ -15,11 +15,7 @@
 module deepbook_predict::lp_book_tests;
 
 use deepbook_predict::{
-    constants::{
-        lp_request_limit_flush_attempts as limit_attempts,
-        min_supply_request as min_supply,
-        min_withdraw_request as min_withdraw,
-    },
+    constants::{min_supply_request as min_supply, min_withdraw_request as min_withdraw},
     lp_book::{Self, DrainSummary, LpBook},
     pool_accounting::{Self, Ledger}
 };
@@ -51,10 +47,11 @@ const NO_MIN_OUTPUT: u64 = 0;
 const LIMIT_MISS_SUPPLY_AMOUNT: u64 = 20_000_000;
 const LIMIT_MISS_SUPPLY_QUOTE: u64 = 10_000_000;
 const LIMIT_MISS_SUPPLY_MIN_OUT: u64 = LIMIT_MISS_SUPPLY_QUOTE + 1_000_000;
-const LIMIT_PASS_SUPPLY_QUOTE: u64 = 20_000_000;
 const LIMIT_MISS_WITHDRAW_AMOUNT: u64 = 10_000_000;
 const LIMIT_MISS_WITHDRAW_QUOTE: u64 = 20_000_000;
 const LIMIT_MISS_WITHDRAW_MIN_OUT: u64 = LIMIT_MISS_WITHDRAW_QUOTE + 1_000_000;
+/// No executable mark can ever quote this, so a request carrying it always misses.
+const UNATTAINABLE_MIN_OUT: u64 = 18_446_744_073_709_551_615;
 
 // === Permanent minimum-liquidity mint ===
 
@@ -209,9 +206,9 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
 // === Request limits and retry expiry ===
 
 #[test]
-fun supply_limit_miss_carries_then_fills_when_mark_improves() {
+fun supply_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // total_supply 30e6, first mark 2.0 -> supply quotes 10e6 shares, below the 11e6 limit.
+    // total_supply 30e6, mark 2.0 -> supply quotes 10e6 shares, below the 11e6 limit.
     book.mint_locked_liquidity(30_000_000);
     let payment = coin::mint_for_testing<DUSDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, LIMIT_MISS_SUPPLY_MIN_OUT);
@@ -225,51 +222,27 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves() {
         scenario.ctx(),
     );
 
+    // Processed as a refund, not a fill: the head is resolved on its first miss.
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.supply_requests_pending(), 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    // Nothing minted and the escrow went back to the requester, not into idle.
     assert_eq!(book.total_supply(), 30_000_000);
     assert_eq!(ledger.idle_balance(), 0);
-
-    // Improved mark 1.0 -> supply quotes 20e6 shares, satisfying the same queued request.
-    let summary = book.drain(
-        &mut ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
-        vault_id(),
-        option::none(),
-        option::none(),
-        scenario.ctx(),
-    );
-
-    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.supply_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 30_000_000 + LIMIT_PASS_SUPPLY_QUOTE);
-    assert_eq!(ledger.idle_balance(), LIMIT_MISS_SUPPLY_AMOUNT);
 
     finish(scenario, book, ledger);
 }
 
+/// A supply request whose limit no mark can satisfy is refunded on the flush that
+/// reaches it, so the request behind it fills in that same flush. Pins the queue
+/// against a head that stalls the drain (external audit finding, issue #42).
 #[test]
-fun supply_limit_expires_after_three_misses() {
+fun supply_limit_miss_does_not_block_later_requests() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // Each flush quotes 10e6 shares against an 11e6 minimum, so the third miss refunds.
     book.mint_locked_liquidity(30_000_000);
-    let payment = coin::mint_for_testing<DUSDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
-    book.request_supply(payment, alice_id(), ALICE, LIMIT_MISS_SUPPLY_MIN_OUT);
-
-    let mut i = 0u64;
-    while (i < limit_attempts!() - 1) {
-        let summary = book.drain(
-            &mut ledger,
-            lp_book::new_flush_mark(60_000_000, 30_000_000),
-            vault_id(),
-            option::none(),
-            option::none(),
-            scenario.ctx(),
-        );
-        assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-        assert_eq!(book.supply_requests_pending(), 1);
-        i = i + 1;
-    };
+    let unfillable = coin::mint_for_testing<DUSDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
+    book.request_supply(unfillable, bob_id(), BOB, UNATTAINABLE_MIN_OUT);
+    let honest = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(honest, alice_id(), ALICE, NO_MIN_OUTPUT);
 
     let summary = book.drain(
         &mut ledger,
@@ -280,18 +253,21 @@ fun supply_limit_expires_after_three_misses() {
         scenario.ctx(),
     );
 
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    // Both heads resolved in one flush: the unfillable one refunded, the honest one filled.
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 2);
     assert_eq!(book.supply_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 30_000_000);
-    assert_eq!(ledger.idle_balance(), 0);
+    // 10e6 DUSDC at the 2.0 mark mints 5e6 PLP on top of the 30e6 genesis lock.
+    assert_eq!(book.total_supply(), 35_000_000);
+    // Only the honest escrow joined idle; the refunded 20e6 did not.
+    assert_eq!(ledger.idle_balance(), 10_000_000);
 
     finish(scenario, book, ledger);
 }
 
 #[test]
-fun withdraw_limit_miss_carries_then_fills_when_mark_improves() {
+fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // total_supply 30e6, first mark 2.0 -> withdraw quotes 20e6 DUSDC, below the 21e6 limit.
+    // total_supply 30e6, mark 2.0 -> withdraw quotes 20e6 DUSDC, below the 21e6 limit.
     book.mint_locked_liquidity(30_000_000);
     seed_idle(&mut ledger, 60_000_000);
     enqueue_withdraw_with_limit(
@@ -311,55 +287,30 @@ fun withdraw_limit_miss_carries_then_fills_when_mark_improves() {
     );
 
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.withdraw_requests_pending(), 1);
+    assert_eq!(book.withdraw_requests_pending(), 0);
+    // Escrowed PLP went back to the requester: nothing burned, no idle paid out.
     assert_eq!(book.total_supply(), 30_000_000);
     assert_eq!(ledger.idle_balance(), 60_000_000);
-
-    // Improved mark 2.1 -> withdraw quotes exactly 21e6 DUSDC, satisfying the request.
-    let summary = book.drain(
-        &mut ledger,
-        lp_book::new_flush_mark(63_000_000, 30_000_000),
-        vault_id(),
-        option::none(),
-        option::none(),
-        scenario.ctx(),
-    );
-
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
-    assert_eq!(book.withdraw_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 30_000_000 - LIMIT_MISS_WITHDRAW_AMOUNT);
-    assert_eq!(ledger.idle_balance(), 60_000_000 - LIMIT_MISS_WITHDRAW_MIN_OUT);
 
     finish(scenario, book, ledger);
 }
 
+/// The withdraw-side twin of `supply_limit_miss_does_not_block_later_requests`:
+/// an exit request behind an unfillable limit is paid in the same flush, so the
+/// queue cannot be held closed by a request no mark can satisfy (issue #42).
 #[test]
-fun withdraw_limit_expires_after_three_misses() {
+fun withdraw_limit_miss_does_not_block_later_requests() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // Each flush quotes 20e6 DUSDC against a 21e6 minimum, so the third miss refunds.
     book.mint_locked_liquidity(30_000_000);
     seed_idle(&mut ledger, 60_000_000);
-    enqueue_withdraw_with_limit(
+    enqueue_withdraw_for(
         &mut scenario,
         &mut book,
+        BOB,
         LIMIT_MISS_WITHDRAW_AMOUNT,
-        LIMIT_MISS_WITHDRAW_MIN_OUT,
+        UNATTAINABLE_MIN_OUT,
     );
-
-    let mut i = 0u64;
-    while (i < limit_attempts!() - 1) {
-        let summary = book.drain(
-            &mut ledger,
-            lp_book::new_flush_mark(60_000_000, 30_000_000),
-            vault_id(),
-            option::none(),
-            option::none(),
-            scenario.ctx(),
-        );
-        assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-        assert_eq!(book.withdraw_requests_pending(), 1);
-        i = i + 1;
-    };
+    enqueue_withdraw_for(&mut scenario, &mut book, ALICE, min_withdraw!(), NO_MIN_OUTPUT);
 
     let summary = book.drain(
         &mut ledger,
@@ -370,10 +321,11 @@ fun withdraw_limit_expires_after_three_misses() {
         scenario.ctx(),
     );
 
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 2);
     assert_eq!(book.withdraw_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 30_000_000);
-    assert_eq!(ledger.idle_balance(), 60_000_000);
+    // 1e6 PLP burned at the 2.0 mark pays 2e6 DUSDC out of the 60e6 idle.
+    assert_eq!(book.total_supply(), 29_000_000);
+    assert_eq!(ledger.idle_balance(), 58_000_000);
 
     finish(scenario, book, ledger);
 }
@@ -1021,6 +973,9 @@ fun setup(): (Scenario, LpBook<LP_BOOK_TESTS>, Ledger) {
 /// A stable dummy account id for the requesting account (event/attribution only).
 fun alice_id(): ID { ALICE.to_id() }
 
+/// A second requesting account, so queue-ordering tests can tell two owners apart.
+fun bob_id(): ID { BOB.to_id() }
+
 /// A stable dummy pool-vault id for drain-event attribution.
 fun vault_id(): ID { @0xFEED.to_id() }
 
@@ -1055,8 +1010,20 @@ fun enqueue_withdraw_with_limit(
     amount: u64,
     min_output: u64,
 ): u64 {
+    enqueue_withdraw_for(scenario, book, ALICE, amount, min_output)
+}
+
+/// Queue a withdraw request owned by `recipient`, so one test can stage requests
+/// from two different LPs in a known order.
+fun enqueue_withdraw_for(
+    scenario: &mut Scenario,
+    book: &mut LpBook<LP_BOOK_TESTS>,
+    recipient: address,
+    amount: u64,
+    min_output: u64,
+): u64 {
     let lp = coin::mint_for_testing<LP_BOOK_TESTS>(amount, scenario.ctx());
-    book.request_withdraw(lp, alice_id(), ALICE, min_output)
+    book.request_withdraw(lp, recipient.to_id(), recipient, min_output)
 }
 
 fun assert_drain_summary(

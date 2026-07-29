@@ -418,40 +418,59 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-12: LP request limit misses carry for three flush attempts (resolves P-7)
+## RP-12: An LP request that misses its limit is refunded by the flush that reaches it (resolves P-7)
 
 - **Trigger state:** a queued LP supply or withdraw request reaches the head of
   its FIFO queue during a flush, the frozen mark is executable, but the quoted
   output is below the request's minimum output (`min_plp_out` for supply,
   `min_dusdc_out` for withdraw).
 - **Controller:** market (the frozen mark) × user (the request-time limit). The
-  protocol controls only the retry policy once the request is at the head.
-- **Blast radius:** `lp_book::drain` runs inside `finish_flush`; blindly filling
-  a limit-missing request gives the user unbounded slippage, while immediately
-  cancelling on the first miss makes ordinary mark volatility a poor LP UX.
-- **Response:** skip/carry with bounded expiry. A live limit miss increments the
-  request's miss count, emits `RequestLimitMissed`, counts against that queue's
-  per-flush processed budget, leaves the request at the head, and stops that
-  queue for the flush. On the third miss, the request is protocol-cancelled and
-  refunded with `RequestCancelled.reason = 2` (`limit expired`) instead of
-  carrying indefinitely. The user cannot modify a queued limit; changing price
-  protection means cancelling and submitting a new request.
-- **Reasoning:** carrying across a small fixed number of flush attempts absorbs
-  ordinary NAV noise without forcing users to monitor and re-submit after every
-  miss. Expiry bounds queue blockage: an overly tight or stale limit cannot
-  permanently block later FIFO requests. The fixed value is upgrade-required
-  (`lp_request_limit_flush_attempts = 3`) rather than per-user configurable to
-  keep the public surface and queue semantics simple pre-deploy.
-- **Risk profile:** `BEST-GUESS` — the UX win depends on actual flush cadence
-  and NAV volatility. The liveness risk is bounded by the three-attempt expiry,
-  and users retain the explicit cancel path while pending.
+  protocol controls only what happens to the request once it is at the head.
+- **Blast radius:** `lp_book::drain` runs inside `finish_flush`, and every LP
+  entry and exit passes through it. Blindly filling a limit-missing request gives
+  the user unbounded slippage; leaving one queued at the head holds up every
+  request behind it, so the head-of-queue policy is a pool-wide liveness control,
+  not a per-user UX knob.
+- **Response:** protocol-cancel and refund on the miss, then keep draining. The
+  head is popped, its escrow returned, and `RequestCancelled.reason = 2` emitted;
+  the drain continues to the next request in the same flush. A miss spends one
+  unit of that queue's processed budget, exactly like a fill. Every head is
+  therefore resolved by the flush that reaches it, and no request can be held
+  over. The user cannot modify a queued limit; changing price protection means
+  submitting a new request.
+- **Reasoning:** the queue is shared, so the cost of retrying a miss is paid by
+  everyone behind it, not by the requester. The superseded policy (carry for
+  three flush attempts, stop the queue each time) reasoned only about an honest
+  too-tight limit and concluded expiry "bounds queue blockage". It does not: the
+  bound is per request, and requests compose. `min_output` is unbounded at
+  admission and escrow is refunded in full, so anyone could pre-stuff a queue
+  with minimum-sized requests carrying an unsatisfiable limit and delay every
+  later LP by ~2 flushes per request for the price of gas — measured at 2N+1
+  flushes of total blockage for N requests, so 201 flushes with no honest LP exit
+  at N=100 (external audit, issue #42). Fill-or-kill at the reaching flush removes
+  the amplification and the blocking together: a griefing request now costs the
+  same single budget unit as an honest one and is gone. The lost affordance is a
+  resting limit — an LP whose limit misses re-submits instead of waiting up to
+  three flushes.
+- **Risk profile:** `MEASURED` for the liveness property — the blockage the
+  superseded policy allowed was reproduced and quantified at 2N+1 flushes for N
+  limit-missing requests
+  (`evidence/rp12-lp-queue-head-of-line-2026-07-29.md`), and the pinning tests
+  below hold the queue open against the same shape. `BEST-GUESS` for the UX cost:
+  how often an honest limit misses depends on flush cadence and NAV volatility,
+  which are still unmeasured, and each miss now costs a round trip rather than a
+  wait.
 - **Pinning tests:** `lp_book_tests.move` —
-  `supply_limit_miss_carries_then_fills_when_mark_improves`,
-  `supply_limit_expires_after_three_misses`,
-  `withdraw_limit_miss_carries_then_fills_when_mark_improves`, and
-  `withdraw_limit_expires_after_three_misses`.
-- **Reopen when:** flush cadence changes materially, the retry count becomes
-  user-configurable, or LP request limits become mutable in-place.
+  `supply_limit_miss_refunds_at_the_flush_that_reaches_it`,
+  `supply_limit_miss_does_not_block_later_requests`,
+  `withdraw_limit_miss_refunds_at_the_flush_that_reaches_it`, and
+  `withdraw_limit_miss_does_not_block_later_requests`.
+- **Reopen when:** measured miss rates on a live cadence show honest LPs
+  re-submitting often enough to want a resting limit back — in which case the
+  retry must live somewhere that cannot block the primary queue (a separate
+  retry queue), never at the head; or LP request limits become mutable in-place;
+  or a per-account pending-request cap is added, which bounds queue spam but is
+  not a substitute for this policy because accounts are permissionless.
 
 ---
 

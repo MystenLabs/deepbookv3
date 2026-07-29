@@ -43,7 +43,6 @@ public struct RequestEntry has copy, drop, store {
     recipient: address,
     amount: u64,
     min_output: u64,
-    missed_flushes: u64,
 }
 
 /// Non-empty request page. Page IDs are `index / PAGE_CAPACITY`; the linked list
@@ -175,10 +174,12 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
 /// supplies first then withdrawals. `supply_budget` / `withdraw_budget` bound how many
-/// head requests each queue may process this flush; processed means filled,
-/// protocol-refunded as non-executable at the mark, or a live limit miss that remains
-/// queued. `None` makes that queue unbounded. The two budgets are independent, so
-/// supply pressure can never starve withdrawals.
+/// head requests each queue may process this flush; processed means filled or
+/// protocol-refunded — as non-executable at the mark, or for missing the request's own
+/// minimum output. `None` makes that queue unbounded. The two budgets are independent,
+/// so supply pressure can never starve withdrawals.
+/// Every head is resolved in the flush that reaches it, so no request a mark cannot
+/// fill can hold up the requests behind it.
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
@@ -223,8 +224,6 @@ fun drain_supply_queue<LP>(
     let mut filled = 0;
     let mut processed = 0;
 
-    let max_limit_misses = constants::lp_request_limit_flush_attempts!();
-
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
         let shares = mark.quote_supply_shares(request.amount);
@@ -251,27 +250,14 @@ fun drain_supply_queue<LP>(
                     book.supply_queue.pending,
                 );
             } else if (shares < request.min_output) {
-                let missed_flushes = book.supply_queue.record_front_limit_miss();
-                if (missed_flushes >= max_limit_misses) {
-                    let (request, escrowed) = book.supply_queue.pop_front();
-                    refund_supply_request(
-                        pool_vault_id,
-                        request,
-                        escrowed,
-                        constants::request_cancel_reason_limit_expired!(),
-                        book.supply_queue.pending,
-                    );
-                } else {
-                    emit_request_limit_missed(
-                        pool_vault_id,
-                        &request,
-                        true,
-                        shares,
-                        missed_flushes,
-                        max_limit_misses,
-                    );
-                    break
-                };
+                let (request, escrowed) = book.supply_queue.pop_front();
+                refund_supply_request(
+                    pool_vault_id,
+                    request,
+                    escrowed,
+                    constants::request_cancel_reason_limit_missed!(),
+                    book.supply_queue.pending,
+                );
             } else {
                 let (request, escrowed) = book.supply_queue.pop_front();
                 ledger.receive_idle(escrowed);
@@ -305,8 +291,6 @@ fun drain_withdraw_queue<LP>(
     let mut filled = 0;
     let mut processed = 0;
 
-    let max_limit_misses = constants::lp_request_limit_flush_attempts!();
-
     while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
         let payout = mark.quote_withdraw_dusdc(request.amount);
@@ -325,27 +309,14 @@ fun drain_withdraw_queue<LP>(
             let payout = payout.destroy_some();
             if (payout < request.min_output) {
                 processed = processed + 1;
-                let missed_flushes = book.withdraw_queue.record_front_limit_miss();
-                if (missed_flushes >= max_limit_misses) {
-                    let (request, escrowed_lp) = book.withdraw_queue.pop_front();
-                    refund_withdraw_request(
-                        pool_vault_id,
-                        request,
-                        escrowed_lp,
-                        constants::request_cancel_reason_limit_expired!(),
-                        book.withdraw_queue.pending,
-                    );
-                } else {
-                    emit_request_limit_missed(
-                        pool_vault_id,
-                        &request,
-                        false,
-                        payout,
-                        missed_flushes,
-                        max_limit_misses,
-                    );
-                    break
-                };
+                let (request, escrowed_lp) = book.withdraw_queue.pop_front();
+                refund_withdraw_request(
+                    pool_vault_id,
+                    request,
+                    escrowed_lp,
+                    constants::request_cancel_reason_limit_missed!(),
+                    book.withdraw_queue.pending,
+                );
             } else if (ledger.idle_balance() < payout) {
                 // FIFO-until-dry: idle can't cover the head request, so stop and carry
                 // this and every later withdrawal to reprice next flush.
@@ -419,28 +390,6 @@ fun refund_withdraw_request<LP>(
     );
 }
 
-fun emit_request_limit_missed(
-    pool_vault_id: ID,
-    request: &RequestEntry,
-    is_supply: bool,
-    quoted_output: u64,
-    missed_flushes: u64,
-    max_limit_misses: u64,
-) {
-    vault_events::emit_request_limit_missed(
-        pool_vault_id,
-        request.account_id,
-        request.recipient,
-        request.index,
-        request.amount,
-        is_supply,
-        quoted_output,
-        request.min_output,
-        missed_flushes,
-        max_limit_misses,
-    );
-}
-
 // === Queue Helpers ===
 
 fun queue_new<T>(ctx: &mut TxContext): RequestQueue<T> {
@@ -479,7 +428,6 @@ fun enqueue<T>(
             recipient,
             amount,
             min_output,
-            missed_flushes: 0,
         });
     queue.escrow.join(escrow);
     queue.pending = queue.pending + 1;
@@ -495,14 +443,6 @@ fun front_request<T>(queue: &RequestQueue<T>): RequestEntry {
 fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
     let request = queue.front_request();
     queue.remove(request.index)
-}
-
-fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>): u64 {
-    assert!(queue.pending > 0, ERequestNotFound);
-    let page_id = *queue.head_page_id.borrow();
-    let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
-    entry.missed_flushes = entry.missed_flushes + 1;
-    entry.missed_flushes
 }
 
 fun remove<T>(queue: &mut RequestQueue<T>, index: u64): (RequestEntry, Balance<T>) {

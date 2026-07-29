@@ -263,11 +263,12 @@ public fun value_expiry(
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
 /// `supply_budget` and `withdraw_budget` bound how many requests each queue may
-/// process this flush (`None` = unbounded). Filled heads, protocol-refunded
-/// non-executable heads, and live limit misses count as processed; a live limit
-/// miss remains queued and stops that queue for the flush. A withdrawal whose
-/// quote is valid but exceeds idle carries without spending budget. The budgets
-/// are independent, so a supply backlog does not consume withdrawal capacity.
+/// process this flush (`None` = unbounded). Filled heads and protocol-refunded
+/// heads — non-executable, or quoting below the request's own minimum output —
+/// both count as processed, so a head is always resolved and never held over. A
+/// withdrawal whose quote is valid but exceeds idle carries without spending
+/// budget. The budgets are independent, so a supply backlog does not consume
+/// withdrawal capacity.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
@@ -494,9 +495,9 @@ public fun lock_capital(
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
 /// auto-settles any flush-delivered DUSDC first. The account receives minted PLP
-/// only if a future flush can mint at least `min_plp_out`; after three limit misses
-/// the request is cancelled and refunded. Returns the queue index, the handle used
-/// to cancel before the flush.
+/// only if the next flush to reach it can mint at least `min_plp_out`; if that
+/// flush's mark quotes less, the request is cancelled and refunded there and then.
+/// Returns the queue index, the handle used to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
@@ -532,10 +533,10 @@ public fun request_supply(
 
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
-/// The pull auto-settles any flush-delivered PLP first. The request fills only if a
-/// future flush can pay at least `min_dusdc_out`; after three limit misses the
-/// request is cancelled and refunded. Returns the queue index used to cancel before
-/// the flush.
+/// The pull auto-settles any flush-delivered PLP first. The request fills only if
+/// the next flush to reach it can pay at least `min_dusdc_out`; if that flush's mark
+/// quotes less, the request is cancelled and refunded there and then. Returns the
+/// queue index used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
