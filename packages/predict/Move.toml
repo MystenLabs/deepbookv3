@@ -15,10 +15,10 @@ account = { local = "../account" }
 # former in-package `market_oracle`/`pyth_source` modules were extracted into
 # propbook).
 propbook = { local = "../propbook" }
-# DEEP token (from the deepbookv3 repo), used for staking custody (`registry::stake_deep`)
-# and DEEP burning via `token::deep::ProtectedTreasury`. Pinned to the exact
-# source resolved for this release.
-token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "75d560614b96f8ded0f511000d65e957c3ec6b1a" }
+# DEEP token, used for staking custody (`registry::stake_deep`) and DEEP burning
+# via `token::deep::ProtectedTreasury`. Its committed publication metadata links
+# this local source to the existing network package.
+token = { local = "../token" }
 # Official Pyth Lazer Sui package — now a transitive dependency through `propbook`
 # (which consumes the verified `pyth_lazer::update::Update`). Kept as a direct dep
 # so the publishable root declares the `dep-replacements` linking below. Pinned

@@ -119,10 +119,7 @@ high gas budget because this mode does not benchmark individual mint gas;
 
 1. Generates fresh localnet genesis.
 2. Starts localnet.
-3. Publishes DeepBook, DUSDC, Fixed Math, Block Scholes Oracle, upstream
-   Wormhole, upstream Pyth Lazer, Propbook, and Predict. Propbook's package init
-   creates and shares the `OracleRegistry` and mints the `RegistryAdminCap` to the
-   publisher.
+3. Uses the shared Python publisher to copy the exact package sources into the run workspace, resolve disposable upstream locks and framework pins against localnet under the Testnet build environment, and record isolated addresses in `Pub.sim.toml`; normal dependency verification remains enabled. It publishes Token, DUSDC, Fixed Math, Account, upstream Wormhole, upstream Pyth Lazer, the Block Scholes verifier, Propbook, and Predict. Propbook's package init creates and shares the `OracleRegistry` and mints the `RegistryAdminCap` to the publisher.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
    vault, registers the Propbook underlying + feeds, binds the feeds, applies
    the expiry-fee template config and max admission leverage, enables the
@@ -142,9 +139,7 @@ high gas budget because this mode does not benchmark individual mint gas;
 13. Writes `economic_summary.json` and renders charts.
 14. Deletes generated scenarios and raw long-run JSON.
 
-The exit trap restores temporary Move manifest edits, removes generated
-`Pub.*.toml` files, removes generated scenarios, and stops localnet. If a
-transaction or chart step fails, the script exits and cleanup still runs.
+The checkout is never a publication target: all package-manager writes remain under the ignored run workspace. The exit trap removes generated scenarios and stops localnet; if a transaction or chart step fails, the script exits and cleanup still runs.
 
 ## Failure Debugging
 
@@ -385,15 +380,7 @@ Important fields:
 -   The capacity wall is per-tx computation (`max_gas_computation_bucket`), not
     the gas budget: a tx over it fails `InsufficientGas` regardless of
     `--gas-budget`.
--   One localnet per git worktree: `run.sh` mutates `Move.toml` during publish,
-    so concurrent runs must not share a checkout. `SIM_PORT_OFFSET` gives each
-    run its own ports; never rewrite the genesis `.blob`/swarm ports (that
-    desyncs config from the baked committee). `stress/` holds the parallel
-    stress/fuzz infra (read `stress/README.md` first, including the
-    `SIM_STRESS_*` knobs in `src/sim.ts`); stress runs need `--skip-analysis`,
-    and `SIM_STRESS_LEVERAGE>1` aborting via
-    `assert_mint_probability_and_leverage_policy` is correct moneyness-capping,
-    not a harness bug.
+-   Concurrent localnets can share one checkout because publication state is isolated under each run workspace; give each run a distinct `SIM_PORT_OFFSET`. Never rewrite the genesis `.blob`/swarm ports because that desynchronizes config from the baked committee. `stress/` holds the parallel stress/fuzz infra (read `stress/README.md` first, including the `SIM_STRESS_*` knobs in `src/sim.ts`); stress runs need `--skip-analysis`, and `SIM_STRESS_LEVERAGE>1` aborting via `assert_mint_probability_and_leverage_policy` is correct moneyness-capping, not a harness bug.
 
 -   Keep `run.sh` limited to the four documented manual command forms. The hidden
     benchmark compatibility path exists only for the Docker benchmark worker and

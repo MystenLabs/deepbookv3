@@ -3,8 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PREDICT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PACKAGES_DIR="$(cd "$PREDICT_DIR/.." && pwd)"
-REPO_DIR="$(cd "$PACKAGES_DIR/.." && pwd)"
 if [ -n "${SUI_BINARY:-}" ]; then
   SUI="$SUI_BINARY"
 elif [ -x "$HOME/.local/bin/sui" ]; then
@@ -13,15 +11,8 @@ else
   SUI="$(command -v sui)"
 fi
 
-DUSDC_DIR="$PACKAGES_DIR/dusdc"
-FIXED_MATH_DIR="$PACKAGES_DIR/fixed_math"
-PROPBOOK_DIR="$PACKAGES_DIR/propbook"
 RUNS_DIR="$SCRIPT_DIR/runs"
-BUILD_ENV="sim"
 SCENARIO_CONFIG="$SCRIPT_DIR/data/scenario_config.json"
-WORMHOLE_REV="a596dc27243e6b6dab95539c98b0af9836af2bc2"
-PYTH_LAZER_REV="f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf"
-BS_ORACLE_REV="11d952488bc50f3a2526549a8cd6d4817ae20cc7"
 
 # --- Flag defaults ---
 PYTHON_ONLY=0
@@ -208,18 +199,6 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$DUSDC_DIR/Move.lock" "$FIXED_MATH_DIR/Move.toml" "$FIXED_MATH_DIR/Move.lock" "$PROPBOOK_DIR/Move.toml" "$PROPBOOK_DIR/Move.lock"; do
-    [ -f "$f.bak" ] && mv "$f.bak" "$f"
-  done
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$FIXED_MATH_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
-    if [ -f "$f.bak" ]; then
-      mv "$f.bak" "$f"
-    fi
-  done
-  find "$PACKAGES_DIR" -name "Pub.sim.toml" -delete 2>/dev/null || true
-  find "$PACKAGES_DIR" -name "Pub.localnet.toml" -delete 2>/dev/null || true
-  find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
-  find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   cleanup_generated
   if [ -n "${SUI_PID:-}" ]; then
     echo "Stopping localnet (pid $SUI_PID)..."
@@ -228,53 +207,6 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-
-inject_env() {
-  local file="$1" chain_id="$2"
-  cp "$file" "$file.bak"
-  # Use temp file for sed compatibility across macOS and Linux.
-  sed '/^sim = /d; /^localnet = /d' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  if grep -q '^\[environments\]' "$file"; then
-    sed '/^\[environments\]/a\
-'"${BUILD_ENV}"' = "'"$chain_id"'"
-' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
-  else
-    printf '\n[environments]\n%s = "%s"\n' "$BUILD_ENV" "$chain_id" >> "$file"
-  fi
-}
-
-check_publish() {
-  local output="$1" label="$2"
-  if ! echo "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d.get('objectChanges',[])) > 0" 2>/dev/null; then
-    echo "$label publish failed:"
-    echo "$output" | tail -40
-    exit 1
-  fi
-}
-
-extract_published_package_id() {
-  python3 -c '
-import json, sys
-data = json.load(sys.stdin)
-published = [c for c in data.get("objectChanges", []) if c.get("type") == "published"]
-print(published[-1]["packageId"])
-'
-}
-
-# `--with-unpublished-dependencies` publishes deps in the same tx, so the predict
-# publish emits several `published` changes. `published[-1]` is predict (the root);
-# find a transitive dep (e.g. the account package) by a module it declares.
-extract_published_package_id_by_module() {
-  python3 -c '
-import json, sys
-needle = sys.argv[1]
-data = json.load(sys.stdin)
-for change in data.get("objectChanges", []):
-    if change.get("type") == "published" and needle in change.get("modules", []):
-        print(change["packageId"])
-        break
-' "$1"
-}
 
 extract_created_object_id() {
   python3 -c '
@@ -289,42 +221,18 @@ for change in data.get("objectChanges", []):
 ' "$@"
 }
 
-publish_package() {
-  local package_path="$1"
-  sui_client test-publish \
-    --build-env "$BUILD_ENV" --with-unpublished-dependencies --gas-budget 5000000000 \
-    --skip-dependency-verification --allow-dirty --force --json \
-    --pubfile-path "$INSTANCE_DIR/Pub.$BUILD_ENV.toml" "$package_path" \
-    2>/tmp/sui-publish.err || true
-}
-
-publish_linked_package() {
-  local package_path="$1"
-  sui_client test-publish \
-    --build-env "$BUILD_ENV" --gas-budget 5000000000 \
-    --skip-dependency-verification --allow-dirty --force --json \
-    --pubfile-path "$INSTANCE_DIR/Pub.$BUILD_ENV.toml" "$package_path" \
-    2>/tmp/sui-publish.err || true
-}
-
 json_field() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
 }
 
-# Stage a dependency at an exact commit SHA (`git clone --branch` cannot take a
-# SHA, so the fallback shallow-fetches the revision directly).
-copy_move_dep_rev() {
-  local name="$1" repo="$2" rev="$3" subdir="$4" cache_path="$5" dest="$6"
-  if [ -d "$cache_path/sources" ]; then
-    cp -R "$cache_path" "$dest"
-    return
-  fi
-
-  local checkout="$DEPS_DIR/${name}_repo"
-  git init -q "$checkout"
-  git -C "$checkout" fetch -q --depth 1 "$repo" "$rev"
-  git -C "$checkout" checkout -q FETCH_HEAD
-  cp -R "$checkout/$subdir" "$dest"
+deployment_field() {
+  python3 -c '
+import json, sys
+value = json.load(open(sys.argv[1]))
+for key in sys.argv[2:]:
+    value = value[key]
+print(value)
+' "$DEPLOYMENT_JSON" "$@"
 }
 
 # --- 1. Genesis ---
@@ -401,90 +309,40 @@ done
   LOCAL_BS_SIGNER_PUBLIC_KEY=$(json_field "$LOCAL_PYTH_CONFIG" bsSignerPublicKey)
   echo "    Local Pyth guardian: $LOCAL_PYTH_GUARDIAN_ADDRESS"
 
-  find "$PACKAGES_DIR" -name "Pub.*.toml" -delete 2>/dev/null || true
-  find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
-  find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml "$FIXED_MATH_DIR/Published.toml" "$PROPBOOK_DIR/Published.toml"; do
-    [ -f "$f" ] && cp "$f" "$f.bak"
-  done
+  DEPLOYMENT_JSON="$INSTANCE_DIR/deployment.json"
+  echo "==> Staging and publishing the isolated Predict package closure..."
+  (
+    cd "$PREDICT_DIR"
+    SUI_BINARY="$SUI" python3 -m harness.publish \
+      --client-config "$CLIENT_CONFIG" \
+      --workspace "$INSTANCE_DIR/workspace" \
+      --pubfile "$INSTANCE_DIR/Pub.sim.toml" \
+      --output "$DEPLOYMENT_JSON"
+  )
 
-  # Publish deepbook
-  echo "==> Phase 1: Publishing deepbook..."
-  inject_env "$PACKAGES_DIR/deepbook/Move.toml" "$CHAIN_ID"
-  inject_env "$PACKAGES_DIR/token/Move.toml" "$CHAIN_ID"
-
-  DEEPBOOK_OUTPUT=$(publish_package "$PACKAGES_DIR/deepbook" "Deepbook")
-  check_publish "$DEEPBOOK_OUTPUT" "Deepbook"
-
-  DEEPBOOK_PKG=$(echo "$DEEPBOOK_OUTPUT" | extract_published_package_id)
-  echo "    Deepbook: $DEEPBOOK_PKG"
-
-  mv "$PACKAGES_DIR/deepbook/Move.toml.bak" "$PACKAGES_DIR/deepbook/Move.toml"
-  mv "$PACKAGES_DIR/token/Move.toml.bak" "$PACKAGES_DIR/token/Move.toml"
-
-  # Publish dusdc
-  echo "==> Phase 2: Publishing dusdc..."
-  inject_env "$DUSDC_DIR/Move.toml" "$CHAIN_ID"
-  cp "$DUSDC_DIR/Move.lock" "$DUSDC_DIR/Move.lock.bak"
-
-  DUSDC_OUTPUT=$(publish_package "$DUSDC_DIR" "DUSDC")
-  check_publish "$DUSDC_OUTPUT" "DUSDC"
-
-  DUSDC_PACKAGE_ID=$(echo "$DUSDC_OUTPUT" | extract_published_package_id)
-  DUSDC_CURRENCY_ID=$(echo "$DUSDC_OUTPUT" | extract_created_object_id "coin_registry::Currency" "dusdc::DUSDC")
-  TREASURY_CAP_ID=$(echo "$DUSDC_OUTPUT" | extract_created_object_id "TreasuryCap")
-
-  echo "    DUSDC: $DUSDC_PACKAGE_ID"
-  echo "    DUSDC Currency: $DUSDC_CURRENCY_ID"
-  echo "    TreasuryCap: $TREASURY_CAP_ID"
-
-  mv "$DUSDC_DIR/Move.toml.bak" "$DUSDC_DIR/Move.toml"
-
-  # Publish fixed_math (was predict_math; leaf package, no deps)
-  echo "==> Phase 2a: Publishing fixed_math..."
-  inject_env "$FIXED_MATH_DIR/Move.toml" "$CHAIN_ID"
-  cp "$FIXED_MATH_DIR/Move.lock" "$FIXED_MATH_DIR/Move.lock.bak"
-
-  FIXED_MATH_OUTPUT=$(publish_package "$FIXED_MATH_DIR" "Fixed Math")
-  check_publish "$FIXED_MATH_OUTPUT" "Fixed Math"
-
-  FIXED_MATH_PACKAGE_ID=$(echo "$FIXED_MATH_OUTPUT" | extract_published_package_id)
-  echo "    Fixed Math: $FIXED_MATH_PACKAGE_ID"
-
-  mv "$FIXED_MATH_DIR/Move.toml.bak" "$FIXED_MATH_DIR/Move.toml"
-
-  # test-publish regenerates `[pinned.sim.*]` entries in predict/Move.lock with
-  # instance-specific local paths. Snapshot so cleanup restores it to pristine.
-  cp "$PREDICT_DIR/Move.lock" "$PREDICT_DIR/Move.lock.bak"
-
-  echo "==> Phase 2b: Publishing Wormhole, Pyth Lazer, and the Block Scholes verifier..."
-  DEPS_DIR="$INSTANCE_DIR/deps"
-  rm -rf "$DEPS_DIR"
-  mkdir -p "$DEPS_DIR"
-  WORMHOLE_DIR="$DEPS_DIR/wormhole"
-  PYTH_LAZER_DIR="$DEPS_DIR/pyth_lazer"
-  BS_ORACLE_DIR="$DEPS_DIR/bs_oracle"
-  copy_move_dep_rev \
-    wormhole \
-    "https://github.com/pyth-network/wormhole.git" \
-    "$WORMHOLE_REV" \
-    "sui/wormhole" \
-    "$HOME/.move/git/https___github_com_pyth-network_wormhole_git_$WORMHOLE_REV/sui/wormhole" \
-    "$WORMHOLE_DIR"
-  copy_move_dep_rev \
-    pyth_lazer \
-    "https://github.com/pyth-network/pyth-crosschain.git" \
-    "$PYTH_LAZER_REV" \
-    "lazer/contracts/sui" \
-    "$HOME/.move/git/https___github_com_pyth-network_pyth-crosschain_git_$PYTH_LAZER_REV/lazer/contracts/sui" \
-    "$PYTH_LAZER_DIR"
-
-  inject_env "$WORMHOLE_DIR/Move.toml" "$CHAIN_ID"
-  WORMHOLE_OUTPUT=$(publish_package "$WORMHOLE_DIR" "Wormhole")
-  check_publish "$WORMHOLE_OUTPUT" "Wormhole"
-  WORMHOLE_PACKAGE_ID=$(echo "$WORMHOLE_OUTPUT" | extract_published_package_id)
-  WORMHOLE_DEPLOYER_CAP_ID=$(echo "$WORMHOLE_OUTPUT" | extract_created_object_id "setup::DeployerCap")
-  WORMHOLE_UPGRADE_CAP_ID=$(echo "$WORMHOLE_OUTPUT" | extract_created_object_id "UpgradeCap")
+  PACKAGE_ID=$(deployment_field packages predict)
+  REGISTRY_ID=$(deployment_field objects registry)
+  ADMIN_CAP_ID=$(deployment_field objects admin_cap)
+  PROTOCOL_CONFIG_ID=$(deployment_field objects protocol_config)
+  POOL_VAULT_ID=$(deployment_field objects pool_vault)
+  ACCOUNT_PACKAGE_ID=$(deployment_field packages account)
+  ACCOUNT_REGISTRY_ID=$(deployment_field objects account_registry)
+  ACCOUNT_ADMIN_CAP_ID=$(deployment_field objects account_admin_cap)
+  FIXED_MATH_PACKAGE_ID=$(deployment_field packages fixed_math)
+  BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$(deployment_field packages block_scholes_oracle)
+  BS_SIGNER_REGISTRY_ID=$(deployment_field objects bs_signer_registry)
+  BS_ADMIN_CAP_ID=$(deployment_field objects bs_admin_cap)
+  PROPBOOK_PACKAGE_ID=$(deployment_field packages propbook)
+  ORACLE_REGISTRY_ID=$(deployment_field objects oracle_registry)
+  ORACLE_REGISTRY_ADMIN_CAP_ID=$(deployment_field objects oracle_registry_admin_cap)
+  DUSDC_PACKAGE_ID=$(deployment_field packages dusdc)
+  DUSDC_CURRENCY_ID=$(deployment_field objects dusdc_currency)
+  TREASURY_CAP_ID=$(deployment_field objects treasury_cap)
+  WORMHOLE_PACKAGE_ID=$(deployment_field packages wormhole)
+  WORMHOLE_DEPLOYER_CAP_ID=$(deployment_field objects wormhole_deployer_cap)
+  WORMHOLE_UPGRADE_CAP_ID=$(deployment_field objects wormhole_upgrade_cap)
+  PYTH_LAZER_PACKAGE_ID=$(deployment_field packages pyth_lazer)
+  PYTH_LAZER_UPGRADE_CAP_ID=$(deployment_field objects pyth_lazer_upgrade_cap)
   WORMHOLE_INIT_OUTPUT=$(sui_client call \
     --package "$WORMHOLE_PACKAGE_ID" \
     --module setup \
@@ -504,32 +362,6 @@ done
   echo "    Wormhole: $WORMHOLE_PACKAGE_ID"
   echo "    Wormhole State: $WORMHOLE_STATE_ID"
 
-  inject_env "$PYTH_LAZER_DIR/Move.toml" "$CHAIN_ID"
-  python3 - "$PYTH_LAZER_DIR/Move.toml" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
-import pathlib, re, sys
-toml_path = pathlib.Path(sys.argv[1])
-wormhole_path = sys.argv[2]
-wormhole_pkg_id = sys.argv[3]
-build_env = sys.argv[4]
-text = toml_path.read_text()
-text = re.sub(
-    r"\[dependencies\.wormhole\][^\[]*",
-    f'[dependencies.wormhole]\nlocal = "{wormhole_path}"\n\n',
-    text,
-)
-text = re.sub(r"\[dep-replacements\.[^\]]+\][^\[]*", "", text)
-text = text.rstrip() + (
-    f'\n\n[dep-replacements.{build_env}]\n'
-    f'wormhole = {{ local = "{wormhole_path}", '
-    f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
-)
-toml_path.write_text(text)
-PY
-
-  PYTH_LAZER_OUTPUT=$(publish_linked_package "$PYTH_LAZER_DIR" "Pyth Lazer")
-  check_publish "$PYTH_LAZER_OUTPUT" "Pyth Lazer"
-  PYTH_LAZER_PACKAGE_ID=$(echo "$PYTH_LAZER_OUTPUT" | extract_published_package_id)
-  PYTH_LAZER_UPGRADE_CAP_ID=$(echo "$PYTH_LAZER_OUTPUT" | extract_created_object_id "UpgradeCap")
   PYTH_LAZER_INIT_OUTPUT=$(sui_client call \
     --package "$PYTH_LAZER_PACKAGE_ID" \
     --module actions \
@@ -544,155 +376,16 @@ PY
   echo "    Pyth Lazer: $PYTH_LAZER_PACKAGE_ID"
   echo "    Pyth Lazer State: $PYTH_LAZER_STATE_ID"
 
-  # Publish the real Block Scholes verifier (`bs_oracle`, the git dep propbook and
-  # predict pin), unmodified. Its `init` shares a `SignerRegistry` and sends the
-  # publisher an `AdminCap`; the sim registers its own per-instance secp256k1 key
-  # via `set_signer` (from sim.ts setup) and signs every batch it submits — the
-  # same local-trusted-signer model as the Pyth guardian above.
-  copy_move_dep_rev \
-    bs_oracle \
-    "https://github.com/blockscholes/sui-signed-oracle.git" \
-    "$BS_ORACLE_REV" \
-    "move/bs_oracle" \
-    "$HOME/.move/git/https___github_com_blockscholes_sui-signed-oracle_git_$BS_ORACLE_REV/move/bs_oracle" \
-    "$BS_ORACLE_DIR"
-
-  inject_env "$BS_ORACLE_DIR/Move.toml" "$CHAIN_ID"
-  BS_ORACLE_OUTPUT=$(publish_package "$BS_ORACLE_DIR" "Block Scholes verifier")
-  check_publish "$BS_ORACLE_OUTPUT" "Block Scholes verifier"
-  BLOCK_SCHOLES_ORACLE_PACKAGE_ID=$(echo "$BS_ORACLE_OUTPUT" | extract_published_package_id)
-  BS_SIGNER_REGISTRY_ID=$(echo "$BS_ORACLE_OUTPUT" | extract_created_object_id "registry::SignerRegistry")
-  BS_ADMIN_CAP_ID=$(echo "$BS_ORACLE_OUTPUT" | extract_created_object_id "registry::AdminCap")
+  echo "    DUSDC: $DUSDC_PACKAGE_ID"
+  echo "    Fixed Math: $FIXED_MATH_PACKAGE_ID"
+  echo "    Account: $ACCOUNT_PACKAGE_ID"
   echo "    Block Scholes verifier: $BLOCK_SCHOLES_ORACLE_PACKAGE_ID"
-  echo "    Block Scholes SignerRegistry: $BS_SIGNER_REGISTRY_ID"
-
-  # Publish propbook (owns the extracted Pyth feed + Block Scholes stores and the
-  # shared OracleRegistry, created+shared at package init). Like predict it depends
-  # on the git pyth_lazer/wormhole/bs_oracle packages, so redirect those to the
-  # locally published copies via [dep-replacements.sim] (the pubfile maps by source
-  # identity, so a git dep never resolves to a package published from a staged
-  # path). Its local dep (fixed_math) resolves through the shared pubfile, like
-  # deepbook/dusdc.
-  echo "==> Phase 2c: Publishing propbook..."
-  inject_env "$PROPBOOK_DIR/Move.toml" "$CHAIN_ID"
-  cp "$PROPBOOK_DIR/Move.lock" "$PROPBOOK_DIR/Move.lock.bak"
-  python3 - "$PROPBOOK_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BS_ORACLE_DIR" "$BLOCK_SCHOLES_ORACLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
-import pathlib, re, sys
-toml_path = pathlib.Path(sys.argv[1])
-pyth_lazer_path = sys.argv[2]
-pyth_lazer_pkg_id = sys.argv[3]
-wormhole_path = sys.argv[4]
-wormhole_pkg_id = sys.argv[5]
-bs_oracle_path = sys.argv[6]
-bs_oracle_pkg_id = sys.argv[7]
-build_env = sys.argv[8]
-text = toml_path.read_text()
-text = re.sub(
-    r"pyth_lazer = \{ git[^}]*\}",
-    f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
-    text,
-)
-text = re.sub(
-    r"bs_oracle = \{ git[^}]*\}",
-    f'bs_oracle = {{ local = "{bs_oracle_path}" }}',
-    text,
-)
-text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
-text = text.rstrip() + (
-    f'\n\n[dep-replacements.{build_env}]\n'
-    f'pyth_lazer = {{ local = "{pyth_lazer_path}", '
-    f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
-    f'wormhole = {{ local = "{wormhole_path}", '
-    f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
-    f'bs_oracle = {{ local = "{bs_oracle_path}", '
-    f'published-at = "{bs_oracle_pkg_id}", original-id = "{bs_oracle_pkg_id}" }}\n'
-)
-toml_path.write_text(text)
-PY
-
-  PROPBOOK_OUTPUT=$(publish_package "$PROPBOOK_DIR" "Propbook")
-  check_publish "$PROPBOOK_OUTPUT" "Propbook"
-
-  PROPBOOK_PACKAGE_ID=$(echo "$PROPBOOK_OUTPUT" | extract_published_package_id)
-  ORACLE_REGISTRY_ID=$(echo "$PROPBOOK_OUTPUT" | extract_created_object_id "registry::OracleRegistry")
-  ORACLE_REGISTRY_ADMIN_CAP_ID=$(echo "$PROPBOOK_OUTPUT" | extract_created_object_id "registry::RegistryAdminCap")
-
   echo "    Propbook: $PROPBOOK_PACKAGE_ID"
-  echo "    OracleRegistry: $ORACLE_REGISTRY_ID"
-  echo "    RegistryAdminCap: $ORACLE_REGISTRY_ADMIN_CAP_ID"
-
-  # Do NOT restore propbook/Move.toml here: propbook is a new-style package, and
-  # predict loads it from source for `--build-env sim`, so its `[environments] sim`
-  # and `[dep-replacements.sim]` must stay in place until predict is built. cleanup()
-  # restores it from the .bak at exit. (Old-style deps like deepbook can be restored
-  # inline because they resolve addresses via `[addresses]`, not `[environments]`.)
-
-  # Publish predict
-  echo "==> Phase 3: Publishing predict..."
-
-  # Only the git deps (pyth_lazer/wormhole/bs_oracle) need source+address
-  # redirection for the sim env — they mirror predict's [dep-replacements.testnet].
-  # The remaining deps (local deepbook, dusdc, fixed_math, propbook, token) resolve
-  # through the shared pubfile, so they are not injected here.
-  inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
-  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BS_ORACLE_DIR" "$BLOCK_SCHOLES_ORACLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
-import pathlib, re, sys
-toml_path = pathlib.Path(sys.argv[1])
-pyth_lazer_path = sys.argv[2]
-pyth_lazer_pkg_id = sys.argv[3]
-wormhole_path = sys.argv[4]
-wormhole_pkg_id = sys.argv[5]
-bs_oracle_path = sys.argv[6]
-bs_oracle_pkg_id = sys.argv[7]
-build_env = sys.argv[8]
-text = toml_path.read_text()
-text = re.sub(
-    r"pyth_lazer = \{ git[^}]*\}",
-    f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
-    text,
-)
-text = re.sub(
-    r"bs_oracle = \{ git[^}]*\}",
-    f'bs_oracle = {{ local = "{bs_oracle_path}" }}',
-    text,
-)
-text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
-text = text.rstrip() + (
-    f'\n\n[dep-replacements.{build_env}]\n'
-    f'pyth_lazer = {{ local = "{pyth_lazer_path}", '
-    f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
-    f'wormhole = {{ local = "{wormhole_path}", '
-    f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
-    f'bs_oracle = {{ local = "{bs_oracle_path}", '
-    f'published-at = "{bs_oracle_pkg_id}", original-id = "{bs_oracle_pkg_id}" }}\n'
-)
-toml_path.write_text(text)
-PY
-
-  PREDICT_OUTPUT=$(publish_package "$PREDICT_DIR" "Predict")
-  check_publish "$PREDICT_OUTPUT" "Predict"
-
-  PACKAGE_ID=$(echo "$PREDICT_OUTPUT" | extract_published_package_id)
-  REGISTRY_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::Registry")
-  ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "admin::AdminCap")
-  PROTOCOL_CONFIG_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "protocol_config::ProtocolConfig")
-  POOL_VAULT_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "plp::PoolVault")
-
-  # The account package is published transitively with predict
-  # (`--with-unpublished-dependencies`); its init shares an `AccountRegistry` and
-  # transfers an `AccountAdminCap` to the publisher.
-  ACCOUNT_PACKAGE_ID=$(echo "$PREDICT_OUTPUT" | extract_published_package_id_by_module "account_registry")
-  ACCOUNT_REGISTRY_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "account_registry::AccountRegistry")
-  ACCOUNT_ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "account_registry::AccountAdminCap")
-
   echo "    Predict: $PACKAGE_ID"
   echo "    Registry: $REGISTRY_ID"
   echo "    AdminCap: $ADMIN_CAP_ID"
   echo "    ProtocolConfig: $PROTOCOL_CONFIG_ID"
   echo "    PoolVault: $POOL_VAULT_ID"
-  echo "    Account: $ACCOUNT_PACKAGE_ID"
-  echo "    AccountRegistry: $ACCOUNT_REGISTRY_ID"
-  echo "    AccountAdminCap: $ACCOUNT_ADMIN_CAP_ID"
 
   # Whitelist predict's `PredictApp` so its account-authorized flows can mint app auth
   # (mirrors flow_test_helpers' setup_market). AccountRegistry is shared; the admin cap
@@ -706,8 +399,6 @@ PY
     --gas-budget 1000000000 \
     --json >/dev/null
   echo "    PredictApp authorized on AccountRegistry"
-
-  mv "$PREDICT_DIR/Move.toml.bak" "$PREDICT_DIR/Move.toml"
 
   # Write env file
   cat > "$INSTANCE_DIR/.env.localnet" <<EOF

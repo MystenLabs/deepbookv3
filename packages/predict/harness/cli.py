@@ -5,9 +5,28 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import signal
 import sys
+from collections.abc import Callable
 
 from . import analyze, config, live, run as run_mod, state
+
+
+def _raise_keyboard_interrupt(_signum, _frame) -> None:
+    raise KeyboardInterrupt()
+
+
+def _run_with_sigterm_handler(command: Callable[[], int]) -> int:
+    """Let command cleanup run on SIGTERM, then report the conventional exit code."""
+    previous = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+    try:
+        try:
+            return command()
+        except KeyboardInterrupt:
+            return 130
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -118,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     p_clean.set_defaults(func=_cmd_cleanup)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    return _run_with_sigterm_handler(lambda: args.func(args))
 
 
 if __name__ == "__main__":

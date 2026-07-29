@@ -39,11 +39,9 @@ process supervision, teardown); TypeScript actors drive the protocol. They coord
 on-chain state plus **atomically-written** shared JSON in the instance dir (`feeds.json`,
 `snapshot.json`, `markets.json`).
 
-**Bring-up** stages the Predict closure into a scratch workspace and publishes it into a
-fresh localnet (no checkout mutation → N in parallel from one clone), initializes Wormhole +
-Pyth + account, and registers a **local trusted signer** — the harness re-signs the real
-Pyth data with its own key (real signatures don't verify on localnet; the data is real, the
-signature is local).
+**Bring-up** stages the Predict closure into a scratch workspace, compiles the canonical Testnet dependency graph, and records fresh localnet addresses in the workspace's `Pub.sim.toml` (no checkout mutation → N in parallel from one clone). It then initializes Wormhole + Pyth + account and registers a **local trusted signer** — the harness re-signs the real Pyth data with its own key (real signatures don't verify on localnet; the data is real, the signature is local).
+
+Upstream packages are exported from their exact commits. Their disposable lockfiles—and Block Scholes' copied explicit framework pins—are resolved against the localnet's Sui framework so normal dependency verification stays enabled; canonical upstream and repository files remain unchanged.
 
 **Three actors, one stream:**
 - **Updater** — the sole market-data consumer: streams the full `real_time` Pyth spot + Block
@@ -107,8 +105,7 @@ trader funding (plus the prod cadence set — 1m/5m/1h, window 3 — every keepe
 ## Requirements
 
 - The `sui` CLI (resolved via `$SUI_BINARY`, `~/.local/bin/sui`, or `PATH`).
-- The `~/.move` cache primed with the exact Pyth Lazer / Wormhole revisions pinned by
-  `predict/Move.lock` (a normal `sui move build` of predict does this).
+- Network access for any exact Pyth Lazer, Wormhole, or Block Scholes revision that is not already present in the `~/.move` cache; the staging publisher discovers these revisions from the canonical Predict/Propbook manifests and shallow-fetches only missing sources.
 - `harness/.env` with `PYTH_PRO_API_KEY` + `BLOCK_SCHOLES_API_KEY` (gitignored; never commit).
 
 ## Note
