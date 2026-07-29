@@ -72,6 +72,13 @@ public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
 /// Maximum active leveraged orders one expiry market may carry into NAV.
 public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
 
+/// How long a started full-pool valuation may stay in flight before anyone may
+/// discard it (`plp::abort_valuation`). The valuation lock freezes the whole
+/// mutation surface and valuation now spans transactions, so an abandoned flush
+/// needs a permissionless escape; this window is the operator's exclusive slot to
+/// finish before that opens.
+public(package) macro fun max_valuation_window_ms(): u64 { one_hour_ms!() }
+
 // === Time Constants ===
 
 public(package) macro fun one_minute_ms(): u64 { 60_000 }
