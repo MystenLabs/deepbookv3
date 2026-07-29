@@ -138,22 +138,20 @@ bounded Moka cache keyed by numeric feed ID and microsecond timestamp. A request
 containing several IDs fetches all cache misses in one Pyth Pro call, and
 concurrent requests for the same timestamp share the load.
 
-The allowlists corresponding to the Pyth feeds currently exposed by
-`@mysten/deepbook-v3` are:
+The mainnet and testnet DeepBook deployments use the same allowlist: the union
+of the Pyth feeds currently exposed by `@mysten/deepbook-v3` on either network.
+This keeps the public proxy behavior consistent across both servers:
 
-| Network | SDK coin | Pyth Pro feed ID |
-| --- | --- | ---: |
-| Mainnet | DEEP | 173 |
-| Mainnet | SUI | 11 |
-| Mainnet | USDC | 7 |
-| Mainnet | WAL | 624 |
-| Mainnet | SUIUSDE | 2998 |
-| Mainnet | XBTC | 1598 |
-| Mainnet | USDSUI | 3049 |
-| Testnet | DEEP | 173 |
-| Testnet | SUI | 11 |
-| Testnet | DBUSDC | 7 |
-| Testnet | DBTC | 1 |
+| SDK coin      | SDK network       | Pyth Pro feed ID |
+| ------------- | ----------------- | ---------------: |
+| DBTC          | Testnet           |                1 |
+| USDC / DBUSDC | Mainnet / Testnet |                7 |
+| SUI           | Mainnet / Testnet |               11 |
+| DEEP          | Mainnet / Testnet |              173 |
+| WAL           | Mainnet           |              624 |
+| XBTC          | Mainnet           |             1598 |
+| SUIUSDE       | Mainnet           |             2998 |
+| USDSUI        | Mainnet           |             3049 |
 
 The testnet SDK currently points its DEEP entry at a Hermes beta HFT feed.
 Pyth Pro feed 446 is the direct HFT symbol match but is inactive, so the
@@ -180,7 +178,7 @@ the repository root:
 ```bash
 export DATABASE_URL="postgres://postgres:postgrespw@localhost:5432/deepbook"
 export PYTH_PRO_API_KEY="<your-api-key>"
-export PYTH_PRO_ALLOWED_FEED_IDS="1,7,11,173"
+export PYTH_PRO_ALLOWED_FEED_IDS="1,7,11,173,624,1598,2998,3049"
 export PYTH_PRO_HISTORY_SYMBOLS="Crypto.BTC/USD,Crypto.ETH/USD"
 cargo run -p deepbook-server
 ```
