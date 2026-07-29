@@ -1653,3 +1653,99 @@ public fun build_pyth_pro_price_info_object(
     );
     price_info_pro::new_price_info_object_for_test(price_info, scenario.ctx())
 }
+
+// === Pyth Pro price object builders ===
+// Twins of the legacy builders above. Pyth Pro is a separately published package, so
+// its `PriceInfoObject` is a distinct Move type and the Pro entrypoints cannot be
+// exercised with the legacy objects.
+
+public fun build_demo_usdc_price_info_object_pro(
+    scenario: &mut Scenario,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::usdc_price_feed_id(),
+        1 * test_constants::pyth_multiplier(),
+        50000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+public fun build_demo_usdt_price_info_object_pro(
+    scenario: &mut Scenario,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::usdt_price_feed_id(),
+        1 * test_constants::pyth_multiplier(),
+        50000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+public fun build_btc_price_info_object_pro(
+    scenario: &mut Scenario,
+    price_usd: u64,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::btc_price_feed_id(),
+        price_usd * test_constants::pyth_multiplier(),
+        1000000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+public fun build_sui_price_info_object_pro(
+    scenario: &mut Scenario,
+    price_usd: u64,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::sui_price_feed_id(),
+        price_usd * test_constants::pyth_multiplier(),
+        100000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
+/// Stale by `stale_seconds`, for asserting that the Pro readers still enforce
+/// staleness on the paths that validated it before the migration.
+public fun build_stale_btc_price_info_object_pro(
+    scenario: &mut Scenario,
+    price_usd: u64,
+    stale_seconds: u64,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::btc_price_feed_id(),
+        price_usd * test_constants::pyth_multiplier(),
+        1000000,
+        test_constants::pyth_decimals(),
+        (clock.timestamp_ms() / 1000) - stale_seconds,
+    )
+}
+
+public fun build_stale_usdc_price_info_object_pro(
+    scenario: &mut Scenario,
+    stale_seconds: u64,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::usdc_price_feed_id(),
+        1 * test_constants::pyth_multiplier(),
+        50000,
+        test_constants::pyth_decimals(),
+        (clock.timestamp_ms() / 1000) - stale_seconds,
+    )
+}
