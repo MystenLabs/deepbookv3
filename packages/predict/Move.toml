@@ -16,13 +16,14 @@ account = { local = "../account" }
 # propbook).
 propbook = { local = "../propbook" }
 # DEEP token (from the deepbookv3 repo), used for staking custody (`registry::stake_deep`)
-# and DEEP burning via `token::deep::ProtectedTreasury`.
-token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
+# and DEEP burning via `token::deep::ProtectedTreasury`. Pinned to the exact
+# source resolved for this release.
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "75d560614b96f8ded0f511000d65e957c3ec6b1a" }
 # Official Pyth Lazer Sui package — now a transitive dependency through `propbook`
 # (which consumes the verified `pyth_lazer::update::Update`). Kept as a direct dep
-# so the publishable root declares the `dep-replacements` linking below. Use
-# `rev = "sui-testnet"` for testnet because Wormhole is custom-deployed there.
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+# so the publishable root declares the `dep-replacements` linking below. Pinned
+# to the exact source used by the testnet deployment.
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
 # Block Scholes signed-oracle verifier. Predict source does not use it directly —
 # BS data is read through propbook's stores — but test fixtures mint verified
 # batches through it to seed those stores. Same pin propbook declares; upstream
@@ -33,7 +34,7 @@ bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", sub
 # for typechecking only; `dep-replacements` tells `sui client publish` to link
 # against the on-chain packages instead of re-publishing them. Addresses come
 # from `contract_manager/src/store/contracts/SuiLazerContracts.json` in the
-# pyth-network/pyth-crosschain repo (sui-testnet branch).
+# pinned pyth-network/pyth-crosschain source revision.
 [dep-replacements.testnet]
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
-wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "sui-testnet", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
+wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }

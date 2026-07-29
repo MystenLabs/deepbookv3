@@ -19,6 +19,9 @@ PROPBOOK_DIR="$PACKAGES_DIR/propbook"
 RUNS_DIR="$SCRIPT_DIR/runs"
 BUILD_ENV="sim"
 SCENARIO_CONFIG="$SCRIPT_DIR/data/scenario_config.json"
+WORMHOLE_REV="a596dc27243e6b6dab95539c98b0af9836af2bc2"
+PYTH_LAZER_REV="f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf"
+BS_ORACLE_REV="11d952488bc50f3a2526549a8cd6d4817ae20cc7"
 
 # --- Flag defaults ---
 PYTHON_ONLY=0
@@ -308,20 +311,8 @@ json_field() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
 }
 
-copy_move_dep() {
-  local name="$1" repo="$2" branch="$3" subdir="$4" cache_path="$5" dest="$6"
-  if [ -d "$cache_path/sources" ]; then
-    cp -R "$cache_path" "$dest"
-    return
-  fi
-
-  local checkout="$DEPS_DIR/${name}_repo"
-  git clone --depth 1 --branch "$branch" "$repo" "$checkout" >/dev/null 2>&1
-  cp -R "$checkout/$subdir" "$dest"
-}
-
-# Like copy_move_dep, but pinned to a commit SHA (which `git clone --branch`
-# cannot fetch): shallow-fetch the exact rev instead.
+# Stage a dependency at an exact commit SHA (`git clone --branch` cannot take a
+# SHA, so the fallback shallow-fetches the revision directly).
 copy_move_dep_rev() {
   local name="$1" repo="$2" rev="$3" subdir="$4" cache_path="$5" dest="$6"
   if [ -d "$cache_path/sources" ]; then
@@ -473,19 +464,19 @@ done
   WORMHOLE_DIR="$DEPS_DIR/wormhole"
   PYTH_LAZER_DIR="$DEPS_DIR/pyth_lazer"
   BS_ORACLE_DIR="$DEPS_DIR/bs_oracle"
-  copy_move_dep \
+  copy_move_dep_rev \
     wormhole \
     "https://github.com/pyth-network/wormhole.git" \
-    "sui-testnet" \
+    "$WORMHOLE_REV" \
     "sui/wormhole" \
-    "$HOME/.move/https___github_com_pyth-network_wormhole_git_sui-testnet/sui/wormhole" \
+    "$HOME/.move/git/https___github_com_pyth-network_wormhole_git_$WORMHOLE_REV/sui/wormhole" \
     "$WORMHOLE_DIR"
-  copy_move_dep \
+  copy_move_dep_rev \
     pyth_lazer \
     "https://github.com/pyth-network/pyth-crosschain.git" \
-    "sui-testnet" \
+    "$PYTH_LAZER_REV" \
     "lazer/contracts/sui" \
-    "$HOME/.move/https___github_com_pyth-network_pyth-crosschain_git_sui-testnet/lazer/contracts/sui" \
+    "$HOME/.move/git/https___github_com_pyth-network_pyth-crosschain_git_$PYTH_LAZER_REV/lazer/contracts/sui" \
     "$PYTH_LAZER_DIR"
 
   inject_env "$WORMHOLE_DIR/Move.toml" "$CHAIN_ID"
@@ -558,7 +549,6 @@ PY
   # publisher an `AdminCap`; the sim registers its own per-instance secp256k1 key
   # via `set_signer` (from sim.ts setup) and signs every batch it submits — the
   # same local-trusted-signer model as the Pyth guardian above.
-  BS_ORACLE_REV="11d952488bc50f3a2526549a8cd6d4817ae20cc7"
   copy_move_dep_rev \
     bs_oracle \
     "https://github.com/blockscholes/sui-signed-oracle.git" \

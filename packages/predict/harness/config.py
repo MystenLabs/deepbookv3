@@ -49,29 +49,33 @@ LOCAL_CLOSURE = [
     "predict",
 ]
 
-# Pin of the real Block Scholes verifier, matching propbook/predict Move.toml.
+# Exact upstream revisions, matching propbook/predict Move.toml and Move.lock.
+WORMHOLE_REV = "a596dc27243e6b6dab95539c98b0af9836af2bc2"
+PYTH_LAZER_REV = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf"
 BS_ORACLE_REV = "11d952488bc50f3a2526549a8cd6d4817ae20cc7"
 
 # Upstream git deps that get dep-replaced to locally-published addresses. Staged
-# from the ~/.move clone cache, falling back to a shallow clone of the branch
-# (or, when pinned by `rev`, a shallow fetch of that exact commit).
+# from the ~/.move clone cache, falling back to a shallow fetch of the exact
+# commit.
 _MOVE_CACHE = Path.home() / ".move"
 GIT_DEPS = {
     "wormhole": {
         "repo": "https://github.com/pyth-network/wormhole.git",
-        "branch": "sui-testnet",
+        "rev": WORMHOLE_REV,
         "subdir": "sui/wormhole",
         "cache": _MOVE_CACHE
-        / "https___github_com_pyth-network_wormhole_git_sui-testnet"
+        / "git"
+        / f"https___github_com_pyth-network_wormhole_git_{WORMHOLE_REV}"
         / "sui"
         / "wormhole",
     },
     "pyth_lazer": {
         "repo": "https://github.com/pyth-network/pyth-crosschain.git",
-        "branch": "sui-testnet",
+        "rev": PYTH_LAZER_REV,
         "subdir": "lazer/contracts/sui",
         "cache": _MOVE_CACHE
-        / "https___github_com_pyth-network_pyth-crosschain_git_sui-testnet"
+        / "git"
+        / f"https___github_com_pyth-network_pyth-crosschain_git_{PYTH_LAZER_REV}"
         / "lazer"
         / "contracts"
         / "sui",

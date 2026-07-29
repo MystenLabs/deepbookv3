@@ -9,6 +9,7 @@
 
 # Move build directory
 build
+Pub.*.toml
 
 # Node.js
 node_modules

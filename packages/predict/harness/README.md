@@ -107,8 +107,8 @@ trader funding (plus the prod cadence set — 1m/5m/1h, window 3 — every keepe
 ## Requirements
 
 - The `sui` CLI (resolved via `$SUI_BINARY`, `~/.local/bin/sui`, or `PATH`).
-- The `~/.move` cache primed with the Pyth Lazer / Wormhole `sui-testnet` branches (a normal
-  `sui move build` of predict does this).
+- The `~/.move` cache primed with the exact Pyth Lazer / Wormhole revisions pinned by
+  `predict/Move.lock` (a normal `sui move build` of predict does this).
 - `harness/.env` with `PYTH_PRO_API_KEY` + `BLOCK_SCHOLES_API_KEY` (gitignored; never commit).
 
 ## Note

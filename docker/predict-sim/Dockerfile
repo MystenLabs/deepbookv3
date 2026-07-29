@@ -1,6 +1,7 @@
 FROM ubuntu:24.04
 
-ARG SUI_VERSION=testnet-v1.73.1
+# Keep this aligned with .github/workflows/move_test.yml.
+ARG SUI_VERSION=testnet-v1.74.1
 ARG NODE_MAJOR=22
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
