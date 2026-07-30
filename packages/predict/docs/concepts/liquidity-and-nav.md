@@ -117,7 +117,7 @@ Subtracting `correction_value` is the leveraged contracts' floor offset, applied
 
 `current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
 
-> This replaces the old approximate NAV entirely. There is no longer a verified/unscanned bucket split, no aggregate uncertainty band, and no uncertainty-band withdrawal fee — those belonged to the approximate-NAV world and are gone. NAV is now the exact per-order walk, and supply/withdraw share one exact mark.
+> This replaces the old approximate NAV entirely. There is no longer a verified/unscanned bucket split, no aggregate uncertainty band, and no uncertainty-band withdrawal fee — those belonged to the approximate-NAV world and are gone. NAV is now the exact per-order walk, and supply/withdraw share one exact mark. The flat `plp_fee_rate` charged on supply and withdraw fills is not a revival of that band: it never enters the mark, and is applied to the DUSDC leg after the mark is computed (see [fees and rebates](./fees-and-rebates.md#the-lp-supplywithdraw-fee)).
 
 ### Past-expiry settlement liveness
 

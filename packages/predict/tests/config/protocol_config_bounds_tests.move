@@ -436,3 +436,46 @@ fun template_trading_loss_rebate_rate_accepts_boundaries() {
     destroy(admin_cap);
     scenario.end();
 }
+
+// === PLP supply/withdraw fee ===
+//
+// The envelope floor is 0, so there is no reachable below-min case for a `u64`;
+// only the above-max side aborts.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpFeeRate)]
+fun plp_fee_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_plp_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!() + 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_plp_fee_rate_during_valuation_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.begin_valuation();
+    config.set_plp_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    abort 999
+}
+
+#[test]
+fun plp_fee_rate_accepts_boundaries() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // 1% in FLOAT_SCALING, the shipped default — asserted as a literal so a
+    // change to `default_plp_fee_rate` has to be made deliberately.
+    assert_eq!(config.plp_fee_rate(), 10_000_000);
+
+    config.set_plp_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    assert_eq!(config.plp_fee_rate(), 0);
+
+    // 5% in FLOAT_SCALING, the envelope ceiling.
+    config.set_plp_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!());
+    assert_eq!(config.plp_fee_rate(), 50_000_000);
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}
