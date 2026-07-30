@@ -103,8 +103,8 @@ public struct WithdrawRequested has copy, drop, store {
 /// Emitted when a still-pending request is cancelled and the escrow (`amount` of
 /// DUSDC if `is_supply`, else PLP) is refunded straight into the requesting account.
 /// Cancellation can be user-requested before flush or protocol-triggered when the
-/// frozen mark makes the request non-executable, quotes below the request's own
-/// minimum output, or would carry pool value past the configured supply cap.
+/// frozen mark makes the request non-executable or quotes below the request's own
+/// minimum output.
 public struct RequestCancelled has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -112,8 +112,7 @@ public struct RequestCancelled has copy, drop, store {
     index: u64,
     amount: u64,
     is_supply: bool,
-    /// 0=user, 1=non-executable frozen mark, 2=quote below the request's minimum
-    /// output, 3=fill would carry pool value past the configured supply cap.
+    /// 0=user, 1=non-executable frozen mark, 2=quote below the request's minimum output.
     reason: u8,
     requests_pending_after: u64,
 }
@@ -148,9 +147,10 @@ public struct SupplyFilled has copy, drop, store {
     /// when the supply cap left only part of it room.
     dusdc_amount: u64,
     shares_minted: u64,
-    /// Escrow returned unfilled because the cap capped the fill; `0` on a full fill.
-    /// `dusdc_amount + dusdc_refunded` is always the originally requested amount.
-    dusdc_refunded: u64,
+    /// Escrow still queued at the head after a partial fill; `0` on a full fill, in
+    /// which case the request is gone. `dusdc_amount + dusdc_remaining` is the amount
+    /// the request carried into this flush.
+    dusdc_remaining: u64,
     requests_pending_after: u64,
 }
 
@@ -164,6 +164,10 @@ public struct WithdrawFilled has copy, drop, store {
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    /// Escrowed PLP still queued at the head after a partial fill; `0` on a full fill,
+    /// in which case the request is gone. `shares_burned + shares_remaining` is the
+    /// amount the request carried into this flush.
+    shares_remaining: u64,
     requests_pending_after: u64,
 }
 
@@ -428,7 +432,7 @@ public(package) fun emit_supply_filled(
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
-    dusdc_refunded: u64,
+    dusdc_remaining: u64,
     requests_pending_after: u64,
 ) {
     event::emit(SupplyFilled {
@@ -438,7 +442,7 @@ public(package) fun emit_supply_filled(
         index,
         dusdc_amount,
         shares_minted,
-        dusdc_refunded,
+        dusdc_remaining,
         requests_pending_after,
     });
 }
@@ -450,6 +454,7 @@ public(package) fun emit_withdraw_filled(
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    shares_remaining: u64,
     requests_pending_after: u64,
 ) {
     event::emit(WithdrawFilled {
@@ -459,6 +464,7 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
+        shares_remaining,
         requests_pending_after,
     });
 }

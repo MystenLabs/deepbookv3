@@ -125,9 +125,9 @@ fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
 
 /// The cap must reach the drain from `ProtocolConfig`, not a constant. The genesis
 /// lock puts pool value at 10 DUSDC; a 20 DUSDC cap leaves 10 of headroom, which the
-/// deposit exactly fills, so the next identical deposit finds nothing left.
+/// first deposit exactly fills, so the next identical deposit finds no room and waits.
 #[test]
-fun flush_refunds_supply_that_breaches_the_configured_pool_cap() {
+fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_max_pool_value(&mut fx, 20_000_000);
     // Consume the whole 10 DUSDC of headroom first.
@@ -138,8 +138,8 @@ fun flush_refunds_supply_that_breaches_the_configured_pool_cap() {
 
     flush(&mut fx);
 
-    // Refunded for capacity: the second deposit minted nothing on top of the first.
-    assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
+    // Held for capacity: the second deposit minted nothing and is still queued.
+    assert_pending_and_supply(&mut fx, 1, 2 * min_supply!());
 
     helpers::return_account_bundle(account);
     fx.finish();

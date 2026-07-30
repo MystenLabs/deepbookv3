@@ -255,8 +255,8 @@ fun drain_supply_queue<LP>(
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
         let shares = mark.quote_supply_shares(request.amount);
-        processed = processed + 1;
         if (shares.is_none()) {
+            processed = processed + 1;
             shares.destroy_none();
             let (request, escrowed) = book.supply_queue.pop_front();
             refund_supply_request(
@@ -269,6 +269,7 @@ fun drain_supply_queue<LP>(
         } else {
             let shares = shares.destroy_some();
             if (shares > std::u64::max_value!() - book.treasury_cap.total_supply()) {
+                processed = processed + 1;
                 let (request, escrowed) = book.supply_queue.pop_front();
                 refund_supply_request(
                     pool_vault_id,
@@ -278,6 +279,7 @@ fun drain_supply_queue<LP>(
                     book.supply_queue.pending,
                 );
             } else if (shares < request.min_output) {
+                processed = processed + 1;
                 // Counted off the copied entry so the refund path does no page write:
                 // at one attempt the entry is popped on this very miss.
                 let missed_flushes = request.missed_flushes + 1;
@@ -303,50 +305,45 @@ fun drain_supply_queue<LP>(
                     break
                 };
             } else {
-                // The limit has already cleared at this mark, and pricing is linear in
-                // the deposit, so any prefix of this request clears the same limit rate.
-                // Take whatever the cap leaves room for and return the rest.
+                // The limit cleared at this mark and pricing is linear in the deposit,
+                // so any prefix of this request clears the same rate. Take whatever the
+                // cap leaves room for; a request too big for the room left keeps its
+                // place at the head with the unfilled balance still escrowed.
                 let headroom = max_pool_value.saturating_sub(pool_value);
                 let fill_amount = request.amount.min(headroom);
                 let fill_shares = mark.quote_supply_shares(fill_amount);
-                // A partial fill below the protocol's own admission floor would create a
-                // position the request path would have rejected, and a zero-share prefix
-                // is not executable at all — refuse the scrap rather than mint it.
-                if (fill_amount < constants::min_supply_request!() || fill_shares.is_none()) {
-                    let (request, escrowed) = book.supply_queue.pop_front();
-                    refund_supply_request(
-                        pool_vault_id,
-                        request,
-                        escrowed,
-                        constants::request_cancel_reason_pool_at_capacity!(),
-                        book.supply_queue.pending,
-                    );
-                } else {
-                    let fill_shares = fill_shares.destroy_some();
-                    let (request, mut escrowed) = book.supply_queue.pop_front();
-                    let refund = escrowed.split(request.amount - fill_amount);
-                    ledger.receive_idle(escrowed);
-                    pool_value = pool_value + fill_amount;
-                    let shares_minted = book.treasury_cap.mint_balance(fill_shares);
-                    balance::send_funds(shares_minted, request.recipient);
-                    let refunded = refund.value();
-                    if (refunded > 0) {
-                        balance::send_funds(refund, request.recipient);
-                    } else {
-                        refund.destroy_zero();
-                    };
-                    vault_events::emit_supply_filled(
-                        pool_vault_id,
-                        request.account_id,
-                        request.recipient,
-                        request.index,
-                        fill_amount,
-                        fill_shares,
-                        refunded,
-                        book.supply_queue.pending,
-                    );
-                    filled = filled + 1;
+                if (fill_shares.is_none()) {
+                    // No room, or a prefix so small it prices to zero shares. Stop the
+                    // pass: with the cap reached, nothing behind this head could fill
+                    // either, so walking the rest of the queue only spends flush budget
+                    // and events to refuse each one.
+                    break
                 };
+                processed = processed + 1;
+                let fill_shares = fill_shares.destroy_some();
+                let partial = fill_amount < request.amount;
+                let escrowed = if (partial) {
+                    book.supply_queue.fill_front_partially(fill_amount)
+                } else {
+                    let (_, escrowed) = book.supply_queue.pop_front();
+                    escrowed
+                };
+                ledger.receive_idle(escrowed);
+                pool_value = pool_value + fill_amount;
+                let shares_minted = book.treasury_cap.mint_balance(fill_shares);
+                balance::send_funds(shares_minted, request.recipient);
+                vault_events::emit_supply_filled(
+                    pool_vault_id,
+                    request.account_id,
+                    request.recipient,
+                    request.index,
+                    fill_amount,
+                    fill_shares,
+                    request.amount - fill_amount,
+                    book.supply_queue.pending,
+                );
+                filled = filled + 1;
+                if (partial) break
             };
         };
     };
@@ -406,12 +403,32 @@ fun drain_withdraw_queue<LP>(
                     );
                     break
                 };
-            } else if (ledger.idle_balance() < payout) {
-                // FIFO-until-dry: idle can't cover the head request, so stop and carry
-                // this and every later withdrawal to reprice next flush.
-                break
             } else {
-                let (_, escrowed_lp) = book.withdraw_queue.pop_front();
+                // Pay as much of the head as idle covers. Shares to burn are floored, so
+                // the pool never hands out cash it has not destroyed shares for, and the
+                // payout is then quoted from those shares by the same helper a full fill
+                // uses — a partial exit prices identically to a whole one, and at most a
+                // ulp of idle is left behind rather than the requester being shorted.
+                let idle = ledger.idle_balance();
+                let (burn_shares, payout) = if (idle >= payout) {
+                    (request.amount, payout)
+                } else {
+                    let affordable = math::mul_div_down(idle, mark.total_supply, mark.pool_value);
+                    let partial_payout = mark.quote_withdraw_dusdc(affordable);
+                    if (partial_payout.is_none()) {
+                        // Idle buys no whole share, or those shares price to nothing.
+                        // Carry the head and stop, as the dry queue always has.
+                        break
+                    };
+                    (affordable, partial_payout.destroy_some())
+                };
+                let partial = burn_shares < request.amount;
+                let escrowed_lp = if (partial) {
+                    book.withdraw_queue.fill_front_partially(burn_shares)
+                } else {
+                    let (_, escrowed_lp) = book.withdraw_queue.pop_front();
+                    escrowed_lp
+                };
                 let payout_cash = ledger.withdraw_idle(payout);
                 book.treasury_cap.burn(escrowed_lp.into_coin(ctx));
                 balance::send_funds(payout_cash, request.recipient);
@@ -420,12 +437,15 @@ fun drain_withdraw_queue<LP>(
                     request.account_id,
                     request.recipient,
                     request.index,
-                    request.amount,
+                    burn_shares,
                     payout,
+                    request.amount - burn_shares,
                     book.withdraw_queue.pending,
                 );
                 processed = processed + 1;
                 filled = filled + 1;
+                // Idle is spent to within a ulp; everything behind would only carry.
+                if (partial) break
             };
         };
     };
@@ -560,6 +580,23 @@ fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
 /// Persist a miss on the head so it survives to the next flush. Only called when the
 /// request keeps an attempt; a miss that refunds counts off the caller's copy instead,
 /// so the refund path writes no page.
+/// Fill `filled` of the head request and leave the rest queued in place, keeping the
+/// request's queue position, index, and owner. Returns the escrow for the filled part.
+///
+/// The remaining `min_output` is scaled to the remaining amount so the request keeps
+/// asking for the same *price* it originally did, and it is rounded **up** so the
+/// carried limit is never laxer than what the requester signed up for: at worst they
+/// are held to a fractionally stricter price, never a worse one.
+fun fill_front_partially<T>(queue: &mut RequestQueue<T>, filled: u64): Balance<T> {
+    assert!(queue.pending > 0, ERequestNotFound);
+    let page_id = *queue.head_page_id.borrow();
+    let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
+    let remaining = entry.amount - filled;
+    entry.min_output = math::mul_div_up(entry.min_output, remaining, entry.amount);
+    entry.amount = remaining;
+    queue.escrow.split(filled)
+}
+
 fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>) {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();

@@ -190,13 +190,13 @@ fun two_withdrawals_share_one_frozen_mark() {
 // === FIFO-until-idle-dry ===
 
 #[test]
-fun withdrawals_stop_when_idle_is_dry_and_carry() {
+fun withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest() {
     let (mut scenario, mut book, mut ledger) = setup();
     // total_supply 30e6, idle 30e6 -> mark 1.0.
     book.mint_locked_liquidity(30_000_000);
     seed_idle(&mut ledger, 30_000_000);
-    // Two 20e6 withdrawals: first fills (idle 30e6 -> 10e6); second needs 20e6 but idle
-    // is only 10e6, so the pass stops and carries it.
+    // Two 20e6 withdrawals: the first fills (idle 30e6 -> 10e6); the second wants 20e6
+    // but only 10e6 of idle is left, so it is paid 10e6 and keeps the other 10e6 queued.
     enqueue_withdraw(&mut scenario, &mut book, 20_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 20_000_000);
 
@@ -211,10 +211,12 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
         scenario.ctx(),
     );
 
-    assert_drain_summary(&summary, 0, 1, 1); // only the first; the dry head carries
-    assert_eq!(book.total_supply(), 10_000_000); // only the first 20e6 burned
-    assert_eq!(ledger.idle_balance(), 10_000_000); // only the first 20e6 paid
-    assert_eq!(book.withdraw_requests_pending(), 1); // second carried
+    // Both count as fills; idle is fully paid out and the second request stays queued
+    // for its remaining half.
+    assert_drain_summary(&summary, 0, 2, 2);
+    assert_eq!(book.total_supply(), 0); // 20e6 + 10e6 burned against the 30e6 locked
+    assert_eq!(ledger.idle_balance(), 0); // every DUSDC of idle reached an exiting LP
+    assert_eq!(book.withdraw_requests_pending(), 1); // the second half is still first in line
 
     finish(scenario, book, ledger);
 }
@@ -242,23 +244,24 @@ fun supply_within_pool_cap_fills() {
     finish(scenario, book, ledger);
 }
 
-/// Headroom too small to admit even a minimum-sized deposit is refused rather than
-/// part-filled: a sub-`min_supply_request` prefix would create a position the request
-/// path itself would have rejected.
+/// A pool with no room left keeps its queue intact: the head carries with its escrow
+/// untouched rather than being refunded, so the requester holds their place in line.
 #[test]
-fun supply_is_refunded_when_headroom_is_below_the_minimum_request() {
+fun supply_carries_when_the_pool_has_no_headroom() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    // Cap 35e6 leaves 5 DUSDC of room — half the 10 DUSDC minimum request.
-    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 35_000_000);
+    // Cap equal to pool value: zero headroom, so there is nothing to part-fill.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
 
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.supply_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 30_000_000); // nothing minted, not even the 5
-    assert_eq!(ledger.idle_balance(), 0); // escrow went back, not into idle
+    // Nothing processed at all — the pass breaks before spending budget on a head it
+    // cannot serve, and every request behind it is equally unservable.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 0);
+    assert_eq!(book.supply_requests_pending(), 1); // still queued, still first in line
+    assert_eq!(book.total_supply(), 30_000_000);
+    assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);
 }
@@ -287,27 +290,6 @@ fun over_cap_and_under_limit_reports_the_limit_miss() {
     finish(scenario, book, ledger);
 }
 
-/// The capacity reason is reported when the limit is satisfied and only room is
-/// missing, so `reason = 3` is reachable and distinguishable.
-#[test]
-fun capacity_refusal_reports_the_capacity_reason() {
-    let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
-    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
-    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
-
-    drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
-
-    let cancels = event::events_by_type<RequestCancelled>();
-    assert_eq!(cancels.length(), 1);
-    assert_eq!(
-        vault_events::request_cancelled_reason(&cancels[0]),
-        constants::request_cancel_reason_pool_at_capacity!(),
-    );
-
-    finish(scenario, book, ledger);
-}
-
 /// A deposit larger than the remaining headroom takes what fits and gets the rest
 /// back, so the cap is filled exactly rather than left short.
 #[test]
@@ -320,9 +302,9 @@ fun supply_larger_than_headroom_partially_fills_to_the_cap() {
     // Cap 55e6 against pool value 30e6: 25 DUSDC of room for a 30 DUSDC deposit.
     let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 55_000_000);
 
-    // Counts as a fill, and the head is fully resolved — the unfilled 5 is not requeued.
+    // Counts as a fill, and the unfilled 5 keeps its place at the head.
     assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.supply_requests_pending(), 1);
     // 25 DUSDC minted 1:1 at the 1.0 mark; pool value lands exactly on the cap.
     assert_eq!(book.total_supply(), 55_000_000);
     assert_eq!(ledger.idle_balance(), 25_000_000);
@@ -367,19 +349,20 @@ fun supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush() {
 
     let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 55_000_000);
 
-    // Two filled, one refunded — all three processed, none left queued.
-    assert_drain_summary(&summary, 2, NO_WITHDRAWALS_FILLED, 3);
-    assert_eq!(book.supply_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 50_000_000); // 30e6 + 2 x 10e6
-    assert_eq!(ledger.idle_balance(), 20_000_000);
+    // Two fill whole; the third takes the last 5 of room and keeps its 5 remainder.
+    assert_drain_summary(&summary, 3, NO_WITHDRAWALS_FILLED, 3);
+    assert_eq!(book.supply_requests_pending(), 1);
+    // Pool value lands exactly on the cap: 30e6 + 10e6 + 10e6 + 5e6.
+    assert_eq!(book.total_supply(), 55_000_000);
+    assert_eq!(ledger.idle_balance(), 25_000_000);
 
     finish(scenario, book, ledger);
 }
 
 /// A pool already above its cap — which trading profit alone can cause — accepts no
-/// new supply, and the request is refunded rather than left queued.
+/// new supply, and the queue waits rather than being emptied.
 #[test]
-fun supply_is_refunded_when_pool_is_already_over_cap() {
+fun supply_carries_when_pool_is_already_over_cap() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
@@ -388,8 +371,8 @@ fun supply_is_refunded_when_pool_is_already_over_cap() {
     // Cap 20e6 below the pool's own 30e6 value: zero headroom, saturating to 0.
     let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 20_000_000);
 
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.supply_requests_pending(), 0);
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 0);
+    assert_eq!(book.supply_requests_pending(), 1); // escrow stays with its queue place
     assert_eq!(book.total_supply(), 30_000_000);
 
     finish(scenario, book, ledger);
@@ -400,8 +383,8 @@ fun supply_is_refunded_when_pool_is_already_over_cap() {
 /// Every figure below is derived by hand from the 1.2 share price.
 ///
 /// Also pins queue priority: S2 takes the remaining headroom as a partial fill and
-/// gets the rest back, so S3 — queued behind it — finds nothing left and is refunded.
-/// Headroom follows queue order rather than going to whoever happens to fit.
+/// keeps its unfilled balance at the head, so S3 is never reached this flush. Headroom
+/// follows queue order, and nobody loses their place to a re-submission race.
 #[test]
 fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     let (mut scenario, mut book, mut ledger) = setup();
@@ -433,11 +416,12 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
 
     // S1 (60) fits in 100 and mints 60 / 1.2 = 50 PLP, leaving 40 of room.
     // S2 (80) exceeds the remaining 40, so 40 is taken at the same 1.2 — minting
-    //   40 / 1.2 = 33.333333 PLP — and the other 40 goes back. Headroom is now 0.
-    // S3 (20) finds no room left and is refunded whole.
+    //   40 / 1.2 = 33.333333 PLP — and its other 40 stays queued at the head. The cap
+    //   is now reached, so the supply pass stops and S3 is never reached.
     // Both withdrawals then pay at the same frozen 1.2: 50 PLP -> 60, 100 PLP -> 120.
-    assert_drain_summary(&summary, 2, 2, 5);
-    assert_eq!(book.supply_requests_pending(), 0);
+    assert_drain_summary(&summary, 2, 2, 4);
+    // S2's remainder and the untouched S3 are still queued, in that order.
+    assert_eq!(book.supply_requests_pending(), 2);
     assert_eq!(book.withdraw_requests_pending(), 0);
     // 1,000 + 50 + 33.333333 minted, then 50 and 100 burned by the exits.
     assert_eq!(book.total_supply(), 933_333_333);
@@ -447,11 +431,13 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     finish(scenario, book, ledger);
 }
 
-/// A full pool does not hold a waiting list. Every queued supply is refunded by the
-/// flush that reaches it, so the queue empties rather than backing up — the cost of
-/// refusing to let an unfillable head sit at the front (RP-12).
+/// A full pool now holds the line instead of emptying it: the head keeps its escrow
+/// and its position, and the pass stops without touching anything behind it. This is
+/// the deliberate inverse of the earlier refund-everything behaviour — with no
+/// headroom, nothing behind the head could fill either, so walking the rest of the
+/// queue would only spend budget and events to refuse each one in turn.
 #[test]
-fun full_pool_clears_the_whole_supply_queue_in_one_flush() {
+fun full_pool_holds_the_supply_queue_instead_of_clearing_it() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let mut i = 0u64;
@@ -464,42 +450,39 @@ fun full_pool_clears_the_whole_supply_queue_in_one_flush() {
     // Cap at the pool's own value: zero headroom for any of them.
     let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
 
-    // All four processed and refunded in this one flush; none carried forward.
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 4);
-    assert_eq!(book.supply_requests_pending(), 0);
+    // Nothing processed, nothing minted, all four still queued in their original order.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 0);
+    assert_eq!(book.supply_requests_pending(), 4);
     assert_eq!(book.total_supply(), 30_000_000);
     assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);
 }
 
-/// The per-queue budget still bounds that clearing, so a full pool cannot make one
-/// flush process an unbounded number of refunds.
+/// Headroom that opens later is served in queue order, so a partially filled head
+/// keeps its seniority across flushes rather than racing re-submitted requests.
 #[test]
-fun budget_bounds_how_much_of_a_full_queue_one_flush_clears() {
+fun partially_filled_head_keeps_its_place_across_flushes() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
-    let mut i = 0u64;
-    while (i < 4) {
-        let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
-        book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
-        i = i + 1;
-    };
+    let first = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    book.request_supply(first, alice_id(), ALICE, NO_MIN_OUTPUT);
+    let second = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(second, bob_id(), BOB, NO_MIN_OUTPUT);
 
-    let summary = book.drain(
-        &mut ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
-        vault_id(),
-        option::some(2),
-        option::none(),
-        NO_RETRY,
-        30_000_000,
-        scenario.ctx(),
-    );
-
-    // Two refunded this flush, two still queued for the next.
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 2);
+    // 10 of room: the 30 head takes it all and carries 20, the 10 behind it is untouched.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 40_000_000);
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.supply_requests_pending(), 2);
+    assert_eq!(book.total_supply(), 40_000_000);
+
+    // Raising the cap by 20 lets the same head finish before the request behind it.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 60_000_000);
+    // The head's remaining 20 fills, then the 10 behind it takes the last 10 of room.
+    assert_drain_summary(&summary, 2, NO_WITHDRAWALS_FILLED, 2);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 70_000_000);
+    assert_eq!(ledger.idle_balance(), 40_000_000);
 
     finish(scenario, book, ledger);
 }
