@@ -23,11 +23,12 @@ module deepbook_predict::lp_book_tests;
 use deepbook_predict::{
     constants::{min_supply_request as min_supply, min_withdraw_request as min_withdraw},
     lp_book::{Self, DrainSummary, LpBook},
-    pool_accounting::{Self, Ledger}
+    pool_accounting::{Self, Ledger},
+    vault_events
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{balance, coin, coin_registry, test_scenario::{Self as test, Scenario}};
+use sui::{balance, coin, coin_registry, event, test_scenario::{Self as test, Scenario}};
 
 public struct LP_BOOK_TESTS has drop {}
 
@@ -478,6 +479,64 @@ fun withdraw_fills_when_idle_covers_only_the_post_fee_payout() {
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
     assert_eq!(ledger.idle_balance(), 0);
     assert_eq!(book.total_supply(), 20_000_000); // full escrow burned, not a slice
+
+    finish(scenario, book, ledger);
+}
+
+/// The balance assertions above cannot see a wrong `fee_dusdc`: shares and cash are
+/// computed from the quote's `output`, so an event reporting the wrong fee leaves
+/// every one of them green while misattributing pool revenue off-chain. These pin the
+/// reported figure itself, on a partial fill — where the slice fee and the whole
+/// request's fee differ.
+#[test]
+fun supply_fill_reports_the_fee_charged_on_the_slice() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap leaves 10e6 of the 20e6 request room; 1% of that slice is 100_000. The
+    // whole request's fee would be 200_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000, ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        70_000_000,
+        scenario.ctx(),
+    );
+
+    let events = event::events_by_type<vault_events::SupplyFilled>();
+    assert_eq!(events.length(), 1);
+    assert_eq!(vault_events::supply_filled_fee(&events[0]), 100_000);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun withdraw_fill_reports_the_fee_withheld_from_the_payout() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    // gross 20e6 at the 2.0 mark, 1% of which is 200_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000, ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    let events = event::events_by_type<vault_events::WithdrawFilled>();
+    assert_eq!(events.length(), 1);
+    assert_eq!(vault_events::withdraw_filled_fee(&events[0]), 200_000);
 
     finish(scenario, book, ledger);
 }

@@ -484,8 +484,10 @@ fun drain_withdraw_queue<LP>(
                         // Carry the head and stop, as the dry queue always has.
                         break
                     };
-                    let FillQuote { output: partial_payout, fee: partial_fee } =
-                        partial_quote.destroy_some();
+                    let FillQuote {
+                        output: partial_payout,
+                        fee: partial_fee,
+                    } = partial_quote.destroy_some();
                     (affordable, partial_payout, partial_fee)
                 };
                 let partial = burn_shares < request.amount;
