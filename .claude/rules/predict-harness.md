@@ -98,6 +98,10 @@ user-facing overview; this file is the editing-critical knowledge.
 ## Don't
 - Don't modify the Predict Move contracts or `dusdc.move` (deployed to testnet) to suit the
   harness — the harness re-signs oracle updates with a local trusted signer instead.
+- Treat `packages/predict/deployment/deployment.testnet.json` as a read-only integration
+  fixture, never as harness-owned runtime state. Harness-local publication and configuration
+  stay under the disposable harness environment and must not write the deployment journal or
+  force production deployment defaults into tracked contract source.
 
 ## Bug oracle caveat
 - `analyze.py`'s bug oracle is **abort-only**: it flags transaction aborts, NOT a wrong-but-

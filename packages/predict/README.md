@@ -9,16 +9,17 @@ financing — a static floor on the contract's own payoff — plus a
 knock-out, rather than as a separate debt position. A shared **pool** of
 liquidity providers writes every contract and earns the trading flow.
 
-> **Status:** in development, not yet deployed. There are no published package
-> addresses yet, and the on-chain interface is still changing. The documentation
-> describes how the protocol works and is designed; it is not an integration or
-> SDK guide.
+> **Status:** in development. `predict-testnet-7-29` is a published Testnet
+> integration target. The on-chain interface is still changing.
 
 ## Documentation
 
 Protocol documentation lives in [`docs/`](./docs/README.md). Start with the
 [overview](./docs/overview.md), then read the
 [concepts](./docs/README.md#concepts) and [risks](./docs/risks.md).
+
+The Testnet contract integration surface and deployment procedure live in
+[`deployment/`](./deployment/README.md).
 
 ## Build & test
 

@@ -7,9 +7,10 @@
  * A run publishes fixed_math, account, propbook, and predict; authorizes the
  * Predict app; creates and binds the oracle objects; stores the cadence policy
  * on-chain; bootstraps the pool; creates and funds the initial market windows;
- * and transfers the lifecycle capability to the keeper operator. Every package,
- * object, configuration value, and transaction digest is written to
- * deployment.testnet.json and verified from Testnet before completion.
+ * and transfers the lifecycle capability to the keeper operator. Resumable,
+ * operator-only progress is written to deployment.testnet.state.json. After a
+ * successful Testnet audit, the script derives the committed
+ * deployment.testnet.json integration manifest from that verified state.
  *
  * The default invocation is non-broadcasting:
  *   SUI_BINARY=/path/to/sui node --import tsx packages/predict/deployment/deploy.ts
@@ -53,14 +54,18 @@ import { fromBase58, fromBase64, toHex } from "@mysten/sui/utils";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..", "..");
-const OUT_RELATIVE = "packages/predict/deployment/deployment.testnet.json";
-const OUT = resolve(REPO_ROOT, OUT_RELATIVE);
-const OUT_TEMP = `${OUT}.tmp`;
+export const STATE_RELATIVE = "packages/predict/deployment/deployment.testnet.state.json";
+export const MANIFEST_RELATIVE = "packages/predict/deployment/deployment.testnet.json";
+const STATE = resolve(REPO_ROOT, STATE_RELATIVE);
+const STATE_TEMP = `${STATE}.tmp`;
+const MANIFEST = resolve(REPO_ROOT, MANIFEST_RELATIVE);
+const MANIFEST_TEMP = `${MANIFEST}.tmp`;
 const SUI = process.env.SUI_BINARY ?? "sui";
 const PACKAGE_GAS_BUDGET = process.env.PACKAGE_GAS_BUDGET ?? "5000000000";
 const TRANSACTION_GAS_BUDGET = BigInt(process.env.TRANSACTION_GAS_BUDGET ?? "1000000000");
 const NETWORK = "testnet";
 const CHAIN_ID = "4c78adac";
+const DEPLOYMENT = "predict-testnet-7-29";
 const DEPLOYER = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
 const LIFECYCLE_CAP_RECIPIENT =
     "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82";
@@ -177,7 +182,7 @@ const CADENCES: readonly CadenceSpec[] = [
     {
         id: 5,
         name: "1mo",
-        periodMs: 0,
+        periodMs: 30 * 24 * 60 * 60_000,
         tickSize: 0n,
         admissionTickSize: 0n,
         maxExpiryAllocation: 0n,
@@ -186,6 +191,36 @@ const CADENCES: readonly CadenceSpec[] = [
         marketsToCreate: 0,
     },
 ] as const;
+
+const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
+    usePythSpotForForward: true,
+    pythSpotFreshnessMs: "10000",
+    blockScholesPriceFreshnessMs: "10000",
+    blockScholesSviFreshnessMs: "60000",
+    ewmaAlpha: "10000000",
+    ewmaZScoreThreshold: "3000000000",
+    ewmaPenaltyRate: "1000000",
+    ewmaEnabled: false,
+    lowerBenefitPower: "100000000000",
+    upperBenefitPower: "1100000000000",
+    protocolReserveProfitShare: "400000000",
+    tradeLiquidationBudget: "24",
+    liquidationLtv: "850000000",
+    maxAdmissionLeverage: "3000000000",
+    backingBufferLambda: "250000000",
+    baseFee: "20000000",
+    minFee: "5000000",
+    minEntryProbability: "10000000",
+    maxEntryProbability: "990000000",
+    expiryFeeWindowMs: "86400000",
+    expiryFeeMaxMultiplier: "1000000000",
+    noLeverageWindowMs: "3600000",
+    tradingLossRebateRate: "500000000",
+    versionWatermark: "1",
+    tradingPaused: false,
+    frozen: false,
+    valuationInProgress: false,
+};
 
 interface ObjectChange {
     type?: string;
@@ -305,9 +340,41 @@ interface WiringState {
     }>;
 }
 
+interface ProtocolConfigRecord {
+    usePythSpotForForward: boolean;
+    pythSpotFreshnessMs: string;
+    blockScholesPriceFreshnessMs: string;
+    blockScholesSviFreshnessMs: string;
+    ewmaAlpha: string;
+    ewmaZScoreThreshold: string;
+    ewmaPenaltyRate: string;
+    ewmaEnabled: boolean;
+    lowerBenefitPower: string;
+    upperBenefitPower: string;
+    protocolReserveProfitShare: string;
+    tradeLiquidationBudget: string;
+    liquidationLtv: string;
+    maxAdmissionLeverage: string;
+    backingBufferLambda: string;
+    baseFee: string;
+    minFee: string;
+    minEntryProbability: string;
+    maxEntryProbability: string;
+    expiryFeeWindowMs: string;
+    expiryFeeMaxMultiplier: string;
+    noLeverageWindowMs: string;
+    tradingLossRebateRate: string;
+    versionWatermark: string;
+    tradingPaused: boolean;
+    frozen: boolean;
+    valuationInProgress: boolean;
+}
+
 interface Verification {
     verifiedAt: string;
     chainId: string;
+    indexingStartCheckpoint: string;
+    verifiedAfterCheckpoint: string;
     packages: Record<string, ObjectEvidence>;
     linkedPackages: Record<string, ObjectEvidence>;
     linkedObjects: Record<string, ObjectEvidence>;
@@ -320,16 +387,7 @@ interface Verification {
     };
     lifecycleCap: ObjectEvidence;
     cadences: CadenceRecord[];
-    protocolConfig: {
-        usePythSpotForForward: boolean;
-        pythSpotFreshnessMs: string;
-        blockScholesPriceFreshnessMs: string;
-        blockScholesSviFreshnessMs: string;
-        versionWatermark: string;
-        tradingPaused: boolean;
-        frozen: boolean;
-        valuationInProgress: boolean;
-    };
+    protocolConfig: ProtocolConfigRecord;
     pool: {
         totalSupply: string;
         idleBalance: string;
@@ -342,7 +400,7 @@ interface Verification {
     markets: MarketRecord[];
 }
 
-interface DeploymentResult {
+export interface DeploymentResult {
     schemaVersion: number;
     status:
         | "pending"
@@ -374,6 +432,128 @@ interface DeploymentResult {
     transactions: Record<string, string>;
     wiring: WiringState;
     verification: Verification | null;
+}
+
+export interface IntegrationManifest {
+    schemaVersion: 3;
+    deployment: string;
+    network: string;
+    chainId: string;
+    sourceCommit: string;
+    packages: {
+        fixedMath: string;
+        account: string;
+        propbook: string;
+        predict: string;
+    };
+    coinTypes: {
+        dusdc: string;
+        deep: string;
+        plp: string;
+    };
+    objects: {
+        accountRegistry: string;
+        oracleRegistry: string;
+        protocolConfig: string;
+        poolVault: string;
+        registry: string;
+        accumulatorRoot: string;
+        clock: string;
+    };
+    underlyings: {
+        BTC: {
+            symbol: "BTC";
+            name: string;
+            propbookUnderlyingId: number;
+            pythLazerFeedId: number;
+            blockScholesSourceId: number;
+            pythFeed: string;
+            blockScholesValueStore: string;
+            blockScholesSviStore: string;
+        };
+    };
+    writers: {
+        keeper: {
+            lifecycleCap: string;
+        };
+        priceUpdater: {
+            pythLazerPackage: string;
+            pythLazerState: string;
+            blockScholesOraclePackage: string;
+            blockScholesSignerRegistry: string;
+        };
+    };
+    indexing: {
+        startCheckpoint: string;
+    };
+    initialConfiguration: {
+        verifiedAfterCheckpoint: string;
+        stateAnchors: {
+            protocolConfig: {
+                objectVersion: string;
+                digest: string;
+            };
+            registry: {
+                objectVersion: string;
+                digest: string;
+            };
+        };
+        units: {
+            fixedPointScale: string;
+            quoteCoinDecimals: number;
+            plpCoinDecimals: number;
+            deepCoinDecimals: number;
+            positionQuantityDecimals: number;
+            positionLotSize: string;
+            timestampUnit: "milliseconds";
+        };
+        liveProtocol: {
+            pricing: {
+                usePythSpotForForward: boolean;
+                pythSpotFreshnessMs: string;
+                blockScholesPriceFreshnessMs: string;
+                blockScholesSviFreshnessMs: string;
+            };
+            ewmaPenalty: {
+                alpha: string;
+                zScoreThreshold: string;
+                penaltyRate: string;
+                enabled: boolean;
+            };
+            stakingBenefits: {
+                lowerBenefitPower: string;
+                upperBenefitPower: string;
+            };
+            protocolReserveProfitShare: string;
+            tradeLiquidationBudget: string;
+        };
+        futureMarketTemplate: {
+            liquidationLtv: string;
+            maxAdmissionLeverage: string;
+            backingBufferLambda: string;
+            baseFee: string;
+            minFee: string;
+            minEntryProbability: string;
+            maxEntryProbability: string;
+            expiryFeeWindowMs: string;
+            expiryFeeMaxMultiplier: string;
+            noLeverageWindowMs: string;
+            tradingLossRebateRate: string;
+        };
+        cadences: {
+            BTC: Array<{
+                id: number;
+                name: string;
+                periodMs: string;
+                enabled: boolean;
+                tickSize: string;
+                admissionTickSize: string;
+                maxExpiryAllocation: string;
+                initialExpiryCash: string;
+                windowSize: string;
+            }>;
+        };
+    };
 }
 
 interface ClientSnapshot {
@@ -409,6 +589,521 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+function requiredString(value: unknown, label: string): string {
+    if (typeof value !== "string" || value.length === 0) {
+        throw new Error(`${label} is missing`);
+    }
+    return value;
+}
+
+function requiredObjectId(value: unknown, label: string): string {
+    const raw = requiredString(value, label);
+    const id = normalizeId(raw);
+    if (!OBJECT_ID.test(raw) || raw !== id) {
+        throw new Error(`${label} is not a normalized Sui object ID`);
+    }
+    return id;
+}
+
+function exactKeys(
+    value: Record<string, unknown>,
+    expected: readonly string[],
+    label: string,
+): void {
+    const actual = Object.keys(value).sort();
+    const wanted = [...expected].sort();
+    if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+        throw new Error(`${label} keys are ${actual.join(", ")}, expected ${wanted.join(", ")}`);
+    }
+}
+
+function decimalString(value: unknown, label: string): string {
+    const raw = requiredString(value, label);
+    if (!/^(0|[1-9][0-9]*)$/.test(raw)) throw new Error(`${label} is not an unsigned integer`);
+    return raw;
+}
+
+export function buildIntegrationManifest(result: DeploymentResult): IntegrationManifest {
+    if (
+        result.status !== "complete" ||
+        result.inFlight !== null ||
+        !result.completedAt ||
+        !result.sourceCommit ||
+        !result.verification
+    ) {
+        throw new Error("integration manifest requires a complete, verified deployment state");
+    }
+    const verification = result.verification;
+    if (verification.chainId !== CHAIN_ID) {
+        throw new Error(`verified chain ${verification.chainId} is not ${CHAIN_ID}`);
+    }
+    const verifiedPackage = (name: PackageName): string =>
+        requiredObjectId(verification.packages[name]?.objectId, `verified ${name} package`);
+    const verifiedSharedEvidence = (pkg: PackageName, type: string): ObjectEvidence => {
+        const evidence = verification.sharedObjects[pkg]?.[type];
+        if (!evidence) throw new Error(`verified ${pkg} ${type} is missing`);
+        requiredObjectId(evidence.objectId, `verified ${pkg} ${type}`);
+        decimalString(evidence.version, `verified ${pkg} ${type} version`);
+        requiredString(evidence.digest, `verified ${pkg} ${type} digest`);
+        return evidence;
+    };
+    const verifiedShared = (pkg: PackageName, type: string): string =>
+        verifiedSharedEvidence(pkg, type).objectId;
+    const verifiedLinkedPackage = (name: keyof typeof LINKED): string =>
+        requiredObjectId(verification.linkedPackages[name]?.objectId, `verified ${name} package`);
+    const verifiedLinkedObject = (name: keyof typeof LINKED_OBJECTS): string =>
+        requiredObjectId(verification.linkedObjects[name]?.objectId, `verified ${name} object`);
+    const fixedMath = verifiedPackage("fixed_math");
+    const account = verifiedPackage("account");
+    const propbook = verifiedPackage("propbook");
+    const predict = verifiedPackage("predict");
+    const protocolConfigEvidence = verifiedSharedEvidence(
+        "predict",
+        "protocol_config::ProtocolConfig",
+    );
+    const registryEvidence = verifiedSharedEvidence("predict", "registry::Registry");
+    const protocol = verification.protocolConfig;
+    if (JSON.stringify(protocol) !== JSON.stringify(EXPECTED_PROTOCOL_CONFIG)) {
+        throw new Error("verified ProtocolConfig does not match the deployment policy");
+    }
+    const cadences = verification.cadences.map((record) => {
+        const spec = CADENCES.find((candidate) => candidate.id === record.id);
+        if (!spec || !cadenceMatches(record, spec)) {
+            throw new Error(`verified cadence ${record.id} does not match deployment policy`);
+        }
+        return {
+            id: record.id,
+            name: record.name,
+            periodMs: spec.periodMs.toString(),
+            enabled: BigInt(record.windowSize) > 0n,
+            tickSize: record.tickSize,
+            admissionTickSize: record.admissionTickSize,
+            maxExpiryAllocation: record.maxExpiryAllocation,
+            initialExpiryCash: record.initialExpiryCash,
+            windowSize: record.windowSize,
+        };
+    });
+    const manifest: IntegrationManifest = {
+        schemaVersion: 3,
+        deployment: DEPLOYMENT,
+        network: NETWORK,
+        chainId: CHAIN_ID,
+        sourceCommit: result.sourceCommit,
+        packages: {
+            fixedMath,
+            account,
+            propbook,
+            predict,
+        },
+        coinTypes: {
+            dusdc: `${verifiedLinkedPackage("dusdc")}::dusdc::DUSDC`,
+            deep: `${verifiedLinkedPackage("deep")}::deep::DEEP`,
+            plp: `${predict}::plp::PLP`,
+        },
+        objects: {
+            accountRegistry: verifiedShared("account", "account_registry::AccountRegistry"),
+            oracleRegistry: verifiedShared("propbook", "registry::OracleRegistry"),
+            protocolConfig: verifiedShared("predict", "protocol_config::ProtocolConfig"),
+            poolVault: verifiedShared("predict", "plp::PoolVault"),
+            registry: verifiedShared("predict", "registry::Registry"),
+            accumulatorRoot: verifiedLinkedObject("accumulatorRoot"),
+            clock: verifiedLinkedObject("clock"),
+        },
+        underlyings: {
+            BTC: {
+                symbol: "BTC",
+                name: ASSET.name,
+                propbookUnderlyingId: ASSET.propbookUnderlyingId,
+                pythLazerFeedId: ASSET.pythLazerFeedId,
+                blockScholesSourceId: ASSET.blockScholesSourceId,
+                pythFeed: requiredObjectId(
+                    verification.oracleObjects.pythFeed?.objectId,
+                    "verified Pyth feed",
+                ),
+                blockScholesValueStore: requiredObjectId(
+                    verification.oracleObjects.blockScholesValueStore?.objectId,
+                    "verified Block Scholes value store",
+                ),
+                blockScholesSviStore: requiredObjectId(
+                    verification.oracleObjects.blockScholesSviStore?.objectId,
+                    "verified Block Scholes SVI store",
+                ),
+            },
+        },
+        writers: {
+            keeper: {
+                lifecycleCap: requiredObjectId(
+                    verification.lifecycleCap.objectId,
+                    "verified lifecycle cap",
+                ),
+            },
+            priceUpdater: {
+                pythLazerPackage: verifiedLinkedPackage("pyth_lazer"),
+                pythLazerState: verifiedLinkedObject("pythLazerState"),
+                blockScholesOraclePackage: verifiedLinkedPackage("bs_oracle"),
+                blockScholesSignerRegistry: verifiedLinkedObject("blockScholesSignerRegistry"),
+            },
+        },
+        indexing: {
+            startCheckpoint: verification.indexingStartCheckpoint,
+        },
+        initialConfiguration: {
+            verifiedAfterCheckpoint: verification.verifiedAfterCheckpoint,
+            stateAnchors: {
+                protocolConfig: {
+                    objectVersion: protocolConfigEvidence.version,
+                    digest: protocolConfigEvidence.digest,
+                },
+                registry: {
+                    objectVersion: registryEvidence.version,
+                    digest: registryEvidence.digest,
+                },
+            },
+            units: {
+                fixedPointScale: "1000000000",
+                quoteCoinDecimals: 6,
+                plpCoinDecimals: 6,
+                deepCoinDecimals: 6,
+                positionQuantityDecimals: 6,
+                positionLotSize: "10000",
+                timestampUnit: "milliseconds",
+            },
+            liveProtocol: {
+                pricing: {
+                    usePythSpotForForward: protocol.usePythSpotForForward,
+                    pythSpotFreshnessMs: protocol.pythSpotFreshnessMs,
+                    blockScholesPriceFreshnessMs: protocol.blockScholesPriceFreshnessMs,
+                    blockScholesSviFreshnessMs: protocol.blockScholesSviFreshnessMs,
+                },
+                ewmaPenalty: {
+                    alpha: protocol.ewmaAlpha,
+                    zScoreThreshold: protocol.ewmaZScoreThreshold,
+                    penaltyRate: protocol.ewmaPenaltyRate,
+                    enabled: protocol.ewmaEnabled,
+                },
+                stakingBenefits: {
+                    lowerBenefitPower: protocol.lowerBenefitPower,
+                    upperBenefitPower: protocol.upperBenefitPower,
+                },
+                protocolReserveProfitShare: protocol.protocolReserveProfitShare,
+                tradeLiquidationBudget: protocol.tradeLiquidationBudget,
+            },
+            futureMarketTemplate: {
+                liquidationLtv: protocol.liquidationLtv,
+                maxAdmissionLeverage: protocol.maxAdmissionLeverage,
+                backingBufferLambda: protocol.backingBufferLambda,
+                baseFee: protocol.baseFee,
+                minFee: protocol.minFee,
+                minEntryProbability: protocol.minEntryProbability,
+                maxEntryProbability: protocol.maxEntryProbability,
+                expiryFeeWindowMs: protocol.expiryFeeWindowMs,
+                expiryFeeMaxMultiplier: protocol.expiryFeeMaxMultiplier,
+                noLeverageWindowMs: protocol.noLeverageWindowMs,
+                tradingLossRebateRate: protocol.tradingLossRebateRate,
+            },
+            cadences: { BTC: cadences },
+        },
+    };
+    assertIntegrationManifest(manifest);
+    return manifest;
+}
+
+export function assertIntegrationManifest(value: unknown): asserts value is IntegrationManifest {
+    const manifest = asRecord(value);
+    exactKeys(
+        manifest,
+        [
+            "schemaVersion",
+            "deployment",
+            "network",
+            "chainId",
+            "sourceCommit",
+            "packages",
+            "coinTypes",
+            "objects",
+            "underlyings",
+            "writers",
+            "indexing",
+            "initialConfiguration",
+        ],
+        "integration manifest",
+    );
+    if (
+        manifest.schemaVersion !== 3 ||
+        manifest.deployment !== DEPLOYMENT ||
+        manifest.network !== NETWORK ||
+        manifest.chainId !== CHAIN_ID ||
+        typeof manifest.sourceCommit !== "string" ||
+        !/^[0-9a-f]{40}$/.test(manifest.sourceCommit)
+    ) {
+        throw new Error(`${MANIFEST_RELATIVE} has invalid deployment identity`);
+    }
+    const packages = asRecord(manifest.packages);
+    exactKeys(packages, ["fixedMath", "account", "propbook", "predict"], "packages");
+    for (const [name, id] of Object.entries(packages)) requiredObjectId(id, `packages.${name}`);
+
+    const coinTypes = asRecord(manifest.coinTypes);
+    exactKeys(coinTypes, ["dusdc", "deep", "plp"], "coinTypes");
+    if (
+        coinTypes.dusdc !== `${LINKED.dusdc}::dusdc::DUSDC` ||
+        coinTypes.deep !== `${LINKED.deep}::deep::DEEP` ||
+        coinTypes.plp !== `${packages.predict}::plp::PLP`
+    ) {
+        throw new Error("coinTypes do not match the verified package identities");
+    }
+
+    const objects = asRecord(manifest.objects);
+    exactKeys(
+        objects,
+        [
+            "accountRegistry",
+            "oracleRegistry",
+            "protocolConfig",
+            "poolVault",
+            "registry",
+            "accumulatorRoot",
+            "clock",
+        ],
+        "objects",
+    );
+    for (const [name, id] of Object.entries(objects)) requiredObjectId(id, `objects.${name}`);
+
+    const underlyings = asRecord(manifest.underlyings);
+    exactKeys(underlyings, ["BTC"], "underlyings");
+    const btc = asRecord(underlyings.BTC);
+    exactKeys(
+        btc,
+        [
+            "symbol",
+            "name",
+            "propbookUnderlyingId",
+            "pythLazerFeedId",
+            "blockScholesSourceId",
+            "pythFeed",
+            "blockScholesValueStore",
+            "blockScholesSviStore",
+        ],
+        "underlyings.BTC",
+    );
+    if (
+        btc.symbol !== "BTC" ||
+        btc.name !== ASSET.name ||
+        btc.propbookUnderlyingId !== ASSET.propbookUnderlyingId ||
+        btc.pythLazerFeedId !== ASSET.pythLazerFeedId ||
+        btc.blockScholesSourceId !== ASSET.blockScholesSourceId
+    ) {
+        throw new Error("underlyings.BTC identity does not match the deployment policy");
+    }
+    for (const name of ["pythFeed", "blockScholesValueStore", "blockScholesSviStore"]) {
+        requiredObjectId(btc[name], `underlyings.BTC.${name}`);
+    }
+
+    const writers = asRecord(manifest.writers);
+    exactKeys(writers, ["keeper", "priceUpdater"], "writers");
+    const keeper = asRecord(writers.keeper);
+    exactKeys(keeper, ["lifecycleCap"], "writers.keeper");
+    requiredObjectId(keeper.lifecycleCap, "writers.keeper.lifecycleCap");
+    const priceUpdater = asRecord(writers.priceUpdater);
+    exactKeys(
+        priceUpdater,
+        [
+            "pythLazerPackage",
+            "pythLazerState",
+            "blockScholesOraclePackage",
+            "blockScholesSignerRegistry",
+        ],
+        "writers.priceUpdater",
+    );
+    if (
+        priceUpdater.pythLazerPackage !== LINKED.pyth_lazer ||
+        priceUpdater.pythLazerState !== LINKED_OBJECTS.pythLazerState ||
+        priceUpdater.blockScholesOraclePackage !== LINKED.bs_oracle ||
+        priceUpdater.blockScholesSignerRegistry !== LINKED_OBJECTS.blockScholesSignerRegistry
+    ) {
+        throw new Error("writers.priceUpdater does not match the verified dependencies");
+    }
+
+    const indexing = asRecord(manifest.indexing);
+    exactKeys(indexing, ["startCheckpoint"], "indexing");
+    const startCheckpoint = BigInt(
+        decimalString(indexing.startCheckpoint, "indexing.startCheckpoint"),
+    );
+    const initial = asRecord(manifest.initialConfiguration);
+    exactKeys(
+        initial,
+        [
+            "verifiedAfterCheckpoint",
+            "stateAnchors",
+            "units",
+            "liveProtocol",
+            "futureMarketTemplate",
+            "cadences",
+        ],
+        "initialConfiguration",
+    );
+    const verifiedAfterCheckpoint = BigInt(
+        decimalString(
+            initial.verifiedAfterCheckpoint,
+            "initialConfiguration.verifiedAfterCheckpoint",
+        ),
+    );
+    if (startCheckpoint > verifiedAfterCheckpoint) {
+        throw new Error("indexing.startCheckpoint is after the configuration verification fence");
+    }
+    const stateAnchors = asRecord(initial.stateAnchors);
+    exactKeys(stateAnchors, ["protocolConfig", "registry"], "initialConfiguration.stateAnchors");
+    for (const name of ["protocolConfig", "registry"]) {
+        const anchor = asRecord(stateAnchors[name]);
+        exactKeys(anchor, ["objectVersion", "digest"], `initialConfiguration.stateAnchors.${name}`);
+        if (
+            BigInt(
+                decimalString(
+                    anchor.objectVersion,
+                    `initialConfiguration.stateAnchors.${name}.objectVersion`,
+                ),
+            ) === 0n
+        ) {
+            throw new Error(`initialConfiguration.stateAnchors.${name}.objectVersion is zero`);
+        }
+        requiredString(anchor.digest, `initialConfiguration.stateAnchors.${name}.digest`);
+    }
+
+    const units = asRecord(initial.units);
+    exactKeys(
+        units,
+        [
+            "fixedPointScale",
+            "quoteCoinDecimals",
+            "plpCoinDecimals",
+            "deepCoinDecimals",
+            "positionQuantityDecimals",
+            "positionLotSize",
+            "timestampUnit",
+        ],
+        "initialConfiguration.units",
+    );
+    if (
+        units.fixedPointScale !== "1000000000" ||
+        units.quoteCoinDecimals !== 6 ||
+        units.plpCoinDecimals !== 6 ||
+        units.deepCoinDecimals !== 6 ||
+        units.positionQuantityDecimals !== 6 ||
+        units.positionLotSize !== "10000" ||
+        units.timestampUnit !== "milliseconds"
+    ) {
+        throw new Error("initialConfiguration.units does not match Predict units");
+    }
+
+    const live = asRecord(initial.liveProtocol);
+    exactKeys(
+        live,
+        [
+            "pricing",
+            "ewmaPenalty",
+            "stakingBenefits",
+            "protocolReserveProfitShare",
+            "tradeLiquidationBudget",
+        ],
+        "initialConfiguration.liveProtocol",
+    );
+    const pricing = asRecord(live.pricing);
+    exactKeys(
+        pricing,
+        [
+            "usePythSpotForForward",
+            "pythSpotFreshnessMs",
+            "blockScholesPriceFreshnessMs",
+            "blockScholesSviFreshnessMs",
+        ],
+        "initialConfiguration.liveProtocol.pricing",
+    );
+    const ewma = asRecord(live.ewmaPenalty);
+    exactKeys(
+        ewma,
+        ["alpha", "zScoreThreshold", "penaltyRate", "enabled"],
+        "initialConfiguration.liveProtocol.ewmaPenalty",
+    );
+    const staking = asRecord(live.stakingBenefits);
+    exactKeys(
+        staking,
+        ["lowerBenefitPower", "upperBenefitPower"],
+        "initialConfiguration.liveProtocol.stakingBenefits",
+    );
+    const template = asRecord(initial.futureMarketTemplate);
+    exactKeys(
+        template,
+        [
+            "liquidationLtv",
+            "maxAdmissionLeverage",
+            "backingBufferLambda",
+            "baseFee",
+            "minFee",
+            "minEntryProbability",
+            "maxEntryProbability",
+            "expiryFeeWindowMs",
+            "expiryFeeMaxMultiplier",
+            "noLeverageWindowMs",
+            "tradingLossRebateRate",
+        ],
+        "initialConfiguration.futureMarketTemplate",
+    );
+    const numericConfig = [
+        [pricing.pythSpotFreshnessMs, "pricing.pythSpotFreshnessMs"],
+        [pricing.blockScholesPriceFreshnessMs, "pricing.blockScholesPriceFreshnessMs"],
+        [pricing.blockScholesSviFreshnessMs, "pricing.blockScholesSviFreshnessMs"],
+        [ewma.alpha, "ewmaPenalty.alpha"],
+        [ewma.zScoreThreshold, "ewmaPenalty.zScoreThreshold"],
+        [ewma.penaltyRate, "ewmaPenalty.penaltyRate"],
+        [staking.lowerBenefitPower, "stakingBenefits.lowerBenefitPower"],
+        [staking.upperBenefitPower, "stakingBenefits.upperBenefitPower"],
+        [live.protocolReserveProfitShare, "liveProtocol.protocolReserveProfitShare"],
+        [live.tradeLiquidationBudget, "liveProtocol.tradeLiquidationBudget"],
+        ...Object.entries(template).map(([name, item]) => [item, `futureMarketTemplate.${name}`]),
+    ] as Array<[unknown, string]>;
+    for (const [item, label] of numericConfig) decimalString(item, label);
+    if (typeof pricing.usePythSpotForForward !== "boolean" || typeof ewma.enabled !== "boolean") {
+        throw new Error("initialConfiguration boolean values are invalid");
+    }
+
+    const cadenceGroups = asRecord(initial.cadences);
+    exactKeys(cadenceGroups, ["BTC"], "initialConfiguration.cadences");
+    if (!Array.isArray(cadenceGroups.BTC) || cadenceGroups.BTC.length !== CADENCES.length) {
+        throw new Error("initialConfiguration.cadences.BTC must contain every cadence");
+    }
+    for (const [index, valueAtIndex] of cadenceGroups.BTC.entries()) {
+        const valueRecord = asRecord(valueAtIndex);
+        exactKeys(
+            valueRecord,
+            [
+                "id",
+                "name",
+                "periodMs",
+                "enabled",
+                "tickSize",
+                "admissionTickSize",
+                "maxExpiryAllocation",
+                "initialExpiryCash",
+                "windowSize",
+            ],
+            `initialConfiguration.cadences.BTC[${index}]`,
+        );
+        const spec = CADENCES[index];
+        if (
+            valueRecord.id !== spec.id ||
+            valueRecord.name !== spec.name ||
+            valueRecord.periodMs !== spec.periodMs.toString() ||
+            valueRecord.enabled !== spec.windowSize > 0n ||
+            valueRecord.tickSize !== spec.tickSize.toString() ||
+            valueRecord.admissionTickSize !== spec.admissionTickSize.toString() ||
+            valueRecord.maxExpiryAllocation !== spec.maxExpiryAllocation.toString() ||
+            valueRecord.initialExpiryCash !== spec.initialExpiryCash.toString() ||
+            valueRecord.windowSize !== spec.windowSize.toString()
+        ) {
+            throw new Error(`initialConfiguration.cadences.BTC[${index}] is invalid`);
+        }
+    }
+}
+
 function command(executable: string, args: string[]): string {
     return execFileSync(executable, args, {
         cwd: REPO_ROOT,
@@ -436,14 +1131,113 @@ function suiClient(snapshot: ClientSnapshot, args: string[]): string {
     ]);
 }
 
-function loadResult(): DeploymentResult {
-    return JSON.parse(readFileSync(OUT, "utf8")) as DeploymentResult;
+function transactionCheckpoint(snapshot: ClientSnapshot, digest: string): string {
+    const response = JSON.parse(suiClient(snapshot, ["tx-block", digest, "--json"])) as Record<
+        string,
+        unknown
+    >;
+    return decimalString(response.checkpoint, `transaction ${digest} checkpoint`);
 }
 
-function writeResult(result: DeploymentResult): void {
+export function createDeploymentState(): DeploymentResult {
+    return {
+        schemaVersion: 2,
+        status: "pending",
+        network: NETWORK,
+        chainId: CHAIN_ID,
+        buildEnvironment: NETWORK,
+        suiVersion: null,
+        sourceCommit: null,
+        deployer: DEPLOYER,
+        packageGasBudget: null,
+        transactionGasBudget: null,
+        startedAt: null,
+        completedAt: null,
+        lastError: null,
+        inFlight: null,
+        packages: {},
+        linked: { ...LINKED },
+        linkedObjects: { ...LINKED_OBJECTS },
+        sharedObjects: {},
+        ownedCaps: {},
+        publishTx: {},
+        transactions: {},
+        wiring: {
+            version: 2,
+            network: NETWORK,
+            operator: DEPLOYER,
+            updatedAt: null,
+            account: {
+                predictAppAuthorized: false,
+                authorizeTx: null,
+                accountWrapperId: null,
+                createAccountTx: null,
+            },
+            lifecycleCap: {
+                id: null,
+                recipient: LIFECYCLE_CAP_RECIPIENT,
+                owner: null,
+                mintTx: null,
+                transferTx: null,
+            },
+            asset: {
+                name: ASSET.name,
+                propbookUnderlyingId: ASSET.propbookUnderlyingId,
+                pythLazerFeedId: ASSET.pythLazerFeedId,
+                blockScholesSourceId: ASSET.blockScholesSourceId,
+                pythFeedId: null,
+                blockScholesValueStoreId: null,
+                blockScholesSviStoreId: null,
+                pythFeedCreateTx: null,
+                pythBindTx: null,
+                blockScholesStoresCreateTx: null,
+                predictUnderlyingRegistered: false,
+                predictUnderlyingRegisteredTx: null,
+            },
+            cadences: CADENCES.map((spec) => ({
+                id: spec.id,
+                name: spec.name,
+                tickSize: spec.tickSize.toString(),
+                admissionTickSize: spec.admissionTickSize.toString(),
+                maxExpiryAllocation: spec.maxExpiryAllocation.toString(),
+                initialExpiryCash: spec.initialExpiryCash.toString(),
+                windowSize: spec.windowSize.toString(),
+                setTx: null,
+            })),
+            bootstrap: {
+                lockCapitalAmount: LOCK_CAPITAL_AMOUNT.toString(),
+                supplyAmount: BOOTSTRAP_SUPPLY_AMOUNT.toString(),
+                accountId: null,
+                requestIndex: null,
+                sharesMinted: null,
+                accountPlpBalance: null,
+                lockCapitalTx: null,
+                supplyRequestTx: null,
+                flushTx: null,
+            },
+            markets: [],
+            marketWindowChecks: [],
+        },
+        verification: null,
+    };
+}
+
+function loadState(): DeploymentResult {
+    if (!existsSync(STATE)) return createDeploymentState();
+    return JSON.parse(readFileSync(STATE, "utf8")) as DeploymentResult;
+}
+
+function writeState(result: DeploymentResult): void {
     result.wiring.updatedAt = new Date().toISOString();
-    writeFileSync(OUT_TEMP, `${JSON.stringify(result, null, 4)}\n`, { mode: 0o600 });
-    renameSync(OUT_TEMP, OUT);
+    writeFileSync(STATE_TEMP, `${JSON.stringify(result, null, 4)}\n`, { mode: 0o600 });
+    renameSync(STATE_TEMP, STATE);
+}
+
+function writeIntegrationManifest(manifest: IntegrationManifest): void {
+    assertIntegrationManifest(manifest);
+    writeFileSync(MANIFEST_TEMP, `${JSON.stringify(manifest, null, 4)}\n`, { mode: 0o644 });
+    chmodSync(MANIFEST_TEMP, 0o644);
+    renameSync(MANIFEST_TEMP, MANIFEST);
 }
 
 function normalizeId(id: string): string {
@@ -548,7 +1342,7 @@ function assertPackageCheckpoints(result: DeploymentResult): void {
             assertCompletedPackage(result, pkg);
         } else if (existsSync(publishedPath(pkg))) {
             throw new Error(
-                `${publishedPath(pkg)} exists without a complete JSON checkpoint; reconcile it before continuing`,
+                `${publishedPath(pkg)} exists without a complete ${STATE_RELATIVE} checkpoint; reconcile it before continuing`,
             );
         }
     }
@@ -568,7 +1362,7 @@ function changedPaths(): string[] {
 }
 
 function assertExpectedWorktree(result: DeploymentResult): void {
-    const allowed = new Set<string>([OUT_RELATIVE]);
+    const allowed = new Set<string>([STATE_RELATIVE]);
     for (const pkg of PACKAGES) {
         if (result.packages[pkg] || result.inFlight?.package === pkg) {
             allowed.add(`packages/${pkg}/Published.toml`);
@@ -613,7 +1407,7 @@ function cadenceMatches(actual: CadenceRecord, expected: CadenceSpec): boolean {
     );
 }
 
-function assertResultFile(result: DeploymentResult): void {
+function assertStateFile(result: DeploymentResult): void {
     if (
         result.schemaVersion !== 2 ||
         result.network !== NETWORK ||
@@ -621,13 +1415,13 @@ function assertResultFile(result: DeploymentResult): void {
         result.buildEnvironment !== NETWORK ||
         normalizeId(result.deployer) !== DEPLOYER
     ) {
-        throw new Error(`${OUT_RELATIVE} is not the expected schema-2 Testnet deployment`);
+        throw new Error(`${STATE_RELATIVE} is not the expected schema-2 Testnet deployment`);
     }
     if (JSON.stringify(result.linked) !== JSON.stringify(LINKED)) {
-        throw new Error("linked package IDs in deployment.testnet.json do not match deploy.ts");
+        throw new Error(`linked package IDs in ${STATE_RELATIVE} do not match deploy.ts`);
     }
     if (JSON.stringify(result.linkedObjects) !== JSON.stringify(LINKED_OBJECTS)) {
-        throw new Error("linked object IDs in deployment.testnet.json do not match deploy.ts");
+        throw new Error(`linked object IDs in ${STATE_RELATIVE} do not match deploy.ts`);
     }
     if (
         result.wiring.lifecycleCap.recipient !== LIFECYCLE_CAP_RECIPIENT ||
@@ -664,7 +1458,7 @@ function acquireLock(): LockHandle {
         if (existsSync(path)) {
             const detail = readFileSync(path, "utf8").trim();
             throw new Error(
-                `deployment lock already exists at ${path}. Fail closed: inspect ${OUT_RELATIVE} and Testnet before removing it. lock=${detail}`,
+                `deployment lock already exists at ${path}. Fail closed: inspect ${STATE_RELATIVE} and Testnet before removing it. lock=${detail}`,
             );
         }
         throw new Error(`unable to acquire deployment lock at ${path}: ${String(error)}`);
@@ -981,7 +1775,7 @@ async function executeTransaction(
         startedAt: new Date().toISOString(),
         digest,
     };
-    writeResult(runtime.result);
+    writeState(runtime.result);
 
     let receipt: Receipt;
     try {
@@ -1015,7 +1809,7 @@ async function executeTransaction(
     runtime.result.transactions[label] = digest;
     runtime.result.inFlight = null;
     runtime.result.status = "wiring";
-    writeResult(runtime.result);
+    writeState(runtime.result);
     await assertSdkTarget(runtime);
     console.log(`[deploy] ${label}: ${digest}`);
     return receipt;
@@ -1056,7 +1850,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
         startedAt: new Date().toISOString(),
         digest: null,
     };
-    writeResult(runtime.result);
+    writeState(runtime.result);
 
     const output = suiClient(runtime.snapshot, [
         "publish",
@@ -1074,7 +1868,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     const failure = effectsError(receipt.effects);
     if (failure || !receipt.digest) throw new Error(`publish ${pkg} failed: ${failure}`);
     runtime.result.inFlight.digest = receipt.digest;
-    writeResult(runtime.result);
+    writeState(runtime.result);
     assertCliTarget(runtime.snapshot);
     assertPublishedIdentity(
         publishedPath(pkg),
@@ -1087,7 +1881,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     recordPublish(runtime.result, pkg, receipt);
     assertCompletedPackage(runtime.result, pkg);
     runtime.result.inFlight = null;
-    writeResult(runtime.result);
+    writeState(runtime.result);
     console.log(`[deploy] ${pkg}: ${runtime.result.packages[pkg]} (${receipt.digest})`);
 }
 
@@ -1125,7 +1919,7 @@ async function reconcileInFlight(runtime: Runtime): Promise<void> {
         runtime.result.transactions[inFlight.label] = inFlight.digest;
     }
     runtime.result.inFlight = null;
-    writeResult(runtime.result);
+    writeState(runtime.result);
     console.log(`[deploy] reconciled ${inFlight.label}: ${inFlight.digest}`);
 }
 
@@ -1416,7 +2210,7 @@ async function ensurePredictAppAuthorized(runtime: Runtime): Promise<void> {
     }
     result.wiring.account.predictAppAuthorized = true;
     result.wiring.account.authorizeTx ??= result.transactions.authorize_predict_app ?? null;
-    writeResult(result);
+    writeState(result);
 }
 
 async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
@@ -1431,7 +2225,7 @@ async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
             "::market_lifecycle_cap::MarketLifecycleCap",
         );
         result.wiring.lifecycleCap.mintTx = receipt.digest ?? null;
-        writeResult(result);
+        writeState(result);
     }
     const recorded = result.wiring.lifecycleCap.id;
     if (recorded) {
@@ -1450,7 +2244,7 @@ async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
         result.wiring.lifecycleCap.mintTx ??= result.transactions.mint_lifecycle_cap ?? null;
         result.wiring.lifecycleCap.transferTx ??=
             result.transactions.transfer_lifecycle_cap_to_keeper ?? null;
-        writeResult(result);
+        writeState(result);
         return recorded;
     }
 
@@ -1466,7 +2260,7 @@ async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
     result.wiring.lifecycleCap.id = id;
     result.wiring.lifecycleCap.owner = "deployer";
     result.wiring.lifecycleCap.mintTx = receipt.digest ?? null;
-    writeResult(result);
+    writeState(result);
     return id;
 }
 
@@ -1558,7 +2352,7 @@ async function ensureOracleObjects(runtime: Runtime): Promise<void> {
         throw new Error(`underlying ${ASSET.propbookUnderlyingId} is bound to Pyth ${boundPyth}`);
     }
     result.wiring.asset.pythBindTx ??= result.transactions.bind_pyth_to_underlying ?? null;
-    writeResult(result);
+    writeState(result);
 }
 
 async function ensureUnderlyingRegistered(runtime: Runtime): Promise<void> {
@@ -1567,7 +2361,7 @@ async function ensureUnderlyingRegistered(runtime: Runtime): Promise<void> {
         result.wiring.asset.predictUnderlyingRegistered = true;
         result.wiring.asset.predictUnderlyingRegisteredTx ??=
             result.transactions.register_predict_underlying;
-        writeResult(result);
+        writeState(result);
     }
     if (!result.wiring.asset.predictUnderlyingRegistered) {
         const tx = new Transaction();
@@ -1580,7 +2374,7 @@ async function ensureUnderlyingRegistered(runtime: Runtime): Promise<void> {
         const receipt = await executeTransaction(runtime, "register_predict_underlying", tx);
         result.wiring.asset.predictUnderlyingRegisteredTx = receipt.digest ?? null;
         result.wiring.asset.predictUnderlyingRegistered = true;
-        writeResult(result);
+        writeState(result);
     }
 }
 
@@ -1646,14 +2440,14 @@ async function ensureCadences(runtime: Runtime): Promise<void> {
         result.wiring.cadences = CADENCES.map((cadence) =>
             expectedCadenceRecord(cadence, receipt.digest ?? null),
         );
-        writeResult(result);
+        writeState(result);
     }
     const verified = await readCadences(runtime);
     if (!verified.every((record, index) => cadenceMatches(record, CADENCES[index]))) {
         throw new Error("on-chain cadence configuration does not match the deployment policy");
     }
     result.wiring.cadences = verified;
-    writeResult(result);
+    writeState(result);
 }
 
 async function ensureAccountWrapper(runtime: Runtime): Promise<string> {
@@ -1695,7 +2489,7 @@ async function ensureAccountWrapper(runtime: Runtime): Promise<string> {
     }
     result.wiring.account.accountWrapperId = wrapperId;
     result.wiring.account.createAccountTx ??= result.transactions.create_deployer_account ?? null;
-    writeResult(result);
+    writeState(result);
     return wrapperId;
 }
 
@@ -1867,7 +2661,7 @@ async function ensureBootstrap(
         result.wiring.bootstrap.lockCapitalTx = receipt.digest ?? null;
         result.wiring.bootstrap.supplyRequestTx = receipt.digest ?? null;
         result.wiring.bootstrap.flushTx = receipt.digest ?? null;
-        writeResult(result);
+        writeState(result);
     }
     totalSupply = await poolU64(runtime, "plp_total_supply");
     pendingSupply = await poolU64(runtime, "supply_requests_pending");
@@ -1900,7 +2694,7 @@ async function ensureBootstrap(
     result.wiring.bootstrap.lockCapitalTx = bootstrapDigest;
     result.wiring.bootstrap.supplyRequestTx = bootstrapDigest;
     result.wiring.bootstrap.flushTx = bootstrapDigest;
-    writeResult(result);
+    writeState(result);
 }
 
 async function activeMarketIds(runtime: Runtime): Promise<string[]> {
@@ -1999,7 +2793,7 @@ async function rebuildMarketsFromTransactions(runtime: Runtime): Promise<void> {
             byId.set(market.id, market);
         }
     }
-    writeResult(result);
+    writeState(result);
 }
 
 async function discoverMarkets(runtime: Runtime): Promise<void> {
@@ -2048,7 +2842,7 @@ async function discoverMarkets(runtime: Runtime): Promise<void> {
     result.wiring.markets.sort((left, right) =>
         Number(BigInt(left.expiryMs) - BigInt(right.expiryMs)),
     );
-    writeResult(result);
+    writeState(result);
 }
 
 async function currentClockMs(runtime: Runtime): Promise<bigint> {
@@ -2179,7 +2973,7 @@ async function assertLiveMarketWindows(
     }
     if (canProbe) {
         runtime.result.wiring.marketWindowChecks = checks;
-        writeResult(runtime.result);
+        writeState(runtime.result);
     }
 }
 
@@ -2200,7 +2994,7 @@ async function rebalanceMarket(runtime: Runtime, market: MarketRecord): Promise<
     if (BigInt(market.cashBalance) === 0n) {
         throw new Error(`market ${market.id} remained unfunded after rebalance`);
     }
-    writeResult(result);
+    writeState(result);
 }
 
 async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<void> {
@@ -2238,7 +3032,7 @@ async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<
             }
             const market = marketFromEvent(receipt, cadence);
             result.wiring.markets.push(market);
-            writeResult(result);
+            writeState(result);
             await rebalanceMarket(runtime, market);
         }
     }
@@ -2257,7 +3051,7 @@ async function transferLifecycleCap(runtime: Runtime, lifecycleCapId: string): P
         result.wiring.lifecycleCap.owner = "recipient";
         result.wiring.lifecycleCap.transferTx ??=
             result.transactions.transfer_lifecycle_cap_to_keeper ?? null;
-        writeResult(result);
+        writeState(result);
         return;
     }
     if (evidence.owner !== DEPLOYER) {
@@ -2268,7 +3062,7 @@ async function transferLifecycleCap(runtime: Runtime, lifecycleCapId: string): P
     const receipt = await executeTransaction(runtime, "transfer_lifecycle_cap_to_keeper", tx);
     result.wiring.lifecycleCap.owner = "recipient";
     result.wiring.lifecycleCap.transferTx = receipt.digest ?? null;
-    writeResult(result);
+    writeState(result);
 }
 
 function boolField(fields: Record<string, unknown>, name: string): boolean {
@@ -2291,26 +3085,40 @@ async function readProtocolConfig(runtime: Runtime): Promise<Verification["proto
         sharedId(runtime.result, "predict", "protocol_config::ProtocolConfig"),
     );
     const pricing = asRecord(fields.pricing_config);
-    const config = {
+    const ewma = asRecord(fields.ewma_config);
+    const stake = asRecord(fields.stake_config);
+    const strike = asRecord(fields.strike_exposure_template_config);
+    const expiryCash = asRecord(fields.expiry_cash_template_config);
+    const config: ProtocolConfigRecord = {
         usePythSpotForForward: boolField(pricing, "use_pyth_spot_for_forward"),
         pythSpotFreshnessMs: stringField(pricing, "pyth_spot_freshness_ms"),
         blockScholesPriceFreshnessMs: stringField(pricing, "block_scholes_price_freshness_ms"),
         blockScholesSviFreshnessMs: stringField(pricing, "block_scholes_svi_freshness_ms"),
+        ewmaAlpha: stringField(ewma, "alpha"),
+        ewmaZScoreThreshold: stringField(ewma, "z_score_threshold"),
+        ewmaPenaltyRate: stringField(ewma, "penalty_rate"),
+        ewmaEnabled: boolField(ewma, "enabled"),
+        lowerBenefitPower: stringField(stake, "lower_benefit_power"),
+        upperBenefitPower: stringField(stake, "upper_benefit_power"),
+        protocolReserveProfitShare: stringField(fields, "protocol_reserve_profit_share"),
+        tradeLiquidationBudget: stringField(fields, "trade_liquidation_budget"),
+        liquidationLtv: stringField(strike, "liquidation_ltv"),
+        maxAdmissionLeverage: stringField(strike, "max_admission_leverage"),
+        backingBufferLambda: stringField(strike, "backing_buffer_lambda"),
+        baseFee: stringField(strike, "base_fee"),
+        minFee: stringField(strike, "min_fee"),
+        minEntryProbability: stringField(strike, "min_entry_probability"),
+        maxEntryProbability: stringField(strike, "max_entry_probability"),
+        expiryFeeWindowMs: stringField(strike, "expiry_fee_window_ms"),
+        expiryFeeMaxMultiplier: stringField(strike, "expiry_fee_max_multiplier"),
+        noLeverageWindowMs: stringField(strike, "no_leverage_window_ms"),
+        tradingLossRebateRate: stringField(expiryCash, "trading_loss_rebate_rate"),
         versionWatermark: stringField(fields, "version_watermark"),
         tradingPaused: boolField(fields, "trading_paused"),
         frozen: boolField(fields, "frozen"),
         valuationInProgress: boolField(fields, "valuation_in_progress"),
     };
-    if (
-        !config.usePythSpotForForward ||
-        config.pythSpotFreshnessMs !== "10000" ||
-        config.blockScholesPriceFreshnessMs !== "10000" ||
-        config.blockScholesSviFreshnessMs !== "60000" ||
-        config.versionWatermark !== "1" ||
-        config.tradingPaused ||
-        config.frozen ||
-        config.valuationInProgress
-    ) {
+    if (JSON.stringify(config) !== JSON.stringify(EXPECTED_PROTOCOL_CONFIG)) {
         throw new Error(`ProtocolConfig defaults are unexpected: ${JSON.stringify(config)}`);
     }
     return config;
@@ -2380,7 +3188,7 @@ async function verifyDeployment(
         valueStore !== result.wiring.asset.blockScholesValueStoreId ||
         sviStore !== result.wiring.asset.blockScholesSviStoreId
     ) {
-        throw new Error("Propbook canonical bindings do not match deployment.testnet.json");
+        throw new Error(`Propbook canonical bindings do not match ${STATE_RELATIVE}`);
     }
     const oracleObjects = {
         pythFeed: await objectEvidence(
@@ -2457,7 +3265,7 @@ async function verifyDeployment(
     for (const id of activeIds) {
         const state = await marketState(runtime, id);
         const record = result.wiring.markets.find((market) => market.id === id);
-        if (!record) throw new Error(`active market ${id} is absent from deployment JSON`);
+        if (!record) throw new Error(`active market ${id} is absent from ${STATE_RELATIVE}`);
         if (state.cashBalance === 0n) throw new Error(`active market ${id} has zero cash`);
         activeMarketCash += state.cashBalance;
         record.cashBalance = state.cashBalance.toString();
@@ -2503,10 +3311,32 @@ async function verifyDeployment(
             `pool accounting mismatch supply=${totalSupply} idle=${idleBalance} activeCash=${activeMarketCash} pending=${pendingSupply}/${pendingWithdraw}`,
         );
     }
+    const packageCheckpoints = PACKAGES.map((pkg) =>
+        transactionCheckpoint(
+            runtime.snapshot,
+            requiredString(result.publishTx[pkg], `${pkg} publish digest`),
+        ),
+    );
+    const indexingStartCheckpoint = packageCheckpoints
+        .map((checkpoint) => BigInt(checkpoint))
+        .reduce((earliest, checkpoint) => (checkpoint < earliest ? checkpoint : earliest))
+        .toString();
+    const verifiedAfterCheckpoint = transactionCheckpoint(
+        runtime.snapshot,
+        requiredString(
+            result.wiring.lifecycleCap.transferTx,
+            "lifecycle capability transfer digest",
+        ),
+    );
+    if (BigInt(verifiedAfterCheckpoint) < BigInt(indexingStartCheckpoint)) {
+        throw new Error("configuration verification fence precedes package publication");
+    }
 
     const verification: Verification = {
         verifiedAt: new Date().toISOString(),
         chainId: await shortChainId(runtime.client),
+        indexingStartCheckpoint,
+        verifiedAfterCheckpoint,
         packages,
         linkedPackages: external.packages,
         linkedObjects: external.objects,
@@ -2531,7 +3361,7 @@ async function verifyDeployment(
         },
         markets: verifiedMarkets,
     };
-    writeResult(result);
+    writeState(result);
     await assertSdkTarget(runtime);
     return verification;
 }
@@ -2562,8 +3392,8 @@ async function run(execute: boolean): Promise<void> {
     if (!/^[1-9][0-9]*$/.test(PACKAGE_GAS_BUDGET) || TRANSACTION_GAS_BUDGET <= 0n) {
         throw new Error("gas budgets must be positive integers");
     }
-    const result = loadResult();
-    assertResultFile(result);
+    const result = loadState();
+    assertStateFile(result);
     assertPackageCheckpoints(result);
     assertExpectedWorktree(result);
     const sourceCommit = git(["rev-parse", "HEAD"]);
@@ -2619,7 +3449,7 @@ async function run(execute: boolean): Promise<void> {
         result.lastError = null;
         result.verification = null;
         result.status = "publishing";
-        writeResult(result);
+        writeState(result);
 
         try {
             for (const pkg of PACKAGES) {
@@ -2631,7 +3461,7 @@ async function run(execute: boolean): Promise<void> {
                 }
             }
             result.status = "wiring";
-            writeResult(result);
+            writeState(result);
 
             await ensurePredictAppAuthorized(runtime);
             const lifecycleCapId = await ensureLifecycleCap(runtime);
@@ -2644,13 +3474,15 @@ async function run(execute: boolean): Promise<void> {
             await transferLifecycleCap(runtime, lifecycleCapId);
 
             result.status = "verifying";
-            writeResult(result);
+            writeState(result);
             result.verification = await verifyDeployment(runtime, external);
             result.status = "complete";
             result.completedAt = new Date().toISOString();
             result.lastError = null;
-            writeResult(result);
-            console.log(`[deploy] complete: ${OUT}`);
+            writeState(result);
+            writeIntegrationManifest(buildIntegrationManifest(result));
+            console.log(`[deploy] complete state: ${STATE}`);
+            console.log(`[deploy] integration manifest: ${MANIFEST}`);
         } catch (error) {
             result.status = result.inFlight
                 ? "ambiguous"
@@ -2659,7 +3491,7 @@ async function run(execute: boolean): Promise<void> {
                   ? "partial"
                   : "failed";
             result.lastError = error instanceof Error ? error.message : String(error);
-            writeResult(result);
+            writeState(result);
             throw error;
         }
     } finally {
@@ -2667,18 +3499,23 @@ async function run(execute: boolean): Promise<void> {
     }
 }
 
-const execute = process.argv.slice(2).includes("--execute");
-const unknownArgs = process.argv.slice(2).filter((arg) => arg !== "--execute");
-if (unknownArgs.length > 0) {
-    throw new Error(`unknown deployment arguments: ${unknownArgs.join(", ")}`);
+export async function main(args = process.argv.slice(2)): Promise<void> {
+    const execute = args.includes("--execute");
+    const unknownArgs = args.filter((arg) => arg !== "--execute");
+    if (unknownArgs.length > 0) {
+        throw new Error(`unknown deployment arguments: ${unknownArgs.join(", ")}`);
+    }
+    const lock = acquireLock();
+    try {
+        await run(execute);
+    } finally {
+        releaseLock(lock);
+    }
 }
 
-const lock = acquireLock();
-run(execute)
-    .catch((error) => {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    main().catch((error) => {
         console.error(error);
         process.exitCode = 1;
-    })
-    .finally(() => {
-        releaseLock(lock);
     });
+}
