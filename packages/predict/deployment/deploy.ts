@@ -1061,8 +1061,6 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     const output = suiClient(runtime.snapshot, [
         "publish",
         resolve(REPO_ROOT, "packages", pkg),
-        "--build-env",
-        NETWORK,
         "--warnings-are-errors",
         "--force",
         "--sender",
