@@ -1644,3 +1644,65 @@ fun finish(scenario: Scenario, book: LpBook<LP_BOOK_TESTS>, ledger: Ledger) {
     destroy(ledger);
     scenario.end();
 }
+
+// === Partial-fill follow-ups: cancel, and repeated partials ===
+
+/// Cancelling after a partial fill must return only what is still escrowed — the
+/// filled part already became PLP. Pins that `remove_for_recipient` reads the entry's
+/// reduced amount rather than the amount originally requested.
+#[test]
+fun cancel_after_a_partial_fill_refunds_only_the_remainder() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    let index = book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // 10 of room against a 30 deposit: 10 fills, 20 stays queued.
+    drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 40_000_000);
+    assert_eq!(book.supply_requests_pending(), 1);
+
+    let (_id, amount, refund) = book.cancel_supply_request(ALICE, index);
+    // The cancel reports and returns the unfilled 20, not the original 30.
+    assert_eq!(amount, 20_000_000);
+    assert_eq!(refund.value(), 20_000_000);
+    assert_eq!(book.supply_requests_pending(), 0);
+
+    refund.destroy_for_testing();
+    finish(scenario, book, ledger);
+}
+
+/// A request filled a slice at a time across several flushes still completes, and the
+/// limit it carries stays satisfiable. The rescale rounds up, so the effective rate can
+/// only tighten; this pins that the tightening does not strand the request. The 2/3
+/// limit below divides unevenly on purpose, so the rescale actually rounds.
+#[test]
+fun repeated_partial_fills_complete_the_request() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    // 30 DUSDC asking 20 PLP: a 2/3 rate, comfortably under the 1.0 mark.
+    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 20_000_000);
+
+    // Room opens 10, then 15, then enough for the rest. The carried limit is rescaled
+    // and rounded up at each step: 20 -> 13.333334 -> 3.333334, each still clearing.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 40_000_000);
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 40_000_000);
+
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 45_000_000);
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 55_000_000);
+
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 60_000_000);
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+
+    // Fully served across three flushes: all 30 DUSDC in, 30 PLP minted on top of the
+    // 30 locked, and nothing stranded by the tightening limit.
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 60_000_000);
+    assert_eq!(ledger.idle_balance(), 30_000_000);
+
+    finish(scenario, book, ledger);
+}
