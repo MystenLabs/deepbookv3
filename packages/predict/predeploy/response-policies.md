@@ -1078,9 +1078,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `partially_filled_head_keeps_its_place_across_flushes`,
   `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`, and
   `capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush` end to end.
-  The branch order is pinned by `over_cap_and_under_limit_reports_the_limit_miss`,
-  which asserts the emitted cancellation reason, plus
-  `limit_miss_is_not_partially_filled_into_available_headroom`.
+  The branch order is pinned by `over_cap_and_under_limit_takes_the_limit_branch`,
+  which reads it off queue state — a limit miss pops and refunds the head while a
+  capacity stop leaves it queued and spends no budget — plus
+  `limit_miss_is_not_partially_filled_into_available_headroom` and, for the prefix
+  price guard, `supply_prefix_below_the_requests_price_is_carried_not_filled` and
+  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`.
   `lp_flow_tests.move` pins the cap to configured state rather than a constant
   (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
   `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
