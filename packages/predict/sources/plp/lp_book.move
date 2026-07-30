@@ -413,7 +413,16 @@ fun drain_withdraw_queue<LP>(
                 let (burn_shares, payout) = if (idle >= payout) {
                     (request.amount, payout)
                 } else {
-                    let affordable = math::mul_div_down(idle, mark.total_supply, mark.pool_value);
+                    // Checked, not the aborting form: this runs inside the mandatory
+                    // flush, so an unrepresentable quote must carry like any other
+                    // rather than abort the pool-wide drain (RP-2).
+                    let affordable = math::try_mul_div_down(
+                        idle,
+                        mark.total_supply,
+                        mark.pool_value,
+                    );
+                    if (affordable.is_none()) break;
+                    let affordable = affordable.destroy_some();
                     let partial_payout = mark.quote_withdraw_dusdc(affordable);
                     if (partial_payout.is_none()) {
                         // Idle buys no whole share, or those shares price to nothing.
@@ -577,11 +586,9 @@ fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
     queue.remove(request.index)
 }
 
-/// Persist a miss on the head so it survives to the next flush. Only called when the
-/// request keeps an attempt; a miss that refunds counts off the caller's copy instead,
-/// so the refund path writes no page.
 /// Fill `filled` of the head request and leave the rest queued in place, keeping the
-/// request's queue position, index, and owner. Returns the escrow for the filled part.
+/// request's queue position, index, and owner. Returns the escrow for the filled part,
+/// so the queue's pooled escrow and the entry's `amount` shrink together.
 ///
 /// The remaining `min_output` is scaled to the remaining amount so the request keeps
 /// asking for the same *price* it originally did, and it is rounded **up** so the
@@ -591,12 +598,18 @@ fun fill_front_partially<T>(queue: &mut RequestQueue<T>, filled: u64): Balance<T
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();
     let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
+    // A caller that filled the whole request must pop it instead; leaving a zero-amount
+    // entry queued would keep a live request nothing can ever serve.
+    assert!(filled < entry.amount, ERequestNotFound);
     let remaining = entry.amount - filled;
     entry.min_output = math::mul_div_up(entry.min_output, remaining, entry.amount);
     entry.amount = remaining;
     queue.escrow.split(filled)
 }
 
+/// Persist a miss on the head so it survives to the next flush. Only called when the
+/// request keeps an attempt; a miss that refunds counts off the caller's copy instead,
+/// so the refund path writes no page.
 fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>) {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();

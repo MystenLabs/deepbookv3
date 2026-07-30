@@ -504,10 +504,13 @@ public fun lock_capital(
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
 /// auto-settles any flush-delivered DUSDC first. The account receives minted PLP
-/// only if a flush that reaches it can mint at least `min_plp_out`. At the shipped
-/// attempt count of one, a flush whose mark quotes less cancels and refunds the
-/// request there and then; a higher configured count lets it rest and retry that many
-/// flushes first. Returns the queue index, the handle used to cancel before the flush.
+/// only at a mark that mints at least `min_plp_out` for the whole `amount` — a **price
+/// floor**, not a promise of that many shares: if the pool cap leaves room for only
+/// part of the deposit, the fill is proportionally smaller at the same price and the
+/// remainder stays queued with its limit rescaled. At the shipped attempt count of one,
+/// a flush whose mark quotes less cancels and refunds the request there and then; a
+/// higher configured count lets it rest and retry that many flushes first. Returns the
+/// queue index, the handle used to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,

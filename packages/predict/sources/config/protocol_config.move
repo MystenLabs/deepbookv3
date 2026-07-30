@@ -276,7 +276,8 @@ public fun set_lp_request_limit_flush_attempts(
 }
 
 /// Set the ceiling on LP-attributable pool value that queued supplies may raise the
-/// pool to. Supplies that would carry the pool past it are refunded at the flush;
+/// pool to. A supply that would carry the pool past it is filled up to the cap at the
+/// flush and its remainder stays queued;
 /// withdrawals and already-issued PLP are unaffected, so lowering this below current
 /// pool value closes the pool to new capital rather than forcing anyone out.
 public fun set_max_lp_pool_value(

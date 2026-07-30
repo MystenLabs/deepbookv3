@@ -75,8 +75,9 @@ public struct DeepUnstaked has copy, drop, store {
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
-/// `min_plp_out` is the minimum PLP the frozen mark must mint before the request
-/// fills. `index` is the queue handle used to cancel.
+/// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
+/// whole `amount` before the request fills, but a fill capped by pool capacity delivers
+/// proportionally less at that same price. `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -88,8 +89,10 @@ public struct SupplyRequested has copy, drop, store {
 }
 
 /// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is the
-/// minimum DUSDC the frozen mark must pay before the request fills.
+/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is a price
+/// floor: the frozen mark must pay at least this much for the whole `amount` before the
+/// request fills, but a fill limited by available idle pays proportionally less at that
+/// same price.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,

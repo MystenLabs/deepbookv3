@@ -1706,3 +1706,55 @@ fun repeated_partial_fills_complete_the_request() {
 
     finish(scenario, book, ledger);
 }
+
+/// The carried limit must round **up**, and this is the only test that can tell the
+/// difference. At a 2/3 mark a 30 DUSDC request asking exactly 20 PLP is at the very
+/// edge of what the mark pays; after 20 fills, the 10 left over quotes
+/// `floor(10 x 2/3) = 6.666666` while the rescaled limit is `ceil(20 x 10/30) =
+/// 6.666667`. Rounding up therefore refuses to fill the remainder a hair below the
+/// price the LP asked for; rounding down would fill it. Every other assertion in the
+/// suite is identical under both directions.
+#[test]
+fun carried_limit_rounds_up_and_refuses_a_fill_below_the_requested_price() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(20_000_000);
+    // 30 DUSDC asking 20 PLP is exactly what the 2/3 mark quotes, so any loss to
+    // flooring on the remainder puts it under the requested price.
+    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 20_000_000);
+
+    // 20 of room: fills 20 (minting floor(20 x 2/3) = 13.333333) and carries 10.
+    let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, 50_000_000);
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 33_333_333);
+
+    // Ample room now, but the remainder can only be quoted 6.666666 against a carried
+    // limit of 6.666667, so it misses and is refunded rather than filled under price.
+    let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, 90_000_000);
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    // Nothing further minted. Rounding down would have minted 6.666666 more here.
+    assert_eq!(book.total_supply(), 33_333_333);
+
+    finish(scenario, book, ledger);
+}
+
+/// Drain at a 2/3 share price (pool 30e6 over supply 20e6) under an explicit cap.
+fun drain_at_two_thirds(
+    scenario: &mut Scenario,
+    book: &mut LpBook<LP_BOOK_TESTS>,
+    ledger: &mut Ledger,
+    max_pool_value: u64,
+): DrainSummary {
+    book.drain(
+        ledger,
+        lp_book::new_flush_mark(30_000_000, 20_000_000),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        max_pool_value,
+        scenario.ctx(),
+    )
+}

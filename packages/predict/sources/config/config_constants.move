@@ -101,13 +101,13 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 /// Ceiling on LP-attributable pool value (`idle + Σ active NAV`, net of the
 /// protocol-profit exclusion) that queued supplies may raise the pool to. Checked at
 /// the flush against the frozen mark, because that is the only point where pool value
-/// is exact; a supply that would carry the pool past it is refunded rather than
-/// filled. The default admits everything, so the cap binds only once an operator sets
+/// is exact; a supply that would carry the pool past it is filled up to the cap and
+/// its remainder held at the queue head rather than refunded. The default admits everything, so the cap binds only once an operator sets
 /// a real figure.
 ///
 /// This caps pool *value*, not cumulative deposits — trading profit raises NAV, so a
-/// pool can sit above a set cap with no new deposits, in which case supplies stay
-/// refunded until NAV falls back. See RP-23.
+/// pool can sit above a set cap with no new deposits, in which case supplies wait
+/// until NAV falls back. See RP-23.
 ///
 /// The floor is the genesis lock plus one minimum supply, which is the smallest cap
 /// under which a minimally-bootstrapped pool can still admit a deposit. It is a
