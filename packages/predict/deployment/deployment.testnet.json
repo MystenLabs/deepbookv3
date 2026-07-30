@@ -1,0 +1,140 @@
+{
+    "schemaVersion": 2,
+    "status": "pending",
+    "network": "testnet",
+    "chainId": "4c78adac",
+    "buildEnvironment": "testnet",
+    "suiVersion": null,
+    "sourceCommit": null,
+    "deployer": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+    "packageGasBudget": null,
+    "transactionGasBudget": null,
+    "startedAt": null,
+    "completedAt": null,
+    "lastError": null,
+    "inFlight": null,
+    "packages": {},
+    "linked": {
+        "dusdc": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
+        "deep": "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
+        "pyth_lazer": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+        "wormhole": "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2",
+        "bs_oracle": "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6"
+    },
+    "linkedObjects": {
+        "clock": "0x0000000000000000000000000000000000000000000000000000000000000006",
+        "accumulatorRoot": "0x0000000000000000000000000000000000000000000000000000000000000acc",
+        "pythLazerState": "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
+        "wormholeState": "0x3c89c52e413edb9b0d9a145e02258c96916c79b1e57a12861bb61791ee5c5f81",
+        "blockScholesSignerRegistry": "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440"
+    },
+    "sharedObjects": {},
+    "ownedCaps": {},
+    "publishTx": {},
+    "transactions": {},
+    "wiring": {
+        "version": 2,
+        "network": "testnet",
+        "operator": "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+        "updatedAt": null,
+        "account": {
+            "predictAppAuthorized": false,
+            "authorizeTx": null,
+            "accountWrapperId": null,
+            "createAccountTx": null
+        },
+        "lifecycleCap": {
+            "id": null,
+            "recipient": "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82",
+            "owner": null,
+            "mintTx": null,
+            "transferTx": null
+        },
+        "asset": {
+            "name": "BTC_USD",
+            "propbookUnderlyingId": 1,
+            "pythLazerFeedId": 1,
+            "blockScholesSourceId": 1,
+            "pythFeedId": null,
+            "blockScholesValueStoreId": null,
+            "blockScholesSviStoreId": null,
+            "pythFeedCreateTx": null,
+            "pythBindTx": null,
+            "blockScholesStoresCreateTx": null,
+            "predictUnderlyingRegistered": false,
+            "predictUnderlyingRegisteredTx": null
+        },
+        "cadences": [
+            {
+                "id": 0,
+                "name": "1m",
+                "tickSize": "10000000",
+                "admissionTickSize": "1000000000",
+                "maxExpiryAllocation": "50000000000",
+                "initialExpiryCash": "10000000000",
+                "windowSize": "3",
+                "setTx": null
+            },
+            {
+                "id": 1,
+                "name": "5m",
+                "tickSize": "10000000",
+                "admissionTickSize": "1000000000",
+                "maxExpiryAllocation": "50000000000",
+                "initialExpiryCash": "10000000000",
+                "windowSize": "3",
+                "setTx": null
+            },
+            {
+                "id": 2,
+                "name": "1h",
+                "tickSize": "10000000",
+                "admissionTickSize": "1000000000",
+                "maxExpiryAllocation": "250000000000",
+                "initialExpiryCash": "50000000000",
+                "windowSize": "3",
+                "setTx": null
+            },
+            {
+                "id": 3,
+                "name": "1d",
+                "tickSize": "0",
+                "admissionTickSize": "0",
+                "maxExpiryAllocation": "0",
+                "initialExpiryCash": "0",
+                "windowSize": "0",
+                "setTx": null
+            },
+            {
+                "id": 4,
+                "name": "1w",
+                "tickSize": "0",
+                "admissionTickSize": "0",
+                "maxExpiryAllocation": "0",
+                "initialExpiryCash": "0",
+                "windowSize": "0",
+                "setTx": null
+            },
+            {
+                "id": 5,
+                "name": "1mo",
+                "tickSize": "0",
+                "admissionTickSize": "0",
+                "maxExpiryAllocation": "0",
+                "initialExpiryCash": "0",
+                "windowSize": "0",
+                "setTx": null
+            }
+        ],
+        "bootstrap": {
+            "lockCapitalAmount": "10000000",
+            "supplyAmount": "1500000000000",
+            "lockCapitalTx": null,
+            "supplyRequestTx": null,
+            "flushTx": null
+        },
+        "markets": [],
+        "marketWindowChecks": []
+    },
+    "verification": null
+}
