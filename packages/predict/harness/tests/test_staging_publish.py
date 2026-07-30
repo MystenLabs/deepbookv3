@@ -812,12 +812,10 @@ class LifecycleTests(unittest.TestCase):
                 except ProcessLookupError:
                     continue
                 stat_path = Path("/proc") / str(pid) / "stat"
+                if not Path("/proc").is_dir():
+                    self.fail(f"setup process {pid} still exists after cancellation")
                 try:
-                    state = (
-                        stat_path.read_text().split(") ", 1)[1][0]
-                        if stat_path.is_file()
-                        else ""
-                    )
+                    state = stat_path.read_text().split(") ", 1)[1][0]
                 except FileNotFoundError:
                     continue
                 # Linux containers may leave the orphaned grandchild as an
