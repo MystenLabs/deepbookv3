@@ -129,7 +129,7 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
     expect:
       profile === "tree"
         ? {
-            terminal: ["dynamic_field:0"],
+            terminal: ["cached objects limit"],
             note: "single-market payout-tree object-cache ceiling at the isolated node limit",
           }
         : undefined,

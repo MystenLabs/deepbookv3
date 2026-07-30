@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
+import { createCapacityStrategy } from "./strategies/capacity.js";
 import { abortInfo } from "./trace.js";
 
 test("cadence scheduling treats window size as a time horizon and reserves higher-rank boundaries", () => {
@@ -32,4 +33,11 @@ test("gRPC Move aborts retain module and code classification", () => {
     { module: "market_manager", code: 5 },
   );
   assert.equal(abortInfo(new Error("transport unavailable")), null);
+});
+
+test("capacity tree declares the semantic VM wall rather than a framework tag", () => {
+  assert.deepEqual(
+    createCapacityStrategy("tree").expect?.terminal,
+    ["cached objects limit"],
+  );
 });

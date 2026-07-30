@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from harness import verdict
+from harness import analyze, verdict
 
 
 class VerdictTests(unittest.TestCase):
@@ -89,6 +89,85 @@ class VerdictTests(unittest.TestCase):
                     "MEMORY_LIMIT_EXCEEDED — Object runtime cached objects limit reached": 1
                 },
             )
+
+    def test_generic_declared_terminal_requires_matching_vm_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory)
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "trader.jsonl").write_text(
+                '{"type":"expect","terminal":["dynamic_field:0"],"ts":2}\n'
+                '{"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+            )
+            artifacts = instance / "artifacts" / "failed_transactions"
+            artifacts.mkdir(parents=True)
+            (artifacts / "unrelated.json").write_text(
+                json.dumps(
+                    {
+                        "dry_run": {
+                            "executionErrorSource": (
+                                "ExecutionError status MEMORY_LIMIT_EXCEEDED at module 0xabc "
+                                "and message unrelated dynamic-field failure at code offset 42"
+                            ),
+                            "effects": {
+                                "status": {
+                                    "status": "failure",
+                                    "error": (
+                                        "MovePrimitiveRuntimeError in "
+                                        "dynamic_field::borrow_child_object"
+                                    ),
+                                }
+                            },
+                        }
+                    }
+                )
+            )
+
+            signals = analyze._analyze_one(instance)
+
+            self.assertIn("dynamic_field:0", signals)
+            self.assertIn(
+                "VACUOUS: declared wall 'dynamic_field:0' never reached",
+                signals,
+            )
+
+    def test_semantic_declared_terminal_accepts_matching_framework_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory)
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "trader.jsonl").write_text(
+                '{"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
+                '{"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+            )
+            artifacts = instance / "artifacts" / "failed_transactions"
+            artifacts.mkdir(parents=True)
+            (artifacts / "capacity-tree.json").write_text(
+                json.dumps(
+                    {
+                        "dry_run": {
+                            "executionErrorSource": (
+                                "ExecutionError status MEMORY_LIMIT_EXCEEDED at module 0xabc "
+                                "and message Object runtime cached objects limit reached "
+                                "at code offset 42"
+                            ),
+                            "effects": {
+                                "status": {
+                                    "status": "failure",
+                                    "error": (
+                                        "MovePrimitiveRuntimeError in "
+                                        "dynamic_field::borrow_child_object"
+                                    ),
+                                }
+                            },
+                        }
+                    }
+                )
+            )
+
+            self.assertEqual(analyze._analyze_one(instance), [])
 
 
 if __name__ == "__main__":

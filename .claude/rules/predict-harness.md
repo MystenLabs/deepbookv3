@@ -5,17 +5,13 @@ paths:
 
 # Predict Localnet Harness
 
-Read this before editing anything under `packages/predict/harness/**`. The harness is a
-worktree-free, real-data Sui-localnet staging sim for Predict (Python orchestration +
-self-contained `harness/ts` TypeScript). `packages/predict/harness/README.md` is the
-user-facing overview; this file is the editing-critical knowledge.
+Read this before editing anything under `packages/predict/harness/**`. The harness is a worktree-free, real-data Sui-localnet staging sim for Predict: Python owns orchestration, `harness/ts` owns live actors and strategies, and `devtools/ts` is the shared execution/wire substrate used by both the harness and simulations. `packages/predict/harness/README.md` is the user-facing overview; this file is the editing-critical knowledge.
 
 ## Build & verify
-- TypeScript: `cd packages/predict/harness/ts && npx tsc --noEmit` (0 errors before done).
+- TypeScript: `cd packages/predict && npm run build && npm test`.
 - Python: `python3 -m py_compile harness/*.py` from `packages/predict/`.
-- Validate behavior with a real localnet run (`python3 -m harness up --traders N --seconds S`)
-  then `python3 -m harness analyze`. Run these in the **main loop or background, never a
-  blocking subagent** (long runs trip watchdogs). Retention/teardown model: README.
+- Python tests: `python3 -m unittest discover -s harness/tests -p 'test_*.py' -v` and `python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v` from `packages/predict/`.
+- Validate behavior with a real localnet run (`python3 -m harness live --traders N --seconds S`) or a scoped campaign, then `python3 -m harness analyze`. Run these in the **main loop or background, never a blocking subagent** (long runs trip watchdogs). Retention/teardown model: README.
 - **On a PTB abort, read the real VM error, not the framework tag.** A
   `MovePrimitiveRuntimeError` in `0x2::dynamic_field::borrow_child_object` names only the
   framework fn; the true cause is the dry-run `executionErrorSource` in the saved
@@ -59,7 +55,7 @@ user-facing overview; this file is the editing-critical knowledge.
   off the hour, 1m the rest) makes `keeperService.cadenceOf(expiry)` exact.
 
 ## Strategies & campaign
-- **A strategy is a self-contained module** under `ts/strategies/` — the model and add-procedure live in README § Strategies & campaigns (and the `harness-strategy` rule for building one). Keep `traderService.ts` a thin runner: no strategy logic in the runner.
+- **Strategy logic stays under `ts/strategies/`.** A standalone behavior can be one module; related named profiles may share one parameterized family module, as capacity and cleanup do. The model and add-procedure live in README § Strategies & campaigns (and the `harness-strategy` rule for building one). Keep `traderService.ts` a thin runner: no strategy logic in the runner.
 - **Strategies only touch the `StrategyCtx`** — never call builders/`submit` directly. `ts/strategy.ts` is the authoritative ctx surface; the ctx wraps submission with bookkeeping and strategy-tagged tracing, which direct calls silently skip.
 - **Supply is custody-only; withdraw must read first.** `supply()` uses
   `requestSupplyFromCustodyTx` (pulls from the trader's funded account balance) — NOT
@@ -70,7 +66,7 @@ user-facing overview; this file is the editing-critical knowledge.
   (realized only by the keeper flush), so a strategy supplies, then withdraws on a LATER tick.
 - **One op per tick, `tickMs ≥ ~1s`** — the open+close same-`Clock`-ms guard
   (`EMintRedeemSameTimestamp`) aborts a mint+redeem of one order in the same ms; pacing avoids it.
-- **`campaign S1 S2 …`** runs each strategy on its own localnet off one shared hub (model: README). `strategies/meta.ts` is the single source for per-strategy funding AND the prod cadence set every keeper runs — don't duplicate either in Python.
+- **`campaign S1 S2 …`** runs each strategy on its own localnet off one shared hub (model: README). `strategies/meta.ts` is the single source for per-strategy funding, completion mode, and the prod cadence set every keeper runs — don't duplicate them in Python. A timeout is a successful bounded stop only for duration-only strategies; a strategy with `maxOps` or semantic `done` that is still running at the deadline is incomplete and fails the campaign.
 
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**

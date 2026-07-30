@@ -84,8 +84,6 @@ def run(
         _generate_scenario(source_path, scenario, seed)
 
         command = ["npx", "tsx", "simulations/src/sim.ts"]
-        if benchmark:
-            command.append("--skip-python")
         if max_rows is not None:
             command.extend(["--max-rows", str(max_rows)])
 
@@ -115,6 +113,16 @@ def run(
                 },
                 check=True,
             )
+            subprocess.run(
+                [
+                    "python3",
+                    "simulations/compare_parity.py",
+                    str(artifacts_dir / "local_data.json"),
+                    str(artifacts_dir / "python_data.json"),
+                ],
+                cwd=config.PREDICT_DIR,
+                check=True,
+            )
             if benchmark:
                 subprocess.run(
                     [
@@ -122,17 +130,6 @@ def run(
                         "simulations/write_benchmark_results.py",
                         str(artifacts_dir / "local_trace.json"),
                         str(artifacts_dir / "results.json"),
-                    ],
-                    cwd=config.PREDICT_DIR,
-                    check=True,
-                )
-            else:
-                subprocess.run(
-                    [
-                        "python3",
-                        "simulations/compare_parity.py",
-                        str(artifacts_dir / "local_data.json"),
-                        str(artifacts_dir / "python_data.json"),
                     ],
                     cwd=config.PREDICT_DIR,
                     check=True,

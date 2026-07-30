@@ -211,13 +211,24 @@ def _analyze_one(inst: Path) -> list[str]:
     if declared:
         vm_msgs = list(verdict.vm_errors(inst))  # the run's real VM-error summaries (framework aborts' true cause)
         undeclared_vm = [m for m in vm_msgs if not any(d in m for d in declared)]
+        package_modules = verdict.GUARD_MODULES | verdict.INVARIANT_MODULES
+
+        def _declared_package_abort(tag: str) -> bool:
+            module = tag.split(":", 1)[0]
+            return (
+                bool(verdict.MOVE_ABORT.match(tag))
+                and module in package_modules
+                and any(d in tag for d in declared)
+            )
+
         reached = {d for d in declared
-                   if any(d in m for m in vm_msgs) or any(d in t for t in flagged + list(expected))}
+                   if any(d in m for m in vm_msgs)
+                   or any(_declared_package_abort(t) and d in t for t in flagged + list(expected))}
         kept: list[str] = []
         for t in flagged:
-            if any(d in t for d in declared):
-                expected[f"declared:{t[:32]}"] += 1            # tag itself names a declared wall
-            elif not verdict.MOVE_ABORT.match(t) and reached and not undeclared_vm:
+            if _declared_package_abort(t):
+                expected[f"declared:{t[:32]}"] += 1            # package abort itself names a declared wall
+            elif t.split(":", 1)[0] not in package_modules and reached and not undeclared_vm:
                 expected["declared-wall (framework)"] += 1     # framework tag whose real cause IS a declared VM wall
             else:
                 kept.append(t)                                 # a clean module:code abort, or an UNdeclared framework error
@@ -283,7 +294,7 @@ def analyze(instances: list[str] | None = None, expect: list[str] | None = None)
                 signals.append(f"missing-trace:{name}")
                 print(f"*** WARN: strategy '{name}' produced no trace — its localnet/keeper never started ***")
     if not insts:
-        print("no trace found (run `harness up --traders N` first)")
+        print("no trace found (run `python3 -m harness live --traders N` first)")
         return 1
     if len(insts) > 1:
         print(f"aggregating {len(insts)} instance(s)\n")

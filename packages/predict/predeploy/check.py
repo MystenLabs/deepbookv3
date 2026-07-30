@@ -21,9 +21,11 @@ is that check. It verifies, deterministically and stdlib-only:
   3. MEASURED LINKS (FATAL) — a register entry claiming a MEASURED risk profile
      must name at least one findings doc that exists. MEASURED without linked
      evidence is just BEST-GUESS wearing a costume.
-  4. DEAD PATHS (FATAL / WARNING) — file paths named in the predeploy docs must
-     exist (resolved against predeploy/, packages/predict/, the harness, and
-     the repo root). Bare filenames are globbed and only warned on.
+  4. DEAD PATHS (FATAL / WARNING) — file paths named in the live predeploy docs
+     must exist (resolved against predeploy/, packages/predict/, the harness,
+     and the repo root). Immutable evidence records preserve the paths that
+     existed at their audited revision and are deliberately excluded. Bare
+     filenames are globbed and only warned on.
   5. EVIDENCE SHAPE (FATAL) — every evidence/ record carries an ownership
      header (`**Item:** <id>`) in its first lines, and is referenced from at
      least one tracker doc (open-items.md, response-policies.md, or README.md).
@@ -221,7 +223,8 @@ def resolve(token, doc_dir=None):
 
 def check_paths(errors, warnings):
     exts = ('.md', '.move', '.py', '.ts', '.js', '.sql', '.sh', '.toml')
-    for path in DOCS:
+    live_docs = sorted(glob.glob(os.path.join(HERE, '*.md')))
+    for path in live_docs:
         name = os.path.relpath(path, HERE)
         seen = set()
         for line in read(path).splitlines():

@@ -407,7 +407,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
   is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
   Audit provenance: finding 8b5d5f.
-- **Reopen when:** the tombstone removal (DBU-592) ships — re-run `cleanout-gas-liq` to re-measure
+- **Reopen when:** the tombstone removal (DBU-592) ships — re-run `cleanup-liquidated` to re-measure
   the liquidated-account cleanout net gas under the derived-state model (the order's book storage is
   now freed at liquidation, not at cleanout, so the prior liquidated fit above no longer describes
   the shipped model); OR a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships

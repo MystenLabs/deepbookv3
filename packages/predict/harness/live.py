@@ -44,6 +44,14 @@ def _raise_keyboard_interrupt(*_) -> None:
     raise KeyboardInterrupt()
 
 
+def _refill_gas(client_config: Path, faucet_port: int, address: str) -> int | None:
+    balance = localnet.balance(client_config, address)
+    if 0 <= balance < GAS_REFILL_FLOOR:
+        localnet.fund(faucet_port, address, times=1)
+        return balance
+    return None
+
+
 @contextlib.contextmanager
 def oracle_ready_localnet(name: str | None = None, keep: bool = True):
     with initialized_localnet(
@@ -146,7 +154,7 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
             print("*** REPLAY MODE: markets price off the RECORDED stream but SETTLE on LIVE Pyth prices"
                   " (settlement uses the history endpoint, independent of the replay) — PnL/solvency"
                   " results are NOT valid in replay; use it for trade-flow / perf only. ***")
-        print(f"\nharness up: keeper + updater + {traders} trader(s); core supervised; localnet held. Ctrl-C to tear down.")
+        print(f"\nharness live: keeper + updater + {traders} trader(s); core supervised; localnet held. Ctrl-C to tear down.")
         deadline = (time.time() + seconds) if seconds > 0 else None
         last_gas = 0.0
         give_up = False
@@ -175,10 +183,13 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
                 if now - last_gas >= 30:  # keep all actors funded over long holds
                     last_gas = now
                     for addr in gas_addrs:
-                        bal = localnet.balance(ctx["client_config"], addr)
-                        if 0 <= bal < 2_000_000_000:  # < 2 SUI
+                        bal = _refill_gas(
+                            ctx["client_config"],
+                            ctx["faucet_port"],
+                            addr,
+                        )
+                        if bal is not None:
                             print(f"[gas] refilling {addr[:10]} (bal {bal / 1e9:.2f} SUI)")
-                            localnet.fund(ctx["faucet_port"], addr, times=1)
                 time.sleep(2)
         except KeyboardInterrupt:
             print("tearing down...")
@@ -337,8 +348,8 @@ def campaign(
     """Run each named strategy on its OWN localnet (keeper + HubSource updater + one trader),
     all off ONE shared market-data hub. Each strategy runs to completion (its maxOps) or until
     `timeout` seconds; then everything is torn down and `analyze` prints a per-strategy report.
-    Instances are named by strategy so analyze labels each block. Returns analyze's exit code
-    (non-zero if the bug oracle flagged anything).
+    Instances are named by strategy so analyze labels each block. Returns non-zero for an
+    operational failure, a completion-required strategy that times out, or a bug-oracle signal.
     """
     from . import analyze  # local import to avoid any import cycle
 
@@ -373,6 +384,7 @@ def campaign(
     termination_reason = "setup"
     fatal_error: str | None = None
     operational_failed = False
+    timed_out = False
     instance_dirs: list[str] = []
     setup_rows: dict[str, dict] = {}
     trader_exit_codes: dict[str, int | None] = {}
@@ -462,6 +474,7 @@ def campaign(
             while any(trader.poll() is None for _, trader in traders_procs):
                 if deadline and time.time() >= deadline:
                     termination_reason = "timeout"
+                    timed_out = True
                     print("campaign: timeout reached; stopping.")
                     break
                 dead_support = [
@@ -478,21 +491,32 @@ def campaign(
                 if now - last_gas >= 30:
                     last_gas = now
                     for client_config, faucet_port, addr in gas:
-                        if 0 <= localnet.balance(client_config, addr) < GAS_REFILL_FLOOR:
-                            localnet.fund(faucet_port, addr, times=1)
+                        _refill_gas(client_config, faucet_port, addr)
                 time.sleep(2)
 
             trader_exit_codes = {name: proc.poll() for name, proc in traders_procs}
             support_exit_codes = {name: proc.poll() for name, proc in support}
             completed = [name for name, code in trader_exit_codes.items() if code == 0]
             failed = [name for name, code in trader_exit_codes.items() if code not in (None, 0)]
-            bounded = [name for name, code in trader_exit_codes.items() if code is None]
+            bounded = [
+                name
+                for name, code in trader_exit_codes.items()
+                if code is None and timed_out and strat_meta[name]["requiresTimeout"]
+            ]
+            incomplete = [
+                name
+                for name, code in trader_exit_codes.items()
+                if code is None and timed_out and not strat_meta[name]["requiresTimeout"]
+            ]
             if failed:
                 termination_reason = "trader_failure"
                 operational_failed = True
+            elif incomplete:
+                termination_reason = "incomplete"
+                operational_failed = True
             print(
                 f"campaign: completed={completed or 'none'} failed={failed or 'none'} "
-                f"bounded_stop={bounded or 'none'}."
+                f"bounded_stop={bounded or 'none'} incomplete={incomplete or 'none'}."
             )
     except KeyboardInterrupt:
         termination_reason = "interrupted"
@@ -538,7 +562,13 @@ def campaign(
                 "completed": trader_exit_codes.get(strategy) == 0,
                 "bounded_stop": (
                     trader_exit_codes.get(strategy) is None
-                    and termination_reason == "timeout"
+                    and timed_out
+                    and strat_meta[strategy]["requiresTimeout"]
+                ),
+                "incomplete": (
+                    trader_exit_codes.get(strategy) is None
+                    and timed_out
+                    and not strat_meta[strategy]["requiresTimeout"]
                 ),
             }
             for strategy in strategies

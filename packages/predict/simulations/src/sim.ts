@@ -126,13 +126,8 @@ interface AliasState {
 
 function parseArgs() {
     let maxRows: number | undefined;
-    let skipPython = false;
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === "--skip-python") {
-            skipPython = true;
-            continue;
-        }
         if (args[i] !== "--max-rows") {
             throw new Error(`Unsupported sim argument ${args[i]}`);
         }
@@ -143,7 +138,7 @@ function parseArgs() {
         maxRows = parseInt(value, 10);
         i += 1;
     }
-    return { maxRows, skipPython };
+    return { maxRows };
 }
 
 function scenarioPath(): string {
@@ -1686,7 +1681,7 @@ async function main() {
         capital,
         scenario,
         args.maxRows,
-        !args.skipPython,
+        true,
     );
 }
 

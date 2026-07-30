@@ -3,13 +3,55 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
 from devtools import run_manifest
+from harness import parity
 
 
 class RunManifestTests(unittest.TestCase):
+    def test_benchmark_runs_and_compares_independent_python_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            source = root / "source.csv"
+            source.write_text("source\n")
+            instance = root / "benchmark-test"
+            artifacts = instance / "artifacts"
+            artifacts.mkdir(parents=True)
+            context = {
+                "run_id": "benchmark-test",
+                "instance_dir": instance,
+                "deployment": {"meta": {}, "packages": {}},
+            }
+
+            def generate(_source, scenario, _seed):
+                scenario.write_text("scenario\n")
+
+            with (
+                mock.patch.object(
+                    parity,
+                    "initialized_localnet",
+                    return_value=nullcontext(context),
+                ),
+                mock.patch.object(parity, "_generate_scenario", side_effect=generate),
+                mock.patch.object(parity, "new_manifest", return_value={}),
+                mock.patch.object(parity, "write_manifest"),
+                mock.patch.object(parity, "complete_manifest"),
+                mock.patch.object(parity.subprocess, "run") as run,
+            ):
+                result = parity.run(source=str(source), max_rows=5, benchmark=True)
+
+            self.assertEqual(result, 0)
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertEqual(
+                commands[0],
+                ["npx", "tsx", "simulations/src/sim.ts", "--max-rows", "5"],
+            )
+            self.assertEqual(commands[1][1], "simulations/compare_parity.py")
+            self.assertEqual(commands[2][1], "simulations/write_benchmark_results.py")
+
     def test_manifest_captures_exact_input_hashes_and_localnet_identity(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
             root = Path(raw_tmp)

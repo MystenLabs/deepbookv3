@@ -23,7 +23,7 @@ The external benchmark worker calls:
 bash simulations/run.sh --skip-analysis
 ```
 
-That shell file is a thin compatibility adapter. It delegates to the same Python task router, honors `SCENARIO_PATH` and `SIM_MAX_ROWS`, skips the independent replay, and mirrors `results.json` to the legacy `simulations/runs/<id>/artifacts/` layout expected by the worker.
+That shell file is a thin compatibility adapter. It delegates to the same Python task router, honors `SCENARIO_PATH` and `SIM_MAX_ROWS`, runs the independent replay and parity comparison, and mirrors `results.json` to the legacy `simulations/runs/<id>/artifacts/` layout expected by the worker.
 
 ## Outputs
 
@@ -33,7 +33,7 @@ Every run retains:
 - `run-manifest.json` — source revision, dirty flag, source/config/scenario hashes, seed, row limit, command, chain id, and package ids
 - `local_trace.json` — transaction receipts, gas, and events
 - `local_data.json` — canonical localnet economic records
-- `python_data.json` — canonical Python-model records for parity runs
+- `python_data.json` — canonical Python-model records
 - `state.json` — published simulation object ids
 - `failed_transactions/` — transaction-build, execution, and dry-run diagnostics
 
@@ -67,4 +67,4 @@ npm run build
 npm test
 ```
 
-The primary gate is still a small end-to-end parity run because pure unit tests cannot validate package publication, transaction composition, event decoding, or the on-chain verifier boundary.
+The external Predict Gas Benchmark check runs a bounded end-to-end parity case because pure unit tests cannot validate package publication, transaction composition, event decoding, or the on-chain verifier boundary.

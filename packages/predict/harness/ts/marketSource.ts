@@ -1,7 +1,7 @@
 // Market-data sources behind one `MarketSource` interface.
 //
 // - DirectWsSource owns the provider WS pair (Pyth Lazer spot + Block Scholes per-expiry
-//   forward/SVI). Used by a single `harness up` and by the shared hub.
+//   forward/SVI). Used by a single `harness live` and by the shared hub.
 // - HubSource reads a global snapshot written by ONE hub, so N parallel localnets share a
 //   single WS pair instead of opening one each.
 // - ReplaySource re-plays a recorded hub stream (deterministic market dynamics): it maps

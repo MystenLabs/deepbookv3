@@ -1,4 +1,4 @@
-// Continuous oracle updater (substrate component of `harness up`).
+// Continuous oracle updater (substrate component of `harness live`).
 //
 // Streams real Pyth Pro + Block Scholes data onto the propbook feeds at high frequency,
 // stamping each update with the provider's REAL publish time (clamped to <= Clock,

@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from harness import cli, config, live, publish, run as run_mod, session, staging
+from harness import analyze, cli, config, live, publish, run as run_mod, session, staging
 
 
 class StagingTests(unittest.TestCase):
@@ -349,6 +349,57 @@ class PublicationPlanTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_cleanup_instances_keeps_active_slot_and_removes_orphan(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            instances = Path(raw_tmp)
+            active = instances / "active-run"
+            orphan = instances / "orphan-run"
+            active.mkdir()
+            orphan.mkdir()
+
+            with (
+                mock.patch.object(cli.config, "INSTANCES_DIR", instances),
+                mock.patch.object(cli.state, "reap_stale", return_value=[]),
+                mock.patch.object(
+                    cli.state,
+                    "snapshot",
+                    return_value={"slots": {"active-run": {"pid": 1234}}},
+                ),
+            ):
+                result = cli._cmd_cleanup(mock.Mock(instances=True))
+
+            self.assertEqual(result, 0)
+            self.assertTrue(active.exists())
+            self.assertFalse(orphan.exists())
+
+    def test_refill_gas_uses_floor_above_keeper_budget(self) -> None:
+        client_config = Path("client.yaml")
+        balance = live.KEEPER_GAS_BUDGET
+        with (
+            mock.patch.object(live.localnet, "balance", return_value=balance),
+            mock.patch.object(live.localnet, "fund") as fund,
+        ):
+            observed = live._refill_gas(client_config, 9123, "0xabc")
+
+        self.assertGreater(live.GAS_REFILL_FLOOR, live.KEEPER_GAS_BUDGET)
+        self.assertEqual(observed, balance)
+        fund.assert_called_once_with(9123, "0xabc", times=1)
+
+    def test_refill_gas_stops_at_shared_floor(self) -> None:
+        client_config = Path("client.yaml")
+        with (
+            mock.patch.object(
+                live.localnet,
+                "balance",
+                return_value=live.GAS_REFILL_FLOOR,
+            ),
+            mock.patch.object(live.localnet, "fund") as fund,
+        ):
+            observed = live._refill_gas(client_config, 9123, "0xabc")
+
+        self.assertIsNone(observed)
+        fund.assert_not_called()
+
     def test_initialized_localnet_unregisters_process_on_teardown(self) -> None:
         process = mock.Mock(pid=1234)
 
@@ -450,6 +501,70 @@ class LifecycleTests(unittest.TestCase):
         )
 
         self.assertIn("above the configured capacity 1", error)
+
+    def test_campaign_timeout_fails_semantically_incomplete_strategy(self) -> None:
+        class RunningProcess:
+            pid = 1234
+            returncode = None
+
+            @staticmethod
+            def poll():
+                return None
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            instance = root / "cleanup-survivor-test"
+            instance.mkdir()
+            context = {
+                "instance_dir": instance,
+                "client_config": root / "client.yaml",
+                "faucet_port": 9123,
+                "active": "0xactive",
+                "updater_address": "0xupdater",
+            }
+            metadata = {
+                "strategies": {
+                    "cleanup-survivor": {
+                        "maxOps": 0,
+                        "requiresTimeout": False,
+                        "fund": "1",
+                    }
+                },
+                "cadences": [],
+            }
+            clock = iter([0.0, 0.0, 2.0, 3.0])
+            with (
+                mock.patch.object(live.config, "LOCALNETS_DIR", root),
+                mock.patch.object(live, "_read_meta", return_value=metadata),
+                mock.patch.object(live, "_make_run_id", return_value="campaign-test"),
+                mock.patch.object(
+                    live,
+                    "_setup_campaign_localnets",
+                    return_value=({"cleanup-survivor": context}, {}),
+                ),
+                mock.patch.object(live, "create_funded_address", return_value="0xtrader"),
+                mock.patch.object(
+                    live.subprocess,
+                    "Popen",
+                    side_effect=[RunningProcess() for _ in range(4)],
+                ),
+                mock.patch.object(live, "_terminate_group"),
+                mock.patch.object(live.signal, "signal"),
+                mock.patch.object(live.time, "time", side_effect=lambda: next(clock)),
+                mock.patch.object(live, "source_revision", return_value={"commit": "abc"}),
+                mock.patch.object(analyze, "analyze", return_value=0),
+            ):
+                result = live.campaign(
+                    ["cleanup-survivor"],
+                    timeout=1,
+                    concurrency=1,
+                )
+
+            report = json.loads((root / "campaign-test-report.json").read_text())
+            self.assertEqual(result, 1)
+            self.assertEqual(report["termination_reason"], "incomplete")
+            self.assertTrue(report["strategies"][0]["incomplete"])
+            self.assertFalse(report["strategies"][0]["bounded_stop"])
 
     def test_campaign_interrupt_closes_worker_entered_localnets(self) -> None:
         exits: list[str] = []

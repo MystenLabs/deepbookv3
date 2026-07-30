@@ -8,7 +8,7 @@ import signal
 import sys
 from collections.abc import Callable
 
-from . import analyze, live, parity, run as run_mod, state
+from . import analyze, config, live, parity, run as run_mod, state
 
 
 def _raise_keyboard_interrupt(_signum, _frame) -> None:
