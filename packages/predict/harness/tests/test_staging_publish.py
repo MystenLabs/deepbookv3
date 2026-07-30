@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from harness import cli, config, live, publish, run as run_mod, staging
+from harness import cli, config, live, publish, run as run_mod, session, staging
 
 
 class StagingTests(unittest.TestCase):
@@ -349,6 +349,50 @@ class PublicationPlanTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_initialized_localnet_unregisters_process_on_teardown(self) -> None:
+        process = mock.Mock(pid=1234)
+
+        def publish_localnet(run_id, _slot, instance_dir):
+            instance_dir.mkdir(parents=True)
+            run_mod._register_localnet(run_id, process)
+            return {
+                "proc": process,
+                "client_config": instance_dir / "client.yaml",
+                "deployment": {
+                    "meta": {
+                        "chain_id": "local-chain",
+                        "rpc_port": 9000,
+                    },
+                    "packages": {"predict": "0x123"},
+                },
+                "active": "0xabc",
+            }
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            with (
+                mock.patch.object(session.config, "INSTANCES_DIR", Path(raw_tmp)),
+                mock.patch.object(session, "_make_run_id", return_value="session-test"),
+                mock.patch.object(
+                    session.state,
+                    "reserve",
+                    return_value={"offset": 0, "rpc_port": 9000, "faucet_port": 9123},
+                ),
+                mock.patch.object(
+                    session,
+                    "_publish_localnet",
+                    side_effect=publish_localnet,
+                ),
+                mock.patch.object(session.oracle_setup, "initialize"),
+                mock.patch.object(session.localnet, "stop") as stop,
+                mock.patch.object(session.state, "release") as release,
+            ):
+                with session.initialized_localnet("session", keep=True):
+                    self.assertIn("session-test", run_mod._ACTIVE_LOCALNETS)
+
+        self.assertNotIn("session-test", run_mod._ACTIVE_LOCALNETS)
+        stop.assert_called_once_with(process)
+        release.assert_called_once_with("session-test")
+
     def test_campaign_requires_timeout_for_unbounded_strategy(self) -> None:
         error = live._campaign_validation_error(
             ["fuzz", "mint-only"],
@@ -363,16 +407,38 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(error, "--timeout is required for unbounded strategies: fuzz")
         self.assertIsNone(
             live._campaign_validation_error(
-                ["claim-marginal"],
+                ["cleanup-claim"],
                 timeout=0,
                 strat_meta={
-                    "claim-marginal": {
+                    "cleanup-claim": {
                         "maxOps": 0,
                         "requiresTimeout": False,
                     }
                 },
                 capacity=1,
             )
+        )
+
+    def test_campaign_rejects_unknown_and_duplicate_strategies(self) -> None:
+        metadata = {"mint-only": {"maxOps": 10}}
+
+        self.assertEqual(
+            live._campaign_validation_error(
+                ["missing"],
+                timeout=10,
+                strat_meta=metadata,
+                capacity=1,
+            ),
+            "unknown strategies: missing",
+        )
+        self.assertEqual(
+            live._campaign_validation_error(
+                ["mint-only", "mint-only"],
+                timeout=10,
+                strat_meta=metadata,
+                capacity=2,
+            ),
+            "duplicate strategies require ambiguous instance ownership: mint-only",
         )
 
     def test_campaign_rejects_more_localnets_than_capacity(self) -> None:
@@ -606,98 +672,6 @@ class LifecycleTests(unittest.TestCase):
 
         self.assertEqual(result, 130)
         stop.assert_called_once_with()
-
-    def test_run_many_drains_every_run_through_the_bounded_pool(self) -> None:
-        started = []
-
-        def fake_run(name, keep, cancel_event):
-            started.append(name)
-            return mock.Mock(
-                ok=True,
-                checkout_clean=True,
-                offset=0,
-                elapsed_s=0,
-                error=None,
-            )
-
-        args = mock.Mock(count=4, concurrency=2, keep=False)
-        with mock.patch.object(cli.run_mod, "run", side_effect=fake_run):
-            result = cli._cmd_run_many(args)
-
-        self.assertEqual(result, 0)
-        self.assertCountEqual(started, ["p0", "p1", "p2", "p3"])
-
-    def test_run_many_sigterm_cancels_pending_and_stops_active_process(self) -> None:
-        script = (
-            "import argparse\n"
-            "import subprocess\n"
-            "import sys\n"
-            "from pathlib import Path\n"
-            "from types import SimpleNamespace\n"
-            "from harness import cli, run as run_mod\n"
-            "started = Path(sys.argv[1])\n"
-            "def fake_run(name, keep, cancel_event):\n"
-            "    child = subprocess.Popen(\n"
-            "        [sys.executable, '-c', 'import signal; signal.pause()'],\n"
-            "        start_new_session=True,\n"
-            "    )\n"
-            "    run_mod._register_localnet(name, child)\n"
-            "    try:\n"
-            "        with started.open('a') as output:\n"
-            "            output.write(f'{name} {child.pid}\\n')\n"
-            "        child.wait()\n"
-            "    finally:\n"
-            "        run_mod._unregister_localnet(name, child)\n"
-            "    return SimpleNamespace(\n"
-            "        ok=True, checkout_clean=True, offset=0, elapsed_s=0, error=None\n"
-            "    )\n"
-            "cli.run_mod.run = fake_run\n"
-            "args = argparse.Namespace(count=4, concurrency=1, keep=False)\n"
-            "raise SystemExit(cli._run_with_sigterm_handler(\n"
-            "    lambda: cli._cmd_run_many(args)\n"
-            "))\n"
-        )
-        child_pid = None
-        with tempfile.TemporaryDirectory() as tmp:
-            started = Path(tmp) / "started"
-            environment = {**os.environ, "PYTHONPATH": str(config.PREDICT_DIR)}
-            with subprocess.Popen(
-                [sys.executable, "-c", script, str(started)],
-                cwd=config.PREDICT_DIR,
-                env=environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            ) as proc:
-                try:
-                    deadline = time.monotonic() + 5
-                    while (
-                        not started.exists()
-                        and proc.poll() is None
-                        and time.monotonic() < deadline
-                    ):
-                        time.sleep(0.01)
-                    self.assertTrue(started.exists(), "run-many worker did not become ready")
-
-                    started_name, pid = started.read_text().split()
-                    child_pid = int(pid)
-                    proc.terminate()
-                    _stdout, stderr = proc.communicate(timeout=5)
-
-                    self.assertEqual(proc.returncode, 130, stderr)
-                    self.assertEqual(started_name, "p0")
-                    self.assertEqual(len(started.read_text().splitlines()), 1)
-                    with self.assertRaises(ProcessLookupError):
-                        os.kill(child_pid, 0)
-                finally:
-                    if proc.poll() is None:
-                        proc.kill()
-                        proc.wait(timeout=5)
-                    if child_pid is not None:
-                        try:
-                            os.killpg(child_pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
 
 
 if __name__ == "__main__":

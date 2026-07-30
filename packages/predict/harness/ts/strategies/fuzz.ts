@@ -1,5 +1,5 @@
 // Default strategy: the original fuzz trader (random feasible mints + full redeems + a
-// fraction of adversarial probes). Preserves `up` / `up-many` behavior unchanged.
+// fraction of adversarial probes). This is the default `live` trader behavior.
 import { RESOLVER_MARKET } from "../predictConfig.js";
 import { type Instruction } from "../resolver.js";
 import { type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
@@ -34,7 +34,7 @@ async function adversarialProbe(ctx: StrategyCtx, market: Mkt, direction: "UP" |
 const fuzz: Strategy = {
   name: "fuzz",
   tickMs: 4000,
-  maxOps: 0, // duration-only (the up/up-many default)
+  maxOps: 0, // duration-only (`live` and bounded campaigns)
   fund: 1_000_000_000_000n, // $1M
   async tick(ctx) {
     ctx.pruneSettled();

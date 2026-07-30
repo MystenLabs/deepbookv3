@@ -9,5 +9,9 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": [
+    "devtools/ts/**/*.ts",
+    "harness/ts/**/*.ts",
+    "simulations/src/**/*.ts"
+  ]
 }

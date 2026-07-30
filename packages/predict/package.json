@@ -1,11 +1,11 @@
 {
-  "name": "predict-harness-ts",
+  "name": "predict-devtools",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "tsx --test harnessTest.ts"
+    "test": "tsx --test harness/ts/harnessTest.ts devtools/ts/devtoolsTest.ts"
   },
   "dependencies": {
     "@mysten/sui": "^2.5.0",

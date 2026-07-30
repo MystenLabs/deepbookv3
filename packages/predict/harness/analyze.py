@@ -9,66 +9,21 @@ external-data (HTTP, rate-limit) failures are transient.
 Exit status is non-zero when the oracle flags an abort, an adversarial probe was wrongly
 accepted, or an instance has no keeper trace — so background/autonomous runs have a
 programmatic signal, not just the banner. Aggregates across ALL instance dirs of a run, so
-parallel up-many is not single-instance blind.
+parallel campaigns are not single-instance blind.
 """
 
 from __future__ import annotations
 
 import json
-import re
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
-from . import config
-
-# GUARD modules: a Move abort here is an EXPECTED business precondition (admission, expiry,
-# freshness, slippage, balance, oracle binding) that a trader/keeper legitimately trips.
-# `block_scholes_store` is propbook's BS ingest/read surface; `verify` is bs_oracle's
-# signature verifier (a bad relayer payload legitimately aborts there).
-GUARD_MODULES = {
-    "pricing", "expiry_market", "strike_exposure", "strike_exposure_config",
-    "predict_account", "pricing_config", "config_constants", "protocol_config",
-    "registry", "market_manager", "pyth_feed", "block_scholes_store", "verify",
-}
-# INVARIANT modules: arithmetic / accounting / index / custody. A healthy run NEVER aborts
-# here, so a hit is a likely contract bug and is flagged regardless of code. (These were
-# previously swallowed because classification keyed on the module name only; e.g. math:3
-# EExpOverflow, i64:0 EZeroDivisor, lp_book EInvalidDrainMark, strike_payout_tree
-# EInsufficientPayoutTerms.)
-INVARIANT_MODULES = {
-    "math", "i64", "plp", "pool_accounting", "strike_payout_tree", "lp_book",
-    "expiry_cash", "liquidation_book", "range_codec", "account", "account_registry",
-}
-# Mixed modules hold genuine invariants AND expected business preconditions, so these specific
-# codes are whitelisted as expected (checked BEFORE the module-level INVARIANT rule):
-#   liquidation_book:4 = EMaxActiveLeveragedOrders (per-market 5000 leveraged-order cap)
-#   strike_payout_tree:1 = EMaxPayoutTreeNodes (per-market 1000 payout-boundary-node cap) — the same
-#     mint-time admission-cap class as liquidation_book:4 (hitting it is a full market, not a bug).
-#   lp_book:0..3 = ERequestNotFound / EBelowMinSupplyRequest / EBelowMinWithdrawRequest / ENotRequestOwner
-# (lp_book:4 EInvalidDrainMark + liquidation_book:0..3 index invariants stay FLAGGED.)
-EXPECTED_CODES = {
-    "liquidation_book:4",
-    "strike_payout_tree:1",
-    "lp_book:0", "lp_book:1", "lp_book:2", "lp_book:3",
-}
-# Submission-level / external-data failures — NOT contract bugs (consensus, network, and the
-# Pyth-history endpoint rate-limiting or not-yet-having the exact-ts observation). Matched on
-# STRUCTURED source markers (http / rpc / pyth history / fetch / …), NOT bare numeric codes: an
-# execution or gas failure whose message merely contains "500" must stay flagged, and the real
-# HTTP transients carry "pyth history HTTP <code>" / "fetch" anyway.
-_TRANSIENT = (
-    "rpc", "timeout", "network", "fetch", "econn", "socket", "validators",
-    "non-retriable", "equivocat", "rejected as invalid",
-    "http", "rate limit", "pyth history", "no price for feed", "expected ts",
-)
-# A Move abort tag is `module:code` (lowercase module, numeric code). Matched so a numeric abort
-# code (e.g. dynamic_field:500) is never mistaken for an HTTP status by the _TRANSIENT substrings.
-_MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
+from . import config, measurements, verdict
 
 # The Sui per-tx COMPUTATION cap: max_gas_computation_bucket = 5,000,000 units (a protocol constant,
 # verified identical localnet/testnet/mainnet) x the reference gas price. Localnet/testnet RGP 1000 ->
 # 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but the binding limit is the 5M UNITS of work, so an OOG book
-# size is network-independent. Both the nav-stress and mint-batch sections compare compGas against this.
+# size is network-independent. Capacity measurements compare compGas against this.
 COMP_CAP = 5_000_000_000
 
 # The shortest keeper cadence (1m). A run shorter than this has produced no expected flush, so a
@@ -99,79 +54,6 @@ def _load(trace_dir: Path) -> list[dict]:
     return records
 
 
-def _classify(fails: list[dict]) -> tuple[Counter[str], Counter[str], list[str]]:
-    expected: Counter[str] = Counter()
-    transient: Counter[str] = Counter()
-    flagged: list[str] = []
-    for r in fails:
-        tag = str(r.get("tag", ""))
-        mod = tag.split(":")[0] if ":" in tag else ""
-        if tag in EXPECTED_CODES:
-            expected[tag] += 1  # a business precondition inside an otherwise-invariant module
-        elif mod in INVARIANT_MODULES:
-            flagged.append(tag)  # arithmetic/accounting/index/custody invariant -> bug
-        elif mod in GUARD_MODULES:
-            expected[tag] += 1
-        elif _MOVE_ABORT.match(tag):
-            # a `module:code` abort from an unknown/framework module (e.g. dynamic_field) -> bug.
-            # Checked BEFORE _TRANSIENT so a numeric abort code is never read as an HTTP status.
-            flagged.append(tag)
-        elif any(t in tag.lower() for t in _TRANSIENT):
-            transient[tag[:40]] += 1
-        else:
-            flagged.append(tag)  # non-package / framework / unknown abort -> bug
-    return expected, transient, flagged
-
-
-def _vm_summary(src: str, fallback: str) -> str:
-    """A legible one-line summary of a VM error: its status + the human `and message` tail, skipping
-    the long module-address noise. A bare [:160] truncation lands mid-address and DROPS the actual
-    cause (the message sits at ~index 228, past the 64-char address) — the same truncation anti-pattern
-    this whole surfacing exists to kill. E.g. `MEMORY_LIMIT_EXCEEDED — Object runtime cached objects
-    limit (1000 entries) reached`."""
-    status_m = re.search(r"status (\w+)", src)
-    msg_m = re.search(r"and message (.+?)(?: at code offset| in function|$)", src)
-    parts = [status_m.group(1) if status_m else None, msg_m.group(1).strip() if msg_m else None]
-    return (" — ".join(p for p in parts if p) or fallback or "")[:200]
-
-
-def _vm_errors(inst: Path) -> Counter:
-    """Distinct non-MoveAbort VM errors from this instance's saved failed-tx artifacts — the
-    plain-English cause a framework-level MovePrimitiveRuntimeError tag hides. Summarised via
-    `_vm_summary`; MoveAbort guards (legible in the tag) are excluded."""
-    out: Counter = Counter()
-    art = inst / "artifacts" / "failed_transactions"
-    if not art.is_dir():
-        return out
-    for f in sorted(art.glob("*.json")):
-        try:
-            o = json.loads(f.read_text())
-        except Exception:
-            continue
-        dr = o.get("dry_run") or {}
-        status = (dr.get("effects") or {}).get("status") or {}
-        src = dr.get("executionErrorSource") or ""
-        # Skip ordinary Move aborts (guards): a MoveAbort shows as `status ABORTED` in
-        # executionErrorSource and `MoveAbort(...)` in status.error (its executionErrorSource does NOT
-        # contain the literal "MoveAbort"); a framework/VM error (e.g. MEMORY_LIMIT_EXCEEDED) shows a
-        # different status. Filter on both fields.
-        is_abort = "status ABORTED" in src or "MoveAbort" in str(status.get("error") or "")
-        msg = _vm_summary(src, status.get("error") or "")
-        if msg and not is_abort:
-            out[msg] += 1
-    return out
-
-
-def _declared_terminals(recs: list[dict]) -> list[str]:
-    """Terminal-wall substrings a stress strategy declared via its `expect` trace record — the aborts
-    it is deliberately probing. Matched (as substrings) against abort tags and `_vm_errors` summaries."""
-    out: list[str] = []
-    for r in recs:
-        if r.get("type") == "expect":
-            out.extend(str(t) for t in (r.get("terminal") or []))
-    return out
-
-
 def _analyze_one(inst: Path) -> list[str]:
     """Print one instance's report; return the list of bug-signal tags (empty = clean)."""
     recs = _load(inst / "trace")
@@ -183,32 +65,24 @@ def _analyze_one(inst: Path) -> list[str]:
     print("op counts:", dict(Counter(r.get("type") for r in recs)))
 
     # gas vs moneyness (mints), bucketed by distance from ATM (|strike/spot - 1|).
-    mints = [r for r in recs if r.get("type") == "mint" and "gas" in r]
-    if mints:
-        buckets: dict[str, list[int]] = defaultdict(list)
-        for r in mints:
-            d = abs(r.get("moneyness", 1.0) - 1.0)
-            key = "ATM (<0.5%)" if d < 0.005 else "near (0.5-2%)" if d < 0.02 else "far (2-5%)" if d < 0.05 else "deep (>5%)"
-            buckets[key].append(r["gas"])
+    buckets = measurements.gas_by_moneyness(recs)
+    if buckets:
         print("\ngas vs moneyness (mint):")
-        for k in ("ATM (<0.5%)", "near (0.5-2%)", "far (2-5%)", "deep (>5%)"):
+        for k in measurements.MONEYNESS_BUCKETS:
             gs = buckets.get(k)
             if gs:
                 print(f"  {k:14} n={len(gs):>3}  avg={sum(gs) // len(gs):>11,} gas")
 
     # pool NAV trend (flushes) -> drain heuristic.
     flushes = sorted((r for r in recs if r.get("type") == "flush" and r.get("poolValue")), key=lambda r: r["ts"])
-    if flushes:
-        navs = [r["poolValue"] for r in flushes]
-        print(f"\npool NAV (flush, n={len(navs)}): first=${navs[0]:,.0f} last=${navs[-1]:,.0f} min=${min(navs):,.0f} max=${max(navs):,.0f}")
-        peak = navs[0]
-        max_drawdown = 0.0
-        for nav in navs:
-            peak = max(peak, nav)
-            if peak > 0:
-                max_drawdown = max(max_drawdown, (peak - nav) / peak)
-        if max_drawdown > 0.01:
-            print(f"  WARN NAV drew down {max_drawdown * 100:.2f}% from a prior peak (inspect for PLP drain)")
+    nav = measurements.nav_summary(recs)
+    if nav:
+        print(
+            f"\npool NAV (flush, n={nav['count']}): first=${nav['first']:,.0f} "
+            f"last=${nav['last']:,.0f} min=${nav['min']:,.0f} max=${nav['max']:,.0f}"
+        )
+        if nav["max_drawdown"] > 0.01:
+            print(f"  WARN NAV drew down {nav['max_drawdown'] * 100:.2f}% from a prior peak (inspect for PLP drain)")
         else:
             print("  NAV stable (no >1% drawdown)")
 
@@ -222,7 +96,7 @@ def _analyze_one(inst: Path) -> list[str]:
     keeper_stalls = [r for r in recs if r.get("type") == "keeper-stall"]
 
     def _transient_tag(tag: str) -> bool:  # a transient RPC/history blip, not an operational brick
-        return not _MOVE_ABORT.match(tag) and any(t in tag.lower() for t in _TRANSIENT)
+        return verdict.is_transient(tag)
 
     hard_keeper_fails = [r for r in keeper_fails if not _transient_tag(str(r.get("tag", "")))]
     ts_all = [r["ts"] for r in recs if r.get("ts")]
@@ -239,8 +113,8 @@ def _analyze_one(inst: Path) -> list[str]:
                else f"no successful flush in {elapsed_ms // 1000}s despite non-transient fails")
         print(f"  *** WARN: keeper settlement/LP lifecycle stuck — {why} ***")
 
-    # NAV stress: flush gas vs leverage-book size. The nav-stress strategy grows a leveraged book in
-    # ONE market (tracing {type:"book", size}); join that with the keeper flush gas to find the book
+    # Capacity: flush gas vs leverage-book size. Capacity profiles trace {type:"book", size}; join
+    # that with the keeper flush gas to find the book
     # size at which the NAV calc can no longer be valued in one PTB. The flush deferral at the
     # breakpoint is the MEASUREMENT, not a bug, so it is excluded from the oracle below.
     nav_break: list[dict] = []
@@ -272,7 +146,7 @@ def _analyze_one(inst: Path) -> list[str]:
 
         pts = [(s, c) for s, c in ((_book_at(f["ts"]), _comp(f)) for f in succ) if s > 0]
         peak = books[-1]["size"]
-        print(f"\nNAV stress — flush computation vs leverage-book size (peak book {peak}):")
+        print(f"\ncapacity — flush computation vs leverage-book size (peak book {peak}):")
         if len(pts) >= 2:
             lo, hi = min(pts, key=lambda p: p[0]), max(pts, key=lambda p: p[0])
             print(f"  {lo[0]} orders -> {lo[1]:,} comp  ...  {hi[0]} orders -> {hi[1]:,} comp")
@@ -294,7 +168,7 @@ def _analyze_one(inst: Path) -> list[str]:
         # an expected guard), NOT the breakpoint — so only treat late fails as the break near the cap.
         near_cap = max_c > COMP_CAP * 0.5
 
-        # Only a GAS-EXHAUSTION keeper fail near the cap is the nav-stress breakpoint; a module:code
+        # Only a GAS-EXHAUSTION keeper fail near the cap is the capacity breakpoint; a module:code
         # invariant abort at the wall is a real bug and MUST reach the oracle (don't mask it as _navbreak).
         def _is_gas_oog(f: dict) -> bool:
             t = str(f.get("tag", ""))
@@ -311,74 +185,31 @@ def _analyze_one(inst: Path) -> list[str]:
         else:
             print(f"  no breakpoint (computation peaked at {max_c:,} = {pct} of the {COMP_CAP:,} cap); grow the book further for the empirical limit")
 
-    # mint-batch: the #cap-mintbatch differential (see mintBatch.ts). A batched leveraged mint amplifies
-    # the per-op liquidation scan vs standalone, but WHY is unproven. cost(N) in the sweep is confounded
-    # (the book grows across it), so the DISCRIMINATOR at a saturated book is the clean mechanism test:
-    # (AB-A) vs S = do prior NON-liq-book commands amplify?  (BB/K) vs S = do prior LIQ-BOOK writes amplify?
-    batches = [r for r in recs if r.get("type") == "mintBatch"]
-    if batches:
-        def _by(kind: str) -> dict[int, tuple[int, int]]:  # n -> (mean compGas, mean book-before)
-            g: dict[int, list[int]] = defaultdict(list)
-            bk: dict[int, list[int]] = defaultdict(list)
-            for r in batches:
-                if r.get("kind") == kind and not r.get("oog") and r.get("compGas"):
-                    g[int(r["n"])].append(int(r["compGas"]))
-                    bk[int(r["n"])].append(int(r.get("book", 0)))
-            return {n: (sum(v) // len(v), sum(bk[n]) // len(bk[n])) for n, v in g.items()}
+    # Batched transaction measurements shared by the capacity and cleanup families.
+    batch_samples, batch_oogs = measurements.batch_computation(recs)
+    if batch_samples or batch_oogs:
+        print("\nbatched mint computation:")
+        for profile, size, mean, sample_count in batch_samples:
+            print(
+                f"  {profile:>12} N={size:>3}: {mean:>14,} comp "
+                f"({mean // size:>12,}/mint, samples={sample_count})"
+            )
+        if batch_oogs:
+            print(
+                "  OOG profiles/sizes: "
+                + ", ".join(f"{profile}:N={size}" for profile, size in batch_oogs)
+            )
 
-        sweep = _by("sweep")
-        print("\nmint-batch — batched leveraged mint computation vs batch size N (book = liq orders before):")
-        if sweep:
-            xs = sorted(sweep)
-            for n in xs:
-                c, bk = sweep[n]
-                print(f"  N={n:>3} (book~{bk:>4}): {c:>14,} comp  ({c // n:>12,}/mint)")
-            per = [sweep[n][0] // n for n in xs]
-            if len(xs) >= 3 and per[0] > 0:
-                growth = per[-1] / per[0]
-                shape = ("SUPER-LINEAR: per-mint grows with N -> cost accumulates within the PTB"
-                         if growth > 1.5 else "~linear: fixed per-mint cost")
-                print(f"  per-mint {per[0]:,} (N={xs[0]}) -> {per[-1]:,} (N={xs[-1]}) = {growth:.1f}x  [{shape}]")
-                print("  NOTE: the sweep confounds N with book growth; the discriminator below is the clean test.")
-        oogs = sorted({int(r["n"]) for r in batches if r.get("oog")})
-        if oogs:
-            print(f"  OOG at N in {oogs} — the atomic-batch ceiling (OOG wall = min(SIM_GAS_BUDGET, {COMP_CAP:,} computation cap); set SIM_GAS_BUDGET > {COMP_CAP:,} so the wall is the cap, not the budget)")
-
-        # discriminator at a saturated book (after the sweep, so every scan hits the 24-candidate cap and
-        # +-1 book is noise). lev1 (1x) mints never touch the liq book, so AB-A is a leveraged mint's cost
-        # with NO prior liq-book writes; BB/K is one with full prior liq-book writes; S is standalone.
-        S, A, AB, BB = _by("disc_std").get(1), _by("disc_lev1").get(20), _by("disc_prefix").get(21), _by("disc_lvg").get(20)
-        if S and A and AB:
-            s = S[0]
-            in_prefix = AB[0] - A[0]
-            print(f"\n  discriminator (saturated book~{S[1]}): does a leveraged mint's cost need prior LIQ-BOOK writes?")
-            print(f"    S   standalone leveraged                             = {s:,} comp")
-            print(f"    AB-A  leveraged after 20x lev1 (NO prior liq writes) = {in_prefix:,} comp")
-            r1 = in_prefix / s if s else 0.0
-            if BB:
-                bb = BB[0] // 20
-                r2 = bb / s if s else 0.0
-                print(f"    BB/20 leveraged in a 20x-lvg batch (prior liq writes) = {bb:,} comp")
-                print(f"    => (AB-A)/S = {r1:.1f}x , (BB/20)/S = {r2:.1f}x")
-                if r1 < 1.5 <= r2:
-                    print("    => VERDICT: amplification needs SAME-PTB LIQ-BOOK writes (dirtied dynamic-field hypothesis)")
-                elif r1 >= 1.5:
-                    print("    => VERDICT: a multi-command PTB alone amplifies, w/o prior liq writes (tx-metering hypothesis)")
-                else:
-                    print("    => VERDICT: no clear amplification in either arm — inspect the raw trace")
-            else:
-                print(f"    => (AB-A)/S = {r1:.1f}x  (BB missing — run longer)")
-
-    # bug oracle (code-aware; tags are module:code). nav-stress breakpoint deferrals excluded (above).
+    # Bug oracle (code-aware; tags are module:code). Capacity breakpoint deferrals are excluded above.
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]
-    expected, transient, flagged = _classify(fails)
+    expected, transient, flagged = verdict.classify_failures(fails)
     # B — per-strategy declared terminal wall (the `expect` trace record). A stress strategy's declared
     # wall is EXPECTED for THIS run only (not a bug oracle hit): the object-cache limit bricks a normal
     # flush, so it must never be a global whitelist. A declared wall NEVER reached fails the run as
     # VACUOUS (a stress that did not stress — Antithesis "sometimes" reachability).
-    declared = _declared_terminals(recs)
+    declared = verdict.declared_terminals(recs)
     if declared:
-        vm_msgs = list(_vm_errors(inst))  # the run's real VM-error summaries (framework aborts' true cause)
+        vm_msgs = list(verdict.vm_errors(inst))  # the run's real VM-error summaries (framework aborts' true cause)
         undeclared_vm = [m for m in vm_msgs if not any(d in m for d in declared)]
         reached = {d for d in declared
                    if any(d in m for m in vm_msgs) or any(d in t for t in flagged + list(expected))}
@@ -386,7 +217,7 @@ def _analyze_one(inst: Path) -> list[str]:
         for t in flagged:
             if any(d in t for d in declared):
                 expected[f"declared:{t[:32]}"] += 1            # tag itself names a declared wall
-            elif not _MOVE_ABORT.match(t) and reached and not undeclared_vm:
+            elif not verdict.MOVE_ABORT.match(t) and reached and not undeclared_vm:
                 expected["declared-wall (framework)"] += 1     # framework tag whose real cause IS a declared VM wall
             else:
                 kept.append(t)                                 # a clean module:code abort, or an UNdeclared framework error
@@ -406,7 +237,7 @@ def _analyze_one(inst: Path) -> list[str]:
         # A framework-level tag (dynamic_field::borrow_child_object etc.) names only the framework fn.
         # Surface the dry-run's executionErrorSource from the saved artifacts — the plain-English VM
         # cause the tag hides (e.g. "Object runtime cached objects limit (1000 entries) reached").
-        for msg, n in _vm_errors(inst).most_common(6):
+        for msg, n in verdict.vm_errors(inst).most_common(6):
             print(f"       -> {n}x  {msg}")
     else:
         print("  bug oracle clean (no invariant/non-package aborts)")

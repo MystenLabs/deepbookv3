@@ -22,8 +22,6 @@ import {
   cleanoutAccountTx,
   mintBatchTx,
   mintTx,
-  readCurrentNav,
-  readIdleBalance,
   readIsSettled,
   redeemSettledAllTx,
   redeemTx,
@@ -99,14 +97,12 @@ export interface StrategyCtx {
   submitMintBatch(market: Mkt, legs: MintLeg[], meta?: Record<string, unknown>): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
-  currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
-  idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
 
   // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
   // position on THIS account then claims its rebate, and return + trace the full gas breakdown
   // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
   cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
-  // Cleanout split (claim-marginal test): redeemAll = the N redeems WITHOUT the claim (leaves an
+  // Cleanup claim profile: redeemAll = the N redeems WITHOUT the claim (leaves an
   // unresolved summary); claimRebate = the claim ALONE (once positions are closed). Diffing them
   // isolates whether a searcher's marginal cost of adding the claim is a refund (bundles it) or a
   // cost (skips it, leaving non-owed accounts' reserve unresolved).
@@ -354,12 +350,6 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
 
     async refreshPlp() {
       plpShares = await deps.readPlpBalance(deps.traderAddress);
-    },
-    async currentNav(market) {
-      return readCurrentNav(market.id, deps.feeds);
-    },
-    async idleBalance() {
-      return readIdleBalance();
     },
 
     async cleanout(marketId, positions) {

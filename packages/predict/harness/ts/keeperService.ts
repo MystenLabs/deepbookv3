@@ -40,15 +40,12 @@ const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
 const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M default; campaign overrides per strategy
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
-// Flush gas budget. The SINGLE dense market (nav-stress) OOGs at the per-tx COMPUTATION cap
+// Flush gas budget. A single dense capacity market can OOG at the per-tx COMPUTATION cap
 // (5e9 MIST), not the budget; the pool total binds earlier on the object-runtime cached-objects
 // limit (C-1) at ~16-50% of that cap. Either way the budget only needs headroom above the 5e9 cap.
 // Set to 15e9 (3x): still lets the single-market flush reach the 5e9 wall, but far below the old
-// 50e9 — because
-// signExecThreaded pins ONE gas coin per sender and Sui requires that coin >= the budget, a 50e9
-// floor starved the keeper's shrinking pinned coin (batch run 2026-07-06: 219 gas-starved flushes).
-// 15e9 ~triples the coin's runway. Mitigation, not a full fix — a long enough run still drains the
-// pinned coin; the real fix is topping it up (deferred).
+// 50e9, which needlessly forces larger gas-payment merges. The gRPC executor tracks the pinned
+// coin's remaining balance and merges faucet coins before it drops below this budget.
 const FLUSH_GAS_BUDGET = 15_000_000_000n;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -132,7 +129,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //     the flush inserts its exact-expiry observation and calls try_settle before value_expiry,
   //     instead of tripping dynamic_field on a missing obs. These commands are the
   //     race-avoidance ONLY; the durable settlement is 1a (a BS outage reverts the flush's inserts but
-  //     can't block 1a, so no brick). A flush OOG here is the nav-stress BREAKPOINT (analyze.py
+  //     can't block 1a, so no brick). A flush OOG here is a capacity BREAKPOINT (analyze.py
   //     excludes it), NOT a stall — logged as a plain flush fail.
   if (didSettle && settledOk) {
     try {

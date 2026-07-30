@@ -39,8 +39,8 @@ def _call(
 def generate_local_pyth(out_path: Path) -> dict:
     """Run the harness localPythCli (tsx) to mint local guardian/signer keys."""
     subprocess.run(
-        ["npx", "tsx", "localPythCli.ts", str(out_path)],
-        cwd=str(config.TS_DIR),
+        ["npx", "tsx", "devtools/ts/localPythCli.ts", str(out_path)],
+        cwd=str(config.PREDICT_DIR),
         check=True,
         capture_output=True,
         text=True,
