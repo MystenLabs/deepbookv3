@@ -23,6 +23,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
+use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
@@ -441,6 +442,16 @@ fun template_trading_loss_rebate_rate_accepts_boundaries() {
 //
 // The envelope floor is 0, so there is no reachable below-min case for a `u64`;
 // only the above-max side aborts.
+
+/// `lp_book::fee_on` subtracts the fee from the amount it was computed on, and
+/// relies on the envelope keeping the rate strictly below 1.0 for that never to
+/// underflow — inside the mandatory pool-wide flush. That guarantee lives in a
+/// comment; this pins it, so widening the envelope past `float_scaling` fails here
+/// rather than aborting a live flush.
+#[test]
+fun plp_fee_rate_envelope_cannot_reach_full_scale() {
+    assert!(config_constants::max_plp_fee_rate!() < math::float_scaling!());
+}
 
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpFeeRate)]
 fun plp_fee_rate_above_max_aborts() {

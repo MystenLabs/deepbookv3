@@ -306,6 +306,18 @@ The 20 bps default is a starting point, not a calibrated number — nothing belo
 has been run, so it is not yet known whether it is above or below the per-lap
 edge it is meant to price.
 
+**A supplier partly refunds their own fee, and the largest LP refunds most of
+it.** The charge is retained by the pool, so a supplier immediately owns a share
+of what they just paid. At a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC
+supply at 20 bps: fee 20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so
+the new holding is worth 9_990_000 and the net fee paid is 10_000 — half. The
+effective supply-side charge is `F * (1 - post_fill_share)`, which tends to zero
+as an LP approaches owning the pool, and a round trip costs
+`F_in * (1 - share) + F_out`. The actor best placed to time the mark is
+therefore the one who pays the least of the charge that exists to price that
+timing. Any calibration below must be against the *effective* rate at the
+sizes it is meant to deter, not the nominal one.
+
 **Experiment plan** (decision rule written before the run):
 
 - **Question:** does the realized fill mark deviate from a higher-precision

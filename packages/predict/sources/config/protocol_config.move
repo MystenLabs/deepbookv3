@@ -94,13 +94,6 @@ public fun frozen(config: &ProtocolConfig): bool {
     config.frozen
 }
 
-/// Return the PLP supply/withdraw fee rate for SDK and devInspect reads. Public
-/// because a caller sizing `min_plp_out` / `min_dusdc_out` needs it: those limits
-/// are compared against the post-fee result.
-public fun plp_fee_rate(config: &ProtocolConfig): u64 {
-    config.plp_fee_rate
-}
-
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
 public fun set_template_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_version();
@@ -377,6 +370,10 @@ public fun set_plp_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, 
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
+}
+
+public(package) fun plp_fee_rate(config: &ProtocolConfig): u64 {
+    config.plp_fee_rate
 }
 
 public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
