@@ -55,12 +55,12 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
     );
 }
 
-/// Fee charged on executed PLP supply and withdraw fills, in FLOAT_SCALING. The
-/// charge is retained by the pool, so it accrues to remaining PLP holders rather
-/// than to the protocol reserve. Zero disables the fee without a package upgrade;
-/// the 5% ceiling bounds how punitive an `AdminCap` alone can make LP entry and
-/// exit.
-public(package) macro fun default_plp_fee_rate(): u64 { 10_000_000 }
+/// Fee charged on executed PLP supply and withdraw fills, in FLOAT_SCALING —
+/// 20 bps by default. The charge is retained by the pool, so it accrues to
+/// remaining PLP holders rather than to the protocol reserve. Zero disables the fee
+/// without a package upgrade; the 5% ceiling bounds how punitive an `AdminCap`
+/// alone can make LP entry and exit.
+public(package) macro fun default_plp_fee_rate(): u64 { 2_000_000 }
 
 public(package) macro fun min_plp_fee_rate(): u64 { 0 }
 
