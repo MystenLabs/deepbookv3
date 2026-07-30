@@ -58,6 +58,8 @@ use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
 const FOREIGN_UNDERLYING_ID: u32 = 2;
+/// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
+const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
 /// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
 /// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
@@ -197,6 +199,45 @@ fun live_quote_with_prices_but_no_svi_aborts() {
     fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
     fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
     live_quote(&fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
+    abort EUnexpectedSuccess
+}
+
+/// The provider store accepts u128 values, but Predict deliberately uses the checked cast itself
+/// as the representation guard rather than wrapping primitive overflow in a named error.
+#[test, expected_failure(arithmetic_error, location = pricing)]
+fun block_scholes_price_above_u64_aborts_on_checked_narrowing() {
+    let (fx, mut oracle) = setup_live();
+    fx.set_bs_spot_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        FIRST_UNREPRESENTABLE_U64,
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// The same representation boundary applies independently to every provider-native SVI magnitude.
+#[test, expected_failure(arithmetic_error, location = pricing)]
+fun block_scholes_svi_above_u64_aborts_on_checked_narrowing() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_a_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        FIRST_UNREPRESENTABLE_U64,
+    );
+
+    live_quote(
+        &fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
     abort EUnexpectedSuccess
 }
 

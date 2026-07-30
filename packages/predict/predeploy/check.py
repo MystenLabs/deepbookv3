@@ -6,7 +6,8 @@ machine-check each other instead of relying on anyone remembering. This script
 is that check. It verifies, deterministically and stdlib-only:
 
   1. PINNING TESTS (FATAL) — every test function named in a response-policies.md
-     "Pinning tests" field exists as `fun <name>` under packages/predict/tests/.
+     "Pinning tests" field exists as `fun <name>` under the Predict or Propbook
+     package tests.
      A register decision whose pinning test vanished is un-enforced: the exact
      drift class that let risks.md promise unshipped behavior.
   2. ID CROSS-REFS — every `RP-n` reference in the predeploy docs resolves to a
@@ -46,6 +47,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.abspath(
     os.path.join(HERE, '..', '..', '..'))
 PREDICT = os.path.join(ROOT, 'packages', 'predict')
+PROPBOOK = os.path.join(ROOT, 'packages', 'propbook')
 
 DOCS = sorted(glob.glob(os.path.join(HERE, '*.md')) +
               glob.glob(os.path.join(HERE, 'evidence', '*.md')))
@@ -117,9 +119,13 @@ def check_pinning_tests(errors):
     if not os.path.exists(reg):
         return
     test_src = ''
-    for path in glob.glob(os.path.join(PREDICT, 'tests', '**', '*.move'),
-                          recursive=True):
-        test_src += read(path)
+    test_roots = [
+        os.path.join(PREDICT, 'tests'),
+        os.path.join(PROPBOOK, 'tests'),
+    ]
+    for test_root in test_roots:
+        for path in glob.glob(os.path.join(test_root, '**', '*.move'), recursive=True):
+            test_src += read(path)
     text = read(reg)
     # Entry-driven, not block-driven: the register's rule is that EVERY RP entry
     # links a pinning test or explicitly says it doesn't. Iterating only well-formed
@@ -149,7 +155,8 @@ def check_pinning_tests(errors):
             if not re.search(r'\bfun\s+' + re.escape(tok) + r'\b', test_src):
                 errors.append(
                     f"response-policies.md entry '{title}' pins test `{tok}` but "
-                    f"no `fun {tok}` exists under packages/predict/tests/")
+                    f"no `fun {tok}` exists under packages/predict/tests/ or "
+                    f"packages/propbook/tests/")
 
 
 def check_id_refs(errors, warnings):
@@ -210,7 +217,7 @@ def check_measured_links(errors):
 
 def resolve(token, doc_dir=None):
     """Resolve a path-like token against the naming doc's dir + the system's roots."""
-    bases = [HERE, PREDICT, os.path.join(PREDICT, 'harness'), ROOT]
+    bases = [HERE, PREDICT, PROPBOOK, os.path.join(PREDICT, 'harness'), ROOT]
     if doc_dir:
         bases.insert(0, doc_dir)
     for base in bases:
@@ -237,10 +244,11 @@ def check_paths(errors, warnings):
                     errors.append(f"{name}: names path `{tok}` which does not exist")
                 else:
                     hits = glob.glob(os.path.join(PREDICT, '**', tok), recursive=True) \
+                        or glob.glob(os.path.join(PROPBOOK, '**', tok), recursive=True) \
                         or glob.glob(os.path.join(ROOT, '.claude', '**', tok), recursive=True)
                     if not hits:
                         warnings.append(f"{name}: names file `{tok}` not found under "
-                                        f"packages/predict/ or .claude/")
+                                        f"packages/predict/, packages/propbook/, or .claude/")
 
 
 def check_evidence(errors):
