@@ -44,7 +44,7 @@ SLOT_COUNT = 32  # generous slot/port ceiling; real parallelism = --concurrency
 # Local packages (under packages/) staged by mirroring the subtree, so their
 # relative `local = "../foo"` deps resolve inside the workspace unchanged.
 # Verified against predict/Move.lock: predict's closure is these locals plus the
-# git deps below. deepbook is intentionally NOT here (run.sh only published it to
+# git deps below. deepbook is intentionally NOT here (the old runner published it to
 # drag `token` in transitively; `token` is a no-dep leaf we publish directly).
 LOCAL_CLOSURE = [
     "fixed_math",

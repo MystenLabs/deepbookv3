@@ -9,6 +9,18 @@ from harness import analyze, verdict
 
 
 class VerdictTests(unittest.TestCase):
+    def test_trace_loader_rejects_malformed_and_unversioned_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory)
+            path = trace / "keeper.jsonl"
+            path.write_text('{"schema":1,"type":"heartbeat","ts":1}\nnot-json\n')
+            with self.assertRaisesRegex(ValueError, "malformed trace JSON"):
+                analyze._load(trace)
+
+            path.write_text('{"type":"heartbeat","ts":1}\n')
+            with self.assertRaisesRegex(ValueError, "unsupported trace schema"):
+                analyze._load(trace)
+
     def test_classification_distinguishes_guards_invariants_and_transients(self) -> None:
         expected, transient, flagged = verdict.classify_failures(
             [
@@ -95,10 +107,12 @@ class VerdictTests(unittest.TestCase):
             instance = Path(directory)
             trace = instance / "trace"
             trace.mkdir(parents=True)
-            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"heartbeat","ts":1}\n'
+            )
             (trace / "trader.jsonl").write_text(
-                '{"type":"expect","terminal":["dynamic_field:0"],"ts":2}\n'
-                '{"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+                '{"schema":1,"type":"expect","terminal":["dynamic_field:0"],"ts":2}\n'
+                '{"schema":1,"type":"fail","tag":"dynamic_field:0","ts":3}\n'
             )
             artifacts = instance / "artifacts" / "failed_transactions"
             artifacts.mkdir(parents=True)
@@ -137,10 +151,12 @@ class VerdictTests(unittest.TestCase):
             instance = Path(directory)
             trace = instance / "trace"
             trace.mkdir(parents=True)
-            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"heartbeat","ts":1}\n'
+            )
             (trace / "trader.jsonl").write_text(
-                '{"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
-                '{"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+                '{"schema":1,"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
+                '{"schema":1,"type":"fail","tag":"dynamic_field:0","ts":3}\n'
             )
             artifacts = instance / "artifacts" / "failed_transactions"
             artifacts.mkdir(parents=True)
@@ -174,11 +190,13 @@ class VerdictTests(unittest.TestCase):
             instance = Path(directory)
             trace = instance / "trace"
             trace.mkdir(parents=True)
-            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"heartbeat","ts":1}\n'
+            )
             (trace / "trader.jsonl").write_text(
-                '{"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
-                '{"type":"fail","tag":"dynamic_field:0","ts":3}\n'
-                '{"type":"fail","tag":"coin:1","ts":4}\n'
+                '{"schema":1,"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
+                '{"schema":1,"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+                '{"schema":1,"type":"fail","tag":"coin:1","ts":4}\n'
             )
             artifacts = instance / "artifacts" / "failed_transactions"
             artifacts.mkdir(parents=True)
@@ -214,7 +232,9 @@ class VerdictTests(unittest.TestCase):
             instance = Path(directory) / "fuzz-test"
             trace = instance / "trace"
             trace.mkdir(parents=True)
-            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"heartbeat","ts":1}\n'
+            )
 
             self.assertEqual(analyze.analyze([str(instance)], expect=["fuzz"]), 1)
 

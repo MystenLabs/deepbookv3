@@ -60,15 +60,9 @@ import {
 } from "./runtime.js";
 
 const DUSDC_DECIMALS = 1_000_000n;
-const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
-const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
-const DEFAULT_INITIAL_EXPIRY_CASH = 50_000n * DUSDC_DECIMALS;
 const FLOAT_SCALING = 1_000_000_000n;
-const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
-const DEFAULT_MAX_ADMISSION_LEVERAGE = 3n * FLOAT_SCALING;
 const SIM_CADENCE_ONE_MONTH = 5;
 const SIM_CADENCE_WINDOW_SIZE = 1n;
-const DEFAULT_MAX_EXPIRY_ALLOCATION = 250_000n * DUSDC_DECIMALS;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
@@ -999,21 +993,26 @@ function clearOutputArtifacts() {
     }
 }
 
-function protocolConfigValue(config: any, key: string, fallback: bigint): bigint {
-    const value = config?.protocol?.[key];
-    return value === undefined || value === null || value === "" ? fallback : BigInt(value);
+function configInteger(value: unknown, path: string): bigint {
+    if (typeof value !== "string" || !/^\d+$/.test(value)) {
+        throw new Error(`${path} must be a non-negative integer string`);
+    }
+    return BigInt(value);
 }
 
-function capitalConfigValue(config: any, mode: string, key: string, fallback: bigint): bigint {
-    const value = config?.capital?.[mode]?.[key];
-    return value === undefined || value === null || value === "" ? fallback : BigInt(value);
+function protocolConfigValue(config: Record<string, any>, key: string): bigint {
+    return configInteger(config.protocol?.[key], `scenario config.protocol.${key}`);
 }
 
-function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapital {
-    const vaultSeed = capitalConfigValue(config, mode, "vault_seed", DEFAULT_VAULT_SEED);
+function capitalConfigValue(config: Record<string, any>, mode: string, key: string): bigint {
+    return configInteger(config.capital?.[mode]?.[key], `scenario config.capital.${mode}.${key}`);
+}
+
+function simulationCapital(config: Record<string, any>, mode: "normal" | "long"): SimulationCapital {
+    const vaultSeed = capitalConfigValue(config, mode, "vault_seed");
     return {
         vaultSeed,
-        managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
+        managerSeed: capitalConfigValue(config, mode, "manager_seed"),
     };
 }
 
@@ -1063,27 +1062,22 @@ async function setupSimulation(
     const expiryFeeMaxMultiplier = protocolConfigValue(
         scenarioConfig,
         "expiry_fee_max_multiplier",
-        FLOAT_SCALING,
     );
     const expiryFeeWindowMs = protocolConfigValue(
         scenarioConfig,
         "expiry_fee_window_ms",
-        DEFAULT_EXPIRY_FEE_WINDOW_MS,
     );
     const maxAdmissionLeverage = protocolConfigValue(
         scenarioConfig,
         "max_admission_leverage",
-        DEFAULT_MAX_ADMISSION_LEVERAGE,
     );
     const maxExpiryAllocation = protocolConfigValue(
         scenarioConfig,
         "max_expiry_allocation",
-        DEFAULT_MAX_EXPIRY_ALLOCATION,
     );
     const initialExpiryCash = protocolConfigValue(
         scenarioConfig,
         "initial_expiry_cash",
-        DEFAULT_INITIAL_EXPIRY_CASH,
     );
 
     let result = await executeAndWait(
@@ -1665,7 +1659,10 @@ function runPythonReplay(scenarioPath: string, expiryMs: string, maxRows?: numbe
 async function main() {
     const args = parseArgs();
     const scenario = scenarioPath();
-    const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
+    const scenarioConfig = readJson<Record<string, any>>(SCENARIO_CONFIG_PATH);
+    if (scenarioConfig.schema_version !== 1) {
+        throw new Error(`unsupported scenario config schema_version: ${String(scenarioConfig.schema_version)}`);
+    }
     const capital = simulationCapital(scenarioConfig, "normal");
     let rows = loadScenario(scenario);
     if (args.maxRows !== undefined) {

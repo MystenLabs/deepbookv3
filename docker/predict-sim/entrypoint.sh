@@ -41,7 +41,7 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 callback "started"
 
 PREDICT_DIR="/workspace/repo/packages/predict"
-SIM_DIR="${PREDICT_DIR}/simulations"
+RESULTS="/tmp/predict-benchmark-results.json"
 
 # Install the shared Predict development-system dependencies.
 cd "${PREDICT_DIR}"
@@ -50,16 +50,13 @@ cd /workspace/repo
 
 # Run the localnet benchmark flow. The benchmark service passes SIM_MAX_ROWS
 # and optionally SCENARIO_PATH through the job environment.
-bash "${SIM_DIR}/run.sh" --skip-analysis
+PYTHONPATH="${PREDICT_DIR}" python3 -m harness benchmark --results-output "${RESULTS}"
 
-# Find results.
-LATEST_RUN=$(ls -td "${SIM_DIR}"/runs/*/ 2>/dev/null | head -1)
-if [ -z "${LATEST_RUN}" ] || [ ! -f "${LATEST_RUN}/artifacts/results.json" ]; then
+if [ ! -f "${RESULTS}" ]; then
     echo "ERROR: results.json not found after localnet run" >&2
     exit 1
 fi
 
-RESULTS="${LATEST_RUN}/artifacts/results.json"
 echo "Results at ${RESULTS}"
 
 # Post results to callback URL if provided.

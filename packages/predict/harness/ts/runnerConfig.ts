@@ -2,3 +2,39 @@
 // Keep this module free of runtime/oracle imports: campaign reads strategy metadata before
 // any localnet or `.env.localnet` exists.
 export const DEFAULT_TRADER_GAS_BUDGET = 2_000_000_000;
+
+export function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+export function definedEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined) throw new Error(`${name} is required`);
+  return value;
+}
+
+export function requiredNonnegativeInt(name: string): number {
+  const raw = requiredEnv(name);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
+  return value;
+}
+
+export function gridExpiries(spec: string, nowMs = Date.now()): number[] {
+  const expiries = spec.split(",").flatMap((part) => {
+    const match = /^([1-9]\d*):([1-9]\d*)$/.exec(part);
+    if (!match) throw new Error(`invalid GRID_SPEC entry: ${part}`);
+    const period = Number(match[1]);
+    const count = Number(match[2]);
+    if (!Number.isSafeInteger(period) || !Number.isSafeInteger(count)) {
+      throw new Error(`GRID_SPEC entry exceeds safe integer range: ${part}`);
+    }
+    const base = Math.floor(nowMs / period) * period;
+    return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
+  });
+  return [...new Set(expiries)];
+}

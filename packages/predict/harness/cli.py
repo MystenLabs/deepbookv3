@@ -8,7 +8,7 @@ import signal
 import sys
 from collections.abc import Callable
 
-from . import analyze, config, live, parity, run as run_mod, state
+from . import analyze, config, live, parity, session, state
 
 
 def _raise_keyboard_interrupt(_signum, _frame) -> None:
@@ -23,21 +23,14 @@ def _run_with_sigterm_handler(command: Callable[[], int]) -> int:
         try:
             return command()
         except KeyboardInterrupt:
-            run_mod.stop_active_localnets()
+            session.stop_active_localnets()
             return 130
     finally:
         signal.signal(signal.SIGTERM, previous)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    result = run_mod.run(keep=args.keep)
-    status = "OK" if result.ok else "FAIL"
-    clean = "clean" if result.checkout_clean else "MUTATED"
-    print(
-        f"\n{status} [{result.run_id}] {result.elapsed_s}s  checkout={clean}"
-        + (f"  error={result.error}" if result.error else "")
-    )
-    return 0 if (result.ok and result.checkout_clean) else 1
+    return session.smoke(keep=args.keep)
 
 
 def _cmd_status(_args: argparse.Namespace) -> int:
@@ -73,8 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     p_up.add_argument("--name", default=None)
     p_up.add_argument("--seconds", type=int, default=0, help="hold for N seconds then tear down (0 = until Ctrl-C)")
     p_up.add_argument("--traders", type=int, default=0, help="number of fuzz trader actors (default 0)")
-    p_up.add_argument("--replay", default=None, help="replay a recorded hub stream (path) instead of live data")
-    p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds, a.traders, a.replay))
+    p_up.set_defaults(func=lambda a: live.hold(a.name, a.seconds, a.traders))
 
     p_campaign = sub.add_parser("campaign", help="run named strategies in parallel (one localnet each) to completion, then analyze")
     p_campaign.add_argument("strategies", nargs="+", help="strategy names, e.g. mint-only mixed-churn liq-churn")
@@ -111,19 +103,23 @@ def main(argv: list[str] | None = None) -> int:
 
     p_benchmark = sub.add_parser(
         "benchmark",
-        help="external benchmark adapter task",
+        help="run parity and produce gas benchmark results",
     )
     p_benchmark.add_argument("--source", default=None)
     p_benchmark.add_argument("--seed", type=int, default=0)
     p_benchmark.add_argument("--max-rows", type=int, default=None)
-    p_benchmark.add_argument("--legacy-runs-dir", default=None)
+    p_benchmark.add_argument(
+        "--results-output",
+        default=None,
+        help="copy results.json to this delivery path",
+    )
     p_benchmark.set_defaults(
         func=lambda a: parity.run(
             source=a.source,
             seed=a.seed,
             max_rows=a.max_rows,
             benchmark=True,
-            legacy_runs_dir=a.legacy_runs_dir,
+            results_output=a.results_output,
         )
     )
 

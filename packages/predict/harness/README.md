@@ -18,14 +18,14 @@ python3 -m harness cleanup --instances
 
 | Task | Purpose | Retained output |
 | --- | --- | --- |
-| `smoke` | Stage, publish, and initialize the package closure once. | Failure artifacts, or the full instance with `--keep`. |
+| `smoke` | Stage and publish the package closure once. | Failure artifacts, or the full instance with `--keep`. |
 | `live` | Hold one localnet with keeper, signed oracle updater, and optional fuzz traders. | Deployment and actor traces. |
 | `campaign` | Run named strategies concurrently, one isolated localnet per strategy, from one market-data hub. | Campaign report and per-strategy traces. |
 | `parity` | Generate a seeded scenario and compare localnet contract behavior with the independent Python model. | Exact scenario, manifest, local trace, economic outputs, and failures. |
 | `analyze` | Reduce retained campaign traces into measurements and a contract-bug verdict. | Terminal report and exit status. |
 | `status` / `cleanup` | Inspect or reclaim localnet slots. | Slot registry state. |
 
-`simulations/run.sh` is not a second human runner. It is the compatibility adapter used by the external gas-benchmark worker and delegates back to `python3 -m harness benchmark`, which runs the same independent Python replay and parity comparison before writing gas results.
+The external gas-benchmark worker calls `python3 -m harness benchmark --results-output <path>`. It runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
 
 ## Strategy registry
 
@@ -75,7 +75,9 @@ Each parity run retains `artifacts/run-manifest.json` with the source commit and
 
 Campaigns retain a machine-readable campaign report plus one trace directory per strategy. Failed transactions retain execution context and dry-run diagnostics under `artifacts/failed_transactions/`.
 
-Instances live under `harness/.localnets/instances/`. Heavy validator and staged-workspace state is removed after context-managed runs while evidence remains.
+Instances live under `harness/.localnets/instances/`. Heavy validator and staged-workspace state is removed after context-managed runs while evidence remains. The generated local signer configuration is captured in memory and written only to the mode-0600 per-instance `.env.localnet`; teardown deletes that file before retaining evidence. `deployment.json` contains public package, object, address, and run metadata only.
+
+Hub snapshots and actor traces carry explicit schema versions. Scenario configuration, hub snapshots, and traces reject missing, unknown, malformed, or unsupported current-schema data instead of applying compatibility defaults.
 
 ## Prerequisites
 
@@ -83,6 +85,6 @@ Instances live under `harness/.localnets/instances/`. Heavy validator and staged
 - Node dependencies installed from `packages/predict/package.json`
 - A Sui CLI build whose client operations use gRPC
 - Network access when pinned Move dependencies are absent from the local cache
-- Live provider credentials only for live signed-feed runs; parity and replay do not require them
+- Live provider credentials only for live signed-feed runs; parity does not require them
 
 Historical capacity measurements remain under `harness/reports/` and `packages/predict/predeploy/evidence/`; their one-off strategy implementations are intentionally not part of the current operator surface.

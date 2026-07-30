@@ -55,21 +55,16 @@ def _generate_scenario(source: Path, scenario: Path, seed: int) -> None:
     )
 
 
-def _legacy_copy(instance_dir: Path, legacy_runs_dir: Path) -> Path:
-    legacy_artifacts = legacy_runs_dir / instance_dir.name / "artifacts"
-    legacy_artifacts.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(instance_dir / "artifacts", legacy_artifacts, dirs_exist_ok=True)
-    return legacy_artifacts
-
-
 def run(
     *,
     source: str | None = None,
     seed: int = 0,
     max_rows: int | None = None,
     benchmark: bool = False,
-    legacy_runs_dir: str | None = None,
+    results_output: str | None = None,
 ) -> int:
+    if results_output is not None and not benchmark:
+        raise ValueError("results_output is only valid for benchmark runs")
     source_path = _source_path(source)
     max_rows = _positive_int(
         max_rows if max_rows is not None else os.environ.get("SIM_MAX_ROWS"),
@@ -124,25 +119,28 @@ def run(
                 check=True,
             )
             if benchmark:
+                results_path = artifacts_dir / "results.json"
                 subprocess.run(
                     [
                         "python3",
                         "simulations/write_benchmark_results.py",
                         str(artifacts_dir / "local_trace.json"),
-                        str(artifacts_dir / "results.json"),
+                        str(results_path),
                     ],
                     cwd=config.PREDICT_DIR,
                     check=True,
                 )
+                if results_output is not None:
+                    output = Path(results_output).expanduser()
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(results_path, output)
+                    print(f"benchmark results: {output}")
         except BaseException as exc:
             error = exc
             raise
         finally:
             complete_manifest(manifest, error=error)
             write_manifest(manifest_path, manifest)
-            if legacy_runs_dir is not None:
-                legacy = _legacy_copy(instance_dir, Path(legacy_runs_dir))
-                print(f"benchmark artifacts: {legacy}")
 
         print(f"{engine} artifacts: {artifacts_dir}")
     return 0

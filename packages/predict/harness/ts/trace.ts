@@ -4,17 +4,22 @@
 // trend, and the bug oracle (aborts not from our packages).
 import { appendFileSync, mkdirSync } from "node:fs";
 
-const TRACE_DIR = `${process.env.INSTANCE_DIR ?? "."}/trace`;
 let dirReady = false;
 let warnedTraceFail = false;
 
 export function appendTrace(actor: string, record: Record<string, unknown>): void {
+  const instanceDir = process.env.INSTANCE_DIR;
+  if (!instanceDir) throw new Error("INSTANCE_DIR is required");
+  const traceDir = `${instanceDir}/trace`;
   if (!dirReady) {
-    try { mkdirSync(TRACE_DIR, { recursive: true }); } catch { /* exists */ }
+    try { mkdirSync(traceDir, { recursive: true }); } catch { /* exists */ }
     dirReady = true;
   }
   try {
-    appendFileSync(`${TRACE_DIR}/${actor}.jsonl`, `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
+    appendFileSync(
+      `${traceDir}/${actor}.jsonl`,
+      `${JSON.stringify({ ...record, schema: 1, ts: Date.now() })}\n`,
+    );
   } catch (e) {
     // Best-effort (never fail the op), but warn ONCE so dropped fail/crash records aren't silent.
     if (!warnedTraceFail) {

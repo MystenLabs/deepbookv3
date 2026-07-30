@@ -22,8 +22,12 @@ from pathlib import Path
 from devtools.run_manifest import source_revision
 
 from . import config, localnet
-from .run import _make_run_id, stop_active_localnets
-from .session import create_funded_address, initialized_localnet
+from .session import (
+    create_funded_address,
+    initialized_localnet,
+    make_run_id,
+    stop_active_localnets,
+)
 
 # Flush every print so captured logs (autonomous/background runs) stay in chronological
 # order with subprocess output, instead of being reordered by Python's block buffering on
@@ -38,6 +42,7 @@ KEEPER_GAS_BUDGET = 15_000_000_000
 # trader budgets so the gRPC executor can merge fresh faucet coins into its
 # exact-version pinned payment before that coin drops below the next budget.
 GAS_REFILL_FLOOR = 60_000_000_000
+LIVE_TRADER_DUSDC = "1000000000000"
 
 
 def _raise_keyboard_interrupt(*_) -> None:
@@ -112,7 +117,7 @@ def _terminate_group(p: subprocess.Popen) -> None:
         pass
 
 
-def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: str | None = None) -> int:
+def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
     """Bring up the full running sim: localnet + Predict keeper + oracle updater + N fuzz
     traders.
 
@@ -135,14 +140,17 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
         def launch_keeper() -> subprocess.Popen:
             return subprocess.Popen(
                 ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs), "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET)},
+                env={
+                    **base,
+                    "TRADER_ADDRESSES": ",".join(trader_addrs),
+                    "TRADER_DUSDC": LIVE_TRADER_DUSDC,
+                    "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
+                },
                 start_new_session=True,
             )
 
         def launch_updater() -> subprocess.Popen:
             env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec}
-            if replay:  # re-play a recorded hub stream instead of opening a live provider WS
-                env["REPLAY_FILE"] = replay
             return subprocess.Popen(["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=env, start_new_session=True)
 
         core = {"keeper": launch_keeper(), "updater": launch_updater()}
@@ -151,14 +159,15 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
         restart_at = {"keeper": 0.0, "updater": 0.0}
         healthy_window = 120  # a core proc alive this long since its last restart has recovered
         traders_procs = [
-            subprocess.Popen(["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR), env={**base, "TRADER_ADDRESS": a}, start_new_session=True)
+            subprocess.Popen(
+                ["npx", "tsx", "traderService.ts"],
+                cwd=str(config.TS_DIR),
+                env={**base, "TRADER_ADDRESS": a, "STRATEGY": "fuzz"},
+                start_new_session=True,
+            )
             for a in trader_addrs
         ]
         gas_addrs = [ctx["active"], ctx["updater_address"], *trader_addrs]
-        if replay:
-            print("*** REPLAY MODE: markets price off the RECORDED stream but SETTLE on LIVE Pyth prices"
-                  " (settlement uses the history endpoint, independent of the replay) — PnL/solvency"
-                  " results are NOT valid in replay; use it for trade-flow / perf only. ***")
         print(f"\nharness live: keeper + updater + {traders} trader(s); core supervised; localnet held. Ctrl-C to tear down.")
         deadline = (time.time() + seconds) if seconds > 0 else None
         last_gas = 0.0
@@ -391,9 +400,8 @@ def campaign(
 
     # One hub grid for all localnets — the full prod cadence set (every keeper runs all of it).
     grid_spec = _grid_spec(meta)
-    campaign_id = _make_run_id("campaign")
+    campaign_id = make_run_id("campaign")
     hub_snapshot = config.LOCALNETS_DIR / f"{campaign_id}-hub-snapshot.json"
-    hub_record = config.LOCALNETS_DIR / f"{campaign_id}-hub-record.jsonl"
     hub_metrics_path = config.LOCALNETS_DIR / f"{campaign_id}-hub-metrics.json"
     report_path = config.LOCALNETS_DIR / f"{campaign_id}-report.json"
     campaign_started = time.time()
@@ -414,7 +422,6 @@ def campaign(
                 env={
                     **os.environ,
                     "HUB_SNAPSHOT": str(hub_snapshot),
-                    "HUB_RECORD": str(hub_record),
                     "HUB_METRICS": str(hub_metrics_path),
                     "GRID_SPEC": grid_spec,
                     "DURATION_MS": "0",

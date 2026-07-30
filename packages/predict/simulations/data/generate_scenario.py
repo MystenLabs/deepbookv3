@@ -77,7 +77,6 @@ class Generator:
         self,
         snapshots: list[dict[str, Any]],
         config: FlowConfig,
-        source_config: dict[str, Any],
         seed: int,
     ):
         self.snapshots = snapshots
@@ -438,10 +437,8 @@ def generation_config_int(
     source_config: dict[str, Any],
     mode: str,
     key: str,
-    default: int,
 ) -> int:
-    value = source_config.get("generation", {}).get(mode, {}).get(key, default)
-    return int(value)
+    return int(source_config["generation"][mode][key])
 
 
 def normal_config(source_config: dict[str, Any]) -> FlowConfig:
@@ -458,13 +455,11 @@ def normal_config(source_config: dict[str, Any]) -> FlowConfig:
             source_config,
             "normal",
             "min_mint_spend",
-            2 * DUSDC,
         ),
         max_mint_spend=generation_config_int(
             source_config,
             "normal",
             "max_mint_spend",
-            20 * DUSDC,
         ),
         min_supply=500 * DUSDC,
         max_supply=5_000 * DUSDC,
@@ -492,7 +487,6 @@ def generate_scenario(
     generator = Generator(
         snapshots,
         normal_config(source_config),
-        source_config,
         seed,
     )
     rows = generator.generate()

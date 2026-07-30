@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -22,21 +23,28 @@ SOURCE_ROWS = (
 
 
 class ScenarioGenerationTests(unittest.TestCase):
-    def _generate(self, source: Path, out: Path, seed: int) -> None:
-        subprocess.run(
+    def _generate(
+        self,
+        source: Path,
+        out: Path,
+        seed: int,
+        config: Path = CONFIG,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
             [
                 sys.executable,
                 str(GENERATOR),
                 "--source",
                 str(source),
                 "--config",
-                str(CONFIG),
+                str(config),
                 "--out",
                 str(out),
                 "--seed",
                 str(seed),
             ],
-            check=True,
+            check=check,
             capture_output=True,
             text=True,
         )
@@ -56,6 +64,42 @@ class ScenarioGenerationTests(unittest.TestCase):
 
             self.assertEqual(first.read_bytes(), second.read_bytes())
             self.assertNotEqual(first.read_bytes(), other.read_bytes())
+
+    def test_config_rejects_missing_and_unknown_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            source = tmp / "source.csv"
+            source.write_text(SOURCE_HEADER + "".join(SOURCE_ROWS))
+            base = json.loads(CONFIG.read_text())
+
+            missing = json.loads(json.dumps(base))
+            del missing["protocol"]["base_fee"]
+            missing_path = tmp / "missing.json"
+            missing_path.write_text(json.dumps(missing))
+            missing_run = self._generate(
+                source,
+                tmp / "missing.csv",
+                0,
+                missing_path,
+                False,
+            )
+
+            unknown = json.loads(json.dumps(base))
+            unknown["protocol"]["base_fees"] = unknown["protocol"]["base_fee"]
+            unknown_path = tmp / "unknown.json"
+            unknown_path.write_text(json.dumps(unknown))
+            unknown_run = self._generate(
+                source,
+                tmp / "unknown.csv",
+                0,
+                unknown_path,
+                False,
+            )
+
+            self.assertNotEqual(missing_run.returncode, 0)
+            self.assertIn("missing=base_fee", missing_run.stderr)
+            self.assertNotEqual(unknown_run.returncode, 0)
+            self.assertIn("unknown=base_fees", unknown_run.stderr)
 
 
 if __name__ == "__main__":

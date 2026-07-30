@@ -1,14 +1,15 @@
-"""Post-publish oracle/account initialization (mirrors run.sh's setup calls).
+"""Post-publish oracle/account initialization.
 
 Turns a freshly-published localnet into an oracle+account-ready one via single
 `sui client call`s: generate local Pyth keys, init Wormhole + Pyth Lazer, authorize
-the Predict app, and write a run.sh-format `.env.localnet` so the harness TS layer
+the Predict app, and write the private `.env.localnet` so the harness TS layer
 (packages/predict/devtools/ts/runtime.ts) can drive the trusted-signer VAA, feeds, and refresh.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -43,19 +44,21 @@ def _call(
 
 
 def generate_local_pyth(
-    out_path: Path,
     cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run the harness localPythCli (tsx) to mint local guardian/signer keys."""
-    cancellation.run(
-        ["npx", "tsx", "devtools/ts/localPythCli.ts", str(out_path)],
+    completed = cancellation.run(
+        ["npx", "tsx", "devtools/ts/localPythCli.ts"],
         cancel_event=cancel_event,
         check_result=True,
         cwd=str(config.PREDICT_DIR),
         capture_output=True,
         text=True,
     )
-    return json.loads(out_path.read_text())
+    try:
+        return json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("local signer generator emitted invalid JSON") from exc
 
 
 def initialize(
@@ -68,10 +71,7 @@ def initialize(
 ) -> dict:
     """Init Wormhole + Pyth Lazer + authorize the app; record states; write .env.localnet."""
     pkgs, objs = deployment["packages"], deployment["objects"]
-    lp = generate_local_pyth(
-        instance_dir / "local_pyth.json",
-        cancel_event,
-    )
+    lp = generate_local_pyth(cancel_event)
 
     wch = _call(
         client_config, pkgs["wormhole"], "setup", "complete",
@@ -98,13 +98,18 @@ def initialize(
         cancel_event=cancel_event,
     )
 
-    deployment["local_pyth"] = lp
-    write_env_localnet(instance_dir, deployment, rpc_port, active_address)
+    write_env_localnet(instance_dir, deployment, lp, rpc_port, active_address)
     return deployment
 
 
-def write_env_localnet(instance_dir: Path, deployment: dict, rpc_port: int, active_address: str) -> None:
-    p, o, lp = deployment["packages"], deployment["objects"], deployment["local_pyth"]
+def write_env_localnet(
+    instance_dir: Path,
+    deployment: dict,
+    local_signers: dict,
+    rpc_port: int,
+    active_address: str,
+) -> None:
+    p, o, lp = deployment["packages"], deployment["objects"], local_signers
     env = {
         "PACKAGE_ID": p["predict"],
         "REGISTRY_ID": o["registry"],
@@ -141,4 +146,12 @@ def write_env_localnet(instance_dir: Path, deployment: dict, rpc_port: int, acti
         "RPC_URL": f"http://127.0.0.1:{rpc_port}",
         "KEYSTORE_PATH": str(instance_dir / "localnet" / "sui.keystore"),
     }
-    (instance_dir / ".env.localnet").write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+    env_path = instance_dir / ".env.localnet"
+    descriptor = os.open(
+        env_path,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    with os.fdopen(descriptor, "w") as output:
+        output.write("".join(f"{k}={v}\n" for k, v in env.items()))
+    os.chmod(env_path, 0o600)

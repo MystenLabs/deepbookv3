@@ -44,21 +44,31 @@ def _load(trace_dir: Path) -> list[dict]:
     records: list[dict] = []
     for f in sorted(trace_dir.glob("*.jsonl")):
         actor = f.stem  # actor-aware: keeper operational fails vs trader probes
-        for line in f.read_text().splitlines():
+        for line_number, line in enumerate(f.read_text().splitlines(), start=1):
             try:
                 r = json.loads(line)
-                r["_actor"] = actor
-                records.append(r)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{f}:{line_number}: malformed trace JSON") from exc
+            if not isinstance(r, dict):
+                raise ValueError(f"{f}:{line_number}: trace record must be an object")
+            if r.get("schema") != 1:
+                raise ValueError(
+                    f"{f}:{line_number}: unsupported trace schema {r.get('schema')!r}"
+                )
+            if not isinstance(r.get("ts"), int) or not isinstance(r.get("type"), str):
+                raise ValueError(
+                    f"{f}:{line_number}: trace record requires integer ts and string type"
+                )
+            r["_actor"] = actor
+            records.append(r)
     return records
 
 
 def _analyze_one(inst: Path) -> list[str]:
     """Print one instance's report; return the list of bug-signal tags (empty = clean)."""
     recs = _load(inst / "trace")
-    # Label the block by the strategy the trader ran (tagged on every trace record); fall back
-    # to the instance dir name (older traces / keeper-only).
+    # Label the block by the strategy the trader ran (tagged on every trace record);
+    # keeper-only live runs use the instance name.
     strat_tags = Counter(r.get("strategy") for r in recs if r.get("strategy"))
     label = strat_tags.most_common(1)[0][0] if strat_tags else inst.name
     print(f"=== strategy: {label} — {len(recs)} ops [{inst.name}] ===\n")
@@ -128,7 +138,7 @@ def _analyze_one(inst: Path) -> list[str]:
         # which the computation cap ignores). COMP_CAP is the module-level per-tx computation cap.
         succ = sorted(
             [r for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper" and r.get("ts")
-             and (r.get("compGas") or r.get("gas"))],
+             and r.get("compGas")],
             key=lambda r: r["ts"],
         )
 
@@ -142,7 +152,7 @@ def _analyze_one(inst: Path) -> list[str]:
             return sz
 
         def _comp(r: dict) -> int:
-            return int(r.get("compGas") or r.get("gas") or 0)  # computation cost (fallback to net gas)
+            return int(r["compGas"])
 
         pts = [(s, c) for s, c in ((_book_at(f["ts"]), _comp(f)) for f in succ) if s > 0]
         peak = books[-1]["size"]

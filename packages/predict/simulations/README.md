@@ -20,10 +20,10 @@ python3 -m harness parity \
 The external benchmark worker calls:
 
 ```bash
-bash simulations/run.sh --skip-analysis
+python3 -m harness benchmark --results-output /path/to/results.json
 ```
 
-That shell file is a thin compatibility adapter. It delegates to the same Python task router, honors `SCENARIO_PATH` and `SIM_MAX_ROWS`, runs the independent replay and parity comparison, and mirrors `results.json` to the legacy `simulations/runs/<id>/artifacts/` layout expected by the worker.
+The task honors `SCENARIO_PATH` and `SIM_MAX_ROWS`, runs the independent replay and parity comparison, retains the canonical instance artifacts, and copies `results.json` to the requested delivery path.
 
 ## Outputs
 
@@ -55,7 +55,7 @@ The Block Scholes local fixture signs the canonical BCS batch, binds it to the p
 
 ## Configuration
 
-`data/scenario_config.json` is the explicit protocol and generator configuration. Scenario generation is byte-deterministic for a fixed source, configuration, and seed. Changing any input is visible in the retained manifest hashes.
+`data/scenario_config.json` is the complete, versioned protocol and generator configuration. Missing, unknown, malformed, and unsupported fields fail before execution. Scenario generation is byte-deterministic for a fixed source, configuration, and seed. Changing any input is visible in the retained manifest hashes.
 
 The generator writes fixed-point integers as decimal text. The Python replay remains independent of Move execution and is the semantic oracle for the parity check.
 

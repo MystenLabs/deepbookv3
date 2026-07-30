@@ -7,7 +7,11 @@
 import { readFileSync } from "node:fs";
 
 import { getSignerForAddress } from "../../devtools/ts/env.js";
-import { DEFAULT_TRADER_GAS_BUDGET } from "./runnerConfig.js";
+import {
+  DEFAULT_TRADER_GAS_BUDGET,
+  requiredEnv,
+  requiredNonnegativeInt,
+} from "./runnerConfig.js";
 import { makeContext } from "./strategy.js";
 import { getStrategy } from "./strategies/index.js";
 import { appendTrace, errorTag } from "./trace.js";
@@ -21,10 +25,10 @@ import {
   readPlpBalance,
 } from "./runtime.js";
 
-const TRADER_ADDRESS = process.env.TRADER_ADDRESS ?? "";
-const INSTANCE_DIR = process.env.INSTANCE_DIR ?? ".";
-const DURATION_MS = Number(process.env.DURATION_MS ?? 0);
-const STRATEGY = process.env.STRATEGY ?? "fuzz";
+const TRADER_ADDRESS = requiredEnv("TRADER_ADDRESS");
+const INSTANCE_DIR = requiredEnv("INSTANCE_DIR");
+const DURATION_MS = requiredNonnegativeInt("DURATION_MS");
+const STRATEGY = requiredEnv("STRATEGY");
 const LABEL = TRADER_ADDRESS.slice(0, 8);
 // Plumb SIM_GAS_BUDGET to the trader so a capacity batch can reach the real 5e9 computation cap;
 // default 2e9 for ordinary strategies.

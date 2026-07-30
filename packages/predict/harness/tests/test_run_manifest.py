@@ -20,6 +20,7 @@ class RunManifestTests(unittest.TestCase):
             instance = root / "benchmark-test"
             artifacts = instance / "artifacts"
             artifacts.mkdir(parents=True)
+            delivered = root / "delivered-results.json"
             context = {
                 "run_id": "benchmark-test",
                 "instance_dir": instance,
@@ -28,6 +29,10 @@ class RunManifestTests(unittest.TestCase):
 
             def generate(_source, scenario, _seed):
                 scenario.write_text("scenario\n")
+
+            def run_command(command, **_kwargs):
+                if command[1] == "simulations/write_benchmark_results.py":
+                    Path(command[3]).write_text('{"gas":"ok"}\n')
 
             with (
                 mock.patch.object(
@@ -39,9 +44,18 @@ class RunManifestTests(unittest.TestCase):
                 mock.patch.object(parity, "new_manifest", return_value={}),
                 mock.patch.object(parity, "write_manifest"),
                 mock.patch.object(parity, "complete_manifest"),
-                mock.patch.object(parity.subprocess, "run") as run,
+                mock.patch.object(
+                    parity.subprocess,
+                    "run",
+                    side_effect=run_command,
+                ) as run,
             ):
-                result = parity.run(source=str(source), max_rows=5, benchmark=True)
+                result = parity.run(
+                    source=str(source),
+                    max_rows=5,
+                    benchmark=True,
+                    results_output=str(delivered),
+                )
 
             self.assertEqual(result, 0)
             commands = [call.args[0] for call in run.call_args_list]
@@ -51,6 +65,7 @@ class RunManifestTests(unittest.TestCase):
             )
             self.assertEqual(commands[1][1], "simulations/compare_parity.py")
             self.assertEqual(commands[2][1], "simulations/write_benchmark_results.py")
+            self.assertEqual(delivered.read_text(), '{"gas":"ok"}\n')
 
     def test_manifest_captures_exact_input_hashes_and_localnet_identity(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:

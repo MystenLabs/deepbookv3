@@ -1,13 +1,12 @@
 import { readFileSync } from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { fromBase64 } from "@mysten/sui/utils";
 
 function resolveInstanceDir(): string {
   const dir = process.env.INSTANCE_DIR;
-  if (dir) return dir;
-  return fileURLToPath(new URL("..", import.meta.url));
+  if (!dir) throw new Error("INSTANCE_DIR is required");
+  return dir;
 }
 
 const instanceDir = resolveInstanceDir();

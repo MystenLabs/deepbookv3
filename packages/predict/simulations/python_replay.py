@@ -22,6 +22,41 @@ POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
+SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
+    "schema_version": None,
+    "source": {
+        "expiry_ms": None,
+        "settlement_timestamp_ms": None,
+        "settlement_price": None,
+    },
+    "capital": {
+        "normal": {"manager_seed": None, "vault_seed": None},
+        "long": {"manager_seed": None, "vault_seed": None},
+    },
+    "generation": {
+        "normal": {"min_mint_spend": None, "max_mint_spend": None},
+        "long": {"min_mint_spend": None, "max_mint_spend": None},
+    },
+    "protocol": {
+        "base_fee": None,
+        "min_fee": None,
+        "min_entry_probability": None,
+        "max_entry_probability": None,
+        "trade_liquidation_budget": None,
+        "valuation_liquidation_budget": None,
+        "liquidation_head_scan_divisor": None,
+        "curve_samples": None,
+        "protocol_reserve_profit_share": None,
+        "trading_loss_rebate_rate": None,
+        "max_expiry_allocation": None,
+        "initial_expiry_cash": None,
+        "expiry_fee_window_ms": None,
+        "expiry_fee_max_multiplier": None,
+        "max_admission_leverage": None,
+        "liquidation_ltv": None,
+        "backing_buffer_lambda": None,
+    },
+}
 ORACLE_REFRESH_FIELDS = (
     "spot",
     "forward",
@@ -34,8 +69,7 @@ ORACLE_REFRESH_FIELDS = (
     "sigma",
     "risk_free_rate",
 )
-# Lightweight mirror of Move config defaults. scenario_config.json may override
-# these only when the corresponding localnet setup is intentionally extended.
+# Lightweight mirror initialized from the complete scenario_config.json contract.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ENTRY_PROBABILITY = 10_000_000
@@ -132,17 +166,49 @@ INV_13_U128 = 76_923_077
 
 def load_scenario_config(path: Path | None = None) -> dict[str, Any]:
     config_path = path if path is not None else DEFAULT_SCENARIO_CONFIG_PATH
-    return json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text())
+    validate_scenario_config(config)
+    return config
 
 
-def _config_int(config: dict[str, Any], section: str, key: str, default: int) -> int:
-    value = config.get(section, {}).get(key, default)
-    return int(value)
+def _validate_config_object(
+    value: Any,
+    schema: dict[str, Any],
+    path: str,
+) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object")
+    missing = sorted(set(schema) - set(value))
+    unknown = sorted(set(value) - set(schema))
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if unknown:
+            details.append(f"unknown={','.join(unknown)}")
+        raise ValueError(f"{path} schema mismatch; {'; '.join(details)}")
+    for key, nested in schema.items():
+        child = value[key]
+        child_path = f"{path}.{key}"
+        if isinstance(nested, dict):
+            _validate_config_object(child, nested, child_path)
+        elif key == "schema_version":
+            if child != 1:
+                raise ValueError(f"unsupported scenario config schema_version: {child}")
+        elif not isinstance(child, str) or not child.isdecimal():
+            raise ValueError(f"{child_path} must be a non-negative integer string")
 
 
-def _capital_int(config: dict[str, Any], mode: str, key: str, default: int) -> int:
-    value = config.get("capital", {}).get(mode, {}).get(key, default)
-    return int(value)
+def validate_scenario_config(config: Any) -> None:
+    _validate_config_object(config, SCENARIO_CONFIG_SCHEMA, "scenario config")
+
+
+def _config_int(config: dict[str, Any], section: str, key: str) -> int:
+    return int(config[section][key])
+
+
+def _capital_int(config: dict[str, Any], mode: str, key: str) -> int:
+    return int(config["capital"][mode][key])
 
 
 def apply_scenario_config(config: dict[str, Any]) -> None:
@@ -167,94 +233,80 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
 
-    VAULT_SEED = _capital_int(config, "normal", "vault_seed", VAULT_SEED)
-    MANAGER_SEED = _capital_int(config, "normal", "manager_seed", MANAGER_SEED)
+    validate_scenario_config(config)
+    VAULT_SEED = _capital_int(config, "normal", "vault_seed")
+    MANAGER_SEED = _capital_int(config, "normal", "manager_seed")
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
 
-    BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
-    MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
+    BASE_FEE = _config_int(config, "protocol", "base_fee")
+    MIN_FEE = _config_int(config, "protocol", "min_fee")
     MIN_ENTRY_PROBABILITY = _config_int(
         config,
         "protocol",
         "min_entry_probability",
-        MIN_ENTRY_PROBABILITY,
     )
     MAX_ENTRY_PROBABILITY = _config_int(
         config,
         "protocol",
         "max_entry_probability",
-        MAX_ENTRY_PROBABILITY,
     )
-    TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
+    TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget")
     VALUATION_LIQUIDATION_BUDGET = _config_int(
         config,
         "protocol",
         "valuation_liquidation_budget",
-        VALUATION_LIQUIDATION_BUDGET,
     )
     LIQUIDATION_HEAD_SCAN_DIVISOR = _config_int(
         config,
         "protocol",
         "liquidation_head_scan_divisor",
-        LIQUIDATION_HEAD_SCAN_DIVISOR,
     )
-    CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples", CURVE_SAMPLES)
+    CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples")
     PROTOCOL_RESERVE_PROFIT_SHARE = _config_int(
         config,
         "protocol",
         "protocol_reserve_profit_share",
-        PROTOCOL_RESERVE_PROFIT_SHARE,
     )
     TRADING_LOSS_REBATE_RATE = _config_int(
         config,
         "protocol",
         "trading_loss_rebate_rate",
-        TRADING_LOSS_REBATE_RATE,
     )
     MAX_EXPIRY_ALLOCATION = _config_int(
         config,
         "protocol",
         "max_expiry_allocation",
-        MAX_EXPIRY_ALLOCATION,
     )
     INITIAL_EXPIRY_CASH = _config_int(
         config,
         "protocol",
         "initial_expiry_cash",
-        INITIAL_EXPIRY_CASH,
     )
     BACKING_BUFFER_LAMBDA = _config_int(
         config,
         "protocol",
         "backing_buffer_lambda",
-        BACKING_BUFFER_LAMBDA,
     )
     EXPIRY_FEE_WINDOW_MS = _config_int(
         config,
         "protocol",
         "expiry_fee_window_ms",
-        EXPIRY_FEE_WINDOW_MS,
     )
     EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
         config,
         "protocol",
         "expiry_fee_max_multiplier",
-        EXPIRY_FEE_MAX_MULTIPLIER,
     )
     MAX_ADMISSION_LEVERAGE = _config_int(
         config,
         "protocol",
         "max_admission_leverage",
-        MAX_ADMISSION_LEVERAGE,
     )
-    LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv", LIQUIDATION_LTV)
+    LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv")
 
 
-def config_source_value(config: dict[str, Any], key: str) -> int | None:
-    source = config.get("source", {})
-    if key not in source:
-        return None
-    return int(source[key])
+def config_source_value(config: dict[str, Any], key: str) -> int:
+    return int(config["source"][key])
 
 
 class I64:
@@ -1231,10 +1283,7 @@ def exact_live_liability(model: dict[str, Any]) -> int:
     return max(0, linear - correction)
 
 
-def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] | None = None) -> int:
-    # `curve` is accepted for call-site compatibility but ignored: the exact walk
-    # needs no curve. (Kept positional so the Python-only derived sampler, which
-    # passes a curve, still type-checks.)
+def live_position_liability(model: dict[str, Any]) -> int:
     return exact_live_liability(model)
 
 
@@ -2552,7 +2601,7 @@ def build_derived_record(
     if sampled_global:
         if model["minted_min_strike"] is not None and model["minted_max_strike"] is not None:
             curve = build_valuation_curve(model)
-        liability = live_position_liability(model, curve)
+        liability = live_position_liability(model)
         try:
             vault_value = compute_pool_value(model, state, curve, liability)
         except ValueError:

@@ -15,6 +15,7 @@ import { cadenceOf, nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
+import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
@@ -35,10 +36,10 @@ import {
 // the future deployment horizon, not a target number of live markets.
 const CADENCE_IDS = [0, 1, 2];
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
-const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
-const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
-const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
-const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M default; campaign overrides per strategy
+const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
+const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
+const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
+const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
 // Flush gas budget. A single dense capacity market can OOG at the per-tx COMPUTATION cap
 // (5e9 MIST), not the budget; the pool total binds earlier on the object-runtime cached-objects

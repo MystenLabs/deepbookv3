@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the legacy gas-benchmark results file from a local trace."""
+"""Write the gas-benchmark results file from a local trace."""
 
 from __future__ import annotations
 

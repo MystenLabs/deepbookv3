@@ -4,7 +4,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const instanceDir = process.env.INSTANCE_DIR ?? process.cwd();
+const instanceDir = process.env.INSTANCE_DIR;
+if (!instanceDir) throw new Error("INSTANCE_DIR is required");
 
 export const FAILED_TRANSACTIONS_DIR = path.join(instanceDir, "artifacts", "failed_transactions");
 

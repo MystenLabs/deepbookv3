@@ -1,14 +1,11 @@
 // Shared Predict-layer bring-up on an oracle-ready localnet: oracle feeds + trusted
-// signer + cadence/freshness config + lifecycle cap, then create+seed a market and
-// bootstrap the pool. Used by the B1 mint spike and the keeper so the multi-step
-// operator sequence lives in one place.
+// signer + cadence config + lifecycle cap, then create markets and bootstrap the pool.
 
 import { existsSync, readFileSync } from "node:fs";
 
 import { atomicWriteFile } from "./io.js";
-import { DirectWsSource, type FixedSvi } from "./marketSource.js";
-import { type Svi } from "./pricer.js";
-import { BOOTSTRAP_SUPPLY, CADENCES, FRESHNESS } from "./predictConfig.js";
+import { BOOTSTRAP_SUPPLY, CADENCES } from "./predictConfig.js";
+import { requiredEnv } from "./runnerConfig.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -26,14 +23,11 @@ import {
   readSupplyRequestsPending,
   registerUnderlyingAndCreateFeedsTx,
   requestSupplyTx,
-  seedOracleTx,
   setBlockScholesSignerTx,
   setCadenceConfigTx,
-  setOracleFreshnessTx,
   updatePythTrustedSignerTx,
 } from "./runtime.js";
 
-export const to1e9 = (x: number) => BigInt(Math.round(x * 1e9));
 export const isoSec = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z";
 export const found = (b: any, t: string): string => {
   const c = b.objectChanges?.find((ch: any) => ch.type === "created" && ch.objectType?.includes(t));
@@ -51,76 +45,14 @@ export interface Feeds {
   bsValueStoreId: string;
   bsSviStoreId: string;
 }
-export interface Snap {
-  pythSpot: number;
-  pythSpot1e9: bigint;
-  bsForward: number;
-  bsForward1e9: bigint;
-  svi: Svi;
-  svi1e9: FixedSvi;
-}
 
-// One-shot: fetch the same signature-verified source the continuous updater
-// uses, rather than maintaining a second unsigned subscription implementation.
-export async function fetchSnapshot(expiryMs: number, timeoutMs = 70_000): Promise<Snap> {
-  const source = new DirectWsSource();
-  await source.start([expiryMs]);
-  const deadline = Date.now() + timeoutMs;
-  try {
-    while (Date.now() < deadline) {
-      const snapshot = source.latest();
-      const expiry = snapshot?.expiries.get(expiryMs);
-      if (snapshot && expiry) {
-        return {
-          pythSpot: Number(snapshot.spot1e9) / 1e9,
-          pythSpot1e9: snapshot.spot1e9,
-          bsForward: expiry.forward,
-          bsForward1e9: expiry.forward1e9,
-          svi: {
-            a: expiry.svi.alpha,
-            b: expiry.svi.beta,
-            rho: expiry.svi.rho,
-            m: expiry.svi.m,
-            sigma: expiry.svi.sigma,
-          },
-          svi1e9: expiry.svi1e9,
-        };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error("snapshot timeout (cold expiry?)");
-  } finally {
-    source.stop();
-  }
-}
-
-// OracleRefreshParams shape from a snapshot (1e9-scaled, signed-magnitude SVI).
-export function refreshParams(feeds: Feeds, expiryMs: bigint, snap: Snap) {
-  return {
-    ...feeds,
-    expiry: expiryMs,
-    spot: snap.pythSpot1e9,
-    forward: snap.bsForward1e9,
-    svi: {
-      a: snap.svi1e9.a,
-      aNegative: snap.svi1e9.aNegative,
-      b: snap.svi1e9.b,
-      sigma: snap.svi1e9.sigma,
-      rho: snap.svi1e9.rho,
-      rhoNegative: snap.svi1e9.rhoNegative,
-      m: snap.svi1e9.m,
-      mNegative: snap.svi1e9.mNegative,
-    },
-  };
-}
-
-// Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + freshness
-// + a lifecycle cap. Returns the feed ids and the cap needed to create/flush markets.
+// Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + a
+// lifecycle cap. Returns the feed ids and the cap needed to create/flush markets.
 export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds: Feeds; lifecycleCapId: string }> {
-  const instanceDir = process.env.INSTANCE_DIR;
-  const feedsPath = instanceDir ? `${instanceDir}/feeds.json` : undefined;
+  const instanceDir = requiredEnv("INSTANCE_DIR");
+  const feedsPath = `${instanceDir}/feeds.json`;
   let feeds: Feeds;
-  if (feedsPath && existsSync(feedsPath)) {
+  if (existsSync(feedsPath)) {
     // Restart re-attach: reuse the already-created feeds instead of minting new feed
     // objects (which would overwrite feeds.json while the updater streams the old ids).
     feeds = JSON.parse(readFileSync(feedsPath, "utf8"));
@@ -135,7 +67,7 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
     await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind-spot");
     feeds = { pythFeedId, bsValueStoreId, bsSviStoreId };
     // Publish the feed ids so the updater (a separate process) can stream onto them.
-    if (feedsPath) atomicWriteFile(feedsPath, JSON.stringify(feeds));
+    atomicWriteFile(feedsPath, JSON.stringify(feeds));
   }
 
   // Config setters are idempotent — (re-)run either way so a re-attach re-asserts policy.
@@ -144,10 +76,6 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   for (const cadenceId of cadenceIds) {
     await executeAndWait(setCadenceConfigTx({ cadenceId, ...CADENCES[cadenceId] }), `cadence-${cadenceId}`);
   }
-  await executeAndWait(
-    setOracleFreshnessTx(PROTOCOL_CONFIG_ID, FRESHNESS.pythSpotMs, FRESHNESS.blockScholesPriceMs, FRESHNESS.blockScholesSviMs),
-    "freshness",
-  );
   return { feeds, lifecycleCapId };
 }
 
@@ -162,18 +90,6 @@ export async function createMarket(
     "create-market",
   );
   return { marketId: found(mkR, "ExpiryMarket"), expiryMs: BigInt(eventField(mkR, "MarketCreated", "expiry")) };
-}
-
-// Create + seed a market's feeds, for the standalone mint spike (no updater running).
-export async function createAndSeedMarket(
-  feeds: Feeds,
-  lifecycleCapId: string,
-  cadenceId: number,
-): Promise<{ marketId: string; expiryMs: bigint; snap: Snap }> {
-  const { marketId, expiryMs } = await createMarket(lifecycleCapId, cadenceId);
-  const snap = await fetchSnapshot(Number(expiryMs));
-  await executeAndWait(await seedOracleTx(refreshParams(feeds, expiryMs, snap)), "seed");
-  return { marketId, expiryMs, snap };
 }
 
 // Genesis: operator account + lock min-bootstrap + supply 10M + a bare flush that mints

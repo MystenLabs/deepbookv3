@@ -4,9 +4,6 @@
 //   forward/SVI). Used by a single `harness live` and by the shared hub.
 // - HubSource reads a global snapshot written by ONE hub, so N parallel localnets share a
 //   single WS pair instead of opening one each.
-// - ReplaySource re-plays a recorded hub stream (deterministic market dynamics): it maps
-//   recorded expiries onto the current grid by sorted position and stamps fresh timestamps,
-//   so the recorded spot path + term structure run against the replay localnet's clock.
 import { readFileSync } from "node:fs";
 
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
@@ -31,16 +28,14 @@ const BS_UNDERLYING_ID = 1;
 // `{network, pkg_ver}` selects this verifier deployment on the provider side;
 // startup reads the shared registry over Sui gRPC and refuses a paused, wrong-
 // package, or malformed signer configuration before accepting any market data.
-const BS_PROVIDER_NETWORK = process.env.BS_PROVIDER_NETWORK ?? "testnet";
-const BS_PROVIDER_PKG_VER = Number(process.env.BS_PROVIDER_PKG_VER ?? 1);
-const BS_PROVIDER_PACKAGE_ID =
-  process.env.BS_PROVIDER_PACKAGE_ID ??
-  "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6";
-const BS_PROVIDER_REGISTRY_ID =
-  process.env.BS_PROVIDER_REGISTRY_ID ??
-  "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440";
-const BS_PROVIDER_GRPC_URL =
-  process.env.BS_PROVIDER_GRPC_URL ?? "https://fullnode.testnet.sui.io:443";
+const BS_PROVIDER_PROFILE = {
+  name: "testnet-v1",
+  network: "testnet" as const,
+  pkgVer: 1,
+  packageId: "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6",
+  registryId: "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
+  grpcUrl: "https://fullnode.testnet.sui.io:443",
+};
 
 export interface Svi {
   alpha: number;
@@ -94,6 +89,7 @@ export interface MarketSource {
 
 export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, unknown> {
   return {
+    schemaVersion: 1,
     spot1e9: snapshot.spot1e9.toString(),
     publishedAtMs: snapshot.publishedAtMs.toString(),
     bsSpot1e9: snapshot.bsSpot1e9.toString(),
@@ -123,62 +119,118 @@ export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, u
   };
 }
 
-// Parse a snapshot JSON object ({spot1e9, publishedAtMs, expiries:{ms:{forward,forwardTsMs,svi,
-// sviTsMs}}}) into a MarketSnapshot. Older recordings without per-series timestamps fall back to
-// the publish time. mapByPosition remaps the recorded expiries onto `wanted` by sorted index
-// (replay); otherwise it filters to exactly the wanted expiries (hub).
-function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketSnapshot {
-  const publishedAtMs = Number(h.publishedAtMs);
-  const fixed = (value: unknown, fallback: number): bigint =>
-    value === undefined ? BigInt(Math.round(fallback * SCALE_1E9)) : BigInt(String(value));
+function strictObject(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const object = value as Record<string, unknown>;
+  const expected = new Set(keys);
+  const missing = keys.filter((key) => !(key in object));
+  const unknown = Object.keys(object).filter((key) => !expected.has(key));
+  if (missing.length || unknown.length) {
+    throw new Error(
+      `${label} schema mismatch` +
+      (missing.length ? `; missing=${missing.join(",")}` : "") +
+      (unknown.length ? `; unknown=${unknown.join(",")}` : ""),
+    );
+  }
+  return object;
+}
+
+function integerString(value: unknown, label: string): bigint {
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) {
+    throw new Error(`${label} must be an integer string`);
+  }
+  return BigInt(value);
+}
+
+function finiteNumber(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number`);
+  }
+  return value;
+}
+
+// Parse the current versioned hub snapshot. Missing and unknown fields fail the read;
+// callers retry the next atomic snapshot instead of silently manufacturing semantics.
+function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
+  const h = strictObject(
+    raw,
+    ["schemaVersion", "spot1e9", "publishedAtMs", "bsSpot1e9", "bsSpotTsMs", "expiries"],
+    "snapshot",
+  );
+  if (h.schemaVersion !== 1) {
+    throw new Error(`unsupported snapshot schemaVersion: ${String(h.schemaVersion)}`);
+  }
+  const encodedExpiries = h.expiries;
+  if (encodedExpiries === null || typeof encodedExpiries !== "object" || Array.isArray(encodedExpiries)) {
+    throw new Error("snapshot.expiries must be an object");
+  }
   const entry = (e: any): ExpiryData => {
-    const svi: Svi = e.svi;
-    const raw = e.svi1e9 ?? {};
+    const encoded = strictObject(
+      e,
+      ["forward", "forward1e9", "forwardTsMs", "svi", "svi1e9", "sviTsMs"],
+      "snapshot expiry",
+    );
+    const encodedSvi = strictObject(
+      encoded.svi,
+      ["alpha", "beta", "rho", "m", "sigma"],
+      "snapshot expiry.svi",
+    );
+    const encodedFixed = strictObject(
+      encoded.svi1e9,
+      ["a", "aNegative", "b", "sigma", "rho", "rhoNegative", "m", "mNegative"],
+      "snapshot expiry.svi1e9",
+    );
+    const boolean = (value: unknown, label: string): boolean => {
+      if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
+      return value;
+    };
+    const svi: Svi = {
+      alpha: finiteNumber(encodedSvi.alpha, "snapshot expiry.svi.alpha"),
+      beta: finiteNumber(encodedSvi.beta, "snapshot expiry.svi.beta"),
+      rho: finiteNumber(encodedSvi.rho, "snapshot expiry.svi.rho"),
+      m: finiteNumber(encodedSvi.m, "snapshot expiry.svi.m"),
+      sigma: finiteNumber(encodedSvi.sigma, "snapshot expiry.svi.sigma"),
+    };
     return {
-      forward: Number(e.forward),
-      forward1e9: fixed(e.forward1e9, Number(e.forward)),
-      forwardTsMs: Number(e.forwardTsMs ?? publishedAtMs),
+      forward: finiteNumber(encoded.forward, "snapshot expiry.forward"),
+      forward1e9: integerString(encoded.forward1e9, "snapshot expiry.forward1e9"),
+      forwardTsMs: finiteNumber(encoded.forwardTsMs, "snapshot expiry.forwardTsMs"),
       svi,
       svi1e9: {
-        a: fixed(raw.a, Math.abs(svi.alpha)),
-        aNegative: raw.aNegative ?? svi.alpha < 0,
-        b: fixed(raw.b, svi.beta),
-        sigma: fixed(raw.sigma, svi.sigma),
-        rho: fixed(raw.rho, Math.abs(svi.rho)),
-        rhoNegative: raw.rhoNegative ?? svi.rho < 0,
-        m: fixed(raw.m, Math.abs(svi.m)),
-        mNegative: raw.mNegative ?? svi.m < 0,
+        a: integerString(encodedFixed.a, "snapshot expiry.svi1e9.a"),
+        aNegative: boolean(encodedFixed.aNegative, "snapshot expiry.svi1e9.aNegative"),
+        b: integerString(encodedFixed.b, "snapshot expiry.svi1e9.b"),
+        sigma: integerString(encodedFixed.sigma, "snapshot expiry.svi1e9.sigma"),
+        rho: integerString(encodedFixed.rho, "snapshot expiry.svi1e9.rho"),
+        rhoNegative: boolean(encodedFixed.rhoNegative, "snapshot expiry.svi1e9.rhoNegative"),
+        m: integerString(encodedFixed.m, "snapshot expiry.svi1e9.m"),
+        mNegative: boolean(encodedFixed.mNegative, "snapshot expiry.svi1e9.mNegative"),
       },
-      sviTsMs: Number(e.sviTsMs ?? publishedAtMs),
+      sviTsMs: finiteNumber(encoded.sviTsMs, "snapshot expiry.sviTsMs"),
     };
   };
   const expiries = new Map<number, ExpiryData>();
-  if (mapByPosition) {
-    const recorded = Object.keys(h.expiries ?? {}).map(Number).sort((a, b) => a - b);
-    const sortedWanted = [...wanted].sort((a, b) => a - b);
-    for (let i = 0; i < sortedWanted.length && i < recorded.length; i++) {
-      const e = h.expiries[String(recorded[i])];
-      if (e) expiries.set(sortedWanted[i], entry(e));
-    }
-  } else {
-    for (const ms of wanted) {
-      const e = h.expiries?.[String(ms)];
-      if (e) expiries.set(ms, entry(e));
-    }
+  for (const ms of wanted) {
+    const e = (encodedExpiries as Record<string, unknown>)[String(ms)];
+    if (e) expiries.set(ms, entry(e));
   }
   return {
-    spot1e9: BigInt(h.spot1e9),
-    publishedAtMs: BigInt(h.publishedAtMs),
-    // Recordings that predate the separate BS spot lane carried only the Pyth spot; fall
-    // back to it so old hubs/replays keep working.
-    bsSpot1e9: BigInt(h.bsSpot1e9 ?? h.spot1e9),
-    bsSpotTsMs: Number(h.bsSpotTsMs ?? publishedAtMs),
+    spot1e9: integerString(h.spot1e9, "snapshot.spot1e9"),
+    publishedAtMs: integerString(h.publishedAtMs, "snapshot.publishedAtMs"),
+    bsSpot1e9: integerString(h.bsSpot1e9, "snapshot.bsSpot1e9"),
+    bsSpotTsMs: finiteNumber(h.bsSpotTsMs, "snapshot.bsSpotTsMs"),
     expiries,
   };
 }
 
-const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
-const BS_KEY = harnessKey("BLOCK_SCHOLES_API_KEY");
+const pythToken = () => harnessKey("PYTH_PRO_API_KEY");
+const blockScholesKey = () => harnessKey("BLOCK_SCHOLES_API_KEY");
 
 // Pyth Lazer history endpoint (settlement, independent of the live stream): the EXACT spot
 // at a past timestamp. Mirrors deepbook-services' fetchExactLazerPayload (POST /v1/price,
@@ -200,7 +252,7 @@ export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<
     try {
       const res = await fetch(PYTH_HISTORY_URL, {
         method: "POST",
-        headers: { Authorization: `Bearer ${PYTH_TOKEN}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${pythToken()}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent"],
           formats: ["leEcdsa"], jsonBinaryEncoding: "base64", parsed: true, channel: PYTH_HISTORY_CHANNEL,
@@ -278,7 +330,7 @@ export class DirectWsSource implements MarketSource {
     this.#expiries = expiries;
     this.#providerPublicKey = await this.#loadProviderPublicKey();
     this.#pyth = await PythLazerClient.create({
-      token: PYTH_TOKEN,
+      token: pythToken(),
       webSocketPoolConfig: { urls: ["wss://pyth-lazer.dourolabs.app/v1/stream"], numConnections: 1 },
     });
     this.#pyth.addMessageListener((ev: any) => {
@@ -299,15 +351,15 @@ export class DirectWsSource implements MarketSource {
 
   async #loadProviderPublicKey(): Promise<Uint8Array> {
     const client = new SuiGrpcClient({
-      baseUrl: BS_PROVIDER_GRPC_URL,
-      network: BS_PROVIDER_NETWORK as "testnet",
+      baseUrl: BS_PROVIDER_PROFILE.grpcUrl,
+      network: BS_PROVIDER_PROFILE.network,
     });
     const { object } = await client.getObject({
-      objectId: BS_PROVIDER_REGISTRY_ID,
+      objectId: BS_PROVIDER_PROFILE.registryId,
       include: { json: true },
     });
     const result = object as any;
-    const expectedType = `${BS_PROVIDER_PACKAGE_ID}::registry::SignerRegistry`;
+    const expectedType = `${BS_PROVIDER_PROFILE.packageId}::registry::SignerRegistry`;
     const objectType = result.objectType ?? result.type ?? "";
     if (objectType && objectType !== expectedType) {
       throw new Error(`Block Scholes registry type mismatch: ${objectType}`);
@@ -324,8 +376,9 @@ export class DirectWsSource implements MarketSource {
       throw new Error(`Block Scholes provider registry signer key is malformed`);
     }
     console.log(
-      `[bs-signed] trust ready network=${BS_PROVIDER_NETWORK} pkg_ver=${BS_PROVIDER_PKG_VER} ` +
-      `package=${BS_PROVIDER_PACKAGE_ID.slice(0, 10)} registry=${BS_PROVIDER_REGISTRY_ID.slice(0, 10)}`,
+      `[bs-signed] trust ready profile=${BS_PROVIDER_PROFILE.name} ` +
+      `package=${BS_PROVIDER_PROFILE.packageId.slice(0, 10)} ` +
+      `registry=${BS_PROVIDER_PROFILE.registryId.slice(0, 10)}`,
     );
     return publicKey;
   }
@@ -339,7 +392,7 @@ export class DirectWsSource implements MarketSource {
         jsonrpc: "2.0",
         id: 1,
         method: "authenticate",
-        params: { api_key: BS_KEY },
+        params: { api_key: blockScholesKey() },
       })));
     ws.on("message", (raw) => {
       let frame: any;
@@ -404,8 +457,8 @@ export class DirectWsSource implements MarketSource {
         Number(format?.decimals) === 9 &&
         signature?.type === "SUI" &&
         (signature?.signature_schema ?? "ecdsa") === "ecdsa" &&
-        domain?.network === BS_PROVIDER_NETWORK &&
-        Number(domain?.pkg_ver) === BS_PROVIDER_PKG_VER
+        domain?.network === BS_PROVIDER_PROFILE.network &&
+        Number(domain?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer
       );
     });
     const itemsOk = items.every((item: any) => {
@@ -524,7 +577,7 @@ export class DirectWsSource implements MarketSource {
       !verifyProviderBatchSignature({
         signature,
         payload,
-        verifierPackageId: BS_PROVIDER_PACKAGE_ID,
+        verifierPackageId: BS_PROVIDER_PROFILE.packageId,
         expectedPublicKey: this.#providerPublicKey,
       })
     ) {
@@ -625,8 +678,8 @@ export class DirectWsSource implements MarketSource {
             type: "SUI",
             signature_schema: "ecdsa",
             domain: {
-              network: BS_PROVIDER_NETWORK,
-              pkg_ver: BS_PROVIDER_PKG_VER,
+              network: BS_PROVIDER_PROFILE.network,
+              pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
             },
           },
         },
@@ -685,10 +738,11 @@ export class DirectWsSource implements MarketSource {
 
   diagnostics(): Record<string, unknown> {
     return {
-      provider_network: BS_PROVIDER_NETWORK,
-      provider_pkg_ver: BS_PROVIDER_PKG_VER,
-      verifier_package_id: BS_PROVIDER_PACKAGE_ID,
-      signer_registry_id: BS_PROVIDER_REGISTRY_ID,
+      provider_profile: BS_PROVIDER_PROFILE.name,
+      provider_network: BS_PROVIDER_PROFILE.network,
+      provider_pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
+      verifier_package_id: BS_PROVIDER_PROFILE.packageId,
+      signer_registry_id: BS_PROVIDER_PROFILE.registryId,
       authenticated: this.#bsOpen,
       acknowledged_subscriptions: this.#acknowledgedSubscriptions,
       pending_acknowledgements: this.#pendingAcks.size,
@@ -726,51 +780,10 @@ export class HubSource implements MarketSource {
   }
   latest(): MarketSnapshot | null {
     try {
-      return snapshotFrom(JSON.parse(readFileSync(this.path, "utf8")), this.#wanted, false);
+      return snapshotFrom(JSON.parse(readFileSync(this.path, "utf8")), this.#wanted);
     } catch {
       return null;
     }
-  }
-  stop(): void {}
-}
-
-// Re-plays a recorded hub stream (JSONL of snapshots), one record per poll, remapping
-// recorded expiries onto the current grid and stamping a fresh publish time so the values
-// stay within the on-chain freshness window.
-export class ReplaySource implements MarketSource {
-  #records: any[] = [];
-  #i = 0;
-  #wanted: number[] = [];
-  constructor(private readonly path: string) {}
-  async start(expiries: number[]): Promise<void> {
-    this.#wanted = expiries;
-    this.#records = readFileSync(this.path, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  }
-  ensureExpiries(want: number[]): void {
-    this.#wanted = want;
-  }
-  latest(): MarketSnapshot | null {
-    if (this.#records.length === 0) return null;
-    const h = this.#records[Math.min(this.#i, this.#records.length - 1)];
-    this.#i++;
-    const snap = snapshotFrom(h, this.#wanted, true);
-    // Rebase EVERY clock by one offset so relative ages survive the replay. Refreshing only
-    // the envelope hands the store fresh batches whose model times still carry the
-    // recording's absolute age — the store accepts them and Predict immediately rejects
-    // them as stale.
-    const nowMs = Date.now();
-    const offsetMs = nowMs - Number(snap.publishedAtMs);
-    const shift = (tsMs: number): number => (tsMs > 0 ? tsMs + offsetMs : 0);
-    const expiries = new Map<number, ExpiryData>();
-    for (const [ms, e] of snap.expiries) {
-      expiries.set(ms, { ...e, forwardTsMs: shift(e.forwardTsMs), sviTsMs: shift(e.sviTsMs) });
-    }
-    return {
-      ...snap,
-      publishedAtMs: BigInt(nowMs),
-      bsSpotTsMs: shift(snap.bsSpotTsMs),
-      expiries,
-    };
   }
   stop(): void {}
 }

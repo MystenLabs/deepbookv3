@@ -19,8 +19,8 @@ from harness import (
     cli,
     config,
     live,
+    oracle_setup,
     publish,
-    run as run_mod,
     session,
     staging,
 )
@@ -318,47 +318,89 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--with-unpublished-dependencies", args)
             self.assertNotIn("--publish-unpublished-deps", args)
 
-    def test_stage_and_publish_checks_checkout_after_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            workspace = Path(tmp) / "workspace"
-            failure = RuntimeError("publish stopped")
-            with (
-                mock.patch.object(staging, "stage_closure") as stage,
-                mock.patch.object(publish, "publish_closure", side_effect=failure),
-                mock.patch.object(
-                    staging, "checkout_fingerprint", return_value="unchanged"
-                ) as fingerprint,
-            ):
-                with self.assertRaisesRegex(RuntimeError, "publish stopped"):
-                    publish.stage_and_publish(
-                        Path(tmp) / "client.yaml",
-                        workspace,
-                        Path(tmp) / "Pub.sim.toml",
-                    )
-
-            stage.assert_called_once_with(workspace)
-            self.assertEqual(fingerprint.call_count, 2)
-
-    def test_stage_and_publish_rejects_checkout_mutation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with (
-                mock.patch.object(staging, "stage_closure"),
-                mock.patch.object(publish, "publish_closure", return_value={}),
-                mock.patch.object(
-                    staging,
-                    "checkout_fingerprint",
-                    side_effect=["before", "after"],
-                ),
-            ):
-                with self.assertRaisesRegex(RuntimeError, "mutated canonical"):
-                    publish.stage_and_publish(
-                        Path(tmp) / "client.yaml",
-                        Path(tmp) / "workspace",
-                        Path(tmp) / "Pub.sim.toml",
-                    )
-
-
 class LifecycleTests(unittest.TestCase):
+    def test_local_signer_bootstrap_is_captured_from_stdout(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["npx", "tsx", "devtools/ts/localPythCli.ts"],
+            0,
+            stdout='{"guardianPrivateKey":"secret"}\n',
+            stderr="",
+        )
+        with mock.patch.object(
+            oracle_setup.cancellation,
+            "run",
+            return_value=completed,
+        ) as run:
+            generated = oracle_setup.generate_local_pyth()
+
+        self.assertEqual(generated, {"guardianPrivateKey": "secret"})
+        self.assertEqual(
+            run.call_args.args[0],
+            ["npx", "tsx", "devtools/ts/localPythCli.ts"],
+        )
+
+    def test_runtime_environment_is_private_and_deployment_stays_public(self) -> None:
+        packages = {
+            name: f"0x-{name}"
+            for name in (
+                "predict",
+                "account",
+                "fixed_math",
+                "block_scholes_oracle",
+                "propbook",
+                "dusdc",
+                "wormhole",
+                "pyth_lazer",
+            )
+        }
+        objects = {
+            name: f"0x-{name}"
+            for name in (
+                "registry",
+                "admin_cap",
+                "protocol_config",
+                "pool_vault",
+                "account_registry",
+                "account_admin_cap",
+                "bs_signer_registry",
+                "bs_admin_cap",
+                "oracle_registry",
+                "oracle_registry_admin_cap",
+                "dusdc_currency",
+                "treasury_cap",
+                "wormhole_state",
+                "pyth_lazer_state",
+            )
+        }
+        local_signers = {
+            "bsSignerPrivateKey": "bs-secret",
+            "bsSignerPublicKey": "bs-public",
+            "governanceChain": 1,
+            "governanceContract": "governance",
+            "receiverChain": 2,
+            "guardianPrivateKey": "guardian-secret",
+            "signerPrivateKey": "pyth-secret",
+            "signerPublicKey": "pyth-public",
+            "signerExpiresAtSeconds": 3,
+        }
+        deployment = {"packages": packages, "objects": objects}
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            instance = Path(raw_tmp)
+            (instance / "localnet").mkdir()
+            oracle_setup.write_env_localnet(
+                instance,
+                deployment,
+                local_signers,
+                9000,
+                "0x-active",
+            )
+            env_path = instance / ".env.localnet"
+
+            self.assertEqual(env_path.stat().st_mode & 0o777, 0o600)
+            self.assertIn("LOCAL_BS_SIGNER_PRIVATE_KEY=bs-secret", env_path.read_text())
+            self.assertNotIn("local_pyth", deployment)
+
     def test_cleanup_instances_keeps_active_slot_and_removes_orphan(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
             instances = Path(raw_tmp)
@@ -415,9 +457,11 @@ class LifecycleTests(unittest.TestCase):
 
         def publish_localnet(run_id, _slot, instance_dir, _cancel_event=None):
             instance_dir.mkdir(parents=True)
-            run_mod._register_localnet(run_id, process)
+            session._register_localnet(run_id, process)
             return {
-                "proc": process,
+                "run_id": run_id,
+                "instance_dir": instance_dir,
+                "process": process,
                 "client_config": instance_dir / "client.yaml",
                 "deployment": {
                     "meta": {
@@ -426,13 +470,15 @@ class LifecycleTests(unittest.TestCase):
                     },
                     "packages": {"predict": "0x123"},
                 },
+                "rpc_port": 9000,
+                "faucet_port": 9123,
                 "active": "0xabc",
             }
 
         with tempfile.TemporaryDirectory() as raw_tmp:
             with (
                 mock.patch.object(session.config, "INSTANCES_DIR", Path(raw_tmp)),
-                mock.patch.object(session, "_make_run_id", return_value="session-test"),
+                mock.patch.object(session, "make_run_id", return_value="session-test"),
                 mock.patch.object(
                     session.state,
                     "reserve",
@@ -440,7 +486,7 @@ class LifecycleTests(unittest.TestCase):
                 ),
                 mock.patch.object(
                     session,
-                    "_publish_localnet",
+                    "_start_published_localnet",
                     side_effect=publish_localnet,
                 ),
                 mock.patch.object(session.oracle_setup, "initialize"),
@@ -448,11 +494,44 @@ class LifecycleTests(unittest.TestCase):
                 mock.patch.object(session.state, "release") as release,
             ):
                 with session.initialized_localnet("session", keep=True):
-                    self.assertIn("session-test", run_mod._ACTIVE_LOCALNETS)
+                    self.assertIn("session-test", session._ACTIVE_LOCALNETS)
 
-        self.assertNotIn("session-test", run_mod._ACTIVE_LOCALNETS)
+        self.assertNotIn("session-test", session._ACTIVE_LOCALNETS)
         stop.assert_called_once_with(process)
         release.assert_called_once_with("session-test")
+
+    def test_published_localnet_scrubs_runtime_secrets_when_retaining_evidence(self) -> None:
+        process = mock.Mock(pid=1234)
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            instance = Path(raw_tmp) / "session-test"
+            context = {
+                "run_id": "session-test",
+                "instance_dir": instance,
+                "process": process,
+                "deployment": {"packages": {}},
+            }
+            with (
+                mock.patch.object(session.config, "INSTANCES_DIR", Path(raw_tmp)),
+                mock.patch.object(session, "make_run_id", return_value="session-test"),
+                mock.patch.object(
+                    session.state,
+                    "reserve",
+                    return_value={"offset": 0, "rpc_port": 9000, "faucet_port": 9123},
+                ),
+                mock.patch.object(
+                    session,
+                    "_start_published_localnet",
+                    return_value=context,
+                ),
+                mock.patch.object(session.localnet, "stop"),
+                mock.patch.object(session.state, "release"),
+            ):
+                with session.published_localnet("session", keep=True) as active:
+                    instance.mkdir(parents=True)
+                    (active["instance_dir"] / ".env.localnet").write_text("SECRET=x\n")
+
+            self.assertTrue(instance.exists())
+            self.assertFalse((instance / ".env.localnet").exists())
 
     def test_campaign_requires_timeout_for_unbounded_strategy(self) -> None:
         error = live._campaign_validation_error(
@@ -560,7 +639,7 @@ class LifecycleTests(unittest.TestCase):
             with (
                 mock.patch.object(live.config, "LOCALNETS_DIR", root),
                 mock.patch.object(live, "_read_meta", return_value=metadata),
-                mock.patch.object(live, "_make_run_id", return_value="campaign-test"),
+                mock.patch.object(live, "make_run_id", return_value="campaign-test"),
                 mock.patch.object(
                     live,
                     "_setup_campaign_localnets",
@@ -608,7 +687,9 @@ class LifecycleTests(unittest.TestCase):
             instance = root / "fuzz-test"
             trace = instance / "trace"
             trace.mkdir(parents=True)
-            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"heartbeat","ts":1}\n'
+            )
             context = {
                 "instance_dir": instance,
                 "client_config": root / "client.yaml",
@@ -631,7 +712,7 @@ class LifecycleTests(unittest.TestCase):
             with (
                 mock.patch.object(live.config, "LOCALNETS_DIR", root),
                 mock.patch.object(live, "_read_meta", return_value=metadata),
-                mock.patch.object(live, "_make_run_id", return_value="campaign-test"),
+                mock.patch.object(live, "make_run_id", return_value="campaign-test"),
                 mock.patch.object(
                     live,
                     "_setup_campaign_localnets",
@@ -710,7 +791,7 @@ class LifecycleTests(unittest.TestCase):
             def __enter__(self):
                 started.set()
                 self.cancel_event.wait(timeout=5)
-                raise run_mod.RunCancelled("run cancelled")
+                raise cancellation.RunCancelled("run cancelled")
 
             def __exit__(self, *_args):
                 raise AssertionError("a context that never entered must not be closed")
@@ -850,11 +931,11 @@ class LifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 mock.patch.object(publish, "staged_closure", side_effect=failure),
-                mock.patch.object(run_mod.localnet, "genesis") as genesis,
-                mock.patch.object(run_mod.localnet, "stop") as stop,
+                mock.patch.object(session.localnet, "genesis") as genesis,
+                mock.patch.object(session.localnet, "stop") as stop,
             ):
                 with self.assertRaisesRegex(RuntimeError, "staging failed"):
-                    run_mod._publish_localnet(
+                    session._start_published_localnet(
                         "test-run",
                         {"rpc_port": 9000, "faucet_port": 9123, "offset": 0},
                         Path(tmp),
@@ -871,22 +952,22 @@ class LifecycleTests(unittest.TestCase):
             with (
                 mock.patch.object(publish, "staged_closure", stage),
                 mock.patch.object(
-                    run_mod.localnet,
+                    session.localnet,
                     "genesis",
                     return_value=Path(tmp) / "client.yaml",
                 ),
-                mock.patch.object(run_mod.localnet, "start", return_value=process),
+                mock.patch.object(session.localnet, "start", return_value=process),
                 mock.patch.object(
-                    run_mod.localnet,
+                    session.localnet,
                     "wait_for_rpc",
                     side_effect=KeyboardInterrupt,
                 ),
-                mock.patch.object(run_mod.localnet, "stop") as stop,
-                mock.patch.object(run_mod.state, "update"),
-                mock.patch.object(run_mod.os, "getpgid", return_value=1234),
+                mock.patch.object(session.localnet, "stop") as stop,
+                mock.patch.object(session.state, "update"),
+                mock.patch.object(session.os, "getpgid", return_value=1234),
             ):
                 with self.assertRaises(KeyboardInterrupt):
-                    run_mod._publish_localnet(
+                    session._start_published_localnet(
                         "test-run",
                         {"rpc_port": 9000, "faucet_port": 9123, "offset": 0},
                         Path(tmp),
@@ -908,17 +989,17 @@ class LifecycleTests(unittest.TestCase):
             with (
                 mock.patch.object(publish, "staged_closure", stage),
                 mock.patch.object(
-                    run_mod.localnet,
+                    session.localnet,
                     "genesis",
                     return_value=Path(tmp) / "client.yaml",
                 ),
-                mock.patch.object(run_mod.localnet, "start", side_effect=start),
-                mock.patch.object(run_mod.localnet, "stop") as stop,
-                mock.patch.object(run_mod.state, "update"),
-                mock.patch.object(run_mod.os, "getpgid", return_value=1234),
+                mock.patch.object(session.localnet, "start", side_effect=start),
+                mock.patch.object(session.localnet, "stop") as stop,
+                mock.patch.object(session.state, "update"),
+                mock.patch.object(session.os, "getpgid", return_value=1234),
             ):
-                with self.assertRaisesRegex(run_mod.RunCancelled, "run cancelled"):
-                    run_mod._publish_localnet(
+                with self.assertRaisesRegex(cancellation.RunCancelled, "run cancelled"):
+                    session._start_published_localnet(
                         "test-run",
                         {"rpc_port": 9000, "faucet_port": 9123, "offset": 0},
                         Path(tmp),
@@ -927,37 +1008,48 @@ class LifecycleTests(unittest.TestCase):
 
             stop.assert_called_once_with(process)
 
-    def test_run_stops_returned_process_when_cancellation_wins_the_return_race(self) -> None:
+    def test_published_localnet_stops_process_when_cancellation_wins_return_race(self) -> None:
         process = mock.Mock(pid=1234)
         cancel_event = threading.Event()
 
         def publish_localnet(run_id, slot, inst, event):
-            run_mod._register_localnet(run_id, process)
+            session._register_localnet(run_id, process)
             event.set()
-            return {"proc": process, "deployment": {"packages": {}}}
+            return {
+                "run_id": run_id,
+                "instance_dir": inst,
+                "process": process,
+                "deployment": {"packages": {}},
+            }
 
         with (
-            mock.patch.object(run_mod, "_make_run_id", return_value="test-run"),
+            tempfile.TemporaryDirectory() as raw_tmp,
+            mock.patch.object(session.config, "INSTANCES_DIR", Path(raw_tmp)),
+            mock.patch.object(session, "make_run_id", return_value="test-run"),
             mock.patch.object(
-                run_mod.staging,
-                "checkout_fingerprint",
-                return_value="unchanged",
-            ),
-            mock.patch.object(
-                run_mod.state,
+                session.state,
                 "reserve",
                 return_value={"rpc_port": 9000, "faucet_port": 9123, "offset": 0},
             ),
-            mock.patch.object(run_mod, "_publish_localnet", side_effect=publish_localnet),
-            mock.patch.object(run_mod.localnet, "stop") as stop,
-            mock.patch.object(run_mod.state, "release") as release,
+            mock.patch.object(
+                session,
+                "_start_published_localnet",
+                side_effect=publish_localnet,
+            ),
+            mock.patch.object(session.localnet, "stop") as stop,
+            mock.patch.object(session.state, "release") as release,
         ):
-            result = run_mod.run(cancel_event=cancel_event)
+            with self.assertRaisesRegex(cancellation.RunCancelled, "run cancelled"):
+                with session.published_localnet(
+                    "test",
+                    keep=False,
+                    cancel_event=cancel_event,
+                ):
+                    self.fail("cancelled localnet must not yield")
 
-        self.assertEqual(result.error, "RunCancelled: run cancelled")
         stop.assert_called_once_with(process)
         release.assert_called_once_with("test-run")
-        self.assertNotIn("test-run", run_mod._ACTIVE_LOCALNETS)
+        self.assertNotIn("test-run", session._ACTIVE_LOCALNETS)
 
     def test_sigterm_runs_command_cleanup_and_returns_130(self) -> None:
         script = (
@@ -1001,7 +1093,7 @@ class LifecycleTests(unittest.TestCase):
         def interrupt() -> int:
             raise KeyboardInterrupt
 
-        with mock.patch.object(cli.run_mod, "stop_active_localnets") as stop:
+        with mock.patch.object(cli.session, "stop_active_localnets") as stop:
             result = cli._run_with_sigterm_handler(interrupt)
 
         self.assertEqual(result, 130)

@@ -44,8 +44,7 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
   not settle with a "latest"/streamed spot.
 - **Live stream = `real_time`** Pyth channel (freshest push), clamped to `≤ Clock−1` and
   strictly monotonic (`clampedSourceTimestampMs`) or the on-chain freshness gate aborts.
-- **MarketSource seam** — DirectWs / Hub / Replay behind one interface; keep new data sources
-  behind it.
+- **MarketSource seam** — DirectWs / Hub behind one interface; keep new data sources behind it.
 - **Oracle grid mirrors the prod cadence set.** The keeper enables + rolls {1m, 5m, 1h} (cadences
   0/1/2, `windowSize` 3 — testnet `deployment.testnet.json`); `GRID_SPEC` warms each cadence's
   `windowSize` boundaries, built from `CADENCES` via `meta.ts`. **Don't widen the grid past BS's
@@ -84,12 +83,21 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
   re-attach). Keep setup idempotent.
 
 ## Secrets
-- `harness/.env` (PYTH_PRO_API_KEY, BLOCK_SCHOLES_API_KEY) is gitignored via `.env`/`*.env`. The
-  per-instance `.env.localnet` (local signer private key) + `local_pyth.json` are written at the
-  instance-dir root and gitignored via `.localnets/` — note `*.env` does NOT match `.env.localnet`,
-  so the `.localnets/` rule is what covers it, and the teardown trim keeps them inside `.localnets/`
-  (never exposed). **Never commit or log any of them** — a pre-commit gate aborts on a staged
-  `.env`; never print a key or the `Bearer` header.
+- `harness/.env` (PYTH_PRO_API_KEY, BLOCK_SCHOLES_API_KEY) is gitignored via `.env`/`*.env`.
+  Local signer configuration is generated onto captured stdout, held in Python memory, and written
+  only to the mode-0600 per-instance `.env.localnet` while actors run. `deployment.json` is public
+  metadata only, and teardown deletes `.env.localnet` before retaining evidence. The instance root
+  is gitignored via `.localnets/` — note `*.env` does NOT match `.env.localnet`, so the `.localnets/`
+  rule is what covers it. **Never commit or log any secret** — a pre-commit gate aborts on a staged
+  `.env`; never print a private key or the `Bearer` header.
+
+## Current-only interfaces
+- Python's `harness` module is the only operator CLI. The TS keeper, updater, hub, and trader actors
+  require the launcher-provided instance, address, grid, strategy, and duration environment instead
+  of inventing standalone defaults.
+- Scenario configuration, hub snapshots, and actor traces are versioned current schemas. Reject
+  missing, unknown, malformed, or unsupported inputs; do not reconstruct historical fields or fall
+  back from computation gas to net gas.
 
 ## Don't
 - Don't modify the Predict Move contracts or `dusdc.move` (deployed to testnet) to suit the
