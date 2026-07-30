@@ -285,6 +285,10 @@ interface WiringState {
     bootstrap: {
         lockCapitalAmount: string;
         supplyAmount: string;
+        accountId: string | null;
+        requestIndex: string | null;
+        sharesMinted: string | null;
+        accountPlpBalance: string | null;
         lockCapitalTx: string | null;
         supplyRequestTx: string | null;
         flushTx: string | null;
@@ -296,6 +300,7 @@ interface WiringState {
         target: number;
         recorded: number;
         windowFull: boolean;
+        checkedAtChainMs: string;
         checkedAt: string;
     }>;
 }
@@ -332,6 +337,7 @@ interface Verification {
         withdrawRequestsPending: string;
         activeMarketIds: string[];
         activeMarketCash: string;
+        deployerAccountPlpBalance: string;
     };
     markets: MarketRecord[];
 }
@@ -1055,6 +1061,10 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     const output = suiClient(runtime.snapshot, [
         "publish",
         resolve(REPO_ROOT, "packages", pkg),
+        "--build-env",
+        NETWORK,
+        "--warnings-are-errors",
+        "--force",
         "--sender",
         DEPLOYER,
         "--skip-dependency-verification",
@@ -1145,6 +1155,10 @@ function target(result: DeploymentResult, pkg: PackageName, module: string, fn: 
 
 function dusdcType(): string {
     return `${LINKED.dusdc}::dusdc::DUSDC`;
+}
+
+function plpType(result: DeploymentResult): string {
+    return `${packageId(result, "predict")}::plp::PLP`;
 }
 
 async function devInspect(runtime: Runtime, label: string, tx: Transaction): Promise<unknown> {
@@ -1691,10 +1705,84 @@ function generateOwnerAuth(result: DeploymentResult, tx: Transaction): Transacti
     return call(tx, target(result, "account", "account", "generate_auth"), []);
 }
 
+async function deploymentAccountId(runtime: Runtime, accountWrapperId: string): Promise<string> {
+    const tx = new Transaction();
+    const account = call(tx, target(runtime.result, "account", "account", "load_account"), [
+        tx.object(accountWrapperId),
+    ]);
+    call(tx, target(runtime.result, "account", "account", "account_id"), [account]);
+    return parseAddress(returnBytes(await devInspect(runtime, "deployment_account_id", tx), 1));
+}
+
+async function deploymentAccountPlpBalance(
+    runtime: Runtime,
+    accountWrapperId: string,
+): Promise<bigint> {
+    const tx = new Transaction();
+    const account = call(tx, target(runtime.result, "account", "account", "load_account"), [
+        tx.object(accountWrapperId),
+    ]);
+    call(
+        tx,
+        target(runtime.result, "account", "account", "balance"),
+        [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
+        [plpType(runtime.result)],
+    );
+    return parseU64(
+        returnBytes(await devInspect(runtime, "deployment_account_plp_balance", tx), 1),
+    );
+}
+
 async function poolU64(runtime: Runtime, fn: string): Promise<bigint> {
     return inspectU64(runtime, fn, target(runtime.result, "predict", "plp", fn), (tx) => [
         tx.object(sharedId(runtime.result, "predict", "plp::PoolVault")),
     ]);
+}
+
+function integerEventField(fields: Record<string, unknown>, name: string): string {
+    const value = fields[name];
+    if (typeof value !== "string" && typeof value !== "number") {
+        throw new Error(`bootstrap event field ${name} is not numeric`);
+    }
+    return String(value);
+}
+
+function validateBootstrapReceipt(
+    receipt: Receipt,
+    vaultId: string,
+    accountId: string,
+    accountWrapperId: string,
+): { requestIndex: string; sharesMinted: string } {
+    const requested = asRecord(eventNamed(receipt, "SupplyRequested")?.parsedJson);
+    const filled = asRecord(eventNamed(receipt, "SupplyFilled")?.parsedJson);
+    if (Object.keys(requested).length === 0 || Object.keys(filled).length === 0) {
+        throw new Error(`bootstrap transaction ${receipt.digest} is missing supply events`);
+    }
+    const requestIndex = integerEventField(requested, "index");
+    const sharesMinted = integerEventField(filled, "shares_minted");
+    const expected = [
+        [normalizeOptionalId(requested.pool_vault_id), vaultId, "requested pool"],
+        [normalizeOptionalId(filled.pool_vault_id), vaultId, "filled pool"],
+        [normalizeOptionalId(requested.account_id), accountId, "requested account"],
+        [normalizeOptionalId(filled.account_id), accountId, "filled account"],
+        [normalizeOptionalId(requested.recipient), accountWrapperId, "requested recipient"],
+        [normalizeOptionalId(filled.recipient), accountWrapperId, "filled recipient"],
+    ] as const;
+    for (const [actual, wanted, label] of expected) {
+        if (actual !== wanted) throw new Error(`${label} is ${actual}, expected ${wanted}`);
+    }
+    if (
+        integerEventField(requested, "amount") !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+        integerEventField(requested, "min_plp_out") !== "0" ||
+        integerEventField(requested, "requests_pending_after") !== "1" ||
+        integerEventField(filled, "index") !== requestIndex ||
+        integerEventField(filled, "dusdc_amount") !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+        sharesMinted !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+        integerEventField(filled, "requests_pending_after") !== "0"
+    ) {
+        throw new Error(`bootstrap transaction ${receipt.digest} has unexpected supply events`);
+    }
+    return { requestIndex, sharesMinted };
 }
 
 async function ensureBootstrap(
@@ -1705,14 +1793,19 @@ async function ensureBootstrap(
     const result = runtime.result;
     const vault = sharedId(result, "predict", "plp::PoolVault");
     const config = sharedId(result, "predict", "protocol_config::ProtocolConfig");
+    const accountId = await deploymentAccountId(runtime, accountWrapperId);
     let totalSupply = await poolU64(runtime, "plp_total_supply");
-    result.wiring.bootstrap.lockCapitalTx ??= result.transactions.lock_bootstrap_capital ?? null;
-    result.wiring.bootstrap.supplyRequestTx ??=
-        result.transactions.request_bootstrap_supply ?? null;
-    result.wiring.bootstrap.flushTx ??= result.transactions.flush_bootstrap_supply ?? null;
+    let pendingSupply = await poolU64(runtime, "supply_requests_pending");
+    let pendingWithdraw = await poolU64(runtime, "withdraw_requests_pending");
+    let accountPlpBalance = await deploymentAccountPlpBalance(runtime, accountWrapperId);
     if (totalSupply === 0n) {
+        if (pendingSupply !== 0n || pendingWithdraw !== 0n || accountPlpBalance !== 0n) {
+            throw new Error(
+                `nonempty bootstrap state supply=${pendingSupply} withdraw=${pendingWithdraw} accountPLP=${accountPlpBalance}`,
+            );
+        }
         const tx = new Transaction();
-        const payment = coinWithBalance({
+        const lockPayment = coinWithBalance({
             type: dusdcType(),
             balance: LOCK_CAPITAL_AMOUNT,
             useGasCoin: false,
@@ -1721,24 +1814,9 @@ async function ensureBootstrap(
             tx.object(vault),
             tx.object(config),
             tx.object(capId(result, "predict", "admin::AdminCap")),
-            payment,
+            lockPayment,
         ]);
-        const receipt = await executeTransaction(runtime, "lock_bootstrap_capital", tx);
-        result.wiring.bootstrap.lockCapitalTx = receipt.digest ?? null;
-        writeResult(result);
-        totalSupply = await poolU64(runtime, "plp_total_supply");
-    }
-    if (
-        totalSupply !== LOCK_CAPITAL_AMOUNT &&
-        totalSupply !== LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT
-    ) {
-        throw new Error(`unexpected PLP supply during bootstrap: ${totalSupply}`);
-    }
-
-    let pendingSupply = await poolU64(runtime, "supply_requests_pending");
-    if (totalSupply === LOCK_CAPITAL_AMOUNT && pendingSupply === 0n) {
-        const tx = new Transaction();
-        const payment = coinWithBalance({
+        const supplyPayment = coinWithBalance({
             type: dusdcType(),
             balance: BOOTSTRAP_SUPPLY_AMOUNT,
             useGasCoin: false,
@@ -1750,7 +1828,7 @@ async function ensureBootstrap(
             [
                 tx.object(accountWrapperId),
                 depositAuth,
-                payment,
+                supplyPayment,
                 tx.object(ACCUMULATOR_ROOT_ID),
                 tx.object(CLOCK_ID),
             ],
@@ -1767,13 +1845,6 @@ async function ensureBootstrap(
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ]);
-        const receipt = await executeTransaction(runtime, "request_bootstrap_supply", tx);
-        result.wiring.bootstrap.supplyRequestTx = receipt.digest ?? null;
-        writeResult(result);
-        pendingSupply = await poolU64(runtime, "supply_requests_pending");
-    }
-    if (totalSupply === LOCK_CAPITAL_AMOUNT && pendingSupply > 0n) {
-        const tx = new Transaction();
         const proof = call(tx, target(result, "predict", "registry", "generate_lifecycle_proof"), [
             tx.object(sharedId(result, "predict", "registry::Registry")),
             tx.object(lifecycleCapId),
@@ -1787,20 +1858,51 @@ async function ensureBootstrap(
             valuation,
             tx.object(vault),
             tx.object(config),
-            tx.pure.option("u64", null),
-            tx.pure.option("u64", null),
+            tx.pure.option("u64", 1),
+            tx.pure.option("u64", 0),
         ]);
-        const receipt = await executeTransaction(runtime, "flush_bootstrap_supply", tx);
+        const receipt = await executeTransaction(runtime, "bootstrap_pool", tx);
+        const eventState = validateBootstrapReceipt(receipt, vault, accountId, accountWrapperId);
+        result.wiring.bootstrap.accountId = accountId;
+        result.wiring.bootstrap.requestIndex = eventState.requestIndex;
+        result.wiring.bootstrap.sharesMinted = eventState.sharesMinted;
+        result.wiring.bootstrap.lockCapitalTx = receipt.digest ?? null;
+        result.wiring.bootstrap.supplyRequestTx = receipt.digest ?? null;
         result.wiring.bootstrap.flushTx = receipt.digest ?? null;
         writeResult(result);
     }
     totalSupply = await poolU64(runtime, "plp_total_supply");
     pendingSupply = await poolU64(runtime, "supply_requests_pending");
-    if (totalSupply !== LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT || pendingSupply !== 0n) {
+    pendingWithdraw = await poolU64(runtime, "withdraw_requests_pending");
+    accountPlpBalance = await deploymentAccountPlpBalance(runtime, accountWrapperId);
+    const bootstrapDigest = result.transactions.bootstrap_pool;
+    if (
+        totalSupply !== LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT ||
+        pendingSupply !== 0n ||
+        pendingWithdraw !== 0n ||
+        accountPlpBalance !== BOOTSTRAP_SUPPLY_AMOUNT ||
+        !bootstrapDigest
+    ) {
         throw new Error(
-            `bootstrap incomplete: totalSupply=${totalSupply} pendingSupply=${pendingSupply}`,
+            `bootstrap incomplete: totalSupply=${totalSupply} pending=${pendingSupply}/${pendingWithdraw} accountPLP=${accountPlpBalance} tx=${bootstrapDigest}`,
         );
     }
+    if (
+        !result.wiring.bootstrap.requestIndex ||
+        !result.wiring.bootstrap.sharesMinted ||
+        result.wiring.bootstrap.accountId !== accountId
+    ) {
+        const receipt = await settledReceipt(runtime.client, bootstrapDigest);
+        const eventState = validateBootstrapReceipt(receipt, vault, accountId, accountWrapperId);
+        result.wiring.bootstrap.accountId = accountId;
+        result.wiring.bootstrap.requestIndex = eventState.requestIndex;
+        result.wiring.bootstrap.sharesMinted = eventState.sharesMinted;
+    }
+    result.wiring.bootstrap.accountPlpBalance = accountPlpBalance.toString();
+    result.wiring.bootstrap.lockCapitalTx = bootstrapDigest;
+    result.wiring.bootstrap.supplyRequestTx = bootstrapDigest;
+    result.wiring.bootstrap.flushTx = bootstrapDigest;
+    writeResult(result);
 }
 
 async function activeMarketIds(runtime: Runtime): Promise<string[]> {
@@ -1814,26 +1916,41 @@ async function activeMarketIds(runtime: Runtime): Promise<string[]> {
 async function marketState(
     runtime: Runtime,
     id: string,
-): Promise<{ underlying: number; expiryMs: bigint; cashBalance: bigint }> {
+): Promise<{
+    underlying: number;
+    expiryMs: bigint;
+    referenceTickSourceTimestampMs: bigint;
+    cashBalance: bigint;
+}> {
     const result = runtime.result;
     const tx = new Transaction();
     call(tx, target(result, "predict", "expiry_market", "propbook_underlying_id"), [tx.object(id)]);
     call(tx, target(result, "predict", "expiry_market", "expiry"), [tx.object(id)]);
+    call(tx, target(result, "predict", "expiry_market", "reference_tick_source_timestamp_ms"), [
+        tx.object(id),
+    ]);
     call(tx, target(result, "predict", "expiry_market", "cash_balance"), [tx.object(id)]);
     const response = await devInspect(runtime, `market_state_${id}`, tx);
     return {
         underlying: parseU32(returnBytes(response, 0)),
         expiryMs: parseU64(returnBytes(response, 1)),
-        cashBalance: parseU64(returnBytes(response, 2)),
+        referenceTickSourceTimestampMs: parseU64(returnBytes(response, 2)),
+        cashBalance: parseU64(returnBytes(response, 3)),
     };
 }
 
-function cadenceForExpiry(expiryMs: bigint): CadenceSpec {
-    const enabled = CADENCES.filter((cadence) => cadence.windowSize > 0n)
-        .slice()
-        .sort((left, right) => right.periodMs - left.periodMs);
-    const match = enabled.find((cadence) => expiryMs % BigInt(cadence.periodMs) === 0n);
-    if (!match) throw new Error(`cannot infer cadence for expiry ${expiryMs}`);
+function cadenceForPeriod(periodMs: bigint): CadenceSpec {
+    const match = CADENCES.find(
+        (cadence) => cadence.windowSize > 0n && BigInt(cadence.periodMs) === periodMs,
+    );
+    if (!match) throw new Error(`cannot infer cadence for period ${periodMs}`);
+    return match;
+}
+
+function cadenceForMarketLabel(label: string): CadenceSpec {
+    const name = label.match(/^create_market_([^_]+)_[0-9]+$/)?.[1];
+    const match = CADENCES.find((cadence) => cadence.windowSize > 0n && cadence.name === name);
+    if (!match) throw new Error(`cannot infer cadence from transaction label ${label}`);
     return match;
 }
 
@@ -1867,15 +1984,14 @@ async function rebuildMarketsFromTransactions(runtime: Runtime): Promise<void> {
     const byId = new Map(result.wiring.markets.map((market) => [market.id, market]));
     for (const [label, digest] of Object.entries(result.transactions)) {
         if (!label.startsWith("create_market_")) continue;
+        if (result.wiring.markets.some((market) => market.createTx === digest)) continue;
         const receipt = await settledReceipt(runtime.client, digest);
         const event = eventNamed(receipt, "MarketCreated");
         const parsed = asRecord(event?.parsedJson);
-        const expiry =
-            typeof parsed.expiry === "string" || typeof parsed.expiry === "number"
-                ? BigInt(parsed.expiry)
-                : null;
-        if (expiry === null) throw new Error(`${label}/${digest} has no MarketCreated expiry`);
-        const cadence = cadenceForExpiry(expiry);
+        if (typeof parsed.expiry !== "string" && typeof parsed.expiry !== "number") {
+            throw new Error(`${label}/${digest} has no MarketCreated expiry`);
+        }
+        const cadence = cadenceForMarketLabel(label);
         const market = marketFromEvent(receipt, cadence);
         const existing = byId.get(market.id);
         if (existing) {
@@ -1897,7 +2013,12 @@ async function discoverMarkets(runtime: Runtime): Promise<void> {
         if (state.underlying !== ASSET.propbookUnderlyingId) {
             throw new Error(`active market ${id} belongs to underlying ${state.underlying}`);
         }
-        const cadence = cadenceForExpiry(state.expiryMs);
+        if (state.referenceTickSourceTimestampMs >= state.expiryMs) {
+            throw new Error(
+                `active market ${id} has invalid reference timestamp ${state.referenceTickSourceTimestampMs}`,
+            );
+        }
+        const cadence = cadenceForPeriod(state.expiryMs - state.referenceTickSourceTimestampMs);
         const existing = byId.get(id);
         if (existing) {
             existing.cashBalance = state.cashBalance.toString();
@@ -1959,6 +2080,111 @@ function isCadenceWindowFull(error: unknown): boolean {
     );
 }
 
+function marketCreationTransaction(
+    result: DeploymentResult,
+    lifecycleCapId: string,
+    cadence: CadenceSpec,
+): Transaction {
+    const tx = new Transaction();
+    call(tx, target(result, "predict", "registry", "create_and_share_expiry_market"), [
+        tx.object(sharedId(result, "predict", "registry::Registry")),
+        tx.object(sharedId(result, "predict", "plp::PoolVault")),
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+        tx.object(sharedId(result, "propbook", "registry::OracleRegistry")),
+        tx.object(lifecycleCapId),
+        tx.pure.u32(ASSET.propbookUnderlyingId),
+        tx.pure.u8(cadence.id),
+        tx.object(CLOCK_ID),
+    ]);
+    return tx;
+}
+
+function nextMarketLabel(result: DeploymentResult, cadence: CadenceSpec): string {
+    let sequence = 0;
+    while (result.transactions[`create_market_${cadence.name}_${sequence}`]) sequence++;
+    return `create_market_${cadence.name}_${sequence}`;
+}
+
+async function liveMarketSnapshot(runtime: Runtime): Promise<{
+    clockMs: bigint;
+    markets: MarketRecord[];
+}> {
+    const [clockMs, activeIds] = await Promise.all([
+        currentClockMs(runtime),
+        activeMarketIds(runtime),
+    ]);
+    const active = new Set(activeIds);
+    return {
+        clockMs,
+        markets: runtime.result.wiring.markets.filter(
+            (market) => active.has(market.id) && BigInt(market.expiryMs) > clockMs,
+        ),
+    };
+}
+
+async function assertLiveMarketWindows(
+    runtime: Runtime,
+    lifecycleCapId: string,
+    canProbe: boolean,
+): Promise<void> {
+    await discoverMarkets(runtime);
+    const snapshot = await liveMarketSnapshot(runtime);
+    const checks: WiringState["marketWindowChecks"] = [];
+    for (const cadence of CADENCES.filter((candidate) => candidate.marketsToCreate > 0)) {
+        const recorded = snapshot.markets.filter(
+            (market) => market.cadenceId === cadence.id,
+        ).length;
+        let windowFull = false;
+        if (recorded < cadence.marketsToCreate) {
+            if (canProbe) {
+                const tx = marketCreationTransaction(runtime.result, lifecycleCapId, cadence);
+                tx.setSender(DEPLOYER);
+                tx.setGasBudget(TRANSACTION_GAS_BUDGET);
+                const bytes = await tx.build({ client: runtime.client });
+                try {
+                    await dryRun(runtime, `check_${cadence.name}_market_window`, bytes);
+                } catch (error) {
+                    if (!isCadenceWindowFull(error)) throw error;
+                    windowFull = true;
+                }
+                if (!windowFull) {
+                    throw new Error(`${cadence.name} still has a deployable market slot`);
+                }
+            } else {
+                const prior = runtime.result.wiring.marketWindowChecks.find(
+                    (check) => check.cadenceId === cadence.id,
+                );
+                if (
+                    !prior?.windowFull ||
+                    prior.recorded !== recorded ||
+                    !prior.checkedAtChainMs ||
+                    snapshot.clockMs < BigInt(prior.checkedAtChainMs) ||
+                    snapshot.clockMs / BigInt(cadence.periodMs) !==
+                        BigInt(prior.checkedAtChainMs) / BigInt(cadence.periodMs)
+                ) {
+                    throw new Error(
+                        `${cadence.name} has only ${recorded}/${cadence.marketsToCreate} future markets after lifecycle-cap handoff`,
+                    );
+                }
+                windowFull = true;
+            }
+        }
+        checks.push({
+            cadenceId: cadence.id,
+            cadence: cadence.name,
+            target: cadence.marketsToCreate,
+            recorded,
+            windowFull,
+            checkedAtChainMs: snapshot.clockMs.toString(),
+            checkedAt: new Date().toISOString(),
+        });
+    }
+    if (canProbe) {
+        runtime.result.wiring.marketWindowChecks = checks;
+        writeResult(runtime.result);
+    }
+}
+
 async function rebalanceMarket(runtime: Runtime, market: MarketRecord): Promise<void> {
     if (market.cashBalance && BigInt(market.cashBalance) > 0n) return;
     const result = runtime.result;
@@ -1982,37 +2208,31 @@ async function rebalanceMarket(runtime: Runtime, market: MarketRecord): Promise<
 async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<void> {
     const result = runtime.result;
     if (result.wiring.lifecycleCap.owner === "recipient") {
-        await discoverMarkets(runtime);
+        await assertLiveMarketWindows(runtime, lifecycleCapId, false);
         return;
     }
     await discoverMarkets(runtime);
-    for (const market of result.wiring.markets) await rebalanceMarket(runtime, market);
+    for (const market of (await liveMarketSnapshot(runtime)).markets) {
+        await rebalanceMarket(runtime, market);
+    }
 
-    for (const cadence of CADENCES.filter((candidate) => candidate.marketsToCreate > 0)) {
-        let recorded = result.wiring.markets.filter(
-            (market) => market.cadenceId === cadence.id,
-        ).length;
-        let windowFull = false;
-        while (recorded < cadence.marketsToCreate) {
+    const enabledCadences = CADENCES.filter((candidate) => candidate.marketsToCreate > 0)
+        .slice()
+        .sort((left, right) => right.periodMs - left.periodMs);
+    for (const cadence of enabledCadences) {
+        while (
+            (await liveMarketSnapshot(runtime)).markets.filter(
+                (market) => market.cadenceId === cadence.id,
+            ).length < cadence.marketsToCreate
+        ) {
             await waitForCadenceLead(runtime, cadence);
-            const tx = new Transaction();
-            call(tx, target(result, "predict", "registry", "create_and_share_expiry_market"), [
-                tx.object(sharedId(result, "predict", "registry::Registry")),
-                tx.object(sharedId(result, "predict", "plp::PoolVault")),
-                tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
-                tx.object(sharedId(result, "propbook", "registry::OracleRegistry")),
-                tx.object(lifecycleCapId),
-                tx.pure.u32(ASSET.propbookUnderlyingId),
-                tx.pure.u8(cadence.id),
-                tx.object(CLOCK_ID),
-            ]);
-            const label = `create_market_${cadence.name}_${recorded}`;
+            const tx = marketCreationTransaction(result, lifecycleCapId, cadence);
+            const label = nextMarketLabel(result, cadence);
             let receipt: Receipt;
             try {
                 receipt = await executeTransaction(runtime, label, tx);
             } catch (error) {
                 if (isCadenceWindowFull(error)) {
-                    windowFull = true;
                     console.log(`[deploy] ${cadence.name} cadence window is full`);
                     break;
                 }
@@ -2022,22 +2242,9 @@ async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<
             result.wiring.markets.push(market);
             writeResult(result);
             await rebalanceMarket(runtime, market);
-            recorded++;
         }
-        result.wiring.marketWindowChecks = result.wiring.marketWindowChecks.filter(
-            (check) => check.cadenceId !== cadence.id,
-        );
-        result.wiring.marketWindowChecks.push({
-            cadenceId: cadence.id,
-            cadence: cadence.name,
-            target: cadence.marketsToCreate,
-            recorded,
-            windowFull,
-            checkedAt: new Date().toISOString(),
-        });
-        writeResult(result);
     }
-    await discoverMarkets(runtime);
+    await assertLiveMarketWindows(runtime, lifecycleCapId, true);
 }
 
 async function transferLifecycleCap(runtime: Runtime, lifecycleCapId: string): Promise<void> {
@@ -2117,6 +2324,8 @@ async function verifyDeployment(
 ): Promise<Verification> {
     const result = runtime.result;
     await assertSdkTarget(runtime);
+    if (!result.wiring.lifecycleCap.id) throw new Error("lifecycle cap is missing");
+    await assertLiveMarketWindows(runtime, result.wiring.lifecycleCap.id, false);
     const packages: Record<string, ObjectEvidence> = {};
     const sharedObjects: Record<string, Record<string, ObjectEvidence>> = {};
     const ownedCaps: Record<string, Record<string, ObjectEvidence>> = {};
@@ -2212,7 +2421,25 @@ async function verifyDeployment(
         `${packageId(result, "account")}::account::AccountWrapper`,
         "shared",
     );
-    if (!result.wiring.lifecycleCap.id) throw new Error("lifecycle cap is missing");
+    const accountId = await deploymentAccountId(runtime, result.wiring.account.accountWrapperId);
+    const accountPlpBalance = await deploymentAccountPlpBalance(
+        runtime,
+        result.wiring.account.accountWrapperId,
+    );
+    const bootstrapDigest = result.transactions.bootstrap_pool;
+    if (
+        result.wiring.bootstrap.accountId !== accountId ||
+        !result.wiring.bootstrap.requestIndex ||
+        result.wiring.bootstrap.sharesMinted !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+        result.wiring.bootstrap.accountPlpBalance !== accountPlpBalance.toString() ||
+        accountPlpBalance !== BOOTSTRAP_SUPPLY_AMOUNT ||
+        !bootstrapDigest ||
+        result.wiring.bootstrap.lockCapitalTx !== bootstrapDigest ||
+        result.wiring.bootstrap.supplyRequestTx !== bootstrapDigest ||
+        result.wiring.bootstrap.flushTx !== bootstrapDigest
+    ) {
+        throw new Error("bootstrap supply is not attributed to the deployment account");
+    }
     const lifecycleCap = await objectEvidence(
         runtime,
         result.wiring.lifecycleCap.id,
@@ -2226,6 +2453,7 @@ async function verifyDeployment(
     }
     await discoverMarkets(runtime);
     const activeIds = await activeMarketIds(runtime);
+    const verificationClockMs = await currentClockMs(runtime);
     let activeMarketCash = 0n;
     const verifiedMarkets: MarketRecord[] = [];
     for (const id of activeIds) {
@@ -2244,8 +2472,22 @@ async function verifyDeployment(
         verifiedMarkets.push({ ...record });
     }
     for (const cadence of CADENCES.filter((spec) => spec.marketsToCreate > 0)) {
-        if (!verifiedMarkets.some((market) => market.cadenceId === cadence.id)) {
-            throw new Error(`${cadence.name} has no active deployment market`);
+        const futureCount = verifiedMarkets.filter(
+            (market) =>
+                market.cadenceId === cadence.id && BigInt(market.expiryMs) > verificationClockMs,
+        ).length;
+        const check = result.wiring.marketWindowChecks.find(
+            (candidate) => candidate.cadenceId === cadence.id,
+        );
+        if (
+            futureCount === 0 ||
+            !check ||
+            check.recorded !== futureCount ||
+            (futureCount < cadence.marketsToCreate && !check.windowFull)
+        ) {
+            throw new Error(
+                `${cadence.name} future market window is incomplete (${futureCount}/${cadence.marketsToCreate})`,
+            );
         }
     }
 
@@ -2287,6 +2529,7 @@ async function verifyDeployment(
             withdrawRequestsPending: pendingWithdraw.toString(),
             activeMarketIds: activeIds,
             activeMarketCash: activeMarketCash.toString(),
+            deployerAccountPlpBalance: accountPlpBalance.toString(),
         },
         markets: verifiedMarkets,
     };
@@ -2301,15 +2544,15 @@ async function assertFunding(runtime: Runtime): Promise<void> {
             ? await poolU64(runtime, "plp_total_supply")
             : 0n;
     if (totalSupply === LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT) return;
+    if (totalSupply !== 0n) {
+        throw new Error(`unexpected partial PLP bootstrap supply: ${totalSupply}`);
+    }
     const balance = await runtime.client.getBalance({
         owner: DEPLOYER,
         coinType: dusdcType(),
     });
     const available = BigInt(balance.balance.balance);
-    const required =
-        totalSupply === 0n
-            ? LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT
-            : BOOTSTRAP_SUPPLY_AMOUNT;
+    const required = LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT;
     if (available < required) {
         throw new Error(
             `insufficient deployer DUSDC: have ${available}, need ${required} (short ${required - available})`,

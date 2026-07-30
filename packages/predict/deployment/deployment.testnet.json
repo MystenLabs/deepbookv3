@@ -129,6 +129,10 @@
         "bootstrap": {
             "lockCapitalAmount": "10000000",
             "supplyAmount": "1500000000000",
+            "accountId": null,
+            "requestIndex": null,
+            "sharesMinted": null,
+            "accountPlpBalance": null,
             "lockCapitalTx": null,
             "supplyRequestTx": null,
             "flushTx": null
