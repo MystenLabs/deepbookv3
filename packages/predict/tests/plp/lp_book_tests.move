@@ -55,6 +55,8 @@ const NO_RETRY: u64 = 1;
 /// The configured maximum, used where a test covers the resting-limit path an admin
 /// can turn on — and the queue blocking that comes back with it.
 const THREE_ATTEMPTS: u64 = 3;
+/// The shipped `ProtocolConfig` default: no ceiling on pool value.
+const NO_CAP: u64 = 18_446_744_073_709_551_615;
 
 // === Permanent minimum-liquidity mint ===
 
@@ -89,6 +91,7 @@ fun supply_drain_mints_at_mark_and_joins_idle() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -116,6 +119,7 @@ fun priced_supply_mints_proportional_shares() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -142,6 +146,7 @@ fun priced_withdraw_burns_and_pays_from_idle() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -170,6 +175,7 @@ fun two_withdrawals_share_one_frozen_mark() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -200,6 +206,7 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -207,6 +214,111 @@ fun withdrawals_stop_when_idle_is_dry_and_carry() {
     assert_eq!(book.total_supply(), 10_000_000); // only the first 20e6 burned
     assert_eq!(ledger.idle_balance(), 10_000_000); // only the first 20e6 paid
     assert_eq!(book.withdraw_requests_pending(), 1); // second carried
+
+    finish(scenario, book, ledger);
+}
+
+// === Pool-value cap on supplies ===
+//
+// The cap is checked against the frozen mark plus what this flush has already
+// filled, so these run at a 1.0 mark with pool value 30e6 and read the headroom
+// straight off the cap: a cap of 35e6 leaves exactly 5 DUSDC of room.
+
+#[test]
+fun supply_within_pool_cap_fills() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap 45e6 against pool value 30e6: 15 DUSDC of room for a 10 DUSDC deposit.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 45_000_000);
+
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.total_supply(), 40_000_000); // 10 DUSDC minted 1:1 at the 1.0 mark
+    assert_eq!(ledger.idle_balance(), min_supply!());
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun supply_that_would_breach_pool_cap_is_refunded() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap 35e6 leaves 5 DUSDC of room; the request wants 10 and is refunded whole,
+    // because a supply is all-or-nothing — there is no partial fill.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 35_000_000);
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 30_000_000); // nothing minted
+    assert_eq!(ledger.idle_balance(), 0); // escrow went back, not into idle
+
+    finish(scenario, book, ledger);
+}
+
+/// The cap counts what this flush has already filled, not just the frozen mark —
+/// otherwise several individually-fitting supplies would collectively overshoot it.
+#[test]
+fun supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    // Three 10 DUSDC requests against 25 DUSDC of room: two fit, the third does not.
+    let mut i = 0u64;
+    while (i < 3) {
+        let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+        book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+        i = i + 1;
+    };
+
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 55_000_000);
+
+    // Two filled, one refunded — all three processed, none left queued.
+    assert_drain_summary(&summary, 2, NO_WITHDRAWALS_FILLED, 3);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 50_000_000); // 30e6 + 2 x 10e6
+    assert_eq!(ledger.idle_balance(), 20_000_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// A pool already above its cap — which trading profit alone can cause — accepts no
+/// new supply, and the request is refunded rather than left queued.
+#[test]
+fun supply_is_refunded_when_pool_is_already_over_cap() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap 20e6 below the pool's own 30e6 value: zero headroom, saturating to 0.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 20_000_000);
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 30_000_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// Withdrawals are not capacity-checked: the cap closes the pool to new capital and
+/// must never trap capital already in it.
+#[test]
+fun pool_cap_does_not_gate_withdrawals() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    seed_idle(&mut ledger, 30_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    // Cap far below pool value: the exit still pays out in full.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 20_000_000);
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
+    assert_eq!(book.total_supply(), 20_000_000); // 10e6 PLP burned
+    assert_eq!(ledger.idle_balance(), 20_000_000); // 10 DUSDC paid out at the 1.0 mark
 
     finish(scenario, book, ledger);
 }
@@ -234,6 +346,7 @@ fun supply_limit_miss_refunds_at_the_flush_that_reaches_it() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -266,6 +379,7 @@ fun supply_limit_miss_does_not_block_later_requests() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -297,6 +411,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() 
         option::none(),
         option::none(),
         THREE_ATTEMPTS,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -312,6 +427,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() 
         option::none(),
         option::none(),
         THREE_ATTEMPTS,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -477,6 +593,7 @@ fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -513,6 +630,7 @@ fun withdraw_limit_miss_does_not_block_later_requests() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -547,6 +665,7 @@ fun unbounded_flush_drains_every_queued_supply() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -591,6 +710,7 @@ fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
     assert_drain_summary(&summary, page_capacity, 0, page_capacity);
@@ -638,6 +758,7 @@ fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
     assert_drain_summary(&summary, page_capacity + 1, 0, page_capacity + 1);
@@ -686,6 +807,7 @@ fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
     assert_drain_summary(&summary, page_capacity, 0, page_capacity);
@@ -713,6 +835,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
         option::some(2),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -728,6 +851,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
     assert_eq!(book.supply_requests_pending(), 0);
@@ -758,6 +882,7 @@ fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
         option::some(1),
         option::some(1),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -837,6 +962,7 @@ fun cancelled_supply_requests_do_not_spend_drain_budget() {
         option::some(1),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
     assert_drain_summary(&summary, 1, 0, 1);
@@ -887,6 +1013,7 @@ fun priced_supply_with_zero_pool_value_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -913,6 +1040,7 @@ fun priced_supply_that_rounds_to_zero_shares_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -938,6 +1066,7 @@ fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -964,6 +1093,7 @@ fun supply_at_min_executable_plp_price_fills() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -988,6 +1118,7 @@ fun supply_below_min_executable_plp_price_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1014,6 +1145,7 @@ fun supply_at_max_executable_plp_price_fills() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1038,6 +1170,7 @@ fun supply_above_max_executable_plp_price_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1065,6 +1198,7 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1093,6 +1227,7 @@ fun supply_that_exceeds_remaining_plp_headroom_refunds() {
         option::none(),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1122,6 +1257,7 @@ fun non_executable_supply_refunds_spend_supply_budget() {
         option::some(2),
         option::none(),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1147,6 +1283,7 @@ fun non_executable_withdraw_refunds_spend_withdraw_budget() {
         option::none(),
         option::some(1),
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     );
 
@@ -1193,6 +1330,25 @@ fun bob_id(): ID { BOB.to_id() }
 /// No executable mark can ever quote this, so a request carrying it always misses.
 fun unattainable_min_out(): u64 { std::u64::max_value!() }
 
+/// Drain at a 1.0 mark with pool value 30e6, under an explicit pool-value ceiling.
+fun drain_at_par_with_cap(
+    scenario: &mut Scenario,
+    book: &mut LpBook<LP_BOOK_TESTS>,
+    ledger: &mut Ledger,
+    max_pool_value: u64,
+): DrainSummary {
+    book.drain(
+        ledger,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        max_pool_value,
+        scenario.ctx(),
+    )
+}
+
 /// Drain both queues at a 1.0 share price, so a budget test varies only the budget.
 fun drain_at_par_with_budgets(
     scenario: &mut Scenario,
@@ -1208,6 +1364,7 @@ fun drain_at_par_with_budgets(
         supply_budget,
         withdraw_budget,
         NO_RETRY,
+        NO_CAP,
         scenario.ctx(),
     )
 }
@@ -1227,6 +1384,7 @@ fun drain_at_two_x(
         option::none(),
         option::none(),
         max_limit_misses,
+        NO_CAP,
         scenario.ctx(),
     )
 }

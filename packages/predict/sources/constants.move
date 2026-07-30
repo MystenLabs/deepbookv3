@@ -51,6 +51,8 @@ public(package) macro fun request_cancel_reason_non_executable(): u8 { 1 }
 
 public(package) macro fun request_cancel_reason_limit_missed(): u8 { 2 }
 
+public(package) macro fun request_cancel_reason_pool_at_capacity(): u8 { 3 }
+
 /// Permanent genesis liquidity locked at the one-time `plp::lock_capital` bootstrap:
 /// 10 DUSDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.

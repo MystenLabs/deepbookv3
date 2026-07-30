@@ -32,6 +32,7 @@ const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
 const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
+const EInvalidMaxLpPoolValue: u64 = 25;
 
 // === Fees ===
 
@@ -94,6 +95,33 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
         value >= min_lp_request_limit_flush_attempts!()
             && value <= max_lp_request_limit_flush_attempts!(),
         EInvalidLpRequestLimitFlushAttempts,
+    );
+}
+
+/// Ceiling on LP-attributable pool value (`idle + Σ active NAV`, net of the
+/// protocol-profit exclusion) that queued supplies may raise the pool to. Checked at
+/// the flush against the frozen mark, because that is the only point where pool value
+/// is exact; a supply that would carry the pool past it is refunded rather than
+/// filled. The default admits everything, so the cap binds only once an operator sets
+/// a real figure.
+///
+/// This caps pool *value*, not cumulative deposits — trading profit raises NAV, so a
+/// pool can sit above a set cap with no new deposits, in which case supplies stay
+/// refunded until NAV falls back. The minimum is the genesis lock, since a cap below
+/// it would leave a bootstrapped pool permanently unable to accept its first supply.
+/// See RP-23.
+public(package) macro fun default_max_lp_pool_value(): u64 { std::u64::max_value!() }
+
+public(package) macro fun min_max_lp_pool_value(): u64 {
+    deepbook_predict::constants::min_bootstrap_liquidity!()
+}
+
+public(package) macro fun max_max_lp_pool_value(): u64 { std::u64::max_value!() }
+
+public(package) fun assert_max_lp_pool_value(value: u64) {
+    assert!(
+        value >= min_max_lp_pool_value!() && value <= max_max_lp_pool_value!(),
+        EInvalidMaxLpPoolValue,
     );
 }
 

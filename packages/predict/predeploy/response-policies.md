@@ -1006,6 +1006,59 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-23: A supply that would carry pool value past the configured cap is refunded (DBU-681)
+
+- **Trigger state:** a queued LP supply reaches the head of the supply pass at a
+  frozen mark where filling it would raise LP-attributable pool value above
+  `ProtocolConfig.max_lp_pool_value`.
+- **Controller:** operator (sets the cap) × market (NAV moves the pool under a
+  fixed cap without anyone depositing) × user (chooses the deposit size).
+- **Blast radius:** the supply pass only. Withdrawals, already-issued PLP, and the
+  genesis lock are untouched, so the cap closes the pool to new capital and can
+  never trap capital already in it.
+- **Response:** refund on the spot with `RequestCancelled.reason = 3`, and keep
+  draining — the same shape as every other unfillable supply head (RP-12). The
+  check runs against the frozen mark **plus the supplies already filled this
+  flush**, so a run of individually-fitting requests cannot collectively overshoot.
+  It is evaluated *before* the user's own limit, because no re-submitted limit can
+  make a full pool admit a deposit and "at capacity" is the actionable reason.
+  Supplies are all-or-nothing, so a request larger than the remaining headroom is
+  refunded whole rather than partially filled.
+- **Reasoning:** capacity is a pool-level property, and pool value is exact only
+  at the flush — an admission-time check would have to compare against a stale
+  snapshot, since no NAV is stored between flushes. Enforcing at the drain keeps
+  the cap exact at the cost of holding escrow for one flush interval. Capping
+  *value* rather than cumulative deposits avoids new running-total state that
+  every fill and withdrawal would have to maintain, and it measures the quantity an
+  operator actually wants bounded — pool size. The consequence is that trading
+  profit alone can carry a pool above its cap, after which supplies are refunded
+  until NAV falls back; that is intended, and it is why the setter is documented as
+  closing the pool rather than forcing an exit. Withdrawals drain after supplies,
+  so the headroom an exit frees is priced at the *next* flush, not the current one
+  — the mark is frozen, and re-reading it mid-drain would break the single-mark
+  guarantee that makes supply and withdraw prices agree.
+- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but no launch
+  figure has been chosen and the cap is inert at its default, so nothing about how
+  it behaves against real deposit flow has been measured.
+- **Pinning tests:** `lp_book_tests.move` — `supply_within_pool_cap_fills`,
+  `supply_that_would_breach_pool_cap_is_refunded`,
+  `supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush`,
+  `supply_is_refunded_when_pool_is_already_over_cap`, and
+  `pool_cap_does_not_gate_withdrawals`. `lp_flow_tests.move` pins the cap to
+  configured state rather than a constant
+  (`flush_refunds_supply_that_breaches_the_configured_pool_cap`, with
+  `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
+  `protocol_config_tests.move` pins the shipped default and the valuation-lock
+  guard; `risk_config_tests.move` pins the bounds.
+- **Reopen when:** a launch figure is set (the profile should become `MEASURED`
+  against observed deposit flow); or partial fills are introduced, which would let
+  a request take the remaining headroom instead of being refunded; or a
+  request-time admission check is wanted for UX, which needs a stored last-flush
+  NAV snapshot and makes the cap two-sided; or withdrawals are ever drained before
+  supplies, which would change whose headroom is being measured.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

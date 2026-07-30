@@ -189,6 +189,13 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 /// head stays queued and stops that queue for the flush, which is what RP-12 trades
 /// away for a resting limit.
 ///
+/// `max_pool_value` caps the LP-attributable pool value supplies may raise the pool
+/// to. It is applied only to the supply pass, against the frozen mark plus the
+/// supplies filled so far this flush, so a run of individually-fitting requests cannot
+/// collectively overshoot. Withdrawals drain afterwards and do not give back headroom
+/// within the same flush — the mark is frozen, so the room they free is priced at the
+/// next one (RP-23).
+///
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
@@ -199,6 +206,7 @@ public(package) fun drain<LP>(
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     max_limit_misses: u64,
+    max_pool_value: u64,
     ctx: &mut TxContext,
 ): DrainSummary {
     let (supplies_filled, supplies_processed) = drain_supply_queue(
@@ -208,6 +216,7 @@ public(package) fun drain<LP>(
         pool_vault_id,
         &supply_budget,
         max_limit_misses,
+        max_pool_value,
     );
     let (withdrawals_filled, withdrawals_processed) = drain_withdraw_queue(
         book,
@@ -233,9 +242,15 @@ fun drain_supply_queue<LP>(
     pool_vault_id: ID,
     budget: &Option<u64>,
     max_limit_misses: u64,
+    max_pool_value: u64,
 ): (u64, u64) {
     let mut filled = 0;
     let mut processed = 0;
+    // Runs forward from the frozen mark as supplies fill, so a flush cannot admit
+    // several individually-fitting requests that collectively exceed the cap. The
+    // frozen mark is the pool value BEFORE this drain; each fill joins its escrow to
+    // idle, raising pool value by exactly `amount`.
+    let mut pool_value = mark.pool_value;
 
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
@@ -260,6 +275,18 @@ fun drain_supply_queue<LP>(
                     request,
                     escrowed,
                     constants::request_cancel_reason_non_executable!(),
+                    book.supply_queue.pending,
+                );
+            } else if (request.amount > max_pool_value.saturating_sub(pool_value)) {
+                // Pool capacity is checked before the user's own limit: no re-submitted
+                // limit can make a full pool admit the deposit, so "at capacity" is the
+                // more actionable reason to report.
+                let (request, escrowed) = book.supply_queue.pop_front();
+                refund_supply_request(
+                    pool_vault_id,
+                    request,
+                    escrowed,
+                    constants::request_cancel_reason_pool_at_capacity!(),
                     book.supply_queue.pending,
                 );
             } else if (shares < request.min_output) {
@@ -290,6 +317,7 @@ fun drain_supply_queue<LP>(
             } else {
                 let (request, escrowed) = book.supply_queue.pop_front();
                 ledger.receive_idle(escrowed);
+                pool_value = pool_value + request.amount;
                 let shares_minted = book.treasury_cap.mint_balance(shares);
                 balance::send_funds(shares_minted, request.recipient);
                 vault_events::emit_supply_filled(

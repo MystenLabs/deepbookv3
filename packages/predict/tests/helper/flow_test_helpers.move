@@ -349,6 +349,11 @@ public fun set_lp_request_limit_flush_attempts(
     config.set_lp_request_limit_flush_attempts(&self.admin_cap, attempts);
 }
 
+/// Set the ceiling on LP-attributable pool value, through the real admin path.
+public fun set_max_lp_pool_value(self: &Fixture, config: &mut ProtocolConfig, max_pool_value: u64) {
+    config.set_max_lp_pool_value(&self.admin_cap, max_pool_value);
+}
+
 /// Queue an LP supply request through the production entrypoint, so a test covers the
 /// account-custody pull and the request event as well as the queue write. Takes the
 /// vault and config directly, so it works on a pool with no live markets — where the

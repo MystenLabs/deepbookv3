@@ -73,3 +73,17 @@ fun lp_request_attempts_above_max_aborts() {
     );
     abort 999
 }
+
+#[test]
+fun max_lp_pool_value_accepts_endpoints() {
+    config_constants::assert_max_lp_pool_value(config_constants::min_max_lp_pool_value!());
+    config_constants::assert_max_lp_pool_value(config_constants::max_max_lp_pool_value!());
+}
+
+/// A cap below the genesis lock would leave a bootstrapped pool unable to accept its
+/// first supply, so the floor is the lock itself.
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxLpPoolValue)]
+fun max_lp_pool_value_below_genesis_lock_aborts() {
+    config_constants::assert_max_lp_pool_value(config_constants::min_max_lp_pool_value!() - 1);
+    abort 999
+}

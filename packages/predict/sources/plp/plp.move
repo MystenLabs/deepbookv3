@@ -317,6 +317,7 @@ public fun finish_flush(
             supply_budget,
             withdraw_budget,
             config.lp_request_limit_flush_attempts(),
+            config.max_lp_pool_value(),
             ctx,
         );
     let total_supply_after = vault.lp.total_supply();
