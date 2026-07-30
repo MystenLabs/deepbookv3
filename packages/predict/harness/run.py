@@ -10,13 +10,23 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from . import config, localnet, publish, staging, state
+
+
+class RunCancelled(RuntimeError):
+    pass
+
+
+_ACTIVE_LOCALNETS: dict[str, subprocess.Popen] = {}
+_ACTIVE_LOCALNETS_LOCK = threading.Lock()
 
 
 @dataclass
@@ -44,7 +54,39 @@ def _mk_instance(inst: Path) -> None:
         (inst / sub).mkdir(parents=True, exist_ok=True)
 
 
-def _publish_localnet(run_id: str, slot: dict[str, Any], inst: Path) -> dict[str, Any]:
+def _check_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise RunCancelled("run cancelled")
+
+
+def _register_localnet(run_id: str, proc: subprocess.Popen) -> None:
+    with _ACTIVE_LOCALNETS_LOCK:
+        _ACTIVE_LOCALNETS[run_id] = proc
+
+
+def _unregister_localnet(run_id: str, proc: subprocess.Popen | None) -> None:
+    with _ACTIVE_LOCALNETS_LOCK:
+        if run_id in _ACTIVE_LOCALNETS and _ACTIVE_LOCALNETS[run_id] is proc:
+            del _ACTIVE_LOCALNETS[run_id]
+
+
+def stop_active_localnets() -> None:
+    """Stop every validator owned by an active worker in this harness process."""
+    with _ACTIVE_LOCALNETS_LOCK:
+        active = list(_ACTIVE_LOCALNETS.items())
+    for _, proc in active:
+        localnet.request_stop(proc)
+    for run_id, proc in active:
+        localnet.stop(proc)
+        _unregister_localnet(run_id, proc)
+
+
+def _publish_localnet(
+    run_id: str,
+    slot: dict[str, Any],
+    inst: Path,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     """Stage the closure, start a fresh localnet, and publish into it.
 
     Returns {proc, client_config, deployment, active, chain}; the caller owns
@@ -54,16 +96,20 @@ def _publish_localnet(run_id: str, slot: dict[str, Any], inst: Path) -> dict[str
     _mk_instance(inst)
     proc = None
     try:
+        _check_cancelled(cancel_event)
         with publish.staged_closure(inst / "workspace"):
+            _check_cancelled(cancel_event)
             config_dir = inst / "localnet"
             print(f"[{run_id}] genesis + starting localnet...")
             client_config = localnet.genesis(config_dir, slot["rpc_port"])
+            _check_cancelled(cancel_event)
             proc = localnet.start(
                 config_dir,
                 slot["rpc_port"],
                 slot["faucet_port"],
                 inst / "logs" / "localnet.log",
             )
+            _register_localnet(run_id, proc)
             # Keep slot.pid = the OWNER harness pid (set in reserve). Record the
             # localnet pid/pgid separately so a dead harness reclaims the slot
             # and kills the orphaned localnet by process group.
@@ -73,15 +119,20 @@ def _publish_localnet(run_id: str, slot: dict[str, Any], inst: Path) -> dict[str
                 localnet_pgid=os.getpgid(proc.pid),
                 status="running",
             )
+            _check_cancelled(cancel_event)
             localnet.wait_for_rpc(slot["rpc_port"])
+            _check_cancelled(cancel_event)
             localnet.wait_for_faucet(slot["faucet_port"])
+            _check_cancelled(cancel_event)
             active = localnet.active_address(client_config)
             localnet.fund(slot["faucet_port"], active)
+            _check_cancelled(cancel_event)
             chain = localnet.chain_id(slot["rpc_port"])
             print(
                 f"[{run_id}] chain={chain} active={active[:10]}... "
                 "publishing staged closure..."
             )
+            _check_cancelled(cancel_event)
             deployment = publish.publish_closure(
                 client_config,
                 inst / "workspace",
@@ -107,10 +158,15 @@ def _publish_localnet(run_id: str, slot: dict[str, Any], inst: Path) -> dict[str
         # The CLI translates SIGTERM into KeyboardInterrupt, so BaseException
         # covers both terminal interrupts during bring-up.
         localnet.stop(proc)
+        _unregister_localnet(run_id, proc)
         raise
 
 
-def run(name: str | None = None, keep: bool = False) -> RunResult:
+def run(
+    name: str | None = None,
+    keep: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> RunResult:
     run_id = _make_run_id(name)
     fp0 = staging.checkout_fingerprint()
     try:
@@ -134,8 +190,9 @@ def run(name: str | None = None, keep: bool = False) -> RunResult:
         f"rpc=:{slot['rpc_port']} faucet=:{slot['faucet_port']}"
     )
     try:
-        ln = _publish_localnet(run_id, slot, inst)
+        ln = _publish_localnet(run_id, slot, inst, cancel_event)
         proc = ln["proc"]
+        _check_cancelled(cancel_event)
         deployment = ln["deployment"]
         (inst / "deployment.json").write_text(json.dumps(deployment, indent=2))
         result.deployment = deployment
@@ -148,6 +205,7 @@ def run(name: str | None = None, keep: bool = False) -> RunResult:
         print(f"[{run_id}] ERROR {result.error}", file=sys.stderr)
     finally:
         localnet.stop(proc)
+        _unregister_localnet(run_id, proc)
         state.release(run_id)
         result.elapsed_s = round(time.time() - started, 1)
         result.checkout_clean = staging.checkout_fingerprint() == fp0

@@ -7,6 +7,7 @@ import concurrent.futures
 import json
 import signal
 import sys
+import threading
 from collections.abc import Callable
 
 from . import analyze, config, live, run as run_mod, state
@@ -24,6 +25,7 @@ def _run_with_sigterm_handler(command: Callable[[], int]) -> int:
         try:
             return command()
         except KeyboardInterrupt:
+            run_mod.stop_active_localnets()
             return 130
     finally:
         signal.signal(signal.SIGTERM, previous)
@@ -50,17 +52,53 @@ def _cmd_run_many(args: argparse.Namespace) -> int:
     concurrency = max(1, min(args.concurrency or config.default_concurrency(), config.SLOT_COUNT))
     print(f"draining {count} runs through a pool of {concurrency} (slot cap {config.SLOT_COUNT})\n")
     results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futures = [ex.submit(run_mod.run, name=f"p{i}", keep=args.keep) for i in range(count)]
-        for fut in concurrent.futures.as_completed(futures):
-            r = fut.result()
-            results.append(r)
-            mark = "OK  " if (r.ok and r.checkout_clean) else "FAIL"
-            extra = "" if r.checkout_clean else " MUTATED"
-            print(
-                f"  [{len(results)}/{count}] {mark} offset={r.offset:<5} {r.elapsed_s:>5}s"
-                + extra + (f"  {r.error}" if r.error else "")
+    cancel_event = threading.Event()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency)
+    futures: set[concurrent.futures.Future] = set()
+    next_run = 0
+    try:
+        while next_run < count and len(futures) < concurrency:
+            futures.add(
+                executor.submit(
+                    run_mod.run,
+                    name=f"p{next_run}",
+                    keep=args.keep,
+                    cancel_event=cancel_event,
+                )
             )
+            next_run += 1
+        while futures:
+            done, futures = concurrent.futures.wait(
+                futures,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+            for fut in done:
+                r = fut.result()
+                results.append(r)
+                mark = "OK  " if (r.ok and r.checkout_clean) else "FAIL"
+                extra = "" if r.checkout_clean else " MUTATED"
+                print(
+                    f"  [{len(results)}/{count}] {mark} offset={r.offset:<5} {r.elapsed_s:>5}s"
+                    + extra + (f"  {r.error}" if r.error else "")
+                )
+            while next_run < count and len(futures) < concurrency:
+                futures.add(
+                    executor.submit(
+                        run_mod.run,
+                        name=f"p{next_run}",
+                        keep=args.keep,
+                        cancel_event=cancel_event,
+                    )
+                )
+                next_run += 1
+    except KeyboardInterrupt:
+        cancel_event.set()
+        for future in futures:
+            future.cancel()
+        run_mod.stop_active_localnets()
+        raise
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
     ok = sum(1 for r in results if r.ok and r.checkout_clean)
     print(f"\n=== {ok}/{count} OK (pool {concurrency}) ===")
     return 0 if ok == count else 1

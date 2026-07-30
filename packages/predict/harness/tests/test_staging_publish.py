@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -394,6 +397,71 @@ class LifecycleTests(unittest.TestCase):
 
             stop.assert_called_once_with(process)
 
+    def test_publish_localnet_stops_process_started_during_cancellation(self) -> None:
+        process = mock.Mock(pid=1234)
+        cancel_event = threading.Event()
+        stage = mock.MagicMock()
+        stage.return_value.__enter__.return_value = {}
+
+        def start(*_args):
+            cancel_event.set()
+            return process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(publish, "staged_closure", stage),
+                mock.patch.object(
+                    run_mod.localnet,
+                    "genesis",
+                    return_value=Path(tmp) / "client.yaml",
+                ),
+                mock.patch.object(run_mod.localnet, "start", side_effect=start),
+                mock.patch.object(run_mod.localnet, "stop") as stop,
+                mock.patch.object(run_mod.state, "update"),
+                mock.patch.object(run_mod.os, "getpgid", return_value=1234),
+            ):
+                with self.assertRaisesRegex(run_mod.RunCancelled, "run cancelled"):
+                    run_mod._publish_localnet(
+                        "test-run",
+                        {"rpc_port": 9000, "faucet_port": 9123, "offset": 0},
+                        Path(tmp),
+                        cancel_event,
+                    )
+
+            stop.assert_called_once_with(process)
+
+    def test_run_stops_returned_process_when_cancellation_wins_the_return_race(self) -> None:
+        process = mock.Mock(pid=1234)
+        cancel_event = threading.Event()
+
+        def publish_localnet(run_id, slot, inst, event):
+            run_mod._register_localnet(run_id, process)
+            event.set()
+            return {"proc": process, "deployment": {"packages": {}}}
+
+        with (
+            mock.patch.object(run_mod, "_make_run_id", return_value="test-run"),
+            mock.patch.object(
+                run_mod.staging,
+                "checkout_fingerprint",
+                return_value="unchanged",
+            ),
+            mock.patch.object(
+                run_mod.state,
+                "reserve",
+                return_value={"rpc_port": 9000, "faucet_port": 9123, "offset": 0},
+            ),
+            mock.patch.object(run_mod, "_publish_localnet", side_effect=publish_localnet),
+            mock.patch.object(run_mod.localnet, "stop") as stop,
+            mock.patch.object(run_mod.state, "release") as release,
+        ):
+            result = run_mod.run(cancel_event=cancel_event)
+
+        self.assertEqual(result.error, "RunCancelled: run cancelled")
+        stop.assert_called_once_with(process)
+        release.assert_called_once_with("test-run")
+        self.assertNotIn("test-run", run_mod._ACTIVE_LOCALNETS)
+
     def test_sigterm_runs_command_cleanup_and_returns_130(self) -> None:
         script = (
             "import signal\n"
@@ -431,6 +499,108 @@ class LifecycleTests(unittest.TestCase):
                     if proc.poll() is None:
                         proc.kill()
                         proc.wait(timeout=5)
+
+    def test_keyboard_interrupt_stops_any_registered_localnet(self) -> None:
+        def interrupt() -> int:
+            raise KeyboardInterrupt
+
+        with mock.patch.object(cli.run_mod, "stop_active_localnets") as stop:
+            result = cli._run_with_sigterm_handler(interrupt)
+
+        self.assertEqual(result, 130)
+        stop.assert_called_once_with()
+
+    def test_run_many_drains_every_run_through_the_bounded_pool(self) -> None:
+        started = []
+
+        def fake_run(name, keep, cancel_event):
+            started.append(name)
+            return mock.Mock(
+                ok=True,
+                checkout_clean=True,
+                offset=0,
+                elapsed_s=0,
+                error=None,
+            )
+
+        args = mock.Mock(count=4, concurrency=2, keep=False)
+        with mock.patch.object(cli.run_mod, "run", side_effect=fake_run):
+            result = cli._cmd_run_many(args)
+
+        self.assertEqual(result, 0)
+        self.assertCountEqual(started, ["p0", "p1", "p2", "p3"])
+
+    def test_run_many_sigterm_cancels_pending_and_stops_active_process(self) -> None:
+        script = (
+            "import argparse\n"
+            "import subprocess\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from types import SimpleNamespace\n"
+            "from harness import cli, run as run_mod\n"
+            "started = Path(sys.argv[1])\n"
+            "def fake_run(name, keep, cancel_event):\n"
+            "    child = subprocess.Popen(\n"
+            "        [sys.executable, '-c', 'import signal; signal.pause()'],\n"
+            "        start_new_session=True,\n"
+            "    )\n"
+            "    run_mod._register_localnet(name, child)\n"
+            "    try:\n"
+            "        with started.open('a') as output:\n"
+            "            output.write(f'{name} {child.pid}\\n')\n"
+            "        child.wait()\n"
+            "    finally:\n"
+            "        run_mod._unregister_localnet(name, child)\n"
+            "    return SimpleNamespace(\n"
+            "        ok=True, checkout_clean=True, offset=0, elapsed_s=0, error=None\n"
+            "    )\n"
+            "cli.run_mod.run = fake_run\n"
+            "args = argparse.Namespace(count=4, concurrency=1, keep=False)\n"
+            "raise SystemExit(cli._run_with_sigterm_handler(\n"
+            "    lambda: cli._cmd_run_many(args)\n"
+            "))\n"
+        )
+        child_pid = None
+        with tempfile.TemporaryDirectory() as tmp:
+            started = Path(tmp) / "started"
+            environment = {**os.environ, "PYTHONPATH": str(config.PREDICT_DIR)}
+            with subprocess.Popen(
+                [sys.executable, "-c", script, str(started)],
+                cwd=config.PREDICT_DIR,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ) as proc:
+                try:
+                    deadline = time.monotonic() + 5
+                    while (
+                        not started.exists()
+                        and proc.poll() is None
+                        and time.monotonic() < deadline
+                    ):
+                        time.sleep(0.01)
+                    self.assertTrue(started.exists(), "run-many worker did not become ready")
+
+                    started_name, pid = started.read_text().split()
+                    child_pid = int(pid)
+                    proc.terminate()
+                    _stdout, stderr = proc.communicate(timeout=5)
+
+                    self.assertEqual(proc.returncode, 130, stderr)
+                    self.assertEqual(started_name, "p0")
+                    self.assertEqual(len(started.read_text().splitlines()), 1)
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(child_pid, 0)
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    if child_pid is not None:
+                        try:
+                            os.killpg(child_pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
 
 
 if __name__ == "__main__":
