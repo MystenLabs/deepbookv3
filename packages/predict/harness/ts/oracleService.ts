@@ -8,7 +8,7 @@
 // trade generator (the keeper settles independently via the Pyth Lazer history endpoint).
 import { existsSync, readFileSync } from "node:fs";
 
-import { getSigner, getSignerForAddress } from "./env.js";
+import { getSigner, getSignerForAddress } from "../../devtools/ts/env.js";
 import { atomicWriteFile } from "./io.js";
 import {
   type MarketSource,
@@ -18,7 +18,12 @@ import {
   serializableSnapshot,
 } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
-import { buildOracleRefreshGridTx, clampedPythTimestampMs, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
+import {
+  buildOracleRefreshGridTx,
+  clampedPythTimestampMs,
+  clampedSourceTimestampMs,
+  executeWithSignerAndWait,
+} from "./runtime.js";
 
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = run until SIGTERM
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
@@ -42,13 +47,13 @@ async function waitForFeeds(): Promise<Feeds> {
 }
 
 async function submit(tx: any, signer: any): Promise<string> {
-  tx.setSender(signer.getPublicKey().toSuiAddress());
-  tx.setGasBudget(GAS_BUDGET);
-  const r = await signExecThreaded(tx, signer, { effects: true });
-  const status = (r as any).effects?.status;
-  if (status?.status !== "success" && status?.success !== true) {
-    throw new Error(`status=${JSON.stringify(status)}`);
-  }
+  const r = await executeWithSignerAndWait(
+    tx,
+    signer,
+    "oracle-refresh",
+    GAS_BUDGET,
+    { effects: true },
+  );
   return r.digest;
 }
 

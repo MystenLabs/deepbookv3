@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import secrets
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,7 +60,6 @@ class FlowConfig:
     redeem_count: int
     supply_count: int
     withdraw_count: int
-    exact_time_ltv: bool
     min_quantity_lots: int
     max_quantity_lots: int
     min_mint_spend: int
@@ -74,13 +73,19 @@ class GenerationError(RuntimeError):
 
 
 class Generator:
-    def __init__(self, snapshots: list[dict[str, Any]], config: FlowConfig, source_config: dict[str, Any]):
+    def __init__(
+        self,
+        snapshots: list[dict[str, Any]],
+        config: FlowConfig,
+        source_config: dict[str, Any],
+        seed: int,
+    ):
         self.snapshots = snapshots
         self.config = config
         if config.min_mint_spend <= 0 or config.max_mint_spend < config.min_mint_spend:
             raise GenerationError("mint spend range must be positive and ordered")
-        self.expiry_ms = replay.config_source_value(source_config, "expiry_ms") if config.exact_time_ltv else None
-        self.rng = secrets.SystemRandom()
+        self.expiry_ms = None
+        self.rng = random.Random(seed)
         self.remaining = {
             "oracle_mint_ptb": config.mint_count,
             "redeem": config.redeem_count,
@@ -439,44 +444,31 @@ def generation_config_int(
     return int(value)
 
 
-def config_for_mode(mode: str, source_rows: int, source_config: dict[str, Any]) -> FlowConfig:
-    if mode == "normal":
-        mint_count, redeem_count, supply_count, withdraw_count = flow_counts(1_000)
-        return FlowConfig(
-            rows=1_000,
-            mint_count=mint_count,
-            redeem_count=redeem_count,
-            supply_count=supply_count,
-            withdraw_count=withdraw_count,
-            exact_time_ltv=False,
-            min_quantity_lots=100,
-            max_quantity_lots=100_000,
-            min_mint_spend=generation_config_int(source_config, mode, "min_mint_spend", 2 * DUSDC),
-            max_mint_spend=generation_config_int(source_config, mode, "max_mint_spend", 20 * DUSDC),
-            min_supply=500 * DUSDC,
-            max_supply=5_000 * DUSDC,
-        )
-    if mode == "long":
-        mint_count, redeem_count, supply_count, withdraw_count = flow_counts(source_rows)
-        return FlowConfig(
-            rows=source_rows,
-            mint_count=mint_count,
-            redeem_count=redeem_count,
-            supply_count=supply_count,
-            withdraw_count=withdraw_count,
-            exact_time_ltv=True,
-            min_quantity_lots=10,
-            max_quantity_lots=250_000,
-            min_mint_spend=generation_config_int(source_config, mode, "min_mint_spend", 5 * DUSDC),
-            max_mint_spend=generation_config_int(source_config, mode, "max_mint_spend", 50 * DUSDC),
-            min_supply=10 * DUSDC,
-            max_supply=100 * DUSDC,
-        )
-    raise GenerationError(f"unsupported mode {mode}")
-
-
-def output_path_for_mode(mode: str) -> Path:
-    return GENERATED_DIR / f"{mode}_scenario.csv"
+def normal_config(source_config: dict[str, Any]) -> FlowConfig:
+    mint_count, redeem_count, supply_count, withdraw_count = flow_counts(1_000)
+    return FlowConfig(
+        rows=1_000,
+        mint_count=mint_count,
+        redeem_count=redeem_count,
+        supply_count=supply_count,
+        withdraw_count=withdraw_count,
+        min_quantity_lots=100,
+        max_quantity_lots=100_000,
+        min_mint_spend=generation_config_int(
+            source_config,
+            "normal",
+            "min_mint_spend",
+            2 * DUSDC,
+        ),
+        max_mint_spend=generation_config_int(
+            source_config,
+            "normal",
+            "max_mint_spend",
+            20 * DUSDC,
+        ),
+        min_supply=500 * DUSDC,
+        max_supply=5_000 * DUSDC,
+    )
 
 
 def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
@@ -487,33 +479,43 @@ def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def generate_mode(mode: str, source: Path, out: Path | None, source_config: dict[str, Any]) -> Path:
+def generate_scenario(
+    source: Path,
+    out: Path | None,
+    source_config: dict[str, Any],
+    seed: int,
+) -> Path:
     snapshots = read_snapshots(source)
     # No grid to configure: the strike domain is absolute ticks (raw = tick*tick_size)
     # over a fixed domain known before any row runs, so there is nothing to center on
     # the first spot. Strikes are selected near the live forward in random_strike.
-    generator = Generator(snapshots, config_for_mode(mode, len(snapshots), source_config), source_config)
+    generator = Generator(
+        snapshots,
+        normal_config(source_config),
+        source_config,
+        seed,
+    )
     rows = generator.generate()
-    out_path = out if out is not None else output_path_for_mode(mode)
+    out_path = out if out is not None else GENERATED_DIR / "normal_scenario.csv"
     write_scenario(out_path, rows)
-    print(f"wrote {out_path} rows={len(rows)}")
+    print(f"wrote {out_path} rows={len(rows)} seed={seed}")
     return out_path
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("normal", "long"), default="normal")
     parser.add_argument("--source", type=Path, default=SOURCE_DATASET)
     parser.add_argument("--config", type=Path, default=SCENARIO_CONFIG)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     source_config = replay.load_scenario_config(args.config)
-    replay.apply_scenario_config(source_config, long_run=args.mode == "long")
-    generate_mode(args.mode, args.source, args.out, source_config)
+    replay.apply_scenario_config(source_config)
+    generate_scenario(args.source, args.out, source_config, args.seed)
 
 
 if __name__ == "__main__":

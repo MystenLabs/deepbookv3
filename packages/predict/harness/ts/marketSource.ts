@@ -13,16 +13,15 @@ import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import WebSocket from "ws";
 
-import { forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
+import { forwardSid, spotSid, sviSid } from "../../devtools/ts/blockScholesSid.js";
 import { harnessKey } from "./io.js";
 import {
   type BsSviUpdate,
   type BsValueUpdate,
   type BsWireSignature,
-  sviBatchPayloadBytes,
-  valueBatchPayloadBytes,
+  providerBatchFromJson,
   verifyProviderBatchSignature,
-} from "./localBlockScholes.js";
+} from "../../devtools/ts/blockScholesWire.js";
 
 export const isoSec = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z";
 const SCALE_1E9 = 1_000_000_000;
@@ -235,18 +234,6 @@ type PendingAck = {
 
 const sidHex = (sid: bigint): string => `0x${sid.toString(16).padStart(64, "0")}`;
 const fixedNumber = (value: bigint): number => Number(value) / SCALE_1E9;
-const requiredString = (value: unknown, field: string): string => {
-  if (typeof value !== "string") {
-    throw new Error(`Block Scholes ${field} must be a decimal string`);
-  }
-  return value;
-};
-const requiredBoolean = (value: unknown, field: string): boolean => {
-  if (typeof value !== "boolean") {
-    throw new Error(`Block Scholes ${field} must be a boolean`);
-  }
-  return value;
-};
 const sviView = (raw: FixedSvi): Svi => ({
   alpha: fixedNumber(raw.a) * (raw.aNegative ? -1 : 1),
   beta: fixedNumber(raw.b),
@@ -455,15 +442,10 @@ export class DirectWsSource implements MarketSource {
       if (!data || !signature || !Array.isArray(data.values)) {
         throw new Error("Block Scholes signed notification is missing data/signature");
       }
-      const batchTimestampMs = BigInt(requiredString(data.timestamp, "data.timestamp"));
-      if (data.batch_kind === 0) {
-        const updates: BsValueUpdate[] = data.values.map((value: any) => ({
-          sid: BigInt(requiredString(value.sid, "value.sid")),
-          timestampMs: BigInt(requiredString(value.t, "value.t")),
-          value: BigInt(requiredString(value.v, "value.v")),
-        }));
-        const payload = valueBatchPayloadBytes(batchTimestampMs, updates);
-        this.#verify(signature, payload);
+      const batch = providerBatchFromJson(data);
+      if (batch.kind === "value") {
+        const updates: BsValueUpdate[] = batch.updates;
+        this.#verify(signature, batch.payload);
         this.#verifiedValueBatches++;
         for (const update of updates) {
           const sid = sidHex(update.sid);
@@ -488,21 +470,9 @@ export class DirectWsSource implements MarketSource {
             this.#unknownSids++;
           }
         }
-      } else if (data.batch_kind === 1) {
-        const updates: BsSviUpdate[] = data.values.map((value: any) => ({
-          sid: BigInt(requiredString(value.sid, "svi.sid")),
-          timestampMs: BigInt(requiredString(value.t, "svi.t")),
-          aMagnitude: BigInt(requiredString(value.svi_a_magnitude, "svi.a")),
-          aNegative: requiredBoolean(value.svi_a_is_negative, "svi.a_is_negative"),
-          b: BigInt(requiredString(value.svi_b, "svi.b")),
-          sigma: BigInt(requiredString(value.svi_sigma, "svi.sigma")),
-          rhoMagnitude: BigInt(requiredString(value.svi_rho_magnitude, "svi.rho")),
-          rhoNegative: requiredBoolean(value.svi_rho_is_negative, "svi.rho_is_negative"),
-          mMagnitude: BigInt(requiredString(value.svi_m_magnitude, "svi.m")),
-          mNegative: requiredBoolean(value.svi_m_is_negative, "svi.m_is_negative"),
-        }));
-        const payload = sviBatchPayloadBytes(batchTimestampMs, updates);
-        this.#verify(signature, payload);
+      } else {
+        const updates: BsSviUpdate[] = batch.updates;
+        this.#verify(signature, batch.payload);
         this.#verifiedSviBatches++;
         for (const update of updates) {
           const sid = sidHex(update.sid);
@@ -534,14 +504,12 @@ export class DirectWsSource implements MarketSource {
             tsMs: Number(update.timestampMs),
           });
         }
-      } else {
-        throw new Error(`unsupported Block Scholes batch kind ${data.batch_kind}`);
       }
       const verified = this.#verifiedValueBatches + this.#verifiedSviBatches;
       if (verified <= 3 || verified % 30 === 0) {
         console.log(
-          `[bs-signed] verified batch #${verified} kind=${data.batch_kind} ` +
-          `values=${data.values.length} published_at_ms=${batchTimestampMs}`,
+          `[bs-signed] verified batch #${verified} kind=${batch.kind} ` +
+          `values=${batch.updates.length} published_at_ms=${batch.batchTimestampMs}`,
         );
       }
     } catch (error) {

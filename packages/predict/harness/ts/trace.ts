@@ -32,7 +32,7 @@ export function gasOf(result: any): number {
 }
 
 // Just the computation cost (MIST). The Sui per-tx COMPUTATION cap (max_gas_computation_bucket =
-// 5M units x RGP) is on THIS, not net gas — nav-stress measures the flush against it (analyze.py).
+// 5M units x RGP) is on THIS, not net gas — capacity runs measure the flush against it (analyze.py).
 export function computationOf(result: any): number {
   return Number(result?.effects?.gasUsed?.computationCost ?? 0);
 }

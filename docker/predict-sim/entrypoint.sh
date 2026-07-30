@@ -40,10 +40,11 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 
 callback "started"
 
-SIM_DIR="/workspace/repo/packages/predict/simulations"
+PREDICT_DIR="/workspace/repo/packages/predict"
+SIM_DIR="${PREDICT_DIR}/simulations"
 
-# Install simulation dependencies.
-cd "${SIM_DIR}"
+# Install the shared Predict development-system dependencies.
+cd "${PREDICT_DIR}"
 npm install
 cd /workspace/repo
 

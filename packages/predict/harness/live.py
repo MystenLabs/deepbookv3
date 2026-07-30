@@ -12,7 +12,6 @@ import contextlib
 import functools
 import json
 import os
-import shutil
 import signal
 import subprocess
 import threading
@@ -20,8 +19,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import config, localnet, oracle_setup, state, suicli
-from .run import _make_run_id, _publish_localnet
+from devtools.run_manifest import source_revision
+
+from . import config, localnet
+from .run import _make_run_id
+from .session import create_funded_address, initialized_localnet
 
 # Flush every print so captured logs (autonomous/background runs) stay in chronological
 # order with subprocess output, instead of being reordered by Python's block buffering on
@@ -32,10 +34,9 @@ print = functools.partial(print, flush=True)
 # keeper process so its cheap settle/liquidate/rebalance/roll txs don't inherit a large trader
 # SIM_GAS_BUDGET (batch strategies need 50e9) and each demand a 50e9 gas coin.
 KEEPER_GAS_BUDGET = 15_000_000_000
-# Refill an actor's gas below this floor. It MUST exceed both the keeper's 15e9
-# budget and the 50e9 trader budget used by batch strategies: signExecThreaded
-# pins one gas coin per sender, so an actor cannot self-top-up after dropping
-# below its next transaction's budget.
+# Refill an actor's aggregate gas below this floor. It exceeds the keeper and
+# trader budgets so the gRPC executor can merge fresh faucet coins into its
+# exact-version pinned payment before that coin drops below the next budget.
 GAS_REFILL_FLOOR = 60_000_000_000
 
 
@@ -43,66 +44,21 @@ def _raise_keyboard_interrupt(*_) -> None:
     raise KeyboardInterrupt()
 
 
-def _create_funded_address(client_config: Path, faucet_port: int) -> str:
-    """Create a fresh ed25519 address in the keystore and fund it (the oracle updater)."""
-    cp = suicli.client(client_config, ["new-address", "ed25519", "--json"])
-    data = suicli.parse_json_lenient(cp.stdout)
-    addr = data.get("address") or data.get("Address")
-    if not addr:
-        raise RuntimeError(f"could not parse new-address output: {cp.stdout[:300]}")
-    localnet.fund(faucet_port, addr, times=2)
-    return addr
-
-
 @contextlib.contextmanager
 def oracle_ready_localnet(name: str | None = None, keep: bool = True):
-    """Bring up a localnet with the propbook oracle initialized and a funded updater
-    address. Yields the run context; tears down the localnet on exit."""
-    run_id = _make_run_id(name or "live")
-    slot = state.reserve(run_id)
-    inst = config.INSTANCES_DIR / run_id
-    proc = None
-    print(f"[{run_id}] slot offset={slot['offset']} rpc=:{slot['rpc_port']} faucet=:{slot['faucet_port']}")
-    try:
-        ln = _publish_localnet(run_id, slot, inst)
-        proc = ln["proc"]
-        client_config = ln["client_config"]
-        deployment = ln["deployment"]
-        active = ln["active"]
-        print(f"[{run_id}] initializing wormhole + pyth + account, writing .env.localnet...")
-        oracle_setup.initialize(client_config, deployment, inst, slot["rpc_port"], active)
-        updater_address = _create_funded_address(client_config, slot["faucet_port"])
-        deployment["updater_address"] = updater_address
-        (inst / "deployment.json").write_text(json.dumps(deployment, indent=2))
+    with initialized_localnet(
+        name or "live",
+        keep=keep,
+        create_updater=True,
+    ) as context:
+        updater_address = context["updater_address"]
         print(
-            f"[{run_id}] ORACLE-READY  rpc=http://127.0.0.1:{slot['rpc_port']}  "
-            f"updater={updater_address[:12]}  env={inst / '.env.localnet'}"
+            f"[{context['run_id']}] ORACLE-READY  "
+            f"rpc=http://127.0.0.1:{context['rpc_port']}  "
+            f"updater={updater_address[:12]}  "
+            f"env={context['instance_dir'] / '.env.localnet'}"
         )
-        yield {
-            "run_id": run_id, "instance_dir": inst, "client_config": client_config,
-            "deployment": deployment, "rpc_port": slot["rpc_port"], "faucet_port": slot["faucet_port"],
-            "active": active, "updater_address": updater_address,
-        }
-    finally:
-        localnet.stop(proc)
-        state.release(run_id)
-        if keep:
-            # Keep the trace (the analyzable result) + deployment/last-state JSONs, but drop the
-            # heavy run-time scratch: the stopped validator DB (localnet/) and the staged closure
-            # (workspace/) are useless after teardown and would otherwise accumulate ~150M+/run.
-            for scratch in ("localnet", "workspace"):
-                shutil.rmtree(inst / scratch, ignore_errors=True)
-        else:
-            shutil.rmtree(inst, ignore_errors=True)
-
-
-def spike_mint() -> int:
-    """B1: oracle-ready localnet -> market + trader -> resolve + execute a semantic mint."""
-    with oracle_ready_localnet(name="mint", keep=True) as ctx:
-        env = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"])}
-        print(f"[{ctx['run_id']}] running B1 mint spike (resolve + execute against live data)...")
-        cp = subprocess.run(["npx", "tsx", "mintSpike.ts"], cwd=str(config.TS_DIR), env=env)
-        return cp.returncode
+        yield context
 
 
 # Cadence id -> period ms (for the updater grid spec).
@@ -160,7 +116,7 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
     grid_spec = _grid_spec(_read_meta())
     max_restarts = 5
     with oracle_ready_localnet(name, keep=True) as ctx:
-        trader_addrs = [_create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
+        trader_addrs = [create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
         base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
 
         def launch_keeper() -> subprocess.Popen:
@@ -232,72 +188,6 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
     return 1 if give_up else 0  # non-zero so a supervised give-up is a programmatic failure
 
 
-def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
-    """Parallel: ONE shared market-data hub (a single WS pair) feeding N localnets, each
-    with a keeper + a HubSource updater + `traders` fuzz traders. The hub writes a global
-    snapshot the updaters read, so N localnets run off one stream instead of N. An
-    ExitStack tears down every subprocess (LIFO) then every localnet on exit.
-    """
-    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
-    grid_spec = _grid_spec(_read_meta())
-    hub_snapshot = config.LOCALNETS_DIR / "hub-snapshot.json"
-    hub_record = config.LOCALNETS_DIR / "hub-record.jsonl"
-    with contextlib.ExitStack() as stack:
-        hub = subprocess.Popen(
-            ["npx", "tsx", "hub.ts"], cwd=str(config.TS_DIR),
-            env={**os.environ, "HUB_SNAPSHOT": str(hub_snapshot), "HUB_RECORD": str(hub_record), "GRID_SPEC": grid_spec, "DURATION_MS": "0"},
-            start_new_session=True,
-        )
-        stack.callback(_terminate_group, hub)
-        core = [hub]
-        gas: list[tuple[Path, int, str]] = []  # (client_config, faucet_port, address)
-        print(f"hub started (pid {hub.pid}); bringing up {n} localnets...")
-        for i in range(n):
-            ctx = stack.enter_context(oracle_ready_localnet(name=f"par{i}", keep=True))
-            trader_addrs = [_create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
-            base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
-            keeper = subprocess.Popen(
-                ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESSES": ",".join(trader_addrs), "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET)},
-                start_new_session=True,
-            )
-            updater = subprocess.Popen(
-                ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec, "HUB_SNAPSHOT": str(hub_snapshot)},
-                start_new_session=True,
-            )
-            stack.callback(_terminate_group, keeper)
-            stack.callback(_terminate_group, updater)
-            core += [keeper, updater]
-            for addr in trader_addrs:
-                stack.callback(_terminate_group, subprocess.Popen(
-                    ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
-                    env={**base, "TRADER_ADDRESS": addr}, start_new_session=True,
-                ))
-            for a in (ctx["active"], ctx["updater_address"], *trader_addrs):
-                gas.append((ctx["client_config"], ctx["faucet_port"], a))
-        print(f"up-many: hub + {n} localnets (keeper + HubSource updater + {traders} trader each); held. Ctrl-C to tear down.")
-        deadline = (time.time() + seconds) if seconds > 0 else None
-        last_gas = 0.0
-        failed = False
-        try:
-            while all(p.poll() is None for p in core):  # hub + keepers + updaters are the core
-                if deadline and time.time() >= deadline:
-                    break
-                now = time.time()
-                if now - last_gas >= 30:
-                    last_gas = now
-                    for client_config, faucet_port, addr in gas:
-                        if 0 <= localnet.balance(client_config, addr) < GAS_REFILL_FLOOR:
-                            localnet.fund(faucet_port, addr, times=1)
-                time.sleep(2)
-            else:
-                failed = True  # while-condition went false: a core proc (hub/keeper/updater) died
-        except KeyboardInterrupt:
-            print("tearing down...")
-    return 1 if failed else 0
-
-
 class _CampaignLocalnetLease:
     """Idempotent ownership wrapper for a context entered by a setup worker."""
 
@@ -326,6 +216,18 @@ def _campaign_validation_error(
 ) -> str | None:
     if timeout < 0:
         return "--timeout must be non-negative"
+    unknown = [strategy for strategy in strategies if strategy not in strat_meta]
+    if unknown:
+        return "unknown strategies: " + ", ".join(unknown)
+    duplicates = [
+        strategy
+        for strategy in dict.fromkeys(strategies)
+        if strategies.count(strategy) > 1
+    ]
+    if duplicates:
+        return "duplicate strategies require ambiguous instance ownership: " + ", ".join(
+            duplicates
+        )
     if len(strategies) > capacity:
         return (
             f"{len(strategies)} strategies require {len(strategies)} simultaneous localnets, "
@@ -401,6 +303,7 @@ def _setup_campaign_localnets(
                     "rpc_port": ctx["rpc_port"],
                     "chain_id": deployment["meta"]["chain_id"],
                     "package_ids": deployment["packages"],
+                    "object_ids": deployment["objects"],
                 }
                 print(
                     f"campaign: {strategy} localnet ready in "
@@ -447,14 +350,6 @@ def campaign(
         print(f"campaign: {e}")
         return 1
     strat_meta = meta["strategies"]
-    unknown = [s for s in strategies if s not in strat_meta]
-    if unknown:
-        print(f"campaign: unknown {unknown}; have: {', '.join(strat_meta)}")
-        return 1
-    duplicates = sorted({s for s in strategies if strategies.count(s) > 1})
-    if duplicates:
-        print(f"campaign: duplicate strategy names are not supported: {', '.join(duplicates)}")
-        return 1
     localnet_capacity = _campaign_capacity(concurrency)
     validation_error = _campaign_validation_error(
         strategies,
@@ -514,7 +409,7 @@ def campaign(
             for strategy in strategies:
                 ctx = contexts[strategy]
                 instance_dirs.append(str(ctx["instance_dir"]))
-                addr = _create_funded_address(ctx["client_config"], ctx["faucet_port"])
+                addr = create_funded_address(ctx["client_config"], ctx["faucet_port"])
                 base = {
                     **os.environ,
                     "INSTANCE_DIR": str(ctx["instance_dir"]),
@@ -624,6 +519,13 @@ def campaign(
         "setup_concurrency": setup_concurrency,
         "localnet_capacity": localnet_capacity,
         "timeout_s": timeout,
+        "source_revision": source_revision(config.REPO_DIR),
+        "strategy_metadata": {
+            strategy: strat_meta[strategy]
+            for strategy in strategies
+            if strategy in strat_meta
+        },
+        "cadences": meta["cadences"],
         "termination_reason": termination_reason,
         "fatal_error": fatal_error,
         "hub_metrics": hub_metrics,

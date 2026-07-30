@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -146,7 +145,7 @@ def _capital_int(config: dict[str, Any], mode: str, key: str, default: int) -> i
     return int(value)
 
 
-def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> None:
+def apply_scenario_config(config: dict[str, Any]) -> None:
     global VAULT_SEED
     global MANAGER_SEED
     global INITIAL_TOTAL_PLP_SUPPLY
@@ -162,16 +161,14 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global TRADING_LOSS_REBATE_RATE
     global MAX_EXPIRY_ALLOCATION
     global INITIAL_EXPIRY_CASH
-    global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global BACKING_BUFFER_LAMBDA
     global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
 
-    capital_mode = "long" if long_run else "normal"
-    VAULT_SEED = _capital_int(config, capital_mode, "vault_seed", VAULT_SEED)
-    MANAGER_SEED = _capital_int(config, capital_mode, "manager_seed", MANAGER_SEED)
+    VAULT_SEED = _capital_int(config, "normal", "vault_seed", VAULT_SEED)
+    MANAGER_SEED = _capital_int(config, "normal", "manager_seed", MANAGER_SEED)
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
 
     BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
@@ -232,7 +229,6 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "backing_buffer_lambda",
         BACKING_BUFFER_LAMBDA,
     )
-    TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
     EXPIRY_FEE_WINDOW_MS = _config_int(
         config,
         "protocol",
@@ -2850,13 +2846,6 @@ def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
 
 
 def flush_checkpoints(row_count: int) -> set[int]:
-    raw = os.environ.get("SIM_FLUSH_AFTER", "")
-    if raw:
-        return {
-            int(value)
-            for part in raw.split(",")
-            if (value := part.strip()).isdigit() and int(value) > 0
-        }
     return {checkpoint for checkpoint in (300, 999) if checkpoint <= row_count}
 
 
@@ -3311,29 +3300,23 @@ def write_json(path: Path, value: Any) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", default=str(Path(__file__).with_name("data") / "generated" / "normal_scenario.csv"))
-    parser.add_argument("--out")
-    parser.add_argument("--derived-out")
+    parser.add_argument("--out", required=True)
     parser.add_argument("--max-rows", type=int)
     parser.add_argument("--config", type=Path, default=DEFAULT_SCENARIO_CONFIG_PATH)
-    parser.add_argument("--long-run", action="store_true")
     parser.add_argument("--pricing-trace", type=Path)
     parser.add_argument("--expiry-ms", type=int)
     args = parser.parse_args()
 
-    if not args.out and not args.derived_out:
-        parser.error("at least one of --out / --derived-out is required")
     if args.pricing_trace is not None and args.expiry_ms is None:
         parser.error("--pricing-trace requires --expiry-ms from the local market")
 
     config = load_scenario_config(args.config)
-    apply_scenario_config(config, long_run=args.long_run)
+    apply_scenario_config(config)
     expiry_ms = (
         args.expiry_ms
         if args.expiry_ms is not None
         else config_source_value(config, "expiry_ms")
     )
-    settlement_price = config_source_value(config, "settlement_price")
-    settlement_timestamp_ms = config_source_value(config, "settlement_timestamp_ms")
     pricing_timings = (
         load_pricing_timings(args.pricing_trace)
         if args.pricing_trace is not None
@@ -3343,20 +3326,12 @@ def main() -> None:
     rows = parse_scenario(Path(args.scenario))
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
-    canonical, derived = replay(
+    canonical, _ = replay(
         rows,
-        collect_derived=bool(args.derived_out),
-        exact_time=args.long_run,
         expiry_ms=expiry_ms,
-        settlement_price=settlement_price,
-        settlement_timestamp_ms=settlement_timestamp_ms,
-        terminal_closeout=args.long_run,
         pricing_timings=pricing_timings,
     )
-    if args.out:
-        write_json(Path(args.out), canonical)
-    if args.derived_out:
-        write_json(Path(args.derived_out), derived)
+    write_json(Path(args.out), canonical)
 
 
 if __name__ == "__main__":

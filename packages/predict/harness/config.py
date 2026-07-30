@@ -14,6 +14,9 @@ from pathlib import Path
 HARNESS_DIR = Path(__file__).resolve().parent
 PREDICT_DIR = HARNESS_DIR.parent
 PACKAGES_DIR = PREDICT_DIR.parent
+REPO_DIR = PACKAGES_DIR.parent
+SIMULATIONS_DIR = PREDICT_DIR / "simulations"
+SCENARIO_CONFIG = SIMULATIONS_DIR / "data" / "scenario_config.json"
 
 TS_DIR = HARNESS_DIR / "ts"
 LOCALNETS_DIR = HARNESS_DIR / ".localnets"
@@ -75,7 +78,7 @@ STAGE_IGNORE = (
 
 
 def sui_binary() -> str:
-    """Resolve the sui binary the same way run.sh does."""
+    """Resolve the Sui CLI used for localnet lifecycle and package publication."""
     env = os.environ.get("SUI_BINARY")
     if env:
         return env

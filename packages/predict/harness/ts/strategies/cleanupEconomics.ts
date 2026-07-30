@@ -1,0 +1,315 @@
+import { type Instruction } from "../resolver.js";
+import { type CleanoutPosition } from "../runtime.js";
+import { type MintLeg, type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
+import { errorTag } from "../trace.js";
+
+const SCALE = 1_000_000_000n;
+const RETRIES = 8;
+
+export type CleanupProfile = "survivor" | "liquidated" | "claim";
+
+interface CleanupConfig {
+  sizes: number[];
+  fund: bigint;
+  maxWaitTicks: number;
+}
+
+const CONFIG: Record<CleanupProfile, CleanupConfig> = {
+  survivor: {
+    sizes: [1, 3, 5, 10, 20],
+    fund: 40_000_000_000_000n,
+    maxWaitTicks: 60,
+  },
+  liquidated: {
+    sizes: [4, 10, 20],
+    fund: 60_000_000_000_000n,
+    maxWaitTicks: 120,
+  },
+  claim: {
+    sizes: [3, 10],
+    fund: 40_000_000_000_000n,
+    maxWaitTicks: 60,
+  },
+};
+
+type Phase = "mint" | "wait" | "claim" | "done";
+
+function targetMarket(ctx: StrategyCtx, profile: CleanupProfile): Mkt | null {
+  if (profile !== "liquidated") {
+    const market = ctx.nearestExpiry();
+    return market && market.expiryMs - Date.now() >= 25_000
+      ? market
+      : null;
+  }
+  const now = Date.now();
+  const usable = ctx
+    .markets()
+    .filter((market) => market.expiryMs - now > 40_000);
+  if (!usable.length) return null;
+  const drifting = usable.filter((market) => {
+    const runway = market.expiryMs - now;
+    return runway >= 120_000 && runway <= 340_000;
+  });
+  const candidates = drifting.length ? drifting : usable;
+  return candidates.reduce((left, right) =>
+    right.expiryMs > left.expiryMs ? right : left,
+  );
+}
+
+function mintLeg(
+  ctx: StrategyCtx,
+  market: Mkt,
+  profile: CleanupProfile,
+  index: number,
+  size: number,
+): MintLeg | null {
+  const probability =
+    profile === "liquidated"
+      ? ctx.rand(0.45, 0.55)
+      : ctx.rand(0.45, 0.6);
+  const isUp =
+    profile !== "liquidated" || index < Math.ceil(size / 2);
+  const instruction: Instruction = {
+    direction: isUp ? "UP" : "DN",
+    leverage:
+      profile === "liquidated"
+        ? ctx.leverageCap(probability) * ctx.rand(0.95, 0.99)
+        : 1,
+    targetProbability: probability,
+    spendUsd:
+      profile === "liquidated"
+        ? ctx.rand(20, 100)
+        : ctx.rand(5, 10),
+  };
+  const resolved = ctx.resolve(instruction, market);
+  if (!resolved) return null;
+  return {
+    strike1e9: BigInt(Math.round(resolved.strikeUsd)) * SCALE,
+    isUp,
+    quantity: resolved.quantity,
+    leverage1e9: resolved.leverage1e9,
+    maxCost: resolved.maxCost,
+    maxProbability: resolved.maxProbability1e9,
+  };
+}
+
+export function createCleanupStrategy(profile: CleanupProfile): Strategy {
+  const config = CONFIG[profile];
+  let phase: Phase = "mint";
+  let sizeIndex = 0;
+  let target: {
+    marketId: string;
+    positions: CleanoutPosition[];
+  } | null = null;
+  let waitTicks = 0;
+  let retries = 0;
+  let terminalFailure: string | null = null;
+
+  const currentSize = () => config.sizes[sizeIndex];
+  const advance = () => {
+    sizeIndex += 1;
+    target = null;
+    waitTicks = 0;
+    retries = 0;
+    phase = sizeIndex >= config.sizes.length ? "done" : "mint";
+  };
+  const fail = (
+    ctx: StrategyCtx,
+    message: string,
+    where: string,
+    tag: string,
+  ) => {
+    terminalFailure = message;
+    ctx.trace({
+      type: "fail",
+      family: "cleanup-economics",
+      profile,
+      fatal: true,
+      where,
+      tag,
+      n: currentSize(),
+    });
+  };
+
+  return {
+    name: `cleanup-${profile}`,
+    tickMs: 4_000,
+    maxOps: 0,
+    fund: config.fund,
+    done: () => phase === "done",
+    failure: () => terminalFailure,
+    async tick(ctx) {
+      if (phase === "done" || terminalFailure) return null;
+
+      if (phase === "mint") {
+        if (!ctx.snapshot()) return null;
+        const market = targetMarket(ctx, profile);
+        if (!market) return null;
+        const size = currentSize();
+        const legs: MintLeg[] = [];
+        for (let index = 0; index < size; index += 1) {
+          const leg = mintLeg(ctx, market, profile, index, size);
+          if (leg) legs.push(leg);
+        }
+        if (legs.length !== size) return null;
+        try {
+          const result = await ctx.submitMintBatch(market, legs, {
+            family: "cleanup-economics",
+            profile,
+            nTarget: size,
+          });
+          const minted = ((result.events ?? []) as any[]).filter((event) =>
+            event.type?.includes("OrderMinted"),
+          );
+          const positions = minted.map((event, index) => ({
+            orderId: String(event.parsedJson.order_id),
+            quantity: legs[index].quantity,
+          }));
+          if (positions.length !== size) {
+            fail(
+              ctx,
+              `mint batch emitted ${positions.length}/${size} OrderMinted events`,
+              "mint-events",
+              `minted ${positions.length}/${size}`,
+            );
+            return null;
+          }
+          target = { marketId: market.id, positions };
+          waitTicks = 0;
+          retries = 0;
+          phase = "wait";
+          return "mint";
+        } catch (error) {
+          ctx.trace({
+            type: "fail",
+            family: "cleanup-economics",
+            profile,
+            where: "mint",
+            tag: errorTag(error),
+            n: size,
+          });
+          return null;
+        }
+      }
+
+      if (!target) {
+        phase = "mint";
+        return null;
+      }
+      let settled = false;
+      try {
+        settled = await ctx.isSettled(target.marketId);
+      } catch {
+        // A transient read failure stays inside the bounded settlement wait.
+      }
+      if (!settled) {
+        waitTicks += 1;
+        if (waitTicks > config.maxWaitTicks) {
+          fail(
+            ctx,
+            `settlement timed out for n=${currentSize()} market=${target.marketId}`,
+            "settlement",
+            "settle-timeout",
+          );
+        }
+        return null;
+      }
+
+      if (profile === "claim") {
+        if (phase === "wait") {
+          try {
+            await ctx.redeemAll(target.marketId, target.positions);
+            retries = 0;
+            phase = "claim";
+            return "redeem";
+          } catch (error) {
+            retries += 1;
+            if (retries > RETRIES) {
+              fail(
+                ctx,
+                `redeem n=${currentSize()}: ${errorTag(error)}`,
+                "redeem-all",
+                errorTag(error),
+              );
+            } else {
+              ctx.trace({
+                type: "cleanupRetry",
+                family: "cleanup-economics",
+                profile,
+                phase: "redeem-all",
+                attempt: retries,
+                tag: errorTag(error),
+                n: currentSize(),
+              });
+            }
+            return null;
+          }
+        }
+        try {
+          await ctx.claimRebate(target.marketId);
+          advance();
+          return "redeem";
+        } catch (error) {
+          retries += 1;
+          if (retries > RETRIES) {
+            fail(
+              ctx,
+              `claim n=${currentSize()}: ${errorTag(error)}`,
+              "claim",
+              errorTag(error),
+            );
+          } else {
+            ctx.trace({
+              type: "cleanupRetry",
+              family: "cleanup-economics",
+              profile,
+              phase: "claim",
+              attempt: retries,
+              tag: errorTag(error),
+              n: currentSize(),
+            });
+          }
+          return null;
+        }
+      }
+
+      try {
+        const result = await ctx.cleanout(
+          target.marketId,
+          target.positions,
+        );
+        if (profile === "liquidated" && result.nLiquidated === 0) {
+          fail(
+            ctx,
+            `cleanout for n=${currentSize()} contained zero liquidated positions`,
+            "cleanout",
+            "no-liquidated-positions",
+          );
+          return null;
+        }
+        advance();
+      } catch (error) {
+        retries += 1;
+        if (retries > RETRIES) {
+          fail(
+            ctx,
+            `cleanout exhausted ${RETRIES} retries for n=${currentSize()}: ${errorTag(error)}`,
+            "cleanout",
+            errorTag(error),
+          );
+        } else {
+          ctx.trace({
+            type: "cleanupRetry",
+            family: "cleanup-economics",
+            profile,
+            phase: "cleanout",
+            attempt: retries,
+            tag: errorTag(error),
+            n: currentSize(),
+          });
+        }
+      }
+      return null;
+    },
+  };
+}

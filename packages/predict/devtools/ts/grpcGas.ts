@@ -11,6 +11,12 @@ export interface GasPaymentRef {
   digest: string;
 }
 
+export interface GasUsed {
+  computationCost?: string | number | bigint;
+  storageCost?: string | number | bigint;
+  storageRebate?: string | number | bigint;
+}
+
 // Sui smashes every gas-payment coin into the first coin before charging the
 // transaction. Select the largest eligible coins until their aggregate balance
 // covers the budget; requiring one oversized coin can strand a funded actor
@@ -39,4 +45,12 @@ export function selectGasPaymentRefs(
     if (balance >= budget) return payment;
   }
   throw new Error(`eligible SUI gas balance ${balance} does not cover budget ${budget}`);
+}
+
+export function netGasCharge(gasUsed: GasUsed | null | undefined): bigint {
+  return (
+    BigInt(gasUsed?.computationCost ?? 0) +
+    BigInt(gasUsed?.storageCost ?? 0) -
+    BigInt(gasUsed?.storageRebate ?? 0)
+  );
 }
