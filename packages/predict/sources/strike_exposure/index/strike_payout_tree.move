@@ -8,17 +8,28 @@
 /// pricing/settlement boundary, where callers pass the owning market's `tick_size`
 /// (`raw_strike = tick * tick_size`); the tree stores no grid geometry.
 ///
-/// This treap stores finite interval boundaries touched by positions. It tracks
-/// each order's quantity and its net payout (`Q - F`), converting the packed
-/// static floor once at the write boundary so no aggregate read re-derives it.
-/// Live cash backing is the max-point net payout plus a buffer over the
+/// This height-balanced (AVL) tree stores finite interval boundaries touched by
+/// positions. Boundary ticks are caller-chosen, so the balancing rule must not
+/// read anything the caller supplies: rotations are driven by measured subtree
+/// height, which bounds depth at `O(log n)` for *every* tick set rather than in
+/// expectation over a random one. Depth is the cost model that matters — each node
+/// is a dynamic-field child, and `apply_at` and `settlement_prefix_net_payout`
+/// touch one per level against a per-transaction cached-object ceiling.
+///
+/// It tracks each order's quantity and its net payout (`Q - F`), converting the
+/// packed static floor once at the write boundary so no aggregate read re-derives
+/// it. Live cash backing is the max-point net payout plus a buffer over the
 /// disjoint-book gap; the tree's max-point term is the floor anchor of that
 /// enforced reserve.
+///
+/// Shape carries no value: `combine_summaries` is associative over the in-order
+/// sequence, so any balanced arrangement of the same boundaries yields identical
+/// summaries, settlement prefixes, and linear-walk totals.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
 use fixed_math::math;
-use sui::{bcs, hash::blake2b256, table::{Self, Table}};
+use sui::table::{Self, Table};
 
 const EInsufficientPayoutTerms: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
@@ -51,9 +62,12 @@ public struct PayoutSummary has copy, drop, store {
     max_net_payout_prefix_gain: u64,
 }
 
-/// Treap node keyed by finite boundary tick.
+/// Height-balanced node keyed by finite boundary tick.
 public struct PayoutNode has copy, drop, store {
-    priority: u64,
+    /// Longest root-to-leaf path in this subtree, counting this node. A leaf is 1;
+    /// an absent child is 0. Maintained by `resummarize` alongside `summary`, and
+    /// read only by `rebalance` — never by a caller, and never derived from a tick.
+    height: u64,
     left: Option<u64>,
     right: Option<u64>,
     /// This node's own boundary terms, stored so the subtree `summary` can be
@@ -185,6 +199,39 @@ public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node
     tree.node_count = node_count;
 }
 
+#[test_only]
+/// Depth of the whole tree. Bounded depth is the property this module exists to
+/// guarantee against caller-chosen ticks, and no evaluator output reveals it, so
+/// it needs its own observation seam.
+public(package) fun root_height_for_testing(tree: &StrikePayoutTree): u64 {
+    subtree_height(&tree.nodes, tree.root)
+}
+
+#[test_only]
+/// Assert the AVL invariant everywhere: each stored height agrees with the
+/// children it was measured from, and no node's subtrees differ by more than one
+/// level. Recomputing rather than trusting `height` is the point — a rotation that
+/// forgets to re-measure is exactly the bug this catches.
+public(package) fun assert_balanced_for_testing(tree: &StrikePayoutTree) {
+    assert_subtree_balanced(&tree.nodes, tree.root);
+}
+
+#[test_only]
+fun assert_subtree_balanced(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
+    if (root.is_none()) return 0;
+    let node = nodes[*root.borrow()];
+    let left = assert_subtree_balanced(nodes, node.left);
+    let right = assert_subtree_balanced(nodes, node.right);
+
+    let taller = left.max(right);
+    let shorter = left.min(right);
+    assert!(taller - shorter <= 1);
+
+    let measured = 1 + taller;
+    assert!(node.height == measured);
+    measured
+}
+
 fun apply_range(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
@@ -242,7 +289,7 @@ fun apply_at(
 ): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutTerms);
-        let leaf = new_leaf(tick, terms, is_start);
+        let leaf = new_leaf(terms, is_start);
         nodes.add(tick, leaf);
         return option::some(tick)
     };
@@ -258,55 +305,52 @@ fun apply_at(
         };
         if (is_empty_node(node)) {
             let _removed = nodes.remove(root_tick);
-            return merge_subtrees(nodes, node.left, node.right)
+            return join_subtrees(nodes, node.left, node.right)
         };
         resummarize(nodes, root_tick, node);
         return option::some(root_tick)
     };
 
+    // The descent is a plain BST insert; every structural decision is deferred to
+    // `rebalance` on the way back up, which reads only measured heights.
     if (tick < root_tick) {
-        let new_left = apply_at(
-            nodes,
-            node.left,
-            tick,
-            terms,
-            is_start,
-            add,
-        );
-        if (add && new_left.is_some()) {
-            let left_tick = *new_left.borrow();
-            let left_node = nodes[left_tick];
-            if (left_node.priority > node.priority) {
-                let rotated = rotate_right(nodes, root_tick, node, left_tick, left_node);
-                return option::some(rotated)
-            };
-        };
-        node.left = new_left;
+        node.left = apply_at(nodes, node.left, tick, terms, is_start, add);
     } else {
-        let new_right = apply_at(
-            nodes,
-            node.right,
-            tick,
-            terms,
-            is_start,
-            add,
-        );
-        if (add && new_right.is_some()) {
-            let right_tick = *new_right.borrow();
-            let right_node = nodes[right_tick];
-            if (right_node.priority > node.priority) {
-                let rotated = rotate_left(nodes, root_tick, node, right_tick, right_node);
-                return option::some(rotated)
-            };
-        };
-        node.right = new_right;
+        node.right = apply_at(nodes, node.right, tick, terms, is_start, add);
     };
 
-    resummarize(nodes, root_tick, node);
-    option::some(root_tick)
+    option::some(rebalance(nodes, root_tick, node))
 }
 
-fun new_leaf(tick: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
+/// Write `node` back at `tick`, restoring the height invariant at that position.
+/// Returns the tick now rooting the subtree. One rotation fixes an outside-heavy
+/// child; an inside-heavy one needs its own rotation first so the taller
+/// grandchild ends up on the outside.
+fun rebalance(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode): u64 {
+    let left_height = subtree_height(nodes, node.left);
+    let right_height = subtree_height(nodes, node.right);
+
+    if (left_height > right_height + 1) {
+        let left_tick = *node.left.borrow();
+        let left_node = nodes[left_tick];
+        if (subtree_height(nodes, left_node.right) > subtree_height(nodes, left_node.left)) {
+            node.left = option::some(rotate_left(nodes, left_tick, left_node));
+        };
+        rotate_right(nodes, tick, node)
+    } else if (right_height > left_height + 1) {
+        let right_tick = *node.right.borrow();
+        let right_node = nodes[right_tick];
+        if (subtree_height(nodes, right_node.left) > subtree_height(nodes, right_node.right)) {
+            node.right = option::some(rotate_right(nodes, right_tick, right_node));
+        };
+        rotate_left(nodes, tick, node)
+    } else {
+        resummarize(nodes, tick, node);
+        tick
+    }
+}
+
+fun new_leaf(terms: PayoutTerms, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
         (terms, payout_terms(0, 0))
     } else {
@@ -314,7 +358,7 @@ fun new_leaf(tick: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
     };
 
     PayoutNode {
-        priority: tick_priority(tick),
+        height: 1,
         left: option::none(),
         right: option::none(),
         local_start: start,
@@ -327,10 +371,12 @@ fun rotate_right(
     nodes: &mut Table<u64, PayoutNode>,
     root_tick: u64,
     mut root_node: PayoutNode,
-    left_tick: u64,
-    mut left_node: PayoutNode,
 ): u64 {
-    // Write the demoted node first so the new parent re-summarizes against it.
+    let left_tick = *root_node.left.borrow();
+    let mut left_node = nodes[left_tick];
+
+    // Write the demoted node first so the new parent re-summarizes (and re-measures
+    // its height) against it.
     root_node.left = left_node.right;
     resummarize(nodes, root_tick, root_node);
 
@@ -343,10 +389,12 @@ fun rotate_left(
     nodes: &mut Table<u64, PayoutNode>,
     root_tick: u64,
     mut root_node: PayoutNode,
-    right_tick: u64,
-    mut right_node: PayoutNode,
 ): u64 {
-    // Write the demoted node first so the new parent re-summarizes against it.
+    let right_tick = *root_node.right.borrow();
+    let mut right_node = nodes[right_tick];
+
+    // Write the demoted node first so the new parent re-summarizes (and re-measures
+    // its height) against it.
     root_node.right = right_node.left;
     resummarize(nodes, root_tick, root_node);
 
@@ -355,7 +403,11 @@ fun rotate_left(
     right_tick
 }
 
-fun merge_subtrees(
+/// Fill the hole left by a GC'd boundary with the in-order successor — the
+/// leftmost node of the right subtree — then rebalance the joined subtree. The
+/// successor keeps its own tick (the table is keyed by tick, so a node is never
+/// re-keyed) and inherits the removed node's children.
+fun join_subtrees(
     nodes: &mut Table<u64, PayoutNode>,
     left: Option<u64>,
     right: Option<u64>,
@@ -363,19 +415,24 @@ fun merge_subtrees(
     if (left.is_none()) return right;
     if (right.is_none()) return left;
 
-    let left_tick = *left.borrow();
-    let right_tick = *right.borrow();
-    let mut left_node = nodes[left_tick];
-    let mut right_node = nodes[right_tick];
-    if (left_node.priority > right_node.priority) {
-        left_node.right = merge_subtrees(nodes, left_node.right, right);
-        resummarize(nodes, left_tick, left_node);
-        option::some(left_tick)
-    } else {
-        right_node.left = merge_subtrees(nodes, left, right_node.left);
-        resummarize(nodes, right_tick, right_node);
-        option::some(right_tick)
-    }
+    let (successor_tick, remainder) = take_min(nodes, *right.borrow());
+    let mut successor = nodes[successor_tick];
+    successor.left = left;
+    successor.right = remainder;
+    option::some(rebalance(nodes, successor_tick, successor))
+}
+
+/// Detach the leftmost node of the subtree rooted at `tick`. Returns that node's
+/// tick and the rebalanced remainder. The detached node is left in the table for
+/// `join_subtrees` to relink — it is never orphaned, because the only caller
+/// immediately reinstalls it.
+fun take_min(nodes: &mut Table<u64, PayoutNode>, tick: u64): (u64, Option<u64>) {
+    let mut node = nodes[tick];
+    if (node.left.is_none()) return (tick, node.right);
+
+    let (min_tick, remainder) = take_min(nodes, *node.left.borrow());
+    node.left = remainder;
+    (min_tick, option::some(rebalance(nodes, tick, node)))
 }
 
 fun settlement_prefix_net_payout(
@@ -435,12 +492,18 @@ fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutN
     let right = subtree_summary(nodes, node.right);
     let boundary = boundary_summary(node.local_start, node.local_end);
     node.summary = combine_summaries(combine_summaries(left, boundary), right);
+    node.height = 1 + subtree_height(nodes, node.left).max(subtree_height(nodes, node.right));
     *nodes.borrow_mut(tick) = node;
 }
 
 fun subtree_summary(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSummary {
     if (root.is_none()) return zero_summary();
     nodes[*root.borrow()].summary
+}
+
+fun subtree_height(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
+    if (root.is_none()) return 0;
+    nodes[*root.borrow()].height
 }
 
 fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
@@ -512,12 +575,4 @@ fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
         assert!(*value >= delta, EInsufficientPayoutTerms);
         *value = *value - delta;
     };
-}
-
-fun tick_priority(tick: u64): u64 {
-    let bytes = bcs::to_bytes(&tick);
-    let hash = blake2b256(&bytes);
-    let mut out = 0;
-    8u64.do!(|i| out = (out << 8) | (hash[i] as u64));
-    out
 }
