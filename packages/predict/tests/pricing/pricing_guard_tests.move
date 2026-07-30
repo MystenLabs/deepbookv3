@@ -1162,7 +1162,11 @@ fun load_pricer_with_values(
     );
 }
 
-fun load_pricer_with_svi(fx: &mut OracleFixture, oracle: &OracleBundle, svi: &BlockScholesSVIStore) {
+fun load_pricer_with_svi(
+    fx: &mut OracleFixture,
+    oracle: &OracleBundle,
+    svi: &BlockScholesSVIStore,
+) {
     let _pricer = fx.load_pricer_with_stores(
         oracle_fixture::config(oracle),
         oracle_fixture::oracle_registry(oracle),

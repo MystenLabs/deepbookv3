@@ -8,12 +8,7 @@
 #[test_only]
 module deepbook_predict::oracle_same_tx_guard_tests;
 
-use deepbook_predict::{
-    constants,
-    flow_test_helpers as helpers,
-    pricing,
-    test_constants
-};
+use deepbook_predict::{constants, flow_test_helpers as helpers, pricing, test_constants};
 use std::unit_test::assert_eq;
 
 /// Lot-aligned position size used across the mint/redeem scenarios.

@@ -57,7 +57,7 @@ use sui::{
     clock::{Self, Clock},
     coin,
     test_scenario::{Self as test, Scenario, return_shared},
-    tx_context::{Self, TxContext},
+    tx_context::{Self, TxContext}
 };
 use token::deep::DEEP;
 
@@ -1765,7 +1765,11 @@ public fun liquidate_order(
 }
 
 /// Try to liquidate one bundled active leveraged order by ID.
-public fun liquidate_order_bundle(self: &mut Fixture, market: &mut MarketBundle, order_id: u256): bool {
+public fun liquidate_order_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    order_id: u256,
+): bool {
     self.liquidate_order(
         &market.config,
         &market.oracle_registry,

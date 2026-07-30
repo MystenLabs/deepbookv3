@@ -40,7 +40,7 @@ use std::unit_test::destroy;
 use sui::{
     clock::{Self, Clock},
     test_scenario::{Self as test, Scenario, return_shared},
-    tx_context::{Self, TxContext},
+    tx_context::{Self, TxContext}
 };
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
