@@ -43,6 +43,9 @@ public struct RequestEntry has copy, drop, store {
     recipient: address,
     amount: u64,
     min_output: u64,
+    /// Frozen marks this request has already missed. Only ever non-zero when the
+    /// protocol allows more than one attempt (`ProtocolConfig`), since at one
+    /// attempt a miss refunds immediately.
     missed_flushes: u64,
 }
 
@@ -176,9 +179,16 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 /// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
 /// supplies first then withdrawals. `supply_budget` / `withdraw_budget` bound how many
 /// head requests each queue may process this flush; processed means filled,
-/// protocol-refunded as non-executable at the mark, or a live limit miss that remains
-/// queued. `None` makes that queue unbounded. The two budgets are independent, so
-/// supply pressure can never starve withdrawals.
+/// protocol-refunded as non-executable at the mark, or a live limit miss. `None` makes
+/// that queue unbounded. The two budgets are independent, so supply pressure can never
+/// starve withdrawals.
+///
+/// `max_limit_misses` is the admin-tunable attempt count from `ProtocolConfig`. At `1`
+/// every head is resolved by the flush that reaches it — filled or refunded — so no
+/// request a mark cannot fill can hold up the requests behind it. Above `1` a missing
+/// head stays queued and stops that queue for the flush, which is what RP-12 trades
+/// away for a resting limit.
+///
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
 public(package) fun drain<LP>(
@@ -188,6 +198,7 @@ public(package) fun drain<LP>(
     pool_vault_id: ID,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
+    max_limit_misses: u64,
     ctx: &mut TxContext,
 ): DrainSummary {
     let (supplies_filled, supplies_processed) = drain_supply_queue(
@@ -196,6 +207,7 @@ public(package) fun drain<LP>(
         &mark,
         pool_vault_id,
         &supply_budget,
+        max_limit_misses,
     );
     let (withdrawals_filled, withdrawals_processed) = drain_withdraw_queue(
         book,
@@ -203,6 +215,7 @@ public(package) fun drain<LP>(
         &mark,
         pool_vault_id,
         &withdraw_budget,
+        max_limit_misses,
         ctx,
     );
 
@@ -219,11 +232,10 @@ fun drain_supply_queue<LP>(
     mark: &FlushMark,
     pool_vault_id: ID,
     budget: &Option<u64>,
+    max_limit_misses: u64,
 ): (u64, u64) {
     let mut filled = 0;
     let mut processed = 0;
-
-    let max_limit_misses = constants::lp_request_limit_flush_attempts!();
 
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
@@ -251,17 +263,20 @@ fun drain_supply_queue<LP>(
                     book.supply_queue.pending,
                 );
             } else if (shares < request.min_output) {
-                let missed_flushes = book.supply_queue.record_front_limit_miss();
+                // Counted off the copied entry so the refund path does no page write:
+                // at one attempt the entry is popped on this very miss.
+                let missed_flushes = request.missed_flushes + 1;
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed) = book.supply_queue.pop_front();
                     refund_supply_request(
                         pool_vault_id,
                         request,
                         escrowed,
-                        constants::request_cancel_reason_limit_expired!(),
+                        constants::request_cancel_reason_limit_missed!(),
                         book.supply_queue.pending,
                     );
                 } else {
+                    book.supply_queue.record_front_limit_miss();
                     emit_request_limit_missed(
                         pool_vault_id,
                         &request,
@@ -300,12 +315,11 @@ fun drain_withdraw_queue<LP>(
     mark: &FlushMark,
     pool_vault_id: ID,
     budget: &Option<u64>,
+    max_limit_misses: u64,
     ctx: &mut TxContext,
 ): (u64, u64) {
     let mut filled = 0;
     let mut processed = 0;
-
-    let max_limit_misses = constants::lp_request_limit_flush_attempts!();
 
     while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
@@ -325,17 +339,18 @@ fun drain_withdraw_queue<LP>(
             let payout = payout.destroy_some();
             if (payout < request.min_output) {
                 processed = processed + 1;
-                let missed_flushes = book.withdraw_queue.record_front_limit_miss();
+                let missed_flushes = request.missed_flushes + 1;
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed_lp) = book.withdraw_queue.pop_front();
                     refund_withdraw_request(
                         pool_vault_id,
                         request,
                         escrowed_lp,
-                        constants::request_cancel_reason_limit_expired!(),
+                        constants::request_cancel_reason_limit_missed!(),
                         book.withdraw_queue.pending,
                     );
                 } else {
+                    book.withdraw_queue.record_front_limit_miss();
                     emit_request_limit_missed(
                         pool_vault_id,
                         &request,
@@ -497,12 +512,14 @@ fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
     queue.remove(request.index)
 }
 
-fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>): u64 {
+/// Persist a miss on the head so it survives to the next flush. Only called when the
+/// request keeps an attempt; a miss that refunds counts off the caller's copy instead,
+/// so the refund path writes no page.
+fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>) {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();
     let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
     entry.missed_flushes = entry.missed_flushes + 1;
-    entry.missed_flushes
 }
 
 fun remove<T>(queue: &mut RequestQueue<T>, index: u64): (RequestEntry, Balance<T>) {

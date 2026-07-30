@@ -43,6 +43,38 @@ fun set_ewma_params_and_enabled_update_config() {
     scenario.end();
 }
 
+/// A freshly created config ships fill-or-kill. Asserted against the stored state the
+/// flush actually reads, not against the default macro, so a constructor that stopped
+/// seeding this field would be caught here.
+#[test]
+fun new_config_ships_with_no_retry() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    assert_eq!(config.lp_request_limit_flush_attempts(), 1);
+
+    // And the admin path moves it, so the getter is not reading a frozen constant.
+    config.set_lp_request_limit_flush_attempts(&admin_cap, 3);
+    assert_eq!(config.lp_request_limit_flush_attempts(), 3);
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_lp_request_limit_flush_attempts_during_valuation_aborts() {
+    // `finish_flush` reads the attempt count mid-PTB and hands it to both queue drains;
+    // moving it under a valuation in flight would change the drain policy between the
+    // mark being frozen and the queues being drained against it.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.begin_valuation();
+    config.set_lp_request_limit_flush_attempts(
+        &admin_cap,
+        config_constants::max_lp_request_limit_flush_attempts!(),
+    );
+    abort 999
+}
+
 #[test]
 fun expiry_market_mint_pause_defaults_false_and_toggles() {
     let mut fx = helpers::setup_market_default();
