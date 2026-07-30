@@ -147,9 +147,12 @@ public struct SupplyFilled has copy, drop, store {
     recipient: address,
     index: u64,
     /// DUSDC actually taken into the pool, which is less than the request's escrow
-    /// when the supply cap left only part of it room.
+    /// when the supply cap left only part of it room. Shares were priced on
+    /// `dusdc_amount - fee_dusdc`.
     dusdc_amount: u64,
     shares_minted: u64,
+    /// Supply fee withheld from `dusdc_amount` and retained by the pool.
+    fee_dusdc: u64,
     /// Escrow still queued at the head after a partial fill; `0` on a full fill, in
     /// which case the request is gone. `dusdc_amount + dusdc_remaining` is the amount
     /// the request carried into this flush.
@@ -166,7 +169,11 @@ public struct WithdrawFilled has copy, drop, store {
     recipient: address,
     index: u64,
     shares_burned: u64,
+    /// Net DUSDC delivered to `recipient`. The gross marked value of
+    /// `shares_burned` was `dusdc_amount + fee_dusdc`.
     dusdc_amount: u64,
+    /// Withdraw fee withheld from the payout and retained by the pool.
+    fee_dusdc: u64,
     /// Escrowed PLP still queued at the head after a partial fill; `0` on a full fill,
     /// in which case the request is gone. `shares_burned + shares_remaining` is the
     /// amount the request carried into this flush.
@@ -184,6 +191,9 @@ public struct FlushExecuted has copy, drop, store {
     pool_value: u64,
     /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
+    /// Supply/withdraw fee rate in FLOAT_SCALING, frozen with the mark and charged
+    /// on every fill in this flush.
+    fee_rate: u64,
     /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
@@ -427,6 +437,7 @@ public(package) fun emit_supply_filled(
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
+    fee_dusdc: u64,
     dusdc_remaining: u64,
     requests_pending_after: u64,
 ) {
@@ -437,6 +448,7 @@ public(package) fun emit_supply_filled(
         index,
         dusdc_amount,
         shares_minted,
+        fee_dusdc,
         dusdc_remaining,
         requests_pending_after,
     });
@@ -449,6 +461,7 @@ public(package) fun emit_withdraw_filled(
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    fee_dusdc: u64,
     shares_remaining: u64,
     requests_pending_after: u64,
 ) {
@@ -459,6 +472,7 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
+        fee_dusdc,
         shares_remaining,
         requests_pending_after,
     });
@@ -469,6 +483,7 @@ public(package) fun emit_flush_executed(
     epoch: u64,
     pool_value: u64,
     total_supply: u64,
+    fee_rate: u64,
     active_market_nav: u64,
     market_count: u64,
     idle_balance_before: u64,
@@ -483,6 +498,7 @@ public(package) fun emit_flush_executed(
         epoch,
         pool_value,
         total_supply,
+        fee_rate,
         active_market_nav,
         market_count,
         idle_balance_before,

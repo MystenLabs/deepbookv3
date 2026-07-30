@@ -273,6 +273,58 @@ including one-minute and five-minute surfaces, so the deviation bound is checked
 where it binds. This needs source rows at those cadences; the current CSV does
 not contain them, so it is a data-collection task before it is a generator task.
 
+### P-27: The PLP supply/withdraw fee ships at 1% on an unmeasured leak
+
+**Severity:** Undecided policy. Not a correctness bug — the mechanism is
+tested; the open question is whether the rate is right, and whether the leak it
+prices is real at all.
+
+A fill at an exact mark is provably value-neutral to incumbents: supplying `D`
+into pool value `V` over `S` shares mints `D·S/V`, leaving `V/S` unchanged.
+Extraction therefore requires the mark to differ from true recoverable value.
+Two facts make that gap non-zero: the certified NAV error is bounded near 1% in
+the worst case, and incumbents are involuntary counterparties who cannot
+decline a fill or requote it. Whoever chooses when to transact selects against
+that error one-directionally.
+
+The counter-argument is that this is ordinary trading, not extraction, and that
+a fee only shifts the thresholds a timer needs. That is correct in the limit
+where the mark is exact; it is exactly the limit that is not established.
+
+Predict is forward-priced — requests queue before the mark exists — which is
+the standard mitigation for the *stale-NAV* form of this problem, so the
+residual exposure is mark **error**, not mark **staleness**. That distinction
+decides the calibration: the yardstick is the certified error, not the variance
+of the share price between flushes.
+
+Shipped state: one protocol-wide `plp_fee_rate`, default 1%, envelope `0..5%`,
+charged on the DUSDC leg of executed fills only and retained by the pool. The
+rate is admin-tunable to zero without a package upgrade, so shipping enabled is
+reversible; widening past 5% is not.
+
+**Experiment plan** (decision rule written before the run):
+
+- **Question:** does the realized fill mark deviate from a higher-precision
+  reference NAV at fill time, in a direction a submitter can predict at
+  *submit* time?
+- **Strategy:** drive supply/withdraw against a live book while recording, per
+  flush, the realized mark, the reference NAV, and the information available
+  one flush earlier. Measure realized round-trip PnL of a timing strategy at
+  `plp_fee_rate = 0`, net of gas and a flush of escrow lockup.
+- **Blocked on:** the Python parity oracle still models scalar NAV, so there is
+  no independent reference to difference the realized mark against. Closing
+  that gap is the first step, not the experiment.
+- **Decision rule:** if zero-fee round-trip PnL is not distinguishable from
+  zero at the observed flush cadence, set the default to 0 and keep the knob.
+  If it is positive, set the rate above the measured per-lap edge and record
+  the measurement as the basis. Either outcome graduates to
+  `response-policies.md`; "it feels safer with a fee" does not.
+
+**Note:** the measurement depends on the flush cadence, which is itself
+unsettled — the keeper default and this repo's design record disagree, and
+every per-day figure in the discussion moves with it. Settle the cadence before
+running, or the result is not interpretable.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation

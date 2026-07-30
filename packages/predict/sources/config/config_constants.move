@@ -33,6 +33,7 @@ const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
 const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
+const EInvalidPlpFeeRate: u64 = 26;
 
 // === Fees ===
 
@@ -52,6 +53,21 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
             && value <= max_protocol_reserve_profit_share!(),
         EInvalidProtocolReserveProfitShare,
     );
+}
+
+/// Fee charged on executed PLP supply and withdraw fills, in FLOAT_SCALING. The
+/// charge is retained by the pool, so it accrues to remaining PLP holders rather
+/// than to the protocol reserve. Zero disables the fee without a package upgrade;
+/// the 5% ceiling bounds how punitive an `AdminCap` alone can make LP entry and
+/// exit.
+public(package) macro fun default_plp_fee_rate(): u64 { 10_000_000 }
+
+public(package) macro fun min_plp_fee_rate(): u64 { 0 }
+
+public(package) macro fun max_plp_fee_rate(): u64 { 50_000_000 }
+
+public(package) fun assert_plp_fee_rate(value: u64) {
+    assert!(value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(), EInvalidPlpFeeRate);
 }
 
 // === Trade Liquidation ===

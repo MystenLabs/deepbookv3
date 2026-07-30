@@ -35,6 +35,13 @@ public struct ProtocolConfig has key {
     /// Merged protocol + insurance reserve share of materialized terminal profit,
     /// in FLOAT_SCALING. The complement accrues to LPs.
     protocol_reserve_profit_share: u64,
+    /// Fee charged on executed PLP supply and withdraw fills, in FLOAT_SCALING.
+    /// Charged on the DUSDC leg of each fill — deducted from the input before
+    /// shares are priced on supply, and withheld from the payout on withdraw — and
+    /// retained by the pool, so it accrues to remaining PLP holders. Read once per
+    /// flush into the frozen mark, so every fill in one flush is charged the same
+    /// rate.
+    plp_fee_rate: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
@@ -85,6 +92,13 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 /// Return the global protocol-freeze state for SDK and devInspect reads.
 public fun frozen(config: &ProtocolConfig): bool {
     config.frozen
+}
+
+/// Return the PLP supply/withdraw fee rate for SDK and devInspect reads. Public
+/// because a caller sizing `min_plp_out` / `min_dusdc_out` needs it: those limits
+/// are compared against the post-fee result.
+public fun plp_fee_rate(config: &ProtocolConfig): u64 {
+    config.plp_fee_rate
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -349,6 +363,16 @@ public fun set_protocol_reserve_profit_share(
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
+/// Set the fee charged on executed PLP supply and withdraw fills. Admin-gated and
+/// validated against its config-constants envelope. Locked during valuation so the
+/// rate a flush froze into its mark cannot change midway through that flush.
+public fun set_plp_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_plp_fee_rate(rate);
+    config.plp_fee_rate = rate;
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -477,6 +501,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
+        plp_fee_rate: config_constants::default_plp_fee_rate!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
