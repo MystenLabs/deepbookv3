@@ -37,7 +37,11 @@ use propbook::{
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::destroy;
-use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
+use sui::{
+    clock::{Self, Clock},
+    test_scenario::{Self as test, Scenario, return_shared},
+    tx_context::{Self, TxContext},
+};
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 
@@ -259,27 +263,61 @@ public fun return_oracle_bundle(bundle: OracleBundle) {
 }
 
 public fun load_pricer(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
     bs: &BlockScholesFeed,
 ): Pricer {
+    self.load_pricer_with_stores(config, oracle_registry, pyth, bs.values(), bs.svi())
+}
+
+/// Load a live pricer while substituting explicit BS stores (binding-guard tests).
+public fun load_pricer_with_stores(
+    self: &mut OracleFixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+): Pricer {
+    let expiry_market_id = self.expiry_id;
+    self.load_pricer_bound_to(
+        config,
+        oracle_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        expiry_market_id,
+    )
+}
+
+/// Load a live pricer bound to an explicit `expiry_market_id` (wrong-pricer tests).
+public fun load_pricer_bound_to(
+    self: &mut OracleFixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    expiry_market_id: ID,
+): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
         oracle_registry,
         pyth,
-        bs.values(),
-        bs.svi(),
-        self.expiry_id,
+        bs_values,
+        bs_svi,
+        expiry_market_id,
         test_constants::propbook_underlying_id(),
         self.expiry,
         &self.clock,
+        self.scenario.ctx(),
     )
 }
 
 /// Load a live pricer from an oracle bundle.
-public fun load_pricer_bundle(self: &OracleFixture, oracle: &OracleBundle): Pricer {
+public fun load_pricer_bundle(self: &mut OracleFixture, oracle: &OracleBundle): Pricer {
     self.load_pricer(&oracle.config, &oracle.oracle_registry, &oracle.pyth, &oracle.bs)
 }
 
@@ -355,7 +393,7 @@ public fun prepare_real_oracle(
 }
 
 fun prepare_real_oracle_with_svi_source(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     pyth: &mut PythFeed,
     spot: u64,
@@ -371,10 +409,11 @@ fun prepare_real_oracle_with_svi_source(
     svi_source_timestamp_ms: u64,
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
-    store_pyth_spot(pyth, spot, live_ts, live_ts);
+    store_pyth_spot(&mut self.scenario, pyth, spot, live_ts, live_ts);
     let underlying = test_constants::propbook_underlying_id();
     // Spot and forward ride one value batch, as they do on the wire.
     apply_value_batch_updates(
+        &mut self.scenario,
         bs,
         vector[
             verify::new_value_update_for_testing(
@@ -442,18 +481,26 @@ public fun prepare_real_oracle_bundle(
 /// envelope carrying it are the same. Use `retransmit_bs_svi_for_testing` for the case where they
 /// differ.
 public fun set_bs_spot_for_testing(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     source_timestamp_ms: u64,
     spot: u64,
 ) {
     let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
-    apply_value_batch(bs, sid, source_timestamp_ms, source_timestamp_ms, spot, &self.clock);
+    apply_value_batch(
+        &mut self.scenario,
+        bs,
+        sid,
+        source_timestamp_ms,
+        source_timestamp_ms,
+        spot,
+        &self.clock,
+    );
 }
 
 /// Overwrite only the BS spot row through an oracle bundle.
 public fun set_bs_spot_for_testing_bundle(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     source_timestamp_ms: u64,
     spot: u64,
@@ -471,7 +518,15 @@ public fun set_bs_forward_for_testing(
     forward: u64,
 ) {
     let sid = block_scholes_sid::forward(test_constants::propbook_underlying_id(), self.expiry);
-    apply_value_batch(bs, sid, source_timestamp_ms, source_timestamp_ms, forward, &self.clock);
+    apply_value_batch(
+        &mut self.scenario,
+        bs,
+        sid,
+        source_timestamp_ms,
+        source_timestamp_ms,
+        forward,
+        &self.clock,
+    );
 }
 
 /// Overwrite only the BS forward row through an oracle bundle.
@@ -486,20 +541,28 @@ public fun set_bs_forward_for_testing_bundle(
 
 /// Retransmit the BS spot pinned to its original model time inside a newer envelope.
 public fun retransmit_bs_spot_for_testing(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     model_timestamp_ms: u64,
     published_at_ms: u64,
     spot: u64,
 ) {
     let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
-    apply_value_batch(&mut oracle.bs, sid, model_timestamp_ms, published_at_ms, spot, &self.clock);
+    apply_value_batch(
+        &mut self.scenario,
+        &mut oracle.bs,
+        sid,
+        model_timestamp_ms,
+        published_at_ms,
+        spot,
+        &self.clock,
+    );
 }
 
 /// Retransmit the BS forward for this fixture's expiry pinned to its original model time inside a
 /// newer envelope.
 public fun retransmit_bs_forward_for_testing(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     model_timestamp_ms: u64,
     published_at_ms: u64,
@@ -507,6 +570,7 @@ public fun retransmit_bs_forward_for_testing(
 ) {
     let sid = block_scholes_sid::forward(test_constants::propbook_underlying_id(), self.expiry);
     apply_value_batch(
+        &mut self.scenario,
         &mut oracle.bs,
         sid,
         model_timestamp_ms,
@@ -581,17 +645,23 @@ public fun retransmit_bs_svi_for_testing(
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
 /// the fixture clock as the on-chain landing timestamp.
 public fun set_pyth(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     pyth: &mut PythFeed,
     price: u64,
     source_timestamp_ms: u64,
 ) {
-    store_pyth_spot(pyth, price, source_timestamp_ms, self.clock.timestamp_ms());
+    store_pyth_spot(
+        &mut self.scenario,
+        pyth,
+        price,
+        source_timestamp_ms,
+        self.clock.timestamp_ms(),
+    );
 }
 
 /// Overwrite the bundled Pyth spot directly.
 public fun set_pyth_bundle(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     price: u64,
     source_timestamp_ms: u64,
@@ -603,12 +673,13 @@ public fun set_pyth_bundle(
 /// generated it at `feed_update_timestamp_ms` — a price Pyth carried forward
 /// because it had no fresh aggregate for this feed.
 public fun carry_pyth_bundle(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     price: u64,
     feed_update_timestamp_ms: u64,
     envelope_timestamp_ms: u64,
 ) {
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     pyth_feed::record_raw_for_testing(
         &mut oracle.pyth,
         price,
@@ -619,16 +690,19 @@ public fun carry_pyth_bundle(
         envelope_timestamp_ms * 1000,
         self.clock.timestamp_ms(),
         false,
+        &ctx,
     );
+    end_seed_tx(restore);
 }
 
 /// Insert an exact historical Pyth spot keyed by `source_timestamp_ms`.
 public fun insert_exact_pyth(
-    _self: &OracleFixture,
+    self: &mut OracleFixture,
     pyth: &mut PythFeed,
     price: u64,
     source_timestamp_ms: u64,
 ) {
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     pyth_feed::record_raw_for_testing(
         pyth,
         price,
@@ -639,12 +713,14 @@ public fun insert_exact_pyth(
         source_timestamp_ms * 1000,
         source_timestamp_ms,
         true,
+        &ctx,
     );
+    end_seed_tx(restore);
 }
 
 /// Insert an exact historical Pyth spot into a bundle.
 public fun insert_exact_pyth_bundle(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     price: u64,
     source_timestamp_ms: u64,
@@ -736,6 +812,7 @@ public fun finish(self: OracleFixture) {
 
 /// Land one value observation through the real verified-batch path.
 fun apply_value_batch(
+    scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
     sid: u256,
     model_timestamp_ms: u64,
@@ -744,6 +821,7 @@ fun apply_value_batch(
     clock: &Clock,
 ) {
     apply_value_batch_updates(
+        scenario,
         bs,
         vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
         published_at_ms,
@@ -753,22 +831,26 @@ fun apply_value_batch(
 
 /// Land a whole value batch, for callers seeding more than one series at once.
 fun apply_value_batch_updates(
+    scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
     updates: vector<verify::ValueUpdate>,
     published_at_ms: u64,
     clock: &Clock,
 ) {
+    let (ctx, restore) = begin_seed_tx(scenario);
     bs
         .values_mut()
         .apply_value_batch(
             verify::new_value_batch_for_testing(published_at_ms, updates),
             clock,
+            &ctx,
         );
+    end_seed_tx(restore);
 }
 
 /// Land one SVI observation through the real verified-batch path.
 fun apply_svi_batch(
-    self: &OracleFixture,
+    self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     model_timestamp_ms: u64,
     published_at_ms: u64,
@@ -782,6 +864,7 @@ fun apply_svi_batch(
     svi_m_is_negative: bool,
 ) {
     let sid = block_scholes_sid::svi(test_constants::propbook_underlying_id(), self.expiry);
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     bs
         .svi_mut()
         .apply_svi_batch(
@@ -803,15 +886,77 @@ fun apply_svi_batch(
                 ],
             ),
             &self.clock,
+            &ctx,
         );
+    end_seed_tx(restore);
+}
+
+/// Snapshot of native TxContext fields. `tx_context::dummy()`/`create()` call
+/// native `replace()`, which rewrites the process-global sender used by
+/// `ctx.sender()` — so seed writes must restore afterwards.
+public struct SeedTxRestore has drop {
+    sender: address,
+    tx_hash: vector<u8>,
+    epoch: u64,
+    epoch_timestamp_ms: u64,
+    ids_created: u64,
+    rgp: u64,
+    gas_price: u64,
+    gas_budget: u64,
+    sponsor: Option<address>,
+}
+
+/// Begin a seed write stamped with a digest distinct from any `test_scenario`
+/// transaction. Pair with `end_seed_tx`. Attack tests that need a real same-tx
+/// write pass `scenario.ctx()` explicitly instead.
+fun begin_seed_tx(scenario: &mut Scenario): (TxContext, SeedTxRestore) {
+    let restore = SeedTxRestore {
+        sender: test::sender(scenario),
+        tx_hash: *scenario.ctx().digest(),
+        epoch: scenario.ctx().epoch(),
+        epoch_timestamp_ms: scenario.ctx().epoch_timestamp_ms(),
+        ids_created: scenario.ctx().ids_created(),
+        rgp: scenario.ctx().reference_gas_price(),
+        gas_price: scenario.ctx().gas_price(),
+        gas_budget: scenario.ctx().gas_budget(),
+        sponsor: scenario.ctx().sponsor(),
+    };
+    (tx_context::dummy(), restore)
+}
+
+fun end_seed_tx(restore: SeedTxRestore) {
+    let SeedTxRestore {
+        sender,
+        tx_hash,
+        epoch,
+        epoch_timestamp_ms,
+        ids_created,
+        rgp,
+        gas_price,
+        gas_budget,
+        sponsor,
+    } = restore;
+    let _ctx = tx_context::create(
+        sender,
+        tx_hash,
+        epoch,
+        epoch_timestamp_ms,
+        ids_created,
+        rgp,
+        gas_price,
+        gas_budget,
+        sponsor,
+    );
 }
 
 fun store_pyth_spot(
+    scenario: &mut Scenario,
     pyth: &mut PythFeed,
     spot: u64,
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 ) {
+    let (ctx, restore) = begin_seed_tx(scenario);
     pyth_feed::record_raw_for_testing(
         pyth,
         spot,
@@ -822,5 +967,7 @@ fun store_pyth_spot(
         source_timestamp_ms * 1000,
         update_timestamp_ms,
         false,
+        &ctx,
     );
+    end_seed_tx(restore);
 }

@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-27. This is the tracked register of **settled response-policy
+Updated 2026-07-30. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -942,6 +942,64 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   re-anchoring branch (the ceiling would then need to move or be duplicated), or
   a cross-source deviation guard lands and changes which side of the ladder an
   out-of-envelope print belongs on (RP-5).
+
+---
+
+## RP-23: Same-transaction oracle writes cannot feed a live pricer
+
+- **Trigger state:** a PTB writes a Propbook observation (Pyth Lazer update or
+  Block Scholes batch) and then builds a live `Pricer` that would consume that
+  observation for the returned forward or SVI.
+- **Controller:** external / adversarial — Propbook writes are permissionless
+  once the caller holds a verifier-produced payload (`LazerUpdate`,
+  `ValueBatch`, `SviBatch`). A trader running their own Pyth Lazer subscription
+  can obtain such a payload.
+- **Blast radius:** every live-pricing path that loads a pricer
+  (`mint_*`, `redeem_live`, `liquidate`, `plp::value_expiry`). One push
+  re-anchors every live market on that underlying.
+- **Response:** **abort** at `pricing::resolve_live_pricer` with
+  `EOracleWrittenInThisTransaction` when any observation that feeds the returned
+  price carries this transaction's digest. Pyth is checked only on the
+  re-anchor branch (`use_pyth_spot_for_forward` and a fresh read); when the flag
+  is off or the read is stale, Pyth is provenance-only and must not trip the
+  guard.
+- **Reasoning:** Without the guard, Variant A (mint → update → mint of the
+  complement) extracts a risk-free box: the two legs together pay $1 and cost
+  less than $1 against a stale-then-fresh forward. Variant C (update → redeem a
+  seasoned position) marks an older position at the inflated print in the same
+  PTB. `EMintRedeemSameTimestamp` only partially covers mint→redeem of a
+  freshly opened order and does not cover cross-leg minting or seasoned
+  redeems. Rejected alternatives: mint-path-only guard (reroutable through
+  redeem/liquidate/second market); clock-timestamp comparison (Sui's `Clock`
+  advances per checkpoint, so honest trades sharing a checkpoint with the
+  updater would false-positive); `ctx.sender()` (cannot distinguish a router);
+  EWMA/smoothed oracle (`oracle_lane::update` no-ops on non-advancing
+  timestamps, so a buffer of signed payloads can converge an EWMA in one PTB,
+  and smoothing desynchronises mint from exact settlement). The transaction
+  digest is constant across a PTB and differs between transactions — zero false
+  positives for honest trades that never write a feed.
+- **Risk profile:** `MEASURED` for the atomic path (reproduced on testnet by the
+  adverse fleet FRS actor). Residual cross-transaction risk is accepted: a
+  trader can still write in tx N and trade in N+1, or sandwich the updater's
+  ~1.4–1.8s push, but then carries inventory and cannot guarantee ordering — a
+  directional bet, not risk-free extraction. Pricing that residual is separate
+  ΔP-surcharge work. Also noted without acting: `pyth_spot_freshness_ms`
+  defaults to 10_000, a wide staleness budget relative to 1m markets.
+- **Pinning tests:** `oracle_same_tx_guard_tests.move` — write-then-load aborts;
+  write-then-mint next tx succeeds; Variant A aborts on the second pricer;
+  Variant C aborts; ordinary and multi-leg mints without an oracle write
+  succeed; Pyth same-tx write succeeds when re-anchor is off or the Pyth read
+  is stale. Propbook `pyth_feed_tests.move` —
+  `normalized_spot_preserves_writer_digest_across_read_transaction` pins digest
+  survival through `normalized_spot_from_read`.
+- **Reopen when:** a ΔP surcharge or similar cross-tx oracle-move fee lands; the
+  redundant `EMintRedeemSameTimestamp` guard is removed as a follow-up; or
+  `load_exact_spot_read` (settlement / reference-tick exact history) is brought
+  under a same-tx policy after an explicit threat-model review (different path:
+  `insert_at` already bounds carry via `ESettlementCarryExceedsWindow`).
+- **Layout note:** adding `writer_digest` to `OracleRead` / `BsRead` changes
+  Propbook struct layouts — requires a fresh publish of propbook and predict,
+  not a compatible upgrade.
 
 ---
 

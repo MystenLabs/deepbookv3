@@ -165,7 +165,7 @@ fun set_reference_tick_floor_to_zero_aborts() {
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidAdmissionTick)]
 fun off_grid_tick_before_reference_tick_is_set_aborts() {
-    let (fx, pricer, mut harness) = setup_priced_harness();
+    let (mut fx, pricer, mut harness) = setup_priced_harness();
 
     let terms = harness
         .exposure
@@ -185,7 +185,7 @@ fun off_grid_tick_before_reference_tick_is_set_aborts() {
 
 #[test]
 fun reference_tick_admits_up_and_down_ranges() {
-    let (fx, pricer, mut harness) = setup_priced_harness();
+    let (mut fx, pricer, mut harness) = setup_priced_harness();
 
     assert_reference_tick_is_off_admission_grid(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
     harness.exposure.set_reference_tick(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
@@ -224,7 +224,7 @@ fun reference_tick_admits_up_and_down_ranges() {
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidAdmissionTick)]
 fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
-    let (fx, pricer, mut harness) = setup_priced_harness();
+    let (mut fx, pricer, mut harness) = setup_priced_harness();
 
     harness.exposure.set_reference_tick(REFERENCE_TICK);
     let terms = harness

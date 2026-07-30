@@ -100,6 +100,45 @@ fun raw_spot_on_empty_feed_aborts() {
     abort 999
 }
 
+/// Normalized projections must retain the digest of the transaction that wrote
+/// the raw observation. Rebuilding through `new_read` would stamp the reader's
+/// digest and silently disable Predict's same-tx oracle guard on the Pyth path.
+#[test]
+fun normalized_spot_preserves_writer_digest_across_read_transaction() {
+    let (mut scenario, feed_obj_id) = setup_feed();
+    scenario.next_tx(ADMIN);
+    let writer_digest = {
+        let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+        let digest = *scenario.ctx().digest();
+        pyth_feed::record_raw_for_testing(
+            &mut feed,
+            SPOT_65K,
+            false,
+            EXPONENT_NEG_9,
+            true,
+            SOURCE_TS_1_US,
+            SOURCE_TS_1_US,
+            UPDATE_1_MS,
+            false,
+            scenario.ctx(),
+        );
+        return_shared(feed);
+        digest
+    };
+
+    scenario.next_tx(ADMIN);
+    let feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+    let reader_digest = *scenario.ctx().digest();
+    assert!(reader_digest != writer_digest);
+    let normalized = feed.normalized_spot().destroy_some();
+    assert!(normalized.read_writer_digest() == writer_digest);
+    assert_eq!(normalized.read_source_timestamp_ms(), SOURCE_TS_1_MS);
+    assert_eq!(normalized.read_value(), SPOT_65K);
+
+    return_shared(feed);
+    scenario.end();
+}
+
 #[test]
 fun update_flows_into_raw_and_normalized_latest_getters() {
     let (scenario, feed_obj_id) = setup_feed();
@@ -646,6 +685,7 @@ fun store_raw_carried(
     envelope_timestamp_us: u64,
     update_timestamp_ms: u64,
 ) {
+    let ctx = tx_context::dummy();
     pyth_feed::record_raw_for_testing(
         feed,
         price_magnitude,
@@ -656,6 +696,7 @@ fun store_raw_carried(
         envelope_timestamp_us,
         update_timestamp_ms,
         false,
+        &ctx,
     );
 }
 
@@ -692,6 +733,7 @@ fun insert_raw_carried(
     envelope_timestamp_us: u64,
     update_timestamp_ms: u64,
 ) {
+    let ctx = tx_context::dummy();
     pyth_feed::record_raw_for_testing(
         feed,
         price_magnitude,
@@ -702,6 +744,7 @@ fun insert_raw_carried(
         envelope_timestamp_us,
         update_timestamp_ms,
         true,
+        &ctx,
     );
 }
 

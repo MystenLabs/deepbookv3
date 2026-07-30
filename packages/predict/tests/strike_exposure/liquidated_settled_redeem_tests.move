@@ -35,7 +35,7 @@ const SETTLED_WINNING_SPOT: u64 = 101_000_000_000;
 
 #[test]
 fun liquidated_order_resolves_liquidated_not_settled_close() {
-    let (fx, oracle, mut harness, order) = liquidated_order_fixture();
+    let (mut fx, oracle, mut harness, order) = liquidated_order_fixture();
 
     assert!(!harness.exposure.is_active_order(&order));
     assert_eq!(harness.exposure.payout_liability(), 0);
@@ -59,7 +59,7 @@ fun liquidated_order_resolves_liquidated_not_settled_close() {
 
 #[test]
 fun repeated_settlement_after_close_preserves_first_price_and_remaining_liability() {
-    let (fx, oracle, mut harness, order) = active_order_fixture();
+    let (mut fx, oracle, mut harness, order) = active_order_fixture();
     let payout = order.quantity() - order.floor_shares();
 
     harness.exposure.record_settlement(SETTLED_WINNING_SPOT);
@@ -111,7 +111,7 @@ fun active_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order
 }
 
 fun liquidated_order_fixture(): (OracleFixture, OracleBundle, ExposureHarness, Order) {
-    let (fx, mut oracle, mut harness, order) = active_order_fixture();
+    let (mut fx, mut oracle, mut harness, order) = active_order_fixture();
 
     fx.set_pyth_bundle(&mut oracle, DROPPED_SPOT, DROPPED_SOURCE_TIMESTAMP_MS);
     let liquidation_pricer = fx.load_pricer_bundle(&oracle);

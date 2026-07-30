@@ -115,6 +115,8 @@ const EBlockScholesPriceUnavailable: u64 = 13;
 const EBlockScholesSVIUnavailable: u64 = 14;
 const EBlockScholesMinVarianceInvalid: u64 = 15;
 const ENonMonotonePriceMemo: u64 = 16;
+/// A live pricer may not be built from an oracle observation written in this transaction.
+const EOracleWrittenInThisTransaction: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -213,6 +215,7 @@ public(package) fun load_live_pricer(
     propbook_underlying_id: u32,
     expiry: u64,
     clock: &Clock,
+    ctx: &TxContext,
 ): Pricer {
     assert_current_oracles(
         propbook_registry,
@@ -230,6 +233,7 @@ public(package) fun load_live_pricer(
         expiry_market_id,
         expiry,
         clock,
+        ctx,
     )
 }
 
@@ -348,6 +352,11 @@ fun assert_current_pyth(
 /// Under `use_pyth_spot_for_forward` a fresh positive normalized Pyth spot
 /// re-anchors the Block Scholes forward basis; otherwise the Block Scholes
 /// forward is used directly.
+///
+/// Aborts if any observation that feeds the returned price was written in this
+/// transaction. Pyth is checked only on the re-anchor branch: when the flag is
+/// off or the read is stale, the observation is provenance-only and must not
+/// trip the guard.
 fun resolve_live_pricer(
     config: &PricingConfig,
     pyth: &PythFeed,
@@ -356,10 +365,12 @@ fun resolve_live_pricer(
     expiry_market_id: ID,
     expiry: u64,
     clock: &Clock,
+    ctx: &TxContext,
 ): Pricer {
     let bs_spot_read = bs_values.spot();
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
+    assert_oracle_not_written_this_tx(&bs_spot_read.read_writer_digest(), ctx);
     // Freshness reads the series' own model time, never the batch envelope: retransmitting an
     // unchanged value re-sends its original model time, and a fresh envelope must not make old
     // model data economically usable — data the provider has not re-derived within the window
@@ -378,6 +389,7 @@ fun resolve_live_pricer(
     let bs_forward_read = bs_values.forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
+    assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_model_timestamp_ms();
     assert!(
         timestamp_is_fresh(
@@ -392,6 +404,7 @@ fun resolve_live_pricer(
     let svi_read = bs_svi.svi(expiry);
     assert!(svi_read.is_some(), EBlockScholesSVIUnavailable);
     let svi_read = svi_read.destroy_some();
+    assert_oracle_not_written_this_tx(&svi_read.read_writer_digest(), ctx);
     // One clock serves both jobs: the model time the freshness gate just accepted is also the
     // roll-down anchor, so the parameters and their anchor always come from the same read.
     let block_scholes_svi_source_timestamp_ms = svi_read.read_model_timestamp_ms();
@@ -432,6 +445,7 @@ fun resolve_live_pricer(
             )
     ) {
         let pyth_spot = pyth_spot.destroy_some();
+        assert_oracle_not_written_this_tx(&pyth_spot.read_writer_digest(), ctx);
         let spot = pyth_spot.read_value();
         assert!(spot <= max_pricing_spot!(), EPythSpotInvalid);
         // The re-anchored forward may exceed the input spot ceiling. The basis and
@@ -448,6 +462,10 @@ fun resolve_live_pricer(
         block_scholes_forward_source_timestamp_ms,
         block_scholes_svi_source_timestamp_ms,
     }
+}
+
+fun assert_oracle_not_written_this_tx(writer_digest: &vector<u8>, ctx: &TxContext) {
+    assert!(writer_digest != ctx.digest(), EOracleWrittenInThisTransaction);
 }
 
 /// Narrow one Block Scholes price to Predict's pricing width. See `RawSVI` on why the narrowing is

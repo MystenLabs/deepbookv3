@@ -215,6 +215,7 @@ public fun load_live_pricer(
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
     clock: &Clock,
+    ctx: &TxContext,
 ): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
@@ -226,6 +227,7 @@ public fun load_live_pricer(
         market.propbook_underlying_id,
         market.expiry,
         clock,
+        ctx,
     )
 }
 

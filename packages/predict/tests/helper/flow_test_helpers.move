@@ -56,7 +56,8 @@ use sui::{
     accumulator::AccumulatorRoot,
     clock::{Self, Clock},
     coin,
-    test_scenario::{Self as test, Scenario, return_shared}
+    test_scenario::{Self as test, Scenario, return_shared},
+    tx_context::{Self, TxContext},
 };
 use token::deep::DEEP;
 
@@ -347,6 +348,24 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 /// Pause / unpause global trading through a market bundle.
 public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
     self.set_trading_paused(&mut market.config, paused);
+}
+
+/// Toggle whether live pricing re-anchors the forward onto a fresh Pyth spot.
+public fun set_use_pyth_spot_for_forward_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    enabled: bool,
+) {
+    market.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled);
+}
+
+/// Tighten or widen the Pyth spot freshness window used by live pricing.
+public fun set_pyth_spot_freshness_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    freshness_ms: u64,
+) {
+    market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
 }
 
 /// Enable the EWMA congestion penalty with explicit parameters through the
@@ -732,6 +751,109 @@ public fun prepare_live_oracle_bundle_at(
     );
 }
 
+/// Write the live Pyth + BS surface stamped with this scenario transaction's
+/// digest. Used by same-tx oracle-guard tests; routine seeding uses a dummy
+/// digest so prepare-then-trade helpers do not false-positive.
+public fun write_live_oracle_in_current_tx_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    let latest = market.pyth.normalized_spot();
+    let ts = if (latest.is_some()) {
+        source_timestamp_ms.max(latest.borrow().read_source_timestamp_ms() + 1)
+    } else {
+        source_timestamp_ms
+    };
+    // Local clock avoids overlapping `&self.clock` with `&mut self.scenario`.
+    let mut write_clock = clock::create_for_testing(self.scenario.ctx());
+    write_clock.set_for_testing(self.clock.timestamp_ms());
+    pyth_feed::record_raw_for_testing(
+        &mut market.pyth,
+        live_price,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        ts * 1000,
+        ts * 1000,
+        ts,
+        false,
+        self.scenario.ctx(),
+    );
+    let underlying = test_constants::propbook_underlying_id();
+    let expiry = market.market.expiry();
+    market
+        .bs
+        .values_mut()
+        .apply_value_batch(
+            verify::new_value_batch_for_testing(
+                ts,
+                vector[
+                    verify::new_value_update_for_testing(
+                        block_scholes_sid::spot(underlying),
+                        ts,
+                        live_price as u128,
+                    ),
+                    verify::new_value_update_for_testing(
+                        block_scholes_sid::forward(underlying, expiry),
+                        ts,
+                        live_price as u128,
+                    ),
+                ],
+            ),
+            &write_clock,
+            self.scenario.ctx(),
+        );
+    market
+        .bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                ts,
+                vector[
+                    verify::new_svi_for_testing(
+                        block_scholes_sid::svi(underlying, expiry),
+                        ts,
+                        test_constants::default_svi_a() as u128,
+                        false,
+                        test_constants::default_svi_b() as u128,
+                        test_constants::default_svi_sigma() as u128,
+                        test_constants::default_svi_rho_magnitude() as u128,
+                        false,
+                        test_constants::default_svi_m() as u128,
+                        false,
+                    ),
+                ],
+            ),
+            &write_clock,
+            self.scenario.ctx(),
+        );
+    write_clock.destroy_for_testing();
+}
+
+/// Write only the Pyth spot stamped with this scenario transaction's digest.
+public fun write_pyth_in_current_tx_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    let update_timestamp_ms = self.clock.timestamp_ms();
+    pyth_feed::record_raw_for_testing(
+        &mut market.pyth,
+        live_price,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        source_timestamp_ms * 1000,
+        source_timestamp_ms * 1000,
+        update_timestamp_ms,
+        false,
+        self.scenario.ctx(),
+    );
+}
+
 /// `prepare_live_oracle` at an explicit source timestamp (for staleness tests).
 public fun prepare_live_oracle_at(
     self: &mut Fixture,
@@ -752,24 +874,30 @@ public fun prepare_live_oracle_at(
     } else {
         source_timestamp_ms
     };
-    store_pyth_spot(pyth, live_price, ts, ts);
+    store_pyth_spot(&mut self.scenario, pyth, live_price, ts, ts);
     self.seed_bs_surface(market, bs, live_price, live_price, ts);
 }
 
 /// Overwrite the Pyth spot directly (for staleness / pricing-source tests), keeping
 /// the fixture clock as the on-chain landing timestamp.
 public fun set_pyth_price_for_testing(
-    self: &Fixture,
+    self: &mut Fixture,
     pyth: &mut PythFeed,
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
-    store_pyth_spot(pyth, live_price, source_timestamp_ms, self.clock.timestamp_ms());
+    store_pyth_spot(
+        &mut self.scenario,
+        pyth,
+        live_price,
+        source_timestamp_ms,
+        self.clock.timestamp_ms(),
+    );
 }
 
 /// Overwrite a market bundle's Pyth spot directly.
 public fun set_pyth_price_for_testing_bundle(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &mut MarketBundle,
     live_price: u64,
     source_timestamp_ms: u64,
@@ -878,7 +1006,7 @@ public fun seed_bs_surface_with_svi(
 }
 
 fun seed_bs_surface_with_svi_source(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &ExpiryMarket,
     bs: &mut BlockScholesFeed,
     spot: u64,
@@ -895,6 +1023,7 @@ fun seed_bs_surface_with_svi_source(
     svi_source_timestamp_ms: u64,
 ) {
     let underlying = test_constants::propbook_underlying_id();
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     // Spot and forward ride one value batch, as they do on the wire.
     bs
         .values_mut()
@@ -915,6 +1044,7 @@ fun seed_bs_surface_with_svi_source(
                 ],
             ),
             &self.clock,
+            &ctx,
         );
     bs
         .svi_mut()
@@ -937,7 +1067,9 @@ fun seed_bs_surface_with_svi_source(
                 ],
             ),
             &self.clock,
+            &ctx,
         );
+    end_seed_tx(restore);
 }
 
 /// Mint one order for `wrapper`'s account over the tick range `(lower_tick,
@@ -1076,6 +1208,7 @@ public fun quote_mint_bundle(
             market.bs.values(),
             market.bs.svi(),
             &self.clock,
+            self.scenario.ctx(),
         );
     market
         .market
@@ -1113,6 +1246,7 @@ public fun quote_mint_amount_bundle(
             market.bs.values(),
             market.bs.svi(),
             &self.clock,
+            self.scenario.ctx(),
         );
     market
         .market
@@ -1149,6 +1283,7 @@ public fun quote_mint_for_account_bundle(
             market.bs.values(),
             market.bs.svi(),
             &self.clock,
+            self.scenario.ctx(),
         );
     market
         .market
@@ -1189,6 +1324,7 @@ public fun quote_mint_for_account_amount_bundle(
             market.bs.values(),
             market.bs.svi(),
             &self.clock,
+            self.scenario.ctx(),
         );
     market
         .market
@@ -1233,6 +1369,7 @@ public fun mint_exact_quantity(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
     market.mint_exact_quantity(
         wrapper,
@@ -1306,6 +1443,7 @@ public fun mint_exact_amount(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
     market.mint_exact_amount(
         wrapper,
@@ -1348,6 +1486,7 @@ public fun redeem(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
     market.redeem_live(
         wrapper,
@@ -1565,7 +1704,7 @@ public fun try_settle_bundle_with_pyth(
 /// Run a budgeted liquidation pass over the market's active leveraged orders.
 /// Returns the number of orders liquidated.
 public fun liquidate(
-    self: &Fixture,
+    self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
@@ -1580,12 +1719,13 @@ public fun liquidate(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
     market.liquidate(config, &pricer, budget, &self.clock)
 }
 
 /// Run a budgeted liquidation pass through a market bundle.
-public fun liquidate_bundle(self: &Fixture, market: &mut MarketBundle, budget: u64): u64 {
+public fun liquidate_bundle(self: &mut Fixture, market: &mut MarketBundle, budget: u64): u64 {
     self.liquidate(
         &market.config,
         &market.oracle_registry,
@@ -1599,7 +1739,7 @@ public fun liquidate_bundle(self: &Fixture, market: &mut MarketBundle, budget: u
 /// Try to liquidate one active leveraged order by ID. Returns whether it was
 /// liquidated.
 public fun liquidate_order(
-    self: &Fixture,
+    self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     market: &mut ExpiryMarket,
@@ -1614,6 +1754,7 @@ public fun liquidate_order(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
     market.liquidate_order(
         config,
@@ -1624,7 +1765,7 @@ public fun liquidate_order(
 }
 
 /// Try to liquidate one bundled active leveraged order by ID.
-public fun liquidate_order_bundle(self: &Fixture, market: &mut MarketBundle, order_id: u256): bool {
+public fun liquidate_order_bundle(self: &mut Fixture, market: &mut MarketBundle, order_id: u256): bool {
     self.liquidate_order(
         &market.config,
         &market.oracle_registry,
@@ -1636,7 +1777,7 @@ public fun liquidate_order_bundle(self: &Fixture, market: &mut MarketBundle, ord
 }
 
 public fun value_expiry(
-    self: &Fixture,
+    self: &mut Fixture,
     valuation: &mut PoolValuation,
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -1654,12 +1795,13 @@ public fun value_expiry(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
 }
 
 /// Value one expiry through a market bundle.
 public fun value_expiry_bundle(
-    self: &Fixture,
+    self: &mut Fixture,
     valuation: &mut PoolValuation,
     market: &mut MarketBundle,
 ) {
@@ -1774,7 +1916,7 @@ public fun claim_trading_loss_rebate_permissionless_bundle(
 }
 
 public fun current_nav(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
@@ -1788,12 +1930,13 @@ public fun current_nav(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     );
     market.current_nav(&pricer)
 }
 
 /// Read live NAV through a market bundle.
-public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
+public fun current_nav_bundle(self: &mut Fixture, market: &MarketBundle): u64 {
     self.current_nav(
         &market.market,
         &market.config,
@@ -1804,7 +1947,7 @@ public fun current_nav_bundle(self: &Fixture, market: &MarketBundle): u64 {
 }
 
 /// Read one order's gross-of-fees live holder value through a market bundle.
-public fun order_value_bundle(self: &Fixture, market: &MarketBundle, order_id: u256): u64 {
+public fun order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
     market.market.order_value(option::some(pricer), order_id)
 }
@@ -1817,7 +1960,7 @@ public fun settled_order_value_bundle(market: &MarketBundle, order_id: u256): u6
 }
 
 public fun load_pricer(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
@@ -1831,11 +1974,12 @@ public fun load_pricer(
         bs.values(),
         bs.svi(),
         &self.clock,
+        self.scenario.ctx(),
     )
 }
 
 /// Load the live pricer through a market bundle.
-public fun load_pricer_bundle(self: &Fixture, market: &MarketBundle): pricing::Pricer {
+public fun load_pricer_bundle(self: &mut Fixture, market: &MarketBundle): pricing::Pricer {
     self.load_pricer(
         &market.market,
         &market.config,
@@ -2070,11 +2214,12 @@ public fun advance_live_oracle_bundle(
 }
 
 public fun insert_exact_settlement_spot(
-    self: &Fixture,
+    self: &mut Fixture,
     pyth: &mut PythFeed,
     expiry_ms: u64,
     spot: u64,
 ) {
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     pyth_feed::record_raw_for_testing(
         pyth,
         spot,
@@ -2085,12 +2230,14 @@ public fun insert_exact_settlement_spot(
         expiry_ms * 1000,
         self.clock.timestamp_ms(),
         true,
+        &ctx,
     );
+    end_seed_tx(restore);
 }
 
 /// Insert an exact settlement spot for the bundled market expiry.
 public fun insert_exact_settlement_spot_bundle(
-    self: &Fixture,
+    self: &mut Fixture,
     market: &mut MarketBundle,
     spot: u64,
 ) {
@@ -2146,12 +2293,73 @@ public fun finish(self: Fixture) {
     scenario.end();
 }
 
+/// Snapshot of native TxContext fields. `tx_context::dummy()`/`create()` call
+/// native `replace()`, which rewrites the process-global sender used by
+/// `ctx.sender()` — so seed writes must restore afterwards or later
+/// `generate_auth` sees `@0x0`.
+public struct SeedTxRestore has drop {
+    sender: address,
+    tx_hash: vector<u8>,
+    epoch: u64,
+    epoch_timestamp_ms: u64,
+    ids_created: u64,
+    rgp: u64,
+    gas_price: u64,
+    gas_budget: u64,
+    sponsor: Option<address>,
+}
+
+/// Begin a seed write stamped with a digest distinct from any `test_scenario`
+/// transaction. Pair with `end_seed_tx`. Attack tests that need a real same-tx
+/// write pass `scenario.ctx()` explicitly instead.
+fun begin_seed_tx(scenario: &mut Scenario): (TxContext, SeedTxRestore) {
+    let restore = SeedTxRestore {
+        sender: test::sender(scenario),
+        tx_hash: *scenario.ctx().digest(),
+        epoch: scenario.ctx().epoch(),
+        epoch_timestamp_ms: scenario.ctx().epoch_timestamp_ms(),
+        ids_created: scenario.ctx().ids_created(),
+        rgp: scenario.ctx().reference_gas_price(),
+        gas_price: scenario.ctx().gas_price(),
+        gas_budget: scenario.ctx().gas_budget(),
+        sponsor: scenario.ctx().sponsor(),
+    };
+    (tx_context::dummy(), restore)
+}
+
+fun end_seed_tx(restore: SeedTxRestore) {
+    let SeedTxRestore {
+        sender,
+        tx_hash,
+        epoch,
+        epoch_timestamp_ms,
+        ids_created,
+        rgp,
+        gas_price,
+        gas_budget,
+        sponsor,
+    } = restore;
+    let _ctx = tx_context::create(
+        sender,
+        tx_hash,
+        epoch,
+        epoch_timestamp_ms,
+        ids_created,
+        rgp,
+        gas_price,
+        gas_budget,
+        sponsor,
+    );
+}
+
 fun store_pyth_spot(
+    scenario: &mut Scenario,
     pyth: &mut PythFeed,
     spot: u64,
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 ) {
+    let (ctx, restore) = begin_seed_tx(scenario);
     pyth_feed::record_raw_for_testing(
         pyth,
         spot,
@@ -2162,5 +2370,7 @@ fun store_pyth_spot(
         source_timestamp_ms * 1000,
         update_timestamp_ms,
         false,
+        &ctx,
     );
+    end_seed_tx(restore);
 }
