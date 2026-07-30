@@ -464,9 +464,9 @@ fun plp_fee_rate_accepts_boundaries() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    // 1% in FLOAT_SCALING, the shipped default — asserted as a literal so a
+    // 20 bps in FLOAT_SCALING, the shipped default — asserted as a literal so a
     // change to `default_plp_fee_rate` has to be made deliberately.
-    assert_eq!(config.plp_fee_rate(), 10_000_000);
+    assert_eq!(config.plp_fee_rate(), 2_000_000);
 
     config.set_plp_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
     assert_eq!(config.plp_fee_rate(), 0);

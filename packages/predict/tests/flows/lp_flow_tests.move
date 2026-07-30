@@ -30,6 +30,15 @@ use deepbook_predict::{
 use std::unit_test::assert_eq;
 use sui::test_scenario::return_shared;
 
+/// 5% in FLOAT_SCALING — the `max_plp_fee_rate` ceiling.
+const MAX_PLP_FEE_RATE: u64 = 50_000_000;
+/// Total PLP after a `min_supply!()` deposit fills at a 1.0 mark against the genesis
+/// lock, charged the shipped 20 bps default: fee = 20_000, so 9_980_000 is minted on
+/// top of the 10_000_000 lock.
+const SUPPLY_AFTER_DEFAULT_FEE: u64 = 19_980_000;
+/// The same deposit charged the 5% ceiling: fee = 500_000, so 9_500_000 is minted.
+const SUPPLY_AFTER_MAX_FEE: u64 = 19_500_000;
+
 /// Account funding for the LP staging the request; well above `min_supply_request`.
 const LP_DEPOSIT: u64 = 1_000_000_000;
 /// No fill limit, so only pool capacity can stop the request.
@@ -129,6 +138,9 @@ fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
 #[test]
 fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
     let (mut fx, mut account) = setup_pool_with_lp();
+    // Isolate the cap: a fee would shift every figure below without changing what
+    // this test measures.
+    set_fee(&mut fx, 0);
     set_max_pool_value(&mut fx, 20_000_000);
     // Consume the whole 10 DUSDC of headroom first.
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
@@ -150,12 +162,50 @@ fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
 #[test]
 fun flush_fills_the_same_supply_when_the_pool_is_uncapped() {
     let (mut fx, mut account) = setup_pool_with_lp();
+    set_fee(&mut fx, 0);
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
 
     flush(&mut fx);
 
     // 10 DUSDC minted 1:1 against the 10 DUSDC genesis lock at a 1.0 mark.
     assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+// === Fee rate is read from config by the flush ===
+
+/// The fee must reach the drain from `ProtocolConfig`, not a compiled constant. The
+/// drain-level tests in `lp_book_tests` hand the rate to `new_flush_mark` by hand and
+/// so structurally cannot see a disconnected knob: a `finish_flush` that ignored
+/// config and froze zero passes all of them. Staged through the production
+/// `request_supply` + flush path instead, against the shipped default.
+#[test]
+fun flush_charges_the_configured_default_fee_on_a_supply_fill() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    flush(&mut fx);
+
+    // Fee-free this would mint the full `2 * min_supply!()`, as the uncapped control
+    // above asserts; the 20 bps default withholds 20_000 of the 10 DUSDC deposit.
+    assert_pending_and_supply(&mut fx, 0, SUPPLY_AFTER_DEFAULT_FEE);
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// And it must track a later admin change rather than a value sampled once.
+#[test]
+fun flush_charges_a_raised_fee_rate() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_fee(&mut fx, MAX_PLP_FEE_RATE);
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    flush(&mut fx);
+
+    assert_pending_and_supply(&mut fx, 0, SUPPLY_AFTER_MAX_FEE);
 
     helpers::return_account_bundle(account);
     fx.finish();
@@ -196,6 +246,13 @@ fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     fx.set_lp_request_limit_flush_attempts(&mut config, attempts);
+    return_shared(config);
+}
+
+fun set_fee(fx: &mut helpers::Fixture, rate: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    fx.set_plp_fee_rate(&mut config, rate);
     return_shared(config);
 }
 

@@ -273,7 +273,7 @@ including one-minute and five-minute surfaces, so the deviation bound is checked
 where it binds. This needs source rows at those cadences; the current CSV does
 not contain them, so it is a data-collection task before it is a generator task.
 
-### P-27: The PLP supply/withdraw fee ships at 1% on an unmeasured leak
+### P-27: The PLP supply/withdraw fee ships at 20 bps on an unmeasured leak
 
 **Severity:** Undecided policy. Not a correctness bug — the mechanism is
 tested; the open question is whether the rate is right, and whether the leak it
@@ -297,10 +297,14 @@ residual exposure is mark **error**, not mark **staleness**. That distinction
 decides the calibration: the yardstick is the certified error, not the variance
 of the share price between flushes.
 
-Shipped state: one protocol-wide `plp_fee_rate`, default 1%, envelope `0..5%`,
-charged on the DUSDC leg of executed fills only and retained by the pool. The
-rate is admin-tunable to zero without a package upgrade, so shipping enabled is
-reversible; widening past 5% is not.
+Shipped state: one protocol-wide `plp_fee_rate`, default 20 bps, envelope
+`0..5%`, charged on the DUSDC leg of executed fills only and retained by the
+pool. The rate is admin-tunable to zero without a package upgrade, so shipping
+enabled is reversible; widening past 5% is not.
+
+The 20 bps default is a starting point, not a calibrated number — nothing below
+has been run, so it is not yet known whether it is above or below the per-lap
+edge it is meant to price.
 
 **Experiment plan** (decision rule written before the run):
 
