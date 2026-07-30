@@ -510,6 +510,21 @@ public(package) fun emit_flush_executed(
     });
 }
 
+/// The fill events' fields exist for off-chain consumers, which decode them rather
+/// than calling Move. These readers exist only so tests can assert the fee reported
+/// to those consumers is the fee actually charged: `fee_dusdc` is where pool revenue
+/// is attributed from, and a wrong value there is invisible to every balance
+/// assertion, since the shares and cash moved are computed separately.
+#[test_only]
+public fun supply_filled_fee(event: &SupplyFilled): u64 {
+    event.fee_dusdc
+}
+
+#[test_only]
+public fun withdraw_filled_fee(event: &WithdrawFilled): u64 {
+    event.fee_dusdc
+}
+
 public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {
     event::emit(CapitalLocked { pool_vault_id, amount });
 }
