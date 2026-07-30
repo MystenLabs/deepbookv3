@@ -304,6 +304,57 @@ fun supply_is_refunded_when_pool_is_already_over_cap() {
     finish(scenario, book, ledger);
 }
 
+/// One flush end to end with a binding cap: supplies drain first against the frozen
+/// mark until the cap is exhausted, then withdrawals pay out with no capacity check.
+/// Every figure below is derived by hand from the 1.2 share price.
+///
+/// Also pins the ordering consequence: S2 is refunded for capacity while S3, queued
+/// behind it and smaller, still fits and fills. Headroom goes to whoever fits, not to
+/// whoever queued first, and there is no partial fill of S2 into the room that is left.
+#[test]
+fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(1_000_000_000); // 1,000 PLP
+    seed_idle(&mut ledger, 200_000_000); // 200 DUSDC idle; the rest of NAV sits in markets
+
+    // Supplies, in queue order.
+    let s1 = coin::mint_for_testing<DUSDC>(60_000_000, scenario.ctx());
+    book.request_supply(s1, alice_id(), ALICE, NO_MIN_OUTPUT);
+    let s2 = coin::mint_for_testing<DUSDC>(80_000_000, scenario.ctx());
+    book.request_supply(s2, bob_id(), BOB, NO_MIN_OUTPUT);
+    let s3 = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(s3, alice_id(), ALICE, NO_MIN_OUTPUT);
+    // Withdrawals, in queue order.
+    enqueue_withdraw_for(&mut scenario, &mut book, ALICE, 50_000_000, NO_MIN_OUTPUT);
+    enqueue_withdraw_for(&mut scenario, &mut book, BOB, 100_000_000, NO_MIN_OUTPUT);
+
+    // Mark: pool 1,200 DUSDC over 1,000 PLP = 1.2 per share. Cap 1,300 leaves 100 of room.
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(1_200_000_000, 1_000_000_000),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        1_300_000_000,
+        scenario.ctx(),
+    );
+
+    // S1 (60) fits in 100 and mints 60 / 1.2 = 50 PLP, leaving 40 of room.
+    // S2 (80) exceeds the remaining 40 and is refunded whole — no partial fill.
+    // S3 (20) still fits and mints floor(20 / 1.2) = 16.666666 PLP.
+    // Both withdrawals then pay at the same frozen 1.2: 50 PLP -> 60, 100 PLP -> 120.
+    assert_drain_summary(&summary, 2, 2, 5);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.withdraw_requests_pending(), 0);
+    // 1,000 + 50 + 16.666666 minted, then 50 and 100 burned by the exits.
+    assert_eq!(book.total_supply(), 916_666_666);
+    // 200 idle + 60 + 20 from the fills, - 60 - 120 paid out.
+    assert_eq!(ledger.idle_balance(), 100_000_000);
+
+    finish(scenario, book, ledger);
+}
+
 /// A full pool does not hold a waiting list. Every queued supply is refunded by the
 /// flush that reaches it, so the queue empties rather than backing up — the cost of
 /// refusing to let an unfillable head sit at the front (RP-12).
