@@ -75,8 +75,9 @@ public struct DeepUnstaked has copy, drop, store {
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
-/// `min_plp_out` is the minimum PLP the frozen mark must mint before the request
-/// fills. `index` is the queue handle used to cancel.
+/// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
+/// whole `amount` before the request fills, but a fill capped by pool capacity delivers
+/// proportionally less at that same price. `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -88,8 +89,10 @@ public struct SupplyRequested has copy, drop, store {
 }
 
 /// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is the
-/// minimum DUSDC the frozen mark must pay before the request fills.
+/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is a price
+/// floor: the frozen mark must pay at least this much for the whole `amount` before the
+/// request fills, but a fill limited by available idle pays proportionally less at that
+/// same price.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
@@ -143,8 +146,14 @@ public struct SupplyFilled has copy, drop, store {
     account_id: ID,
     recipient: address,
     index: u64,
+    /// DUSDC actually taken into the pool, which is less than the request's escrow
+    /// when the supply cap left only part of it room.
     dusdc_amount: u64,
     shares_minted: u64,
+    /// Escrow still queued at the head after a partial fill; `0` on a full fill, in
+    /// which case the request is gone. `dusdc_amount + dusdc_remaining` is the amount
+    /// the request carried into this flush.
+    dusdc_remaining: u64,
     requests_pending_after: u64,
 }
 
@@ -158,6 +167,10 @@ public struct WithdrawFilled has copy, drop, store {
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    /// Escrowed PLP still queued at the head after a partial fill; `0` on a full fill,
+    /// in which case the request is gone. `shares_burned + shares_remaining` is the
+    /// amount the request carried into this flush.
+    shares_remaining: u64,
     requests_pending_after: u64,
 }
 
@@ -414,6 +427,7 @@ public(package) fun emit_supply_filled(
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
+    dusdc_remaining: u64,
     requests_pending_after: u64,
 ) {
     event::emit(SupplyFilled {
@@ -423,6 +437,7 @@ public(package) fun emit_supply_filled(
         index,
         dusdc_amount,
         shares_minted,
+        dusdc_remaining,
         requests_pending_after,
     });
 }
@@ -434,6 +449,7 @@ public(package) fun emit_withdraw_filled(
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    shares_remaining: u64,
     requests_pending_after: u64,
 ) {
     event::emit(WithdrawFilled {
@@ -443,6 +459,7 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
+        shares_remaining,
         requests_pending_after,
     });
 }

@@ -91,8 +91,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   recipient with `RequestCancelled`, and the flush continues. Filled and
   protocol-refunded heads both count against that queue's per-flush budget and
   toward `FlushExecuted.requests_processed`. A withdrawal whose quote is valid
-  but exceeds idle is different: it stays queued, consumes no withdraw budget,
-  and the withdrawal pass stops FIFO-until-dry.
+  but exceeds idle is different: it is not refused at all — idle pays as much of it as
+  it covers and the unfilled balance stays queued at the head, after which the pass
+  stops (RP-23). Only if idle cannot buy even one whole share does the head carry
+  untouched, consuming no withdraw budget.
 - **Reasoning:** the drain must be total over request content. Beyond the
   stall, a fill that *fits* at a dust mark mints ~1e18 shares; `total_supply`
   only shrinks via withdrawals, so the inflated supply persists after NAV
@@ -117,7 +119,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `oversized_supply_that_exceeds_u64_shares_refunds`,
   `non_executable_supply_refunds_spend_supply_budget`,
   `non_executable_withdraw_refunds_spend_withdraw_budget`, and
-  `withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
+  `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, or a new LP request type adds another
@@ -1003,6 +1005,97 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   re-anchoring branch (the ceiling would then need to move or be duplicated), or
   a cross-source deviation guard lands and changes which side of the ladder an
   out-of-envelope print belongs on (RP-5).
+
+---
+
+## RP-23: Supplies fill up to the pool-value cap and the remainder holds its queue place (DBU-684)
+
+- **Trigger state:** a queued LP supply reaches the head of the supply pass at a
+  frozen mark where filling it would raise LP-attributable pool value above
+  `ProtocolConfig.max_lp_pool_value`.
+- **Controller:** operator (sets the cap) × market (NAV moves the pool under a
+  fixed cap without anyone depositing) × user (chooses the deposit size).
+- **Blast radius:** capacity gates the supply pass only — withdrawals, already-issued
+  PLP, and the genesis lock are never checked against it, so the cap closes the pool
+  to new capital and can never trap capital already in it. It does reach exits
+  **indirectly**: supplies drain first precisely because their fresh cash funds the
+  same flush's withdrawals, so refusing supplies leaves idle lower and a large exit
+  can hit the FIFO-until-idle-dry carry a flush earlier than it otherwise would.
+- **Response:** fill what fits, keep the rest in place, and stop the pass. A head with
+  room fills entirely; a head larger than the remaining headroom is **partially filled
+  up to the cap**, its unfilled balance left escrowed at the head with its queue
+  position, index, and owner intact; the pass then breaks. A head that finds no room at
+  all — or a prefix so small it prices to zero shares — is left untouched and the pass
+  breaks without spending flush budget. Headroom is measured against the frozen mark
+  **plus the supplies already filled this flush**, so requests cannot collectively
+  overshoot. Nothing is refunded for capacity: an LP who would rather hold cash than a
+  place in line cancels.
+  Breaking forfeits no throughput, because once the cap is reached nothing behind the
+  head could fill either; walking the rest of the queue would only spend budget and one
+  event per request to refuse each in turn. It also bounds per-flush drain work at O(1)
+  under a binding cap, which matters given the flush's event ceiling (RP-12).
+- **Withdrawals partially fill on the same principle.** A head whose payout exceeds idle
+  is paid what idle covers and keeps the balance queued, rather than carrying whole. The
+  shares to burn are floored from available idle and the payout is then quoted from
+  those shares by the same helper a full fill uses, so a partial exit prices identically
+  to a whole one and the pool never releases cash it has not destroyed shares for; at
+  most one ulp of idle is left behind rather than the requester being shorted.
+- **Carried limits are rescaled, rounded in the requester's favour.** A partially filled
+  request keeps asking for the same *price*, so its `min_output` is scaled to the
+  remaining amount and rounded **up** — at worst the carried request is held to a
+  fractionally stricter limit than it originally signed, never a laxer one.
+- **Ordering — the limit is checked first.** A partial fill mints fewer shares (or pays
+  less DUSDC) than the whole request, so it is only defensible if the *price* was
+  acceptable. Pricing is linear at a frozen mark, so "this prefix clears the LP's rate"
+  is exactly the existing `shares >= min_output` test on the full amount — checking the
+  limit first costs no new arithmetic and makes `min_output` a **price floor rather than
+  an absolute output floor**. A request that both misses its limit and finds a full pool
+  reports the limit miss, and an attempt-bearing request keeps its resting behaviour
+  rather than being consumed by a transient capacity state.
+- **Reasoning:** capacity is a pool-level property, and pool value is exact only
+  at the flush — an admission-time check would have to compare against a stale
+  snapshot, since no NAV is stored between flushes. Enforcing at the drain keeps
+  the cap exact at the cost of holding escrow for one flush interval. Capping
+  *value* rather than cumulative deposits avoids new running-total state that
+  every fill and withdrawal would have to maintain, and it measures the quantity an
+  operator actually wants bounded — pool size. The consequence is that trading
+  profit alone can carry a pool above its cap, after which supplies wait
+  until NAV falls back; that is intended, and it is why the setter is documented as
+  closing the pool rather than forcing an exit. Withdrawals drain after supplies,
+  so the headroom an exit frees is priced at the *next* flush, not the current one
+  — the mark is frozen, and re-reading it mid-drain would break the single-mark
+  guarantee that makes supply and withdraw prices agree.
+- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but no launch
+  figure has been chosen and the cap is inert at its default, so nothing about how
+  it behaves against real deposit flow has been measured.
+- **Pinning tests:** `lp_book_tests.move` — `supply_within_pool_cap_fills`,
+  `supply_larger_than_headroom_partially_fills_to_the_cap`,
+  `supply_carries_when_the_pool_has_no_headroom`,
+  `supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush`,
+  `supply_carries_when_pool_is_already_over_cap`,
+  `pool_cap_does_not_gate_withdrawals`,
+  `full_pool_holds_the_supply_queue_instead_of_clearing_it`,
+  `partially_filled_head_keeps_its_place_across_flushes`,
+  `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`, and
+  `capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush` end to end.
+  The branch order is pinned by `over_cap_and_under_limit_takes_the_limit_branch`,
+  which reads it off queue state — a limit miss pops and refunds the head while a
+  capacity stop leaves it queued and spends no budget — plus
+  `limit_miss_is_not_partially_filled_into_available_headroom` and, for the prefix
+  price guard, `supply_prefix_below_the_requests_price_is_carried_not_filled` and
+  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`.
+  `lp_flow_tests.move` pins the cap to configured state rather than a constant
+  (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
+  `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
+  `protocol_config_tests.move` pins the shipped default and the valuation-lock
+  guard; `risk_config_tests.move` pins the bounds and the floor.
+- **Reopen when:** a launch figure is set (the profile should become `MEASURED`
+  against observed deposit flow); or a request-time admission check is wanted for
+  UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or
+  withdrawals are ever drained before supplies, which would change whose headroom is
+  being measured; or per-flush drain work is bounded structurally rather than by the
+  operator's budgets, which would also bound how much of a capped pool's queue one
+  flush churns through (see RP-12's per-flush cost note).
 
 ---
 

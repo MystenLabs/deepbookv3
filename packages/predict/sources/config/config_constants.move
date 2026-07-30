@@ -32,6 +32,7 @@ const EInvalidCadenceWindowSize: u64 = 21;
 const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
 const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
+const EInvalidMaxLpPoolValue: u64 = 25;
 
 // === Fees ===
 
@@ -94,6 +95,38 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
         value >= min_lp_request_limit_flush_attempts!()
             && value <= max_lp_request_limit_flush_attempts!(),
         EInvalidLpRequestLimitFlushAttempts,
+    );
+}
+
+/// Ceiling on LP-attributable pool value (`idle + Σ active NAV`, net of the
+/// protocol-profit exclusion) that queued supplies may raise the pool to. Checked at
+/// the flush against the frozen mark, because that is the only point where pool value
+/// is exact; a supply that would carry the pool past it is filled up to the cap and
+/// its remainder held at the queue head rather than refunded. The default admits everything, so the cap binds only once an operator sets
+/// a real figure.
+///
+/// This caps pool *value*, not cumulative deposits — trading profit raises NAV, so a
+/// pool can sit above a set cap with no new deposits, in which case supplies wait
+/// until NAV falls back. See RP-23.
+///
+/// The floor is the genesis lock plus one minimum supply, which is the smallest cap
+/// under which a minimally-bootstrapped pool can still admit a deposit. It is a
+/// sanity bound, not a liveness guarantee: a pool bootstrapped above the minimum, or
+/// one whose NAV has since grown, can be closed to new capital by any cap at or below
+/// its current value — which is a legitimate operator action, not a misconfiguration.
+public(package) macro fun default_max_lp_pool_value(): u64 { std::u64::max_value!() }
+
+public(package) macro fun min_max_lp_pool_value(): u64 {
+    deepbook_predict::constants::min_bootstrap_liquidity!() +
+    deepbook_predict::constants::min_supply_request!()
+}
+
+public(package) macro fun max_max_lp_pool_value(): u64 { std::u64::max_value!() }
+
+public(package) fun assert_max_lp_pool_value(value: u64) {
+    assert!(
+        value >= min_max_lp_pool_value!() && value <= max_max_lp_pool_value!(),
+        EInvalidMaxLpPoolValue,
     );
 }
 

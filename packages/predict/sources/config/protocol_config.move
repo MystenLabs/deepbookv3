@@ -42,6 +42,10 @@ public struct ProtocolConfig has key {
     /// that a missing request rests at the queue head and stops that queue for the
     /// flush, so this is an LP-queue liveness knob (RP-12).
     lp_request_limit_flush_attempts: u64,
+    /// Ceiling on LP-attributable pool value that queued supplies may raise the pool
+    /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
+    /// the pool is uncapped until an operator sets a figure (RP-23).
+    max_lp_pool_value: u64,
     expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
     stake_config: StakeConfig,
@@ -271,6 +275,23 @@ public fun set_lp_request_limit_flush_attempts(
     config.lp_request_limit_flush_attempts = attempts;
 }
 
+/// Set the ceiling on LP-attributable pool value that queued supplies may raise the
+/// pool to. A supply that would carry the pool past it is filled up to the cap at the
+/// flush and its remainder stays queued;
+/// withdrawals and already-issued PLP are unaffected, so lowering this below current
+/// pool value closes the pool to new capital rather than forcing anyone out.
+public fun set_max_lp_pool_value(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    max_pool_value: u64,
+) {
+    config.assert_version();
+    // The flush reads this mid-PTB, like the attempt count.
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_max_lp_pool_value(max_pool_value);
+    config.max_lp_pool_value = max_pool_value;
+}
+
 /// Set the EWMA gas-price penalty parameters.
 public fun set_ewma_params(
     config: &mut ProtocolConfig,
@@ -344,6 +365,10 @@ public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
 
 public(package) fun lp_request_limit_flush_attempts(config: &ProtocolConfig): u64 {
     config.lp_request_limit_flush_attempts
+}
+
+public(package) fun max_lp_pool_value(config: &ProtocolConfig): u64 {
+    config.max_lp_pool_value
 }
 
 public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
@@ -454,6 +479,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
+        max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
         expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),
         stake_config: stake_config::new(),

@@ -32,6 +32,8 @@ use sui::test_scenario::return_shared;
 
 /// Account funding for the LP staging the request; well above `min_supply_request`.
 const LP_DEPOSIT: u64 = 1_000_000_000;
+/// No fill limit, so only pool capacity can stop the request.
+const NO_MIN_OUT: u64 = 0;
 
 // === Genesis lock + bootstrapped gates ===
 
@@ -119,6 +121,46 @@ fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
     fx.finish();
 }
 
+// === Pool-value cap is read from config by the flush ===
+
+/// The cap must reach the drain from `ProtocolConfig`, not a constant. The genesis
+/// lock puts pool value at 10 DUSDC; a 20 DUSDC cap leaves 10 of headroom, which the
+/// first deposit exactly fills, so the next identical deposit finds no room and waits.
+#[test]
+fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_max_pool_value(&mut fx, 20_000_000);
+    // Consume the whole 10 DUSDC of headroom first.
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+    flush(&mut fx);
+    assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    flush(&mut fx);
+
+    // Held for capacity: the second deposit minted nothing and is still queued.
+    assert_pending_and_supply(&mut fx, 1, 2 * min_supply!());
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// The control: the identical deposit fills when the pool is uncapped, so the test
+/// above is measuring the cap rather than some other refund path.
+#[test]
+fun flush_fills_the_same_supply_when_the_pool_is_uncapped() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    flush(&mut fx);
+
+    // 10 DUSDC minted 1:1 against the 10 DUSDC genesis lock at a 1.0 mark.
+    assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
 // === Helpers ===
 
 /// A bootstrapped pool (no live markets) plus a funded LP account.
@@ -133,10 +175,19 @@ fun setup_pool_with_lp(): (helpers::Fixture, helpers::AccountBundle) {
 /// Queue a minimum-sized supply asking for an output no mark can quote, through the
 /// production entrypoint.
 fun queue_unfillable_supply(fx: &mut helpers::Fixture, account: &mut helpers::AccountBundle) {
+    queue_supply(fx, account, unattainable_min_out());
+}
+
+/// Queue a minimum-sized supply at `min_plp_out` through the production entrypoint.
+fun queue_supply(
+    fx: &mut helpers::Fixture,
+    account: &mut helpers::AccountBundle,
+    min_plp_out: u64,
+) {
     fx.scenario_mut().next_tx(test_constants::alice());
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    fx.request_supply_direct(&mut vault, &config, account, min_supply!(), unattainable_min_out());
+    fx.request_supply_direct(&mut vault, &config, account, min_supply!(), min_plp_out);
     return_shared(vault);
     return_shared(config);
 }
@@ -145,6 +196,13 @@ fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     fx.set_lp_request_limit_flush_attempts(&mut config, attempts);
+    return_shared(config);
+}
+
+fun set_max_pool_value(fx: &mut helpers::Fixture, max_pool_value: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    fx.set_max_lp_pool_value(&mut config, max_pool_value);
     return_shared(config);
 }
 
