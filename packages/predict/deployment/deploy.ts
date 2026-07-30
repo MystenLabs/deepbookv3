@@ -442,7 +442,7 @@ function loadResult(): DeploymentResult {
 
 function writeResult(result: DeploymentResult): void {
     result.wiring.updatedAt = new Date().toISOString();
-    writeFileSync(OUT_TEMP, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(OUT_TEMP, `${JSON.stringify(result, null, 4)}\n`, { mode: 0o600 });
     renameSync(OUT_TEMP, OUT);
 }
 
