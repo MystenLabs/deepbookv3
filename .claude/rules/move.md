@@ -1,6 +1,8 @@
 ---
 paths:
   - "packages/**/*.move"
+  - "packages/**/Move.toml"
+  - "packages/**/Published.toml"
 ---
 
 # Sui Move Instructions
@@ -165,6 +167,14 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - When you have completed making Move changes, run `pnpm install --frozen-lockfile && pnpm format:move` before opening the PR. CI runs the same script (`format:move:check`) over the same file set, so a clean local run means a clean check.
 - **Never format with `bunx`/`npx prettier-move`, a globally-installed prettier, or `sui move format`.** Those resolve whatever plugin version is latest; the lockfile pins the version CI enforces, and the two format differently. A local run with the wrong version silently rewrites files CI then rejects — or worse, passes locally and reddens someone else's PR later.
 - `pnpm format:move` formats every package, not just your files. That is deliberate and safe: the tree is formatted at HEAD, so it is a no-op outside your own edits. If it reports changes to files you did not touch, do not just commit them — that means something upstream drifted, and the drift belongs in its own PR (why: the check once matched only 45 of 182 files, so drift accumulated where it could not be seen, and the next PR to format such a file inherited unrelated churn in its diff — deepbookv3#1126).
+
+## Package manifests and publication identity
+
+- `Move.toml` is the canonical production dependency declaration. Keep dependency sources and identities correct for production publication; localnet, simulation, and harness environments must adapt in isolated staged copies rather than changing the canonical manifest.
+- `Published.toml` is durable target-chain publication history, not a prospective deployment plan. Preserve existing network entries and add or update an entry only after verifying the successful publication transaction and resulting package on that chain.
+- A `Published.toml` `toolchain-version` records the toolchain used for that historical publication; it does not select or constrain the toolchain for the current build or deployment.
+- Before publication, resolve the entire local dependency closure and validate an explicit topological publish order. Never use `--with-unpublished-dependencies`, because implicit republication changes package and type identity.
+- If the current CLI cannot reproduce an immutable dependency's historical bytecode, do not republish it or rewrite its identity to make verification pass. Diagnose the mismatch and verify the intended package and original IDs on the target chain; `.claude/rules/predict-deployment.md` owns the narrow conditions for an explicit dependency-verification bypass during Predict publication.
 
 ## Upstream Move Style (2024 Edition)
 
