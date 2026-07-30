@@ -264,6 +264,54 @@ including one-minute and five-minute surfaces, so the deviation bound is checked
 where it binds. This needs source rows at those cadences; the current CSV does
 not contain them, so it is a data-collection task before it is a generator task.
 
+### P-17: A negligible-tail finite boundary mints a payout-tree node for free
+
+**Severity:** Low / fix before deployment, sequenced after C-4.
+
+`max_payout_tree_nodes` is per-market and shared across all users, so filling it
+denies new strike ranges to everyone in that market until positions close or the
+market expires. The denial is renewable: an actor can hold to expiry and re-apply
+on the next market.
+
+What makes it cheap is a degenerate range shape, not the cap itself. Fixing one
+near-money lower boundary `L` and varying only the upper across arbitrary
+deep-out-of-the-money ticks mints exactly one new node per order, because
+`insert_range` counts only boundaries not already present. Every such range prices
+at ≈ `P(S > L)`, so each order is a near-certain position carrying no real
+directional risk. At the compiled floors (`min_net_premium` 1 DUSDC, entry band
+[1%, 99%], `min_fee` 0.5% on quantity) ~999 nodes cost ~1,000 DUSDC of premium that
+is ~99% likely to be repaid plus ~5 DUSDC of fees.
+
+Neither guard that looks like it should stop this does. `assert_admitted_mint_ticks`
+already forces both boundaries onto the admission grid, but the tick domain is 30
+bits, so the grid still admits far more than 1,000 points; admissibility is bounded
+economically (the range must price within [1%, 99%]), not combinatorially. A
+per-account reservation is sybil-trivial and would need new refcounted per-account
+boundary ownership, since the tree keys nodes by tick with no notion of who created
+one.
+
+**Direction:** reject a finite boundary whose tail probability is negligible and
+require the sentinel instead. A range whose upper boundary carries no meaningful
+mass is economically identical to `(lower, +inf]`, and `pos_inf_tick` stores no
+node; symmetrically a negligible `P(S <= lower_tick)` must use tick 0, which folds
+into `base` and also stores no node. That collapses the cheap shape onto the free
+sentinels rather than rate-limiting it, and leaves near-money boundaries, which are
+bounded by the probability band and cost real directional risk. The threshold wants
+to be derived rather than picked — plausibly tied to `min_entry_probability`, so a
+boundary must carry at least as much tail as the smallest admissible range.
+
+**Sequencing:** after C-4. That item sets `max_payout_tree_nodes`, and the two move
+in opposite directions — if C-4 forces the cap down to fit one transaction, the tree
+fills sooner and this gets cheaper to trigger, while this fix cuts how many nodes
+honest books generate and buys the cap headroom back. Sizing the threshold before
+the cap is known means picking it twice.
+
+**Provenance:** reported externally as issue 45 (closed as acknowledged and tracked
+2026-07-30, with this direction stated to the reporter); the cost model and the
+`assert_admitted_mint_ticks` analysis were established while triaging it. Not
+reachable on the deployed anchor, which carries no node cap at all — it applies to
+`main` and the next deployment.
+
 ### P-27: The PLP exit fee ships at 20 bps on a partly-unmeasured basis
 
 **Severity:** Undecided policy. Not a correctness bug — the mechanism is
