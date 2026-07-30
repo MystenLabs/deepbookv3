@@ -31,6 +31,7 @@ let nIdx = 0;
 let target: { marketId: string; positions: CleanoutPosition[] } | null = null;
 let waitTicks = 0;
 let retries = 0;
+let terminalFailure: string | null = null;
 
 function advance() {
   nIdx++;
@@ -78,8 +79,10 @@ const cleanoutGasLiq: Strategy = {
   tickMs: 4000,
   maxOps: 0,
   fund: 60_000_000_000_000n, // high-leverage batches cost more premium than cleanout-gas
+  done: () => phase === "done",
+  failure: () => terminalFailure,
   async tick(ctx) {
-    if (phase === "done") return null;
+    if (phase === "done" || terminalFailure) return null;
 
     if (phase === "mint") {
       if (!ctx.snapshot()) return null;
@@ -109,6 +112,7 @@ const cleanoutGasLiq: Strategy = {
       }));
       if (positions.length !== n) {
         ctx.trace({ type: "fail", tag: `minted ${positions.length}/${n}`, where: "cleanout-liq-mint-events", n });
+        terminalFailure = `mint batch emitted ${positions.length}/${n} OrderMinted events`;
         return null;
       }
       target = { marketId: m.id, positions };
@@ -132,18 +136,29 @@ const cleanoutGasLiq: Strategy = {
     if (!settled) {
       if (++waitTicks > MAX_WAIT_TICKS) {
         ctx.trace({ type: "fail", tag: "settle-timeout", n: NS[nIdx], market: target.marketId });
-        advance();
+        terminalFailure = `settlement timed out for n=${NS[nIdx]} market=${target.marketId}`;
       }
       return null;
     }
     try {
       // Traces {type:"cleanout", n, nLiquidated, nSettled, ...gas}: nLiquidated > 0 is the liq measurement.
-      await ctx.cleanout(target.marketId, target.positions);
+      const result = await ctx.cleanout(target.marketId, target.positions);
+      if (result.nLiquidated === 0) {
+        ctx.trace({
+          type: "fail",
+          tag: "no-liquidated-positions",
+          where: "cleanout-liq",
+          n: NS[nIdx],
+          nSettled: result.nSettled,
+        });
+        terminalFailure = `cleanout for n=${NS[nIdx]} contained zero liquidated positions`;
+        return null;
+      }
       advance();
     } catch (e) {
       if (++retries > MAX_CLEANOUT_RETRIES) {
         ctx.trace({ type: "fail", tag: errorTag(e), where: "cleanout-liq", n: NS[nIdx] });
-        advance();
+        terminalFailure = `cleanout exhausted ${MAX_CLEANOUT_RETRIES} retries for n=${NS[nIdx]}: ${errorTag(e)}`;
       } else {
         ctx.trace({ type: "cleanoutRetry", tag: errorTag(e), attempt: retries, n: NS[nIdx] });
       }

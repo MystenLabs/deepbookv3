@@ -18,7 +18,9 @@ import { errorTag } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
 const NS = [1, 3, 5, 10, 20]; // positions-per-account sweep -> the net(N) linear fit
-const LVG = 1.1; // low leverage: far above the floor -> never liquidated -> survives to a settled redeem
+// The gas fit only needs surviving positions. Use 1x because its fresh
+// one-minute target is inside the protocol's one-hour no-leverage window.
+const LVG = 1.0;
 const MINT_RUNWAY_MS = 25_000; // need this much time-to-expiry to mint and still let the market settle
 const MAX_WAIT_TICKS = 60; // give up waiting for settlement after this many ticks (not expected for a 1m market)
 const MAX_CLEANOUT_RETRIES = 8; // retry past transient valuation-lock / RPC races before abandoning an N
@@ -29,6 +31,7 @@ let nIdx = 0;
 let target: { marketId: string; positions: CleanoutPosition[] } | null = null;
 let waitTicks = 0;
 let retries = 0;
+let terminalFailure: string | null = null;
 
 function advance() {
   nIdx++;
@@ -56,10 +59,12 @@ function legFor(ctx: StrategyCtx, market: Mkt): MintLeg | null {
 const cleanoutGas: Strategy = {
   name: "cleanout-gas",
   tickMs: 4000, // poll pace for settlement + cleanout retries
-  maxOps: 0, // duration-only: the sweep self-terminates (phase "done") when every N is measured
+  maxOps: 0,
   fund: 40_000_000_000_000n, // generous: the NS-sum of positions across several markets
+  done: () => phase === "done",
+  failure: () => terminalFailure,
   async tick(ctx) {
-    if (phase === "done") return null;
+    if (phase === "done" || terminalFailure) return null;
 
     if (phase === "mint") {
       if (!ctx.snapshot()) return null;
@@ -88,6 +93,7 @@ const cleanoutGas: Strategy = {
       }));
       if (positions.length !== n) {
         ctx.trace({ type: "fail", tag: `minted ${positions.length}/${n}`, where: "cleanout-mint-events", n });
+        terminalFailure = `mint batch emitted ${positions.length}/${n} OrderMinted events`;
         return null;
       }
       target = { marketId: m.id, positions };
@@ -111,7 +117,7 @@ const cleanoutGas: Strategy = {
     if (!settled) {
       if (++waitTicks > MAX_WAIT_TICKS) {
         ctx.trace({ type: "fail", tag: "settle-timeout", n: NS[nIdx], market: target.marketId });
-        advance();
+        terminalFailure = `settlement timed out for n=${NS[nIdx]} market=${target.marketId}`;
       }
       return null;
     }
@@ -121,7 +127,7 @@ const cleanoutGas: Strategy = {
     } catch (e) {
       if (++retries > MAX_CLEANOUT_RETRIES) {
         ctx.trace({ type: "fail", tag: errorTag(e), where: "cleanout", n: NS[nIdx] });
-        advance();
+        terminalFailure = `cleanout exhausted ${MAX_CLEANOUT_RETRIES} retries for n=${NS[nIdx]}: ${errorTag(e)}`;
       } else {
         // Most likely the keeper's valuation lock (claim asserts !valuation_in_progress) — retry.
         ctx.trace({ type: "cleanoutRetry", tag: errorTag(e), attempt: retries, n: NS[nIdx] });

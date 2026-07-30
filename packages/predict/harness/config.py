@@ -30,7 +30,7 @@ PUBFILE_NAME = "Pub.sim.toml"
 GAS_BUDGET = 5_000_000_000
 
 # --- Ports -----------------------------------------------------------------
-# Only the fullnode JSON-RPC (9000) and faucet (9123) are fixed; swarm /
+# Only the fullnode service (9000) and faucet (9123) are fixed; swarm /
 # validator / consensus / metrics ports are genesis-randomized and disjoint
 # between instances, so offsetting just these two isolates a localnet.
 RPC_BASE = 9000

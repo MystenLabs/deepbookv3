@@ -42,11 +42,14 @@ const readJson = (p: string): any => {
 };
 
 async function submit(tx: any, label: string): Promise<any> {
-  tx.setSender(TRADER_ADDRESS);
-  tx.setGasBudget(GAS_BUDGET);
-  const r = await signExecThreaded(tx, signer, { showEffects: true, showEvents: true });
-  if (r.effects?.status?.status !== "success") throw new Error(`${label}: ${JSON.stringify(r.effects?.status)}`);
-  return r;
+    tx.setSender(TRADER_ADDRESS);
+    tx.setGasBudget(GAS_BUDGET);
+    const r = await signExecThreaded(tx, signer, { effects: true, events: true });
+    const status = r.effects?.status;
+    if (status?.status !== "success" && status?.success !== true) {
+      throw new Error(`${label}: ${JSON.stringify(status)}`);
+    }
+    return r;
 }
 
 async function waitForFeeds(): Promise<any> {
@@ -62,9 +65,9 @@ async function fundAndSetup(): Promise<void> {
   await submit(createAccountTx(), "create-account");
   // Wait for the keeper to transfer DUSDC to this address, then deposit it.
   for (let i = 0; i < 120; i++) {
-    const coins = await client.getCoins({ owner: TRADER_ADDRESS, coinType: DUSDC_TYPE });
-    if (coins.data.length > 0) {
-      await submit(depositOwnedCoinTx(wrapperId, coins.data[0].coinObjectId), "deposit");
+    const coins = await client.listCoins({ owner: TRADER_ADDRESS, coinType: DUSDC_TYPE });
+    if (coins.objects.length > 0) {
+      await submit(depositOwnedCoinTx(wrapperId, coins.objects[0].objectId), "deposit");
       return;
     }
     await sleep(1000);
@@ -103,6 +106,9 @@ async function main() {
       ctx.trace({ type: "fail", tag: errorTag(e) });
       if (skips % 25 === 0) console.warn(`[trader ${LABEL}] skip: ${e instanceof Error ? e.message.slice(0, 90) : e}`);
     }
+    const semanticFailure = strategy.failure?.();
+    if (semanticFailure) throw new Error(`${strategy.name} incomplete: ${semanticFailure}`);
+    if (strategy.done?.()) break;
     if (strategy.maxOps > 0 && ops >= strategy.maxOps) break; // run-to-completion
     if (deadline && Date.now() >= deadline) break;
     await sleep(strategy.tickMs);

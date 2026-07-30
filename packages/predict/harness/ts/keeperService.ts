@@ -11,6 +11,7 @@
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
 import { CADENCES } from "./predictConfig.js";
+import { cadenceOf, nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
@@ -30,7 +31,8 @@ import {
 } from "./runtime.js";
 
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
-// keeper enables and rolls all three; each keeps its own CADENCES[c].windowSize markets ahead.
+// keeper enables and rolls all three; each windowSize is a count of periods in
+// the future deployment horizon, not a target number of live markets.
 const CADENCE_IDS = [0, 1, 2];
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
@@ -72,15 +74,6 @@ async function expiryOf(marketId: string): Promise<number> {
 interface Mkt {
   id: string;
   expiryMs: number;
-}
-
-// Recover a market's cadence from its expiry. Cadence isn't stored on-chain, but the contract's
-// rank partition (1h owns :00:00, 5m owns 5-min marks off-the-hour, 1m owns the rest) makes this
-// exact for the enabled {1m,5m,1h} set — so it holds for chain-reconciled + post-restart markets.
-function cadenceOf(expiryMs: number): number {
-  if (expiryMs % 3_600_000 === 0) return 2; // 1h
-  if (expiryMs % 300_000 === 0) return 1; // 5m
-  return 0; // 1m
 }
 
 // The durable settlement lane: settle every currently-past-expiry active market, each in its own PTB
@@ -207,10 +200,13 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //    markets would grow the active set past the single-PTB flush gas wall and brick it.
   if (settledOk) {
     for (const c of CADENCE_IDS) {
-      const windowC = Number(CADENCES[c].windowSize);
-      if (live.filter((m) => cadenceOf(m.expiryMs) === c).length >= windowC) continue;
+      const expectedExpiry = nextDeployableExpiry(live, c, liveClock, CADENCE_IDS);
+      if (expectedExpiry === null) continue;
       try {
         const { marketId, expiryMs } = await createMarket(lifecycleCapId, c);
+        if (Number(expiryMs) !== expectedExpiry) {
+          throw new Error(`keeper cadence schedule drift c${c}: expected ${expectedExpiry}, created ${expiryMs}`);
+        }
         await executeAndWait(
           rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
           "rebalance",
@@ -220,7 +216,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
         live.push({ id: marketId, expiryMs: Number(expiryMs) });
         console.log(`[keeper] rolled c${c}: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))}`);
       } catch (e) {
-        // ECadenceWindowExceeded (market_manager:5) = window full (skip-edge / post-restart): expected.
         appendTrace("keeper", { type: "fail", tag: errorTag(e) });
         console.warn(`[keeper] roll c${c} skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
       }

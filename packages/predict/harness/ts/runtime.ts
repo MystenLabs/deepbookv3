@@ -1,5 +1,5 @@
 import { bcs } from "@mysten/sui/bcs";
-import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { deriveObjectID } from "@mysten/sui/utils";
 
@@ -50,6 +50,7 @@ import {
     updateTrustedSignerVaaFromConfig,
 } from "./localPyth.js";
 import { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson } from "./artifacts.js";
+import { selectGasPaymentRefs } from "./grpcGas.js";
 
 export interface GasUsage {
     computationCost: number;
@@ -98,18 +99,18 @@ const ONE_MONTH_MS = 30n * ONE_DAY_MS;
 // making the supply==0 re-bootstrap branch unreachable. request_supply/withdraw abort
 // `ENotBootstrapped` until it has run, so the harness locks it before any supply.
 export const MIN_BOOTSTRAP_LIQUIDITY = 10_000_000n;
-const SETUP_RESPONSE_OPTIONS = {
-    showEffects: true,
-    showEvents: true,
-    showObjectChanges: true,
+const SETUP_TRANSACTION_INCLUDE = {
+    effects: true,
+    events: true,
+    objectTypes: true,
 } as const;
-const EXECUTION_RESPONSE_OPTIONS = {
-    showEffects: true,
-    showEvents: true,
-    showObjectChanges: true,
+const EXECUTION_TRANSACTION_INCLUDE = {
+    effects: true,
+    events: true,
+    objectTypes: true,
 } as const;
 
-export const client = new SuiJsonRpcClient({ url: RPC_URL, network: "localnet" });
+export const client = new SuiGrpcClient({ baseUrl: RPC_URL, network: "localnet" });
 export const signer = getSigner();
 export const address = signer.getPublicKey().toSuiAddress();
 export { POOL_VAULT_ID, PROTOCOL_CONFIG_ID };
@@ -130,7 +131,150 @@ function isSuccessStatus(status: any): boolean {
 }
 
 function formatStatusError(status: any, fallback: string): string {
-    return status?.error ?? fallback;
+    const error = status?.error;
+    if (typeof error === "string") return error;
+    if (typeof error?.message === "string") return error.message;
+    if (error !== null && error !== undefined) return JSON.stringify(error);
+    return fallback;
+}
+
+function unwrapTransactionResult(result: any): any {
+    const transaction =
+        result?.$kind === "Transaction"
+            ? result.Transaction
+            : result?.$kind === "FailedTransaction"
+              ? result.FailedTransaction
+              : result?.Transaction ?? result?.FailedTransaction;
+    if (!transaction) {
+        throw new Error(`Sui gRPC returned an unknown transaction result: ${JSON.stringify(result).slice(0, 300)}`);
+    }
+    return transaction;
+}
+
+function objectChangeType(change: any): string {
+    if (change.idOperation === "Created") return "created";
+    if (change.idOperation === "Deleted" || change.outputState === "DoesNotExist") return "deleted";
+    if (change.outputState === "ObjectWrite" || change.outputState === "PackageWrite") return "mutated";
+    return "unknown";
+}
+
+function normalizeTransactionResult(result: any): any {
+    const transaction = unwrapTransactionResult(result);
+    const objectTypes = transaction.objectTypes ?? {};
+    return {
+        ...transaction,
+        events: (transaction.events ?? []).map((event: any) => ({
+            ...event,
+            type: event.eventType ?? event.type ?? "",
+            parsedJson: event.json ?? event.parsedJson ?? {},
+        })),
+        objectChanges: (transaction.effects?.changedObjects ?? []).map((change: any) => ({
+            ...change,
+            type: objectChangeType(change),
+            objectId: change.objectId,
+            objectType: objectTypes[change.objectId] ?? "",
+        })),
+    };
+}
+
+const submittedTransactionBytes = new WeakMap<Transaction, Uint8Array>();
+
+async function signAndExecuteGrpc(
+    tx: Transaction,
+    txSigner: any,
+    include: Record<string, boolean>,
+): Promise<any> {
+    const transaction = await buildGrpcTransactionBytes(tx, txSigner);
+    submittedTransactionBytes.set(tx, transaction);
+    return normalizeTransactionResult(
+        await client.signAndExecuteTransaction({
+            transaction,
+            signer: txSigner,
+            include,
+        }),
+    );
+}
+
+// The gRPC SDK resolves a Transaction by simulating the whole PTB with checks
+// enabled. That is not execution-neutral on an idle localnet: Clock advances
+// only when a transaction lands, so a legitimate next-checkpoint redeem can
+// fail resolution against the prior mint's timestamp. Resolve only the
+// TransactionKind with checks disabled, then attach explicit gas data and sign
+// the fully resolved bytes. Actual execution remains the sole status authority.
+async function buildGrpcTransactionBytes(
+    tx: Transaction,
+    txSigner: any,
+): Promise<Uint8Array> {
+    const original = tx.getData() as any;
+    const sender = original.sender ?? txSigner.getPublicKey().toSuiAddress();
+    const budget = original.gasData?.budget;
+    if (budget === null || budget === undefined) {
+        throw new Error("gRPC transaction requires an explicit gas budget");
+    }
+
+    const kind = await tx.build({ client, onlyTransactionKind: true });
+    const resolved = Transaction.fromKind(kind);
+    resolved.setSender(sender);
+    resolved.setGasOwner(original.gasData?.owner ?? sender);
+    resolved.setGasBudget(budget);
+    const gasPrice =
+        original.gasData?.price ??
+        (await client.getReferenceGasPrice()).referenceGasPrice;
+    resolved.setGasPrice(gasPrice);
+    if (original.expiration) resolved.setExpiration(original.expiration);
+
+    const payment =
+        original.gasData?.payment?.length > 0
+            ? original.gasData.payment
+            : await selectGasPayment(resolved, sender, BigInt(budget));
+    resolved.setGasPayment(payment);
+    return resolved.build();
+}
+
+async function selectGasPayment(
+    tx: Transaction,
+    owner: string,
+    budget: bigint,
+): Promise<Array<{ objectId: string; version: string; digest: string }>> {
+    const used = new Set<string>();
+    for (const input of (tx.getData() as any).inputs ?? []) {
+        const object = input?.Object;
+        const ref = object?.ImmOrOwnedObject ?? object?.Receiving;
+        if (ref?.objectId) used.add(ref.objectId);
+    }
+    const coins = [];
+    let cursor: string | null = null;
+    for (;;) {
+        const page = await client.listCoins({ owner, cursor, limit: 50 });
+        coins.push(...page.objects);
+        if (!page.hasNextPage) break;
+        if (!page.cursor) {
+            throw new Error(`Sui gRPC returned a gas-coin page without its next cursor for ${owner}`);
+        }
+        cursor = page.cursor;
+    }
+    try {
+        return selectGasPaymentRefs(coins, used, budget);
+    } catch (error) {
+        throw new Error(`no usable SUI gas payment for ${owner}: ${String(error)}`);
+    }
+}
+
+async function simulateGrpc(transaction: Transaction | Uint8Array): Promise<any> {
+    const result = await client.simulateTransaction({
+        transaction,
+        checksEnabled: false,
+        include: {
+            effects: true,
+            events: true,
+            objectTypes: true,
+            commandResults: true,
+        },
+    });
+    return {
+        ...normalizeTransactionResult(result),
+        commandResults: result.commandResults ?? [],
+    };
 }
 
 function failedTransactionAlreadyLogged(error: unknown): boolean {
@@ -193,6 +337,7 @@ function failedTransactionArtifactPath(label: string, attempt: number): string {
 
 async function collectTransactionDebug(params: {
     tx?: Transaction | null;
+    transactionBytes?: Uint8Array | null;
     label: string;
     attempt: number;
     gasBudget: bigint;
@@ -226,43 +371,42 @@ async function collectTransactionDebug(params: {
         raw_response: safeArtifactValue(params.raw),
     };
 
-    if (params.tx) {
+    if (params.transactionBytes) {
+        const bytes = params.transactionBytes;
+        artifact.transaction_bytes = {
+            length: bytes.length,
+            base64: Buffer.from(bytes).toString("base64"),
+        };
         try {
-            const bytes = await params.tx.build({ client });
-            artifact.transaction_bytes = {
-                length: bytes.length,
-                base64: Buffer.from(bytes).toString("base64"),
-            };
-            try {
-                artifact.dry_run = safeArtifactValue(
-                    await client.dryRunTransactionBlock({ transactionBlock: bytes }),
-                );
-            } catch (dryRunError) {
-                artifact.dry_run_error = safeArtifactValue(dryRunError);
-            }
-        } catch (buildError) {
-            artifact.transaction_build_error = safeArtifactValue(buildError);
+            artifact.dry_run = safeArtifactValue(await simulateGrpc(bytes));
+        } catch (dryRunError) {
+            artifact.dry_run_error = safeArtifactValue(dryRunError);
         }
+    } else if (params.tx) {
+        artifact.transaction_unavailable =
+            "execution failed before producing complete transaction bytes";
     } else {
         artifact.transaction_unavailable = "transaction builder failed before producing a PTB";
     }
 
     if (digest !== null) {
         try {
-            artifact.transaction_block = safeArtifactValue(
-                await client.getTransactionBlock({
-                    digest,
-                    options: {
-                        showInput: true,
-                        showEffects: true,
-                        showEvents: true,
-                        showObjectChanges: true,
-                        showBalanceChanges: true,
-                    },
-                }),
+            artifact.transaction = safeArtifactValue(
+                normalizeTransactionResult(
+                    await client.getTransaction({
+                        digest,
+                        include: {
+                            transaction: true,
+                            effects: true,
+                            events: true,
+                            objectTypes: true,
+                            balanceChanges: true,
+                        },
+                    }),
+                ),
             );
         } catch (fetchError) {
-            artifact.transaction_block_fetch_error = safeArtifactValue(fetchError);
+            artifact.transaction_fetch_error = safeArtifactValue(fetchError);
         }
     }
 
@@ -277,7 +421,10 @@ async function collectTransactionDebug(params: {
     // truncated framework string while this exact message sat unsurfaced in the artifact. Always print it.
     const dr = artifact.dry_run as any;
     const vmError = dr?.executionErrorSource ?? dr?.effects?.status?.error ?? (artifact.status as any)?.error ?? null;
-    if (vmError) process.stderr.write(`[${ts()}]   VM error: ${String(vmError).slice(0, 300)}\n`);
+    if (vmError) {
+        const message = typeof vmError === "string" ? vmError : vmError?.message ?? JSON.stringify(vmError);
+        process.stderr.write(`[${ts()}]   VM error: ${message.slice(0, 300)}\n`);
+    }
     return path;
 }
 
@@ -315,15 +462,17 @@ function gasSummaryFromEffects(effects: any): GasUsage {
     };
 }
 
-async function getTransactionBlockWithRetry(digest: string): Promise<any> {
+async function getTransactionWithRetry(digest: string): Promise<any> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt < 20; attempt++) {
         try {
-            return await client.getTransactionBlock({
-                digest,
-                options: { showEvents: true, showObjectChanges: true, showEffects: true },
-            });
+            return normalizeTransactionResult(
+                await client.getTransaction({
+                    digest,
+                    include: EXECUTION_TRANSACTION_INCLUDE,
+                }),
+            );
         } catch (error) {
             lastError = error;
             await new Promise((resolve) => setTimeout(resolve, 250));
@@ -397,11 +546,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function clockTimestampMs(): Promise<bigint> {
-    const object = await client.getObject({
-        id: CLOCK_ID,
-        options: { showContent: true },
+    const { object } = await client.getObject({
+        objectId: CLOCK_ID,
+        include: { json: true },
     });
-    const timestamp = (object.data?.content as any)?.fields?.timestamp_ms;
+    const json = object.json as any;
+    const timestamp = json?.timestamp_ms ?? json?.fields?.timestamp_ms;
     if (timestamp === undefined) {
         throw new Error("unable to read localnet Clock timestamp");
     }
@@ -411,11 +561,14 @@ export async function clockTimestampMs(): Promise<bigint> {
 // devInspect a read-only getter and return the first command's first raw return bytes.
 // Read-only chain queries (no signing, no gas) used to reconcile keeper state from chain.
 async function devInspectFirstReturn(tx: Transaction, cmdIndex = 0): Promise<number[]> {
-    const r = await client.devInspectTransactionBlock({ transactionBlock: tx, sender: address });
-    if (r.error) throw new Error(`devInspect failed: ${r.error}`);
-    const rv = r.results?.[cmdIndex]?.returnValues?.[0]?.[0];
+    tx.setSenderIfNotSet(address);
+    const r = await simulateGrpc(tx);
+    if (!isSuccessStatus(r.effects?.status)) {
+        throw new Error(`simulation failed: ${formatStatusError(r.effects?.status, JSON.stringify(r).slice(0, 300))}`);
+    }
+    const rv = r.commandResults?.[cmdIndex]?.returnValues?.[0]?.bcs;
     if (!rv) throw new Error(`devInspect: no return value at command ${cmdIndex}`);
-    return rv as number[];
+    return Array.from(rv as Uint8Array);
 }
 
 function parseU64LE(bytes: number[]): bigint {
@@ -477,8 +630,8 @@ export async function readSupplyRequestsPending(): Promise<bigint> {
 
 // Whether a shared/owned object still exists on chain (used to make genesis steps idempotent).
 export async function objectExists(id: string): Promise<boolean> {
-    const r = await client.getObject({ id });
-    return r.data != null;
+    const result = (await client.getObjects({ objectIds: [id] })).objects[0] as any;
+    return result !== undefined && typeof result?.objectId === "string";
 }
 
 // A market's expiry (ms) read from chain — recovers expiries for markets the keeper did
@@ -1848,13 +2001,19 @@ export async function signExecThreaded(tx: Transaction, txSigner: any, options: 
     if (pinned) tx.setGasPayment([pinned]);
     let r: any;
     try {
-        r = await client.signAndExecuteTransaction({ transaction: tx, signer: txSigner, options: { ...options, showEffects: true } });
+        r = await signAndExecuteGrpc(tx, txSigner, { ...options, effects: true });
     } catch (error) {
         gasRefBySender.delete(sender); // submission rejected (no execution) -> re-resolve a fresh gas coin next time
         throw error;
     }
-    const ref = (r as any).effects?.gasObject?.reference;
-    if (ref) gasRefBySender.set(sender, { objectId: ref.objectId, version: String(ref.version), digest: ref.digest });
+    const gasObject = (r as any).effects?.gasObject;
+    if (gasObject?.objectId && gasObject?.outputVersion && gasObject?.outputDigest) {
+        gasRefBySender.set(sender, {
+            objectId: gasObject.objectId,
+            version: String(gasObject.outputVersion),
+            digest: gasObject.outputDigest,
+        });
+    }
     return r;
 }
 
@@ -1868,10 +2027,11 @@ export async function executeAndWait(
 
     let execution: any;
     try {
-        execution = await signExecThreaded(tx, signer, SETUP_RESPONSE_OPTIONS);
+        execution = await signExecThreaded(tx, signer, SETUP_TRANSACTION_INCLUDE);
     } catch (error) {
         const artifactPath = await tryCollectTransactionDebug({
             tx,
+            transactionBytes: submittedTransactionBytes.get(tx) ?? null,
             label,
             attempt: 0,
             gasBudget,
@@ -1887,6 +2047,7 @@ export async function executeAndWait(
     if (!isSuccessStatus(status)) {
         const artifactPath = await tryCollectTransactionDebug({
             tx,
+            transactionBytes: submittedTransactionBytes.get(tx) ?? null,
             label,
             attempt: 0,
             gasBudget,
@@ -1901,10 +2062,11 @@ export async function executeAndWait(
     }
 
     try {
-        return await getTransactionBlockWithRetry(execution.digest);
+        return await getTransactionWithRetry(execution.digest);
     } catch (error) {
         const artifactPath = await tryCollectTransactionDebug({
             tx,
+            transactionBytes: submittedTransactionBytes.get(tx) ?? null,
             label,
             attempt: 0,
             gasBudget,
@@ -1938,16 +2100,13 @@ export async function execute(
             tx.setSender(address);
             tx.setGasBudget(gasBudget);
 
-            raw = await client.signAndExecuteTransaction({
-                transaction: tx,
-                signer,
-                options: EXECUTION_RESPONSE_OPTIONS,
-            });
+            raw = await signAndExecuteGrpc(tx, signer, EXECUTION_TRANSACTION_INCLUDE);
 
             const status = raw.effects?.status;
             if (!isSuccessStatus(status)) {
                 const artifactPath = await tryCollectTransactionDebug({
                     tx,
+                    transactionBytes: submittedTransactionBytes.get(tx) ?? null,
                     label,
                     attempt,
                     gasBudget,
@@ -1963,10 +2122,11 @@ export async function execute(
 
             let settled: any;
             try {
-                settled = await getTransactionBlockWithRetry(raw.digest);
+                settled = await getTransactionWithRetry(raw.digest);
             } catch (error) {
                 const artifactPath = await tryCollectTransactionDebug({
                     tx,
+                    transactionBytes: submittedTransactionBytes.get(tx) ?? null,
                     label,
                     attempt,
                     gasBudget,
@@ -1999,6 +2159,7 @@ export async function execute(
                     const delay = EXECUTE_RETRY_DELAY_MS * (attempt + 1);
                     const artifactPath = await tryCollectTransactionDebug({
                         tx,
+                        transactionBytes: tx ? submittedTransactionBytes.get(tx) ?? null : null,
                         label,
                         attempt,
                         gasBudget,
@@ -2015,6 +2176,7 @@ export async function execute(
             }
             const artifactPath = await tryCollectTransactionDebug({
                 tx,
+                transactionBytes: tx ? submittedTransactionBytes.get(tx) ?? null : null,
                 label,
                 attempt,
                 gasBudget,

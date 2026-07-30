@@ -10,7 +10,8 @@
 // need raw control (e.g. the adversarial probe sending a deliberately-over-cap order).
 import { readFileSync } from "node:fs";
 
-import { RESOLVER_MARKET } from "./predictConfig.js";
+import { rollDownSvi } from "./pricer.js";
+import { NO_LEVERAGE_WINDOW_MS, RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
@@ -41,8 +42,13 @@ export interface Mkt {
 }
 export interface Snap {
   spot1e9: string;
+  bsSpot1e9: string;
   publishedAtMs: string;
-  expiries: Record<string, { forward: number; svi: { alpha: number; beta: number; rho: number; m: number; sigma: number } }>;
+  expiries: Record<string, {
+    forward: number;
+    sviTsMs: number;
+    svi: { alpha: number; beta: number; rho: number; m: number; sigma: number };
+  }>;
 }
 export interface Held {
   orderId: string;
@@ -114,6 +120,7 @@ export interface StrategyCtx {
   leverageCap(p: number): number;
   nearestExpiry(): Mkt | null;
   randomExpiry(): Mkt | null;
+  randomLeveragedExpiry(): Mkt | null;
   pruneSettled(): void; // drop held orders whose market is no longer live (settled)
   trace(record: Record<string, unknown>): void;
 }
@@ -133,6 +140,13 @@ export interface Strategy {
   // point here) is expected, not a bug oracle hit; a run that never reaches a declared wall fails as
   // VACUOUS (a stress that did not stress). Scope narrowly — this whitelist is per-strategy, not global.
   expect?: { terminal: string[]; note?: string };
+  // Optional semantic completion for phased strategies whose useful work is
+  // not naturally expressed as an operation count.
+  done?: () => boolean;
+  // Optional terminal failure for phased measurement strategies. The runner
+  // exits non-zero instead of reporting a semantically incomplete sweep as
+  // successful merely because its retry budget was exhausted.
+  failure?: () => string | null;
   tick(ctx: StrategyCtx): Promise<OpKind | null>;
 }
 
@@ -180,11 +194,39 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     const exp = snap?.expiries?.[String(market.expiryMs)];
     if (!snap || !exp) return null;
     const spot = Number(snap.spot1e9) / 1e9;
-    const svi = { a: exp.svi.alpha, b: exp.svi.beta, rho: exp.svi.rho, m: exp.svi.m, sigma: exp.svi.sigma };
-    return { pythSpot: spot, bsSpot: spot, bsForward: Number(exp.forward), svi };
+    const rawSvi = {
+      a: exp.svi.alpha,
+      b: exp.svi.beta,
+      rho: exp.svi.rho,
+      m: exp.svi.m,
+      sigma: exp.svi.sigma,
+    };
+    // Match load_live_pricer: use Block Scholes' own signed spot for the
+    // basis re-anchor, then roll a/b from the signed SVI model timestamp to
+    // this quote's wall-clock time. Using Pyth as both spots and leaving SVI
+    // at its anchor made near-expiry max-probability guards reject otherwise
+    // valid strategy quotes.
+    const svi = rollDownSvi(rawSvi, Number(exp.sviTsMs), market.expiryMs, Date.now());
+    if (!svi) return null;
+    return {
+      pythSpot: spot,
+      bsSpot: Number(snap.bsSpot1e9) / 1e9,
+      bsForward: Number(exp.forward),
+      svi,
+    };
   };
 
   const resolve = (inst: Instruction, market: Mkt): Resolved | null => {
+    // Leave a small transaction-build margin outside the protocol's strict
+    // one-hour no-leverage window. Without this common gate, strategies spent
+    // most of their ticks submitting guaranteed strike_exposure_config:6
+    // aborts against 1m/5m/nearest-hour markets.
+    if (
+      Math.round(inst.leverage * 1e9) > Number(SCALE) &&
+      market.expiryMs - Date.now() < NO_LEVERAGE_WINDOW_MS + 5_000
+    ) {
+      return null;
+    }
     const env = envFor(market);
     if (!env) return null;
     const r = resolveMint(inst, env, RESOLVER_MARKET);
@@ -370,6 +412,13 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
     randomExpiry() {
       const m = markets();
+      return m.length ? pick(m) : null;
+    },
+    randomLeveragedExpiry() {
+      const now = Date.now();
+      const m = markets().filter(
+        (market) => market.expiryMs - now >= NO_LEVERAGE_WINDOW_MS + 5_000,
+      );
       return m.length ? pick(m) : null;
     },
     pruneSettled() {

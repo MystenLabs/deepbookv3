@@ -62,6 +62,12 @@ export function gasBreakdownOf(result: any): {
 // (e.g. an arithmetic/VM error or an RPC failure — which the bug oracle flags hardest).
 export function abortInfo(err: unknown): { module: string; code: number } | null {
   const s = err instanceof Error ? err.message : String(err);
+  // Sui gRPC transaction resolution:
+  // `MoveAbort ... abort code: 5, in '0x...::expiry_market::mint...'`.
+  const grpc = s.match(
+    /MoveAbort[\s\S]*?abort code:\s*(\d+),\s*in\s*'[^']*::([A-Za-z0-9_]+)::/,
+  );
+  if (grpc) return { module: grpc[2], code: Number(grpc[1]) };
   // Handle both raw (`Identifier("x")`) and JSON-escaped (`Identifier(\"x\")`) forms.
   const m = s.match(/Identifier\(\\?"([A-Za-z0-9_]+)\\?"\)[\s\S]*?\}, (\d+)\)/);
   return m ? { module: m[1], code: Number(m[2]) } : null;

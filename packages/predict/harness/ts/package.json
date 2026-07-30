@@ -3,6 +3,10 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "tsx --test harnessTest.ts"
+  },
   "dependencies": {
     "@mysten/sui": "^2.5.0",
     "@noble/curves": "^2.0.1",

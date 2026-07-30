@@ -47,7 +47,7 @@ const fuzz: Strategy = {
     }
 
     // else: mint a fuzzed position into a random expiry; a fraction probes the guards.
-    const market = ctx.randomExpiry();
+    const market = ctx.randomLeveragedExpiry();
     if (!market) return null;
     const direction = ctx.pick(["UP", "DN"]) as "UP" | "DN";
     if (Math.random() < ADVERSARIAL_FRACTION) return adversarialProbe(ctx, market, direction);

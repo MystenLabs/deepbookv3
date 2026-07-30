@@ -38,6 +38,8 @@ loudly.
 scenario against both localnet and Python, checks canonical economic parity, and
 then runs the long Python scenario for economic charts.
 
+The parity and replay gates use only the Python standard library. Charts require `matplotlib`; when it is unavailable, the runner reports that charts were skipped and still completes the correctness and economic replay gates.
+
 `bash run.sh --python-only` skips localnet, generates a long scenario, runs only
 the long Python replay, writes summary/charts, and deletes the raw long-run JSON
 after charting.
@@ -50,13 +52,7 @@ for short manual smoke runs.
 `artifacts/python_long_data.json` and `artifacts/python_derived.json` so charts
 can be iterated quickly inside the latest run folder.
 
-The gas benchmark Docker entrypoint uses an internal compatibility mode to run
-localnet only and write the legacy `artifacts/results.json` consumed by the
-benchmark service. That CI path may read `SCENARIO_PATH` and `SIM_MAX_ROWS` from
-the job environment. `SCENARIO_PATH` is treated as source market data in the
-same shape as `data/scenario_dataset.csv`; the runner still generates a
-temporary executable scenario before replay. This is not a manual simulation
-interface.
+The gas benchmark Docker entrypoint uses an internal compatibility mode to run localnet only and write the legacy `artifacts/results.json` consumed by the benchmark service. That CI path may read `SCENARIO_PATH` and `SIM_MAX_ROWS` from the job environment. `SCENARIO_PATH` is treated as source market data in the same shape as `data/scenario_dataset.csv`; the runner validates it before localnet publication and uses it for both normal and long scenario generation. The runner still generates temporary executable scenarios before replay. This is not a manual simulation interface.
 
 For ad hoc localnet-only NAV stress runs, reuse the benchmark path:
 
@@ -117,8 +113,8 @@ high gas budget because this mode does not benchmark individual mint gas;
 
 `bash run.sh`:
 
-1. Generates fresh localnet genesis.
-2. Starts localnet.
+1. Resolves and validates the ignored source dataset.
+2. Generates fresh localnet genesis and starts localnet.
 3. Uses the shared Python publisher to copy the exact package sources into the run workspace, resolve disposable upstream locks and framework pins against localnet under the Testnet build environment, and record isolated addresses in `Pub.sim.toml`; normal dependency verification remains enabled. It publishes Token, DUSDC, Fixed Math, Account, upstream Wormhole, upstream Pyth Lazer, the Block Scholes verifier, Propbook, and Predict. Propbook's package init creates and shares the `OracleRegistry` and mints the `RegistryAdminCap` to the publisher.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
    vault, registers the Propbook underlying + feeds, binds the feeds, applies
@@ -129,15 +125,14 @@ high gas budget because this mode does not benchmark individual mint gas;
    expiry to the configured initial expiry cash target before scenario rows start.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
-6. Runs Python over the normal scenario to create `python_data.json`.
-7. Replays the same normal scenario against localnet. The runner also synthesizes privileged maintenance transactions: standalone expiry-cash rebalances every 100 rows and LP flushes at the configured flush checkpoints. These are real localnet transactions recorded in `local_trace.json` and `local_data.json`, but they are not CSV row actions.
-8. Writes `local_trace.json` and `local_data.json`.
-9. Renders gas charts from `local_trace.json`.
-10. Compares the canonical parity projections of `local_data.json` and `python_data.json`.
-11. If parity holds, generates `data/generated/long_scenario.csv`.
-12. Runs long Python replay with exact source timestamps and terminal closeout.
-13. Writes `economic_summary.json` and renders charts.
-14. Deletes generated scenarios and raw long-run JSON.
+6. Replays the normal scenario against localnet. The runner also synthesizes privileged maintenance transactions: standalone expiry-cash rebalances every 100 rows and LP flushes at the configured flush checkpoints. These are real localnet transactions recorded in `local_trace.json` and `local_data.json`, but they are not CSV row actions.
+7. Writes `local_trace.json` and `local_data.json`.
+8. Runs Python over the normal scenario using the observed local transaction timestamps for SVI roll-down, creating `python_data.json`.
+9. Compares the canonical parity projections of `local_data.json` and `python_data.json`.
+10. If parity holds, generates `data/generated/long_scenario.csv`.
+11. Runs long Python replay with exact source timestamps and terminal closeout.
+12. Writes `economic_summary.json` and, when `matplotlib` is installed, renders gas and economic charts.
+13. Deletes generated scenarios and raw long-run JSON.
 
 The checkout is never a publication target: all package-manager writes remain under the ignored run workspace. The exit trap removes generated scenarios and stops localnet; if a transaction or chart step fails, the script exits and cleanup still runs.
 

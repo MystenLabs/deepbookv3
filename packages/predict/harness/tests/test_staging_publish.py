@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -12,7 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from harness import cli, config, publish, run as run_mod, staging
+from harness import cli, config, live, publish, run as run_mod, staging
 
 
 class StagingTests(unittest.TestCase):
@@ -348,6 +349,102 @@ class PublicationPlanTests(unittest.TestCase):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_campaign_requires_timeout_for_unbounded_strategy(self) -> None:
+        error = live._campaign_validation_error(
+            ["fuzz", "mint-only"],
+            timeout=0,
+            strat_meta={
+                "fuzz": {"maxOps": 0, "requiresTimeout": True},
+                "mint-only": {"maxOps": 10, "requiresTimeout": False},
+            },
+            capacity=2,
+        )
+
+        self.assertEqual(error, "--timeout is required for unbounded strategies: fuzz")
+        self.assertIsNone(
+            live._campaign_validation_error(
+                ["claim-marginal"],
+                timeout=0,
+                strat_meta={
+                    "claim-marginal": {
+                        "maxOps": 0,
+                        "requiresTimeout": False,
+                    }
+                },
+                capacity=1,
+            )
+        )
+
+    def test_campaign_rejects_more_localnets_than_capacity(self) -> None:
+        error = live._campaign_validation_error(
+            ["a", "b"],
+            timeout=10,
+            strat_meta={"a": {"maxOps": 1}, "b": {"maxOps": 1}},
+            capacity=1,
+        )
+
+        self.assertIn("above the configured capacity 1", error)
+
+    def test_campaign_interrupt_closes_worker_entered_localnets(self) -> None:
+        exits: list[str] = []
+
+        class Manager:
+            def __init__(self, name: str):
+                self.name = name
+
+            def __enter__(self):
+                return {
+                    "run_id": self.name,
+                    "instance_dir": Path(self.name),
+                    "rpc_port": 9000,
+                    "deployment": {
+                        "meta": {"chain_id": self.name},
+                        "packages": {},
+                    },
+                }
+
+            def __exit__(self, *_args):
+                exits.append(self.name)
+
+        def interrupt_after_workers(futures):
+            for future in futures:
+                future.result(timeout=5)
+            raise KeyboardInterrupt
+            yield  # pragma: no cover - makes this a generator for the for-loop
+
+        with (
+            contextlib.ExitStack() as stack,
+            mock.patch.object(
+                live,
+                "oracle_ready_localnet",
+                side_effect=lambda name, keep: Manager(name),
+            ),
+            mock.patch.object(live, "as_completed", side_effect=interrupt_after_workers),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                live._setup_campaign_localnets(["a", "b"], stack, 2)
+
+        self.assertCountEqual(exits, ["a", "b"])
+
+    def test_campaign_keyboard_interrupt_from_future_propagates(self) -> None:
+        class InterruptedManager:
+            def __enter__(self):
+                raise KeyboardInterrupt
+
+            def __exit__(self, *_args):
+                raise AssertionError("a context that never entered must not be closed")
+
+        with (
+            contextlib.ExitStack() as stack,
+            mock.patch.object(
+                live,
+                "oracle_ready_localnet",
+                return_value=InterruptedManager(),
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                live._setup_campaign_localnets(["interrupted"], stack, 1)
+
     def test_publish_localnet_finishes_staging_before_genesis(self) -> None:
         failure = RuntimeError("staging failed")
         with tempfile.TemporaryDirectory() as tmp:

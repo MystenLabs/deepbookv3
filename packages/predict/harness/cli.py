@@ -157,8 +157,21 @@ def main(argv: list[str] | None = None) -> int:
 
     p_campaign = sub.add_parser("campaign", help="run named strategies in parallel (one localnet each) to completion, then analyze")
     p_campaign.add_argument("strategies", nargs="+", help="strategy names, e.g. mint-only mixed-churn liq-churn")
-    p_campaign.add_argument("--timeout", type=int, default=0, help="safety cap in seconds (0 = until all strategies finish)")
-    p_campaign.set_defaults(func=lambda a: live.campaign(a.strategies, a.timeout))
+    p_campaign.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="safety cap in seconds (required for strategies with no maxOps or semantic done)",
+    )
+    p_campaign.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help="simultaneous localnet capacity (default: auto from cores/RAM)",
+    )
+    p_campaign.set_defaults(
+        func=lambda a: live.campaign(a.strategies, a.timeout, a.concurrency)
+    )
 
     p_spike_mint = sub.add_parser("spike-mint", help="B1: resolve + execute a semantic mint against live data")
     p_spike_mint.set_defaults(func=lambda a: live.spike_mint())

@@ -16,7 +16,7 @@ const navStressMulti: Strategy = {
     // Prune settled: near-expiry (1m/5m) markets settle mid-run and their held orders drop, so the book
     // accumulates in the persisting (5m/1h) markets — the flush values whatever is live at flush time.
     ctx.pruneSettled();
-    const market = ctx.randomExpiry();
+    const market = ctx.randomLeveragedExpiry();
     if (!market || !ctx.snapshot()) return null;
     const inst: Instruction = {
       direction: "UP",

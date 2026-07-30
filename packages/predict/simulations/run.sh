@@ -88,6 +88,13 @@ if [ "$PYTHON_ONLY" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 1 ]; then
   exit 1
 fi
 
+SOURCE_DATASET="${SCENARIO_PATH:-$SCRIPT_DIR/data/scenario_dataset.csv}"
+if [ ! -f "$SOURCE_DATASET" ]; then
+  echo "ERROR: scenario source dataset does not exist: $SOURCE_DATASET"
+  echo "Set SCENARIO_PATH to the ignored local scenario_dataset.csv before rerunning."
+  exit 1
+fi
+
 # --- Determine instance ---
 INSTANCE_ID="$(date +%b%d-%H%M | tr '[:upper:]' '[:lower:]')"
 if [ -d "$RUNS_DIR/$INSTANCE_ID" ]; then
@@ -106,7 +113,7 @@ export INSTANCE_DIR
 
 # Per-instance localnet ports so multiple isolated localnets can run concurrently.
 # `sui genesis` randomizes validator/consensus/metrics ports per run; only the fullnode
-# JSON-RPC (9000) and faucet (9123) are fixed, so offsetting just those two isolates an
+# service (9000) and faucet (9123) are fixed, so offsetting just those two isolates an
 # instance. Default offset 0 = the original single-instance ports.
 PORT_OFFSET="${SIM_PORT_OFFSET:-0}"
 RPC_PORT=$((9000 + PORT_OFFSET))
@@ -164,24 +171,34 @@ run_long_python_replay() {
   (cd "$SCRIPT_DIR" && python3 "${args[@]}")
 }
 
+if python3 -c "import matplotlib" >/dev/null 2>&1; then
+  CHARTS_AVAILABLE=1
+else
+  CHARTS_AVAILABLE=0
+fi
+
 if [ "$PYTHON_ONLY" -eq 1 ]; then
   mkdir -p "$INSTANCE_DIR/artifacts"
   cleanup_generated
   PYTHON_SCENARIO="$SCRIPT_DIR/data/generated/long_scenario.csv"
   PYTHON_LONG_DATA="$INSTANCE_DIR/artifacts/python_long_data.json"
   echo "==> Generating long Python scenario..."
-  generate_scenario long "$PYTHON_SCENARIO"
+  generate_scenario long "$PYTHON_SCENARIO" "$SOURCE_DATASET"
   echo "==> Running Python replay only..."
   run_long_python_replay "$PYTHON_SCENARIO" "$PYTHON_LONG_DATA"
   echo "==> Writing economic summary..."
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
-  echo ""
-  echo "==> Rendering charts..."
-  (cd "$SCRIPT_DIR" && python3 charts/chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 charts/chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 charts/chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 charts/chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 charts/chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
+  if [ "$CHARTS_AVAILABLE" -eq 1 ]; then
+    echo ""
+    echo "==> Rendering charts..."
+    (cd "$SCRIPT_DIR" && python3 charts/chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
+    (cd "$SCRIPT_DIR" && python3 charts/chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+    (cd "$SCRIPT_DIR" && python3 charts/chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json")
+    (cd "$SCRIPT_DIR" && python3 charts/chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+    (cd "$SCRIPT_DIR" && python3 charts/chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
+  else
+    echo "==> Skipping charts (matplotlib is not installed)."
+  fi
   echo "==> Updating economic summary..."
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
   cleanup_long_outputs
@@ -235,7 +252,31 @@ print(value)
 ' "$DEPLOYMENT_JSON" "$@"
 }
 
+check_localnet_ports() {
+  python3 - "$RPC_PORT" "$FAUCET_PORT" <<'PY'
+import socket
+import sys
+
+busy = []
+for raw in sys.argv[1:]:
+    port = int(raw)
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError as error:
+        busy.append(f":{port} ({error})")
+    finally:
+        sock.close()
+if busy:
+    print("ERROR: localnet port(s) already in use: " + ", ".join(busy), file=sys.stderr)
+    print("Set SIM_PORT_OFFSET to a free offset before rerunning.", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 # --- 1. Genesis ---
+check_localnet_ports
 echo "==> Generating fresh genesis..."
 rm -rf "$CONFIG_DIR"
 mkdir -p "$CONFIG_DIR"
@@ -255,11 +296,9 @@ echo "==> Starting localnet..."
 $SUI start --network.config "$CONFIG_DIR" --fullnode-rpc-port $RPC_PORT --with-faucet=$FAUCET_PORT &
 SUI_PID=$!
 
-echo -n "    Waiting for RPC"
+echo -n "    Waiting for gRPC"
 for i in $(seq 1 30); do
-  if curl -s http://127.0.0.1:$RPC_PORT -X POST -H 'Content-Type: application/json' \
-    -d '{"jsonrpc":"2.0","id":1,"method":"sui_getLatestCheckpointSequenceNumber","params":[]}' \
-    2>/dev/null | grep -q result; then
+  if sui_client chain-identifier --json >/dev/null 2>&1; then
     echo " ready!"
     break
   fi
@@ -290,9 +329,8 @@ done
   done
   sleep 1
 
-  CHAIN_ID=$(curl -s http://127.0.0.1:$RPC_PORT -X POST -H 'Content-Type: application/json' \
-    -d '{"jsonrpc":"2.0","id":1,"method":"sui_getChainIdentifier","params":[]}' | \
-    python3 -c "import json,sys; print(json.load(sys.stdin)['result'])")
+  CHAIN_ID=$(sui_client chain-identifier --json | \
+    python3 -c 'import json,sys; data=json.load(sys.stdin); print(data if isinstance(data, str) else data.get("chainIdentifier") or data["chain_identifier"])')
   echo "    Chain ID: $CHAIN_ID"
 
   LOCAL_PYTH_CONFIG="$INSTANCE_DIR/local_pyth.json"
@@ -450,15 +488,10 @@ run_sim() {
 
   if [ -n "${SCENARIO_PATH:-}" ]; then
     echo "==> Generating normal localnet/Python scenario from SCENARIO_PATH..."
-    if [ ! -f "$SCENARIO_PATH" ]; then
-      echo "ERROR: SCENARIO_PATH does not exist: $SCENARIO_PATH"
-      exit 1
-    fi
-    generate_scenario normal "$NORMAL_SCENARIO" "$SCENARIO_PATH"
   else
     echo "==> Generating normal localnet/Python scenario..."
-    generate_scenario normal "$NORMAL_SCENARIO"
   fi
+  generate_scenario normal "$NORMAL_SCENARIO" "$SOURCE_DATASET"
   cp "$NORMAL_SCENARIO" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
 
   if [ -n "$RUN_MAX_ROWS" ]; then
@@ -496,12 +529,6 @@ if [ ! -f "$INSTANCE_DIR/artifacts/python_data.json" ]; then
   exit 1
 fi
 
-echo "==> Rendering gas chart..."
-python3 charts/chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
-
-echo "==> Updating economic summary..."
-python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-
 echo ""
 echo "==> Checking localnet/Python parity..."
 if python3 compare_parity.py \
@@ -509,17 +536,22 @@ if python3 compare_parity.py \
   LONG_SCENARIO="$SCRIPT_DIR/data/generated/long_scenario.csv"
   PYTHON_LONG_DATA="$INSTANCE_DIR/artifacts/python_long_data.json"
   echo "    Parity OK. Generating long Python scenario..."
-  generate_scenario long "$LONG_SCENARIO"
+  generate_scenario long "$LONG_SCENARIO" "$SOURCE_DATASET"
   echo "==> Running long Python economic replay..."
   run_long_python_replay "$LONG_SCENARIO" "$PYTHON_LONG_DATA"
   echo "==> Writing economic summary..."
   python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-  echo "==> Rendering charts..."
-  python3 charts/chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 charts/chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 charts/chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 charts/chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 charts/chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
+  if [ "$CHARTS_AVAILABLE" -eq 1 ]; then
+    echo "==> Rendering charts..."
+    python3 charts/chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
+    python3 charts/chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
+    python3 charts/chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+    python3 charts/chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json"
+    python3 charts/chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+    python3 charts/chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
+  else
+    echo "==> Skipping charts (matplotlib is not installed)."
+  fi
   echo "==> Updating economic summary..."
   python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
   cleanup_long_outputs

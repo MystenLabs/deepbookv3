@@ -201,8 +201,14 @@ def _analyze_one(inst: Path) -> list[str]:
     if flushes:
         navs = [r["poolValue"] for r in flushes]
         print(f"\npool NAV (flush, n={len(navs)}): first=${navs[0]:,.0f} last=${navs[-1]:,.0f} min=${min(navs):,.0f} max=${max(navs):,.0f}")
-        if min(navs) < max(navs) * 0.99:
-            print(f"  WARN NAV dipped {((max(navs) - min(navs)) / max(navs) * 100):.2f}% below peak (inspect for PLP drain)")
+        peak = navs[0]
+        max_drawdown = 0.0
+        for nav in navs:
+            peak = max(peak, nav)
+            if peak > 0:
+                max_drawdown = max(max_drawdown, (peak - nav) / peak)
+        if max_drawdown > 0.01:
+            print(f"  WARN NAV drew down {max_drawdown * 100:.2f}% from a prior peak (inspect for PLP drain)")
         else:
             print("  NAV stable (no >1% drawdown)")
 

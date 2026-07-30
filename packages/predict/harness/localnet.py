@@ -48,27 +48,26 @@ def start(config_dir: Path, rpc_port: int, faucet_port: int, log_path: Path) -> 
     )
 
 
-def _rpc(rpc_port: int, method: str, params=None) -> dict:
-    body = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
-    ).encode()
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{rpc_port}",
-        data=body,
-        headers={"Content-Type": "application/json"},
+def _client_json(client_config: Path, args: list[str]) -> object:
+    """Run a read through the current Sui CLI transport and parse its JSON output."""
+    cp = suicli.client(
+        client_config,
+        [*args, "--json"],
+        check=False,
+        timeout=5,
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    if cp.returncode != 0:
+        raise suicli.SuiError(cp.stderr.strip() or cp.stdout.strip())
+    return suicli.parse_json_lenient(cp.stdout)
 
 
-def wait_for_rpc(rpc_port: int, timeout: float = 90.0) -> None:
+def wait_for_rpc(client_config: Path, rpc_port: int, timeout: float = 90.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            r = _rpc(rpc_port, "sui_getLatestCheckpointSequenceNumber")
-            if "result" in r:
+            if chain_id(client_config):
                 return
-        except (urllib.error.URLError, ConnectionError, OSError, json.JSONDecodeError):
+        except (subprocess.SubprocessError, suicli.SuiError, OSError, json.JSONDecodeError):
             pass
         time.sleep(1)
     raise TimeoutError(f"localnet RPC not ready on :{rpc_port} after {timeout}s")
@@ -103,11 +102,28 @@ def fund(faucet_port: int, address: str, times: int = 2) -> None:
     time.sleep(1)
 
 
-def balance(rpc_port: int, address: str) -> int:
+def balance(client_config: Path, address: str) -> int:
     """Total SUI balance (MIST) for an address, or -1 if the query fails."""
     try:
-        return int(_rpc(rpc_port, "suix_getBalance", [address])["result"]["totalBalance"])
-    except (urllib.error.URLError, ConnectionError, OSError, KeyError, ValueError, json.JSONDecodeError):
+        data = _client_json(
+            client_config,
+            ["balance", address, "--coin-type", "0x2::sui::SUI"],
+        )
+        entries = data if isinstance(data, list) else [data]
+        if not entries:
+            return 0
+        entry = entries[0]
+        if not isinstance(entry, dict):
+            raise ValueError("unexpected balance response")
+        value = (
+            entry.get("totalBalance")
+            or entry.get("total_balance")
+            or entry.get("balance")
+        )
+        if isinstance(value, dict):
+            value = value.get("balance") or value.get("coinBalance")
+        return int(value)
+    except (subprocess.SubprocessError, suicli.SuiError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return -1
 
 
@@ -115,8 +131,15 @@ def active_address(client_config: Path) -> str:
     return suicli.client_text(client_config, ["active-address"])
 
 
-def chain_id(rpc_port: int) -> str:
-    return _rpc(rpc_port, "sui_getChainIdentifier")["result"]
+def chain_id(client_config: Path) -> str:
+    data = _client_json(client_config, ["chain-identifier"])
+    if isinstance(data, str):
+        return data
+    if isinstance(data, dict):
+        value = data.get("chainIdentifier") or data.get("chain_identifier")
+        if isinstance(value, str):
+            return value
+    raise ValueError(f"unexpected chain identifier response: {data!r}")
 
 
 def request_stop(proc: subprocess.Popen | None) -> None:

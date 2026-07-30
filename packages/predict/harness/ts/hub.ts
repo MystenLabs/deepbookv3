@@ -5,12 +5,13 @@
 import { appendFileSync } from "node:fs";
 
 import { atomicWriteFile } from "./io.js";
-import { DirectWsSource } from "./marketSource.js";
+import { DirectWsSource, serializableSnapshot } from "./marketSource.js";
 
 const DURATION_MS = Number(process.env.DURATION_MS ?? 0);
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
 const HUB_SNAPSHOT = process.env.HUB_SNAPSHOT ?? "";
 const HUB_RECORD = process.env.HUB_RECORD; // optional JSONL record for replay
+const HUB_METRICS = process.env.HUB_METRICS ?? `${HUB_SNAPSHOT}.metrics.json`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
@@ -27,35 +28,39 @@ async function main() {
     ),
   ];
   const source = new DirectWsSource();
-  await source.start(gridNow());
-  console.log(`[hub] one WS pair -> ${HUB_SNAPSHOT} (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:3,300000:3,3600000:3"}); warming up...`);
-
-  let shutdown = false;
-  process.on("SIGTERM", () => { shutdown = true; });
-  process.on("SIGINT", () => { shutdown = true; });
-
   const start = Date.now();
   let writes = 0;
-  while (!shutdown && (DURATION_MS === 0 || Date.now() - start < DURATION_MS)) {
-    await sleep(LOOP_MS);
-    source.ensureExpiries(gridNow());
-    const snap = source.latest();
-    if (!snap || snap.expiries.size === 0) continue;
-    const json = JSON.stringify({
-      spot1e9: snap.spot1e9.toString(),
-      publishedAtMs: snap.publishedAtMs.toString(),
-      bsSpot1e9: snap.bsSpot1e9.toString(),
-      bsSpotTsMs: snap.bsSpotTsMs,
-      expiries: Object.fromEntries([...snap.expiries.entries()]),
-    });
-    atomicWriteFile(HUB_SNAPSHOT, json);
-    if (HUB_RECORD) appendFileSync(HUB_RECORD, `${json}\n`);
-    writes++;
-    if (writes <= 3 || writes % 10 === 0)
-      console.log(`[hub] snapshot #${writes} spot=$${(Number(snap.spot1e9) / 1e9).toFixed(2)} expiries=${snap.expiries.size}`);
+  const writeMetrics = () => atomicWriteFile(HUB_METRICS, JSON.stringify({
+    elapsed_ms: Date.now() - start,
+    snapshots: writes,
+    source: source.diagnostics?.() ?? {},
+  }));
+  try {
+    await source.start(gridNow());
+    console.log(`[hub] one WS pair -> ${HUB_SNAPSHOT} (GRID_SPEC=${process.env.GRID_SPEC ?? "60000:3,300000:3,3600000:3"}); warming up...`);
+
+    let shutdown = false;
+    process.on("SIGTERM", () => { shutdown = true; });
+    process.on("SIGINT", () => { shutdown = true; });
+
+    while (!shutdown && (DURATION_MS === 0 || Date.now() - start < DURATION_MS)) {
+      await sleep(LOOP_MS);
+      source.ensureExpiries(gridNow());
+      const snap = source.latest();
+      if (!snap || snap.expiries.size === 0) continue;
+      const json = JSON.stringify(serializableSnapshot(snap));
+      atomicWriteFile(HUB_SNAPSHOT, json);
+      if (HUB_RECORD) appendFileSync(HUB_RECORD, `${json}\n`);
+      writes++;
+      writeMetrics();
+      if (writes <= 3 || writes % 10 === 0)
+        console.log(`[hub] snapshot #${writes} spot=$${(Number(snap.spot1e9) / 1e9).toFixed(2)} expiries=${snap.expiries.size}`);
+    }
+  } finally {
+    source.stop();
+    writeMetrics();
+    console.log(`[hub] done: ${writes} snapshots over ${((Date.now() - start) / 1000).toFixed(0)}s`);
   }
-  source.stop();
-  console.log(`[hub] done: ${writes} snapshots over ${((Date.now() - start) / 1000).toFixed(0)}s`);
 }
 
 main().then(() => process.exit(0)).catch((e) => { console.error("[hub] FAIL:", e); process.exit(1); });

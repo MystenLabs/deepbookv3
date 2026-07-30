@@ -15,7 +15,9 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import config, localnet, oracle_setup, state, suicli
@@ -30,12 +32,11 @@ print = functools.partial(print, flush=True)
 # keeper process so its cheap settle/liquidate/rebalance/roll txs don't inherit a large trader
 # SIM_GAS_BUDGET (batch strategies need 50e9) and each demand a 50e9 gas coin.
 KEEPER_GAS_BUDGET = 15_000_000_000
-# Refill an actor's gas below this floor. It MUST exceed the keeper's gas budget: signExecThreaded
-# pins ONE gas coin per sender, so the keeper's flush coin can't self-top-up and must be refilled
-# BEFORE it drops under budget (else it starves with no coin to gas-smash against). The old 2e9
-# floor << the 50e9 flush budget was exactly why the keeper starved (batch run 2026-07-06, 219
-# gas-starved flush submits).
-GAS_REFILL_FLOOR = 30_000_000_000
+# Refill an actor's gas below this floor. It MUST exceed both the keeper's 15e9
+# budget and the 50e9 trader budget used by batch strategies: signExecThreaded
+# pins one gas coin per sender, so an actor cannot self-top-up after dropping
+# below its next transaction's budget.
+GAS_REFILL_FLOOR = 60_000_000_000
 
 
 def _raise_keyboard_interrupt(*_) -> None:
@@ -122,7 +123,7 @@ def _read_meta() -> dict:
 
 def _grid_spec(meta: dict) -> str:
     """Oracle GRID_SPEC ('periodMs:count,...') from the enabled cadence set — each cadence's
-    windowSize boundaries, matching the markets the keeper keeps live per cadence (prod 1m/5m/1h)."""
+    windowSize-period time horizon, partitioned by cadence rank (prod 1m/5m/1h)."""
     return ",".join(f"{_CADENCE_PERIOD_MS[c['id']]}:{c['windowSize']}" for c in meta["cadences"])
 
 
@@ -218,7 +219,7 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0, replay: st
                 if now - last_gas >= 30:  # keep all actors funded over long holds
                     last_gas = now
                     for addr in gas_addrs:
-                        bal = localnet.balance(ctx["rpc_port"], addr)
+                        bal = localnet.balance(ctx["client_config"], addr)
                         if 0 <= bal < 2_000_000_000:  # < 2 SUI
                             print(f"[gas] refilling {addr[:10]} (bal {bal / 1e9:.2f} SUI)")
                             localnet.fund(ctx["faucet_port"], addr, times=1)
@@ -249,7 +250,7 @@ def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
         )
         stack.callback(_terminate_group, hub)
         core = [hub]
-        gas: list[tuple[int, int, str]] = []  # (rpc_port, faucet_port, address)
+        gas: list[tuple[Path, int, str]] = []  # (client_config, faucet_port, address)
         print(f"hub started (pid {hub.pid}); bringing up {n} localnets...")
         for i in range(n):
             ctx = stack.enter_context(oracle_ready_localnet(name=f"par{i}", keep=True))
@@ -274,7 +275,7 @@ def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
                     env={**base, "TRADER_ADDRESS": addr}, start_new_session=True,
                 ))
             for a in (ctx["active"], ctx["updater_address"], *trader_addrs):
-                gas.append((ctx["rpc_port"], ctx["faucet_port"], a))
+                gas.append((ctx["client_config"], ctx["faucet_port"], a))
         print(f"up-many: hub + {n} localnets (keeper + HubSource updater + {traders} trader each); held. Ctrl-C to tear down.")
         deadline = (time.time() + seconds) if seconds > 0 else None
         last_gas = 0.0
@@ -286,8 +287,8 @@ def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
                 now = time.time()
                 if now - last_gas >= 30:
                     last_gas = now
-                    for rpc_port, faucet_port, addr in gas:
-                        if 0 <= localnet.balance(rpc_port, addr) < GAS_REFILL_FLOOR:
+                    for client_config, faucet_port, addr in gas:
+                        if 0 <= localnet.balance(client_config, addr) < GAS_REFILL_FLOOR:
                             localnet.fund(faucet_port, addr, times=1)
                 time.sleep(2)
             else:
@@ -297,7 +298,139 @@ def up_many(n: int = 2, seconds: int = 0, traders: int = 1) -> int:
     return 1 if failed else 0
 
 
-def campaign(strategies: list[str], timeout: int = 0) -> int:
+class _CampaignLocalnetLease:
+    """Idempotent ownership wrapper for a context entered by a setup worker."""
+
+    def __init__(self, manager):
+        self._manager = manager
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        self._manager.__exit__(None, None, None)
+
+
+def _campaign_capacity(concurrency: int | None) -> int:
+    return max(1, min(concurrency or config.default_concurrency(), config.SLOT_COUNT))
+
+
+def _campaign_validation_error(
+    strategies: list[str],
+    timeout: int,
+    strat_meta: dict,
+    capacity: int,
+) -> str | None:
+    if timeout < 0:
+        return "--timeout must be non-negative"
+    if len(strategies) > capacity:
+        return (
+            f"{len(strategies)} strategies require {len(strategies)} simultaneous localnets, "
+            f"above the configured capacity {capacity}; split the campaign or pass an explicit "
+            "--concurrency override"
+        )
+    duration_only = [
+        strategy
+        for strategy in strategies
+        if bool(
+            strat_meta[strategy].get(
+                "requiresTimeout",
+                int(strat_meta[strategy]["maxOps"]) == 0,
+            )
+        )
+    ]
+    if timeout == 0 and duration_only:
+        return (
+            "--timeout is required for unbounded strategies: "
+            + ", ".join(duration_only)
+        )
+    return None
+
+
+def _setup_campaign_localnets(
+    strategies: list[str],
+    stack: contextlib.ExitStack,
+    setup_concurrency: int,
+) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Enter localnets concurrently and give ExitStack teardown ownership.
+
+    A worker records its lease immediately after __enter__ succeeds. If setup is
+    interrupted before the main thread consumes that future, the finally block
+    still closes the lease rather than leaving its validator to GC.
+    """
+
+    contexts: dict[str, dict] = {}
+    setup_rows: dict[str, dict] = {}
+    leases: list[_CampaignLocalnetLease] = []
+    leases_lock = threading.Lock()
+    setup_complete = False
+
+    def enter_localnet(strategy: str):
+        started = time.time()
+        manager = oracle_ready_localnet(name=strategy, keep=True)
+        ctx = manager.__enter__()
+        lease = _CampaignLocalnetLease(manager)
+        with leases_lock:
+            leases.append(lease)
+        return lease, ctx, round(time.time() - started, 1)
+
+    executor = ThreadPoolExecutor(
+        max_workers=setup_concurrency,
+        thread_name_prefix="predict-campaign",
+    )
+    futures = {executor.submit(enter_localnet, strategy): strategy for strategy in strategies}
+    setup_errors: list[str] = []
+    try:
+        for future in as_completed(futures):
+            strategy = futures[future]
+            try:
+                lease, ctx, setup_duration_s = future.result()
+                # close() is idempotent: if an interrupt lands while this callback
+                # is being registered, the exceptional cleanup below can safely
+                # close the same lease and ExitStack's later callback becomes a no-op.
+                stack.callback(lease.close)
+                contexts[strategy] = ctx
+                deployment = ctx["deployment"]
+                setup_rows[strategy] = {
+                    "run_id": ctx["run_id"],
+                    "instance_dir": str(ctx["instance_dir"]),
+                    "setup_duration_s": setup_duration_s,
+                    "rpc_port": ctx["rpc_port"],
+                    "chain_id": deployment["meta"]["chain_id"],
+                    "package_ids": deployment["packages"],
+                }
+                print(
+                    f"campaign: {strategy} localnet ready in "
+                    f"{setup_duration_s:.1f}s ({len(contexts)}/{len(strategies)})"
+                )
+            except Exception as exc:
+                setup_errors.append(f"{strategy}: {type(exc).__name__}: {exc}")
+        if setup_errors:
+            raise RuntimeError("localnet setup failed: " + " | ".join(setup_errors))
+        setup_complete = True
+        return contexts, setup_rows
+    finally:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=True, cancel_futures=True)
+        if not setup_complete:
+            with leases_lock:
+                entered = list(leases)
+            for lease in entered:
+                try:
+                    lease.close()
+                except BaseException as exc:
+                    print(f"campaign: localnet cleanup failed: {type(exc).__name__}: {exc}")
+
+
+def campaign(
+    strategies: list[str],
+    timeout: int = 0,
+    concurrency: int | None = None,
+) -> int:
     """Run each named strategy on its OWN localnet (keeper + HubSource updater + one trader),
     all off ONE shared market-data hub. Each strategy runs to completion (its maxOps) or until
     `timeout` seconds; then everything is torn down and `analyze` prints a per-strategy report.
@@ -318,73 +451,207 @@ def campaign(strategies: list[str], timeout: int = 0) -> int:
     if unknown:
         print(f"campaign: unknown {unknown}; have: {', '.join(strat_meta)}")
         return 1
+    duplicates = sorted({s for s in strategies if strategies.count(s) > 1})
+    if duplicates:
+        print(f"campaign: duplicate strategy names are not supported: {', '.join(duplicates)}")
+        return 1
+    localnet_capacity = _campaign_capacity(concurrency)
+    validation_error = _campaign_validation_error(
+        strategies,
+        timeout,
+        strat_meta,
+        localnet_capacity,
+    )
+    if validation_error:
+        print(f"campaign: {validation_error}")
+        return 1
+    setup_concurrency = min(len(strategies), localnet_capacity)
 
     # One hub grid for all localnets — the full prod cadence set (every keeper runs all of it).
     grid_spec = _grid_spec(meta)
-    hub_snapshot = config.LOCALNETS_DIR / "hub-snapshot.json"
-    hub_record = config.LOCALNETS_DIR / "hub-record.jsonl"
-    with contextlib.ExitStack() as stack:
-        hub = subprocess.Popen(
-            ["npx", "tsx", "hub.ts"], cwd=str(config.TS_DIR),
-            env={**os.environ, "HUB_SNAPSHOT": str(hub_snapshot), "HUB_RECORD": str(hub_record), "GRID_SPEC": grid_spec, "DURATION_MS": "0"},
-            start_new_session=True,
-        )
-        stack.callback(_terminate_group, hub)
-        support = [hub]  # hub + keepers + updaters: the substrate that must stay up
-        traders_procs: list[tuple[str, subprocess.Popen]] = []
-        gas: list[tuple[int, int, str]] = []
-        instance_dirs: list[str] = []  # scope the final analyze to THIS run's dirs only
-        print(f"hub started (pid {hub.pid}); launching {len(strategies)} strategy localnet(s)...")
-        for s in strategies:
-            ctx = stack.enter_context(oracle_ready_localnet(name=s, keep=True))
-            instance_dirs.append(str(ctx["instance_dir"]))
-            addr = _create_funded_address(ctx["client_config"], ctx["faucet_port"])
-            base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
-            keeper = subprocess.Popen(
-                ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_DUSDC": strat_meta[s]["fund"], "TRADER_ADDRESSES": addr, "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET)},
+    campaign_id = _make_run_id("campaign")
+    hub_snapshot = config.LOCALNETS_DIR / f"{campaign_id}-hub-snapshot.json"
+    hub_record = config.LOCALNETS_DIR / f"{campaign_id}-hub-record.jsonl"
+    hub_metrics_path = config.LOCALNETS_DIR / f"{campaign_id}-hub-metrics.json"
+    report_path = config.LOCALNETS_DIR / f"{campaign_id}-report.json"
+    campaign_started = time.time()
+    termination_reason = "setup"
+    fatal_error: str | None = None
+    operational_failed = False
+    instance_dirs: list[str] = []
+    setup_rows: dict[str, dict] = {}
+    trader_exit_codes: dict[str, int | None] = {}
+    support_exit_codes: dict[str, int | None] = {}
+
+    try:
+        with contextlib.ExitStack() as stack:
+            hub = subprocess.Popen(
+                ["npx", "tsx", "hub.ts"], cwd=str(config.TS_DIR),
+                env={
+                    **os.environ,
+                    "HUB_SNAPSHOT": str(hub_snapshot),
+                    "HUB_RECORD": str(hub_record),
+                    "HUB_METRICS": str(hub_metrics_path),
+                    "GRID_SPEC": grid_spec,
+                    "DURATION_MS": "0",
+                },
                 start_new_session=True,
             )
-            updater = subprocess.Popen(
-                ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec, "HUB_SNAPSHOT": str(hub_snapshot)},
-                start_new_session=True,
+            stack.callback(_terminate_group, hub)
+            support: list[tuple[str, subprocess.Popen]] = [("hub", hub)]
+            traders_procs: list[tuple[str, subprocess.Popen]] = []
+            gas: list[tuple[Path, int, str]] = []
+            print(
+                f"hub started (pid {hub.pid}); bringing up {len(strategies)} "
+                f"strategy localnet(s) with capacity {localnet_capacity}..."
             )
-            stack.callback(_terminate_group, keeper)
-            stack.callback(_terminate_group, updater)
-            support += [keeper, updater]
-            trader = subprocess.Popen(
-                ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESS": addr, "STRATEGY": s}, start_new_session=True,
+            contexts, setup_rows = _setup_campaign_localnets(
+                strategies,
+                stack,
+                setup_concurrency,
             )
-            stack.callback(_terminate_group, trader)
-            traders_procs.append((s, trader))
-            for a in (ctx["active"], ctx["updater_address"], addr):
-                gas.append((ctx["rpc_port"], ctx["faucet_port"], a))
-        print(f"campaign: running {', '.join(strategies)}; run-to-completion. Ctrl-C to stop early.")
-        deadline = (time.time() + timeout) if timeout > 0 else None
-        last_gas = 0.0
-        try:
-            while any(t.poll() is None for _, t in traders_procs):
+
+            for strategy in strategies:
+                ctx = contexts[strategy]
+                instance_dirs.append(str(ctx["instance_dir"]))
+                addr = _create_funded_address(ctx["client_config"], ctx["faucet_port"])
+                base = {
+                    **os.environ,
+                    "INSTANCE_DIR": str(ctx["instance_dir"]),
+                    "DURATION_MS": "0",
+                }
+                keeper = subprocess.Popen(
+                    ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
+                    env={
+                        **base,
+                        "TRADER_DUSDC": strat_meta[strategy]["fund"],
+                        "TRADER_ADDRESSES": addr,
+                        "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
+                    },
+                    start_new_session=True,
+                )
+                updater = subprocess.Popen(
+                    ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
+                    env={
+                        **base,
+                        "UPDATER_ADDRESS": ctx["updater_address"],
+                        "GRID_SPEC": grid_spec,
+                        "HUB_SNAPSHOT": str(hub_snapshot),
+                    },
+                    start_new_session=True,
+                )
+                stack.callback(_terminate_group, keeper)
+                stack.callback(_terminate_group, updater)
+                support.extend([
+                    (f"{strategy}:keeper", keeper),
+                    (f"{strategy}:updater", updater),
+                ])
+                trader = subprocess.Popen(
+                    ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
+                    env={**base, "TRADER_ADDRESS": addr, "STRATEGY": strategy},
+                    start_new_session=True,
+                )
+                stack.callback(_terminate_group, trader)
+                traders_procs.append((strategy, trader))
+                for actor in (ctx["active"], ctx["updater_address"], addr):
+                    gas.append((ctx["client_config"], ctx["faucet_port"], actor))
+
+            print(
+                f"campaign: running {', '.join(strategies)} in parallel; "
+                f"{'bounded to ' + str(timeout) + 's' if timeout > 0 else 'run-to-completion'}. "
+                "Ctrl-C to stop early."
+            )
+            termination_reason = "completed"
+            deadline = (time.time() + timeout) if timeout > 0 else None
+            last_gas = 0.0
+            while any(trader.poll() is None for _, trader in traders_procs):
                 if deadline and time.time() >= deadline:
+                    termination_reason = "timeout"
                     print("campaign: timeout reached; stopping.")
                     break
-                if not all(p.poll() is None for p in support):
-                    print("campaign: a support process (hub/keeper/updater) died; stopping.")
+                dead_support = [
+                    (name, proc.returncode)
+                    for name, proc in support
+                    if proc.poll() is not None
+                ]
+                if dead_support:
+                    termination_reason = "support_failure"
+                    operational_failed = True
+                    print(f"campaign: support process died: {dead_support}; stopping.")
                     break
                 now = time.time()
                 if now - last_gas >= 30:
                     last_gas = now
-                    for rpc_port, faucet_port, addr in gas:
-                        if 0 <= localnet.balance(rpc_port, addr) < GAS_REFILL_FLOOR:
+                    for client_config, faucet_port, addr in gas:
+                        if 0 <= localnet.balance(client_config, addr) < GAS_REFILL_FLOOR:
                             localnet.fund(faucet_port, addr, times=1)
                 time.sleep(2)
-            done = [s for s, t in traders_procs if t.poll() is not None]
-            print(f"campaign: {len(done)}/{len(traders_procs)} strategies completed ({', '.join(done) or 'none'}).")
-        except KeyboardInterrupt:
-            print("tearing down...")
+
+            trader_exit_codes = {name: proc.poll() for name, proc in traders_procs}
+            support_exit_codes = {name: proc.poll() for name, proc in support}
+            completed = [name for name, code in trader_exit_codes.items() if code == 0]
+            failed = [name for name, code in trader_exit_codes.items() if code not in (None, 0)]
+            bounded = [name for name, code in trader_exit_codes.items() if code is None]
+            if failed:
+                termination_reason = "trader_failure"
+                operational_failed = True
+            print(
+                f"campaign: completed={completed or 'none'} failed={failed or 'none'} "
+                f"bounded_stop={bounded or 'none'}."
+            )
+    except KeyboardInterrupt:
+        termination_reason = "interrupted"
+        operational_failed = True
+        fatal_error = "KeyboardInterrupt"
+        print("tearing down...")
+    except BaseException as exc:
+        termination_reason = "setup_failure" if termination_reason == "setup" else "harness_failure"
+        operational_failed = True
+        fatal_error = f"{type(exc).__name__}: {exc}"
+        print(f"campaign: {fatal_error}")
+
+    campaign_finished = time.time()
+    try:
+        hub_metrics = json.loads(hub_metrics_path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        hub_metrics = None
+    report = {
+        "schema_version": "predict_campaign_v1",
+        "campaign_id": campaign_id,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(campaign_started)),
+        "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(campaign_finished)),
+        "wall_duration_s": round(campaign_finished - campaign_started, 1),
+        "setup_concurrency": setup_concurrency,
+        "localnet_capacity": localnet_capacity,
+        "timeout_s": timeout,
+        "termination_reason": termination_reason,
+        "fatal_error": fatal_error,
+        "hub_metrics": hub_metrics,
+        "support_exit_codes_before_teardown": support_exit_codes,
+        "strategies": [
+            {
+                "strategy": strategy,
+                **setup_rows.get(strategy, {}),
+                "trader_exit_code_before_teardown": trader_exit_codes.get(strategy),
+                "completed": trader_exit_codes.get(strategy) == 0,
+                "bounded_stop": (
+                    trader_exit_codes.get(strategy) is None
+                    and termination_reason == "timeout"
+                ),
+            }
+            for strategy in strategies
+        ],
+    }
+    report_path.write_text(json.dumps(report, indent=2))
+    print(f"campaign: machine report retained at {report_path}")
+
     # ExitStack has torn everything down; aggregate the per-strategy report scoped to THIS run's
     # instance dirs (never every retained instance) so an old trace can't fail — or falsely
     # satisfy `expect` for — the current verdict. `expect` flags a strategy that produced no trace.
     print("\n=== campaign report ===")
-    return analyze.analyze(instances=instance_dirs, expect=list(strategies))
+    analysis_result = (
+        analyze.analyze(instances=instance_dirs, expect=list(strategies))
+        if instance_dirs
+        else 1
+    )
+    return 1 if operational_failed else analysis_result

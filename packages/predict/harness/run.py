@@ -120,14 +120,14 @@ def _publish_localnet(
                 status="running",
             )
             _check_cancelled(cancel_event)
-            localnet.wait_for_rpc(slot["rpc_port"])
+            localnet.wait_for_rpc(client_config, slot["rpc_port"])
             _check_cancelled(cancel_event)
             localnet.wait_for_faucet(slot["faucet_port"])
             _check_cancelled(cancel_event)
             active = localnet.active_address(client_config)
             localnet.fund(slot["faucet_port"], active)
             _check_cancelled(cancel_event)
-            chain = localnet.chain_id(slot["rpc_port"])
+            chain = localnet.chain_id(client_config)
             print(
                 f"[{run_id}] chain={chain} active={active[:10]}... "
                 "publishing staged closure..."

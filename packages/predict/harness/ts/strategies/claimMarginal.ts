@@ -15,17 +15,21 @@ import { errorTag } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
 const NS = [3, 10]; // claim-only is ~N-independent; a couple of N confirms it + gives a redeemAll baseline
-const LVG = 1.1; // low leverage: survive to a settled redeem (clean redeemAll baseline)
+// This measurement needs positions to survive, not leverage. The nearest
+// one-minute market is inside the protocol's one-hour no-leverage window, so
+// 1x is the only admissible setup for a short end-to-end claim run.
+const LVG = 1.0;
 const MINT_RUNWAY_MS = 25_000;
 const MAX_WAIT_TICKS = 60;
 const MAX_RETRIES = 8;
 
-type Phase = "mint" | "wait" | "done";
+type Phase = "mint" | "wait" | "claim" | "done";
 let phase: Phase = "mint";
 let nIdx = 0;
 let target: { marketId: string; positions: CleanoutPosition[] } | null = null;
 let waitTicks = 0;
 let retries = 0;
+let terminalFailure: string | null = null;
 
 function advance() {
   nIdx++;
@@ -47,6 +51,8 @@ const claimMarginal: Strategy = {
   tickMs: 4000,
   maxOps: 0,
   fund: 40_000_000_000_000n,
+  done: () => phase === "done",
+  failure: () => terminalFailure,
   async tick(ctx) {
     if (phase === "done") return null;
 
@@ -94,19 +100,39 @@ const claimMarginal: Strategy = {
     }
     if (!settled) {
       if (++waitTicks > MAX_WAIT_TICKS) {
-        ctx.trace({ type: "fail", tag: "settle-timeout", n: NS[nIdx], market: target.marketId });
-        advance();
+        terminalFailure = `settle-timeout n=${NS[nIdx]} market=${target.marketId}`;
+        ctx.trace({ type: "fail", tag: "settle-timeout", fatal: true, n: NS[nIdx], market: target.marketId });
       }
       return null;
     }
+
+    if (phase === "wait") {
+      try {
+        await ctx.redeemAll(target.marketId, target.positions); // traces {type:"redeemAll", n, ...gas}
+        retries = 0;
+        phase = "claim";
+        return "redeem";
+      } catch (e) {
+        if (++retries > MAX_RETRIES) {
+          terminalFailure = `redeem n=${NS[nIdx]}: ${errorTag(e)}`;
+          ctx.trace({ type: "fail", tag: errorTag(e), fatal: true, where: "claim-marginal-redeem", n: NS[nIdx] });
+        } else {
+          ctx.trace({ type: "claimMarginalRedeemRetry", tag: errorTag(e), attempt: retries, n: NS[nIdx] });
+        }
+        return null;
+      }
+    }
+
+    // phase === "claim": never replay the already-successful redemptions when
+    // this separate transaction races a shared-object version or RPC retry.
     try {
-      await ctx.redeemAll(target.marketId, target.positions); // traces {type:"redeemAll", n, ...gas}
       await ctx.claimRebate(target.marketId); // traces {type:"claimRebate", ...gas}  <- the number under test
       advance();
+      return "redeem";
     } catch (e) {
       if (++retries > MAX_RETRIES) {
-        ctx.trace({ type: "fail", tag: errorTag(e), where: "claim-marginal", n: NS[nIdx] });
-        advance();
+        terminalFailure = `claim n=${NS[nIdx]}: ${errorTag(e)}`;
+        ctx.trace({ type: "fail", tag: errorTag(e), fatal: true, where: "claim-marginal-claim", n: NS[nIdx] });
       } else {
         ctx.trace({ type: "claimMarginalRetry", tag: errorTag(e), attempt: retries, n: NS[nIdx] });
       }

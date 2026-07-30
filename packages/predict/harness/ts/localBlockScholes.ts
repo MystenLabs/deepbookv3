@@ -66,6 +66,12 @@ export interface BsSviUpdate {
     mNegative: boolean;
 }
 
+export interface BsWireSignature {
+    r: string;
+    s: string;
+    v: string | number;
+}
+
 interface SignParams {
     /** Local signer key registered on the localnet `SignerRegistry`. */
     signerPrivateKey: string;
@@ -86,12 +92,25 @@ export function createLocalBsSignerConfig(): LocalBsSignerConfig {
 export function signedValueBatchBytes(
     params: SignParams & { updates: BsValueUpdate[] },
 ): Uint8Array {
+    const payload = valueBatchPayloadBytes(params.batchTimestampMs, params.updates);
+    return signMessage(params, payload);
+}
+
+export function signedSviBatchBytes(params: SignParams & { updates: BsSviUpdate[] }): Uint8Array {
+    const payload = sviBatchPayloadBytes(params.batchTimestampMs, params.updates);
+    return signMessage(params, payload);
+}
+
+export function valueBatchPayloadBytes(
+    batchTimestampMs: bigint,
+    updates: BsValueUpdate[],
+): Uint8Array {
     const payload = concatBytes(
-        envelopeBytes(BATCH_VALUE, params.batchTimestampMs),
+        envelopeBytes(BATCH_VALUE, batchTimestampMs),
         bcs
             .vector(ValueUpdate)
             .serialize(
-                params.updates.map((u) => ({
+                updates.map((u) => ({
                     sid: u.sid,
                     timestamp: u.timestampMs,
                     v: u.value,
@@ -99,16 +118,19 @@ export function signedValueBatchBytes(
             )
             .toBytes(),
     );
-    return signMessage(params, payload);
+    return payload;
 }
 
-export function signedSviBatchBytes(params: SignParams & { updates: BsSviUpdate[] }): Uint8Array {
+export function sviBatchPayloadBytes(
+    batchTimestampMs: bigint,
+    updates: BsSviUpdate[],
+): Uint8Array {
     const payload = concatBytes(
-        envelopeBytes(BATCH_SVI, params.batchTimestampMs),
+        envelopeBytes(BATCH_SVI, batchTimestampMs),
         bcs
             .vector(SviUpdate)
             .serialize(
-                params.updates.map((u) => ({
+                updates.map((u) => ({
                     sid: u.sid,
                     timestamp: u.timestampMs,
                     sviAMagnitude: u.aMagnitude,
@@ -123,7 +145,41 @@ export function signedSviBatchBytes(params: SignParams & { updates: BsSviUpdate[
             )
             .toBytes(),
     );
-    return signMessage(params, payload);
+    return payload;
+}
+
+/// Rebuild the exact `r || s || recovery_id || BCS payload` byte vector the
+/// testnet verifier accepts. Block Scholes returns the EVM recovery byte
+/// (27/28); Sui's `ecdsa_k1` wire uses 0/1.
+export function providerBatchMessageBytes(
+    signature: BsWireSignature,
+    payload: Uint8Array,
+): Uint8Array {
+    const { compact, recoveryId } = parseWireSignature(signature);
+    return concatBytes(compact, Uint8Array.of(recoveryId), payload);
+}
+
+/// Validate one provider batch exactly as `bs_oracle::verify` does: hash the
+/// verifier package address plus the reconstructed BCS payload, recover the
+/// secp256k1 public key, and compare it with the live SignerRegistry key.
+export function verifyProviderBatchSignature(params: {
+    signature: BsWireSignature;
+    payload: Uint8Array;
+    verifierPackageId: string;
+    expectedPublicKey: Uint8Array;
+}): boolean {
+    const { compact, recoveryId } = parseWireSignature(params.signature);
+    const signedBytes = concatBytes(
+        bcs.Address.serialize(params.verifierPackageId).toBytes(),
+        params.payload,
+    );
+    const digest = keccak_256(signedBytes);
+    const recovered = secp256k1.Signature
+        .fromBytes(compact, "compact")
+        .addRecoveryBit(recoveryId)
+        .recoverPublicKey(digest)
+        .toBytes(true);
+    return bytesEqual(recovered, params.expectedPublicKey);
 }
 
 function envelopeBytes(batchKind: number, timestampMs: bigint): Uint8Array {
@@ -147,6 +203,32 @@ function signMessage(params: SignParams, payload: Uint8Array): Uint8Array {
         format: "recovered",
     });
     return concatBytes(recovered.slice(1), recovered.slice(0, 1), payload);
+}
+
+function parseWireSignature(signature: BsWireSignature): {
+    compact: Uint8Array;
+    recoveryId: number;
+} {
+    const r = hexToBytes(signature.r);
+    const s = hexToBytes(signature.s);
+    if (r.length !== 32 || s.length !== 32) {
+        throw new Error(`Block Scholes signature must contain 32-byte r/s values`);
+    }
+    const rawV = typeof signature.v === "number"
+        ? signature.v
+        : Number(BigInt(signature.v));
+    const recoveryId = rawV >= 27 ? rawV - 27 : rawV;
+    if (recoveryId !== 0 && recoveryId !== 1) {
+        throw new Error(`unsupported Block Scholes recovery id ${rawV}`);
+    }
+    return { compact: concatBytes(r, s), recoveryId };
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    let difference = 0;
+    for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
+    return difference === 0;
 }
 
 function concatBytes(...parts: Uint8Array[]): Uint8Array {

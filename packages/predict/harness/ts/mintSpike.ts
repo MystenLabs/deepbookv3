@@ -3,7 +3,15 @@
 // The mint PTB refreshes the oracle with the SAME snapshot the resolver priced against,
 // so on-chain pricing matches the off-chain selection (only math drift).
 import { RESOLVER_MARKET } from "./predictConfig.js";
-import { bootstrapPool, createAndSeedMarket, eventField, isoSec, refreshParams, setupFeedsAndConfig } from "./predictSetup.js";
+import {
+  bootstrapPool,
+  createAndSeedMarket,
+  createMarket,
+  eventField,
+  isoSec,
+  refreshParams,
+  setupFeedsAndConfig,
+} from "./predictSetup.js";
 import { type Instruction, resolveMint } from "./resolver.js";
 import { POOL_VAULT_ID, PROTOCOL_CONFIG_ID, depositToAccountTx, executeAndWait, rebalanceExpiryCashTx, refreshOracleAndMintTx } from "./runtime.js";
 
@@ -14,6 +22,10 @@ const CADENCE_1H = 2;
 async function main() {
   const { feeds, lifecycleCapId } = await setupFeedsAndConfig([CADENCE_1H]);
   const { wrapperId } = await bootstrapPool(lifecycleCapId);
+  // The next 1h boundary is always inside the default one-hour no-leverage
+  // window. Materialize it, then trade the following boundary so this 2x spike
+  // exercises leveraged admission instead of deterministically aborting.
+  await createMarket(lifecycleCapId, CADENCE_1H);
   const { marketId, expiryMs, snap } = await createAndSeedMarket(feeds, lifecycleCapId, CADENCE_1H);
   await executeAndWait(
     rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),

@@ -1600,9 +1600,6 @@ async function executeScenario(
     stressMintBatchSize = 1,
 ): Promise<void> {
     clearOutputArtifacts();
-    if (runPython) {
-        runPythonReplay(scenarioPath, maxRows);
-    }
 
     const traceSteps: LocalTraceStep[] = [];
     const records: EconomicRecord[] = [];
@@ -1820,6 +1817,9 @@ async function executeScenario(
     }
 
     writeReplayArtifacts(LOCAL_TRACE_PATH, LOCAL_DATA_PATH);
+    if (runPython) {
+        runPythonReplay(scenarioPath, state.expiryMs, maxRows);
+    }
 
     console.log(`\n[${ts()}] --- Done ---`);
     console.log(
@@ -1832,9 +1832,19 @@ async function executeScenario(
     }
 }
 
-function runPythonReplay(scenarioPath: string, maxRows?: number) {
+function runPythonReplay(scenarioPath: string, expiryMs: string, maxRows?: number) {
     const script = fileURLToPath(new URL("../python_replay.py", import.meta.url));
-    const args = [script, "--scenario", scenarioPath, "--out", PYTHON_DATA_PATH];
+    const args = [
+        script,
+        "--scenario",
+        scenarioPath,
+        "--out",
+        PYTHON_DATA_PATH,
+        "--pricing-trace",
+        LOCAL_TRACE_PATH,
+        "--expiry-ms",
+        expiryMs,
+    ];
     if (maxRows !== undefined) {
         args.push("--max-rows", String(maxRows));
     }

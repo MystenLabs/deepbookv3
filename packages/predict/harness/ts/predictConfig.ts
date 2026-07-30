@@ -12,8 +12,19 @@ export interface CadenceConfig {
   admissionTickSize: bigint; // raw price unit ($1 = 1_000_000_000); admission/tick = 100
   maxExpiryAllocation: bigint; // DUSDC
   initialExpiryCash: bigint; // DUSDC (>= expiry_cash_floor 10k, <= maxExpiryAllocation)
-  windowSize: bigint; // fill depth ahead
+  windowSize: bigint; // number of cadence periods in the rolling future horizon
 }
+
+// Fixed protocol cadence periods. The keeper mirrors these when deciding
+// whether the contract can admit another market inside a cadence horizon.
+export const CADENCE_PERIOD_MS: Record<number, number> = {
+  0: 60_000,
+  1: 300_000,
+  2: 3_600_000,
+  3: 86_400_000,
+  4: 604_800_000,
+  5: 2_592_000_000,
+};
 
 // Per cadence id: 0=1m, 1=5m, 2=1h. 3/4/5 (1d/7d/30d) are disabled on testnet.
 // Allocation caps are raised ~10x above the testnet values (50k/10k, 250k/50k) so capacity stress
@@ -29,6 +40,7 @@ export const CADENCES: Record<number, CadenceConfig> = {
 
 // Oracle read freshness (ms) — the one place testnet diverges from contract defaults.
 export const FRESHNESS = { pythSpotMs: 10_000n, blockScholesPriceMs: 10_000n, blockScholesSviMs: 60_000n };
+export const NO_LEVERAGE_WINDOW_MS = 3_600_000;
 
 // Genesis bootstrap supply: 10M DUSDC (lock_capital mints min_bootstrap_liquidity itself).
 export const BOOTSTRAP_SUPPLY = 10_000_000_000_000n;

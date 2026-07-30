@@ -18,7 +18,7 @@ cd packages/predict
 
 python3 -m harness up [--traders N] [--replay FILE]  # the full running sim
 python3 -m harness up-many N [--traders N]   # parallel: one shared hub -> N localnets
-python3 -m harness campaign S1 S2 ... [--timeout S]  # run named strategies in parallel, then analyze
+python3 -m harness campaign S1 S2 ... [--timeout S] [--concurrency N]  # parallel strategies, then analyze
 python3 -m harness spike-mint                # one-shot: resolve + execute a semantic mint
 python3 -m harness analyze                   # report the latest run's trace
 python3 -m harness run                       # one localnet publish lifecycle (no sim)
@@ -39,9 +39,11 @@ process supervision, teardown); TypeScript actors drive the protocol. They coord
 on-chain state plus **atomically-written** shared JSON in the instance dir (`feeds.json`,
 `snapshot.json`, `markets.json`).
 
-**Bring-up** stages the Predict closure into a scratch workspace, compiles the canonical Testnet dependency graph, and records fresh localnet addresses in the workspace's `Pub.sim.toml` (no checkout mutation → N in parallel from one clone). It then initializes Wormhole + Pyth + account and registers a **local trusted signer** — the harness re-signs the real Pyth data with its own key (real signatures don't verify on localnet; the data is real, the signature is local).
+**Bring-up** stages the Predict closure into a scratch workspace, compiles the canonical Testnet dependency graph, and records fresh localnet addresses in the workspace's `Pub.sim.toml` (no checkout mutation → N in parallel from one clone). It then initializes Wormhole + Pyth + account and registers local trusted signers for the disposable Pyth and Block Scholes verifier packages.
 
 Upstream packages are exported from their exact commits. Their disposable lockfiles—and Block Scholes' copied explicit framework pins—are resolved against the localnet's Sui framework so normal dependency verification stays enabled; canonical upstream and repository files remain unchanged.
+
+**Sui transport** uses gRPC for reads, transaction resolution, submission, and receipts. The adapter resolves only the transaction kind with checks disabled, attaches explicit sender/gas data, and submits signed bytes: the SDK's default checked full-PTB simulation is not execution-neutral on an idle localnet because `Clock` advances only when a transaction lands.
 
 **Three actors, one stream:**
 - **Updater** — the sole market-data consumer: streams the full `real_time` Pyth spot + Block
@@ -65,16 +67,19 @@ re-signs it locally, and inserts it at the expiry key so the flush settles the m
 pool-NAV trend (drain heuristic), and a **bug oracle** that flags any transaction abort not
 coming from our own packages (arithmetic/framework errors are the contract-bug signal).
 
+## Signed Block Scholes path
+
+`DirectWsSource` requests SUI-signed Block Scholes batches for the public testnet v1 domain, reads that deployment's `SignerRegistry` over Sui gRPC, validates every subscription acknowledgement, reconstructs the exact BCS value or SVI payload from decimal strings, and recovers the registered secp256k1 key before admitting a value to the shared snapshot.
+
+Block Scholes signatures bind the target verifier package address into the digest, so a testnet signature cannot verify in the freshly published local verifier package. The local harness therefore verifies the provider signature against the public testnet registry, preserves the exact fixed-point integers, SIDs, signs, and model timestamps, then signs the same payload for the disposable local package. The updater still submits the production-shaped atomic PTB: local `verify_and_create_{value,svi}_batch` followed by Predict ingest.
+
+A testnet keeper must not use the local bridge. It should BCS-encode the provider `data`, normalize the split signature's recovery byte from 27/28 to 0/1, submit `r || s || recovery_id || payload` to the matching Block Scholes testnet verifier, and consume the returned gated batch in Predict ingest in the same PTB.
+
+The current Predict stores derive packed Propbook SIDs from the underlying and expiry, so the harness supplies those IDs in the subscription and accepts data only after Block Scholes echoes the complete item, format, and signing domain. Moving to provider-derived SIDs requires an admin-updatable SID-to-feed mapping in the consumer; until that contract surface exists, computing or substituting provider-derived IDs would make the oracle write under keys Predict never reads.
+
 ## Strategies & campaigns
 
-A **strategy** is a code module under `ts/strategies/<name>.ts` exporting a `Strategy`
-(`name`, `tickMs`, `maxOps`, `fund`, and an async `tick(ctx)`). The runner
-(`traderService.ts`) loads the one named by the `STRATEGY` env (default `fuzz`) and ticks it on
-its pace until `maxOps` (run-to-completion) or the run's duration. `tick(ctx)` orchestrates via
-the `StrategyCtx`: state readers (`markets()`, `snapshot()`, `held`, `plpShares`) and actions
-that wrap the PTB builders + bookkeeping (`mint`, `redeem` partial-or-full, `supply`, `withdraw`,
-plus low-level `submitMint` for probes). Add one by dropping a module and registering it in
-`strategies/index.ts`.
+A **strategy** is a code module under `ts/strategies/<name>.ts` exporting a `Strategy` (`name`, `tickMs`, `maxOps`, `fund`, optional semantic `done`/`failure`, and an async `tick(ctx)`). The runner (`traderService.ts`) loads the one named by the `STRATEGY` env (default `fuzz`) and ticks it on its pace until semantic completion, `maxOps`, or the run's duration. `tick(ctx)` orchestrates via the `StrategyCtx`: state readers (`markets()`, `snapshot()`, `held`, `plpShares`) and actions that wrap the PTB builders plus bookkeeping (`mint`, partial-or-full `redeem`, `supply`, `withdraw`, and low-level `submitMint` for probes). Add one by dropping a module and registering it in `strategies/index.ts`.
 
 Built-in: `fuzz` (default — random feasible trades + adversarial probes), `mint-only`
 (high-frequency unleveraged mints into the nearest expiry, 10k run-to-completion), `mixed-churn`
@@ -87,11 +92,9 @@ the live-market pool total). Stress strategies that submit large mint PTBs shoul
 `SIM_GAS_BUDGET=50000000000` so the trader has headroom and the keeper flush is measured against
 the protocol computation ceiling.
 
-`campaign S1 S2 …` runs each named strategy on its **own** localnet (all off one shared hub) to
-completion, tears everything down, then prints a **per-strategy** `analyze` report + an aggregate
-verdict (non-zero exit if the bug oracle flags anything). `--timeout S` caps the run. Per-strategy
-trader funding (plus the prod cadence set — 1m/5m/1h, window 3 — every keeper runs) comes from
-`strategies/meta.ts`, the single source of truth.
+`campaign S1 S2 …` initializes each named strategy's isolated localnet concurrently, runs them from one shared signed-data hub, tears everything down, then prints a per-strategy `analyze` report and aggregate verdict. A semantic strategy exits successfully only after `done` and exits non-zero when `failure` is set; a strategy with neither a positive `maxOps` nor semantic `done` requires `--timeout S`, which bounds the actor without calling it completed. The default simultaneous-localnet capacity is derived from cores and RAM; campaigns above it are rejected unless the operator explicitly raises `--concurrency N` (up to the slot cap). Per-strategy trader funding and the production cadence set come from `strategies/meta.ts`.
+
+Every campaign retains `<campaign-id>-report.json`, `<campaign-id>-hub-metrics.json`, the final hub snapshot, and the optional hub JSONL recording under `.localnets/`. The machine report records wall/setup durations, chain and package IDs, trader outcomes, support-process health, and signed-source acknowledgement/signature counters; per-instance traces remain the source for action, gas, NAV, guard, and capacity metrics.
 
 ## Extension backlog (enablers for planned campaigns)
 
@@ -105,6 +108,7 @@ trader funding (plus the prod cadence set — 1m/5m/1h, window 3 — every keepe
 ## Requirements
 
 - The `sui` CLI (resolved via `$SUI_BINARY`, `~/.local/bin/sui`, or `PATH`).
+- A Sui CLI build whose client reads use gRPC; the harness does not call deprecated Sui JSON-RPC methods.
 - Network access for any exact Pyth Lazer, Wormhole, or Block Scholes revision that is not already present in the `~/.move` cache; the staging publisher discovers these revisions from the canonical Predict/Propbook manifests and shallow-fetches only missing sources.
 - `harness/.env` with `PYTH_PRO_API_KEY` + `BLOCK_SCHOLES_API_KEY` (gitignored; never commit).
 
