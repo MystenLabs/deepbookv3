@@ -7,20 +7,29 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import config, suicli
+from . import cancellation, config, suicli
 
 
-def genesis(config_dir: Path, rpc_port: int) -> Path:
+def genesis(
+    config_dir: Path,
+    rpc_port: int,
+    cancel_event: threading.Event | None = None,
+) -> Path:
     """Generate fresh genesis; return the client.yaml path (RPC port patched)."""
     if config_dir.exists():
         shutil.rmtree(config_dir)
     config_dir.mkdir(parents=True)
-    suicli.run(["genesis", "--force", "--working-dir", str(config_dir)])
+    suicli.run(
+        ["genesis", "--force", "--working-dir", str(config_dir)],
+        cancel_event=cancel_event,
+    )
+    cancellation.check(cancel_event)
 
     client_config = config_dir / "client.yaml"
     if rpc_port != config.RPC_BASE:
@@ -48,47 +57,75 @@ def start(config_dir: Path, rpc_port: int, faucet_port: int, log_path: Path) -> 
     )
 
 
-def _client_json(client_config: Path, args: list[str]) -> object:
+def _client_json(
+    client_config: Path,
+    args: list[str],
+    cancel_event: threading.Event | None = None,
+) -> object:
     """Run a read through the current Sui CLI transport and parse its JSON output."""
     cp = suicli.client(
         client_config,
         [*args, "--json"],
         check=False,
         timeout=5,
+        cancel_event=cancel_event,
     )
     if cp.returncode != 0:
         raise suicli.SuiError(cp.stderr.strip() or cp.stdout.strip())
     return suicli.parse_json_lenient(cp.stdout)
 
 
-def wait_for_rpc(client_config: Path, rpc_port: int, timeout: float = 90.0) -> None:
+def wait_for_rpc(
+    client_config: Path,
+    rpc_port: int,
+    timeout: float = 90.0,
+    cancel_event: threading.Event | None = None,
+) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        cancellation.check(cancel_event)
         try:
-            if chain_id(client_config):
+            if chain_id(client_config, cancel_event):
                 return
         except (subprocess.SubprocessError, suicli.SuiError, OSError, json.JSONDecodeError):
             pass
-        time.sleep(1)
+        if cancel_event is not None:
+            cancel_event.wait(timeout=1)
+        else:
+            time.sleep(1)
     raise TimeoutError(f"localnet RPC not ready on :{rpc_port} after {timeout}s")
 
 
-def wait_for_faucet(faucet_port: int, timeout: float = 60.0) -> None:
+def wait_for_faucet(
+    faucet_port: int,
+    timeout: float = 60.0,
+    cancel_event: threading.Event | None = None,
+) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        cancellation.check(cancel_event)
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{faucet_port}/", timeout=5)
             return
         except urllib.error.HTTPError:
             return  # any HTTP response means the faucet is up
         except (urllib.error.URLError, ConnectionError, OSError):
-            time.sleep(1)
+            if cancel_event is not None:
+                cancel_event.wait(timeout=1)
+            else:
+                time.sleep(1)
     raise TimeoutError(f"faucet not ready on :{faucet_port} after {timeout}s")
 
 
-def fund(faucet_port: int, address: str, times: int = 2) -> None:
+def fund(
+    faucet_port: int,
+    address: str,
+    times: int = 2,
+    cancel_event: threading.Event | None = None,
+) -> None:
     body = json.dumps({"FixedAmountRequest": {"recipient": address}}).encode()
     for _ in range(times):
+        cancellation.check(cancel_event)
         try:
             req = urllib.request.Request(
                 f"http://127.0.0.1:{faucet_port}/v1/gas",
@@ -98,8 +135,16 @@ def fund(faucet_port: int, address: str, times: int = 2) -> None:
             urllib.request.urlopen(req, timeout=10).read()
         except (urllib.error.URLError, OSError):
             pass
+        if cancel_event is not None:
+            cancel_event.wait(timeout=1)
+        else:
+            time.sleep(1)
+    cancellation.check(cancel_event)
+    if cancel_event is not None:
+        cancel_event.wait(timeout=1)
+    else:
         time.sleep(1)
-    time.sleep(1)
+    cancellation.check(cancel_event)
 
 
 def balance(client_config: Path, address: str) -> int:
@@ -127,12 +172,26 @@ def balance(client_config: Path, address: str) -> int:
         return -1
 
 
-def active_address(client_config: Path) -> str:
-    return suicli.client_text(client_config, ["active-address"])
+def active_address(
+    client_config: Path,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    return suicli.client(
+        client_config,
+        ["active-address"],
+        cancel_event=cancel_event,
+    ).stdout.strip()
 
 
-def chain_id(client_config: Path) -> str:
-    data = _client_json(client_config, ["chain-identifier"])
+def chain_id(
+    client_config: Path,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    data = _client_json(
+        client_config,
+        ["chain-identifier"],
+        cancel_event,
+    )
     if isinstance(data, str):
         return data
     if isinstance(data, dict):

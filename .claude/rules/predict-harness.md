@@ -66,7 +66,7 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
   (realized only by the keeper flush), so a strategy supplies, then withdraws on a LATER tick.
 - **One op per tick, `tickMs ≥ ~1s`** — the open+close same-`Clock`-ms guard
   (`EMintRedeemSameTimestamp`) aborts a mint+redeem of one order in the same ms; pacing avoids it.
-- **`campaign S1 S2 …`** runs each strategy on its own localnet off one shared hub (model: README). `strategies/meta.ts` is the single source for per-strategy funding, completion mode, and the prod cadence set every keeper runs — don't duplicate them in Python. A timeout is a successful bounded stop only for duration-only strategies; a strategy with `maxOps` or semantic `done` that is still running at the deadline is incomplete and fails the campaign.
+- **`campaign S1 S2 …`** runs each strategy on its own localnet off one shared hub (model: README). `strategies/meta.ts` is the single source for per-strategy funding, gas budget, completion mode, and the prod cadence set every keeper runs — don't duplicate them in Python. A timeout is a successful bounded stop only for a duration-only strategy that emitted trader progress; zero-progress runs fail. A strategy with `maxOps` or semantic `done` that is still running at the deadline is incomplete and fails the campaign.
 
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**
@@ -107,11 +107,14 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
   `no-keeper-trace` and (campaign) `missing-trace:<name>` (an instance/strategy that never produced
   a trace), `keeper-stuck` (operational fails with zero successful flush — a bricked settlement/LP
   lifecycle), and `fatal-crash` (a top-level actor crash, a `{fatal:true}` trace).
-- **nav-stress measures the per-tx COMPUTATION cap, not the gas budget.** The keeper flush OOGs when
+- **`capacity-single` and `capacity-pool` measure the per-tx COMPUTATION cap, not the gas budget.** The keeper flush OOGs when
   its `computationCost` hits `max_gas_computation_bucket = 5M units × RGP` (localnet/testnet 5e9 MIST,
   mainnet 5e8 — a protocol constant, so the OOG book size is network-independent), NOT the 50,000-SUI
-  `max_tx_gas` budget. `analyze.py` compares `compGas` (the flush trace's computation cost, not net
-  `gasOf`) against that cap; the flush's `InsufficientGas` deferral at that book size is the
-  nav-stress BREAKPOINT (the measurement) and is excluded from the oracle — don't reintroduce a
-  gas-budget ceiling (it both mis-reports the breakpoint and false-flags the OOGs as bugs). See
-  `packages/predict/predeploy/evidence/c1-nav-stress-2026-06-30.md`.
+  `max_tx_gas` budget. The profiles emit `book` records; `analyze.py` joins those with keeper flushes
+  and compares `compGas` (computation cost, not net `gasOf`) against the cap. A flush's
+  `InsufficientGas` deferral at that book size is the measured breakpoint and is excluded from the
+  oracle — don't reintroduce a gas-budget ceiling. The former `nav-stress` measurements remain as
+  historical evidence in `packages/predict/predeploy/evidence/c1-nav-stress-2026-06-30.md`.
+- **`capacity-tree` measures a different wall.** It emits `nodes` records and declares the semantic
+  VM terminal `cached objects limit`; the analyzer accepts a framework abort only when the saved VM
+  error source proves that cause. Never replace the semantic terminal with a generic framework tag.

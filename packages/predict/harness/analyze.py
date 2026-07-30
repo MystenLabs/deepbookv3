@@ -209,9 +209,19 @@ def _analyze_one(inst: Path) -> list[str]:
     # VACUOUS (a stress that did not stress — Antithesis "sometimes" reachability).
     declared = verdict.declared_terminals(recs)
     if declared:
-        vm_msgs = list(verdict.vm_errors(inst))  # the run's real VM-error summaries (framework aborts' true cause)
+        vm_errors = verdict.vm_errors(inst)  # the run's real VM-error summaries (framework aborts' true cause)
+        vm_msgs = list(vm_errors)
         undeclared_vm = [m for m in vm_msgs if not any(d in m for d in declared)]
         package_modules = verdict.GUARD_MODULES | verdict.INVARIANT_MODULES
+        framework_allowance: Counter[str] = Counter()
+        for terminal in declared:
+            evidence_count = sum(
+                count
+                for message, count in vm_errors.items()
+                if terminal in message
+            )
+            for tag in verdict.SEMANTIC_FRAMEWORK_TAGS.get(terminal, set()):
+                framework_allowance[tag] += evidence_count
 
         def _declared_package_abort(tag: str) -> bool:
             module = tag.split(":", 1)[0]
@@ -228,7 +238,8 @@ def _analyze_one(inst: Path) -> list[str]:
         for t in flagged:
             if _declared_package_abort(t):
                 expected[f"declared:{t[:32]}"] += 1            # package abort itself names a declared wall
-            elif t.split(":", 1)[0] not in package_modules and reached and not undeclared_vm:
+            elif framework_allowance[t] > 0 and reached and not undeclared_vm:
+                framework_allowance[t] -= 1
                 expected["declared-wall (framework)"] += 1     # framework tag whose real cause IS a declared VM wall
             else:
                 kept.append(t)                                 # a clean module:code abort, or an UNdeclared framework error
@@ -278,6 +289,14 @@ def _analyze_one(inst: Path) -> list[str]:
     return signals
 
 
+def has_strategy_progress(instance: Path, strategy: str) -> bool:
+    """True when a trader emitted evidence beyond its declaration record."""
+    return any(
+        record.get("strategy") == strategy and record.get("type") != "expect"
+        for record in _load(instance / "trace")
+    )
+
+
 def analyze(instances: list[str] | None = None, expect: list[str] | None = None) -> int:
     # `instances`: the exact dirs to analyze — a campaign/run scopes to ITS OWN dirs so an OLD
     # retained trace can't fail (or falsely satisfy `expect` for) the current verdict. None =
@@ -288,11 +307,14 @@ def analyze(instances: list[str] | None = None, expect: list[str] | None = None)
     insts = [i for i in insts if (i / "trace").exists()]
     signals: list[str] = []
     if expect:
-        present = [i.name for i in insts]
         for name in expect:
-            if not any(n.startswith(f"{name}-") for n in present):
+            matching = [i for i in insts if i.name.startswith(f"{name}-")]
+            if not matching:
                 signals.append(f"missing-trace:{name}")
                 print(f"*** WARN: strategy '{name}' produced no trace — its localnet/keeper never started ***")
+            elif not any(has_strategy_progress(instance, name) for instance in matching):
+                signals.append(f"no-progress:{name}")
+                print(f"*** WARN: strategy '{name}' produced no trader progress ***")
     if not insts:
         print("no trace found (run `python3 -m harness live --traders N` first)")
         return 1

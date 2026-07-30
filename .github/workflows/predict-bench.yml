@@ -46,6 +46,7 @@ jobs:
           python3 -m unittest discover -s harness/tests -p 'test_*.py' -v
           python3 -m unittest discover -s predeploy/tests -p 'test_*.py' -v
           python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v
+          python3 predeploy/check.py
 
   trigger-benchmark:
     runs-on: ubuntu-latest

@@ -10,13 +10,13 @@ import hashlib
 import io
 import re
 import shutil
-import subprocess
 import tarfile
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import config
+from . import cancellation, config
 
 _IGNORE = shutil.ignore_patterns(*config.STAGE_IGNORE)
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -157,8 +157,12 @@ def validate_workspace(workspace: Path) -> dict[str, Path]:
     return paths
 
 
-def stage_closure(workspace: Path) -> dict[str, Path]:
+def stage_closure(
+    workspace: Path,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Path]:
     """Copy the canonical closure and its exact upstream sources into a fresh workspace."""
+    cancellation.check(cancel_event)
     if workspace.exists() and any(workspace.iterdir()):
         raise FileExistsError(f"staging workspace must be empty: {workspace}")
     package_dir = workspace / "packages"
@@ -167,42 +171,71 @@ def stage_closure(workspace: Path) -> dict[str, Path]:
     dependency_dir.mkdir(parents=True, exist_ok=True)
 
     for name in config.LOCAL_CLOSURE:
+        cancellation.check(cancel_event)
         source = config.PACKAGES_DIR / name
         if not source.is_dir():
             raise FileNotFoundError(f"local package not found: {source}")
         shutil.copytree(source, package_dir / name, ignore=_IGNORE)
 
     for name, spec in external_dependency_specs().items():
-        _stage_git_dep(spec, dependency_dir / name)
+        cancellation.check(cancel_event)
+        _stage_git_dep(spec, dependency_dir / name, cancel_event)
 
+    cancellation.check(cancel_event)
     return validate_workspace(workspace)
 
 
-def _stage_git_dep(spec: GitDependency, destination: Path) -> None:
+def _stage_git_dep(
+    spec: GitDependency,
+    destination: Path,
+    cancel_event: threading.Event | None = None,
+) -> None:
     cache = spec.cache_root()
-    if _git_has_commit(cache, spec.rev):
-        _export_git_tree(cache, spec.rev, spec.subdir, destination)
+    if _git_has_commit(cache, spec.rev, cancel_event):
+        _export_git_tree(
+            cache,
+            spec.rev,
+            spec.subdir,
+            destination,
+            cancel_event,
+        )
         return
 
     checkout = destination.parent / f"{spec.name}_repo"
-    subprocess.run(["git", "init", "-q", str(checkout)], check=True, capture_output=True)
-    subprocess.run(
+    cancellation.run(
+        ["git", "init", "-q", str(checkout)],
+        cancel_event=cancel_event,
+        check_result=True,
+        capture_output=True,
+    )
+    cancellation.run(
         ["git", "-C", str(checkout), "fetch", "-q", "--depth", "1", spec.repo, spec.rev],
-        check=True,
+        cancel_event=cancel_event,
+        check_result=True,
         capture_output=True,
     )
     try:
-        _export_git_tree(checkout, spec.rev, spec.subdir, destination)
+        _export_git_tree(
+            checkout,
+            spec.rev,
+            spec.subdir,
+            destination,
+            cancel_event,
+        )
     finally:
         shutil.rmtree(checkout, ignore_errors=True)
 
 
-def _git_has_commit(repository: Path, revision: str) -> bool:
+def _git_has_commit(
+    repository: Path,
+    revision: str,
+    cancel_event: threading.Event | None = None,
+) -> bool:
     if not repository.is_dir():
         return False
-    result = subprocess.run(
+    result = cancellation.run(
         ["git", "-C", str(repository), "cat-file", "-e", f"{revision}^{{commit}}"],
-        check=False,
+        cancel_event=cancel_event,
         capture_output=True,
     )
     return result.returncode == 0
@@ -213,9 +246,10 @@ def _export_git_tree(
     revision: str,
     subdir: str,
     destination: Path,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Export committed bytes only, ignoring cache working-tree state."""
-    result = subprocess.run(
+    result = cancellation.run(
         [
             "git",
             "-C",
@@ -224,7 +258,8 @@ def _export_git_tree(
             "--format=tar",
             f"{revision}:{subdir}",
         ],
-        check=True,
+        cancel_event=cancel_event,
+        check_result=True,
         capture_output=True,
     )
     with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as archive:

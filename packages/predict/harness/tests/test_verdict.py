@@ -169,6 +169,55 @@ class VerdictTests(unittest.TestCase):
 
             self.assertEqual(analyze._analyze_one(instance), [])
 
+    def test_semantic_terminal_does_not_hide_unrelated_abort(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory)
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            (trace / "trader.jsonl").write_text(
+                '{"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
+                '{"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+                '{"type":"fail","tag":"coin:1","ts":4}\n'
+            )
+            artifacts = instance / "artifacts" / "failed_transactions"
+            artifacts.mkdir(parents=True)
+            (artifacts / "capacity-tree.json").write_text(
+                json.dumps(
+                    {
+                        "dry_run": {
+                            "executionErrorSource": (
+                                "ExecutionError status MEMORY_LIMIT_EXCEEDED at module 0xabc "
+                                "and message Object runtime cached objects limit reached "
+                                "at code offset 42"
+                            ),
+                            "effects": {
+                                "status": {
+                                    "status": "failure",
+                                    "error": (
+                                        "MovePrimitiveRuntimeError in "
+                                        "dynamic_field::borrow_child_object"
+                                    ),
+                                }
+                            },
+                        }
+                    }
+                )
+            )
+
+            signals = analyze._analyze_one(instance)
+
+            self.assertEqual(signals, ["coin:1"])
+
+    def test_expected_strategy_requires_trader_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory) / "fuzz-test"
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+
+            self.assertEqual(analyze.analyze([str(instance)], expect=["fuzz"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

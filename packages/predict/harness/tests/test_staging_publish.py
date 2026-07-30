@@ -13,7 +13,17 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from harness import analyze, cli, config, live, publish, run as run_mod, session, staging
+from harness import (
+    analyze,
+    cancellation,
+    cli,
+    config,
+    live,
+    publish,
+    run as run_mod,
+    session,
+    staging,
+)
 
 
 class StagingTests(unittest.TestCase):
@@ -403,7 +413,7 @@ class LifecycleTests(unittest.TestCase):
     def test_initialized_localnet_unregisters_process_on_teardown(self) -> None:
         process = mock.Mock(pid=1234)
 
-        def publish_localnet(run_id, _slot, instance_dir):
+        def publish_localnet(run_id, _slot, instance_dir, _cancel_event=None):
             instance_dir.mkdir(parents=True)
             run_mod._register_localnet(run_id, process)
             return {
@@ -502,6 +512,19 @@ class LifecycleTests(unittest.TestCase):
 
         self.assertIn("above the configured capacity 1", error)
 
+    def test_strategy_metadata_is_environment_free_and_carries_capacity_budget(self) -> None:
+        with mock.patch.dict(os.environ, {"INSTANCE_DIR": ""}, clear=False):
+            metadata = live._read_meta()
+
+        self.assertEqual(
+            metadata["strategies"]["capacity-single"]["gasBudget"],
+            50_000_000_000,
+        )
+        self.assertLess(
+            metadata["strategies"]["capacity-single"]["gasBudget"],
+            live.GAS_REFILL_FLOOR,
+        )
+
     def test_campaign_timeout_fails_semantically_incomplete_strategy(self) -> None:
         class RunningProcess:
             pid = 1234
@@ -528,6 +551,7 @@ class LifecycleTests(unittest.TestCase):
                         "maxOps": 0,
                         "requiresTimeout": False,
                         "fund": "1",
+                        "gasBudget": 50_000_000_000,
                     }
                 },
                 "cadences": [],
@@ -547,7 +571,7 @@ class LifecycleTests(unittest.TestCase):
                     live.subprocess,
                     "Popen",
                     side_effect=[RunningProcess() for _ in range(4)],
-                ),
+                ) as popen,
                 mock.patch.object(live, "_terminate_group"),
                 mock.patch.object(live.signal, "signal"),
                 mock.patch.object(live.time, "time", side_effect=lambda: next(clock)),
@@ -564,6 +588,73 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertEqual(report["termination_reason"], "incomplete")
             self.assertTrue(report["strategies"][0]["incomplete"])
+            self.assertFalse(report["strategies"][0]["bounded_stop"])
+            self.assertEqual(
+                popen.call_args_list[3].kwargs["env"]["SIM_GAS_BUDGET"],
+                "50000000000",
+            )
+
+    def test_campaign_timeout_fails_duration_strategy_without_progress(self) -> None:
+        class RunningProcess:
+            pid = 1234
+            returncode = None
+
+            @staticmethod
+            def poll():
+                return None
+
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            instance = root / "fuzz-test"
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text('{"type":"heartbeat","ts":1}\n')
+            context = {
+                "instance_dir": instance,
+                "client_config": root / "client.yaml",
+                "faucet_port": 9123,
+                "active": "0xactive",
+                "updater_address": "0xupdater",
+            }
+            metadata = {
+                "strategies": {
+                    "fuzz": {
+                        "maxOps": 0,
+                        "requiresTimeout": True,
+                        "fund": "1",
+                        "gasBudget": 2_000_000_000,
+                    }
+                },
+                "cadences": [],
+            }
+            clock = iter([0.0, 0.0, 2.0, 3.0])
+            with (
+                mock.patch.object(live.config, "LOCALNETS_DIR", root),
+                mock.patch.object(live, "_read_meta", return_value=metadata),
+                mock.patch.object(live, "_make_run_id", return_value="campaign-test"),
+                mock.patch.object(
+                    live,
+                    "_setup_campaign_localnets",
+                    return_value=({"fuzz": context}, {}),
+                ),
+                mock.patch.object(live, "create_funded_address", return_value="0xtrader"),
+                mock.patch.object(
+                    live.subprocess,
+                    "Popen",
+                    side_effect=[RunningProcess() for _ in range(4)],
+                ),
+                mock.patch.object(live, "_terminate_group"),
+                mock.patch.object(live.signal, "signal"),
+                mock.patch.object(live.time, "time", side_effect=lambda: next(clock)),
+                mock.patch.object(live, "source_revision", return_value={"commit": "abc"}),
+                mock.patch.object(analyze, "analyze", return_value=0),
+            ):
+                result = live.campaign(["fuzz"], timeout=1, concurrency=1)
+
+            report = json.loads((root / "campaign-test-report.json").read_text())
+            self.assertEqual(result, 1)
+            self.assertEqual(report["termination_reason"], "no_progress")
+            self.assertTrue(report["strategies"][0]["no_progress"])
             self.assertFalse(report["strategies"][0]["bounded_stop"])
 
     def test_campaign_interrupt_closes_worker_entered_localnets(self) -> None:
@@ -598,14 +689,126 @@ class LifecycleTests(unittest.TestCase):
             mock.patch.object(
                 live,
                 "oracle_ready_localnet",
-                side_effect=lambda name, keep: Manager(name),
+                side_effect=lambda name, keep, cancel_event=None: Manager(name),
             ),
             mock.patch.object(live, "as_completed", side_effect=interrupt_after_workers),
+            mock.patch.object(live, "stop_active_localnets"),
         ):
             with self.assertRaises(KeyboardInterrupt):
                 live._setup_campaign_localnets(["a", "b"], stack, 2)
 
         self.assertCountEqual(exits, ["a", "b"])
+
+    def test_campaign_interrupt_cancels_blocked_setup_worker(self) -> None:
+        started = threading.Event()
+        observed_cancel: list[threading.Event] = []
+
+        class BlockedManager:
+            def __init__(self, cancel_event: threading.Event):
+                self.cancel_event = cancel_event
+
+            def __enter__(self):
+                started.set()
+                self.cancel_event.wait(timeout=5)
+                raise run_mod.RunCancelled("run cancelled")
+
+            def __exit__(self, *_args):
+                raise AssertionError("a context that never entered must not be closed")
+
+        def manager(*, name, keep, cancel_event):
+            self.assertEqual(name, "blocked")
+            self.assertTrue(keep)
+            observed_cancel.append(cancel_event)
+            return BlockedManager(cancel_event)
+
+        def interrupt_while_worker_blocked(_futures):
+            self.assertTrue(started.wait(timeout=5))
+            raise KeyboardInterrupt
+            yield  # pragma: no cover - makes this a generator for the for-loop
+
+        with (
+            contextlib.ExitStack() as stack,
+            mock.patch.object(
+                live,
+                "oracle_ready_localnet",
+                side_effect=manager,
+            ),
+            mock.patch.object(
+                live,
+                "as_completed",
+                side_effect=interrupt_while_worker_blocked,
+            ),
+            mock.patch.object(live, "stop_active_localnets") as stop,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                live._setup_campaign_localnets(["blocked"], stack, 1)
+
+        self.assertEqual(len(observed_cancel), 1)
+        self.assertTrue(observed_cancel[0].is_set())
+        stop.assert_called_once_with()
+
+    def test_cancellable_setup_command_kills_blocked_process_group(self) -> None:
+        cancel_event = threading.Event()
+        failures: list[BaseException] = []
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            leader_pid_path = root / "leader-pid"
+            child_pid_path = root / "child-pid"
+            child_script = (
+                "import os, signal, sys, time\n"
+                "from pathlib import Path\n"
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+                "time.sleep(30)\n"
+            )
+            leader_script = (
+                "import os, subprocess, sys, time\n"
+                "from pathlib import Path\n"
+                "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+                "subprocess.Popen([sys.executable, '-c', sys.argv[3], sys.argv[2]])\n"
+                "time.sleep(30)\n"
+            )
+
+            def run_blocked_command() -> None:
+                try:
+                    cancellation.run(
+                        [
+                            sys.executable,
+                            "-c",
+                            leader_script,
+                            str(leader_pid_path),
+                            str(child_pid_path),
+                            child_script,
+                        ],
+                        cancel_event=cancel_event,
+                        check_result=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                except BaseException as exc:
+                    failures.append(exc)
+
+            worker = threading.Thread(target=run_blocked_command)
+            worker.start()
+            deadline = time.time() + 5
+            while (
+                not leader_pid_path.exists() or not child_pid_path.exists()
+            ) and time.time() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(leader_pid_path.exists())
+            self.assertTrue(child_pid_path.exists())
+            leader_pid = int(leader_pid_path.read_text())
+            child_pid = int(child_pid_path.read_text())
+
+            cancel_event.set()
+            worker.join(timeout=5)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(len(failures), 1)
+            self.assertIsInstance(failures[0], cancellation.RunCancelled)
+            for pid in (leader_pid, child_pid):
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(pid, 0)
 
     def test_campaign_keyboard_interrupt_from_future_propagates(self) -> None:
         class InterruptedManager:

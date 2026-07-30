@@ -3,17 +3,17 @@
 Turns a freshly-published localnet into an oracle+account-ready one via single
 `sui client call`s: generate local Pyth keys, init Wormhole + Pyth Lazer, authorize
 the Predict app, and write a run.sh-format `.env.localnet` so the harness TS layer
-(harness/ts/runtime.ts) can drive the trusted-signer VAA, feeds, and refresh.
+(packages/predict/devtools/ts/runtime.ts) can drive the trusted-signer VAA, feeds, and refresh.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
-from . import config, suicli
+from . import cancellation, config, suicli
 from .publish import _created
 
 
@@ -24,24 +24,34 @@ def _call(
     function: str,
     args: list[Any],
     type_args: list[str] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> list[dict]:
     a = ["call", "--package", package, "--module", module, "--function", function]
     for t in type_args or []:
         a += ["--type-args", t]
     a += ["--args", *[str(x) for x in args]]
     a += ["--gas-budget", str(config.GAS_BUDGET), "--json"]
-    cp = suicli.client(client_config, a, check=False)
+    cp = suicli.client(
+        client_config,
+        a,
+        check=False,
+        cancel_event=cancel_event,
+    )
     if cp.returncode != 0:
         raise suicli.SuiError(f"{module}::{function} call failed:\n{cp.stderr.strip()[:1500]}")
     return suicli.parse_json_lenient(cp.stdout).get("objectChanges") or []
 
 
-def generate_local_pyth(out_path: Path) -> dict:
+def generate_local_pyth(
+    out_path: Path,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     """Run the harness localPythCli (tsx) to mint local guardian/signer keys."""
-    subprocess.run(
+    cancellation.run(
         ["npx", "tsx", "devtools/ts/localPythCli.ts", str(out_path)],
+        cancel_event=cancel_event,
+        check_result=True,
         cwd=str(config.PREDICT_DIR),
-        check=True,
         capture_output=True,
         text=True,
     )
@@ -54,10 +64,14 @@ def initialize(
     instance_dir: Path,
     rpc_port: int,
     active_address: str,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Init Wormhole + Pyth Lazer + authorize the app; record states; write .env.localnet."""
     pkgs, objs = deployment["packages"], deployment["objects"]
-    lp = generate_local_pyth(instance_dir / "local_pyth.json")
+    lp = generate_local_pyth(
+        instance_dir / "local_pyth.json",
+        cancel_event,
+    )
 
     wch = _call(
         client_config, pkgs["wormhole"], "setup", "complete",
@@ -66,12 +80,14 @@ def initialize(
             lp["governanceChain"], lp["governanceContract"], 0,
             f'[{lp["guardianAddress"]}]', 86400, 0,
         ],
+        cancel_event=cancel_event,
     )
     objs["wormhole_state"] = _created(wch, "state::State")
 
     pch = _call(
         client_config, pkgs["pyth_lazer"], "actions", "init_lazer",
         [objs["pyth_lazer_upgrade_cap"], lp["governanceChain"], lp["governanceContract"]],
+        cancel_event=cancel_event,
     )
     objs["pyth_lazer_state"] = _created(pch, "state::State")
 
@@ -79,6 +95,7 @@ def initialize(
         client_config, pkgs["account"], "account_registry", "authorize_app",
         [objs["account_registry"], objs["account_admin_cap"]],
         type_args=[f'{pkgs["predict"]}::predict_account::PredictApp'],
+        cancel_event=cancel_event,
     )
 
     deployment["local_pyth"] = lp

@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 
 import { getSignerForAddress } from "../../devtools/ts/env.js";
+import { DEFAULT_TRADER_GAS_BUDGET } from "./runnerConfig.js";
 import { makeContext } from "./strategy.js";
 import { getStrategy } from "./strategies/index.js";
 import { appendTrace, errorTag } from "./trace.js";
@@ -27,7 +28,7 @@ const STRATEGY = process.env.STRATEGY ?? "fuzz";
 const LABEL = TRADER_ADDRESS.slice(0, 8);
 // Plumb SIM_GAS_BUDGET to the trader so a capacity batch can reach the real 5e9 computation cap;
 // default 2e9 for ordinary strategies.
-const GAS_BUDGET = Number(process.env.SIM_GAS_BUDGET ?? 2_000_000_000);
+const GAS_BUDGET = Number(process.env.SIM_GAS_BUDGET ?? DEFAULT_TRADER_GAS_BUDGET);
 
 const signer = getSignerForAddress(TRADER_ADDRESS);
 const wrapperId = deriveAccountWrapperId(TRADER_ADDRESS);

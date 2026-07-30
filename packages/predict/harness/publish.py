@@ -11,6 +11,7 @@ import argparse
 import contextlib
 import json
 import re
+import threading
 import tomllib
 from pathlib import Path
 from typing import Any, Iterator, Mapping
@@ -201,6 +202,7 @@ def _test_publish(
     staged_path: Path,
     pubfile: Path,
     gas_budget: int,
+    cancel_event: threading.Event | None = None,
 ) -> list[dict]:
     package_path = staging.require_staged_path(workspace, staged_path)
     args = [
@@ -218,7 +220,11 @@ def _test_publish(
         str(pubfile),
         str(package_path),
     ]
-    result = suicli.run(args, check=False)
+    result = suicli.run(
+        args,
+        check=False,
+        cancel_event=cancel_event,
+    )
     try:
         data = suicli.parse_json_lenient(result.stdout)
     except suicli.SuiError as exc:
@@ -274,6 +280,7 @@ def publish_closure(
     workspace: Path,
     pubfile: Path,
     gas_budget: int,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Validate and publish each staged package exactly once in dependency order."""
     paths = staging.validate_workspace(workspace)
@@ -313,7 +320,14 @@ def publish_closure(
             )
             staging.validate_workspace(workspace)
 
-        changes = _test_publish(client_config, workspace, paths[name], pubfile, gas_budget)
+        changes = _test_publish(
+            client_config,
+            workspace,
+            paths[name],
+            pubfile,
+            gas_budget,
+            cancel_event,
+        )
         package_key = "block_scholes_oracle" if name == "bs_oracle" else name
         packages[package_key] = _published_id(changes)
         _capture_objects(name, changes, objects)
@@ -326,11 +340,17 @@ def publish_closure(
 
 
 @contextlib.contextmanager
-def staged_closure(workspace: Path) -> Iterator[dict[str, Path]]:
+def staged_closure(
+    workspace: Path,
+    cancel_event: threading.Event | None = None,
+) -> Iterator[dict[str, Path]]:
     """Stage the closure while proving canonical package files stay unchanged."""
     fingerprint = staging.checkout_fingerprint()
     try:
-        yield staging.stage_closure(workspace)
+        if cancel_event is None:
+            yield staging.stage_closure(workspace)
+        else:
+            yield staging.stage_closure(workspace, cancel_event)
     finally:
         if staging.checkout_fingerprint() != fingerprint:
             raise RuntimeError("ephemeral publication mutated canonical package-management files")
@@ -341,10 +361,24 @@ def stage_and_publish(
     workspace: Path,
     pubfile: Path,
     gas_budget: int = config.GAS_BUDGET,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Stage then publish while proving the canonical package files stayed unchanged."""
-    with staged_closure(workspace):
-        return publish_closure(client_config, workspace, pubfile, gas_budget)
+    with staged_closure(workspace, cancel_event):
+        if cancel_event is None:
+            return publish_closure(
+                client_config,
+                workspace,
+                pubfile,
+                gas_budget,
+            )
+        return publish_closure(
+            client_config,
+            workspace,
+            pubfile,
+            gas_budget,
+            cancel_event,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

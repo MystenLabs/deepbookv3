@@ -22,7 +22,7 @@ from pathlib import Path
 from devtools.run_manifest import source_revision
 
 from . import config, localnet
-from .run import _make_run_id
+from .run import _make_run_id, stop_active_localnets
 from .session import create_funded_address, initialized_localnet
 
 # Flush every print so captured logs (autonomous/background runs) stay in chronological
@@ -53,11 +53,16 @@ def _refill_gas(client_config: Path, faucet_port: int, address: str) -> int | No
 
 
 @contextlib.contextmanager
-def oracle_ready_localnet(name: str | None = None, keep: bool = True):
+def oracle_ready_localnet(
+    name: str | None = None,
+    keep: bool = True,
+    cancel_event: threading.Event | None = None,
+):
     with initialized_localnet(
         name or "live",
         keep=keep,
         create_updater=True,
+        cancel_event=cancel_event,
     ) as context:
         updater_address = context["updater_address"]
         print(
@@ -279,11 +284,16 @@ def _setup_campaign_localnets(
     setup_rows: dict[str, dict] = {}
     leases: list[_CampaignLocalnetLease] = []
     leases_lock = threading.Lock()
+    cancel_event = threading.Event()
     setup_complete = False
 
     def enter_localnet(strategy: str):
         started = time.time()
-        manager = oracle_ready_localnet(name=strategy, keep=True)
+        manager = oracle_ready_localnet(
+            name=strategy,
+            keep=True,
+            cancel_event=cancel_event,
+        )
         ctx = manager.__enter__()
         lease = _CampaignLocalnetLease(manager)
         with leases_lock:
@@ -322,11 +332,17 @@ def _setup_campaign_localnets(
                 )
             except Exception as exc:
                 setup_errors.append(f"{strategy}: {type(exc).__name__}: {exc}")
+                break
         if setup_errors:
             raise RuntimeError("localnet setup failed: " + " | ".join(setup_errors))
         setup_complete = True
         return contexts, setup_rows
     finally:
+        if not setup_complete:
+            cancel_event.set()
+            # Stop validators immediately so a worker blocked in RPC/publication
+            # returns before executor shutdown waits for it.
+            stop_active_localnets()
         for future in futures:
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
@@ -389,6 +405,7 @@ def campaign(
     setup_rows: dict[str, dict] = {}
     trader_exit_codes: dict[str, int | None] = {}
     support_exit_codes: dict[str, int | None] = {}
+    strategy_progress: dict[str, bool] = {}
 
     try:
         with contextlib.ExitStack() as stack:
@@ -455,7 +472,12 @@ def campaign(
                 ])
                 trader = subprocess.Popen(
                     ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
-                    env={**base, "TRADER_ADDRESS": addr, "STRATEGY": strategy},
+                    env={
+                        **base,
+                        "TRADER_ADDRESS": addr,
+                        "STRATEGY": strategy,
+                        "SIM_GAS_BUDGET": str(strat_meta[strategy]["gasBudget"]),
+                    },
                     start_new_session=True,
                 )
                 stack.callback(_terminate_group, trader)
@@ -496,17 +518,39 @@ def campaign(
 
             trader_exit_codes = {name: proc.poll() for name, proc in traders_procs}
             support_exit_codes = {name: proc.poll() for name, proc in support}
+            strategy_progress = {
+                name: analyze.has_strategy_progress(
+                    Path(contexts[name]["instance_dir"]),
+                    name,
+                )
+                for name, _ in traders_procs
+            }
             completed = [name for name, code in trader_exit_codes.items() if code == 0]
             failed = [name for name, code in trader_exit_codes.items() if code not in (None, 0)]
             bounded = [
                 name
                 for name, code in trader_exit_codes.items()
-                if code is None and timed_out and strat_meta[name]["requiresTimeout"]
+                if (
+                    code is None
+                    and timed_out
+                    and strat_meta[name]["requiresTimeout"]
+                    and strategy_progress[name]
+                )
             ]
             incomplete = [
                 name
                 for name, code in trader_exit_codes.items()
                 if code is None and timed_out and not strat_meta[name]["requiresTimeout"]
+            ]
+            no_progress = [
+                name
+                for name, code in trader_exit_codes.items()
+                if (
+                    code is None
+                    and timed_out
+                    and strat_meta[name]["requiresTimeout"]
+                    and not strategy_progress[name]
+                )
             ]
             if failed:
                 termination_reason = "trader_failure"
@@ -514,9 +558,13 @@ def campaign(
             elif incomplete:
                 termination_reason = "incomplete"
                 operational_failed = True
+            elif no_progress:
+                termination_reason = "no_progress"
+                operational_failed = True
             print(
                 f"campaign: completed={completed or 'none'} failed={failed or 'none'} "
-                f"bounded_stop={bounded or 'none'} incomplete={incomplete or 'none'}."
+                f"bounded_stop={bounded or 'none'} incomplete={incomplete or 'none'} "
+                f"no_progress={no_progress or 'none'}."
             )
     except KeyboardInterrupt:
         termination_reason = "interrupted"
@@ -560,15 +608,23 @@ def campaign(
                 **setup_rows.get(strategy, {}),
                 "trader_exit_code_before_teardown": trader_exit_codes.get(strategy),
                 "completed": trader_exit_codes.get(strategy) == 0,
+                "progressed": strategy_progress.get(strategy, False),
                 "bounded_stop": (
                     trader_exit_codes.get(strategy) is None
                     and timed_out
                     and strat_meta[strategy]["requiresTimeout"]
+                    and strategy_progress.get(strategy, False)
                 ),
                 "incomplete": (
                     trader_exit_codes.get(strategy) is None
                     and timed_out
                     and not strat_meta[strategy]["requiresTimeout"]
+                ),
+                "no_progress": (
+                    trader_exit_codes.get(strategy) is None
+                    and timed_out
+                    and strat_meta[strategy]["requiresTimeout"]
+                    and not strategy_progress.get(strategy, False)
                 ),
             }
             for strategy in strategies

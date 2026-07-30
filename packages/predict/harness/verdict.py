@@ -62,6 +62,12 @@ TRANSIENT_MARKERS = (
     "expected ts",
 )
 MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
+# Semantic VM walls whose trace tag names only the framework call that surfaced
+# them. Keep this mapping exact: a declared message must never whitelist every
+# abort from an unknown/framework module.
+SEMANTIC_FRAMEWORK_TAGS = {
+    "cached objects limit": {"dynamic_field:0"},
+}
 
 
 def is_transient(tag: str) -> bool:

@@ -18,11 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import config, localnet, publish, staging, state
-
-
-class RunCancelled(RuntimeError):
-    pass
+from . import cancellation, config, localnet, publish, staging, state
+from .cancellation import RunCancelled
 
 
 _ACTIVE_LOCALNETS: dict[str, subprocess.Popen] = {}
@@ -55,8 +52,7 @@ def _mk_instance(inst: Path) -> None:
 
 
 def _check_cancelled(cancel_event: threading.Event | None) -> None:
-    if cancel_event is not None and cancel_event.is_set():
-        raise RunCancelled("run cancelled")
+    cancellation.check(cancel_event)
 
 
 def _register_localnet(run_id: str, proc: subprocess.Popen) -> None:
@@ -97,11 +93,15 @@ def _publish_localnet(
     proc = None
     try:
         _check_cancelled(cancel_event)
-        with publish.staged_closure(inst / "workspace"):
+        with publish.staged_closure(inst / "workspace", cancel_event):
             _check_cancelled(cancel_event)
             config_dir = inst / "localnet"
             print(f"[{run_id}] genesis + starting localnet...")
-            client_config = localnet.genesis(config_dir, slot["rpc_port"])
+            client_config = localnet.genesis(
+                config_dir,
+                slot["rpc_port"],
+                cancel_event,
+            )
             _check_cancelled(cancel_event)
             proc = localnet.start(
                 config_dir,
@@ -120,14 +120,25 @@ def _publish_localnet(
                 status="running",
             )
             _check_cancelled(cancel_event)
-            localnet.wait_for_rpc(client_config, slot["rpc_port"])
+            localnet.wait_for_rpc(
+                client_config,
+                slot["rpc_port"],
+                cancel_event=cancel_event,
+            )
             _check_cancelled(cancel_event)
-            localnet.wait_for_faucet(slot["faucet_port"])
+            localnet.wait_for_faucet(
+                slot["faucet_port"],
+                cancel_event=cancel_event,
+            )
             _check_cancelled(cancel_event)
-            active = localnet.active_address(client_config)
-            localnet.fund(slot["faucet_port"], active)
+            active = localnet.active_address(client_config, cancel_event)
+            localnet.fund(
+                slot["faucet_port"],
+                active,
+                cancel_event=cancel_event,
+            )
             _check_cancelled(cancel_event)
-            chain = localnet.chain_id(client_config)
+            chain = localnet.chain_id(client_config, cancel_event)
             print(
                 f"[{run_id}] chain={chain} active={active[:10]}... "
                 "publishing staged closure..."
@@ -138,6 +149,7 @@ def _publish_localnet(
                 inst / "workspace",
                 inst / config.PUBFILE_NAME,
                 config.GAS_BUDGET,
+                cancel_event,
             )
             deployment["meta"] = {
                 "run_id": run_id,

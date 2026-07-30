@@ -36,8 +36,7 @@ test("gRPC Move aborts retain module and code classification", () => {
 });
 
 test("capacity tree declares the semantic VM wall rather than a framework tag", () => {
-  assert.deepEqual(
-    createCapacityStrategy("tree").expect?.terminal,
-    ["cached objects limit"],
-  );
+  const strategy = createCapacityStrategy("tree");
+  assert.deepEqual(strategy.expect?.terminal, ["cached objects limit"]);
+  assert.equal(strategy.gasBudget, 50_000_000_000);
 });

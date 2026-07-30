@@ -5,20 +5,39 @@ from __future__ import annotations
 import contextlib
 import json
 import shutil
+import threading
 from pathlib import Path
 
 from . import config, localnet, oracle_setup, state, suicli
-from .run import _make_run_id, _publish_localnet, _unregister_localnet
+from .run import (
+    _check_cancelled,
+    _make_run_id,
+    _publish_localnet,
+    _unregister_localnet,
+)
 
 
-def create_funded_address(client_config: Path, faucet_port: int) -> str:
+def create_funded_address(
+    client_config: Path,
+    faucet_port: int,
+    cancel_event: threading.Event | None = None,
+) -> str:
     """Create a fresh ed25519 address in the session keystore and fund it."""
-    result = suicli.client(client_config, ["new-address", "ed25519", "--json"])
+    result = suicli.client(
+        client_config,
+        ["new-address", "ed25519", "--json"],
+        cancel_event=cancel_event,
+    )
     data = suicli.parse_json_lenient(result.stdout)
     address = data.get("address") or data.get("Address")
     if not address:
         raise RuntimeError(f"could not parse new-address output: {result.stdout[:300]}")
-    localnet.fund(faucet_port, address, times=2)
+    localnet.fund(
+        faucet_port,
+        address,
+        times=2,
+        cancel_event=cancel_event,
+    )
     return address
 
 
@@ -28,6 +47,7 @@ def initialized_localnet(
     *,
     keep: bool = True,
     create_updater: bool = False,
+    cancel_event: threading.Event | None = None,
 ):
     """Publish and initialize one isolated Predict localnet.
 
@@ -45,8 +65,14 @@ def initialized_localnet(
         flush=True,
     )
     try:
-        localnet_context = _publish_localnet(run_id, slot, instance_dir)
+        localnet_context = _publish_localnet(
+            run_id,
+            slot,
+            instance_dir,
+            cancel_event,
+        )
         process = localnet_context["proc"]
+        _check_cancelled(cancel_event)
         client_config = localnet_context["client_config"]
         deployment = localnet_context["deployment"]
         active = localnet_context["active"]
@@ -56,13 +82,17 @@ def initialized_localnet(
             instance_dir,
             slot["rpc_port"],
             active,
+            cancel_event,
         )
+        _check_cancelled(cancel_event)
         updater_address = None
         if create_updater:
             updater_address = create_funded_address(
                 client_config,
                 slot["faucet_port"],
+                cancel_event,
             )
+            _check_cancelled(cancel_event)
             deployment["updater_address"] = updater_address
         (instance_dir / "deployment.json").write_text(
             json.dumps(deployment, indent=2)

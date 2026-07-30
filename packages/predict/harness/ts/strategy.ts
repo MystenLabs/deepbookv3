@@ -130,6 +130,7 @@ export interface Strategy {
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
+  gasBudget?: number; // MIST; raise only for measurements whose PTB must reach a protocol wall
   // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
   // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
   // (e.g. the object-cache limit "cached objects limit", which bricks a normal flush but is the whole

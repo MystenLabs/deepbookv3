@@ -29,7 +29,9 @@ A strategy's `tick(ctx)` may use ONLY what the ctx exposes — `ts/strategy.ts` 
 
 1. Extend the closest parameterized family when its state machine fits; otherwise copy the closest standalone example to `strategies/<name>.ts`.
 2. Implement `tick(ctx)` for the behavior; set `name`, `tickMs` (≥ ~1s), `maxOps` (0 =
-   duration-only), and `fund` (DUSDC the keeper grants the trader — size it for the op count). No
+   duration-only), and `fund` (DUSDC the keeper grants the trader — size it for the op count). Set
+   `gasBudget` only when a measurement PTB must exceed the ordinary trader budget to reach its real
+   protocol wall; keep the aggregate refill floor above it. No
    `cadence` field — every keeper runs the full prod cadence set; a strategy spans cadences via the
    expiries it picks (`nearestExpiry`/`randomExpiry`, or filtering `ctx.markets()` by expiry).
 3. Register it in `strategies/index.ts` (the registry; `meta.ts` then exposes it to `campaign`
@@ -37,7 +39,8 @@ A strategy's `tick(ctx)` may use ONLY what the ctx exposes — `ts/strategy.ts` 
 4. Validate — run these in the **main loop or background, never a blocking subagent**:
    - `cd packages/predict && npm run build && npm test`
    - `python3 -m harness campaign <name> --timeout N` then read the analyze verdict: the new ops
-     appear, the bug oracle is **clean** (exit 0), and the measured signal behaves as intended.
+     appear, the bug oracle is **clean** (exit 0), and the measured signal behaves as intended. A
+     duration-only run with no trader progress is a failure, not a successful bounded stop.
 
 ## 3b. If the scenario is NOT supported → note it, then extend the harness
 

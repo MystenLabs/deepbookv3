@@ -6,6 +6,7 @@ const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
 const MAX_BOOK = 5_000;
 const FUND = 20_000_000_000_000n;
+const GAS_BUDGET = 50_000_000_000;
 
 export type CapacityProfile = "single" | "pool" | "tree";
 
@@ -126,6 +127,7 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
     tickMs: profile === "tree" ? 1_200 : 1_500,
     maxOps: 0,
     fund: FUND,
+    gasBudget: GAS_BUDGET,
     expect:
       profile === "tree"
         ? {
