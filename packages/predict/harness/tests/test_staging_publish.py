@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from devtools import run_manifest
 from harness import (
     analyze,
     cancellation,
@@ -319,6 +320,186 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--publish-unpublished-deps", args)
 
 class LifecycleTests(unittest.TestCase):
+    def _run_campaign_case(
+        self,
+        root: Path,
+        *,
+        case_name: str,
+        strategy: str,
+        strategy_metadata: dict,
+        timeout: int = 0,
+        trader_exit_code: int | None = None,
+        trace_lines: dict[str, str] | None = None,
+        retain_metrics: bool,
+        time_values: list[float] | None = None,
+        fail_manifest_write_at: int | None = None,
+        cleanup_failure: OSError | None = None,
+    ) -> dict:
+        instance = root / f"{case_name}-instance"
+        instance.mkdir()
+        for actor, lines in (trace_lines or {}).items():
+            trace = instance / "trace"
+            trace.mkdir(exist_ok=True)
+            (trace / f"{actor}.jsonl").write_text(lines)
+        context = {
+            "run_id": f"{strategy}-test",
+            "instance_dir": instance,
+            "client_config": root / "client.yaml",
+            "faucet_port": 9123,
+            "rpc_port": 9000,
+            "active": "0xactive",
+            "updater_address": "0xupdater",
+            "deployment": {
+                "meta": {"chain_id": "local-chain", "rpc_port": 9000},
+                "packages": {"predict": "0xpackage"},
+                "objects": {"pool": "0xpool"},
+            },
+        }
+        setup_row = {
+            "run_id": context["run_id"],
+            "instance_dir": str(instance),
+            "setup_duration_s": 1.0,
+            "rpc_port": 9000,
+            "chain_id": "local-chain",
+            "package_ids": context["deployment"]["packages"],
+            "object_ids": context["deployment"]["objects"],
+        }
+
+        def setup(_strategies, _stack, _concurrency, on_ready=None):
+            if on_ready is not None:
+                on_ready(strategy, context, setup_row)
+            return {strategy: context}, {strategy: setup_row}
+
+        processes = []
+        for pid, returncode in (
+            (1001, None),
+            (1002, None),
+            (1003, None),
+            (1004, trader_exit_code),
+        ):
+            process = mock.Mock(pid=pid, returncode=returncode)
+            process.poll.return_value = returncode
+            processes.append(process)
+        campaigns = root / f"{case_name}-campaigns"
+        campaign_dir = campaigns / "campaign-test"
+        stopped = []
+
+        def terminate(process):
+            stopped.append(process)
+            if retain_metrics:
+                (campaign_dir / "hub-metrics.json").write_text('{"snapshots":1}')
+
+        writes = 0
+
+        def write(path, manifest):
+            nonlocal writes
+            writes += 1
+            if writes == fail_manifest_write_at:
+                raise OSError("manifest disk full")
+            run_manifest.write_manifest(path, manifest)
+
+        metadata = {
+            "strategies": {strategy: strategy_metadata},
+            "cadences": [],
+        }
+        with contextlib.ExitStack() as patches:
+            patches.enter_context(
+                mock.patch.object(live.config, "CAMPAIGNS_DIR", campaigns)
+            )
+            patches.enter_context(
+                mock.patch.object(live, "_read_meta", return_value=metadata)
+            )
+            patches.enter_context(
+                mock.patch.object(
+                    live,
+                    "make_run_id",
+                    return_value="campaign-test",
+                )
+            )
+            patches.enter_context(
+                mock.patch.object(
+                    live,
+                    "_setup_campaign_localnets",
+                    side_effect=setup,
+                )
+            )
+            patches.enter_context(
+                mock.patch.object(
+                    live,
+                    "create_funded_address",
+                    return_value="0xtrader",
+                )
+            )
+            popen = patches.enter_context(
+                mock.patch.object(
+                    live.subprocess,
+                    "Popen",
+                    side_effect=processes,
+                )
+            )
+            patches.enter_context(
+                mock.patch.object(
+                    live,
+                    "_terminate_group",
+                    side_effect=terminate,
+                )
+            )
+            patches.enter_context(mock.patch.object(live.signal, "signal"))
+            patches.enter_context(
+                mock.patch.object(
+                    run_manifest,
+                    "source_revision",
+                    return_value={"commit": "abc123", "dirty": False},
+                )
+            )
+            if time_values is not None:
+                times = iter(time_values)
+                patches.enter_context(
+                    mock.patch.object(
+                        live.time,
+                        "time",
+                        side_effect=lambda: next(times),
+                    )
+                )
+            if fail_manifest_write_at is not None:
+                patches.enter_context(
+                    mock.patch.object(
+                        live,
+                        "write_manifest",
+                        side_effect=write,
+                    )
+                )
+            if cleanup_failure is not None:
+                patches.enter_context(
+                    mock.patch.object(
+                        live.shutil,
+                        "rmtree",
+                        side_effect=cleanup_failure,
+                    )
+                )
+            analyze_campaign = patches.enter_context(
+                mock.patch.object(
+                    analyze,
+                    "analyze_manifest",
+                    return_value=0,
+                )
+            )
+            result = live.campaign(
+                [strategy],
+                timeout=timeout,
+                concurrency=1,
+            )
+
+        return {
+            "result": result,
+            "manifest": json.loads((campaign_dir / "manifest.json").read_text()),
+            "campaign_dir": campaign_dir,
+            "processes": processes,
+            "stopped": stopped,
+            "popen": popen,
+            "analyze": analyze_campaign,
+        }
+
     def test_local_signer_bootstrap_is_captured_from_stdout(self) -> None:
         completed = subprocess.CompletedProcess(
             ["npx", "tsx", "devtools/ts/localPythCli.ts"],
@@ -605,138 +786,189 @@ class LifecycleTests(unittest.TestCase):
         )
 
     def test_campaign_timeout_fails_semantically_incomplete_strategy(self) -> None:
-        class RunningProcess:
-            pid = 1234
-            returncode = None
-
-            @staticmethod
-            def poll():
-                return None
-
         with tempfile.TemporaryDirectory() as raw_tmp:
-            root = Path(raw_tmp)
-            instance = root / "cleanup-survivor-test"
-            instance.mkdir()
-            context = {
-                "instance_dir": instance,
-                "client_config": root / "client.yaml",
-                "faucet_port": 9123,
-                "active": "0xactive",
-                "updater_address": "0xupdater",
-            }
-            metadata = {
-                "strategies": {
-                    "cleanup-survivor": {
-                        "maxOps": 0,
-                        "requiresTimeout": False,
-                        "fund": "1",
-                        "gasBudget": 50_000_000_000,
-                    }
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="incomplete",
+                strategy="cleanup-survivor",
+                strategy_metadata={
+                    "maxOps": 0,
+                    "requiresTimeout": False,
+                    "fund": "1",
+                    "gasBudget": 50_000_000_000,
                 },
-                "cadences": [],
-            }
-            clock = iter([0.0, 0.0, 2.0, 3.0])
-            with (
-                mock.patch.object(live.config, "LOCALNETS_DIR", root),
-                mock.patch.object(live, "_read_meta", return_value=metadata),
-                mock.patch.object(live, "make_run_id", return_value="campaign-test"),
-                mock.patch.object(
-                    live,
-                    "_setup_campaign_localnets",
-                    return_value=({"cleanup-survivor": context}, {}),
-                ),
-                mock.patch.object(live, "create_funded_address", return_value="0xtrader"),
-                mock.patch.object(
-                    live.subprocess,
-                    "Popen",
-                    side_effect=[RunningProcess() for _ in range(4)],
-                ) as popen,
-                mock.patch.object(live, "_terminate_group"),
-                mock.patch.object(live.signal, "signal"),
-                mock.patch.object(live.time, "time", side_effect=lambda: next(clock)),
-                mock.patch.object(live, "source_revision", return_value={"commit": "abc"}),
-                mock.patch.object(analyze, "analyze", return_value=0),
-            ):
-                result = live.campaign(
-                    ["cleanup-survivor"],
-                    timeout=1,
-                    concurrency=1,
-                )
+                timeout=1,
+                retain_metrics=True,
+                time_values=[0.0, 0.0, 2.0, 3.0],
+            )
 
-            report = json.loads((root / "campaign-test-report.json").read_text())
-            self.assertEqual(result, 1)
-            self.assertEqual(report["termination_reason"], "incomplete")
+            manifest = case["manifest"]
+            report = manifest["outcome"]
+            self.assertEqual(case["result"], 1)
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["termination"]["reason"], "incomplete")
             self.assertTrue(report["strategies"][0]["incomplete"])
             self.assertFalse(report["strategies"][0]["bounded_stop"])
+            self.assertFalse((case["campaign_dir"] / "runtime").exists())
+            self.assertEqual(manifest["localnets"][0]["role"], "cleanup-survivor")
             self.assertEqual(
-                popen.call_args_list[3].kwargs["env"]["SIM_GAS_BUDGET"],
+                case["popen"].call_args_list[3].kwargs["env"]["SIM_GAS_BUDGET"],
                 "50000000000",
             )
 
     def test_campaign_timeout_fails_duration_strategy_without_progress(self) -> None:
-        class RunningProcess:
-            pid = 1234
-            returncode = None
-
-            @staticmethod
-            def poll():
-                return None
-
         with tempfile.TemporaryDirectory() as raw_tmp:
-            root = Path(raw_tmp)
-            instance = root / "fuzz-test"
-            trace = instance / "trace"
-            trace.mkdir(parents=True)
-            (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"heartbeat","ts":1}\n'
-            )
-            context = {
-                "instance_dir": instance,
-                "client_config": root / "client.yaml",
-                "faucet_port": 9123,
-                "active": "0xactive",
-                "updater_address": "0xupdater",
-            }
-            metadata = {
-                "strategies": {
-                    "fuzz": {
-                        "maxOps": 0,
-                        "requiresTimeout": True,
-                        "fund": "1",
-                        "gasBudget": 2_000_000_000,
-                    }
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="no-progress",
+                strategy="fuzz",
+                strategy_metadata={
+                    "maxOps": 0,
+                    "requiresTimeout": True,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
                 },
-                "cadences": [],
-            }
-            clock = iter([0.0, 0.0, 2.0, 3.0])
-            with (
-                mock.patch.object(live.config, "LOCALNETS_DIR", root),
-                mock.patch.object(live, "_read_meta", return_value=metadata),
-                mock.patch.object(live, "make_run_id", return_value="campaign-test"),
-                mock.patch.object(
-                    live,
-                    "_setup_campaign_localnets",
-                    return_value=({"fuzz": context}, {}),
-                ),
-                mock.patch.object(live, "create_funded_address", return_value="0xtrader"),
-                mock.patch.object(
-                    live.subprocess,
-                    "Popen",
-                    side_effect=[RunningProcess() for _ in range(4)],
-                ),
-                mock.patch.object(live, "_terminate_group"),
-                mock.patch.object(live.signal, "signal"),
-                mock.patch.object(live.time, "time", side_effect=lambda: next(clock)),
-                mock.patch.object(live, "source_revision", return_value={"commit": "abc"}),
-                mock.patch.object(analyze, "analyze", return_value=0),
-            ):
-                result = live.campaign(["fuzz"], timeout=1, concurrency=1)
+                timeout=1,
+                trace_lines={
+                    "keeper": '{"schema":1,"type":"heartbeat","ts":1}\n'
+                },
+                retain_metrics=True,
+                time_values=[0.0, 0.0, 2.0, 3.0],
+            )
 
-            report = json.loads((root / "campaign-test-report.json").read_text())
-            self.assertEqual(result, 1)
-            self.assertEqual(report["termination_reason"], "no_progress")
+            manifest = case["manifest"]
+            report = manifest["outcome"]
+            self.assertEqual(case["result"], 1)
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["termination"]["reason"], "no_progress")
             self.assertTrue(report["strategies"][0]["no_progress"])
             self.assertFalse(report["strategies"][0]["bounded_stop"])
+
+    def test_campaign_manifest_completes_only_after_metrics_and_analysis(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            strategy_metadata = {
+                "maxOps": 1,
+                "requiresTimeout": False,
+                "fund": "1",
+                "gasBudget": 2_000_000_000,
+            }
+            missing = self._run_campaign_case(
+                root,
+                case_name="missing-metrics",
+                strategy="mint-only",
+                strategy_metadata=strategy_metadata,
+                trader_exit_code=0,
+                retain_metrics=False,
+            )
+
+            manifest = missing["manifest"]
+            self.assertEqual(missing["result"], 1)
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(
+                manifest["termination"]["reason"],
+                "evidence_failure",
+            )
+            self.assertIn(
+                "FileNotFoundError",
+                manifest["outcome"]["hub_metrics_error"],
+            )
+            self.assertFalse((missing["campaign_dir"] / "runtime").exists())
+
+            successful = self._run_campaign_case(
+                root,
+                case_name="successful",
+                strategy="mint-only",
+                strategy_metadata=strategy_metadata,
+                trader_exit_code=0,
+                retain_metrics=True,
+            )
+
+            successful_manifest = successful["manifest"]
+            self.assertEqual(successful["result"], 0)
+            self.assertEqual(successful_manifest["status"], "complete")
+            self.assertEqual(
+                successful_manifest["termination"],
+                {
+                    "reason": "completed",
+                    "error": None,
+                    "exit_code": 0,
+                },
+            )
+            self.assertEqual(
+                successful_manifest["outcome"]["analysis_exit_code"],
+                0,
+            )
+            self.assertFalse((successful["campaign_dir"] / "runtime").exists())
+            successful["analyze"].assert_called_once_with(
+                successful["campaign_dir"] / "manifest.json",
+                require_terminal=False,
+            )
+
+    def test_campaign_runtime_cleanup_failure_fails_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="cleanup-failure",
+                strategy="mint-only",
+                strategy_metadata={
+                    "maxOps": 1,
+                    "requiresTimeout": False,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
+                },
+                trader_exit_code=0,
+                retain_metrics=True,
+                cleanup_failure=OSError("runtime directory is busy"),
+            )
+
+            self.assertEqual(case["result"], 1)
+            self.assertEqual(case["manifest"]["status"], "failed")
+            self.assertEqual(
+                case["manifest"]["termination"]["reason"],
+                "cleanup_failure",
+            )
+            self.assertIn(
+                "runtime directory is busy",
+                case["manifest"]["outcome"]["runtime_cleanup_error"],
+            )
+
+    def test_campaign_manifest_write_failure_stops_started_actor(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="write-failure",
+                strategy="mint-only",
+                strategy_metadata={
+                    "maxOps": 1,
+                    "requiresTimeout": False,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
+                },
+                trader_exit_code=0,
+                retain_metrics=False,
+                fail_manifest_write_at=3,
+            )
+
+            manifest = case["manifest"]
+            self.assertEqual(case["result"], 1)
+            self.assertEqual(
+                case["stopped"],
+                [case["processes"][1], case["processes"][0]],
+            )
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(
+                manifest["termination"]["reason"],
+                "setup_failure",
+            )
+            self.assertIn(
+                "manifest disk full",
+                manifest["termination"]["error"],
+            )
+            self.assertEqual(
+                manifest["localnets"][0]["actors"],
+                ["keeper"],
+            )
 
     def test_campaign_interrupt_closes_worker_entered_localnets(self) -> None:
         exits: list[str] = []
@@ -779,6 +1011,49 @@ class LifecycleTests(unittest.TestCase):
                 live._setup_campaign_localnets(["a", "b"], stack, 2)
 
         self.assertCountEqual(exits, ["a", "b"])
+
+    def test_campaign_setup_reports_each_localnet_when_ready(self) -> None:
+        ready: list[tuple[str, str]] = []
+
+        class Manager:
+            def __init__(self, name: str):
+                self.name = name
+
+            def __enter__(self):
+                return {
+                    "run_id": f"{self.name}-run",
+                    "instance_dir": Path(self.name),
+                    "rpc_port": 9000,
+                    "deployment": {
+                        "meta": {"chain_id": self.name},
+                        "packages": {},
+                        "objects": {},
+                    },
+                }
+
+            def __exit__(self, *_args):
+                return None
+
+        with (
+            contextlib.ExitStack() as stack,
+            mock.patch.object(
+                live,
+                "oracle_ready_localnet",
+                side_effect=lambda name, keep, cancel_event=None: Manager(name),
+            ),
+        ):
+            contexts, rows = live._setup_campaign_localnets(
+                ["a", "b"],
+                stack,
+                2,
+                lambda strategy, context, _row: ready.append(
+                    (strategy, context["run_id"])
+                ),
+            )
+
+        self.assertEqual(set(contexts), {"a", "b"})
+        self.assertEqual(set(rows), {"a", "b"})
+        self.assertCountEqual(ready, [("a", "a-run"), ("b", "b-run")])
 
     def test_campaign_interrupt_cancels_blocked_setup_worker(self) -> None:
         started = threading.Event()

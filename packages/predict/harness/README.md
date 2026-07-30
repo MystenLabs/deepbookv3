@@ -11,7 +11,7 @@ python3 -m harness smoke
 python3 -m harness live --traders 1 --seconds 300
 python3 -m harness campaign mint-only mixed-churn liq-churn --timeout 600
 python3 -m harness parity --source /path/to/scenario_dataset.csv --seed 0 --max-rows 20
-python3 -m harness analyze
+python3 -m harness analyze harness/.localnets/campaigns/<campaign-id>
 python3 -m harness status
 python3 -m harness cleanup --instances
 ```
@@ -20,7 +20,7 @@ python3 -m harness cleanup --instances
 | --- | --- | --- |
 | `smoke` | Stage and publish the package closure once. | Failure artifacts, or the full instance with `--keep`. |
 | `live` | Hold one localnet with keeper, signed oracle updater, and optional fuzz traders. | Deployment and actor traces. |
-| `campaign` | Run named strategies concurrently, one isolated localnet per strategy, from one market-data hub. | Campaign report and per-strategy traces. |
+| `campaign` | Run named strategies concurrently, one isolated localnet per strategy, from one market-data hub. | Atomic campaign manifest, hub metrics, and per-strategy traces. |
 | `parity` | Generate a seeded scenario and compare localnet contract behavior with the independent Python model. | Exact scenario, manifest, local trace, economic outputs, and failures. |
 | `analyze` | Reduce retained campaign traces into measurements and a contract-bug verdict. | Terminal report and exit status. |
 | `status` / `cleanup` | Inspect or reclaim localnet slots. | Slot registry state. |
@@ -63,6 +63,9 @@ devtools/ts
   ├─ gRPC Sui execution and receipt/failure artifacts
   ├─ local Pyth and Block Scholes signed payload helpers
   └─ Block Scholes BCS/signature codec
+
+devtools/run_manifest.py
+  └─ shared versioned lifecycle and provenance manifest for campaign, parity, and benchmark
 ```
 
 The transaction path uses `SuiGrpcClient`. The Sui CLI remains responsible for localnet management and package publication; the harness does not instantiate a deprecated Sui JSON-RPC client.
@@ -71,9 +74,9 @@ The local Block Scholes path signs the same BCS payload shape and submits it thr
 
 ## Reproducibility and artifacts
 
-Each parity run retains `artifacts/run-manifest.json` with the source commit and dirty flag, source/config/scenario SHA-256 hashes, seed, maximum row count, exact command, chain id, and package ids. The generated scenario is retained at `artifacts/scenario.csv`.
+Parity and benchmark runs retain `artifacts/run-manifest.json` with the source commit and dirty flag, source/config/scenario SHA-256 hashes, arguments, localnet identity, declared artifacts, and terminal outcome. The generated scenario is retained at `artifacts/scenario.csv`.
 
-Campaigns retain a machine-readable campaign report plus one trace directory per strategy. Failed transactions retain execution context and dry-run diagnostics under `artifacts/failed_transactions/`.
+Each campaign writes `harness/.localnets/campaigns/<campaign-id>/manifest.json` atomically before starting actors, records each ready localnet as setup completes, and reaches `complete`, `failed`, or `interrupted` only after teardown, hub-metrics validation, and manifest-scoped analysis. A manifest left `running` is incomplete and `analyze` rejects it. The hub snapshot lives under the campaign's `runtime/` directory and is deleted at normal teardown; retained hub metrics and per-strategy instance paths are declared by the manifest. Failed transactions retain execution context and dry-run diagnostics under each instance's `artifacts/failed_transactions/`.
 
 Instances live under `harness/.localnets/instances/`. Heavy validator and staged-workspace state is removed after context-managed runs while evidence remains. The generated local signer configuration is captured in memory and written only to the mode-0600 per-instance `.env.localnet`; teardown deletes that file before retaining evidence. `deployment.json` contains public package, object, address, and run metadata only.
 

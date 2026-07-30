@@ -4,7 +4,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from devtools import run_manifest
 from harness import analyze, verdict
 
 
@@ -237,6 +239,78 @@ class VerdictTests(unittest.TestCase):
             )
 
             self.assertEqual(analyze.analyze([str(instance)], expect=["fuzz"]), 1)
+
+    def test_campaign_manifest_rejects_incomplete_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "manifest.json"
+            with mock.patch.object(
+                run_manifest,
+                "source_revision",
+                return_value={"commit": "abc123", "dirty": False},
+            ):
+                manifest = run_manifest.new_manifest(
+                    engine="campaign",
+                    run_id="campaign-test",
+                    repo=root,
+                    arguments={"strategies": ["fuzz"]},
+                )
+            run_manifest.write_manifest(manifest_path, manifest)
+
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                analyze.analyze_manifest(manifest_path)
+
+    def test_campaign_manifest_uses_declared_instance_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            campaign = root / "campaign"
+            campaign.mkdir()
+            manifest_path = campaign / "manifest.json"
+            instance = root / "instance-without-strategy-prefix"
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"heartbeat","ts":1}\n'
+            )
+            (trace / "trader.jsonl").write_text(
+                '{"schema":1,"type":"mint","strategy":"fuzz","ts":2}\n'
+            )
+            deployment = {
+                "meta": {"chain_id": "local-chain", "rpc_port": 9000},
+                "packages": {"predict": "0xpackage"},
+                "objects": {},
+            }
+            with mock.patch.object(
+                run_manifest,
+                "source_revision",
+                return_value={"commit": "abc123", "dirty": False},
+            ):
+                manifest = run_manifest.new_manifest(
+                    engine="campaign",
+                    run_id="campaign-test",
+                    repo=root,
+                    arguments={"strategies": ["fuzz"]},
+                )
+            manifest["localnets"] = [
+                run_manifest.localnet_record(
+                    role="fuzz",
+                    run_id="instance-test",
+                    instance_dir=instance,
+                    manifest_path=manifest_path,
+                    deployment=deployment,
+                    setup_duration_s=1.0,
+                    actors=["keeper", "updater", "trader:fuzz"],
+                )
+            ]
+            run_manifest.complete_manifest(
+                manifest,
+                status="complete",
+                reason="completed",
+                exit_code=0,
+            )
+            run_manifest.write_manifest(manifest_path, manifest)
+
+            self.assertEqual(analyze.analyze_manifest(manifest_path), 0)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ SCENARIO_CONFIG = SIMULATIONS_DIR / "data" / "scenario_config.json"
 TS_DIR = HARNESS_DIR / "ts"
 LOCALNETS_DIR = HARNESS_DIR / ".localnets"
 INSTANCES_DIR = LOCALNETS_DIR / "instances"
+CAMPAIGNS_DIR = LOCALNETS_DIR / "campaigns"
 STATE_FILE = LOCALNETS_DIR / "state.json"
 LOCK_FILE = LOCALNETS_DIR / "state.lock"
 

@@ -66,6 +66,7 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
 - **One op per tick, `tickMs ≥ ~1s`** — the open+close same-`Clock`-ms guard
   (`EMintRedeemSameTimestamp`) aborts a mint+redeem of one order in the same ms; pacing avoids it.
 - **`campaign S1 S2 …`** runs each strategy on its own localnet off one shared hub (model: README). `strategies/meta.ts` is the single source for per-strategy funding, gas budget, completion mode, and the prod cadence set every keeper runs — don't duplicate them in Python. A timeout is a successful bounded stop only for a duration-only strategy that emitted trader progress; zero-progress runs fail. A strategy with `maxOps` or semantic `done` that is still running at the deadline is incomplete and fails the campaign.
+- **The campaign manifest is the run authority.** Write `campaigns/<id>/manifest.json` atomically before actors start, record every ready localnet immediately, and finalize it only after teardown, hub-metrics validation, and analysis of the instance paths it declares. `running` means incomplete and must fail closed. The hub snapshot is runtime transport under the campaign's `runtime/` directory and is deleted at teardown; do not restore loose campaign-level report, snapshot, or metrics files.
 
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`**
@@ -76,6 +77,7 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
 - Shared files (`snapshot/feeds/markets.json`, `hub-snapshot.json`) are written with
   `io.ts atomicWriteFile` (temp+rename). Use it for any new shared file, and guard every
   cross-process JSON parse (a torn read must not throw out of a loop).
+- Python run manifests use `devtools/run_manifest.py::write_manifest` (temp+replace). Keep its top-level schema shared across campaign, parity, and benchmark; command-specific data stays in `arguments`, `inputs`, `artifacts`, and `outcome`.
 - Keeper tick steps are individually isolated (a transient sub-step abort defers that step,
   not the whole tick); liquidate re-filters `live` against a fresh clock.
 - Restart-safe: `setupFeedsAndConfig` re-attaches an existing `feeds.json`, `bootstrapPool`
@@ -95,9 +97,7 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
 - Python's `harness` module is the only operator CLI. The TS keeper, updater, hub, and trader actors
   require the launcher-provided instance, address, grid, strategy, and duration environment instead
   of inventing standalone defaults.
-- Scenario configuration, hub snapshots, and actor traces are versioned current schemas. Reject
-  missing, unknown, malformed, or unsupported inputs; do not reconstruct historical fields or fall
-  back from computation gas to net gas.
+- Run manifests, scenario configuration, hub snapshots, and actor traces are versioned current schemas. Reject missing, unknown, malformed, incomplete, or unsupported inputs; do not reconstruct historical fields or fall back from computation gas to net gas.
 
 ## Don't
 - Don't modify the Predict Move contracts or `dusdc.move` (deployed to testnet) to suit the

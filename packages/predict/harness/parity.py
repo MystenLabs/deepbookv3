@@ -7,7 +7,14 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from devtools.run_manifest import complete_manifest, new_manifest, write_manifest
+from devtools.run_manifest import (
+    complete_manifest,
+    file_input,
+    localnet_record,
+    new_manifest,
+    relative_path,
+    write_manifest,
+)
 
 from . import config
 from .session import initialized_localnet
@@ -76,7 +83,6 @@ def run(
         artifacts_dir = instance_dir / "artifacts"
         scenario = artifacts_dir / "scenario.csv"
         manifest_path = artifacts_dir / "run-manifest.json"
-        _generate_scenario(source_path, scenario, seed)
 
         command = ["npx", "tsx", "simulations/src/sim.ts"]
         if max_rows is not None:
@@ -86,18 +92,52 @@ def run(
             engine=engine,
             run_id=context["run_id"],
             repo=config.REPO_DIR,
-            source=source_path,
-            scenario=scenario,
-            config=config.SCENARIO_CONFIG,
-            seed=seed,
-            command=command,
-            max_rows=max_rows,
-            deployment=context["deployment"],
+            arguments={
+                "source": str(source_path.resolve()),
+                "seed": seed,
+                "max_rows": max_rows,
+                "results_output": results_output,
+                "simulation_command": command,
+            },
         )
+        manifest["inputs"] = {
+            "source": file_input(source_path),
+            "config": file_input(config.SCENARIO_CONFIG, include_value=True),
+        }
+        manifest["localnets"] = [
+            localnet_record(
+                role=engine,
+                run_id=context["run_id"],
+                instance_dir=instance_dir,
+                manifest_path=manifest_path,
+                deployment=context["deployment"],
+                setup_duration_s=None,
+                actors=["simulation"],
+            )
+        ]
+        manifest["artifacts"] = {
+            "scenario": relative_path(scenario, manifest_path),
+            "local_data": relative_path(
+                artifacts_dir / "local_data.json",
+                manifest_path,
+            ),
+            "python_data": relative_path(
+                artifacts_dir / "python_data.json",
+                manifest_path,
+            ),
+        }
+        if benchmark:
+            manifest["artifacts"]["results"] = relative_path(
+                artifacts_dir / "results.json",
+                manifest_path,
+            )
         write_manifest(manifest_path, manifest)
 
         error: BaseException | None = None
         try:
+            _generate_scenario(source_path, scenario, seed)
+            manifest["inputs"]["scenario"] = file_input(scenario)
+            write_manifest(manifest_path, manifest)
             subprocess.run(
                 command,
                 cwd=config.PREDICT_DIR,
@@ -139,7 +179,25 @@ def run(
             error = exc
             raise
         finally:
-            complete_manifest(manifest, error=error)
+            complete_manifest(
+                manifest,
+                status=(
+                    "interrupted"
+                    if isinstance(error, KeyboardInterrupt)
+                    else "failed" if error is not None else "complete"
+                ),
+                reason=(
+                    "interrupted"
+                    if isinstance(error, KeyboardInterrupt)
+                    else "execution_failure" if error is not None else "completed"
+                ),
+                exit_code=(
+                    130
+                    if isinstance(error, KeyboardInterrupt)
+                    else 1 if error is not None else 0
+                ),
+                error=error,
+            )
             write_manifest(manifest_path, manifest)
 
         print(f"{engine} artifacts: {artifacts_dir}")

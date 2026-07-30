@@ -18,6 +18,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from devtools.run_manifest import load_manifest
+
 from . import config, measurements, verdict
 
 # The Sui per-tx COMPUTATION cap: max_gas_computation_bucket = 5,000,000 units (a protocol constant,
@@ -307,18 +309,34 @@ def has_strategy_progress(instance: Path, strategy: str) -> bool:
     )
 
 
-def analyze(instances: list[str] | None = None, expect: list[str] | None = None) -> int:
+def analyze(
+    instances: list[str] | None = None,
+    expect: list[str] | None = None,
+    instance_roles: dict[str, str] | None = None,
+) -> int:
     # `instances`: the exact dirs to analyze — a campaign/run scopes to ITS OWN dirs so an OLD
     # retained trace can't fail (or falsely satisfy `expect` for) the current verdict. None =
     # every retained instance dir (the explicit "aggregate everything" mode of a bare `analyze`).
     # `expect` (a campaign's strategy names) flags any that produced NO trace among `instances`
     # — a fully-dead localnet is otherwise silently absent from the verdict.
-    insts = [Path(p) for p in instances] if instances else _instances()
+    insts = [Path(p) for p in instances] if instances is not None else _instances()
     insts = [i for i in insts if (i / "trace").exists()]
+    roles = {
+        Path(path).resolve(): role
+        for path, role in (instance_roles or {}).items()
+    }
     signals: list[str] = []
     if expect:
         for name in expect:
-            matching = [i for i in insts if i.name.startswith(f"{name}-")]
+            matching = [
+                instance
+                for instance in insts
+                if (
+                    roles.get(instance.resolve()) == name
+                    if roles
+                    else instance.name.startswith(f"{name}-")
+                )
+            ]
             if not matching:
                 signals.append(f"missing-trace:{name}")
                 print(f"*** WARN: strategy '{name}' produced no trace — its localnet/keeper never started ***")
@@ -337,3 +355,53 @@ def analyze(instances: list[str] | None = None, expect: list[str] | None = None)
         print(f"=== aggregate verdict over {len(insts)} instance(s): {'FAIL' if signals else 'clean'} ===")
     # Non-zero exit so background/autonomous runs have a programmatic failure signal.
     return 1 if signals else 0
+
+
+def analyze_manifest(
+    target: Path,
+    *,
+    require_terminal: bool = True,
+) -> int:
+    manifest_path = target / "manifest.json" if target.is_dir() else target
+    manifest = load_manifest(
+        manifest_path,
+        require_terminal=require_terminal,
+    )
+    if manifest["engine"] != "campaign":
+        raise ValueError(
+            f"{manifest_path}: expected campaign manifest, got {manifest['engine']!r}"
+        )
+    strategies = manifest["arguments"].get("strategies")
+    if not isinstance(strategies, list) or not all(
+        isinstance(strategy, str) and strategy
+        for strategy in strategies
+    ):
+        raise ValueError(
+            f"{manifest_path}: campaign arguments.strategies must contain non-empty strings"
+        )
+    instance_paths = [
+        (manifest_path.parent / record["instance_dir"]).resolve()
+        for record in manifest["localnets"]
+    ]
+    return analyze(
+        instances=[str(path) for path in instance_paths],
+        expect=strategies,
+        instance_roles={
+            str(path): record["role"]
+            for path, record in zip(
+                instance_paths,
+                manifest["localnets"],
+                strict=True,
+            )
+        },
+    )
+
+
+def analyze_target(target: str | None) -> int:
+    if target is None:
+        return analyze()
+    path = Path(target)
+    manifest_path = path / "manifest.json" if path.is_dir() else path
+    if manifest_path.name == "manifest.json" and manifest_path.is_file():
+        return analyze_manifest(manifest_path)
+    return analyze([target])

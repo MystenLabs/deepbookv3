@@ -12,14 +12,22 @@ import contextlib
 import functools
 import json
 import os
+import shutil
 import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from devtools.run_manifest import source_revision
+from devtools.run_manifest import (
+    complete_manifest,
+    localnet_record,
+    new_manifest,
+    relative_path,
+    write_manifest,
+)
 
 from . import config, localnet
 from .session import (
@@ -281,6 +289,7 @@ def _setup_campaign_localnets(
     strategies: list[str],
     stack: contextlib.ExitStack,
     setup_concurrency: int,
+    on_ready: Callable[[str, dict, dict], None] | None = None,
 ) -> tuple[dict[str, dict], dict[str, dict]]:
     """Enter localnets concurrently and give ExitStack teardown ownership.
 
@@ -335,6 +344,8 @@ def _setup_campaign_localnets(
                     "package_ids": deployment["packages"],
                     "object_ids": deployment["objects"],
                 }
+                if on_ready is not None:
+                    on_ready(strategy, ctx, setup_rows[strategy])
                 print(
                     f"campaign: {strategy} localnet ready in "
                     f"{setup_duration_s:.1f}s ({len(contexts)}/{len(strategies)})"
@@ -401,19 +412,59 @@ def campaign(
     # One hub grid for all localnets — the full prod cadence set (every keeper runs all of it).
     grid_spec = _grid_spec(meta)
     campaign_id = make_run_id("campaign")
-    hub_snapshot = config.LOCALNETS_DIR / f"{campaign_id}-hub-snapshot.json"
-    hub_metrics_path = config.LOCALNETS_DIR / f"{campaign_id}-hub-metrics.json"
-    report_path = config.LOCALNETS_DIR / f"{campaign_id}-report.json"
+    campaign_dir = config.CAMPAIGNS_DIR / campaign_id
+    runtime_dir = campaign_dir / "runtime"
+    manifest_path = campaign_dir / "manifest.json"
+    hub_snapshot = runtime_dir / "hub-snapshot.json"
+    hub_metrics_path = campaign_dir / "hub-metrics.json"
     campaign_started = time.time()
     termination_reason = "setup"
     fatal_error: str | None = None
     operational_failed = False
     timed_out = False
-    instance_dirs: list[str] = []
-    setup_rows: dict[str, dict] = {}
     trader_exit_codes: dict[str, int | None] = {}
     support_exit_codes: dict[str, int | None] = {}
     strategy_progress: dict[str, bool] = {}
+    manifest = new_manifest(
+        engine="campaign",
+        run_id=campaign_id,
+        repo=config.REPO_DIR,
+        arguments={
+            "strategies": strategies,
+            "timeout_s": timeout,
+            "concurrency": concurrency,
+            "setup_concurrency": setup_concurrency,
+            "localnet_capacity": localnet_capacity,
+        },
+    )
+    manifest["inputs"] = {
+        "strategy_metadata": {
+            strategy: strat_meta[strategy]
+            for strategy in strategies
+        },
+        "cadences": meta["cadences"],
+        "grid_spec": grid_spec,
+    }
+    campaign_dir.mkdir(parents=True)
+    runtime_dir.mkdir()
+    manifest["artifacts"] = {
+        "hub_metrics": relative_path(hub_metrics_path, manifest_path),
+    }
+    write_manifest(manifest_path, manifest)
+
+    def record_ready_localnet(strategy: str, context: dict, row: dict) -> None:
+        manifest["localnets"].append(
+            localnet_record(
+                role=strategy,
+                run_id=context["run_id"],
+                instance_dir=context["instance_dir"],
+                manifest_path=manifest_path,
+                deployment=context["deployment"],
+                setup_duration_s=row["setup_duration_s"],
+                actors=[],
+            )
+        )
+        write_manifest(manifest_path, manifest)
 
     try:
         with contextlib.ExitStack() as stack:
@@ -436,16 +487,21 @@ def campaign(
                 f"hub started (pid {hub.pid}); bringing up {len(strategies)} "
                 f"strategy localnet(s) with capacity {localnet_capacity}..."
             )
-            contexts, setup_rows = _setup_campaign_localnets(
+            contexts, _ = _setup_campaign_localnets(
                 strategies,
                 stack,
                 setup_concurrency,
+                record_ready_localnet,
             )
 
             for strategy in strategies:
                 ctx = contexts[strategy]
-                instance_dirs.append(str(ctx["instance_dir"]))
                 addr = create_funded_address(ctx["client_config"], ctx["faucet_port"])
+                manifest_localnet = next(
+                    localnet
+                    for localnet in manifest["localnets"]
+                    if localnet["role"] == strategy
+                )
                 base = {
                     **os.environ,
                     "INSTANCE_DIR": str(ctx["instance_dir"]),
@@ -461,6 +517,9 @@ def campaign(
                     },
                     start_new_session=True,
                 )
+                stack.callback(_terminate_group, keeper)
+                manifest_localnet["actors"].append("keeper")
+                write_manifest(manifest_path, manifest)
                 updater = subprocess.Popen(
                     ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
                     env={
@@ -471,8 +530,9 @@ def campaign(
                     },
                     start_new_session=True,
                 )
-                stack.callback(_terminate_group, keeper)
                 stack.callback(_terminate_group, updater)
+                manifest_localnet["actors"].append("updater")
+                write_manifest(manifest_path, manifest)
                 support.extend([
                     (f"{strategy}:keeper", keeper),
                     (f"{strategy}:updater", updater),
@@ -489,6 +549,8 @@ def campaign(
                 )
                 stack.callback(_terminate_group, trader)
                 traders_procs.append((strategy, trader))
+                manifest_localnet["actors"].append("trader")
+                write_manifest(manifest_path, manifest)
                 for actor in (ctx["active"], ctx["updater_address"], addr):
                     gas.append((ctx["client_config"], ctx["faucet_port"], actor))
 
@@ -585,34 +647,34 @@ def campaign(
         print(f"campaign: {fatal_error}")
 
     campaign_finished = time.time()
+    runtime_cleanup_error: str | None = None
+    try:
+        shutil.rmtree(runtime_dir)
+    except OSError as exc:
+        runtime_cleanup_error = f"{type(exc).__name__}: {exc}"
+        if not operational_failed:
+            termination_reason = "cleanup_failure"
+            operational_failed = True
+            fatal_error = runtime_cleanup_error
+    hub_metrics_error: str | None = None
     try:
         hub_metrics = json.loads(hub_metrics_path.read_text())
-    except (FileNotFoundError, json.JSONDecodeError):
-        hub_metrics = None
-    report = {
-        "schema_version": "predict_campaign_v1",
-        "campaign_id": campaign_id,
-        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(campaign_started)),
-        "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(campaign_finished)),
+        if not isinstance(hub_metrics, dict):
+            raise ValueError("hub metrics must be an object")
+    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+        hub_metrics_error = f"{type(exc).__name__}: {exc}"
+        if not operational_failed:
+            termination_reason = "evidence_failure"
+            operational_failed = True
+            fatal_error = hub_metrics_error
+    manifest["outcome"] = {
         "wall_duration_s": round(campaign_finished - campaign_started, 1),
-        "setup_concurrency": setup_concurrency,
-        "localnet_capacity": localnet_capacity,
-        "timeout_s": timeout,
-        "source_revision": source_revision(config.REPO_DIR),
-        "strategy_metadata": {
-            strategy: strat_meta[strategy]
-            for strategy in strategies
-            if strategy in strat_meta
-        },
-        "cadences": meta["cadences"],
-        "termination_reason": termination_reason,
-        "fatal_error": fatal_error,
-        "hub_metrics": hub_metrics,
+        "runtime_cleanup_error": runtime_cleanup_error,
+        "hub_metrics_error": hub_metrics_error,
         "support_exit_codes_before_teardown": support_exit_codes,
         "strategies": [
             {
                 "strategy": strategy,
-                **setup_rows.get(strategy, {}),
                 "trader_exit_code_before_teardown": trader_exit_codes.get(strategy),
                 "completed": trader_exit_codes.get(strategy) == 0,
                 "progressed": strategy_progress.get(strategy, False),
@@ -636,17 +698,53 @@ def campaign(
             }
             for strategy in strategies
         ],
+        "analysis_exit_code": None,
+        "analysis_error": None,
     }
-    report_path.write_text(json.dumps(report, indent=2))
-    print(f"campaign: machine report retained at {report_path}")
+    write_manifest(manifest_path, manifest)
+    print(f"campaign: machine manifest retained at {manifest_path}")
 
     # ExitStack has torn everything down; aggregate the per-strategy report scoped to THIS run's
     # instance dirs (never every retained instance) so an old trace can't fail — or falsely
     # satisfy `expect` for — the current verdict. `expect` flags a strategy that produced no trace.
     print("\n=== campaign report ===")
-    analysis_result = (
-        analyze.analyze(instances=instance_dirs, expect=list(strategies))
-        if instance_dirs
-        else 1
+    analysis_error: str | None = None
+    try:
+        analysis_result = analyze.analyze_manifest(
+            manifest_path,
+            require_terminal=False,
+        )
+    except KeyboardInterrupt:
+        analysis_result = 1
+        analysis_error = "KeyboardInterrupt"
+        termination_reason = "interrupted"
+        operational_failed = True
+        fatal_error = analysis_error
+    except Exception as exc:
+        analysis_result = 1
+        analysis_error = f"{type(exc).__name__}: {exc}"
+        if not operational_failed:
+            termination_reason = "analysis_failure"
+            operational_failed = True
+            fatal_error = analysis_error
+
+    manifest["outcome"]["analysis_exit_code"] = analysis_result
+    manifest["outcome"]["analysis_error"] = analysis_error
+    exit_code = 1 if operational_failed else analysis_result
+    if termination_reason == "interrupted":
+        status = "interrupted"
+    elif exit_code:
+        status = "failed"
+    else:
+        status = "complete"
+    complete_manifest(
+        manifest,
+        status=status,
+        reason=termination_reason if operational_failed else (
+            "analysis_failure" if analysis_result else termination_reason
+        ),
+        exit_code=exit_code,
+        error=fatal_error or analysis_error,
     )
-    return 1 if operational_failed else analysis_result
+    write_manifest(manifest_path, manifest)
+    return exit_code
