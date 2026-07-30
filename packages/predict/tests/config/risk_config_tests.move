@@ -80,10 +80,18 @@ fun max_lp_pool_value_accepts_endpoints() {
     config_constants::assert_max_lp_pool_value(config_constants::max_max_lp_pool_value!());
 }
 
-/// A cap below the genesis lock would leave a bootstrapped pool unable to accept its
-/// first supply, so the floor is the lock itself.
+/// The floor is the genesis lock plus one minimum supply — the smallest cap that
+/// still leaves a minimally-bootstrapped pool able to admit a deposit. A cap at the
+/// lock itself would leave zero headroom forever, which is what this rejects.
+/// 10 DUSDC genesis lock + 10 DUSDC minimum supply = 20 DUSDC, hand-derived from the
+/// two protocol floors rather than from the expression under test.
+#[test]
+fun max_lp_pool_value_floor_leaves_room_for_one_minimum_supply() {
+    assert_eq!(config_constants::min_max_lp_pool_value!(), 20_000_000);
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidMaxLpPoolValue)]
-fun max_lp_pool_value_below_genesis_lock_aborts() {
+fun max_lp_pool_value_below_floor_aborts() {
     config_constants::assert_max_lp_pool_value(config_constants::min_max_lp_pool_value!() - 1);
     abort 999
 }

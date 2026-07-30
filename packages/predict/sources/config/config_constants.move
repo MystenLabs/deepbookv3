@@ -107,13 +107,18 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 ///
 /// This caps pool *value*, not cumulative deposits — trading profit raises NAV, so a
 /// pool can sit above a set cap with no new deposits, in which case supplies stay
-/// refunded until NAV falls back. The minimum is the genesis lock, since a cap below
-/// it would leave a bootstrapped pool permanently unable to accept its first supply.
-/// See RP-23.
+/// refunded until NAV falls back. See RP-23.
+///
+/// The floor is the genesis lock plus one minimum supply, which is the smallest cap
+/// under which a minimally-bootstrapped pool can still admit a deposit. It is a
+/// sanity bound, not a liveness guarantee: a pool bootstrapped above the minimum, or
+/// one whose NAV has since grown, can be closed to new capital by any cap at or below
+/// its current value — which is a legitimate operator action, not a misconfiguration.
 public(package) macro fun default_max_lp_pool_value(): u64 { std::u64::max_value!() }
 
 public(package) macro fun min_max_lp_pool_value(): u64 {
-    deepbook_predict::constants::min_bootstrap_liquidity!()
+    deepbook_predict::constants::min_bootstrap_liquidity!() +
+    deepbook_predict::constants::min_supply_request!()
 }
 
 public(package) macro fun max_max_lp_pool_value(): u64 { std::u64::max_value!() }

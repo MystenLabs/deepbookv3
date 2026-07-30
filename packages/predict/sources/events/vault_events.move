@@ -144,8 +144,13 @@ public struct SupplyFilled has copy, drop, store {
     account_id: ID,
     recipient: address,
     index: u64,
+    /// DUSDC actually taken into the pool, which is less than the request's escrow
+    /// when the supply cap left only part of it room.
     dusdc_amount: u64,
     shares_minted: u64,
+    /// Escrow returned unfilled because the cap capped the fill; `0` on a full fill.
+    /// `dusdc_amount + dusdc_refunded` is always the originally requested amount.
+    dusdc_refunded: u64,
     requests_pending_after: u64,
 }
 
@@ -382,6 +387,14 @@ public(package) fun emit_request_cancelled(
     });
 }
 
+#[test_only]
+/// Read the cancellation reason off an emitted event. Event struct fields are
+/// module-private and `event::events_by_type` hands back the struct by value, so a
+/// test asserting *which* refund path fired has no other route to this field.
+public fun request_cancelled_reason(request_cancelled: &RequestCancelled): u8 {
+    request_cancelled.reason
+}
+
 public(package) fun emit_request_limit_missed(
     pool_vault_id: ID,
     account_id: ID,
@@ -415,6 +428,7 @@ public(package) fun emit_supply_filled(
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
+    dusdc_refunded: u64,
     requests_pending_after: u64,
 ) {
     event::emit(SupplyFilled {
@@ -424,6 +438,7 @@ public(package) fun emit_supply_filled(
         index,
         dusdc_amount,
         shares_minted,
+        dusdc_refunded,
         requests_pending_after,
     });
 }

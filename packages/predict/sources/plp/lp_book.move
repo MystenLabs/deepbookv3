@@ -277,18 +277,6 @@ fun drain_supply_queue<LP>(
                     constants::request_cancel_reason_non_executable!(),
                     book.supply_queue.pending,
                 );
-            } else if (request.amount > max_pool_value.saturating_sub(pool_value)) {
-                // Pool capacity is checked before the user's own limit: no re-submitted
-                // limit can make a full pool admit the deposit, so "at capacity" is the
-                // more actionable reason to report.
-                let (request, escrowed) = book.supply_queue.pop_front();
-                refund_supply_request(
-                    pool_vault_id,
-                    request,
-                    escrowed,
-                    constants::request_cancel_reason_pool_at_capacity!(),
-                    book.supply_queue.pending,
-                );
             } else if (shares < request.min_output) {
                 // Counted off the copied entry so the refund path does no page write:
                 // at one attempt the entry is popped on this very miss.
@@ -315,21 +303,50 @@ fun drain_supply_queue<LP>(
                     break
                 };
             } else {
-                let (request, escrowed) = book.supply_queue.pop_front();
-                ledger.receive_idle(escrowed);
-                pool_value = pool_value + request.amount;
-                let shares_minted = book.treasury_cap.mint_balance(shares);
-                balance::send_funds(shares_minted, request.recipient);
-                vault_events::emit_supply_filled(
-                    pool_vault_id,
-                    request.account_id,
-                    request.recipient,
-                    request.index,
-                    request.amount,
-                    shares,
-                    book.supply_queue.pending,
-                );
-                filled = filled + 1;
+                // The limit has already cleared at this mark, and pricing is linear in
+                // the deposit, so any prefix of this request clears the same limit rate.
+                // Take whatever the cap leaves room for and return the rest.
+                let headroom = max_pool_value.saturating_sub(pool_value);
+                let fill_amount = request.amount.min(headroom);
+                let fill_shares = mark.quote_supply_shares(fill_amount);
+                // A partial fill below the protocol's own admission floor would create a
+                // position the request path would have rejected, and a zero-share prefix
+                // is not executable at all — refuse the scrap rather than mint it.
+                if (fill_amount < constants::min_supply_request!() || fill_shares.is_none()) {
+                    let (request, escrowed) = book.supply_queue.pop_front();
+                    refund_supply_request(
+                        pool_vault_id,
+                        request,
+                        escrowed,
+                        constants::request_cancel_reason_pool_at_capacity!(),
+                        book.supply_queue.pending,
+                    );
+                } else {
+                    let fill_shares = fill_shares.destroy_some();
+                    let (request, mut escrowed) = book.supply_queue.pop_front();
+                    let refund = escrowed.split(request.amount - fill_amount);
+                    ledger.receive_idle(escrowed);
+                    pool_value = pool_value + fill_amount;
+                    let shares_minted = book.treasury_cap.mint_balance(fill_shares);
+                    balance::send_funds(shares_minted, request.recipient);
+                    let refunded = refund.value();
+                    if (refunded > 0) {
+                        balance::send_funds(refund, request.recipient);
+                    } else {
+                        refund.destroy_zero();
+                    };
+                    vault_events::emit_supply_filled(
+                        pool_vault_id,
+                        request.account_id,
+                        request.recipient,
+                        request.index,
+                        fill_amount,
+                        fill_shares,
+                        refunded,
+                        book.supply_queue.pending,
+                    );
+                    filled = filled + 1;
+                };
             };
         };
     };

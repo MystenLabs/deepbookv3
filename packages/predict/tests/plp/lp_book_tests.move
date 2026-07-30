@@ -15,13 +15,14 @@
 module deepbook_predict::lp_book_tests;
 
 use deepbook_predict::{
-    constants::{min_supply_request as min_supply, min_withdraw_request as min_withdraw},
+    constants::{Self, min_supply_request as min_supply, min_withdraw_request as min_withdraw},
     lp_book::{Self, DrainSummary, LpBook},
-    pool_accounting::{Self, Ledger}
+    pool_accounting::{Self, Ledger},
+    vault_events::{Self, RequestCancelled}
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{balance, coin, coin_registry, test_scenario::{Self as test, Scenario}};
+use sui::{balance, coin, coin_registry, event, test_scenario::{Self as test, Scenario}};
 
 public struct LP_BOOK_TESTS has drop {}
 
@@ -241,21 +242,111 @@ fun supply_within_pool_cap_fills() {
     finish(scenario, book, ledger);
 }
 
+/// Headroom too small to admit even a minimum-sized deposit is refused rather than
+/// part-filled: a sub-`min_supply_request` prefix would create a position the request
+/// path itself would have rejected.
 #[test]
-fun supply_that_would_breach_pool_cap_is_refunded() {
+fun supply_is_refunded_when_headroom_is_below_the_minimum_request() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    // Cap 35e6 leaves 5 DUSDC of room; the request wants 10 and is refunded whole,
-    // because a supply is all-or-nothing — there is no partial fill.
+    // Cap 35e6 leaves 5 DUSDC of room — half the 10 DUSDC minimum request.
     let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 35_000_000);
 
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.supply_requests_pending(), 0);
-    assert_eq!(book.total_supply(), 30_000_000); // nothing minted
+    assert_eq!(book.total_supply(), 30_000_000); // nothing minted, not even the 5
     assert_eq!(ledger.idle_balance(), 0); // escrow went back, not into idle
+
+    finish(scenario, book, ledger);
+}
+
+/// A request that both misses its limit and hits a full pool reports the *limit* —
+/// the only test that distinguishes the two refund reasons, and so the only one that
+/// pins the branch order the partial-fill rule depends on.
+#[test]
+fun over_cap_and_under_limit_reports_the_limit_miss() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    // At the 1.0 mark this quotes 10e6 PLP, short of the 11e6 minimum.
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 11_000_000);
+
+    // Cap at the pool's own value: zero headroom as well as a missed limit.
+    drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
+
+    let cancels = event::events_by_type<RequestCancelled>();
+    assert_eq!(cancels.length(), 1);
+    assert_eq!(
+        vault_events::request_cancelled_reason(&cancels[0]),
+        constants::request_cancel_reason_limit_missed!(),
+    );
+
+    finish(scenario, book, ledger);
+}
+
+/// The capacity reason is reported when the limit is satisfied and only room is
+/// missing, so `reason = 3` is reachable and distinguishable.
+#[test]
+fun capacity_refusal_reports_the_capacity_reason() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
+
+    let cancels = event::events_by_type<RequestCancelled>();
+    assert_eq!(cancels.length(), 1);
+    assert_eq!(
+        vault_events::request_cancelled_reason(&cancels[0]),
+        constants::request_cancel_reason_pool_at_capacity!(),
+    );
+
+    finish(scenario, book, ledger);
+}
+
+/// A deposit larger than the remaining headroom takes what fits and gets the rest
+/// back, so the cap is filled exactly rather than left short.
+#[test]
+fun supply_larger_than_headroom_partially_fills_to_the_cap() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap 55e6 against pool value 30e6: 25 DUSDC of room for a 30 DUSDC deposit.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 55_000_000);
+
+    // Counts as a fill, and the head is fully resolved — the unfilled 5 is not requeued.
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    // 25 DUSDC minted 1:1 at the 1.0 mark; pool value lands exactly on the cap.
+    assert_eq!(book.total_supply(), 55_000_000);
+    assert_eq!(ledger.idle_balance(), 25_000_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// The limit is checked before the cap, so a deposit whose price is unacceptable is a
+/// limit miss — never part-filled at that price for the portion that would have fit.
+#[test]
+fun limit_miss_is_not_partially_filled_into_available_headroom() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    // At the 1.0 mark a 30 DUSDC deposit quotes 30e6 PLP, short of this 31e6 minimum.
+    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 31_000_000);
+
+    // Headroom is ample; only the price is wrong.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 55_000_000);
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 30_000_000); // nothing minted at a price it refused
+    assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);
 }
@@ -308,9 +399,9 @@ fun supply_is_refunded_when_pool_is_already_over_cap() {
 /// mark until the cap is exhausted, then withdrawals pay out with no capacity check.
 /// Every figure below is derived by hand from the 1.2 share price.
 ///
-/// Also pins the ordering consequence: S2 is refunded for capacity while S3, queued
-/// behind it and smaller, still fits and fills. Headroom goes to whoever fits, not to
-/// whoever queued first, and there is no partial fill of S2 into the room that is left.
+/// Also pins queue priority: S2 takes the remaining headroom as a partial fill and
+/// gets the rest back, so S3 — queued behind it — finds nothing left and is refunded.
+/// Headroom follows queue order rather than going to whoever happens to fit.
 #[test]
 fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     let (mut scenario, mut book, mut ledger) = setup();
@@ -341,16 +432,17 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     );
 
     // S1 (60) fits in 100 and mints 60 / 1.2 = 50 PLP, leaving 40 of room.
-    // S2 (80) exceeds the remaining 40 and is refunded whole — no partial fill.
-    // S3 (20) still fits and mints floor(20 / 1.2) = 16.666666 PLP.
+    // S2 (80) exceeds the remaining 40, so 40 is taken at the same 1.2 — minting
+    //   40 / 1.2 = 33.333333 PLP — and the other 40 goes back. Headroom is now 0.
+    // S3 (20) finds no room left and is refunded whole.
     // Both withdrawals then pay at the same frozen 1.2: 50 PLP -> 60, 100 PLP -> 120.
     assert_drain_summary(&summary, 2, 2, 5);
     assert_eq!(book.supply_requests_pending(), 0);
     assert_eq!(book.withdraw_requests_pending(), 0);
-    // 1,000 + 50 + 16.666666 minted, then 50 and 100 burned by the exits.
-    assert_eq!(book.total_supply(), 916_666_666);
-    // 200 idle + 60 + 20 from the fills, - 60 - 120 paid out.
-    assert_eq!(ledger.idle_balance(), 100_000_000);
+    // 1,000 + 50 + 33.333333 minted, then 50 and 100 burned by the exits.
+    assert_eq!(book.total_supply(), 933_333_333);
+    // 200 idle + 60 + 40 taken by the fills, - 60 - 120 paid out.
+    assert_eq!(ledger.idle_balance(), 120_000_000);
 
     finish(scenario, book, ledger);
 }

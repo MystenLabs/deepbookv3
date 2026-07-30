@@ -1013,17 +1013,31 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `ProtocolConfig.max_lp_pool_value`.
 - **Controller:** operator (sets the cap) × market (NAV moves the pool under a
   fixed cap without anyone depositing) × user (chooses the deposit size).
-- **Blast radius:** the supply pass only. Withdrawals, already-issued PLP, and the
-  genesis lock are untouched, so the cap closes the pool to new capital and can
-  never trap capital already in it.
-- **Response:** refund on the spot with `RequestCancelled.reason = 3`, and keep
-  draining — the same shape as every other unfillable supply head (RP-12). The
-  check runs against the frozen mark **plus the supplies already filled this
-  flush**, so a run of individually-fitting requests cannot collectively overshoot.
-  It is evaluated *before* the user's own limit, because no re-submitted limit can
-  make a full pool admit a deposit and "at capacity" is the actionable reason.
-  Supplies are all-or-nothing, so a request larger than the remaining headroom is
-  refunded whole rather than partially filled.
+- **Blast radius:** capacity gates the supply pass only — withdrawals, already-issued
+  PLP, and the genesis lock are never checked against it, so the cap closes the pool
+  to new capital and can never trap capital already in it. It does reach exits
+  **indirectly**: supplies drain first precisely because their fresh cash funds the
+  same flush's withdrawals, so refusing supplies leaves idle lower and a large exit
+  can hit the FIFO-until-idle-dry carry a flush earlier than it otherwise would.
+- **Response:** fill what fits, refund the rest, and keep draining. A head with room
+  fills entirely; a head larger than the remaining headroom is **partially filled up
+  to the cap** and the unfilled escrow is returned in the same transaction, which
+  lands pool value exactly on the cap and gives headroom to the queue in order
+  rather than to whichever later request happens to be small enough. A head with no
+  usable room is refunded with `RequestCancelled.reason = 3`. The check runs against
+  the frozen mark **plus the supplies already filled this flush**, so a run of
+  requests cannot collectively overshoot.
+  Two floors bound the partial fill: it is refused when the room left is under
+  `min_supply_request` (a smaller prefix would create a position the request path
+  itself rejects) or when the prefix quotes zero shares.
+- **Ordering — the limit is checked first.** A partial fill mints fewer shares than
+  the full deposit, so it can only be justified if the *price* was acceptable.
+  Pricing is linear at a frozen mark, so "this prefix clears the LP's rate" is
+  exactly the existing `shares >= min_output` test on the full amount — checking the
+  limit first therefore costs no new arithmetic and makes `min_plp_out` a price
+  floor rather than an absolute share floor. A request that both misses its limit
+  and finds a full pool reports the limit miss, and an attempt-bearing request keeps
+  its resting behaviour rather than being consumed by a transient capacity state.
 - **Reasoning:** capacity is a pool-level property, and pool value is exact only
   at the flush — an admission-time check would have to compare against a stale
   snapshot, since no NAV is stored between flushes. Enforcing at the drain keeps
@@ -1041,21 +1055,30 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   figure has been chosen and the cap is inert at its default, so nothing about how
   it behaves against real deposit flow has been measured.
 - **Pinning tests:** `lp_book_tests.move` — `supply_within_pool_cap_fills`,
-  `supply_that_would_breach_pool_cap_is_refunded`,
+  `supply_larger_than_headroom_partially_fills_to_the_cap`,
+  `supply_is_refunded_when_headroom_is_below_the_minimum_request`,
   `supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush`,
-  `supply_is_refunded_when_pool_is_already_over_cap`, and
-  `pool_cap_does_not_gate_withdrawals`. `lp_flow_tests.move` pins the cap to
-  configured state rather than a constant
+  `supply_is_refunded_when_pool_is_already_over_cap`,
+  `pool_cap_does_not_gate_withdrawals`,
+  `full_pool_clears_the_whole_supply_queue_in_one_flush`,
+  `budget_bounds_how_much_of_a_full_queue_one_flush_clears`, and
+  `capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush` end to end.
+  The branch order is pinned by the only two tests that distinguish refund reasons —
+  `over_cap_and_under_limit_reports_the_limit_miss` and
+  `capacity_refusal_reports_the_capacity_reason` — plus
+  `limit_miss_is_not_partially_filled_into_available_headroom`.
+  `lp_flow_tests.move` pins the cap to configured state rather than a constant
   (`flush_refunds_supply_that_breaches_the_configured_pool_cap`, with
   `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
   `protocol_config_tests.move` pins the shipped default and the valuation-lock
-  guard; `risk_config_tests.move` pins the bounds.
+  guard; `risk_config_tests.move` pins the bounds and the floor.
 - **Reopen when:** a launch figure is set (the profile should become `MEASURED`
-  against observed deposit flow); or partial fills are introduced, which would let
-  a request take the remaining headroom instead of being refunded; or a
-  request-time admission check is wanted for UX, which needs a stored last-flush
-  NAV snapshot and makes the cap two-sided; or withdrawals are ever drained before
-  supplies, which would change whose headroom is being measured.
+  against observed deposit flow); or a request-time admission check is wanted for
+  UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or
+  withdrawals are ever drained before supplies, which would change whose headroom is
+  being measured; or per-flush drain work is bounded structurally rather than by the
+  operator's budgets, which would also bound how much of a capped pool's queue one
+  flush churns through (see RP-12's per-flush cost note).
 
 ---
 
