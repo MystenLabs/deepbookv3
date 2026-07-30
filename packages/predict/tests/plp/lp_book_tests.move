@@ -389,7 +389,7 @@ fun supply_carries_when_pool_is_already_over_cap() {
 fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(1_000_000_000); // 1,000 PLP
-    seed_idle(&mut ledger, 200_000_000); // 200 DUSDC idle; the rest of NAV sits in markets
+    seed_idle(&mut ledger, 20_000_000); // 20 DUSDC idle; the rest of NAV sits in markets
 
     // Supplies, in queue order.
     let s1 = coin::mint_for_testing<DUSDC>(60_000_000, scenario.ctx());
@@ -418,15 +418,21 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     // S2 (80) exceeds the remaining 40, so 40 is taken at the same 1.2 — minting
     //   40 / 1.2 = 33.333333 PLP — and its other 40 stays queued at the head. The cap
     //   is now reached, so the supply pass stops and S3 is never reached.
-    // Both withdrawals then pay at the same frozen 1.2: 50 PLP -> 60, 100 PLP -> 120.
+    // Withdrawals then price at the same frozen 1.2, against 120 of idle (20 seeded
+    //   plus the 100 the two supply fills brought in).
+    // W1 (50 PLP) wants 60 and is paid in full, leaving 60 of idle.
+    // W2 (100 PLP) wants 120 but only 60 of idle remains, so idle buys
+    //   floor(60 / 1.2) = 50 PLP, pays exactly 60 for them, and the other 50 PLP stays
+    //   queued at the head.
     assert_drain_summary(&summary, 2, 2, 4);
-    // S2's remainder and the untouched S3 are still queued, in that order.
+    // S2's remainder and the untouched S3 stay queued, in that order.
     assert_eq!(book.supply_requests_pending(), 2);
-    assert_eq!(book.withdraw_requests_pending(), 0);
-    // 1,000 + 50 + 33.333333 minted, then 50 and 100 burned by the exits.
-    assert_eq!(book.total_supply(), 933_333_333);
-    // 200 idle + 60 + 40 taken by the fills, - 60 - 120 paid out.
-    assert_eq!(ledger.idle_balance(), 120_000_000);
+    // W2's unpaid half keeps its place at the front of the withdraw queue.
+    assert_eq!(book.withdraw_requests_pending(), 1);
+    // 1,000 + 50 + 33.333333 minted, then 50 and 50 burned by the two exits.
+    assert_eq!(book.total_supply(), 983_333_333);
+    // Every DUSDC of idle reached an exiting LP.
+    assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);
 }
