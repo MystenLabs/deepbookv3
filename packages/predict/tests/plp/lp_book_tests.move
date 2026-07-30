@@ -11,18 +11,23 @@
 /// requests not spending a budget) and the recipient-gated cancel refund are exercised
 /// HERE against a standalone `LpBook` + `Ledger`. Every expected share/payout is
 /// hand-computed independently of the contract.
+///
+/// Fixture convention: `mint_locked_liquidity` shares are permanent and have no withdraw
+/// path, so tracked supply is `locked + circulating` and a drain can only ever burn the
+/// circulating part. Any fixture whose drain burns PLP therefore stages that circulating
+/// supply the way production does — a filled supply request (`lock_and_fill_supply`) —
+/// rather than escrowing test-minted LP the treasury never issued.
 #[test_only]
 module deepbook_predict::lp_book_tests;
 
 use deepbook_predict::{
-    constants::{Self, min_supply_request as min_supply, min_withdraw_request as min_withdraw},
+    constants::{min_supply_request as min_supply, min_withdraw_request as min_withdraw},
     lp_book::{Self, DrainSummary, LpBook},
-    pool_accounting::{Self, Ledger},
-    vault_events::{Self, RequestCancelled}
+    pool_accounting::{Self, Ledger}
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{balance, coin, coin_registry, event, test_scenario::{Self as test, Scenario}};
+use sui::{balance, coin, coin_registry, test_scenario::{Self as test, Scenario}};
 
 public struct LP_BOOK_TESTS has drop {}
 
@@ -134,9 +139,11 @@ fun priced_supply_mints_proportional_shares() {
 #[test]
 fun priced_withdraw_burns_and_pays_from_idle() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // total_supply 30e6, idle 60e6 -> mark 2.0.
-    book.mint_locked_liquidity(30_000_000);
-    seed_idle(&mut ledger, 60_000_000);
+    // 20e6 locked + 10e6 circulating from a filled supply -> total_supply 30e6, of which
+    // only the 10e6 circulating can be burned. Idle 60e6 (the fill's 10e6 plus 50e6 of
+    // genesis capital and retained profit) values the pool at the 2.0 mark.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
     // dusdc = 10e6 * 60e6 / 30e6 = 20e6.
@@ -151,7 +158,9 @@ fun priced_withdraw_burns_and_pays_from_idle() {
         scenario.ctx(),
     );
 
-    assert_eq!(book.total_supply(), 20_000_000); // 30e6 - 10e6 burned
+    // 30e6 - 10e6 burned, landing exactly on the 20e6 locked floor: the exit consumed
+    // the whole circulating supply and nothing more.
+    assert_eq!(book.total_supply(), 20_000_000);
     assert_eq!(ledger.idle_balance(), 40_000_000); // 60e6 - 20e6 paid out
     assert_eq!(book.withdraw_requests_pending(), 0);
 
@@ -161,9 +170,11 @@ fun priced_withdraw_burns_and_pays_from_idle() {
 #[test]
 fun two_withdrawals_share_one_frozen_mark() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // total_supply 30e6, idle 50e6 -> mark 5/3 (a fraction that rounds).
-    book.mint_locked_liquidity(30_000_000);
-    seed_idle(&mut ledger, 50_000_000);
+    // 10e6 locked + 20e6 circulating -> total_supply 30e6, and the two exits burn exactly
+    // that circulating 20e6. Idle 50e6 (the fill's 20e6 plus 30e6 of genesis capital and
+    // retained profit) -> mark 5/3, a fraction that rounds.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 10_000_000, 20_000_000);
+    seed_idle(&mut ledger, 30_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
@@ -181,7 +192,7 @@ fun two_withdrawals_share_one_frozen_mark() {
     );
 
     assert_eq!(ledger.idle_balance(), 16_666_668); // 50e6 - 2 * 16_666_666 (frozen); repriced would leave 16_666_667
-    assert_eq!(book.total_supply(), 10_000_000); // 30e6 - 2 * 10e6 burned
+    assert_eq!(book.total_supply(), 10_000_000); // 30e6 - 2 * 10e6 burned, back to the locked floor
     assert_eq!(book.withdraw_requests_pending(), 0);
 
     finish(scenario, book, ledger);
@@ -192,17 +203,19 @@ fun two_withdrawals_share_one_frozen_mark() {
 #[test]
 fun withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest() {
     let (mut scenario, mut book, mut ledger) = setup();
-    // total_supply 30e6, idle 30e6 -> mark 1.0.
-    book.mint_locked_liquidity(30_000_000);
-    seed_idle(&mut ledger, 30_000_000);
-    // Two 20e6 withdrawals: the first fills (idle 30e6 -> 10e6); the second wants 20e6
-    // but only 10e6 of idle is left, so it is paid 10e6 and keeps the other 10e6 queued.
+    // 10e6 locked + 30e6 circulating -> total_supply 40e6, idle 30e6 from the fill. The
+    // mark values the pool at 40e6, so the 10e6 the locked shares stand for sits in
+    // markets rather than idle — which is what lets idle run dry before supply does.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 10_000_000, 30_000_000);
+    // Two 20e6 withdrawals at the 1.0 mark: the first fills (idle 30e6 -> 10e6); the
+    // second wants 20e6 but only 10e6 of idle is left, so it is paid 10e6 and keeps the
+    // other 10e6 queued.
     enqueue_withdraw(&mut scenario, &mut book, 20_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 20_000_000);
 
     let summary = book.drain(
         &mut ledger,
-        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        lp_book::new_flush_mark(40_000_000, 40_000_000),
         vault_id(),
         option::none(),
         option::none(),
@@ -214,7 +227,8 @@ fun withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest() {
     // Both count as fills; idle is fully paid out and the second request stays queued
     // for its remaining half.
     assert_drain_summary(&summary, 0, 2, 2);
-    assert_eq!(book.total_supply(), 0); // 20e6 + 10e6 burned against the 30e6 locked
+    // 20e6 + 10e6 burned out of the 30e6 circulating, leaving only the locked 10e6.
+    assert_eq!(book.total_supply(), 10_000_000);
     assert_eq!(ledger.idle_balance(), 0); // every DUSDC of idle reached an exiting LP
     assert_eq!(book.withdraw_requests_pending(), 1); // the second half is still first in line
 
@@ -266,11 +280,15 @@ fun supply_carries_when_the_pool_has_no_headroom() {
     finish(scenario, book, ledger);
 }
 
-/// A request that both misses its limit and hits a full pool reports the *limit* —
-/// the only test that distinguishes the two refund reasons, and so the only one that
-/// pins the branch order the partial-fill rule depends on.
+/// A request that both misses its limit and hits a full pool takes the *limit* branch,
+/// which is the branch order the partial-fill rule depends on. The two branches leave
+/// different queue state at the shipped attempt count, so the outcome is readable
+/// without inspecting the refund reason: a limit miss resolves the head — popped,
+/// refunded, one unit of budget spent — while a capacity stop carries the head with its
+/// escrow and spends nothing, exactly as `supply_carries_when_the_pool_has_no_headroom`
+/// pins for the same fixture without a limit.
 #[test]
-fun over_cap_and_under_limit_reports_the_limit_miss() {
+fun over_cap_and_under_limit_takes_the_limit_branch() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     // At the 1.0 mark this quotes 10e6 PLP, short of the 11e6 minimum.
@@ -278,14 +296,15 @@ fun over_cap_and_under_limit_reports_the_limit_miss() {
     book.request_supply(payment, alice_id(), ALICE, 11_000_000);
 
     // Cap at the pool's own value: zero headroom as well as a missed limit.
-    drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
 
-    let cancels = event::events_by_type<RequestCancelled>();
-    assert_eq!(cancels.length(), 1);
-    assert_eq!(
-        vault_events::request_cancelled_reason(&cancels[0]),
-        constants::request_cancel_reason_limit_missed!(),
-    );
+    // Processed and gone: the limit branch popped and refunded the head. Had capacity
+    // won, the head would still be queued with nothing processed.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    // Refunded to the requester rather than filled: nothing minted, nothing into idle.
+    assert_eq!(book.total_supply(), 30_000_000);
+    assert_eq!(ledger.idle_balance(), 0);
 
     finish(scenario, book, ledger);
 }
@@ -388,8 +407,9 @@ fun supply_carries_when_pool_is_already_over_cap() {
 #[test]
 fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(1_000_000_000); // 1,000 PLP
-    seed_idle(&mut ledger, 20_000_000); // 20 DUSDC idle; the rest of NAV sits in markets
+    // 980 PLP locked plus a 20 DUSDC supply filled at par: 1,000 PLP tracked, of which 20
+    // is circulating and burnable, and 20 DUSDC of idle. The rest of NAV sits in markets.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 980_000_000, 20_000_000);
 
     // Supplies, in queue order.
     let s1 = coin::mint_for_testing<DUSDC>(60_000_000, scenario.ctx());
@@ -418,8 +438,8 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     // S2 (80) exceeds the remaining 40, so 40 is taken at the same 1.2 — minting
     //   40 / 1.2 = 33.333333 PLP — and its other 40 stays queued at the head. The cap
     //   is now reached, so the supply pass stops and S3 is never reached.
-    // Withdrawals then price at the same frozen 1.2, against 120 of idle (20 seeded
-    //   plus the 100 the two supply fills brought in).
+    // Withdrawals then price at the same frozen 1.2, against 120 of idle (the 20 the
+    //   opening supply left behind plus the 100 the two fills above brought in).
     // W1 (50 PLP) wants 60 and is paid in full, leaving 60 of idle.
     // W2 (100 PLP) wants 120 but only 60 of idle remains, so idle buys
     //   floor(60 / 1.2) = 50 PLP, pays exactly 60 for them, and the other 50 PLP stays
@@ -429,7 +449,8 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     assert_eq!(book.supply_requests_pending(), 2);
     // W2's unpaid half keeps its place at the front of the withdraw queue.
     assert_eq!(book.withdraw_requests_pending(), 1);
-    // 1,000 + 50 + 33.333333 minted, then 50 and 50 burned by the two exits.
+    // 1,000 + 50 + 33.333333 minted, then 50 and 50 burned by the two exits — the burns
+    // come out of the 103.333333 circulating, leaving the 980 locked untouched.
     assert_eq!(book.total_supply(), 983_333_333);
     // Every DUSDC of idle reached an exiting LP.
     assert_eq!(ledger.idle_balance(), 0);
@@ -498,15 +519,18 @@ fun partially_filled_head_keeps_its_place_across_flushes() {
 #[test]
 fun pool_cap_does_not_gate_withdrawals() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
-    seed_idle(&mut ledger, 30_000_000);
+    // 20e6 locked + 10e6 circulating -> total_supply 30e6, matching the 1.0 mark
+    // `drain_at_par_with_cap` prices at; idle 30e6 is the fill's 10e6 plus genesis capital.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 20_000_000);
     enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
 
     // Cap far below pool value: the exit still pays out in full.
     let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 20_000_000);
 
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
-    assert_eq!(book.total_supply(), 20_000_000); // 10e6 PLP burned
+    // The whole 10e6 circulating burned; the locked 20e6 is what remains.
+    assert_eq!(book.total_supply(), 20_000_000);
     assert_eq!(ledger.idle_balance(), 20_000_000); // 10 DUSDC paid out at the 1.0 mark
 
     finish(scenario, book, ledger);
@@ -692,8 +716,10 @@ fun raising_attempts_reintroduces_head_of_line_blocking() {
 #[test]
 fun withdraw_limit_miss_carries_then_expires_at_three_attempts() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
-    seed_idle(&mut ledger, 60_000_000);
+    // 20e6 locked + 10e6 circulating -> total_supply 30e6 for the 2.0 mark; idle 60e6 is
+    // the fill's 10e6 plus 50e6 of genesis capital and retained profit.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
     enqueue_withdraw_with_limit(
         &mut scenario,
         &mut book,
@@ -718,6 +744,7 @@ fun withdraw_limit_miss_carries_then_expires_at_three_attempts() {
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 2);
     assert_eq!(book.withdraw_requests_pending(), 0);
     // 1 PLP burned at the 2.0 mark pays 2 DUSDC; the rested head's escrow was refunded.
+    // The burn comes out of the 10e6 circulating, well clear of the 20e6 locked.
     assert_eq!(book.total_supply(), 29_000_000);
     assert_eq!(ledger.idle_balance(), 58_000_000);
 
@@ -801,8 +828,10 @@ fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
 #[test]
 fun withdraw_limit_miss_does_not_block_later_requests() {
     let (mut scenario, mut book, mut ledger) = setup();
-    book.mint_locked_liquidity(30_000_000);
-    seed_idle(&mut ledger, 60_000_000);
+    // 20e6 locked + 10e6 circulating -> total_supply 30e6 for the 2.0 mark; idle 60e6 is
+    // the fill's 10e6 plus 50e6 of genesis capital and retained profit.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
     enqueue_withdraw_for(
         &mut scenario,
         &mut book,
@@ -825,7 +854,8 @@ fun withdraw_limit_miss_does_not_block_later_requests() {
 
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 2);
     assert_eq!(book.withdraw_requests_pending(), 0);
-    // 1e6 PLP burned at the 2.0 mark pays 2e6 DUSDC out of the 60e6 idle.
+    // 1e6 PLP burned at the 2.0 mark pays 2e6 DUSDC out of the 60e6 idle; the burn comes
+    // out of the 10e6 circulating, well clear of the 20e6 locked.
     assert_eq!(book.total_supply(), 29_000_000);
     assert_eq!(ledger.idle_balance(), 58_000_000);
 
@@ -1055,7 +1085,9 @@ fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
     book.mint_locked_liquidity(30_000_000);
     seed_idle(&mut ledger, 30_000_000);
     // Three supplies queued ahead of one withdrawal. Independent budgets of 1 each fill
-    // exactly one of each, so the withdrawal drains despite the supply backlog.
+    // exactly one of each, so the withdrawal drains despite the supply backlog. Supplies
+    // run first, so the 10e6 the exit burns is the circulating PLP this flush just
+    // minted — the locked 30e6 is never touched.
     let mut i = 0u64;
     while (i < 3) {
         let coin = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
@@ -1596,9 +1628,44 @@ fun new_book(ctx: &mut TxContext): (LpBook<LP_BOOK_TESTS>, Ledger) {
     (lp_book::new(treasury_cap, ctx), pool_accounting::new(ctx))
 }
 
-/// Seed pool idle DUSDC directly so withdraw drains have liquidity to pay from.
+/// Seed pool idle DUSDC directly, standing in for the genesis capital and retained
+/// trading profit that back a mark above the shares this root-free book has minted.
 fun seed_idle(ledger: &mut Ledger, amount: u64) {
     ledger.receive_idle(balance::create_for_testing<DUSDC>(amount));
+}
+
+/// Genesis lock plus one filled supply request: the production route to *circulating*
+/// PLP. `locked` shares are minted into the book's permanent balance, which has no
+/// withdraw path, and `supplied` DUSDC is then filled at the 1.0 mark that lock leaves
+/// behind — minting `supplied` shares 1:1 to an LP and joining that DUSDC to idle.
+///
+/// Post-state: tracked supply `locked + supplied`, idle `supplied`. A later drain may
+/// burn up to `supplied`; burning past it would take tracked supply below a locked
+/// balance that still exists, a state production cannot reach.
+fun lock_and_fill_supply(
+    scenario: &mut Scenario,
+    book: &mut LpBook<LP_BOOK_TESTS>,
+    ledger: &mut Ledger,
+    locked: u64,
+    supplied: u64,
+) {
+    book.mint_locked_liquidity(locked);
+    let payment = coin::mint_for_testing<DUSDC>(supplied, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+    book.drain(
+        ledger,
+        lp_book::new_flush_mark(locked, locked),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+    // Fixture guard: at a 1.0 mark the fill is exactly 1:1, so a fixture that quietly
+    // stopped establishing circulating supply fails here rather than in the assertions.
+    assert_eq!(book.total_supply(), locked + supplied);
+    assert_eq!(ledger.idle_balance(), supplied);
 }
 
 /// Queue one withdraw request escrowing a `mint_for_testing` LP stand-in for

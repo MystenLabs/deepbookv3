@@ -394,14 +394,6 @@ public(package) fun emit_request_cancelled(
     });
 }
 
-#[test_only]
-/// Read the cancellation reason off an emitted event. Event struct fields are
-/// module-private and `event::events_by_type` hands back the struct by value, so a
-/// test asserting *which* refund path fired has no other route to this field.
-public fun request_cancelled_reason(request_cancelled: &RequestCancelled): u8 {
-    request_cancelled.reason
-}
-
 public(package) fun emit_request_limit_missed(
     pool_vault_id: ID,
     account_id: ID,
