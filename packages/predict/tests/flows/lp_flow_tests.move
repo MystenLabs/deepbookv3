@@ -1,19 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Flow coverage for the genesis-lock + bootstrap gates of the async LP layer.
+/// Vault-level flow coverage for the async LP layer: the genesis `lock_capital` mint,
+/// the bootstrap precondition on the flush, and the request-attempt count that
+/// `finish_flush` reads from `ProtocolConfig`.
 ///
-/// The async LP request/cancel entrypoints (`request_supply` / `request_withdraw` /
-/// `cancel_*`) pull from / refund to the manager's internal custody and therefore
-/// auto-settle from a `sui::accumulator::AccumulatorRoot`, which a Move unit test
-/// cannot construct (private `create`, `@0x0`-only). So the vault-level
-/// request / cancel custody paths live in the accumulator-bound outer layer. Flush
-/// valuation is covered in `pool_valuation_flow_tests`, while the drain economics
-/// (proportional shares, FIFO-until-dry, per-queue budgets, frozen mark) and the
-/// manager-routed cancel refund + recipient check are re-covered root-free against
-/// a standalone `LpBook` in `lp_book_tests`. This file keeps only the root-free
-/// vault gates: the genesis `lock_capital` mint and the bootstrap precondition on
-/// the flush.
+/// The fixture shares an empty `sui::accumulator::AccumulatorRoot` through
+/// `accumulator_support` (the framework exposes `create_for_testing`, callable as
+/// `@0x0`), so the attempt-count tests drive the production `plp::request_supply`
+/// against a real `AccountBundle` and cover the account-custody pull and the queue
+/// write on the same path as the flush's refund-or-carry decision. Not covered here: the
+/// vault-level `cancel_*` entrypoints, and `request_withdraw` — a unit-test root carries
+/// no settlement funds (`packages/account/ACCUMULATOR_TESTING_STATUS.md`), so a flush
+/// fill's PLP never reaches account custody to be withdrawn. Flush valuation is
+/// covered in `pool_valuation_flow_tests`, while the drain economics (proportional
+/// shares, FIFO-until-dry, per-queue budgets, frozen mark) and the cancel refund +
+/// recipient check are covered root-free against a standalone `LpBook` in
+/// `lp_book_tests`.
 #[test_only]
 module deepbook_predict::lp_flow_tests;
 

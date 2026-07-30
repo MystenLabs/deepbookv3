@@ -1,14 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Validation bounds for the trade liquidation budget. The value is stored on
-/// `ProtocolConfig`; its bounds live in `config_constants` and are asserted by
-/// the protocol_config setter.
+/// Validation bounds for two `ProtocolConfig` scalars: the trade liquidation budget
+/// and the LP request attempt count. Both values are stored on `ProtocolConfig`; their
+/// bounds live in `config_constants` and are asserted by the protocol_config setters.
 #[test_only]
 module deepbook_predict::risk_config_tests;
 
 use deepbook_predict::config_constants;
 use std::unit_test::assert_eq;
+
+/// The shipped `lp_request_limit_flush_attempts` envelope, written out by hand so a
+/// change to either bound has to be made here too: one attempt is fill-or-kill, and
+/// three is the widest head-of-line window RP-12 accounts for.
+const MIN_LP_REQUEST_ATTEMPTS: u64 = 1;
+const MAX_LP_REQUEST_ATTEMPTS: u64 = 3;
 
 #[test]
 fun trade_budget_accepts_endpoints() {
@@ -42,12 +48,11 @@ fun trade_budget_above_max_aborts() {
 /// here only the envelope is pinned.
 #[test]
 fun lp_request_attempts_accepts_endpoints() {
-    config_constants::assert_lp_request_limit_flush_attempts(
-        config_constants::min_lp_request_limit_flush_attempts!(),
-    );
-    config_constants::assert_lp_request_limit_flush_attempts(
-        config_constants::max_lp_request_limit_flush_attempts!(),
-    );
+    assert_eq!(config_constants::min_lp_request_limit_flush_attempts!(), MIN_LP_REQUEST_ATTEMPTS);
+    assert_eq!(config_constants::max_lp_request_limit_flush_attempts!(), MAX_LP_REQUEST_ATTEMPTS);
+
+    config_constants::assert_lp_request_limit_flush_attempts(MIN_LP_REQUEST_ATTEMPTS);
+    config_constants::assert_lp_request_limit_flush_attempts(MAX_LP_REQUEST_ATTEMPTS);
 }
 
 /// Zero attempts would refund a request the mark could actually have filled.
