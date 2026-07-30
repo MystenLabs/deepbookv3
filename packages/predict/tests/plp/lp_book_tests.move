@@ -50,8 +50,6 @@ const LIMIT_MISS_SUPPLY_MIN_OUT: u64 = LIMIT_MISS_SUPPLY_QUOTE + 1_000_000;
 const LIMIT_MISS_WITHDRAW_AMOUNT: u64 = 10_000_000;
 const LIMIT_MISS_WITHDRAW_QUOTE: u64 = 20_000_000;
 const LIMIT_MISS_WITHDRAW_MIN_OUT: u64 = LIMIT_MISS_WITHDRAW_QUOTE + 1_000_000;
-/// No executable mark can ever quote this, so a request carrying it always misses.
-const UNATTAINABLE_MIN_OUT: u64 = 18_446_744_073_709_551_615;
 /// The shipped `ProtocolConfig` default: one attempt, so a miss refunds at once.
 const NO_RETRY: u64 = 1;
 /// The configured maximum, used where a test covers the resting-limit path an admin
@@ -257,7 +255,7 @@ fun supply_limit_miss_does_not_block_later_requests() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let unfillable = coin::mint_for_testing<DUSDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
-    book.request_supply(unfillable, bob_id(), BOB, UNATTAINABLE_MIN_OUT);
+    book.request_supply(unfillable, bob_id(), BOB, unattainable_min_out());
     let honest = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(honest, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -360,7 +358,7 @@ fun raising_attempts_reintroduces_head_of_line_blocking() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let unfillable = coin::mint_for_testing<DUSDC>(LIMIT_MISS_SUPPLY_AMOUNT, scenario.ctx());
-    book.request_supply(unfillable, bob_id(), BOB, UNATTAINABLE_MIN_OUT);
+    book.request_supply(unfillable, bob_id(), BOB, unattainable_min_out());
     let honest = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(honest, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -428,7 +426,7 @@ fun limit_miss_spends_one_budget_unit() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(30_000_000);
     let unfillable = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
-    book.request_supply(unfillable, bob_id(), BOB, UNATTAINABLE_MIN_OUT);
+    book.request_supply(unfillable, bob_id(), BOB, unattainable_min_out());
     let honest = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(honest, alice_id(), ALICE, NO_MIN_OUTPUT);
 
@@ -504,7 +502,7 @@ fun withdraw_limit_miss_does_not_block_later_requests() {
         &mut book,
         BOB,
         LIMIT_MISS_WITHDRAW_AMOUNT,
-        UNATTAINABLE_MIN_OUT,
+        unattainable_min_out(),
     );
     enqueue_withdraw_for(&mut scenario, &mut book, ALICE, min_withdraw!(), NO_MIN_OUTPUT);
 
@@ -1191,6 +1189,9 @@ fun alice_id(): ID { ALICE.to_id() }
 
 /// A second requesting account, so queue-ordering tests can tell two owners apart.
 fun bob_id(): ID { BOB.to_id() }
+
+/// No executable mark can ever quote this, so a request carrying it always misses.
+fun unattainable_min_out(): u64 { std::u64::max_value!() }
 
 /// Drain both queues at a 1.0 share price, so a budget test varies only the budget.
 fun drain_at_par_with_budgets(

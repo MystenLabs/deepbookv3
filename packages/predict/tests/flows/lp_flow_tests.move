@@ -24,12 +24,11 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
-use sui::{coin, test_scenario::return_shared};
+use sui::test_scenario::return_shared;
 
-/// No executable mark can quote this, so a request carrying it misses every flush.
-const UNATTAINABLE_MIN_OUT: u64 = 18_446_744_073_709_551_615;
+/// Account funding for the LP staging the request; well above `min_supply_request`.
+const LP_DEPOSIT: u64 = 1_000_000_000;
 
 // === Genesis lock + bootstrapped gates ===
 
@@ -75,73 +74,68 @@ fun flush_before_bootstrap_aborts() {
 // === Attempt count is read from config by the flush ===
 
 /// `finish_flush` must take the attempt count from `ProtocolConfig`, not from a
-/// compiled constant. Staged end-to-end because the drain-level tests pass the value
-/// in by hand and so cannot see a disconnected knob: at the shipped default of one
-/// attempt, a limit-missing request is refunded by the flush that reaches it.
+/// compiled constant. Staged through the production `request_supply` + flush path
+/// because the drain-level tests pass the value in by hand and so structurally cannot
+/// see a disconnected knob. Runs on a pool with no live markets, so the mark is simply
+/// idle over supply and the request can only leave the queue by missing its limit.
 #[test]
 fun flush_refunds_limit_miss_at_the_default_attempt_count() {
-    let mut fx = helpers::setup_market_default();
-    fx.bootstrap_lock(min_supply!());
-    queue_unfillable_supply(&mut fx);
+    let (mut fx, mut account) = setup_pool_with_lp();
+    queue_unfillable_supply(&mut fx, &mut account);
+    assert_pending_and_supply(&mut fx, 1, min_supply!());
 
     flush(&mut fx);
 
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    // Refunded on its first miss: queue empty, and the genesis lock is all that was minted.
-    assert_eq!(vault.supply_requests_pending(), 0);
-    assert_eq!(vault.plp_total_supply(), min_supply!());
-    return_shared(vault);
+    // Refunded on its first miss: queue empty, and the genesis lock is all that exists.
+    assert_pending_and_supply(&mut fx, 0, min_supply!());
 
+    helpers::return_account_bundle(account);
     fx.finish();
 }
 
-/// The same request against a raised attempt count survives its first flush instead,
+/// The same request against a raised attempt count survives its first two flushes,
 /// which is only possible if the flush actually reads the configured value.
 #[test]
 fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
-    let mut fx = helpers::setup_market_default();
-    fx.bootstrap_lock(min_supply!());
+    let (mut fx, mut account) = setup_pool_with_lp();
     set_attempts(&mut fx, 3);
-    queue_unfillable_supply(&mut fx);
+    queue_unfillable_supply(&mut fx, &mut account);
 
     flush(&mut fx);
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     // Still queued after one miss, because the admin allowed three attempts.
-    assert_eq!(vault.supply_requests_pending(), 1);
-    return_shared(vault);
+    assert_pending_and_supply(&mut fx, 1, min_supply!());
 
-    // Two more flushes exhaust the allowance; the third miss refunds it.
     flush(&mut fx);
+    assert_pending_and_supply(&mut fx, 1, min_supply!());
+
+    // The third miss exhausts the allowance and refunds it.
     flush(&mut fx);
+    assert_pending_and_supply(&mut fx, 0, min_supply!());
 
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    assert_eq!(vault.supply_requests_pending(), 0);
-    assert_eq!(vault.plp_total_supply(), min_supply!());
-    return_shared(vault);
-
+    helpers::return_account_bundle(account);
     fx.finish();
 }
 
 // === Helpers ===
 
-/// Queue a minimum-sized supply asking for an output no mark can quote, so it misses
-/// its limit on every flush regardless of pool NAV.
-fun queue_unfillable_supply(fx: &mut helpers::Fixture) {
-    fx.scenario_mut().next_tx(test_constants::admin());
+/// A bootstrapped pool (no live markets) plus a funded LP account.
+fun setup_pool_with_lp(): (helpers::Fixture, helpers::AccountBundle) {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+    let trader = fx.create_funded_manager(LP_DEPOSIT);
+    let account = fx.take_account_bundle(&trader);
+    (fx, account)
+}
+
+/// Queue a minimum-sized supply asking for an output no mark can quote, through the
+/// production entrypoint.
+fun queue_unfillable_supply(fx: &mut helpers::Fixture, account: &mut helpers::AccountBundle) {
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), fx.scenario_mut().ctx());
-    plp::queue_supply_for_testing(
-        &mut vault,
-        payment,
-        test_constants::admin().to_id(),
-        test_constants::admin(),
-        UNATTAINABLE_MIN_OUT,
-    );
+    fx.request_supply_direct(&mut vault, &config, account, min_supply!(), unattainable_min_out());
     return_shared(vault);
+    return_shared(config);
 }
 
 fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
@@ -150,6 +144,17 @@ fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
     fx.set_lp_request_limit_flush_attempts(&mut config, attempts);
     return_shared(config);
 }
+
+fun assert_pending_and_supply(fx: &mut helpers::Fixture, pending: u64, total_supply: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.supply_requests_pending(), pending);
+    assert_eq!(vault.plp_total_supply(), total_supply);
+    return_shared(vault);
+}
+
+/// No executable mark can quote this, so a request carrying it misses every flush.
+fun unattainable_min_out(): u64 { std::u64::max_value!() }
 
 /// Run one flush over the empty market set (pool NAV == idle), draining both queues
 /// fully, and discard the result.

@@ -36,15 +36,10 @@ fun trade_budget_above_max_aborts() {
     abort 999
 }
 
-/// Predict ships fill-or-kill: one attempt, so a limit miss refunds at the flush
-/// that reaches it and no request can hold the queue head. Raising this is what
-/// buys a resting limit; RP-12 owns the liveness cost that comes with it.
-#[test]
-fun lp_request_attempts_default_is_no_retry() {
-    assert_eq!(config_constants::default_lp_request_limit_flush_attempts!(), 1);
-    assert_eq!(config_constants::min_lp_request_limit_flush_attempts!(), 1);
-}
-
+/// Predict ships fill-or-kill: one attempt, so a limit miss refunds at the flush that
+/// reaches it and no request can hold the queue head. The shipped value is asserted
+/// against stored config state in `protocol_config_tests::new_config_ships_with_no_retry`;
+/// here only the envelope is pinned.
 #[test]
 fun lp_request_attempts_accepts_endpoints() {
     config_constants::assert_lp_request_limit_flush_attempts(

@@ -430,7 +430,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   entry and exit passes through it. Blindly filling a limit-missing request gives
   the user unbounded slippage; leaving one queued at the head holds up every
   request behind it, so the head-of-queue policy is a pool-wide liveness control,
-  not a per-user UX knob.
+  not a per-user UX knob. The two settings move the cost between two different
+  failure modes: at one attempt the queue cannot be held, but each miss is
+  *processed* (pop, refund, event) and the drain continues, so with unbounded
+  budgets a single flush does work proportional to the queued-request count —
+  inside the one mandatory flush PTB, which is already measured at 47-92% of the
+  computation ceiling on a saturated pool
+  (`evidence/c1-price-memo-2026-07-01.md`) and whose OOG stalls valuation and both
+  queues (`evidence/c1-nav-stress-2026-06-30.md`). Above one attempt the per-flush
+  work is truncated by the `break` instead, at the cost of the blocking.
 - **Response:** the attempt count is admin-tunable
   (`protocol_config::set_lp_request_limit_flush_attempts`, bounds 1–3) and
   **ships at 1**. At 1 a miss protocol-cancels and refunds immediately — the head
@@ -456,28 +464,48 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   keeping the attempt count as config rather than deleting the retry keeps that
   recoverable without an upgrade — the number is a tuning parameter for LP-queue
   liveness alongside flush cadence. The ceiling of 3 is deliberate: it caps the
-  worst case an operator can create at the pre-fix behaviour, so raising the knob
-  can never be worse than what was measured.
-- **Risk profile:** `MEASURED` at the shipped setting — the blockage the
-  superseded policy allowed was reproduced and quantified at 2N+1 flushes for N
-  limit-missing requests
-  (`evidence/rp12-lp-queue-head-of-line-2026-07-29.md`), and the pinning tests
-  below hold the queue open at one attempt while also pinning that the blocking
-  returns above it. `BEST-GUESS` for the UX cost: how often an honest limit misses
-  depends on flush cadence and NAV volatility, which are still unmeasured, and at
-  one attempt each miss costs a round trip rather than a wait. **The knob is a
+  blocking an operator can create at the pre-fix behaviour, so raising the knob is
+  never worse *on that axis* than what was measured.
+  **The per-flush work this shifts onto the drain is bounded by the operator's
+  budgets, not by the protocol.** Nothing caps pending requests per account or per
+  queue, `min_output` is unbounded at admission, and a refunded request returns its
+  escrow in the same transaction — so the same capital re-queues indefinitely at
+  gas cost. Running a flush with `supply_budget`/`withdraw_budget` = `None` is
+  therefore not a supported production configuration under this policy; both must
+  be bounded so one flush's drain work is capped regardless of queue depth. This is
+  an operational precondition, and the marginal cost of one refunded head against
+  the flush's remaining headroom is **not yet measured**.
+- **Risk profile:** split, because only one axis was measured.
+  `MEASURED` for the blockage the **superseded** policy allowed — reproduced and
+  quantified at 2N+1 flushes for N limit-missing requests
+  (`evidence/rp12-lp-queue-head-of-line-2026-07-29.md`), which is what raising the
+  knob buys back, bounded by the ceiling. `BEST-GUESS` for the **shipped** setting
+  on both of its axes: the per-flush drain cost under a deep queue was not
+  measured (see Reasoning — budgets must be bounded), and how often an honest limit
+  misses depends on flush cadence and NAV volatility, which are also unmeasured.
+  The pinning tests below hold the queue open at one attempt and pin that the
+  blocking returns above it; neither is a gas or rate measurement. **The knob is a
   liveness control, not a UX preference** — raising it above 1 knowingly re-enables
-  head-of-line blocking (bounded by the ceiling) and should follow a measured miss
-  rate rather than an intuition about volatility.
+  head-of-line blocking and should follow a measured miss rate rather than an
+  intuition about volatility.
 - **Pinning tests:** `lp_book_tests.move` —
   `supply_limit_miss_refunds_at_the_flush_that_reaches_it`,
   `supply_limit_miss_does_not_block_later_requests`,
   `withdraw_limit_miss_refunds_at_the_flush_that_reaches_it`,
-  `withdraw_limit_miss_does_not_block_later_requests`, and, for the tunable path,
+  `withdraw_limit_miss_does_not_block_later_requests`, and `limit_miss_spends_one_budget_unit`;
+  for the tunable path,
   `supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts`,
-  `supply_limit_expires_after_three_misses_at_three_attempts`, and
-  `raising_attempts_reintroduces_head_of_line_blocking`. The shipped default and
-  the bounds are pinned in `risk_config_tests.move`.
+  `supply_limit_expires_after_three_misses_at_three_attempts`,
+  `raising_attempts_reintroduces_head_of_line_blocking`, and
+  `withdraw_limit_miss_carries_then_expires_at_three_attempts`. `lp_flow_tests.move`
+  drives the production request-then-flush path at both settings —
+  `flush_refunds_limit_miss_at_the_default_attempt_count` and
+  `flush_carries_limit_miss_when_admin_raises_the_attempt_count` — which is what pins
+  the attempt count to configured state rather than to a constant.
+  `protocol_config_tests.move` pins the shipped value on a fresh config
+  (`new_config_ships_with_no_retry`) and the valuation-lock guard on the setter
+  (`set_lp_request_limit_flush_attempts_during_valuation_aborts`); the tunable envelope
+  is pinned in `risk_config_tests.move`.
 - **Reopen when:** measured miss rates on a live cadence show honest LPs
   re-submitting often enough to want a resting limit back. Raising the attempt
   count is the cheap, bounded lever; the durable answer is a retry that cannot

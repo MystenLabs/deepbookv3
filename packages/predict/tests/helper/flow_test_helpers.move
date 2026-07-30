@@ -349,6 +349,31 @@ public fun set_lp_request_limit_flush_attempts(
     config.set_lp_request_limit_flush_attempts(&self.admin_cap, attempts);
 }
 
+/// Queue an LP supply request through the production entrypoint, so a test covers the
+/// account-custody pull and the request event as well as the queue write. Takes the
+/// vault and config directly, so it works on a pool with no live markets — where the
+/// flush mark is just idle over supply and a limit miss is unambiguous.
+public fun request_supply_direct(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    account_bundle: &mut AccountBundle,
+    amount: u64,
+    min_plp_out: u64,
+): u64 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    vault.request_supply(
+        &mut account_bundle.wrapper,
+        auth,
+        config,
+        amount,
+        min_plp_out,
+        &account_bundle.root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);

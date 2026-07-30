@@ -265,10 +265,17 @@ public fun value_expiry(
 /// `supply_budget` and `withdraw_budget` bound how many requests each queue may
 /// process this flush (`None` = unbounded). Filled heads and protocol-refunded
 /// heads — non-executable, or quoting below the request's own minimum output —
-/// both count as processed, so a head is always resolved and never held over. A
-/// withdrawal whose quote is valid but exceeds idle carries without spending
-/// budget. The budgets are independent, so a supply backlog does not consume
-/// withdrawal capacity.
+/// both count as processed. At `ProtocolConfig`'s shipped attempt count of one, a
+/// head is therefore always resolved by the flush that reaches it and never held
+/// over; above one, a head that misses its limit stays queued and stops that queue
+/// for the flush. A withdrawal whose quote is valid but exceeds idle carries
+/// without spending budget. The budgets are independent, so a supply backlog does
+/// not consume withdrawal capacity.
+///
+/// Leaving budgets `None` means one flush processes every queued request. Because
+/// queueing is permissionless and a refunded request returns its escrow in the same
+/// transaction, an operator should bound both budgets in production rather than rely
+/// on queue length staying small — see RP-12.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
@@ -496,9 +503,10 @@ public fun lock_capital(
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
 /// auto-settles any flush-delivered DUSDC first. The account receives minted PLP
-/// only if the next flush to reach it can mint at least `min_plp_out`; if that
-/// flush's mark quotes less, the request is cancelled and refunded there and then.
-/// Returns the queue index, the handle used to cancel before the flush.
+/// only if a flush that reaches it can mint at least `min_plp_out`. At the shipped
+/// attempt count of one, a flush whose mark quotes less cancels and refunds the
+/// request there and then; a higher configured count lets it rest and retry that many
+/// flushes first. Returns the queue index, the handle used to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
@@ -534,10 +542,11 @@ public fun request_supply(
 
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
-/// The pull auto-settles any flush-delivered PLP first. The request fills only if
-/// the next flush to reach it can pay at least `min_dusdc_out`; if that flush's mark
-/// quotes less, the request is cancelled and refunded there and then. Returns the
-/// queue index used to cancel before the flush.
+/// The pull auto-settles any flush-delivered PLP first. The request fills only if a
+/// flush that reaches it can pay at least `min_dusdc_out`. At the shipped attempt
+/// count of one, a flush whose mark quotes less cancels and refunds the request there
+/// and then; a higher configured count lets it rest and retry that many flushes first.
+/// Returns the queue index used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
@@ -979,20 +988,4 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     let (vault_id, metadata_cap) = init_plp(PLP {}, ctx);
     transfer_metadata_cap(metadata_cap, ctx);
     vault_id
-}
-
-#[test_only]
-/// Queue a supply request straight into the book, skipping the account-custody pull
-/// that `request_supply` performs. The public entrypoint auto-settles from an
-/// `AccumulatorRoot` that a Move unit test cannot construct, so this is the only way
-/// to stage a queued request and then exercise the real `finish_flush` drain — which
-/// is where the flush reads the attempt count from `ProtocolConfig`.
-public fun queue_supply_for_testing(
-    vault: &mut PoolVault,
-    payment: Coin<DUSDC>,
-    account_id: ID,
-    recipient: address,
-    min_plp_out: u64,
-): u64 {
-    vault.lp.request_supply(payment, account_id, recipient, min_plp_out)
 }

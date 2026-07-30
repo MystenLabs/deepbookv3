@@ -264,6 +264,9 @@ public fun set_lp_request_limit_flush_attempts(
     attempts: u64,
 ) {
     config.assert_version();
+    // The flush reads this value mid-PTB; refuse to move it under a valuation in
+    // flight, as the other setters a flush reads from do.
+    config.assert_not_valuation_in_progress();
     config_constants::assert_lp_request_limit_flush_attempts(attempts);
     config.lp_request_limit_flush_attempts = attempts;
 }

@@ -263,7 +263,9 @@ fun drain_supply_queue<LP>(
                     book.supply_queue.pending,
                 );
             } else if (shares < request.min_output) {
-                let missed_flushes = book.supply_queue.record_front_limit_miss();
+                // Counted off the copied entry so the refund path does no page write:
+                // at one attempt the entry is popped on this very miss.
+                let missed_flushes = request.missed_flushes + 1;
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed) = book.supply_queue.pop_front();
                     refund_supply_request(
@@ -274,6 +276,7 @@ fun drain_supply_queue<LP>(
                         book.supply_queue.pending,
                     );
                 } else {
+                    book.supply_queue.record_front_limit_miss();
                     emit_request_limit_missed(
                         pool_vault_id,
                         &request,
@@ -336,7 +339,7 @@ fun drain_withdraw_queue<LP>(
             let payout = payout.destroy_some();
             if (payout < request.min_output) {
                 processed = processed + 1;
-                let missed_flushes = book.withdraw_queue.record_front_limit_miss();
+                let missed_flushes = request.missed_flushes + 1;
                 if (missed_flushes >= max_limit_misses) {
                     let (request, escrowed_lp) = book.withdraw_queue.pop_front();
                     refund_withdraw_request(
@@ -347,6 +350,7 @@ fun drain_withdraw_queue<LP>(
                         book.withdraw_queue.pending,
                     );
                 } else {
+                    book.withdraw_queue.record_front_limit_miss();
                     emit_request_limit_missed(
                         pool_vault_id,
                         &request,
@@ -508,12 +512,14 @@ fun pop_front<T>(queue: &mut RequestQueue<T>): (RequestEntry, Balance<T>) {
     queue.remove(request.index)
 }
 
-fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>): u64 {
+/// Persist a miss on the head so it survives to the next flush. Only called when the
+/// request keeps an attempt; a miss that refunds counts off the caller's copy instead,
+/// so the refund path writes no page.
+fun record_front_limit_miss<T>(queue: &mut RequestQueue<T>) {
     assert!(queue.pending > 0, ERequestNotFound);
     let page_id = *queue.head_page_id.borrow();
     let entry = &mut queue.pages.borrow_mut(page_id).entries[0];
     entry.missed_flushes = entry.missed_flushes + 1;
-    entry.missed_flushes
 }
 
 fun remove<T>(queue: &mut RequestQueue<T>, index: u64): (RequestEntry, Balance<T>) {
