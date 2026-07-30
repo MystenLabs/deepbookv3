@@ -25,10 +25,11 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 ### Path-Scoped Rules — read before editing files under the glob
 
-- **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
+- **Move package sources and manifests** (`packages/**/*.move`, `packages/**/Move.toml`, `packages/**/Published.toml`) → `.claude/rules/move.md`
 - **Predict-cluster contracts** (`packages/{predict,propbook,block_scholes_oracle,account}/**/*.move`) → `.claude/rules/predict-contracts.md` *(also read `move.md`)*
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
 - **Predict harness** (`packages/predict/harness/**`) → `.claude/rules/predict-harness.md`
+- **Predict deployment** (`packages/predict/deployment/**`) → `.claude/rules/predict-deployment.md`
 - **Core indexer** (`crates/{server,schema,indexer}/**`) → `.claude/rules/indexer.md` *(thin stub — retires when the core crates migrate)*
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 
@@ -37,6 +38,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 - **Code review / review uncommitted changes** → `.claude/rules/code-review.md` (for a deep Predict smart-contract audit, invoke the `predict-audit` skill — `.claude/skills/predict-audit/` — which fans the lenses out via `orchestrator.workflow.js`, with `ownership-walk.workflow.js` + `rule-sweep.workflow.js` for per-module + per-rule conformance audits)
 - **Wrap-up requests** → `.claude/rules/wrap-up.md`
 - **Add / build a harness strategy** → `.claude/rules/harness-strategy.md` (engage when the user wants to add a Predict harness strategy or test a scenario in the harness)
+- **Create, change, run, publish, deploy, migrate, resume, audit, or verify a Predict deployment or publication script** → `.claude/rules/predict-deployment.md` *(also read `move.md` for package manifests)*
 
 When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`. When the user wants to add or build a harness strategy (e.g. "I want to add a harness strategy"), follow `.claude/rules/harness-strategy.md`.
 
