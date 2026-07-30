@@ -213,8 +213,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   every independently fresh usable Pyth spot reanchors the Block Scholes basis,
   even when the Block Scholes spot is newer; only Pyth's own freshness boundary
   selects the Block Scholes-forward fallback. A signed Block Scholes magnitude
-  above `u64::MAX` aborts at the checked narrowing cast with the VM arithmetic
-  error; it is not relabelled as unavailable and cannot reach the narrower
+  above `u64::MAX` aborts with the named `EBlockScholesInputTooWide` error before
+  narrowing; it is not relabelled as unavailable and cannot reach the narrower
   semantic envelope.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
@@ -225,9 +225,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `use_pyth_spot_for_forward` is a source-preference setting, not a
   newest-observation chooser: adding a relative-time gate would make the chosen
   source depend on cross-provider clock ordering and introduce another
-  observable switching boundary. Primitive width overflow remains the
-  representation guard itself; wrapping it in a named pre-assert would duplicate
-  the same predicate without changing the response.
+  observable switching boundary. Provider-width failure keeps the same
+  fail-closed response as a checked cast, but names the provider-controlled
+  condition so mandatory-path aborts are diagnosable separately from the
+  semantic pricing envelope.
 - **Risk profile:** `BEST-GUESS`; bounded only by the envelope and the
   provider's signing integrity. The timestamp skew between independently fresh
   Pyth and Block Scholes observations is bounded by their configured absolute
@@ -237,8 +238,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `fresh_pyth_remains_selected_when_block_scholes_is_newer`, and
   `live_forward_switches_source_exactly_at_pyth_staleness_boundary`;
   `pricing_guard_tests.move` —
-  `block_scholes_price_above_u64_aborts_on_checked_narrowing` and
-  `block_scholes_svi_above_u64_aborts_on_checked_narrowing`.
+  `block_scholes_price_above_u64_aborts_with_named_width_error` and
+  `block_scholes_svi_above_u64_aborts_with_named_width_error`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
@@ -567,33 +568,46 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-15: Non-monotone active-book BS surfaces block NAV valuation
+## RP-15: Block Scholes guarantees butterfly-free surfaces; active-book inversions fail closed (resolves P-11)
 
-- **Trigger state:** during `current_nav`, the active payout tree asks for UP
-  prices at increasing strike ticks and a fresh Block Scholes surface makes a
-  higher strike price above a lower strike price.
+- **Trigger state:** despite the provider's guarantee that every published SVI
+  surface is monotone and butterfly-arbitrage-free, a fresh Block Scholes
+  surface makes a higher-strike UP price exceed a lower-strike UP price. During
+  `current_nav`, the active payout tree exposes that inversion at two increasing
+  boundary ticks.
 - **Controller:** external — the BS surface publisher controls the shape inside
-  Predict's pricing-safe envelope.
-- **Blast radius:** one market's active book can abort that market's NAV read.
-  Because pool flush uses one frozen mark for all LP supply and withdraw fills,
-  this can block LP fills pool-wide until the surface is corrected.
-- **Response:** abort and retry with a valid surface. The recovery path is the
-  same operational path as stale or missing oracle data: publish a fresh,
-  usable BS surface and rerun valuation.
+  Predict's pricing-safe envelope; traders cannot choose SVI parameters.
+- **Blast radius:** single-order pricing trusts the provider's surface and
+  floors an inverted range to zero. NAV adds a defense-in-depth active-book
+  check: one exposed inversion aborts that market's NAV read, and because the
+  pool flush uses one frozen mark for all LP supply and withdraw fills, it can
+  block LP fills pool-wide until the surface is corrected.
+- **Response:** accept the provider guarantee for surface admission; do not add
+  an on-chain `g(k) >= 0` or tighter synthetic-parameter envelope. If an active
+  book nevertheless exposes an inversion, abort valuation and retry after the
+  provider publishes a corrected surface. This converts the known aggregate-NAV
+  overstatement into fail-closed liveness.
 - **Reasoning:** `strike_payout_tree::walk_linear` relies on active boundary
   prices being monotone. Skipping the market or carrying a partial mark would
   poison the single LP mark used for both supply and withdraw, while allowing
-  the inverted segment through can overstate pool NAV.
-- **Risk profile:** `BEST-GUESS` — reachability depends on the BS publisher
-  signing an arbitrageable surface that also intersects the active book
-  (S-4 resolved: only the registered signer can produce observations).
+  the inverted segment through can overstate pool NAV. Surface quality is part
+  of the trusted Block Scholes provider contract rather than an invariant the
+  signature or Predict Move code proves; the active-book check stays as a
+  narrow accounting backstop rather than duplicating the provider's global
+  surface validation on chain.
+- **Risk profile:** `BEST-GUESS` — no sampled Block Scholes surface violated
+  butterfly freedom, and reachability requires the trusted publisher to violate
+  its guarantee with a surface whose inversion intersects the active book. The
+  guarantee is not enforced by Predict on chain.
 - **Pinning tests:** `pricing_guard_tests.move` —
   `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
   `current_nav_flow_tests.move` —
   `current_nav_rejects_non_monotone_active_book_surface`.
-- **Reopen when:** NAV valuation gains a safe per-market skip/carry design, the
-  LP flush no longer uses one shared mark for both queues, or the production BS
-  verifier proves monotonicity before the surface reaches Predict.
+- **Reopen when:** Block Scholes changes or violates the surface guarantee,
+  Predict accepts another SVI publisher without the same guarantee, the
+  active-book guard is removed, NAV valuation gains a safe per-market
+  skip/carry design, or the LP flush no longer uses one shared mark for both
+  queues.
 
 ---
 

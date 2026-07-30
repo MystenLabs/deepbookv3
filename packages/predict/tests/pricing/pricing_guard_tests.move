@@ -202,10 +202,9 @@ fun live_quote_with_prices_but_no_svi_aborts() {
     abort EUnexpectedSuccess
 }
 
-/// The provider store accepts u128 values, but Predict deliberately uses the checked cast itself
-/// as the representation guard rather than wrapping primitive overflow in a named error.
-#[test, expected_failure(arithmetic_error, location = pricing)]
-fun block_scholes_price_above_u64_aborts_on_checked_narrowing() {
+/// The provider store accepts u128 values, but Predict names the width failure before narrowing.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_price_above_u64_aborts_with_named_width_error() {
     let (fx, mut oracle) = setup_live();
     fx.set_bs_spot_raw_for_testing_bundle(
         &mut oracle,
@@ -222,9 +221,9 @@ fun block_scholes_price_above_u64_aborts_on_checked_narrowing() {
     abort EUnexpectedSuccess
 }
 
-/// The same representation boundary applies independently to every provider-native SVI magnitude.
-#[test, expected_failure(arithmetic_error, location = pricing)]
-fun block_scholes_svi_above_u64_aborts_on_checked_narrowing() {
+/// The same named representation boundary applies to every provider-native SVI magnitude.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_svi_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
     fx.set_bs_svi_a_raw_for_testing_bundle(
         &mut oracle,

@@ -38,10 +38,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Adjusted one-sided digital prices clamp to probability bounds.** The
   pricing-safe envelope bounds each SVI parameter independently and enforces no
   butterfly/no-arbitrage condition, so an admissible surface can push the raw
-  skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any moneyness
-  (open-items P-11). The one-sided UP price saturates to `[0, 1]` and range
-  differencing floors at zero rather than aborting live mint, redeem, or
-  liquidation reads; surface quality is the Block Scholes feed's responsibility.
+  skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any
+  moneyness. The one-sided UP price saturates to `[0, 1]` and range differencing
+  floors at zero rather than aborting live mint, redeem, or liquidation reads;
+  Block Scholes guarantees its published SVI surfaces are monotone and
+  butterfly-arbitrage-free (response policy RP-15).
   NAV valuation additionally rejects an active-book surface whose cached finite
   boundary UP prices are non-monotone, because the aggregate payout-tree walk
   nets signed boundary contributions across orders.

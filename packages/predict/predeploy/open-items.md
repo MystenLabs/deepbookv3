@@ -83,57 +83,6 @@ positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case.
 
-### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
-
-**Severity:** Open envelope-hardening item; non-blocking for the skew-pricing
-correction. No sampled Block Scholes surface triggers it (`g(k) >= 0` over the
-scanned band on 4,000 sampled surfaces), and observed `b` is roughly 3,000 times
-below the constructed corner. The contract nevertheless accepts the corner
-because it bounds each SVI parameter independently and does not enforce
-butterfly freedom (`g(k) >= 0`).
-
-**Condition and controller.** The fixed-point counterexample uses an admitted
-surface with `a=1`, `b=max_svi_input`, `rho=-1`, `m=0`, and `sigma=min` at a
-forward of `100e9`. The trusted surface source controls these inputs; a trader
-cannot choose them. Exploitation additionally requires pre-existing offsetting
-ranges, a pool flush while the surface is active, and queued LP withdrawals.
-Under that surface the adjusted digital is non-monotone. `walk_linear` nets
-signed boundary contributions tree-wide and floors once at the aggregate,
-whereas `compute_range_price` floors each order at zero; without an active-book
-monotonicity guard the tree can therefore net away real liability and make
-`current_nav` overstate withdrawable value.
-
-**Economic impact.** The replay uses two ranges with `1e9` raw DUSDC units of
-quantity each, a $1,000 face value per range at six decimals. Per-order pricing
-returns `0` for `(80e9, 90e9]` and `898,433,481` raw units ($898.433481, or
-89.843% of face) for `(95e9, 105e9]`, so the contract's own per-order liability
-is $898.433481. `walk_linear` nets the first signed contribution before flooring
-and reports `255,159,574` raw units ($255.159574, or 25.516% of face): an
-absolute liability understatement of `643,273,907` raw units ($643.273907, or
-64.327% of face), which is 71.6% of the per-order liability. `current_nav`
-overstates by the same absolute amount; its percentage error depends on the
-market's free cash. This is an internal accounting discrepancy, not a claim that
-a live contract quote is 64% inaccurate.
-
-**Evidence grade.** The mechanism follows directly from `walk_linear`'s
-tree-wide signed netting versus `compute_range_price`'s per-order zero floor;
-the numbers above are reproduced by the fixed-point replay. They are a synthetic
-accepted-envelope counterexample, not a live-pool measurement or a realistic
-loss estimate.
-
-**Action:** Measure a `b`-specific envelope against observed surface history and
-evaluate a source-level butterfly/monotonicity admission check. The active-book
-price-memo guard prevents the known NAV overstatement by aborting valuation on a
-non-monotone active boundary set, so the completed-valuation-discrepancy risk is
-closed (only P-13 now describes a live valuation gap). Because the guard
-aborts rather than reprices, and the pool flush values every active market in one
-transaction, an admitted non-monotone surface now stalls that flush until the
-surface is replaced — the residual is a surface-quality admission gap plus this
-flush-liveness cost, not a mispriced NAV. Surface quality remains a trusted input
-for single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
-review; quantitative framing corrected 2026-07-11; active-book guard added by
-DBU-548.)
-
 ### P-13: Boundary aggregation can understate positive liability by one raw unit
 
 **Severity:** Low.
