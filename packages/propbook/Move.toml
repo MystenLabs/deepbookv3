@@ -12,9 +12,8 @@ fixed_math = { local = "../fixed_math" }
 # Official Pyth Lazer Sui package. Used by `propbook::pyth_feed::update`
 # to consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
 # package-scoped, so the Move type system enforces "this value came from Pyth's
-# verifier." Use `rev = "sui-testnet"` for testnet because Wormhole is
-# custom-deployed there.
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+# verifier." Pinned to the exact source used by the testnet deployment.
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
 # Block Scholes signed-oracle verifier. `bs_oracle::verify` mints the batch types
 # that propbook's Block Scholes feeds consume, so the Move type system enforces
 # "this value carries a valid Block Scholes signature" — the same gating shape as
@@ -28,5 +27,5 @@ bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", sub
 # from `packages/predict/Move.toml` so the published-at/original-id addresses can
 # never drift between the two consumers.
 [dep-replacements.testnet]
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
-wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "sui-testnet", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
+wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }

@@ -119,17 +119,23 @@ def chain_id(rpc_port: int) -> str:
     return _rpc(rpc_port, "sui_getChainIdentifier")["result"]
 
 
-def stop(proc: subprocess.Popen | None) -> None:
+def request_stop(proc: subprocess.Popen | None) -> None:
     if proc is None or proc.poll() is not None:
         return
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def stop(proc: subprocess.Popen | None) -> None:
+    if proc is None or proc.poll() is not None:
         return
+    request_stop(proc)
     try:
         proc.wait(timeout=15)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass

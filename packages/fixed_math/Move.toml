@@ -4,6 +4,3 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
-
-[addresses]
-fixed_math = "0x0"

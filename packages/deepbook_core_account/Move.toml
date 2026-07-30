@@ -6,9 +6,6 @@ version = "0.0.1"
 [dependencies]
 account = { local = "../account" }
 deepbook = { local = "../deepbook" }
-token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
-MoveStdlib = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "1fd64849c11a130de450168e64e3913885a3bee4", override = true }
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "1fd64849c11a130de450168e64e3913885a3bee4", override = true }
-
-[addresses]
-deepbook_core_account = "0x0"
+# Keep this direct dependency on the release revision resolved through `deepbook`;
+# the override prevents divergent token copies from entering this package graph.
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "75d560614b96f8ded0f511000d65e957c3ec6b1a", override = true }

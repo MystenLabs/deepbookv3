@@ -14,7 +14,6 @@ from pathlib import Path
 HARNESS_DIR = Path(__file__).resolve().parent
 PREDICT_DIR = HARNESS_DIR.parent
 PACKAGES_DIR = PREDICT_DIR.parent
-REPO_DIR = PACKAGES_DIR.parent
 
 TS_DIR = HARNESS_DIR / "ts"
 LOCALNETS_DIR = HARNESS_DIR / ".localnets"
@@ -23,7 +22,11 @@ STATE_FILE = LOCALNETS_DIR / "state.json"
 LOCK_FILE = LOCALNETS_DIR / "state.lock"
 
 # --- Build / publish -------------------------------------------------------
-BUILD_ENV = "sim"
+# Ephemeral localnets compile the canonical Testnet dependency graph and write
+# their local addresses to a separate Pub.sim.toml. Localnet is not a persistent
+# package environment and must never be added to the checked-in manifests.
+BUILD_ENV = "testnet"
+PUBFILE_NAME = "Pub.sim.toml"
 GAS_BUDGET = 5_000_000_000
 
 # --- Ports -----------------------------------------------------------------
@@ -49,48 +52,10 @@ LOCAL_CLOSURE = [
     "predict",
 ]
 
-# Pin of the real Block Scholes verifier, matching propbook/predict Move.toml.
-BS_ORACLE_REV = "11d952488bc50f3a2526549a8cd6d4817ae20cc7"
-
-# Upstream git deps that get dep-replaced to locally-published addresses. Staged
-# from the ~/.move clone cache, falling back to a shallow clone of the branch
-# (or, when pinned by `rev`, a shallow fetch of that exact commit).
-_MOVE_CACHE = Path.home() / ".move"
-GIT_DEPS = {
-    "wormhole": {
-        "repo": "https://github.com/pyth-network/wormhole.git",
-        "branch": "sui-testnet",
-        "subdir": "sui/wormhole",
-        "cache": _MOVE_CACHE
-        / "https___github_com_pyth-network_wormhole_git_sui-testnet"
-        / "sui"
-        / "wormhole",
-    },
-    "pyth_lazer": {
-        "repo": "https://github.com/pyth-network/pyth-crosschain.git",
-        "branch": "sui-testnet",
-        "subdir": "lazer/contracts/sui",
-        "cache": _MOVE_CACHE
-        / "https___github_com_pyth-network_pyth-crosschain_git_sui-testnet"
-        / "lazer"
-        / "contracts"
-        / "sui",
-    },
-    # The real Block Scholes verifier, published unmodified. The harness holds the
-    # publisher AdminCap, registers a per-instance local signer key on the shared
-    # SignerRegistry, and signs every batch it submits (same model as the local
-    # Pyth trusted signer).
-    "bs_oracle": {
-        "repo": "https://github.com/blockscholes/sui-signed-oracle.git",
-        "rev": BS_ORACLE_REV,
-        "subdir": "move/bs_oracle",
-        "cache": _MOVE_CACHE
-        / "git"
-        / f"https___github_com_blockscholes_sui-signed-oracle_git_{BS_ORACLE_REV}"
-        / "move"
-        / "bs_oracle",
-    },
-}
+# Upstream packages that localnet must publish independently. Their repository,
+# subdirectory, and exact revision are read from the canonical Predict/Propbook
+# manifests by staging.py; the harness keeps no duplicate dependency pins.
+GIT_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle")
 
 # Directory names never worth copying into the scratch workspace.
 STAGE_IGNORE = (
@@ -103,6 +68,9 @@ STAGE_IGNORE = (
     "simulations",
     "harness",
     ".worktrees",
+    "Pub.*.toml",
+    "*.bak",
+    "*.tmp",
 )
 
 
