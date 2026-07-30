@@ -807,8 +807,26 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(len(failures), 1)
             self.assertIsInstance(failures[0], cancellation.RunCancelled)
             for pid in (leader_pid, child_pid):
-                with self.assertRaises(ProcessLookupError):
+                try:
                     os.kill(pid, 0)
+                except ProcessLookupError:
+                    continue
+                stat_path = Path("/proc") / str(pid) / "stat"
+                try:
+                    state = (
+                        stat_path.read_text().split(") ", 1)[1][0]
+                        if stat_path.is_file()
+                        else ""
+                    )
+                except FileNotFoundError:
+                    continue
+                # Linux containers may leave the orphaned grandchild as an
+                # unreaped zombie briefly. A zombie is dead and holds no pipes.
+                self.assertEqual(
+                    state,
+                    "Z",
+                    f"setup process {pid} is still running with state {state}",
+                )
 
     def test_campaign_keyboard_interrupt_from_future_propagates(self) -> None:
         class InterruptedManager:
