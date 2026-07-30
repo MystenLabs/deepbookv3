@@ -1400,15 +1400,16 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
 }
 
 #[test]
-fun supply_that_exceeds_remaining_plp_headroom_refunds() {
+fun supply_that_exceeds_remaining_plp_headroom_fills_the_representable_prefix() {
     let (mut scenario, mut book, mut ledger) = setup();
     let near_max_total_supply = std::u64::max_value!() - NEAR_MAX_SUPPLY_HEADROOM;
     book.mint_locked_liquidity(near_max_total_supply);
     let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
     book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
 
-    // At a 1.0 executable mark, the min supply request quotes to min_supply shares,
-    // but only 5_000_000 PLP raw units remain before the treasury supply cap.
+    // At a 1.0 executable mark the 10 DUSDC request quotes 10e6 shares, but only
+    // 5_000_000 raw units remain before the treasury supply cap. The drain mints the
+    // 5e6 that fit and leaves the rest queued rather than refusing the whole request.
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(near_max_total_supply, near_max_total_supply),
@@ -1420,10 +1421,10 @@ fun supply_that_exceeds_remaining_plp_headroom_refunds() {
         scenario.ctx(),
     );
 
-    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
-    assert_eq!(book.supply_requests_pending(), 0);
-    assert_eq!(book.total_supply(), near_max_total_supply);
-    assert_eq!(ledger.idle_balance(), 0);
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 1); // the unmintable half waits
+    assert_eq!(book.total_supply(), std::u64::max_value!()); // exactly full
+    assert_eq!(ledger.idle_balance(), NEAR_MAX_SUPPLY_HEADROOM);
 
     finish(scenario, book, ledger);
 }
@@ -1708,34 +1709,32 @@ fun repeated_partial_fills_complete_the_request() {
 }
 
 /// The carried limit must round **up**, and this is the only test that can tell the
-/// difference. At a 2/3 mark a 30 DUSDC request asking exactly 20 PLP is at the very
-/// edge of what the mark pays; after 20 fills, the 10 left over quotes
-/// `floor(10 x 2/3) = 6.666666` while the rescaled limit is `ceil(20 x 10/30) =
-/// 6.666667`. Rounding up therefore refuses to fill the remainder a hair below the
-/// price the LP asked for; rounding down would fill it. Every other assertion in the
-/// suite is identical under both directions.
+/// difference. At the 2/3 mark a 40.000001 DUSDC request asking 26.666667 PLP sits just
+/// under the mark's rate, so the 30 prefix clears its own proportional minimum and
+/// fills. What is left, 10.000001, then quotes 6.666667 against a carried limit of
+/// ceil = 6.666668 — one unit short, so it is refused. Rounding down would carry
+/// 6.666667 instead and fill it, minting 6.666667 more PLP. Every other assertion in
+/// the suite is identical under both directions.
 #[test]
 fun carried_limit_rounds_up_and_refuses_a_fill_below_the_requested_price() {
     let (mut scenario, mut book, mut ledger) = setup();
     book.mint_locked_liquidity(20_000_000);
-    // 30 DUSDC asking 20 PLP is exactly what the 2/3 mark quotes, so any loss to
-    // flooring on the remainder puts it under the requested price.
-    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
-    book.request_supply(payment, alice_id(), ALICE, 20_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(40_000_001, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 26_666_667);
 
-    // 20 of room: fills 20 (minting floor(20 x 2/3) = 13.333333) and carries 10.
-    let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, 50_000_000);
+    // 30 of room: the prefix quotes 20e6 against a proportional minimum of 20e6, so it
+    // fills exactly at price and carries 10.000001.
+    let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, 60_000_000);
     assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.supply_requests_pending(), 1);
-    assert_eq!(book.total_supply(), 33_333_333);
+    assert_eq!(book.total_supply(), 40_000_000);
 
-    // Ample room now, but the remainder can only be quoted 6.666666 against a carried
-    // limit of 6.666667, so it misses and is refunded rather than filled under price.
+    // Ample room now, but the remainder is a unit short of its carried limit.
     let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, 90_000_000);
     assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
     assert_eq!(book.supply_requests_pending(), 0);
-    // Nothing further minted. Rounding down would have minted 6.666666 more here.
-    assert_eq!(book.total_supply(), 33_333_333);
+    // Nothing further minted. Rounding down would have minted 6.666667 more here.
+    assert_eq!(book.total_supply(), 40_000_000);
 
     finish(scenario, book, ledger);
 }
@@ -1757,4 +1756,54 @@ fun drain_at_two_thirds(
         max_pool_value,
         scenario.ctx(),
     )
+}
+
+// === Prefix pricing: a slice must clear the request's own price ===
+
+/// The prefix is quoted on its own and rounds down, so clearing the limit on the whole
+/// request does not imply clearing it on a slice. Aslan's case: 30 DUSDC asking 20 PLP
+/// at the 2/3 mark, with room for exactly 20 — the slice quotes floor(20 x 2/3) =
+/// 13.333333 while the request's own price needs ceil(20 x 20/30) = 13.333334. The
+/// slice is carried, not filled a hair under price; rounding the pool's quote up to
+/// close the gap instead would pay the difference out of the LPs who stay.
+#[test]
+fun supply_prefix_below_the_requests_price_is_carried_not_filled() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(20_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(30_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 20_000_000);
+
+    // Cap 50e6 over pool value 30e6 leaves exactly the 20 of room from the example.
+    let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, 50_000_000);
+
+    // Nothing filled, nothing minted, no budget spent — the head simply waits.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 0);
+    assert_eq!(book.supply_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 20_000_000);
+    assert_eq!(ledger.idle_balance(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+/// The withdraw prefix carries the same hazard, so it gets the same guard. At the 2/3
+/// mark a 30 PLP exit asking 45 DUSDC is exactly at price; 10.000001 of idle affords
+/// floor(10.000001 x 2/3) = 6.666667 shares, which quote floor(6.666667 x 1.5) =
+/// 10.000000 against a proportional minimum of ceil(45 x 6.666667/30) = 10.000001.
+/// One unit short, so it carries rather than paying the exiting LP under their price.
+#[test]
+fun withdraw_prefix_below_the_requests_price_is_carried_not_paid() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(50_000_000);
+    seed_idle(&mut ledger, 10_000_001);
+    enqueue_withdraw_with_limit(&mut scenario, &mut book, 30_000_000, 45_000_000);
+
+    let summary = drain_at_two_thirds(&mut scenario, &mut book, &mut ledger, NO_CAP);
+
+    // Carried whole: no payout, no burn, no budget spent, escrow still queued.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 0);
+    assert_eq!(book.withdraw_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 50_000_000);
+    assert_eq!(ledger.idle_balance(), 10_000_001);
+
+    finish(scenario, book, ledger);
 }

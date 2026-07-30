@@ -268,17 +268,7 @@ fun drain_supply_queue<LP>(
             );
         } else {
             let shares = shares.destroy_some();
-            if (shares > std::u64::max_value!() - book.treasury_cap.total_supply()) {
-                processed = processed + 1;
-                let (request, escrowed) = book.supply_queue.pop_front();
-                refund_supply_request(
-                    pool_vault_id,
-                    request,
-                    escrowed,
-                    constants::request_cancel_reason_non_executable!(),
-                    book.supply_queue.pending,
-                );
-            } else if (shares < request.min_output) {
+            if (shares < request.min_output) {
                 processed = processed + 1;
                 // Counted off the copied entry so the refund path does no page write:
                 // at one attempt the entry is popped on this very miss.
@@ -305,12 +295,11 @@ fun drain_supply_queue<LP>(
                     break
                 };
             } else {
-                // The limit cleared at this mark and pricing is linear in the deposit,
-                // so any prefix of this request clears the same rate. Take whatever the
-                // cap leaves room for; a request too big for the room left keeps its
-                // place at the head with the unfilled balance still escrowed.
+                // Take whatever the cap leaves room for; a request too big for the room
+                // left keeps its place at the head with the unfilled balance escrowed.
                 let headroom = max_pool_value.saturating_sub(pool_value);
                 let fill_amount = request.amount.min(headroom);
+                let partial = fill_amount < request.amount;
                 let fill_shares = mark.quote_supply_shares(fill_amount);
                 if (fill_shares.is_none()) {
                     // No room, or a prefix so small it prices to zero shares. Stop the
@@ -319,9 +308,36 @@ fun drain_supply_queue<LP>(
                     // and events to refuse each one.
                     break
                 };
-                processed = processed + 1;
                 let fill_shares = fill_shares.destroy_some();
-                let partial = fill_amount < request.amount;
+                // Capacity is judged on the prefix this drain would actually mint, not
+                // on the whole request: a request whose full quote would overflow the
+                // treasury can still have an executable slice while the rest waits.
+                if (fill_shares > std::u64::max_value!() - book.treasury_cap.total_supply()) {
+                    if (!partial) {
+                        processed = processed + 1;
+                        let (request, escrowed) = book.supply_queue.pop_front();
+                        refund_supply_request(
+                            pool_vault_id,
+                            request,
+                            escrowed,
+                            constants::request_cancel_reason_non_executable!(),
+                            book.supply_queue.pending,
+                        );
+                    };
+                    break
+                };
+                // The prefix is quoted on its own and rounds down, so clearing the limit
+                // on the whole request does not imply clearing it on a slice. Hold the
+                // slice to the request's own price — `ceil` of the proportional share —
+                // and carry rather than fill below it. Rounding the pool's quote up
+                // instead would pay the difference out of the LPs who stay.
+                let min_for_prefix = math::mul_div_up(
+                    request.min_output,
+                    fill_amount,
+                    request.amount,
+                );
+                if (fill_shares < min_for_prefix) break;
+                processed = processed + 1;
                 let escrowed = if (partial) {
                     book.supply_queue.fill_front_partially(fill_amount)
                 } else {
@@ -423,8 +439,16 @@ fun drain_withdraw_queue<LP>(
                     );
                     if (affordable.is_none()) break;
                     let affordable = affordable.destroy_some();
+                    // Same rounding hazard as the supply prefix: the affordable slice
+                    // is quoted on its own and rounds down, so hold it to the request's
+                    // own price rather than paying a hair under it.
+                    let min_for_prefix = math::mul_div_up(
+                        request.min_output,
+                        affordable,
+                        request.amount,
+                    );
                     let partial_payout = mark.quote_withdraw_dusdc(affordable);
-                    if (partial_payout.is_none()) {
+                    if (partial_payout.is_none() || *partial_payout.borrow() < min_for_prefix) {
                         // Idle buys no whole share, or those shares price to nothing.
                         // Carry the head and stop, as the dry queue always has.
                         break
