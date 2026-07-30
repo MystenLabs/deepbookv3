@@ -640,6 +640,24 @@ async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): P
     addBlockScholesUpdates(tx, params, sourceTimestampMs);
 }
 
+// A refresh and the priced op it feeds are two transactions, never one:
+// `pricing::resolve_live_pricer` aborts `EOracleWrittenInThisTransaction` when a
+// price-feeding observation carries the current transaction's digest, so anything
+// that builds a live `Pricer` may not share a PTB with the write it prices against.
+// Returns the refresh PTB followed by the trade PTB; run them in order with
+// `executeAllAndWait`. Determinism against an off-chain snapshot is unchanged — the
+// refresh still writes exactly the snapshot values the trade then prices against.
+async function refreshThen(
+    params: OracleRefreshParams,
+    addTrade: (tx: Transaction) => void,
+): Promise<Transaction[]> {
+    const refreshTx = new Transaction();
+    await addOracleRefresh(refreshTx, params);
+    const tradeTx = new Transaction();
+    addTrade(tradeTx);
+    return [refreshTx, tradeTx];
+}
+
 // Live-data updater: clamp a provider's real publish timestamp to a valid on-chain
 // source timestamp — `<= Clock - 1` and strictly monotonic — so the oracle history
 // mirrors real wall-clock without ever tripping the freshness gate. Returns null
@@ -705,9 +723,10 @@ export function buildOracleRefreshGridTx(
     return tx;
 }
 
-// Add a grid refresh (one value batch + one SVI batch) to an existing PTB, so a
-// priced op (flush valuation, liquidation) reads fresh inputs within the same
-// atomic transaction rather than depending on a separate earlier refresh. Each
+// Add a grid refresh (one value batch + one SVI batch) to an existing PTB, pre-warming
+// the whole boundary grid in one push. It must stay a refresh-only PTB: a priced op
+// appended after it would abort `EOracleWrittenInThisTransaction`, since a live pricer
+// may not read an observation written in its own transaction. Each
 // series carries its own provider model time; a series whose model time is
 // unknown gets the envelope, and one that momentarily postdates the envelope
 // (cross-stream clock skew) is skipped this push rather than clamped — the store
@@ -1517,13 +1536,10 @@ export function requestWithdrawTx(params: {
 // Refresh the oracle, then run one privileged full-pool flush that drains both LP
 // request queues at the frozen mark. The drain happens inside `finish_flush`; no
 // per-LP coin is returned (fills land on the manager via the accumulator).
-export async function refreshOracleAndFlushTx(
+export async function refreshOracleAndFlushTxs(
     params: OracleRefreshParams & FlushParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addFlush(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addFlush(tx, params));
 }
 
 // Genesis flush with NO active markets: proof -> start (snapshots an empty expected
@@ -1750,37 +1766,30 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     return tx;
 }
 
-export async function refreshOracleAndMintTx(
+export async function refreshOracleAndMintTxs(
     params: OracleRefreshParams & MintParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addMint(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addMint(tx, params));
 }
 
-export async function refreshOracleAndMintBatchTx(
+export async function refreshOracleAndMintBatchTxs(
     params: OracleRefreshParams & { mints: MintParams[] },
-): Promise<Transaction> {
+): Promise<Transaction[]> {
     if (params.mints.length === 0) {
-        throw new Error("refreshOracleAndMintBatchTx requires at least one mint");
+        throw new Error("refreshOracleAndMintBatchTxs requires at least one mint");
     }
 
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    for (const mint of params.mints) {
-        addMint(tx, mint);
-    }
-    return tx;
+    return refreshThen(params, (tx) => {
+        for (const mint of params.mints) {
+            addMint(tx, mint);
+        }
+    });
 }
 
-export async function refreshOracleAndRedeemTx(
+export async function refreshOracleAndRedeemTxs(
     params: OracleRefreshParams & RedeemParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addRedeem(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addRedeem(tx, params));
 }
 
 // Mint test DUSDC and transfer it to `toAddress`. The TreasuryCap is owned by the
@@ -1856,6 +1865,21 @@ export async function signExecThreaded(tx: Transaction, txSigner: any, options: 
     const ref = (r as any).effects?.gasObject?.reference;
     if (ref) gasRefBySender.set(sender, { objectId: ref.objectId, version: String(ref.version), digest: ref.digest });
     return r;
+}
+
+// Execute PTBs in order, returning the LAST receipt — the one carrying the priced
+// op's events. Pair with the `refreshOracleAnd*Txs` builders, whose refresh leg is
+// only a precondition for the trade leg that follows it.
+export async function executeAllAndWait(
+    txs: Transaction[],
+    label = "transaction",
+    gasBudget = DEFAULT_GAS_BUDGET,
+): Promise<any> {
+    let receipt: any;
+    for (const [index, tx] of txs.entries()) {
+        receipt = await executeAndWait(tx, `${label} (${index + 1}/${txs.length})`, gasBudget);
+    }
+    return receipt;
 }
 
 export async function executeAndWait(

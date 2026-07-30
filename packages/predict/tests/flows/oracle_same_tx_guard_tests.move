@@ -4,7 +4,9 @@
 /// Flow coverage for the same-transaction oracle-write guard: a live pricer may
 /// not be built from an observation written in the current PTB. Pins Variant A
 /// (mint → update → mint), Variant C (update → redeem seasoned position), the
-/// no-false-positive multi-leg path, and the Pyth provenance-only exemptions.
+/// no-false-positive multi-leg path, the Pyth provenance-only exemptions, and the
+/// accepted residual — the guard is a build-time check, so it refuses write→price
+/// but not price→write (RP-23).
 #[test_only]
 module deepbook_predict::oracle_same_tx_guard_tests;
 
@@ -21,6 +23,9 @@ const FRESHER_SOURCE_TS: u64 = 121_000;
 /// Keep the default ATM price so admission bounds stay satisfied; the guard
 /// keys on writer digest, not the printed level.
 const FRESHER_PRICE: u64 = 100_000_000_000;
+/// +20% on the seeded ATM level: the correction a trader pushes after filling
+/// against the stale surface. Drives the strike deep in the money for the UP leg.
+const PUSHED_PRICE: u64 = 120_000_000_000;
 /// Tight Pyth freshness used to force a same-tx Pyth write into the stale branch.
 const TIGHT_PYTH_FRESHNESS_MS: u64 = 1_000;
 const STALE_PYTH_CLOCK_MS: u64 = 122_001;
@@ -306,6 +311,59 @@ fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
     );
 
     helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The guard runs at `Pricer` construction, so it cannot see a write that lands
+/// later in the same PTB: `load pricer (stale) → mint → write` is permitted. The
+/// trader fills at the stale mark and pushes the correction in one atomic
+/// transaction; only the closing leg must cross a transaction boundary, and since
+/// that leg is a mint of the complement rather than a redeem, no minimum-holding
+/// guard applies to it either. RP-23 accepts this residual — this test pins that
+/// it is what ships, so closing the ordering turns the assertion red instead of
+/// changing behavior silently.
+#[test]
+fun price_then_write_same_tx_is_permitted() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Fill the UP leg against the stale surface, then push the correction — one tx.
+    let order = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_ONE_X,
+    );
+    let value_at_stale_mark = fx.order_value_bundle(&market, order);
+    fx.set_clock_for_testing(FRESHER_SOURCE_TS);
+    fx.write_live_oracle_in_current_tx_bundle(
+        &mut market,
+        PUSHED_PRICE,
+        FRESHER_SOURCE_TS,
+    );
+    assert!(helpers::has_position_bundle(&account, expiry_id, order));
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    // Next transaction: the position bought at the stale mark now carries the level
+    // this same trader pushed. Both bounds come from the payoff, not from Predict's
+    // pricing — a range digital struck at the seeded spot is worth strictly more
+    // once spot sits 20% above the strike, and never more than its max payout.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let market = fx.take_market_bundle(expiry_id);
+    let value_at_pushed_mark = fx.order_value_bundle(&market, order);
+    assert!(value_at_pushed_mark > value_at_stale_mark);
+    assert!(value_at_pushed_mark <= QUANTITY);
+
     helpers::return_market_bundle(market);
     fx.finish();
 }
