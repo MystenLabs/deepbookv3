@@ -24,8 +24,12 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     test_constants
 };
+use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
+use sui::{coin, test_scenario::return_shared};
+
+/// No executable mark can quote this, so a request carrying it misses every flush.
+const UNATTAINABLE_MIN_OUT: u64 = 18_446_744_073_709_551_615;
 
 // === Genesis lock + bootstrapped gates ===
 
@@ -68,7 +72,84 @@ fun flush_before_bootstrap_aborts() {
     abort 999
 }
 
+// === Attempt count is read from config by the flush ===
+
+/// `finish_flush` must take the attempt count from `ProtocolConfig`, not from a
+/// compiled constant. Staged end-to-end because the drain-level tests pass the value
+/// in by hand and so cannot see a disconnected knob: at the shipped default of one
+/// attempt, a limit-missing request is refunded by the flush that reaches it.
+#[test]
+fun flush_refunds_limit_miss_at_the_default_attempt_count() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+    queue_unfillable_supply(&mut fx);
+
+    flush(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    // Refunded on its first miss: queue empty, and the genesis lock is all that was minted.
+    assert_eq!(vault.supply_requests_pending(), 0);
+    assert_eq!(vault.plp_total_supply(), min_supply!());
+    return_shared(vault);
+
+    fx.finish();
+}
+
+/// The same request against a raised attempt count survives its first flush instead,
+/// which is only possible if the flush actually reads the configured value.
+#[test]
+fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+    set_attempts(&mut fx, 3);
+    queue_unfillable_supply(&mut fx);
+
+    flush(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    // Still queued after one miss, because the admin allowed three attempts.
+    assert_eq!(vault.supply_requests_pending(), 1);
+    return_shared(vault);
+
+    // Two more flushes exhaust the allowance; the third miss refunds it.
+    flush(&mut fx);
+    flush(&mut fx);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.supply_requests_pending(), 0);
+    assert_eq!(vault.plp_total_supply(), min_supply!());
+    return_shared(vault);
+
+    fx.finish();
+}
+
 // === Helpers ===
+
+/// Queue a minimum-sized supply asking for an output no mark can quote, so it misses
+/// its limit on every flush regardless of pool NAV.
+fun queue_unfillable_supply(fx: &mut helpers::Fixture) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let payment = coin::mint_for_testing<DUSDC>(min_supply!(), fx.scenario_mut().ctx());
+    plp::queue_supply_for_testing(
+        &mut vault,
+        payment,
+        test_constants::admin().to_id(),
+        test_constants::admin(),
+        UNATTAINABLE_MIN_OUT,
+    );
+    return_shared(vault);
+}
+
+fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    fx.set_lp_request_limit_flush_attempts(&mut config, attempts);
+    return_shared(config);
+}
 
 /// Run one flush over the empty market set (pool NAV == idle), draining both queues
 /// fully, and discard the result.

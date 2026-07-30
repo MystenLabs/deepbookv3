@@ -980,3 +980,19 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     transfer_metadata_cap(metadata_cap, ctx);
     vault_id
 }
+
+#[test_only]
+/// Queue a supply request straight into the book, skipping the account-custody pull
+/// that `request_supply` performs. The public entrypoint auto-settles from an
+/// `AccumulatorRoot` that a Move unit test cannot construct, so this is the only way
+/// to stage a queued request and then exercise the real `finish_flush` drain — which
+/// is where the flush reads the attempt count from `ProtocolConfig`.
+public fun queue_supply_for_testing(
+    vault: &mut PoolVault,
+    payment: Coin<DUSDC>,
+    account_id: ID,
+    recipient: address,
+    min_plp_out: u64,
+): u64 {
+    vault.lp.request_supply(payment, account_id, recipient, min_plp_out)
+}

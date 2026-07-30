@@ -339,6 +339,16 @@ public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolCon
     config.set_trade_liquidation_budget(&self.admin_cap, budget);
 }
 
+/// Set how many frozen-mark attempts a queued LP request gets, through the real
+/// admin path, so a test can prove the flush reads the configured value.
+public fun set_lp_request_limit_flush_attempts(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    attempts: u64,
+) {
+    config.set_lp_request_limit_flush_attempts(&self.admin_cap, attempts);
+}
+
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);

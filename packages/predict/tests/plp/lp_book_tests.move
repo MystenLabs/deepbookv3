@@ -383,6 +383,82 @@ fun raising_attempts_reintroduces_head_of_line_blocking() {
     finish(scenario, book, ledger);
 }
 
+/// The withdraw drain has its own shape — `processed` is counted inside the branch
+/// and the idle check sits after the limit check — so the tunable path is covered on
+/// both queues rather than assumed symmetric with supply.
+#[test]
+fun withdraw_limit_miss_carries_then_expires_at_three_attempts() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    seed_idle(&mut ledger, 60_000_000);
+    enqueue_withdraw_with_limit(
+        &mut scenario,
+        &mut book,
+        LIMIT_MISS_WITHDRAW_AMOUNT,
+        LIMIT_MISS_WITHDRAW_MIN_OUT,
+    );
+    // A second withdrawal behind it, to show the head holds the queue while it rests.
+    enqueue_withdraw_for(&mut scenario, &mut book, BOB, min_withdraw!(), NO_MIN_OUTPUT);
+
+    // Misses 1 and 2: the head rests and the request behind it is never reached.
+    let mut i = 0u64;
+    while (i < 2) {
+        let summary = drain_at_two_x(&mut scenario, &mut book, &mut ledger, THREE_ATTEMPTS);
+        assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+        assert_eq!(book.withdraw_requests_pending(), 2);
+        assert_eq!(ledger.idle_balance(), 60_000_000);
+        i = i + 1;
+    };
+
+    // Miss 3 refunds the head, and only then is the second withdrawal paid.
+    let summary = drain_at_two_x(&mut scenario, &mut book, &mut ledger, THREE_ATTEMPTS);
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 2);
+    assert_eq!(book.withdraw_requests_pending(), 0);
+    // 1 PLP burned at the 2.0 mark pays 2 DUSDC; the rested head's escrow was refunded.
+    assert_eq!(book.total_supply(), 29_000_000);
+    assert_eq!(ledger.idle_balance(), 58_000_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// A refunded miss spends one budget unit, exactly like a fill — so a bounded budget
+/// stops the pass after it and the next request waits for the following flush.
+#[test]
+fun limit_miss_spends_one_budget_unit() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let unfillable = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(unfillable, bob_id(), BOB, UNATTAINABLE_MIN_OUT);
+    let honest = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+    book.request_supply(honest, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Budget of 1: the refund consumes it, so the honest request is not reached.
+    let summary = drain_at_par_with_budgets(
+        &mut scenario,
+        &mut book,
+        &mut ledger,
+        option::some(1),
+        option::none(),
+    );
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 30_000_000);
+
+    // Next flush reaches it and mints 10e6 PLP at the 1.0 mark.
+    let summary = drain_at_par_with_budgets(
+        &mut scenario,
+        &mut book,
+        &mut ledger,
+        option::some(1),
+        option::none(),
+    );
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 40_000_000);
+
+    finish(scenario, book, ledger);
+}
+
 #[test]
 fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let (mut scenario, mut book, mut ledger) = setup();
@@ -1115,6 +1191,25 @@ fun alice_id(): ID { ALICE.to_id() }
 
 /// A second requesting account, so queue-ordering tests can tell two owners apart.
 fun bob_id(): ID { BOB.to_id() }
+
+/// Drain both queues at a 1.0 share price, so a budget test varies only the budget.
+fun drain_at_par_with_budgets(
+    scenario: &mut Scenario,
+    book: &mut LpBook<LP_BOOK_TESTS>,
+    ledger: &mut Ledger,
+    supply_budget: Option<u64>,
+    withdraw_budget: Option<u64>,
+): DrainSummary {
+    book.drain(
+        ledger,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        vault_id(),
+        supply_budget,
+        withdraw_budget,
+        NO_RETRY,
+        scenario.ctx(),
+    )
+}
 
 /// Drain at the 2.0 mark (pool 60e6 over supply 30e6) with unbounded budgets, so a
 /// repeated-flush test varies only the attempt count.
