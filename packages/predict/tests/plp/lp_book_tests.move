@@ -304,6 +304,63 @@ fun supply_is_refunded_when_pool_is_already_over_cap() {
     finish(scenario, book, ledger);
 }
 
+/// A full pool does not hold a waiting list. Every queued supply is refunded by the
+/// flush that reaches it, so the queue empties rather than backing up — the cost of
+/// refusing to let an unfillable head sit at the front (RP-12).
+#[test]
+fun full_pool_clears_the_whole_supply_queue_in_one_flush() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let mut i = 0u64;
+    while (i < 4) {
+        let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+        book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+        i = i + 1;
+    };
+
+    // Cap at the pool's own value: zero headroom for any of them.
+    let summary = drain_at_par_with_cap(&mut scenario, &mut book, &mut ledger, 30_000_000);
+
+    // All four processed and refunded in this one flush; none carried forward.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 4);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 30_000_000);
+    assert_eq!(ledger.idle_balance(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+/// The per-queue budget still bounds that clearing, so a full pool cannot make one
+/// flush process an unbounded number of refunds.
+#[test]
+fun budget_bounds_how_much_of_a_full_queue_one_flush_clears() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let mut i = 0u64;
+    while (i < 4) {
+        let payment = coin::mint_for_testing<DUSDC>(min_supply!(), scenario.ctx());
+        book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+        i = i + 1;
+    };
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        vault_id(),
+        option::some(2),
+        option::none(),
+        NO_RETRY,
+        30_000_000,
+        scenario.ctx(),
+    );
+
+    // Two refunded this flush, two still queued for the next.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 2);
+    assert_eq!(book.supply_requests_pending(), 2);
+
+    finish(scenario, book, ledger);
+}
+
 /// Withdrawals are not capacity-checked: the cap closes the pool to new capital and
 /// must never trap capital already in it.
 #[test]
