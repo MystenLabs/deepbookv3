@@ -541,6 +541,72 @@ fun withdraw_fill_reports_the_fee_withheld_from_the_payout() {
     finish(scenario, book, ledger);
 }
 
+/// M4: the idle-short partial branch, with a fee. This is the one place the fee
+/// meets the gross inversion, and every other test that reaches it prices at zero
+/// fee. Idle 10e6 against a 20e6 gross payout, mark 2.0, 1% fee:
+///   affordable   = floor(10e6 * 30e6 / 60e6) = 5_000_000 shares
+///   gross(slice) = floor(5e6 * 60e6 / 30e6)  = 10_000_000
+///   fee          = ceil(10e6 * 1%)           =     100_000
+///   net paid     = 9_900_000
+/// so idle keeps exactly the fee — the conservatism the drain comment claims.
+#[test]
+fun withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000, ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
+    assert_eq!(ledger.idle_balance(), 100_000); // exactly the slice's fee, never negative
+    assert_eq!(book.total_supply(), 25_000_000); // 30e6 - 5e6 burned, a partial burn
+    assert_eq!(book.withdraw_requests_pending(), 1); // remainder carried
+    let events = event::events_by_type<vault_events::WithdrawFilled>();
+    assert_eq!(vault_events::withdraw_filled_fee(&events[0]), 100_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// M5: a partial supply slice carrying BOTH a limit and a fee. The slice is quoted
+/// on its own with a ceil'd fee, while the limit is pro-rated, so the two roundings
+/// meet here. 10e6 slice of a 20e6 request at 1%: fee 100_000, shares 4_950_000.
+/// The request's own price is 9_900_000 shares per 20e6, so the pro-rated floor for
+/// this slice is ceil(9_900_000 * 10e6 / 20e6) = 4_950_000 — it clears by exactly
+/// zero, which is the boundary that must fill rather than carry.
+#[test]
+fun capped_partial_supply_at_its_own_price_fills_with_the_fee() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 9_900_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000, ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        70_000_000,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.total_supply(), 34_950_000); // 30e6 + 4_950_000
+    assert_eq!(book.supply_requests_pending(), 1); // 10e6 remainder carried
+
+    finish(scenario, book, ledger);
+}
+
 // === FIFO-until-idle-dry ===
 
 #[test]

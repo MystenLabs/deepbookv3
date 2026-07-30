@@ -513,7 +513,8 @@ fun drain_withdraw_queue<LP>(
                 );
                 processed = processed + 1;
                 filled = filled + 1;
-                // Idle is spent to within a ulp; everything behind would only carry.
+                // Idle is spent to within a ulp, or to within the slice's fee when one
+                // is set; everything behind carries either way, as FIFO requires.
                 if (partial) break
             };
         };
