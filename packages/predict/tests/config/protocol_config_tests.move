@@ -216,7 +216,10 @@ fun max_valuation_window_ships_at_one_hour_and_is_tunable() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     assert_eq!(config.max_valuation_window_ms(), constants::one_hour_ms!());
 
-    config.set_max_valuation_window_ms(&admin_cap, config_constants::min_max_valuation_window_ms!());
+    config.set_max_valuation_window_ms(
+        &admin_cap,
+        config_constants::min_max_valuation_window_ms!(),
+    );
     assert_eq!(config.max_valuation_window_ms(), config_constants::min_max_valuation_window_ms!());
 
     destroy(admin_cap);
