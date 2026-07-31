@@ -71,6 +71,14 @@ _MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
 # size is network-independent. Both the nav-stress and mint-batch sections compare compGas against this.
 COMP_CAP = 5_000_000_000
 
+# The liq-budget fit extrapolates a production ceiling from sampled points, so it needs a real
+# lever arm: the largest candidate count sampled must be at least this many times the smallest.
+# Below that the line is fitted to a cluster and the crossing is noise dressed as a measurement.
+MIN_LIQ_BUDGET_FIT_SPAN = 4
+# Beyond this multiple of the largest count actually measured, the crossing is flagged as an
+# extrapolation in the report rather than presented as a measured limit.
+MAX_LIQ_BUDGET_EXTRAPOLATION = 3
+
 # The shortest keeper cadence (1m). A run shorter than this has produced no expected flush, so a
 # "never flushed" keeper is not yet a brick; a keeper that has NOT flushed past ~2x this (bootstrap +
 # one expiry) despite non-transient fails IS bricked. (M1: the old `stuck` heuristic false-FAILed a
@@ -371,6 +379,9 @@ def _analyze_one(inst: Path) -> list[str]:
     # keeper's ladder records; with no ladder configured there is nothing to sweep, so the section is
     # skipped rather than assuming the contract default.
     unexpected_wall: str | None = None  # set when a single mint OOGs on an arm that never declared that wall
+    no_data = False           # the section ran but collected no single-mint samples at all
+    insufficient_fit = False  # samples too clustered (or unphysical) to support a ceiling
+    wall_tags: set[str] = set()  # OOG tags from the probe, used as declared-wall evidence
     rungs = sorted([r for r in recs if r.get("type") == "liqBudget" and r.get("ts")], key=lambda r: r["ts"])
     if rungs:
         def _budget_at(ts: int) -> int:
@@ -418,7 +429,18 @@ def _analyze_one(inst: Path) -> list[str]:
         # Fit on CANDIDATES (= min(budget, book)) rather than budget: below saturation the book, not the
         # budget, is what the pass actually walks, so regressing on budget alone understates the slope.
         fit = [(min(b, book), c) for b, book, c in probes]
-        if len({x for x, _ in fit}) >= 2:
+        xs = {x for x, _ in fit}
+        # A ceiling extrapolated from a narrow, low-x cluster is worse than no number: fitting over
+        # x in {23..29} and projecting to ~4,000 recovers a slope 2.4x off the truth and still prints
+        # to the same decimal places. Demand a real lever arm before reporting, and refuse a negative
+        # base mint outright — a mint cannot cost less than nothing, so it means the line is being
+        # driven by noise rather than by the candidate count.
+        span = (max(xs) / min(xs)) if xs and min(xs) > 0 else 0
+        if len(xs) < 2 or span < MIN_LIQ_BUDGET_FIT_SPAN:
+            print(f"  fit SKIPPED — candidate counts span only {min(xs, default=0)}-{max(xs, default=0)}"
+                  f" ({span:.1f}x, want >={MIN_LIQ_BUDGET_FIT_SPAN}x); widen the ladder or run longer")
+            insufficient_fit = True
+        else:
             n = len(fit)
             sx, sy = sum(x for x, _ in fit), sum(y for _, y in fit)
             denom = n * sum(x * x for x, _ in fit) - sx * sx
@@ -426,10 +448,18 @@ def _analyze_one(inst: Path) -> list[str]:
                 slope = (n * sum(x * y for x, y in fit) - sx * sy) / denom
                 base = (sy - slope * sx) / n
                 print(f"  ~{int(slope):,} comp/candidate (+{int(base):,} base mint)")
-                if slope > 0:
+                if base < 0:
+                    print("  fit REJECTED — negative base mint is unphysical; the samples do not "
+                          "constrain the line (too narrow a range, or cost dominated by something "
+                          "other than the candidate count)")
+                    insufficient_fit = True
+                elif slope > 0:
                     cross = int((COMP_CAP - base) / slope)
                     print(f"  -> an ordinary mint stops fitting one tx at ~{cross:,} candidates "
                           f"(the ceiling max_trade_liquidation_budget should be set under, with margin)")
+                    if cross > max(xs) * MAX_LIQ_BUDGET_EXTRAPOLATION:
+                        print(f"     CAUTION: that is {cross / max(xs):.0f}x beyond the largest measured "
+                              f"count ({max(xs)}) — extrapolation, not measurement")
         # The empirical wall: the smallest candidate count at which a SINGLE mint actually OOG'd.
         walls = [
             (min(_budget_at(r["ts"]), int(r.get("book", r.get("minted", 0)))),
@@ -441,12 +471,24 @@ def _analyze_one(inst: Path) -> list[str]:
         if walls:
             cand, b, book = min(walls)
             print(f"  EMPIRICAL wall: a single mint OOG'd at budget {b} / book {book} (~{cand} candidates)")
+            # The trader submits through `signExecThreaded`, which — unlike the keeper's
+            # `executeAndWait` — writes no failed-tx artifact, and the strategy traces the OOG as a
+            # mintBatch record rather than a `fail`. So neither source the declared-wall check reads
+            # can see this, and an arm that reached exactly the wall it declared would be failed
+            # VACUOUS for not reaching it. Feed the OOG's own tag forward as the evidence.
+            wall_tags = {str(r.get("err", "")) for r in recs
+                         if r.get("type") == "mintBatch" and r.get("oog") and r.get("err")}
             # A strategy that DECLARED this wall was built to reach it; one that did not has just
             # shown an ordinary mint failing to fit in a tx, which is a finding in its own right and
-            # must fail the run rather than print quietly. The OOG is traced as a mintBatch record,
-            # not a `fail`, so the bug oracle below never sees it — this is what surfaces it.
+            # must fail the run rather than print quietly.
             if not _declared_terminals(recs):
                 unexpected_wall = f"liq-budget-wall-undeclared:budget={b},book={book}"
+        elif not probes:
+            # No successful single-mint samples AND no wall: the run measured nothing at all. Saying
+            # "affordable" here would be an affirmative safety claim drawn from zero evidence.
+            print("  NO single-mint samples collected — this run measured nothing (check the fill "
+                  "reached FILL_TARGET and that the ladder outlasts it)")
+            no_data = True
         else:
             print("  no single-mint OOG — every rung reached was affordable at the book this run built")
 
@@ -462,7 +504,8 @@ def _analyze_one(inst: Path) -> list[str]:
         vm_msgs = list(_vm_errors(inst))  # the run's real VM-error summaries (framework aborts' true cause)
         undeclared_vm = [m for m in vm_msgs if not any(d in m for d in declared)]
         reached = {d for d in declared
-                   if any(d in m for m in vm_msgs) or any(d in t for t in flagged + list(expected))}
+                   if any(d in m for m in vm_msgs) or any(d in t for t in flagged + list(expected))
+                   or any(d in t for t in wall_tags)}
         kept: list[str] = []
         for t in flagged:
             if any(d in t for d in declared):
@@ -505,6 +548,10 @@ def _analyze_one(inst: Path) -> list[str]:
     signals = list(flagged)
     if unexpected_wall:
         signals.append(unexpected_wall)
+    if no_data:
+        signals.append("liq-budget-no-samples")
+    if insufficient_fit:
+        signals.append("liq-budget-fit-unusable")
     signals += [f"adversarial-accepted:{r.get('mode')}" for r in adv_accepted]
     if stuck:
         signals.append("keeper-stuck")  # (1) a bricked settlement/LP lifecycle must fail the run

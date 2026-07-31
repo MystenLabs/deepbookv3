@@ -291,10 +291,21 @@ async function applyBudgetStages(startedAt: number) {
       appendTrace("keeper", { type: "fail", lane: "liqBudget", tag: errorTag(e) });
       budgetStageFailures++;
       if (budgetStageFailures >= MAX_BUDGET_STAGE_FAILURES) {
-        throw new Error(
-          `TRADE_LIQ_BUDGET_STAGES: rung ${budget} failed ${budgetStageFailures}x — the sweep cannot proceed ` +
-            `(last: ${e instanceof Error ? e.message.slice(0, 160) : e})`,
+        // ABANDON the ladder — never throw. This runs before tick() inside the same try, so a throw
+        // here would skip settlement, flush, rebalance and roll on every subsequent iteration, and
+        // since the counter never clears it would do so for the rest of the run: one bad rung would
+        // brick every other keeper lane, against the harness's own per-step isolation invariant.
+        // The `fatal` trace fails the run in `analyze` instead, which is the loud part.
+        nextBudgetStage = TRADE_LIQ_BUDGET_STAGES.length;
+        appendTrace("keeper", {
+          type: "fail", lane: "liqBudget", fatal: true,
+          tag: `budget-ladder-abandoned:rung=${budget}:${errorTag(e)}`,
+        });
+        console.error(
+          `[keeper] TRADE_LIQ_BUDGET_STAGES: rung ${budget} failed ${budgetStageFailures}x — abandoning the ` +
+            `ladder; the sweep will collect nothing further (last: ${e instanceof Error ? e.message.slice(0, 160) : e})`,
         );
+        return;
       }
       console.warn(`[keeper] trade_liquidation_budget deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
       return; // retry this rung next tick; do not run ahead to a later one

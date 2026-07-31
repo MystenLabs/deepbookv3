@@ -80,24 +80,31 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
   const book = () => minted - liquidated;
 
   function targetMarket(ctx: StrategyCtx): Mkt | null {
+    const live = ctx.markets();
     if (lockedId) {
-      const m = ctx.markets().find((mk) => mk.id === lockedId);
+      const m = live.find((mk) => mk.id === lockedId);
       if (m) return m;
-      // Locked market settled (shouldn't happen for a >2h market) — re-lock onto a fresh one and
-      // reset EVERY piece of book-derived state with it. Carrying `batch`/`wallHits` across the
-      // re-lock would strand the strategy: a run that reached the wall on the old book holds at
-      // batch==1 with wallHits past its limit, so it would never mint into the new empty book.
-      lockedId = null;
+      // The locked market is missing from this tick's view. That is NOT proof it settled:
+      // `markets()` reads markets.json, which comes back empty on a torn read and drops markets
+      // whose keeper-side `funded` set was cleared by a restart. Resetting the book counter on that
+      // alone would leave `book` under-reporting the real index for the rest of the run — silently,
+      // and in the direction that corrupts the measurement. So hold state and wait; only a genuine
+      // re-lock onto a DIFFERENT market resets, below.
+      if (!live.length) return null;
+    }
+    if (!live.length) return null;
+    const farthest = live.reduce((a, b) => (b.expiryMs > a.expiryMs ? b : a));
+    if (farthest.expiryMs <= Date.now() + TWO_HOURS_MS) return null;
+    if (farthest.id !== lockedId) {
+      // A different market: the old book is gone with it, so every piece of book-derived state
+      // resets together. Carrying `batch`/`wallHits` over would strand the strategy — a run that
+      // reached the wall holds at batch==1 with wallHits past its limit and never mints again.
+      lockedId = farthest.id;
       minted = 0;
       liquidated = 0;
       batch = START_BATCH;
       wallHits = 0;
     }
-    const live = ctx.markets();
-    if (!live.length) return null;
-    const farthest = live.reduce((a, b) => (b.expiryMs > a.expiryMs ? b : a));
-    if (farthest.expiryMs <= Date.now() + TWO_HOURS_MS) return null;
-    lockedId = farthest.id;
     return farthest;
   }
 
@@ -143,12 +150,15 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
         // ordinary mint's cost, which is the number the ceiling is set from. `book` is the index
         // size the ambient pass saw — BEFORE this tx's own mints and knockouts.
         const res = await ctx.submitMintBatch(market, legs, { book: book(), minted, batch });
-        // The ambient pass in this very tx may have knocked orders out of the index.
+        // The ambient pass in this very tx may have knocked orders out of the index. `knocked` also
+        // goes onto the record (via the follow-up trace) because a liquidating candidate costs more
+        // than a scanned one — index removal plus payout-tree boundary removal — so without it the
+        // fitted comp/candidate is a blend of the two whose mix is invisible after the fact.
         const knocked = ((res?.events ?? []) as any[]).filter((e) => e.type?.includes("OrderLiquidated")).length;
         minted += legs.length;
         liquidated += knocked;
         wallHits = 0;
-        ctx.trace({ type: "book", size: book(), minted, liquidated, market: market.id });
+        ctx.trace({ type: "book", size: book(), minted, liquidated, knocked, n: legs.length, market: market.id });
         return "mint";
       } catch (e) {
         if (isOog(e)) {

@@ -10,7 +10,7 @@
 //
 // This arm declares NO terminal wall, deliberately. At the pre-memo `correction_value` slope
 // (~1.09M/order, the closest measured analogue) a scan-only pass at the 3,000 budget max costs
-// ~73% of the computation cap — expensive, but it fits. So the wall is not expected here, and a
+// ~3.26e9 of the 5e9 computation cap — about 65%, expensive but it fits. So the wall is not expected here, and a
 // declared-but-unreached wall would fail every clean run VACUOUS. It also means an OOG on this arm
 // is genuine news — a scan-only mint that cannot fit is a bigger finding than the one being
 // measured. `analyze` raises `liq-budget-wall-undeclared` for exactly that case, which is what

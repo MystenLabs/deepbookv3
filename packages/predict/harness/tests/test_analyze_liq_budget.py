@@ -165,8 +165,12 @@ class LiqBudgetAnalysisTests(unittest.TestCase):
             with redirect_stdout(buf):
                 signals = analyze._analyze_one(inst)
 
+        # The whole run must come back clean, not merely free of the undeclared-wall signal: the
+        # trader submits via a path that writes no failed-tx artifact and traces its OOG as a
+        # mintBatch rather than a `fail`, so neither source the declared-wall check normally reads
+        # can see it — an arm that reached exactly the wall it declared would be failed VACUOUS.
         self.assertIn("EMPIRICAL wall", buf.getvalue())
-        self.assertFalse([s for s in signals if s.startswith("liq-budget-wall-undeclared")], signals)
+        self.assertEqual(signals, [], f"a declared, reached wall must not fail the run: {signals}")
 
     def test_wall_reports_the_smallest_candidate_count_not_the_last_or_largest(self) -> None:
         # Two rungs OOG a single mint, at different books. The wall worth reporting is the CHEAPEST
@@ -232,6 +236,110 @@ class LiqBudgetAnalysisTests(unittest.TestCase):
         # would read 333,333 and the ceiling would be inflated threefold.
         self.assertEqual(_int_after(report, r"~([\d,]+) comp/candidate"), 1_000_000)
         self.assertEqual(_int_after(report, r"stops fitting one tx at ~([\d,]+) candidates"), 4600)
+
+    def _one_rung_trace(self, tmp: Path, rows: list[dict], budget: int = 3000) -> tuple[str, list[str]]:
+        inst = tmp / "inst"
+        (inst / "trace").mkdir(parents=True)
+        (inst / "trace" / "keeper.jsonl").write_text(
+            json.dumps({"type": "liqBudget", "budget": budget, "requestedAtMs": 900, "ts": 1000})
+        )
+        (inst / "trace" / "trader.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            signals = analyze._analyze_one(inst)
+        return buf.getvalue(), signals
+
+    def test_wall_is_keyed_on_candidates_not_on_the_budget_alone(self) -> None:
+        # The pass walks min(budget, book), so the cheapest state that failed to fit is the one with
+        # the fewest CANDIDATES — which need not be the one with the lowest budget. Here budget 3000
+        # at book 500 scans 500 candidates while budget 1500 at book 2000 scans 1500, so the wall is
+        # the 3000/500 row. Keying on budget would report 1500 and set a ceiling three times too high.
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "inst"
+            (inst / "trace").mkdir(parents=True)
+            (inst / "trace" / "keeper.jsonl").write_text("\n".join(json.dumps(r) for r in [
+                {"type": "liqBudget", "budget": 1500, "requestedAtMs": 900, "ts": 1000},
+                {"type": "liqBudget", "budget": 3000, "requestedAtMs": 2900, "ts": 3000},
+            ]))
+            (inst / "trace" / "trader.jsonl").write_text("\n".join(json.dumps(r) for r in [
+                {"type": "mintBatch", "n": 1, "book": 2000, "batch": 1, "ts": 2000,
+                 "oog": True, "err": "InsufficientGas"},
+                {"type": "mintBatch", "n": 1, "book": 500, "batch": 1, "ts": 4000,
+                 "oog": True, "err": "InsufficientGas"},
+            ]))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                analyze._analyze_one(inst)
+
+        self.assertRegex(buf.getvalue(), r"EMPIRICAL wall: a single mint OOG'd at budget 3000 / book 500 \(~500 candidates\)")
+
+    def test_probes_before_the_first_rung_are_ignored(self) -> None:
+        # Before any rung lands the in-force budget is the contract default, which the harness does
+        # not assume. A probe from that window has no known budget and must not enter the fit.
+        with tempfile.TemporaryDirectory() as tmp:
+            report, _ = self._one_rung_trace(Path(tmp), [
+                # ts 500 is before the rung's ts 1000 — unknown budget, must be dropped.
+                {"type": "mintBatch", "n": 1, "gas": 99, "compGas": 99, "book": 40, "batch": 1, "ts": 500},
+                {"type": "mintBatch", "n": 1, "gas": 900_000_000, "compGas": 900_000_000,
+                 "book": 500, "batch": 1, "ts": 1100},
+                {"type": "mintBatch", "n": 1, "gas": 2_400_000_000, "compGas": 2_400_000_000,
+                 "book": 2000, "batch": 1, "ts": 1200},
+            ])
+
+        self.assertNotIn("book   40", report)
+        # Two kept samples: (500, 9e8) and (2000, 2.4e9) -> slope exactly 1,000,000. Including the
+        # pre-rung sample at (40, 99) would drag it to ~1,180,000 and the ceiling with it.
+        self.assertEqual(_int_after(report, r"~([\d,]+) comp/candidate"), 1_000_000)
+
+    def test_a_run_that_collected_no_samples_says_so_and_fails(self) -> None:
+        # The failure this guards is a run that measured nothing yet printed an affirmative
+        # "affordable" line and exited 0 — an affirmative safety claim from zero evidence.
+        with tempfile.TemporaryDirectory() as tmp:
+            report, signals = self._one_rung_trace(Path(tmp), [
+                {"type": "mintBatch", "n": 40, "gas": 3_000_000_000, "compGas": 3_000_000_000,
+                 "book": 900, "batch": 40, "ts": 1100},
+            ])
+
+        self.assertIn("measured nothing", report)
+        self.assertNotIn("affordable", report)
+        self.assertIn("liq-budget-no-samples", signals)
+
+    def test_a_fit_over_a_narrow_cluster_is_refused_not_extrapolated(self) -> None:
+        # Samples spanning 23-29 candidates cannot support a ceiling near 4,000: the recovered slope
+        # is dominated by noise and the crossing came out 2.4x off truth in simulation, printed to
+        # the same decimal places as a real measurement. Refuse rather than report.
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = [
+                {"type": "mintBatch", "n": 1, "gas": 400_000_000 + 1_086_000 * bk,
+                 "compGas": 400_000_000 + 1_086_000 * bk, "book": bk, "batch": 1, "ts": 1100 + i}
+                for i, bk in enumerate([23, 25, 27, 29])
+            ]
+            report, signals = self._one_rung_trace(Path(tmp), rows)
+
+        self.assertIn("fit SKIPPED", report)
+        self.assertNotIn("stops fitting one tx", report)
+        self.assertIn("liq-budget-fit-unusable", signals)
+
+    def test_an_unphysical_negative_base_mint_is_refused_even_on_a_wide_span(self) -> None:
+        # A wide span is necessary but not sufficient. If cost grows super-linearly in the book
+        # (page splits, tree depth), a straight line through the samples cuts the axis below zero:
+        # here (100, 1.0e9) and (2000, 4.8e9) give slope 2,000,000 and base 1.0e9 - 2.0e8 = ... in
+        # fact 8.0e8; use a steeper pair so the intercept is genuinely negative —
+        # (100, 1.0e8) and (2000, 4.0e9): slope = 3.9e9/1900 = 2,052,631, base = 1e8 - 2.053e8 < 0.
+        # A mint cannot cost less than nothing, so the line is not describing the candidate count and
+        # its crossing must not be reported however wide the span (20x here).
+        with tempfile.TemporaryDirectory() as tmp:
+            report, signals = self._one_rung_trace(Path(tmp), [
+                {"type": "mintBatch", "n": 1, "gas": 100_000_000, "compGas": 100_000_000,
+                 "book": 100, "batch": 1, "ts": 1100},
+                {"type": "mintBatch", "n": 1, "gas": 4_000_000_000, "compGas": 4_000_000_000,
+                 "book": 2000, "batch": 1, "ts": 1200},
+            ])
+
+        self.assertNotIn("fit SKIPPED", report)  # the span guard is NOT what catches this
+        self.assertIn("fit REJECTED", report)
+        self.assertNotIn("stops fitting one tx", report)
+        self.assertIn("liq-budget-fit-unusable", signals)
 
     def test_section_is_skipped_when_no_budget_ladder_ran(self) -> None:
         # With no rung applied the in-force budget is the contract default, which the harness must
