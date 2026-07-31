@@ -321,23 +321,34 @@ is the numerical envelope of the pricer, not the vendor's model error.
 The 20 bps default is therefore justified as a floor by the first mechanism and
 unvalidated as a ceiling against the second.
 
-**A filler partly refunds their own fee, and the largest LP refunds most of it.**
-With the supply leg at zero this is now only live on partial exits, but it does
-not disappear: a withdrawer keeping part of their stake recaptures their
-post-withdrawal share of what they just paid, and a *full* exit pays it in
-full. That is the right direction — the charge bites hardest on the exit that
-concentrates the most risk and least on the LP who stays exposed — but it means
-the effective rate is not the nominal one for large partial exits. The charge is retained by the pool, so a supplier immediately owns a share
-of what they just paid. At a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC
-supply at 20 bps (the shape, illustrated on the leg that is now zero): fee
-20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so the new holding is
-worth 9_989_989 and the net fee paid is 10_011 — just over half. In closed form the net charge is `F * V / (V + n - F)` for a deposit `n`
-into a pool worth `V`, equivalently `F * (1 - post_fill_share)`, which tends to zero
-as an LP approaches owning the pool, and a round trip costs
-`F_in * (1 - share) + F_out`. The actor best placed to time the mark is
-therefore the one who pays the least of the charge that exists to price that
-timing. Any calibration below must be against the *effective* rate at the
-sizes it is meant to deter, not the nominal one.
+**A withdrawer partly refunds their own fee, and the deviation is largest for
+the smallest exits.** The charge is retained by the pool, so a withdrawer who is
+not fully exiting still owns a share of what they just paid. For a holder of `s`
+of `S` shares withdrawing `w` at fee `F`, the net charge is
+`F * (1 - post_withdrawal_share)` where the share is `(s - w) / (S - w)`. At
+`w = s` the recapture term is exactly zero, so a **full exit pays `F` in full**;
+the deviation grows as the exit shrinks relative to what the holder keeps, and
+is largest for a holder who still owns much of the pool afterwards. That is the
+right direction — the charge bites hardest on the exit that concentrates the most
+risk, least on the LP who stays exposed — but any calibration below must target
+the *effective* rate at the sizes it is meant to deter, not the nominal one.
+
+The same identity holds on the supply leg, which is one more reason entry ships
+at zero: a supplier is a holder the instant the fill lands. Illustrated on that
+now-dormant leg, at a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC supply at
+20 bps: fee 20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so the new
+holding is worth 9_989_989 and the net charge is 10_011 — just over half. In
+closed form that is `F * V / (V + n - F)` for a deposit `n` into a pool worth
+`V`, equivalently `F * (1 - post_fill_share)`.
+
+**The split roughly halves the shipped cost of the strategy this item exists to
+measure.** A round trip costs `F_in * (1 - share) + F_out`; with `F_in = 0` as
+shipped that is now just `F_out`, so the timing loop pays a flat 20 bps rather
+than the ~40 bps a symmetric 20 bps would have charged a small LP. A pure
+outside timer — deposit, wait a flush, exit fully — recaptures nothing on either
+leg and pays exactly the nominal exit rate. The measurement below must be read
+against that figure, not against the symmetric one the item was first written
+for.
 
 **Experiment plan** (decision rule written before the run):
 

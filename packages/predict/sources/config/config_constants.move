@@ -71,7 +71,8 @@ public(package) macro fun default_plp_withdraw_fee_rate(): u64 { 2_000_000 }
 /// Shared envelope for both legs. The 5% ceiling bounds how punitive an `AdminCap`
 /// alone can make LP entry or exit, and keeping it far below `float_scaling` is what
 /// makes `amount - fee` structurally non-underflowing on the mandatory flush path
-/// (pinned by `plp_fee_rate_at_full_scale_is_rejected`).
+/// (pinned by `plp_supply_fee_rate_at_full_scale_is_rejected` and
+/// `plp_withdraw_fee_rate_at_full_scale_is_rejected`).
 public(package) macro fun min_plp_fee_rate(): u64 { 0 }
 
 public(package) macro fun max_plp_fee_rate(): u64 { 50_000_000 }

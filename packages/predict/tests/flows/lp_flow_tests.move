@@ -138,8 +138,8 @@ fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
 #[test]
 fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
     let (mut fx, mut account) = setup_pool_with_lp();
-    // Isolate the cap: a fee would shift every figure below without changing what
-    // this test measures.
+    // Isolate the cap. Redundant against today's zero default, kept so a future
+    // non-zero supply default cannot silently shift every figure below.
     set_supply_fee(&mut fx, 0);
     set_max_pool_value(&mut fx, 20_000_000);
     // Consume the whole 10 DUSDC of headroom first.

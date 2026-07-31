@@ -198,7 +198,9 @@ Each leg is charged on the DUSDC side at its own rate, frozen into that flush's 
 - **Supply** — the fee, if one is ever set, is deducted from the escrowed DUSDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply DUSDC that no new shares were issued against. At the shipped rate of zero a deposit mints its full pro-rata share.
 - **Withdraw** — the fee is withheld from the marked payout, so the requester receives the net. The full escrowed PLP is burned either way.
 
-Both legs leave the charge inside the pool, so it accrues to PLP holders pro-rata rather than to the protocol reserve. On the withdraw leg that is exactly the holders who stayed; on the supply leg the payer is a holder the moment the fill lands, so they immediately recapture their own post-fill share of it — the effective supply charge is `F * (1 - post_fill_share)`, which matters for calibration and is recorded in `predeploy/open-items.md` P-27. Rounding is up, to the pool, consistent with the protocol's dust policy.
+Both legs leave the charge inside the pool, so it accrues to PLP holders pro-rata rather than to the protocol reserve.
+
+That has a consequence worth stating for the leg that actually charges: a withdrawer who is *not* fully exiting is still a holder afterwards, so they recapture their own post-withdrawal share of what they just paid. A **full** exit pays the fee in full; a partial exit pays `F × (1 − post_withdrawal_share)`. The deviation from the nominal rate is largest for an exit that leaves the holder owning a large share of the pool, and vanishes as the exit approaches a full one. That is the right direction — the charge bites hardest on the exit that concentrates the most risk, and least on the LP who stays exposed — but it means the effective rate is not the nominal rate for every exit, which matters when calibrating it (`predeploy/open-items.md` P-27). The same identity would apply to a supply fee, which is one more reason entry ships at zero. Rounding is up, to the pool, consistent with the protocol's dust policy.
 
 Two consequences worth stating plainly:
 

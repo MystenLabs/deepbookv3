@@ -609,6 +609,36 @@ fun capped_partial_supply_at_its_own_price_fills_with_the_fee() {
     finish(scenario, book, ledger);
 }
 
+/// The envelope ceiling on the leg that actually charges. `max_fee_rate_withholds_five_percent`
+/// covers it on the supply side; both legs share `fee_on`, but only this one is live
+/// at the shipped defaults, so the boundary is worth driving here too.
+/// gross 20e6 at the 2.0 mark, 5% of which is 1e6, so the payout is 19e6.
+#[test]
+fun max_withdraw_fee_rate_withholds_five_percent() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000, NO_FEE, MAX_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_eq!(ledger.idle_balance(), 41_000_000); // 60e6 - 19e6 paid out
+    assert_eq!(book.total_supply(), 20_000_000);
+    let events = event::events_by_type<vault_events::WithdrawFilled>();
+    assert_eq!(vault_events::withdraw_filled_fee(&events[0]), 1_000_000);
+
+    finish(scenario, book, ledger);
+}
+
 // === FIFO-until-idle-dry ===
 
 #[test]
