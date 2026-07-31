@@ -718,6 +718,20 @@ export async function readActiveMarketIds(): Promise<string[]> {
     return parseVectorId(await devInspectFirstReturn(tx));
 }
 
+// On-chain valuation-lock flag (devInspect `protocol_config::valuation_in_progress`).
+// The lock now spans transactions, so a keeper that died mid-flush leaves it engaged and
+// every mutation lane stays blocked until it is cleared. Reading it is how the keeper
+// notices, since a stuck lock otherwise only shows up as every other lane aborting.
+export async function readValuationInProgress(): Promise<boolean> {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "valuation_in_progress"),
+        arguments: [tx.object(PROTOCOL_CONFIG_ID)],
+    });
+    const bytes = await devInspectFirstReturn(tx);
+    return (bytes[0] ?? 0) !== 0;
+}
+
 // On-chain settlement flag for one market (devInspect `expiry_market::is_settled`). The
 // cleanout measurement waits on this: `redeem_settled` / `claim_trading_loss_rebate` both
 // require a settled market, and a settled market drops out of `active_expiry_markets`, so a

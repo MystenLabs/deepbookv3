@@ -5,8 +5,8 @@
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
 /// gate, the protocol-wide emergency freeze, and the full-pool valuation lock (held
-/// across transactions for the duration of a flush). Flow modules decide which gates apply before they mutate
-/// expiry, oracle, pool, or account state.
+/// across transactions for the duration of a flush). Flow modules decide which gates
+/// apply before they mutate expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -101,6 +101,15 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 /// Return the global protocol-freeze state for SDK and devInspect reads.
 public fun frozen(config: &ProtocolConfig): bool {
     config.frozen
+}
+
+/// Return whether a full-pool valuation is in flight, for SDK and devInspect reads.
+/// Every mutation entrypoint is gated on this, so an integrator needs it to explain a
+/// rejected transaction and a keeper needs it to notice a lock it has to clear — the
+/// lock now outlives its transaction, so "in flight" is an observable state rather
+/// than an intra-PTB detail.
+public fun valuation_in_progress(config: &ProtocolConfig): bool {
+    config.valuation_in_progress
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.

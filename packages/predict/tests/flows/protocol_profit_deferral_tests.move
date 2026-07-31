@@ -114,8 +114,8 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     fx.snapshot_expiry_pricer(&stage, &mut vault, &m_a, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &m_b, &config, &oracle_registry, &pyth, &bs);
     helpers::seal_snapshot(stage, &mut vault, &config);
-    helpers::value_expiry(&mut vault, &mut m_a, &config);
-    helpers::value_expiry(&mut vault, &mut m_b, &config);
+    fx.value_expiry(&mut vault, &mut m_a, &config);
+    fx.value_expiry(&mut vault, &mut m_b, &config);
     // Reaching here proves the flush did not brick on A's under-idle materialize.
     let pool_nav = vault.finish_flush(
         &mut config,

@@ -59,6 +59,7 @@ const EExpiryPricerAlreadySnapshotted: u64 = 12;
 const EIncompleteValuationSnapshot: u64 = 13;
 const EExpiredMarketNotSettled: u64 = 14;
 const EValuationDeadlineNotReached: u64 = 15;
+const ENotValuationStarter: u64 = 16;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -136,6 +137,9 @@ public struct PoolValuation has store {
     sealed: bool,
     /// Clock time the flush was started, for the stuck-flush deadline.
     started_at_ms: u64,
+    /// Address that started this flush. Only it may value markets and finish, for as
+    /// long as the flush is its own — see `assert_valuation_starter`.
+    started_by: address,
 }
 
 // === Package Initializer ===
@@ -267,10 +271,11 @@ public fun start_pool_valuation(
     vault: &mut PoolVault,
     lifecycle_proof: MarketLifecycleProof,
     clock: &Clock,
+    ctx: &TxContext,
 ): SnapshotStage {
     config.assert_version();
     lifecycle_proof.destroy_proof();
-    start_pool_valuation_internal(config, vault, clock);
+    start_pool_valuation_internal(config, vault, clock, ctx);
     SnapshotStage {}
 }
 
@@ -366,9 +371,15 @@ public fun seal_valuation_snapshot(
 ///
 /// Only this stage walks payout trees, so each transaction now carries one market's
 /// dynamic-field children instead of the entire pool's.
-public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
+public fun value_expiry(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    ctx: &TxContext,
+) {
     config.assert_version();
     config.assert_valuation_in_progress();
+    vault.assert_valuation_starter(ctx);
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
 
@@ -428,6 +439,7 @@ public fun finish_flush(
 ): u64 {
     config.assert_version();
     config.assert_valuation_in_progress();
+    vault.assert_valuation_starter(ctx);
     let valuation = vault.valuation.extract();
     assert_all_expected_valued(
         &valuation.expected_expiry_markets,
@@ -1154,6 +1166,7 @@ fun start_pool_valuation_internal(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
     clock: &Clock,
+    ctx: &TxContext,
 ) {
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();
@@ -1166,6 +1179,7 @@ fun start_pool_valuation_internal(
             frozen_pricers: vec_map::empty(),
             sealed: false,
             started_at_ms: clock.timestamp_ms(),
+            started_by: ctx.sender(),
         });
 }
 
@@ -1181,6 +1195,23 @@ fun abort_valuation_internal(vault: &mut PoolVault, config: &mut ProtocolConfig)
         expected_expiry_markets.length(),
         valued_expiry_markets.length(),
     );
+}
+
+/// Abort unless the caller started this flush.
+///
+/// The hot potato used to carry this: `finish_flush` consumed a `PoolValuation` only
+/// `start_pool_valuation` could mint, so a flush could only be completed by whoever
+/// started it. Moving the valuation onto the vault made the completion entrypoints
+/// reachable by anyone, and a third party finishing a flush is not harmless — it may
+/// pass zero drain budgets, which retires the frozen mark with no LP request filled
+/// and forces the operator to re-value the whole pool. Cheap to do, expensive to
+/// suffer, and repeatable.
+///
+/// There is no permissionless completion path past the deadline: an abandoned flush is
+/// cleared by `abort_valuation`, which discards it rather than retiring a mark nobody
+/// audited.
+fun assert_valuation_starter(vault: &PoolVault, ctx: &TxContext) {
+    assert!(vault.valuation.borrow().started_by == ctx.sender(), ENotValuationStarter);
 }
 
 /// Abort unless the market is in the snapshot and not already valued (exactly-once).

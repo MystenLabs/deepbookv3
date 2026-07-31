@@ -1405,6 +1405,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   every active market in one atomic PTB, so this was a joint sum across markets:
   two markets at 586 nodes each aborted at 1,172 combined
   (`evidence/c1-object-cache-flush-2026-07-07.md`).
+
+  **Correction to that record's capacity law, which RP-25 inherited:** it writes the
+  liquidation-book term as `ceil(leveraged_orders / 64)`. That is the best case, not the
+  bound. `insert_active_order_id` splits an over-full page at its midpoint (32 and 33,
+  never 64) and `merge_page_if_small` declines exactly when the neighbour is full, so
+  ascending order ids — a bot minting a monotone strike ladder — leave every page at the
+  split floor. The correct term is `ceil(leveraged_orders / 32)`: **157 pages at the
+  5,000-order cap, not 79**.
 - **Controller:** external — a Sui protocol constant. Verified network-invariant
   on 2026-07-29: set once in `sui-protocol-config/src/lib.rs` with no
   version-gated override, alongside `object_runtime_max_num_store_entries` at the
@@ -1508,29 +1516,40 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   requires every snapshotted market valued, so LP supply and withdraw freeze
   **pool-wide** until that market expires and is swept. This is strictly worse than a
   degraded fill, which is why the response is a hard bound rather than a tuned one.
-- **Response:** rung 3 — make the over-budget state unrepresentable.
+- **Response:** rung 2 — a derived cap plus a written operational bound.
   `max_payout_tree_nodes` is no longer a chosen number; it is
   `object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
-  (1,000 − 79 − 40 = **881**). Raising `max_active_leveraged_orders` now shrinks the
+  (1,000 − 157 − 40 = **803**). Raising `max_active_leveraged_orders` now shrinks the
   node cap automatically instead of silently pushing the flush over the ceiling.
+  Not rung 3: the derivation bounds ONE market's valuation, and nothing on-chain stops a
+  caller batching two `value_expiry` commands — or `value_expiry` and `finish_flush` —
+  into one PTB, which re-creates the joint budget. **One `value_expiry` per transaction,
+  never batched with `finish_flush`,** is an operator convention, and the failure if it
+  is broken is a recoverable abort rather than a freeze.
 - **Reasoning:** RP-25 removed the *joint* budget across markets but left the
   *per-market* one at a number that could not fit — 1,000 nodes alone equalled the
   whole budget, before pages and base children. Picking a smaller literal would have
   fixed today's arithmetic and left the two caps free to drift apart again; deriving
-  it means the invariant is the definition. The cost is accepted and real: ~12% fewer
-  distinct strike boundaries per market (1,000 → 881), which tightens wide-strike
-  books that Q14 already records as pressing the old cap. Correctness wins because
-  the failure mode is a pool-wide LP freeze, not a narrower grid.
-- **Risk profile:** `MEASURED` for the two terms the derivation rests on — the
-  1,000-child budget and the ~18 base children implied by the single-market abort
-  boundary, both from `evidence/c1-object-cache-flush-2026-07-07.md`. `UNMEASURED`
-  for `valuation_base_children_reserve` itself: source inspection puts the real base
-  under 10 (the registered-expiry row, three enclosing `Table` objects, per-market
-  bookkeeping), the C-1 figure of ~18 came from a fuller PTB that also carried
-  `start_pool_valuation`, `finish_flush` and the LP-queue drain, and the reserve is
-  set to 40 — several times either figure — because the cost of being wrong is
-  asymmetric. C-4 stays open to tighten it against a measured single-market
-  `value_expiry`.
+  it means the invariant is the definition. The cost is accepted and real: ~20% fewer
+  distinct strike boundaries per market (1,000 → 803, a ~20% cut), which tightens wide-strike
+  books. Correctness wins because the failure mode is a pool-wide LP freeze, not a
+  narrower grid, and no item here records a strike-count floor the new cap crosses —
+  the tracker's standing complaint about this cap is P-17's, that it is too generous.
+- **Risk profile:** `MEASURED` only for the 1,000-child budget itself
+  (`evidence/c1-object-cache-flush-2026-07-07.md`). `UNMEASURED` for both other terms.
+  The page bound is structural, read from `liquidation_book`'s split and merge
+  conditions and pinned by `worst_case_page_occupancy_stays_within_the_bound`, not
+  measured on a node. `valuation_base_children_reserve` is an estimate: the evidence's
+  two data points (708 success, 982 abort) bound the *fuller-PTB* overhead only to the
+  interval **[19, 292]** — a one-sided read of the abort as landing exactly on the
+  boundary is what produced the "~18" figure, and that run carried
+  `start_pool_valuation`, `finish_flush`, the LP-queue drain and several other markets,
+  so it is not a per-market base at all. Source inspection of a lone `value_expiry`
+  puts the real per-market base at **1-2** children: Predict uses `sui::table` only, so
+  each row is one child, and a `Table` stored inline in its parent is not itself a
+  cached child. The reserve is 40 because the cost of being wrong is asymmetric —
+  over-reserving spends strike capacity, under-reserving freezes the pool. C-4 tightens
+  it against a measured single-market `value_expiry`.
 - **Rejected: leaving the cap and deferring to measurement.** That was C-4's original
   plan, and it leaves the pool-wide freeze reachable on `main` in the meantime for the
   price of the fees. Rejected: **excluding an un-valuable market from the flush** —
@@ -1540,10 +1559,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   walk's in-order contract is what `cached_up_price` binary-searches, so a resumable
   walk is a redesign of the NAV primitive, not a cap change.
 - **Pinning tests:** `valuation_capacity_tests.move` —
-  `one_market_valuation_fits_the_object_budget`,
-  `the_node_cap_is_exactly_the_remaining_budget`,
-  `liquidation_pages_track_the_leveraged_order_cap`. Mutation-checked: restoring the
-  old literal `1_000` fails all three. Note `sui move test` does not enforce the
+  `worst_case_page_occupancy_stays_within_the_bound` (builds a real book in ascending-id
+  order and counts real pages against the derivation's own occupancy assumption; this is
+  the one that fails if the divisor reverts to the full page capacity),
+  `one_market_valuation_fits_the_object_budget`, and `the_node_cap_stays_usable` (a
+  floor, because a derived cap can be driven to a positive but economically dead value
+  without ever underflowing). Mutation-checked: reverting the divisor to the full page
+  capacity fails the occupancy test. Note `sui move test` does not enforce the
   object-runtime limit, which is precisely why the budget is asserted as arithmetic
   rather than left to a localnet run nobody repeats.
 - **Reopen when:** C-4 measures the base children and the reserve can be tightened; or
