@@ -1,6 +1,16 @@
-import { mkdirSync, readFileSync, writeFileSync } from "fs";
+import { readFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+
+import {
+    FAILED_TRANSACTIONS_DIR,
+    INSTANCE_DIR,
+    ensureDir,
+    ts,
+    writeJson,
+} from "../../devtools/ts/artifacts.js";
+
+export { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson };
 
 export type ScenarioActionName = "oracle_mint_ptb" | "redeem" | "supply" | "withdraw";
 export type SimulationActionName =
@@ -181,12 +191,6 @@ const ORACLE_REFRESH_FIELDS = [
 
 const POSITION_LOT_SIZE = 10_000n;
 const LEVERAGE_ONE_X = 1_000_000_000n;
-
-function resolveInstanceDir(): string {
-    const dir = process.env.INSTANCE_DIR;
-    if (dir) return dir;
-    return fileURLToPath(new URL("..", import.meta.url));
-}
 
 function isScenarioActionName(value: string): value is ScenarioActionName {
     return (
@@ -373,39 +377,28 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     };
 }
 
-const instanceDir = resolveInstanceDir();
-
 export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v3";
 export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v3";
 export const SCENARIO_PATH = fileURLToPath(
     new URL("../data/generated/normal_scenario.csv", import.meta.url),
 );
-export const STATE_PATH = path.join(instanceDir, "artifacts", "state.json");
-export const LOCAL_TRACE_PATH = path.join(instanceDir, "artifacts", "local_trace.json");
-export const LOCAL_DATA_PATH = path.join(instanceDir, "artifacts", "local_data.json");
+export const STATE_PATH = path.join(INSTANCE_DIR, "artifacts", "state.json");
+export const LOCAL_TRACE_PATH = path.join(INSTANCE_DIR, "artifacts", "local_trace.json");
+export const LOCAL_DATA_PATH = path.join(INSTANCE_DIR, "artifacts", "local_data.json");
 export const LOCAL_TRACE_PARTIAL_PATH = path.join(
-    instanceDir,
+    INSTANCE_DIR,
     "artifacts",
     "local_trace.partial.json",
 );
 export const LOCAL_DATA_PARTIAL_PATH = path.join(
-    instanceDir,
+    INSTANCE_DIR,
     "artifacts",
     "local_data.partial.json",
 );
-export const PYTHON_DATA_PATH = path.join(instanceDir, "artifacts", "python_data.json");
-export const FAILED_TRANSACTIONS_DIR = path.join(instanceDir, "artifacts", "failed_transactions");
+export const PYTHON_DATA_PATH = path.join(INSTANCE_DIR, "artifacts", "python_data.json");
 
 export function scenarioQuantityScale(): string {
     return "1";
-}
-
-export function ts(): string {
-    return new Date().toISOString().slice(11, 23);
-}
-
-export function ensureDir(dirPath: string): void {
-    mkdirSync(dirPath, { recursive: true });
 }
 
 export function parseScenarioText(text: string): ScenarioRow[] {
@@ -443,9 +436,4 @@ export function loadScenario(path = SCENARIO_PATH): ScenarioRow[] {
 
 export function readJson<T>(filePath: string): T {
     return JSON.parse(readFileSync(filePath, "utf8")) as T;
-}
-
-export function writeJson(filePath: string, value: unknown): void {
-    ensureDir(path.dirname(filePath));
-    writeFileSync(filePath, JSON.stringify(value, null, 2));
 }

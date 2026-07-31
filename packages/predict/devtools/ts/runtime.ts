@@ -517,8 +517,8 @@ function gasSummaryFromEffects(effects: any): GasUsage {
 }
 
 // A refresh and the priced operation are separate receipts under the same-transaction
-// oracle guard. Keep reporting their combined gas as one logical operation while the
-// priced operation remains the authority for the returned digest, events, and effects.
+// oracle guard. Aggregate their gas, events, and object changes as one logical operation;
+// the priced operation remains the authority for the returned digest and effects.
 function aggregateGas(usages: GasUsage[]): GasUsage {
     return usages.reduce(
         (acc, gas) => ({
@@ -904,16 +904,6 @@ export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | n
     if (ts <= lastPythTimestampMs) return null;
     lastPythTimestampMs = ts;
     return ts;
-}
-
-// Build one combined oracle refresh (re-signed Pyth spot + BS spot/forward/SVI for
-// one expiry) at a caller-provided source timestamp. Same calls as addOracleRefresh
-// but stamps real (clamped) provider time instead of deriving it from the Clock.
-export function buildOracleRefreshTx(params: OracleRefreshParams, sourceTimestampMs: bigint): Transaction {
-    const tx = new Transaction();
-    addPythFeedUpdate(tx, params.pythFeedId, params.spot, sourceTimestampMs);
-    addBlockScholesUpdates(tx, params, sourceTimestampMs);
-    return tx;
 }
 
 // Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then a
@@ -1975,20 +1965,6 @@ export async function refreshOracleAndMintTxs(
     return refreshThen(params, (tx) => addMint(tx, params));
 }
 
-export async function refreshOracleAndMintBatchTxs(
-    params: OracleRefreshParams & { mints: MintParams[] },
-): Promise<Transaction[]> {
-    if (params.mints.length === 0) {
-        throw new Error("refreshOracleAndMintBatchTxs requires at least one mint");
-    }
-
-    return refreshThen(params, (tx) => {
-        for (const mint of params.mints) {
-            addMint(tx, mint);
-        }
-    });
-}
-
 export async function refreshOracleAndRedeemTxs(
     params: OracleRefreshParams & RedeemParams,
 ): Promise<Transaction[]> {
@@ -2183,30 +2159,6 @@ export async function executeAndWait(
     gasBudget: number | bigint = DEFAULT_GAS_BUDGET,
 ): Promise<any> {
     return executeWithSignerAndWait(tx, signer, label, gasBudget);
-}
-
-// Execute every PTB in order and combine the logical operation's observable receipt.
-export async function executeAllAndWait(
-    txs: Transaction[],
-    label = "transaction",
-    gasBudget: number | bigint = DEFAULT_GAS_BUDGET,
-): Promise<ExecutionReceipt> {
-    if (txs.length === 0) {
-        throw new Error(`${label}: executeAllAndWait requires at least one transaction`);
-    }
-    const receipts: ExecutionReceipt[] = [];
-    for (const [index, tx] of txs.entries()) {
-        const legLabel = txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
-        const settled = await executeAndWait(tx, legLabel, gasBudget);
-        receipts.push({
-            digest: settled.digest,
-            gas: gasSummaryFromEffects(settled.effects),
-            events: settled.events ?? [],
-            objectChanges: settled.objectChanges ?? [],
-            effects: settled.effects,
-        });
-    }
-    return combineExecutionReceipts(receipts);
 }
 
 const EXECUTE_MAX_ATTEMPTS = 5;

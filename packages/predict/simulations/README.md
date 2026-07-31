@@ -35,7 +35,8 @@ Every run retains:
 - `local_data.json` — canonical localnet economic records
 - `python_data.json` — canonical Python-model records
 - `state.json` — published simulation object ids
-- `failed_transactions/` — transaction-build, execution, and dry-run diagnostics
+
+Failed transaction builds or executions additionally retain `failed_transactions/` with transaction-build, execution, and dry-run diagnostics.
 
 The manifest status is atomically changed from `running` to `complete` or `failed`, so interrupted and failed retained runs remain machine-readable.
 

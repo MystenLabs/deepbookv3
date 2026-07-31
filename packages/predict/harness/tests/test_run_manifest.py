@@ -189,6 +189,16 @@ class RunManifestTests(unittest.TestCase):
                 },
             )
             self.assertEqual(set(manifest["inputs"]), {"source", "config"})
+            self.assertEqual(
+                manifest["artifacts"],
+                {
+                    "scenario": "scenario.csv",
+                    "local_data": "local_data.json",
+                    "python_data": "python_data.json",
+                    "local_trace": "local_trace.json",
+                    "state": "state.json",
+                },
+            )
 
     def test_write_manifest_replaces_valid_json_and_removes_pending_file(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:

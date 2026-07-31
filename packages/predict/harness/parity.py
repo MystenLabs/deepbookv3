@@ -125,6 +125,14 @@ def run(
                 artifacts_dir / "python_data.json",
                 manifest_path,
             ),
+            "local_trace": relative_path(
+                artifacts_dir / "local_trace.json",
+                manifest_path,
+            ),
+            "state": relative_path(
+                artifacts_dir / "state.json",
+                manifest_path,
+            ),
         }
         if benchmark:
             manifest["artifacts"]["results"] = relative_path(

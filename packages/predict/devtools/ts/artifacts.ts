@@ -1,13 +1,13 @@
-// Failure-artifact + small filesystem helpers — the subset of the legacy
-// simulations `shared.ts` that the harness executor needs (the rest of shared.ts
-// was CSV-scenario parsing, intentionally left behind).
+// Canonical instance artifact paths and small filesystem helpers shared by the
+// harness executor and deterministic simulation.
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const instanceDir = process.env.INSTANCE_DIR;
-if (!instanceDir) throw new Error("INSTANCE_DIR is required");
+const configuredInstanceDir = process.env.INSTANCE_DIR;
+if (!configuredInstanceDir) throw new Error("INSTANCE_DIR is required");
+export const INSTANCE_DIR = configuredInstanceDir;
 
-export const FAILED_TRANSACTIONS_DIR = path.join(instanceDir, "artifacts", "failed_transactions");
+export const FAILED_TRANSACTIONS_DIR = path.join(INSTANCE_DIR, "artifacts", "failed_transactions");
 
 export function ts(): string {
   return new Date().toISOString().slice(11, 23);
