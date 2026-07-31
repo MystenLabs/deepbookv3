@@ -85,6 +85,7 @@ export interface LocalTraceStep {
     step: number;
     action: SimulationActionName;
     digest: string;
+    pricingTimestampMs: number;
     wallMs: number;
     gas: GasLike;
     events: LocalTraceEvent[];

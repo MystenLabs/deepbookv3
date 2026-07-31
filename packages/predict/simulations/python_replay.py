@@ -2887,9 +2887,12 @@ def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
         key = (int(step["step"]), str(step["action"]))
         if key in timings:
             raise ValueError(f"duplicate SVI timing for trace step {key}")
+        pricing_timestamp = step.get("pricingTimestampMs")
+        if not isinstance(pricing_timestamp, int):
+            raise ValueError(f"pricing trace step {key} has no integer pricingTimestampMs")
         timings[key] = {
             "model_timestamp_ms": int(observation["model_timestamp_ms"]),
-            "pricing_timestamp_ms": int(observation["recorded_at_ms"]),
+            "pricing_timestamp_ms": pricing_timestamp,
         }
     return timings
 

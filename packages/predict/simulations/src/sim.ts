@@ -853,6 +853,7 @@ function traceStep(row: ScenarioRow, receipt: ExecutionReceipt, wallMs: number):
         step: row.step,
         action: row.action,
         digest: receipt.digest,
+        pricingTimestampMs: receipt.timestampMs,
         wallMs,
         gas: receipt.gas,
         events: receipt.events.map((event: any) => ({
@@ -1463,6 +1464,7 @@ async function executeScenario(
             step: afterRow,
             action: "flush",
             digest: receipt.digest,
+            pricingTimestampMs: receipt.timestampMs,
             wallMs,
             gas: receipt.gas,
             events: receipt.events.map((event: any) => ({
@@ -1502,6 +1504,7 @@ async function executeScenario(
             step: afterRow,
             action: "rebalance_expiry_cash",
             digest: receipt.digest,
+            pricingTimestampMs: receipt.timestampMs,
             wallMs,
             gas: receipt.gas,
             events: receipt.events.map((event: any) => ({

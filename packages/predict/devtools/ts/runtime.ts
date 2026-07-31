@@ -1,5 +1,5 @@
 import { bcs } from "@mysten/sui/bcs";
-import { SuiGrpcClient } from "@mysten/sui/grpc";
+import { SuiGrpcClient, parseGrpcTransactionResponse } from "@mysten/sui/grpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { deriveObjectID } from "@mysten/sui/utils";
 
@@ -64,6 +64,7 @@ export interface GasUsage {
 
 export interface ExecutionReceipt {
     digest: string;
+    timestampMs: number;
     gas: GasUsage;
     events: any[];
     objectChanges: any[];
@@ -557,12 +558,34 @@ async function getTransactionWithRetry(digest: string): Promise<any> {
 
     for (let attempt = 0; attempt < 20; attempt++) {
         try {
-            return normalizeTransactionResult(
-                await client.getTransaction({
-                    digest,
-                    include: EXECUTION_TRANSACTION_INCLUDE,
-                }),
-            );
+            const { response } = await client.ledgerService.getTransaction({
+                digest,
+                readMask: {
+                    paths: [
+                        "digest",
+                        "effects",
+                        "events",
+                        "effects.changed_objects.object_type",
+                        "effects.changed_objects.object_id",
+                        "timestamp",
+                    ],
+                },
+            });
+            if (!response.transaction?.timestamp) {
+                throw new Error(`transaction ${digest} has no checkpoint timestamp`);
+            }
+            const timestamp = response.transaction.timestamp;
+            return {
+                ...normalizeTransactionResult(
+                    parseGrpcTransactionResponse(response.transaction, {
+                        include: EXECUTION_TRANSACTION_INCLUDE,
+                    }),
+                ),
+                timestampMs: Number(
+                    timestamp.seconds * 1_000n +
+                    BigInt(timestamp.nanos) / 1_000_000n,
+                ),
+            };
         } catch (error) {
             lastError = error;
             await new Promise((resolve) => setTimeout(resolve, 250));
@@ -2234,6 +2257,7 @@ export async function execute(
                 }
                 receipts.push({
                     digest: raw.digest,
+                    timestampMs: settled.timestampMs,
                     gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
                     events: settled.events ?? raw.events ?? [],
                     objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
