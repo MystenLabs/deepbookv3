@@ -101,6 +101,7 @@ export interface GasLike {
     computationCost: number;
     storageCost: number;
     storageRebate: number;
+    nonRefundableStorageFee: number;
     gasTotal: number;
 }
 

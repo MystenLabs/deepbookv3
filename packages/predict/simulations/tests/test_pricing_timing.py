@@ -24,9 +24,19 @@ class PricingTimingTests(unittest.TestCase):
                             {
                                 "step": 1,
                                 "action": "oracle_mint_ptb",
+                                "digest": "priced-digest",
                                 "pricingTimestampMs": 125,
+                                "wallMs": 1.5,
+                                "gas": {
+                                    "computationCost": 1,
+                                    "storageCost": 2,
+                                    "storageRebate": 0,
+                                    "nonRefundableStorageFee": 0,
+                                    "gasTotal": 3,
+                                },
                                 "events": [
                                     {
+                                        "type": "SVIParams>>",
                                         "full_type": (
                                             "0x1::events::BlockScholesObservationRecorded"
                                             "<0x1::types::SVIParams>"

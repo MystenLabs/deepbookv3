@@ -16,20 +16,12 @@ from python_indexes.liquidation_book import (
     encode_order_id,
 )
 from python_indexes.strike_payout_tree import StrikePayoutTree
+from sim_artifacts import load_local_trace
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
-LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v4"
-LOCAL_TRACE_ACTIONS = {
-    "oracle_mint_ptb",
-    "redeem",
-    "supply",
-    "withdraw",
-    "flush",
-    "rebalance_expiry_cash",
-}
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
     "schema_version": None,
@@ -2870,48 +2862,16 @@ def scenario_pricing_timing(row: dict[str, Any]) -> dict[str, int]:
 
 
 def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
-    trace = json.loads(path.read_text())
-    if not isinstance(trace, dict):
-        raise ValueError(f"pricing trace must be an object: {path}")
-    if trace.get("schema_version") != LOCAL_TRACE_SCHEMA_VERSION:
-        raise ValueError(
-            f"pricing trace must use schema_version='{LOCAL_TRACE_SCHEMA_VERSION}': {path}"
-        )
-    steps = trace.get("steps")
-    if not isinstance(steps, list):
-        raise ValueError(f"pricing trace has no steps array: {path}")
+    trace = load_local_trace(path)
 
     timings: dict[tuple[int, str], dict[str, int]] = {}
-    for index, step in enumerate(steps):
-        if not isinstance(step, dict):
-            raise ValueError(f"pricing trace step {index} must be an object")
-        step_number = step.get("step")
-        action = step.get("action")
-        pricing_timestamp = step.get("pricingTimestampMs")
-        events = step.get("events")
-        if type(step_number) is not int or step_number < 0:
-            raise ValueError(f"pricing trace step {index} has invalid step")
-        if not isinstance(action, str) or action not in LOCAL_TRACE_ACTIONS:
-            raise ValueError(f"pricing trace step {index} has invalid action")
-        if type(pricing_timestamp) is not int or pricing_timestamp < 0:
-            raise ValueError(
-                f"pricing trace step {(step_number, action)} has invalid pricingTimestampMs"
-            )
-        if not isinstance(events, list):
-            raise ValueError(f"pricing trace step {(step_number, action)} has invalid events")
+    for step in trace["steps"]:
+        step_number = step["step"]
+        action = step["action"]
+        pricing_timestamp = step["pricingTimestampMs"]
         observation = None
-        for event_index, event in enumerate(events):
-            if not isinstance(event, dict):
-                raise ValueError(
-                    f"pricing trace step {(step_number, action)} event {event_index} "
-                    "must be an object"
-                )
-            full_type = event.get("full_type")
-            if not isinstance(full_type, str):
-                raise ValueError(
-                    f"pricing trace step {(step_number, action)} event {event_index} "
-                    "has invalid full_type"
-                )
+        for event in step["events"]:
+            full_type = event["full_type"]
             if (
                 "BlockScholesObservationRecorded" not in full_type
                 or "SVIParams" not in full_type
