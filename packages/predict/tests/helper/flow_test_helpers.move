@@ -1970,13 +1970,18 @@ public fun seal_snapshot(stage: SnapshotStage, vault: &mut PoolVault, config: &P
     vault.seal_valuation_snapshot(stage, config);
 }
 
-public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
-    vault.value_expiry(market, config);
+public fun value_expiry(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+) {
+    vault.value_expiry(market, config, self.scenario.ctx());
 }
 
 /// Value one expiry through a market bundle.
-public fun value_expiry_bundle(market: &mut MarketBundle) {
-    value_expiry(&mut market.vault, &mut market.market, &market.config);
+public fun value_expiry_bundle(self: &mut Fixture, market: &mut MarketBundle) {
+    self.value_expiry(&mut market.vault, &mut market.market, &market.config);
 }
 
 public fun rebalance_expiry_cash(
@@ -2182,7 +2187,7 @@ public fun start_flush(
     let registry = self.scenario.take_shared<Registry>();
     let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
     return_shared(registry);
-    plp::start_pool_valuation(config, vault, proof, &self.clock)
+    plp::start_pool_valuation(config, vault, proof, &self.clock, self.scenario.ctx())
 }
 
 /// Start a pool-NAV flush through a single-market bundle, running the whole snapshot
@@ -2197,6 +2202,7 @@ public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle) {
         &mut market.vault,
         proof,
         &self.clock,
+        self.scenario.ctx(),
     );
     self.snapshot_expiry_pricer_bundle(&stage, market);
     seal_snapshot(stage, &mut market.vault, &market.config);
@@ -2214,6 +2220,7 @@ public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundl
         &mut market.vault,
         proof,
         &self.clock,
+        self.scenario.ctx(),
     );
     self.snapshot_expiry_pricer_bundle(&stage, market);
     stage
@@ -2225,6 +2232,24 @@ public fun abort_valuation_privileged_bundle(self: &mut Fixture, market: &mut Ma
     let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
     return_shared(registry);
     plp::abort_valuation_privileged(&mut market.vault, &mut market.config, proof);
+}
+
+/// Discard an in-flight flush on the lifecycle authority, against loose objects.
+public fun abort_valuation_privileged(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &mut ProtocolConfig,
+) {
+    let registry = self.scenario.take_shared<Registry>();
+    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    return_shared(registry);
+    plp::abort_valuation_privileged(vault, config, proof);
+}
+
+/// Read the valuation lock through a bundle's config. Wraps the public
+/// `protocol_config::valuation_in_progress` getter, not a test-only seam.
+public fun valuation_in_progress_bundle(market: &MarketBundle): bool {
+    market.config.valuation_in_progress()
 }
 
 /// Discard an in-flight flush through the permissionless deadline path.

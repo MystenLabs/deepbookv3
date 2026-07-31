@@ -72,19 +72,35 @@ public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 /// Exceeding it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object`.
 public(package) macro fun object_cache_budget(): u64 { 1_000 }
 
-/// Liquidation-book pages one market can carry, at `liquidation_book`'s 64 orders per
-/// page. `correction_value` scans every page during valuation, so these compete with
-/// payout-tree nodes for the same per-transaction budget.
-public(package) macro fun max_liquidation_pages(): u64 {
-    max_active_leveraged_orders!().div_ceil(64)
+/// Orders one `liquidation_book` page holds before it splits. Single-homed here so the
+/// capacity derivation below and the book itself cannot drift apart.
+public(package) macro fun liquidation_page_capacity(): u64 { 64 }
+
+/// Liquidation-book pages one market can carry. `correction_value` scans every page
+/// during valuation, so these compete with payout-tree nodes for the same
+/// per-transaction budget.
+///
+/// The divisor is **half** the page capacity, not the capacity. `insert_active_order_id`
+/// splits an over-full page at its midpoint, leaving 32 and 33 — never 64 — and
+/// `merge_page_if_small` declines to merge exactly when the neighbour is full. Ascending
+/// order ids (a bot minting a monotone strike ladder at constant size and floor) always
+/// land in the last page, so each page splits once and is never revisited, and occupancy
+/// settles at the split floor. Dividing by the full capacity would describe a perfectly
+/// packed book: the best case, not the bound.
+public(package) macro fun liquidation_orders_per_page_worst_case(): u64 {
+    liquidation_page_capacity!() / 2
 }
 
-/// Headroom for the children a single `plp::value_expiry` loads besides the payout
-/// tree and the liquidation book: the registered-expiry row, the three enclosing
-/// `Table` objects, and per-market bookkeeping. Source inspection puts this under 10
-/// and the C-1 campaign implies ~18 in a fuller PTB; the reserve is deliberately
-/// several times that, because it is UNMEASURED against the resumable shape and
-/// running out is a pool-wide LP freeze rather than a degraded fill. C-4 tightens it.
+public(package) macro fun max_liquidation_pages(): u64 {
+    max_active_leveraged_orders!().div_ceil(liquidation_orders_per_page_worst_case!())
+}
+
+/// Headroom for the children a single `plp::value_expiry` loads besides the payout tree
+/// and the liquidation book — chiefly the registered-expiry row. Source inspection puts
+/// the real figure at 1-2: Predict uses `sui::table` only, so each row is one child, and
+/// a `Table` stored inline in its parent is not itself a cached child. UNMEASURED, and
+/// set far above that estimate because running out is a pool-wide LP freeze rather than
+/// a degraded fill. C-4 tightens it.
 public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
@@ -96,7 +112,12 @@ public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 /// pushing the flush over the ceiling. A cap above the budget is not a tuning mistake
 /// — it makes a market permanently un-valuable, and `finish_flush` requires every
 /// snapshotted market valued, so one such market freezes LP supply and withdraw
-/// pool-wide until it expires. See RP-26.
+/// pool-wide until it expires.
+///
+/// **Precondition:** one `value_expiry` per transaction, never batched with another
+/// market's or with `finish_flush` (whose queue drain walks its own pages). The
+/// derivation bounds ONE market's valuation; batching re-creates the joint budget this
+/// exists to remove. See RP-26.
 public(package) macro fun max_payout_tree_nodes(): u64 {
     object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()
 }

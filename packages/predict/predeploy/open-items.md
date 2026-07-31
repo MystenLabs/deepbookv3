@@ -457,16 +457,18 @@ trust coupling.
 RP-25 removed the *joint* flush budget, and RP-26 closed the *per-market* one by
 deriving `max_payout_tree_nodes` from the transaction budget rather than choosing it:
 `object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
-= 1,000 − 79 − 40 = **881**. A single `value_expiry` therefore fits by construction,
+= 1,000 − 157 − 40 = **803**. A single `value_expiry` therefore fits by construction,
 and `valuation_capacity_tests.move` fails if a future edit breaks that.
 
 What remains is the reserve's *size*, not its existence. 40 is deliberately generous:
-source inspection puts the real base children under 10 (the registered-expiry row,
-the three enclosing `Table` objects, per-market bookkeeping), and the C-1 campaign
-implies ~18 inside a fuller PTB that also carried `start_pool_valuation`,
-`finish_flush` and the LP-queue drain — none of which a `value_expiry` transaction
-carries now. So the reserve is likely 2–4× larger than it needs to be, and every
-unit of it is a strike boundary markets cannot use.
+source inspection of a lone `value_expiry` puts the real per-market base at **1-2**
+children — Predict uses `sui::table` only, so each row is one child, and a `Table`
+stored inline in its parent is not itself a cached child. The C-1 campaign cannot
+refine this: its two points (708 success, 982 abort) bound the *fuller-PTB* overhead
+only to `[19, 292]`, and that PTB also carried `start_pool_valuation`, `finish_flush`,
+the LP-queue drain and several other markets, so it is not a per-market figure. The
+reserve is therefore likely ~20× larger than needed, and every unit of it is a strike
+boundary markets cannot use.
 
 **Plan (decision rule pre-registered):** re-run `ts/strategies/treeNodeSweep.ts`
 against the resumable flush, filling ONE market and valuing it in its own

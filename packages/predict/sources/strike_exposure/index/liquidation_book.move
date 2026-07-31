@@ -17,7 +17,9 @@ const EActiveOrderAlreadyExists: u64 = 0;
 const EActiveOrderNotFound: u64 = 1;
 const EMaxActiveLeveragedOrders: u64 = 2;
 
-const PAGE_CAPACITY: u64 = 64;
+/// Orders one page holds before it splits. Single-homed in `constants` because the
+/// flush's per-transaction object budget is derived from it (RP-26).
+macro fun page_capacity(): u64 { constants::liquidation_page_capacity!() }
 
 /// Active leveraged-order scan source.
 public struct LiquidationBook has store {
@@ -128,6 +130,13 @@ public(package) fun select_liquidation_candidates(
 }
 
 /// Index a leveraged order for liquidation scanning; no-op for 1x orders.
+/// Pages currently backing the book. Each is a dynamic-field child that
+/// `correction_value` loads during valuation, so this is the quantity
+/// `constants::max_liquidation_pages` bounds.
+public(package) fun page_count(book: &LiquidationBook): u64 {
+    book.page_ids.length()
+}
+
 public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
     if (!order.is_leveraged()) return;
 
@@ -170,7 +179,7 @@ fun insert_active_order_id(book: &mut LiquidationBook, order_id: u256) {
         );
         page.order_ids.insert(order_id, offset);
 
-        if (page.order_ids.length() > PAGE_CAPACITY) {
+        if (page.order_ids.length() > page_capacity!()) {
             should_split = true;
             let split_at = page.order_ids.length() / 2;
             while (page.order_ids.length() > split_at) {
@@ -355,11 +364,11 @@ fun merge_page_if_small(book: &mut LiquidationBook, page_ix: u64) {
     if (page_count <= 1) return;
 
     let page_len = book.page_length(page_ix);
-    if (page_len >= PAGE_CAPACITY / 2) return;
+    if (page_len >= page_capacity!() / 2) return;
 
     if (page_ix > 0) {
         let left_ix = page_ix - 1;
-        if (book.page_length(left_ix) + page_len <= PAGE_CAPACITY) {
+        if (book.page_length(left_ix) + page_len <= page_capacity!()) {
             book.merge_adjacent_pages(left_ix, page_ix);
             return
         };
@@ -367,7 +376,7 @@ fun merge_page_if_small(book: &mut LiquidationBook, page_ix: u64) {
 
     if (page_ix + 1 < page_count) {
         let right_ix = page_ix + 1;
-        if (page_len + book.page_length(right_ix) <= PAGE_CAPACITY) {
+        if (page_len + book.page_length(right_ix) <= page_capacity!()) {
             book.merge_adjacent_pages(page_ix, right_ix);
         };
     };

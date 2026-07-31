@@ -628,7 +628,7 @@ fun explicit_settlement_unblocks_pool_valuation_sweep() {
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.start_flush_bundle(&mut market);
-    helpers::value_expiry_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
     let pool_nav = fx.finish_flush_bundle(&mut market, option::none(), option::none());
 
     assert_eq!(pool_nav, IDLE_SEED);

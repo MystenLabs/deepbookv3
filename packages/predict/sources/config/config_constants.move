@@ -139,7 +139,13 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 /// exclusive slot to finish before a permissionless escape opens — i.e. the maximum
 /// protocol pause a stalled keeper can cause. The minimum keeps a legitimate flush
 /// from being discarded out from under a keeper still working through it; the
-/// maximum bounds the pause even if an operator sets this carelessly. See RP-25.
+/// maximum bounds the pause even if an operator sets this carelessly.
+///
+/// Size it against the flush interval, not in the abstract: the window is how long a
+/// dead keeper freezes the protocol, so at a ten-minute cadence the one-hour default
+/// is six missed flush cycles, while at an hourly cadence it is about one. A live
+/// operator never waits it out — `abort_valuation_privileged` is immediate — so this
+/// only binds when the keeper is genuinely gone. See RP-25.
 public(package) macro fun default_max_valuation_window_ms(): u64 {
     deepbook_predict::constants::one_hour_ms!()
 }
