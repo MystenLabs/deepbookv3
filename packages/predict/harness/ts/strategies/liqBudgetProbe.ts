@@ -1,4 +1,4 @@
-// Shared core for the two trade-path liquidation-budget probes (DBU-695, Three Sigma #48).
+// Shared core for the two trade-path liquidation-budget probes (DBU-695).
 //
 // WHAT IS BEING MEASURED. `trade_liquidation_budget` bounds the ambient liquidation pass that
 // runs before every mint and every live redeem. It ships at 24 and is admin-raisable to a
@@ -10,21 +10,25 @@
 // HOW ONE RUN SWEEPS IT. The cost is min(budget, book), so a book built cheaply at budget 24 can
 // be re-probed at every higher rung without rebuilding it. The keeper walks
 // TRADE_LIQ_BUDGET_STAGES ("<elapsedSeconds>:<budget>,…") and traces each rung as
-// {type:"liqBudget", budget, elapsedMs}; analysis joins probes to rungs on time. Run with e.g.
+// {type:"liqBudget", budget, requestedAtMs, elapsedMs}; analysis joins probes to rungs on time and
+// discards the request-to-landed window, where the in-force budget is indeterminate. Run e.g.
 //   TRADE_LIQ_BUDGET_STAGES=0:24,900:512,1800:1500,2700:3000 SIM_GAS_BUDGET=50000000000
 //
-// BATCHING IS ADAPTIVE, AND THAT IS THE POINT. Every `mint_exact_quantity` in a PTB runs its own
-// ambient pass, so an N-mint batch pays N sweeps: at budget 3,000 even a 2-mint batch is over the
-// cap. The batch therefore starts at 40 (fast fill while the budget is low) and halves on each
-// OOG until it reaches 1. A 1-leg batch is byte-identical to an ordinary mint, so every
-// submission at batch==1 IS the measurement — no separate probe path to keep honest.
+// FILL, THEN PROBE ONE AT A TIME. Every `mint_exact_quantity` in a PTB runs its own ambient pass,
+// so an N-mint batch pays N sweeps and only n==1 transactions measure the trade path. Batching
+// exists solely to reach a deep book fast: up to FILL_TARGET the probe batches (halving on any
+// OOG), and past it every mint goes out alone for the rest of the run. A 1-leg batch is
+// byte-identical to an ordinary mint, so each of those submissions IS the measurement — there is
+// no separate probe path that could drift from what a real trader pays.
 //
-// READING THE RESULT. The declared wall is the per-tx computation cap (`InsufficientGas`).
-// `analyze` fails a run VACUOUS when a declared wall is never reached — here that is a real
-// result, not a harness failure: it means the ladder's top rung was affordable at the book the
-// run built. If the object-runtime cached-objects limit (1,000 children/tx) binds first on the
-// adverse arm instead, it surfaces as an UNdeclared VM error and gets flagged; that is
-// deliberate — which wall binds is the open question, so neither is pre-declared as expected.
+// READING THE RESULT. Only the adverse arm declares the per-tx computation cap
+// (`InsufficientGas`) as its terminal wall, because only it is expected to reach one; `analyze`
+// fails a run VACUOUS when a DECLARED wall goes unreached, so declaring it on the healthy arm
+// would turn every clean run red. An undeclared arm that OOGs a single mint raises
+// `liq-budget-wall-undeclared` instead — that is a finding, not the measurement. If the
+// object-runtime cached-objects limit (1,000 children/tx) binds before the computation cap on the
+// adverse arm, it surfaces as an UNdeclared VM error and gets flagged; which wall binds first is
+// the open question, so neither is pre-declared as the expected one.
 import { type Instruction } from "../resolver.js";
 import { type MintLeg, type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
 import { errorTag, isOog } from "../trace.js";

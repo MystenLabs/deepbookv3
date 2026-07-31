@@ -1,6 +1,6 @@
 // Strategy: liq-budget-sweep — the HEALTHY arm of the trade-path liquidation-budget ceiling
-// (DBU-695, Three Sigma #48). Fills one far-1h market with LOW-leverage orders (1.1x, far above
-// their floor, so nothing is ever knocked out) and measures per-mint computation as the keeper's
+// (DBU-695). Fills one far-1h market with LOW-leverage orders (1.1x, far above their floor, so
+// nothing is ever knocked out) and measures per-mint computation as the keeper's
 // budget ladder steps up. Every candidate the ambient pass selects is priced and found healthy,
 // so this isolates the scan+price cost — the floor under any budget setting, paid on every mint
 // and live redeem whether or not anything is liquidatable.

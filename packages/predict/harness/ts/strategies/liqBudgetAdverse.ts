@@ -1,10 +1,10 @@
 // Strategy: liq-budget-adverse — the ADVERSE arm of the trade-path liquidation-budget ceiling
-// (DBU-695, Three Sigma #48). Same probe as liq-budget-sweep, but mints high-leverage near-ATM
-// orders (just under the admission cap, p~0.5 -> thin floor buffer, same profile as liq-churn),
+// (DBU-695). Same probe as liq-budget-sweep, but mints high-leverage near-ATM orders (just under
+// the admission cap, p~0.5 -> thin floor buffer, same profile as liq-churn),
 // so real BTC drift pushes them under their knock-out threshold and a mint's ambient pass MEETS
 // liquidatable candidates instead of only healthy ones.
 //
-// This is the branch the filed issue is actually about: a liquidatable candidate does not just
+// This is the branch the ceiling question is actually about: a liquidatable candidate does not just
 // get priced, it gets removed from the paged liquidation index AND has its boundaries removed
 // from the payout treap. Whether the per-tx wall is the computation cap or the object-runtime
 // cached-objects limit (1,000 dynamic-field children) is the open question — see the header of
