@@ -1385,7 +1385,8 @@ async function executeRow(
 
     // supply/withdraw are ASYNC: a row only ENQUEUES a request; the economic effect
     // (PLP mint/burn, account credit) lands at a later privileged flush
-    // (start_pool_valuation -> value_expiry -> finish_flush), synthesized by the
+    // (start_pool_valuation -> snapshot_expiry_pricer -> seal_valuation_snapshot ->
+    // value_expiry -> finish_flush), synthesized by the
     // runner at the batched checkpoints (see executeScenario). request_supply deposits
     // fresh DUSDC into the account and pulls it into escrow; request_withdraw pulls PLP
     // from account custody, auto-settling any flush-delivered PLP first (no separate
