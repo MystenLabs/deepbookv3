@@ -1088,7 +1088,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   capacity stop leaves it queued and spends no budget — plus
   `limit_miss_is_not_partially_filled_into_available_headroom` and, for the prefix
   price guard, `supply_prefix_below_the_requests_price_is_carried_not_filled` and
-  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`.
+  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`. The fee-set
+  leftover bound above is pinned by
+  `withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle`, and the
+  prefix price guard under a fee by
+  `capped_partial_supply_at_its_own_price_fills_with_the_fee`.
   `lp_flow_tests.move` pins the cap to configured state rather than a constant
   (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
   `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).

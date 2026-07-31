@@ -1960,9 +1960,18 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 # later privileged flush that drains the queue at one EXACT frozen mark
 # (current_nav). plp::supply_shares mints `amount * total_supply / pool_value`
 # (bootstrap 1:1 when total_supply == 0 AND pool_value == 0); plp::withdraw_dusdc
-# pays `shares * pool_value / total_supply` — NO withdraw fee (the band fee died with
-# the approximate-NAV world). Both round down; a dust request that prices to 0 is
-# refunded.
+# pays `shares * pool_value / total_supply`. Both round down; a dust request that
+# prices to 0 is refunded.
+#
+# THIS MODEL DOES NOT INCLUDE THE PLP SUPPLY/WITHDRAW FEE (`plp_fee_rate`, DBU-688).
+# The contract charges it on the DUSDC leg of every fill, so a parity run against a
+# deployment with a NON-ZERO rate will mismatch `shares_minted` / `total_supply_after`
+# on supply rows and `dusdc_amount` / `idle_balance_after` on withdraw rows, by
+# exactly the fee. Until the fee is modelled here, parity runs must stage
+# `plp_fee_rate = 0`. Deliberately not mirrored from the Move source: this file is the
+# INDEPENDENT oracle, so the fee belongs here as a separately-derived formula
+# validated by an actual parity run, not as a copy of the implementation under test.
+# Tracked on predeploy open item P-27.
 #
 # These synchronous helpers are for the long Python-only replay. Normal parity
 # queues requests and drains them later in `parity_flush_updates`.
@@ -2008,7 +2017,8 @@ def withdraw_update(
     if shares is None:
         raise ValueError(f"unknown lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    # plp::withdraw_dusdc: pro-rata, rounded down, NO withdraw fee.
+    # plp::withdraw_dusdc: pro-rata, rounded down. Does NOT model `plp_fee_rate` —
+    # see the module note above; parity requires a zero-rate staging until it does.
     payout = mul_div_round_down(shares, pool_value, total_supply) if total_supply else 0
     if payout <= 0:
         raise ValueError("withdraw priced to zero DUSDC (would be refunded)")

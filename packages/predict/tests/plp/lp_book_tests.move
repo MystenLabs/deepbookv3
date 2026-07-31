@@ -577,8 +577,10 @@ fun withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle() {
 }
 
 /// M5: a partial supply slice carrying BOTH a limit and a fee. The slice is quoted
-/// on its own with a ceil'd fee, while the limit is pro-rated, so the two roundings
-/// meet here. 10e6 slice of a 20e6 request at 1%: fee 100_000, shares 4_950_000.
+/// on its own and the limit is pro-rated to it, and this pins the `<` boundary where
+/// the two land on the same number (every quantity divides evenly here, so neither
+/// rounding fires — the exact-equality case must fill, not carry).
+/// 10e6 slice of a 20e6 request at 1%: fee 100_000, shares 4_950_000.
 /// The request's own price is 9_900_000 shares per 20e6, so the pro-rated floor for
 /// this slice is ceil(9_900_000 * 10e6 / 20e6) = 4_950_000 — it clears by exactly
 /// zero, which is the boundary that must fill rather than carry.

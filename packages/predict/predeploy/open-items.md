@@ -310,8 +310,9 @@ edge it is meant to price.
 it.** The charge is retained by the pool, so a supplier immediately owns a share
 of what they just paid. At a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC
 supply at 20 bps: fee 20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so
-the new holding is worth 9_990_000 and the net fee paid is 10_000 — half. The
-effective supply-side charge is `F * (1 - post_fill_share)`, which tends to zero
+the new holding is worth 9_989_989 and the net fee paid is 10_011 — just over
+half. In closed form the net charge is `F * V / (V + n - F)` for a deposit `n`
+into a pool worth `V`, equivalently `F * (1 - post_fill_share)`, which tends to zero
 as an LP approaches owning the pool, and a round trip costs
 `F_in * (1 - share) + F_out`. The actor best placed to time the mark is
 therefore the one who pays the least of the charge that exists to price that
@@ -329,7 +330,11 @@ sizes it is meant to deter, not the nominal one.
   `plp_fee_rate = 0`, net of gas and a flush of escrow lockup.
 - **Blocked on:** the Python parity oracle still models scalar NAV, so there is
   no independent reference to difference the realized mark against. Closing
-  that gap is the first step, not the experiment.
+  that gap is the first step, not the experiment. It also does not model this
+  fee at all (`simulations/python_replay.py`, marked in-file), so parity runs
+  must stage `plp_fee_rate = 0` until someone derives the fee independently
+  there — copying the Move formula across would make the oracle a mirror of the
+  code it is supposed to check.
 - **Decision rule:** if zero-fee round-trip PnL is not distinguishable from
   zero at the observed flush cadence, set the default to 0 and keep the knob.
   If it is positive, set the rate above the measured per-lap edge and record
