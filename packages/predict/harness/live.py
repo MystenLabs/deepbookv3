@@ -126,8 +126,72 @@ def _validate_hub_metrics(value: object) -> dict:
         raise ValueError("hub metrics elapsed_ms must be a non-negative integer")
     if type(value["snapshots"]) is not int or value["snapshots"] <= 0:
         raise ValueError("hub metrics snapshots must be a positive integer")
-    if not isinstance(value["source"], dict):
+    source = value["source"]
+    if not isinstance(source, dict):
         raise ValueError("hub metrics source must be an object")
+    source_expected = {
+        "provider_profile",
+        "provider_network",
+        "provider_pkg_ver",
+        "verifier_package_id",
+        "signer_registry_id",
+        "authenticated",
+        "acknowledged_subscriptions",
+        "pending_acknowledgements",
+        "verified_value_batches",
+        "verified_svi_batches",
+        "invalid_batches",
+        "unknown_sids",
+        "retired_sid_updates",
+        "pre_ack_updates",
+        "fatal",
+    }
+    source_missing = sorted(source_expected - source.keys())
+    source_unknown = sorted(source.keys() - source_expected)
+    if source_missing or source_unknown:
+        details = []
+        if source_missing:
+            details.append(f"missing={','.join(source_missing)}")
+        if source_unknown:
+            details.append(f"unknown={','.join(source_unknown)}")
+        raise ValueError(
+            "hub metrics source schema mismatch; " + "; ".join(details)
+        )
+    for field in (
+        "provider_profile",
+        "provider_network",
+        "verifier_package_id",
+        "signer_registry_id",
+    ):
+        if not isinstance(source[field], str) or not source[field]:
+            raise ValueError(f"hub metrics source {field} must be a non-empty string")
+    if type(source["provider_pkg_ver"]) is not int or source["provider_pkg_ver"] <= 0:
+        raise ValueError("hub metrics source provider_pkg_ver must be a positive integer")
+    counters = (
+        "acknowledged_subscriptions",
+        "pending_acknowledgements",
+        "verified_value_batches",
+        "verified_svi_batches",
+        "invalid_batches",
+        "unknown_sids",
+        "retired_sid_updates",
+        "pre_ack_updates",
+    )
+    for field in counters:
+        if type(source[field]) is not int or source[field] < 0:
+            raise ValueError(
+                f"hub metrics source {field} must be a non-negative integer"
+            )
+    if source["authenticated"] is not True:
+        raise ValueError("hub metrics source must be authenticated")
+    if source["acknowledged_subscriptions"] <= 0:
+        raise ValueError("hub metrics source has no acknowledged subscriptions")
+    if source["verified_value_batches"] <= 0 or source["verified_svi_batches"] <= 0:
+        raise ValueError("hub metrics source has no verified value/SVI evidence")
+    if source["invalid_batches"] != 0:
+        raise ValueError("hub metrics source recorded invalid provider batches")
+    if source["fatal"] is not None:
+        raise ValueError(f"hub metrics source failed: {source['fatal']}")
     return value
 
 

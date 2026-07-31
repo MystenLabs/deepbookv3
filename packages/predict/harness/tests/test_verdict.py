@@ -47,6 +47,15 @@ class VerdictTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing=gas"):
                 analyze._load(trace)
 
+            path = trace / "trader.jsonl"
+            (trace / "keeper.jsonl").unlink()
+            path.write_text(
+                '{"schema":1,"type":"supply","strategy":"fuzz",'
+                '"amount":null,"gas":null,"ts":1}\n'
+            )
+            with self.assertRaisesRegex(ValueError, "has invalid value None"):
+                analyze._load(trace)
+
     def test_classification_distinguishes_guards_invariants_and_transients(self) -> None:
         expected, transient, flagged = verdict.classify_failures(
             [

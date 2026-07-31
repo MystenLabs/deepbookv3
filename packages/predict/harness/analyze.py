@@ -15,6 +15,7 @@ parallel campaigns are not single-instance blind.
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from pathlib import Path
 
@@ -129,6 +130,56 @@ _STRATEGY_PROGRESS_TYPES = {
     "claimRebate",
     "adversarial-accepted",
 }
+_STRING_TRACE_FIELDS = {
+    "adversarial",
+    "direction",
+    "err",
+    "family",
+    "lane",
+    "lastError",
+    "market",
+    "mode",
+    "note",
+    "phase",
+    "profile",
+    "retry",
+    "strategy",
+    "tag",
+    "where",
+}
+_BOOLEAN_TRACE_FIELDS = {"fatal", "partial", "oog"}
+_NUMBER_TRACE_FIELDS = {
+    "activeNav",
+    "amount",
+    "attempt",
+    "book",
+    "compGas",
+    "computationCost",
+    "consecutiveDefers",
+    "expiryMs",
+    "gas",
+    "leverage",
+    "marketCount",
+    "markets",
+    "moneyness",
+    "n",
+    "net",
+    "netPremium",
+    "nodeCount",
+    "nonRefundableStorageFee",
+    "nLiquidated",
+    "nSettled",
+    "nTarget",
+    "perMarket",
+    "poolValue",
+    "prob",
+    "shares",
+    "size",
+    "storageCost",
+    "storageRebate",
+    "stragglers",
+    "totalSupply",
+}
 
 
 def _instances() -> list[Path]:
@@ -155,6 +206,30 @@ def _validate_trace_record(record: dict, actor: str, location: str) -> None:
             f"{location}: {actor} {trace_type} trace schema mismatch; "
             + "; ".join(details)
         )
+    for field in required | (optional & record.keys()):
+        value = record[field]
+        valid = True
+        if field in _STRING_TRACE_FIELDS:
+            valid = isinstance(value, str) and bool(value)
+        elif field in _BOOLEAN_TRACE_FIELDS:
+            valid = type(value) is bool
+        elif field in _NUMBER_TRACE_FIELDS:
+            valid = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+            )
+        elif field == "terminal":
+            valid = (
+                isinstance(value, list)
+                and bool(value)
+                and all(isinstance(item, str) and bool(item) for item in value)
+            )
+        if not valid:
+            raise ValueError(
+                f"{location}: {actor} {trace_type} trace field {field!r} "
+                f"has invalid value {value!r}"
+            )
     if trace_type == "mintBatch":
         required_variant = (
             {"family", "profile", "book", "oog", "err"}
@@ -180,11 +255,11 @@ def _load(trace_dir: Path) -> list[dict]:
                 raise ValueError(f"{f}:{line_number}: malformed trace JSON") from exc
             if not isinstance(r, dict):
                 raise ValueError(f"{f}:{line_number}: trace record must be an object")
-            if r.get("schema") != 1:
+            if type(r.get("schema")) is not int or r["schema"] != 1:
                 raise ValueError(
                     f"{f}:{line_number}: unsupported trace schema {r.get('schema')!r}"
                 )
-            if not isinstance(r.get("ts"), int) or not isinstance(r.get("type"), str):
+            if type(r.get("ts")) is not int or not isinstance(r.get("type"), str):
                 raise ValueError(
                     f"{f}:{line_number}: trace record requires integer ts and string type"
                 )

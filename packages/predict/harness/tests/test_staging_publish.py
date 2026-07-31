@@ -320,6 +320,31 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--publish-unpublished-deps", args)
 
 class LifecycleTests(unittest.TestCase):
+    @staticmethod
+    def _valid_hub_metrics() -> dict:
+        return {
+            "schema_version": 1,
+            "elapsed_ms": 1,
+            "snapshots": 1,
+            "source": {
+                "provider_profile": "test",
+                "provider_network": "testnet",
+                "provider_pkg_ver": 1,
+                "verifier_package_id": "0x1",
+                "signer_registry_id": "0x2",
+                "authenticated": True,
+                "acknowledged_subscriptions": 1,
+                "pending_acknowledgements": 0,
+                "verified_value_batches": 1,
+                "verified_svi_batches": 1,
+                "invalid_batches": 0,
+                "unknown_sids": 0,
+                "retired_sid_updates": 0,
+                "pre_ack_updates": 0,
+                "fatal": None,
+            },
+        }
+
     def _run_campaign_case(
         self,
         root: Path,
@@ -389,8 +414,7 @@ class LifecycleTests(unittest.TestCase):
             stopped.append(process)
             if retain_metrics:
                 (campaign_dir / "hub-metrics.json").write_text(
-                    '{"schema_version":1,"elapsed_ms":1,'
-                    '"snapshots":1,"source":{}}'
+                    json.dumps(self._valid_hub_metrics())
                 )
 
         writes = 0
@@ -897,17 +921,33 @@ class LifecycleTests(unittest.TestCase):
             )
 
     def test_hub_metrics_require_current_schema_and_positive_evidence(self) -> None:
-        valid = {
-            "schema_version": 1,
-            "elapsed_ms": 1,
-            "snapshots": 1,
-            "source": {},
-        }
+        valid = self._valid_hub_metrics()
         self.assertEqual(live._validate_hub_metrics(valid), valid)
         with self.assertRaisesRegex(ValueError, "snapshots must be a positive"):
             live._validate_hub_metrics({**valid, "snapshots": 0})
         with self.assertRaisesRegex(ValueError, "unknown=unexpected"):
             live._validate_hub_metrics({**valid, "unexpected": True})
+        with self.assertRaisesRegex(ValueError, "must be authenticated"):
+            live._validate_hub_metrics(
+                {
+                    **valid,
+                    "source": {**valid["source"], "authenticated": False},
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "invalid provider batches"):
+            live._validate_hub_metrics(
+                {
+                    **valid,
+                    "source": {**valid["source"], "invalid_batches": 7},
+                }
+            )
+        with self.assertRaisesRegex(ValueError, "source failed: registry paused"):
+            live._validate_hub_metrics(
+                {
+                    **valid,
+                    "source": {**valid["source"], "fatal": "registry paused"},
+                }
+            )
 
     def test_campaign_manifest_completes_only_after_metrics_and_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
