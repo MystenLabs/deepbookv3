@@ -449,12 +449,21 @@ fun walk_linear_subtree(
 }
 
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {
-    let left = subtree_summary(nodes, node.left);
-    let right = subtree_summary(nodes, node.right);
+    let (left, left_height) = subtree_facts(nodes, node.left);
+    let (right, right_height) = subtree_facts(nodes, node.right);
     let boundary = boundary_summary(node.local_start, node.local_end);
     node.summary = combine_summaries(combine_summaries(left, boundary), right);
-    node.height = 1 + subtree_height(nodes, node.left).max(subtree_height(nodes, node.right));
+    node.height = 1 + left_height.max(right_height);
     *nodes.borrow_mut(tick) = node;
+}
+
+/// Summary and height of one child in a single table read. Every re-summarize
+/// needs both, and each child load is a dynamic-field access — reading the two
+/// fields separately doubled the loads on the hottest path in the module.
+fun subtree_facts(nodes: &Table<u64, PayoutNode>, root: Option<u64>): (PayoutSummary, u64) {
+    if (root.is_none()) return (zero_summary(), 0);
+    let node = nodes[*root.borrow()];
+    (node.summary, node.height)
 }
 
 fun subtree_summary(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSummary {
