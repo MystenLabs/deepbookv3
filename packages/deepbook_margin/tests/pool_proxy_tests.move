@@ -29,6 +29,7 @@ use deepbook_margin::{
         return_shared_3,
         build_demo_usdc_price_info_object,
         build_stale_usdc_price_info_object,
+        build_stale_usdt_price_info_object,
         build_demo_usdt_price_info_object,
         build_demo_usdc_price_info_object_with_price,
         setup_orderbook_liquidity_stablecoin,
@@ -8821,6 +8822,7 @@ fun place_limit_order_v2_no_debt_tolerates_stale_feed() {
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     let stale_usdc = build_stale_usdc_price_info_object(&mut scenario, &clock, 600);
+    let stale_usdt = build_stale_usdt_price_info_object(&mut scenario, &clock, 600);
     let order_info = pool_proxy::place_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
@@ -8828,7 +8830,7 @@ fun place_limit_order_v2_no_debt_tolerates_stale_feed() {
         &base_pool,
         &quote_pool,
         &stale_usdc,
-        &usdt_price,
+        &stale_usdt,
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
@@ -8848,7 +8850,7 @@ fun place_limit_order_v2_no_debt_tolerates_stale_feed() {
     return_shared(base_pool);
     return_shared(quote_pool);
     destroy_2!(usdc_price, usdt_price);
-    destroy(stale_usdc);
+    destroy_2!(stale_usdc, stale_usdt);
     return_shared_2!(mm, pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
@@ -8900,6 +8902,7 @@ fun place_market_order_v2_no_debt_tolerates_stale_feed() {
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     let stale_usdc = build_stale_usdc_price_info_object(&mut scenario, &clock, 600);
+    let stale_usdt = build_stale_usdt_price_info_object(&mut scenario, &clock, 600);
     let order_info = pool_proxy::place_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
@@ -8907,7 +8910,7 @@ fun place_market_order_v2_no_debt_tolerates_stale_feed() {
         &base_pool,
         &quote_pool,
         &stale_usdc,
-        &usdt_price,
+        &stale_usdt,
         2,
         constants::self_matching_allowed(),
         50 * test_constants::usdc_multiplier(),
@@ -8924,7 +8927,7 @@ fun place_market_order_v2_no_debt_tolerates_stale_feed() {
     return_shared(base_pool);
     return_shared(quote_pool);
     destroy_2!(usdc_price, usdt_price);
-    destroy(stale_usdc);
+    destroy_2!(stale_usdc, stale_usdt);
     return_shared_2!(mm, pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
