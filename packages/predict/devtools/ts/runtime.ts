@@ -539,6 +539,19 @@ function aggregateGas(usages: GasUsage[]): GasUsage {
     );
 }
 
+// Preserve the observable contents of the former single-PTB operation after splitting
+// refresh from pricing: gas, events, and object changes cover every leg in submission
+// order, while the final priced operation remains the scalar digest/effects authority.
+function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceipt {
+    const last = receipts[receipts.length - 1]!;
+    return {
+        ...last,
+        gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
+        events: receipts.flatMap((receipt) => receipt.events),
+        objectChanges: receipts.flatMap((receipt) => receipt.objectChanges),
+    };
+}
+
 async function getTransactionWithRetry(digest: string): Promise<any> {
     let lastError: unknown;
 
@@ -2172,8 +2185,7 @@ export async function executeAndWait(
     return executeWithSignerAndWait(tx, signer, label, gasBudget);
 }
 
-// Execute every PTB in order and return the priced operation's receipt with gas
-// aggregated across all legs.
+// Execute every PTB in order and combine the logical operation's observable receipt.
 export async function executeAllAndWait(
     txs: Transaction[],
     label = "transaction",
@@ -2194,11 +2206,7 @@ export async function executeAllAndWait(
             effects: settled.effects,
         });
     }
-    const last = receipts[receipts.length - 1]!;
-    return {
-        ...last,
-        gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
-    };
+    return combineExecutionReceipts(receipts);
 }
 
 const EXECUTE_MAX_ATTEMPTS = 5;
@@ -2281,11 +2289,7 @@ export async function execute(
                 });
             }
 
-            const last = receipts[receipts.length - 1]!;
-            return {
-                ...last,
-                gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
-            };
+            return combineExecutionReceipts(receipts);
         } catch (error) {
             lastError = error;
             if (failedTransactionAlreadyLogged(error)) {

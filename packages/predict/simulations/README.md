@@ -31,7 +31,7 @@ Every run retains:
 
 - `scenario.csv` — the exact generated scenario executed by both engines
 - `run-manifest.json` — source revision, dirty flag, source/config/scenario hashes, seed, row limit, command, chain id, and package ids
-- `local_trace.json` — transaction receipts, gas, and events; refresh-plus-priced-operation paths use two transactions under the same-transaction oracle guard, with both legs' gas aggregated into one logical trace step and the priced operation supplying its digest and events
+- `local_trace.json` — transaction receipts, gas, and events; refresh-plus-priced-operation paths use two transactions under the same-transaction oracle guard, with both legs' gas, events, and object changes aggregated into one logical trace step and the priced operation supplying its digest and effects
 - `local_data.json` — canonical localnet economic records
 - `python_data.json` — canonical Python-model records
 - `state.json` — published simulation object ids

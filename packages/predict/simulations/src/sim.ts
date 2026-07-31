@@ -1440,7 +1440,7 @@ async function executeScenario(
         const startedAt = performance.now();
         // Use `execute` so the receipt carries normalized gas. Refresh and flush are
         // two PTBs under the same-tx oracle guard; `execute` aggregates both legs'
-        // gas into one chart point (priced-op events/digest from the flush receipt).
+        // gas and events into one trace step while the flush supplies digest/effects.
         const receipt = await execute(
             () =>
                 refreshOracleAndFlushTxs({
