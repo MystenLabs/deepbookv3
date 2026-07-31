@@ -2017,7 +2017,7 @@ def withdraw_update(
     if shares is None:
         raise ValueError(f"unknown lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    # plp::withdraw_dusdc: pro-rata, rounded down. Does NOT model `plp_fee_rate` —
+    # plp::withdraw_dusdc: pro-rata, rounded down. Does NOT model `plp_withdraw_fee_rate` —
     # see the module note above; parity requires a zero-rate staging until it does.
     payout = mul_div_round_down(shares, pool_value, total_supply) if total_supply else 0
     if payout <= 0:

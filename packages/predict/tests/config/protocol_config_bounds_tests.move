@@ -483,7 +483,7 @@ fun set_plp_withdraw_fee_rate_during_valuation_aborts() {
 /// comment; this drives the real validators at full scale, so widening the envelope
 /// to admit it fails here rather than aborting a live flush.
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpSupplyFeeRate)]
-fun plp_fee_rate_at_full_scale_is_rejected() {
+fun plp_supply_fee_rate_at_full_scale_is_rejected() {
     config_constants::assert_plp_supply_fee_rate(math::float_scaling!());
     abort 999
 }

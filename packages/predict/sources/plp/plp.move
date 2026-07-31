@@ -313,16 +313,15 @@ public fun finish_flush(
     // valuation, so the single FlushExecuted event carries the priced mark and its
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
-    let supply_fee_rate = config.plp_supply_fee_rate();
-    let withdraw_fee_rate = config.plp_withdraw_fee_rate();
     let mark = lp_book::new_flush_mark(
         pool_nav,
         total_supply,
-        supply_fee_rate,
-        withdraw_fee_rate,
+        config.plp_supply_fee_rate(),
+        config.plp_withdraw_fee_rate(),
     );
-    // Sampled off the mark, not the config locals, so the event reports the pair the
-    // drain was handed — see `lp_book::fee_rates`.
+    // The mark is the only source for these: the config reads are inlined above so no
+    // local survives that the event could report instead of what the drain was handed.
+    // See `lp_book::fee_rates`.
     let (frozen_supply_fee_rate, frozen_withdraw_fee_rate) = mark.fee_rates();
     let drain_summary = vault
         .lp
