@@ -308,11 +308,8 @@ fun valuation_split_across_transactions_marks_at_the_snapshot_instant() {
 
     // Move the oracle between valuation transactions.
     fx.scenario_mut().next_tx(test_constants::alice());
-    fx.set_pyth_price_for_testing(
-        &mut pyth,
-        test_constants::default_live_price() * 2,
-        fx.clock().timestamp_ms(),
-    );
+    let now_ms = fx.clock().timestamp_ms();
+    fx.set_pyth_price_for_testing(&mut pyth, test_constants::default_live_price() * 2, now_ms);
 
     // Guard against a vacuous test: prove the move is load-bearing. A pricer loaded
     // live at this moment marks m2 differently from its frozen one, so if
