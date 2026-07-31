@@ -1963,12 +1963,12 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 # pays `shares * pool_value / total_supply`. Both round down; a dust request that
 # prices to 0 is refunded.
 #
-# THIS MODEL DOES NOT INCLUDE THE PLP SUPPLY/WITHDRAW FEE (`plp_fee_rate`, DBU-688).
+# THIS MODEL DOES NOT INCLUDE THE PLP SUPPLY/WITHDRAW FEES (`plp_supply_fee_rate` / `plp_withdraw_fee_rate`, DBU-688).
 # The contract charges it on the DUSDC leg of every fill, so a parity run against a
 # deployment with a NON-ZERO rate will mismatch `shares_minted` / `total_supply_after`
 # on supply rows and `dusdc_amount` / `idle_balance_after` on withdraw rows, by
 # exactly the fee. Until the fee is modelled here, parity runs must stage
-# `plp_fee_rate = 0`. Deliberately not mirrored from the Move source: this file is the
+# both rates at 0 (the supply leg already ships there; the withdraw leg does not). Deliberately not mirrored from the Move source: this file is the
 # INDEPENDENT oracle, so the fee belongs here as a separately-derived formula
 # validated by an actual parity run, not as a copy of the implementation under test.
 # Tracked on predeploy open item P-27.

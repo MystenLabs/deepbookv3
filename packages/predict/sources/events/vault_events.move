@@ -191,9 +191,11 @@ public struct FlushExecuted has copy, drop, store {
     pool_value: u64,
     /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
-    /// Supply/withdraw fee rate in FLOAT_SCALING, frozen with the mark and charged
-    /// on every fill in this flush.
-    fee_rate: u64,
+    /// Supply-leg fee rate in FLOAT_SCALING, frozen with the mark and charged on
+    /// every supply fill in this flush.
+    supply_fee_rate: u64,
+    /// Withdraw-leg fee rate in FLOAT_SCALING, frozen alongside it.
+    withdraw_fee_rate: u64,
     /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
@@ -483,7 +485,8 @@ public(package) fun emit_flush_executed(
     epoch: u64,
     pool_value: u64,
     total_supply: u64,
-    fee_rate: u64,
+    supply_fee_rate: u64,
+    withdraw_fee_rate: u64,
     active_market_nav: u64,
     market_count: u64,
     idle_balance_before: u64,
@@ -498,7 +501,8 @@ public(package) fun emit_flush_executed(
         epoch,
         pool_value,
         total_supply,
-        fee_rate,
+        supply_fee_rate,
+        withdraw_fee_rate,
         active_market_nav,
         market_count,
         idle_balance_before,
@@ -561,6 +565,17 @@ public(package) fun emit_fee_incentives_returned(
 }
 
 // === Test-Only Functions ===
+
+/// The frozen rate pair a flush actually charged. Exists because the withdraw leg's
+/// config wiring cannot be reached behaviourally from a Move test — a unit-test
+/// accumulator root carries no settlement funds, so a fill's PLP never reaches
+/// account custody to be withdrawn (`lp_flow_tests` module doc) — and because with
+/// two independent rates a swapped pair is otherwise invisible: each leg would still
+/// charge a plausible rate.
+#[test_only]
+public fun flush_executed_fee_rates(event: &FlushExecuted): (u64, u64) {
+    (event.supply_fee_rate, event.withdraw_fee_rate)
+}
 
 /// The fill events' fields exist for off-chain consumers, which decode them rather
 /// than calling Move. These readers exist only so tests can assert the fee reported

@@ -311,8 +311,17 @@ public fun finish_flush(
     // valuation, so the single FlushExecuted event carries the priced mark and its
     // idle + active-NAV breakdown.
     let vault_id = vault.id();
-    let fee_rate = config.plp_fee_rate();
-    let mark = lp_book::new_flush_mark(pool_nav, total_supply, fee_rate);
+    let supply_fee_rate = config.plp_supply_fee_rate();
+    let withdraw_fee_rate = config.plp_withdraw_fee_rate();
+    let mark = lp_book::new_flush_mark(
+        pool_nav,
+        total_supply,
+        supply_fee_rate,
+        withdraw_fee_rate,
+    );
+    // Sampled off the mark, not the config locals, so the event reports the pair the
+    // drain was handed — see `lp_book::fee_rates`.
+    let (frozen_supply_fee_rate, frozen_withdraw_fee_rate) = mark.fee_rates();
     let drain_summary = vault
         .lp
         .drain(
@@ -332,7 +341,8 @@ public fun finish_flush(
         ctx.epoch(),
         pool_nav,
         total_supply,
-        fee_rate,
+        frozen_supply_fee_rate,
+        frozen_withdraw_fee_rate,
         total_nav,
         market_count,
         idle_balance_before,
@@ -510,8 +520,8 @@ public fun lock_capital(
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
 /// auto-settles any flush-delivered DUSDC first. The flush charges the protocol's
-/// supply/withdraw fee on the DUSDC it takes in and prices shares on the remainder,
-/// so `min_plp_out` is measured after the fee. The account receives minted PLP
+/// supply fee — zero by default — on the DUSDC it takes in and prices shares on the
+/// remainder, so `min_plp_out` is measured after that fee. The account receives minted PLP
 /// only at a mark that mints at least `min_plp_out` for the whole `amount` — a **price
 /// floor**, not a promise of that many shares: if the pool cap leaves room for only
 /// part of the deposit, the fill is proportionally smaller at the same price and the
@@ -555,8 +565,8 @@ public fun request_supply(
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
 /// The pull auto-settles any flush-delivered PLP first. The flush withholds the
-/// protocol's supply/withdraw fee from the marked payout, so `min_dusdc_out` is
-/// measured after the fee. The account is paid only at a
+/// protocol's withdraw fee from the marked payout, so `min_dusdc_out` is measured
+/// after the fee. The account is paid only at a
 /// mark that quotes at least `min_dusdc_out` for the whole `amount` — a **price
 /// floor**, not a promise of that much DUSDC: if idle liquidity covers only part of the
 /// payout, only the shares idle affords are burned, the fill is proportionally smaller
