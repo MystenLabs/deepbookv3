@@ -319,8 +319,10 @@ public fun finish_flush(
     );
     // The mark is the only source for these: the config reads are inlined above so no
     // local survives that the event could report instead of what the drain was handed.
-    // See `lp_book::fee_rates`.
-    let (frozen_supply_fee_rate, frozen_withdraw_fee_rate) = mark.fee_rates();
+    // Named per-leg reads rather than a pair, so a transposition here cannot compile
+    // into a silently-swapped event.
+    let frozen_supply_fee_rate = mark.supply_fee_rate();
+    let frozen_withdraw_fee_rate = mark.withdraw_fee_rate();
     let drain_summary = vault
         .lp
         .drain(
