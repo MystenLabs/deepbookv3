@@ -193,45 +193,6 @@ public(package) fun remove_range(
     );
 }
 
-#[test_only]
-/// Seed the stored count so tests can exercise the node-cap boundary directly.
-public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node_count: u64) {
-    tree.node_count = node_count;
-}
-
-#[test_only]
-/// Depth of the whole tree. Bounded depth is the property this module exists to
-/// guarantee against caller-chosen ticks, and no evaluator output reveals it, so
-/// it needs its own observation seam.
-public(package) fun root_height_for_testing(tree: &StrikePayoutTree): u64 {
-    subtree_height(&tree.nodes, tree.root)
-}
-
-#[test_only]
-/// Assert the AVL invariant everywhere: each stored height agrees with the
-/// children it was measured from, and no node's subtrees differ by more than one
-/// level. Recomputing rather than trusting `height` is the point — a rotation that
-/// forgets to re-measure is exactly the bug this catches.
-public(package) fun assert_balanced_for_testing(tree: &StrikePayoutTree) {
-    assert_subtree_balanced(&tree.nodes, tree.root);
-}
-
-#[test_only]
-fun assert_subtree_balanced(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
-    if (root.is_none()) return 0;
-    let node = nodes[*root.borrow()];
-    let left = assert_subtree_balanced(nodes, node.left);
-    let right = assert_subtree_balanced(nodes, node.right);
-
-    let taller = left.max(right);
-    let shorter = left.min(right);
-    assert!(taller - shorter <= 1);
-
-    let measured = 1 + taller;
-    assert!(node.height == measured);
-    measured
-}
-
 fun apply_range(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
@@ -575,4 +536,45 @@ fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
         assert!(*value >= delta, EInsufficientPayoutTerms);
         *value = *value - delta;
     };
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+/// Seed the stored count so tests can exercise the node-cap boundary directly.
+public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node_count: u64) {
+    tree.node_count = node_count;
+}
+
+#[test_only]
+/// Depth of the whole tree. Bounded depth is the property this module exists to
+/// guarantee against caller-chosen ticks, and no evaluator output reveals it, so
+/// it needs its own observation seam.
+public(package) fun root_height_for_testing(tree: &StrikePayoutTree): u64 {
+    subtree_height(&tree.nodes, tree.root)
+}
+
+#[test_only]
+/// Assert the AVL invariant everywhere: each stored height agrees with the
+/// children it was measured from, and no node's subtrees differ by more than one
+/// level. Recomputing rather than trusting `height` is the point — a rotation that
+/// forgets to re-measure is exactly the bug this catches.
+public(package) fun assert_balanced_for_testing(tree: &StrikePayoutTree) {
+    assert_subtree_balanced(&tree.nodes, tree.root);
+}
+
+#[test_only]
+fun assert_subtree_balanced(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
+    if (root.is_none()) return 0;
+    let node = nodes[*root.borrow()];
+    let left = assert_subtree_balanced(nodes, node.left);
+    let right = assert_subtree_balanced(nodes, node.right);
+
+    let taller = left.max(right);
+    let shorter = left.min(right);
+    assert!(taller - shorter <= 1);
+
+    let measured = 1 + taller;
+    assert!(node.height == measured);
+    measured
 }
