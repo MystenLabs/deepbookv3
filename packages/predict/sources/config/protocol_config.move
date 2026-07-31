@@ -4,8 +4,8 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, the protocol-wide emergency freeze, and the transaction-local full-pool
-/// valuation lock. Flow modules decide which gates apply before they mutate
+/// gate, the protocol-wide emergency freeze, and the full-pool valuation lock (held
+/// across transactions for the duration of a flush). Flow modules decide which gates apply before they mutate
 /// expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
@@ -56,6 +56,11 @@ public struct ProtocolConfig has key {
     /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
     /// the pool is uncapped until an operator sets a figure (RP-23).
     max_lp_pool_value: u64,
+    /// How long a started full-pool valuation may stay in flight before
+    /// `plp::abort_valuation` becomes permissionless. Because the valuation lock
+    /// freezes the whole mutation surface, this is the maximum protocol pause a
+    /// stalled keeper can cause, and so is tuned alongside flush cadence (RP-25).
+    max_valuation_window_ms: u64,
     expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
     stake_config: StakeConfig,
@@ -75,8 +80,9 @@ public struct ProtocolConfig has key {
     /// Account-package custody withdrawals and builder-fee claims are ungated and
     /// stay available (already-earned funds).
     frozen: bool,
-    /// Transaction-local lock held while a full-pool valuation is assembled, so no
-    /// NAV-changing op can interleave between per-market value steps in the PTB.
+    /// Lock held for the whole duration of a full-pool valuation, across every
+    /// transaction it spans, so no NAV-changing op can interleave between the frozen
+    /// snapshot and the last market's valuation.
     valuation_in_progress: bool,
 }
 
@@ -285,6 +291,24 @@ public fun set_lp_request_limit_flush_attempts(
     config.lp_request_limit_flush_attempts = attempts;
 }
 
+/// Set how long a started full-pool valuation may stay in flight before anyone may
+/// discard it. This is the maximum protocol pause a stalled keeper can cause, so it
+/// belongs with the flush cadence as an operator liveness decision: too short and a
+/// legitimate long flush can be discarded from under the keeper, too long and an
+/// abandoned one freezes the protocol for that duration. See RP-25.
+public fun set_max_valuation_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    window_ms: u64,
+) {
+    config.assert_version();
+    // The deadline is read against a flush already in flight; refuse to move it
+    // under one, so a started flush cannot have its escape hatch shifted.
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_max_valuation_window_ms(window_ms);
+    config.max_valuation_window_ms = window_ms;
+}
+
 /// Set the ceiling on LP-attributable pool value that queued supplies may raise the
 /// pool to. A supply that would carry the pool past it is filled up to the cap at the
 /// flush and its remainder stays queued;
@@ -408,6 +432,10 @@ public(package) fun lp_request_limit_flush_attempts(config: &ProtocolConfig): u6
     config.lp_request_limit_flush_attempts
 }
 
+public(package) fun max_valuation_window_ms(config: &ProtocolConfig): u64 {
+    config.max_valuation_window_ms
+}
+
 public(package) fun max_lp_pool_value(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
@@ -486,13 +514,14 @@ public(package) fun freeze_protocol(config: &mut ProtocolConfig) {
     config.set_frozen_internal(true);
 }
 
-/// Begin a transaction-local full-pool valuation lock.
+/// Begin the full-pool valuation lock. Held across transactions until the flush
+/// finishes or is aborted.
 public(package) fun begin_valuation(config: &mut ProtocolConfig) {
     config.assert_not_valuation_in_progress();
     config.valuation_in_progress = true;
 }
 
-/// End a transaction-local full-pool valuation lock.
+/// End the full-pool valuation lock.
 public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.assert_valuation_in_progress();
     config.valuation_in_progress = false;
@@ -522,6 +551,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
+        max_valuation_window_ms: config_constants::default_max_valuation_window_ms!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
         expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),

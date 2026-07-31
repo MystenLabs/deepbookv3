@@ -72,9 +72,11 @@ Freshness moving from the batch envelope to the per-series model time is the
 correct economic reading, but it creates a halt mode the envelope clock did not
 have: a series the provider retransmits unchanged keeps its original model time,
 so it ages out even while transport is visibly alive. Past the window,
-`load_live_pricer` aborts, `plp::value_expiry` aborts with it, and the flush is
-one PTB over every active market — so a single un-refreshed series defers every
-queued LP fill pool-wide.
+`load_live_pricer` aborts, `plp::snapshot_expiry_pricer` aborts with it, and that
+stage is one atomic transaction over every active market — so a single un-refreshed
+series defers every queued LP fill pool-wide. (The abort moved from `value_expiry`
+to the snapshot stage with RP-25; the blast radius is unchanged, because the
+snapshot stage still spans every active market atomically.)
 
 RP-21 registers exactly this for SVI at its 60s window. The spot and forward
 lane runs the same mechanism at `block_scholes_price_freshness_ms` — 10s by
@@ -306,7 +308,8 @@ fills sooner and this gets cheaper to trigger, while this fix cuts how many node
 honest books generate and buys the cap headroom back. Sizing the threshold before
 the cap is known means picking it twice.
 
-**Provenance:** reported externally as issue 45 (closed as acknowledged and tracked
+**Provenance:** reported as issue 45 in the external audit engagement's own tracker
+(not this repo's issue #45), closed as acknowledged and tracked
 2026-07-30, with this direction stated to the reporter); the cost model and the
 `assert_admitted_mint_ticks` analysis were established while triaging it. Not
 reachable on the deployed anchor, which carries no node cap at all — it applies to
@@ -469,7 +472,7 @@ measured ceiling is below `max_payout_tree_nodes` + pages + base, lower
 one run that reaches the new boundary. If it is above, record the headroom and
 close this item with a register entry.
 
-**Note:** the cap is also what deepbookv3 issue #45 reports as a mint-side denial
+**Note:** the cap is also what the external audit tracker's issue 45 reports as a mint-side denial
 of new strike ranges; it is a deliberate bound, and whatever number this item
 settles on is the one that answer should quote.
 
