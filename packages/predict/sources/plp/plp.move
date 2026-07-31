@@ -232,6 +232,7 @@ public fun value_expiry(
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
     clock: &Clock,
+    ctx: &TxContext,
 ) {
     config.assert_version();
     config.assert_valuation_in_progress();
@@ -248,6 +249,7 @@ public fun value_expiry(
             bs_values,
             bs_svi,
             clock,
+            ctx,
         );
         market.current_nav(&pricer)
     };

@@ -68,6 +68,7 @@ fun a_spot_observation_lands_with_all_three_clocks() {
         PUBLISHED_EARLY,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -95,6 +96,7 @@ fun a_stored_observation_is_what_its_event_reports() {
         PUBLISHED_EARLY,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let events = event::events_by_type<store::BlockScholesObservationRecorded<BsRead<u128>>>();
@@ -123,12 +125,14 @@ fun a_newer_batch_replaces_the_stored_observation() {
         PUBLISHED_EARLY,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -153,12 +157,14 @@ fun a_retransmission_advances_the_envelope_but_not_the_model_time() {
         PUBLISHED_EARLY,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -187,6 +193,7 @@ fun one_batch_fills_spot_and_every_forward_expiry_independently() {
             forward_update(UNDERLYING_ID, EXPIRY_B, MODEL_EARLY, FORWARD_B),
         ],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert_eq!(store::spot(&value_store).destroy_some().read_value(), SPOT);
@@ -227,12 +234,14 @@ fun an_older_batch_leaves_the_stored_observation_intact() {
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -257,12 +266,14 @@ fun a_newer_envelope_with_an_older_model_time_cannot_roll_the_series_back() {
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_LATER,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -288,12 +299,14 @@ fun newer_model_data_in_an_older_envelope_still_lands() {
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_MID,
         vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -323,12 +336,14 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
         PUBLISHED_MID,
         vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut forward_store,
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     apply_values(
@@ -336,12 +351,14 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut reversed_store,
         PUBLISHED_MID,
         vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let forward_read = store::spot(&forward_store).destroy_some();
@@ -375,6 +392,7 @@ fun a_model_time_after_its_own_envelope_is_skipped() {
             forward_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
         ],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::spot(&value_store).is_none());
@@ -402,6 +420,7 @@ fun an_svi_model_time_after_its_own_envelope_is_skipped() {
         PUBLISHED_EARLY,
         vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_LATE)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::svi(&svi_store, EXPIRY_A).is_none());
@@ -423,12 +442,14 @@ fun resubmitting_the_same_batch_changes_nothing_and_does_not_abort() {
         PUBLISHED_MID,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_MID,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -455,6 +476,7 @@ fun a_foreign_series_is_dropped_without_discarding_the_rest_of_the_batch() {
             spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT),
         ],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert_eq!(store::spot(&value_store).destroy_some().read_value(), SPOT);
@@ -479,6 +501,7 @@ fun a_wholly_foreign_batch_stores_nothing() {
             forward_update(OTHER_UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
         ],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::spot(&value_store).is_none());
@@ -499,6 +522,7 @@ fun a_zero_envelope_time_is_skipped() {
         0,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::spot(&value_store).is_none());
@@ -520,6 +544,7 @@ fun an_envelope_time_after_chain_time_is_skipped() {
         CHAIN_TIME_MS + 1,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::spot(&value_store).is_none());
@@ -542,6 +567,7 @@ fun an_envelope_time_at_exactly_chain_time_lands() {
         CHAIN_TIME_MS,
         vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -566,6 +592,7 @@ fun an_svi_batch_lands_every_parameter_source_native() {
         PUBLISHED_EARLY,
         vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
@@ -596,6 +623,7 @@ fun svi_expiries_are_independent() {
         PUBLISHED_EARLY,
         vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::svi(&svi_store, EXPIRY_A).is_some());
@@ -617,6 +645,7 @@ fun a_foreign_svi_batch_stores_nothing() {
         PUBLISHED_LATE,
         vector[svi_update(OTHER_UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     assert!(store::svi(&svi_store, EXPIRY_A).is_none());
@@ -637,12 +666,14 @@ fun an_older_svi_batch_leaves_the_stored_parameters_intact() {
         PUBLISHED_LATE,
         vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_LATE)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_svis(
         &mut svi_store,
         PUBLISHED_EARLY,
         vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
@@ -670,6 +701,7 @@ fun an_ingested_batch_reports_what_it_carried_matched_and_stored() {
         PUBLISHED_LATE,
         vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER)],
         &chain_clock,
+        scenario.ctx(),
     );
     apply_values(
         &mut value_store,
@@ -680,6 +712,7 @@ fun an_ingested_batch_reports_what_it_carried_matched_and_stored() {
             forward_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
         ],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
@@ -716,6 +749,7 @@ fun a_series_repeated_within_one_batch_resolves_by_model_time() {
             spot_update(UNDERLYING_ID, MODEL_MID, SPOT_LATER),
         ],
         &chain_clock,
+        scenario.ctx(),
     );
 
     let read = store::spot(&value_store).destroy_some();
@@ -794,11 +828,13 @@ fun apply_values(
     published_at_ms: u64,
     updates: vector<ValueUpdate>,
     chain_clock: &Clock,
+    ctx: &TxContext,
 ) {
     store::apply_value_batch(
         value_store,
         verify::new_value_batch_for_testing(published_at_ms, updates),
         chain_clock,
+        ctx,
     )
 }
 
@@ -807,11 +843,13 @@ fun apply_svis(
     published_at_ms: u64,
     updates: vector<SviUpdate>,
     chain_clock: &Clock,
+    ctx: &TxContext,
 ) {
     store::apply_svi_batch(
         svi_store,
         verify::new_svi_batch_for_testing(published_at_ms, updates),
         chain_clock,
+        ctx,
     )
 }
 
