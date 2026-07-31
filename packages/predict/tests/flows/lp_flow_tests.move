@@ -332,9 +332,9 @@ fun flush_with_budgets(
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    fx.start_flush(&mut config, &mut vault);
+    let stage = fx.start_flush(&mut config, &mut vault);
     // No active markets in this fixture, so the snapshot stage seals empty.
-    helpers::seal_snapshot(&mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &config);
     let _ = vault.finish_flush(
         &mut config,
         supply_budget,

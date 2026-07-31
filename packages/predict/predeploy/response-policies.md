@@ -68,9 +68,29 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   those fill-site degeneracies by classifying non-executable queue heads before
   mutating pool state.
 - **Pinning tests:** `pool_valuation_flow_tests.move` —
-  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`,
-  `finish_flush_with_low_plp_price_and_empty_queues_succeeds`,
-  `finish_flush_with_high_plp_price_and_empty_queues_succeeds`.
+  `valuation_split_across_transactions_marks_at_the_snapshot_instant` (moves the
+  Pyth spot between two `value_expiry` transactions and asserts the pool mark is
+  unchanged, with a guard assertion proving a live re-read would have marked it
+  differently, so the test cannot pass vacuously),
+  `seal_aborts_when_an_active_market_has_no_frozen_pricer`,
+  `value_expiry_before_seal_aborts`,
+  `finish_aborts_when_a_snapshotted_market_is_unvalued`,
+  `snapshotting_one_market_twice_aborts`,
+  `snapshotting_an_expired_unsettled_market_aborts`,
+  `settling_during_a_flush_aborts` (the gate that closes lifecycle drift),
+  `privileged_abort_releases_the_lock_and_a_later_flush_succeeds`,
+  `permissionless_abort_before_the_deadline_aborts` and
+  `permissionless_abort_at_the_deadline_releases_the_lock` (the deadline pinned from
+  both sides, so it cannot be widened or dropped silently). The window's bounds and
+  its in-flight immutability are pinned in `protocol_config_tests.move`
+  (`max_valuation_window_ships_at_one_hour_and_is_tunable`,
+  `max_valuation_window_below_the_floor_aborts`,
+  `max_valuation_window_above_the_ceiling_aborts`,
+  `set_max_valuation_window_during_valuation_aborts`). The flush's inherited
+  same-transaction oracle refusal is pinned by
+  `oracle_same_tx_guard_tests::write_feed_then_snapshot_flush_same_tx_aborts` — the
+  guard's coverage had to follow the oracle read from `value_expiry` to the snapshot
+  stage.
 - **Reopen when:** the fill-site policy (RP-2) turns out not to cover a
   mark-level degeneracy.
 
@@ -1396,7 +1416,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   varying the upper mints one new node per order, and at the compiled floors
   (`min_net_premium` 1 DUSDC, entry band [1%, 99%], `min_fee` 0.5% on quantity)
   ~999 orders cost ~1,000 DUSDC of premium that is ~99% likely to pay back plus
-  ~5 DUSDC of fees. Reported externally as deepbookv3 issue #45.
+  ~5 DUSDC of fees. Reported as issue 45 in the external audit engagement's own
+  tracker (not this repo's issue #45).
 - **Response:** rung 3 — restructure so the joint budget cannot exist. The flush
   splits into an atomic snapshot stage (`start_pool_valuation` →
   `snapshot_expiry_pricer` × N → `seal_valuation_snapshot`, which reads oracles
@@ -1430,17 +1451,34 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   per-transaction sizing; they were superseded only as a model of the pool total,
   which the object-cache finding showed binds first.
 - **Duty inventory (state the potato used to guarantee, and what carries it now):**
-  the hot potato forced the valuation lock to release in its own transaction. It
-  no longer can, and the lock gates the whole mutation surface, so an abandoned
-  flush would freeze the protocol. Carried by `abort_valuation` (permissionless
-  once `max_valuation_window_ms` has elapsed) and `abort_valuation_privileged`
-  (immediate, on the lifecycle authority that started it); partial NAV is
-  discarded because frozen marks are sound only as a simultaneous set. The potato
-  also bound a valuation to its vault (`EWrongPoolVault`); the valuation is now a
-  field of that vault, so the mismatch is unrepresentable. Lifecycle drift across
-  transactions is closed by gating `try_settle` on the lock — deadlock-free
-  because `snapshot_expiry_pricer` refuses an expired-unsettled market and that
-  abort reverts the atomic snapshot transaction.
+  The hot potato guaranteed three things. (1) *The snapshot stage is one transaction.*
+  Kept, not replaced: `start_pool_valuation` still returns a `SnapshotStage` potato that
+  every `snapshot_expiry_pricer` borrows and `seal_valuation_snapshot` consumes, so the
+  stage whose atomicity is load-bearing is still enforced by Move's linearity rather
+  than by keeper convention — and, since the potato is only mintable by starting a
+  flush, that also scopes the otherwise-permissionless snapshot calls to the starter.
+  Only the *valuation* stage gave the potato up, which is the stage that had to span
+  transactions. (2) *The lock releases in-transaction.* This is the one genuinely
+  surrendered: the lock now gates the whole mutation surface across transactions, so an
+  abandoned flush would freeze the protocol. Carried by `abort_valuation`
+  (permissionless once `max_valuation_window_ms` has elapsed) and
+  `abort_valuation_privileged` (immediate, on the lifecycle authority); partial NAV is
+  discarded because frozen marks are sound only as a simultaneous set. Note the
+  abandoned state is only reachable *after* a committed seal — a snapshot stage that
+  fails part-way reverts whole, lock included. (3) *A valuation is bound to its vault*
+  (`EWrongPoolVault`); the valuation is now a field of that vault, so the mismatch is
+  unrepresentable. Lifecycle drift across transactions is closed by gating `try_settle`
+  on the lock — deadlock-free because `snapshot_expiry_pricer` refuses an
+  expired-unsettled market and that abort reverts the atomic snapshot transaction.
+- **Window is admin-tunable, not compiled.** `max_valuation_window_ms` decides the
+  maximum protocol pause a stalled keeper can cause, so it is a `ProtocolConfig` field
+  with an `AdminCap` setter (bounds 5 min – 4 h, default 1 h) rather than an
+  upgrade-required constant: it is tuned against flush cadence, which is an operator
+  decision, and the same reasoning as RP-12's attempt count. The floor stops a window
+  so short that anyone can discard a flush the keeper is still working through; the
+  ceiling bounds the pause even if an operator sets it carelessly. The setter carries
+  `assert_not_valuation_in_progress` so a started flush cannot have its escape hatch
+  moved after the fact.
 - **Pinning tests:** `pool_valuation_flow_tests.move` —
   `valuation_split_across_transactions_marks_at_the_snapshot_instant` (moves the
   Pyth spot between two `value_expiry` transactions and asserts the pool mark is

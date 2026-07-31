@@ -181,8 +181,6 @@ public struct WithdrawFilled has copy, drop, store {
     requests_pending_after: u64,
 }
 
-/// Emitted once after a flush drains both queues. `pool_value / total_supply` is
-/// the frozen pre-drain mark used by every fill in the flush.
 /// A started full-pool valuation was discarded without draining the LP queues.
 /// Distinguishes an abandoned flush from one that never started; the market counts
 /// say how far it got before being dropped.
@@ -192,6 +190,8 @@ public struct FlushAborted has copy, drop, store {
     valued_market_count: u64,
 }
 
+/// Emitted once after a flush drains both queues. `pool_value / total_supply` is
+/// the frozen pre-drain mark used by every fill in the flush.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,

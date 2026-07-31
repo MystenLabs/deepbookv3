@@ -37,6 +37,7 @@ const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
 const EInvalidMaxBenefitRatio: u64 = 28;
 const EInvalidInventoryImpactMaxRate: u64 = 29;
+const EInvalidMaxValuationWindowMs: u64 = 30;
 
 // === Fees ===
 
@@ -131,6 +132,32 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
         value >= min_lp_request_limit_flush_attempts!()
             && value <= max_lp_request_limit_flush_attempts!(),
         EInvalidLpRequestLimitFlushAttempts,
+    );
+}
+
+/// How long a started full-pool valuation may stay in flight before anyone may
+/// discard it (`plp::abort_valuation`). The valuation lock freezes the whole
+/// mutation surface and valuation spans transactions, so this is the operator's
+/// exclusive slot to finish before a permissionless escape opens — i.e. the maximum
+/// protocol pause a stalled keeper can cause. The minimum keeps a legitimate flush
+/// from being discarded out from under a keeper still working through it; the
+/// maximum bounds the pause even if an operator sets this carelessly. See RP-25.
+public(package) macro fun default_max_valuation_window_ms(): u64 {
+    deepbook_predict::constants::one_hour_ms!()
+}
+
+public(package) macro fun min_max_valuation_window_ms(): u64 {
+    deepbook_predict::constants::five_minutes_ms!()
+}
+
+public(package) macro fun max_max_valuation_window_ms(): u64 {
+    4 * deepbook_predict::constants::one_hour_ms!()
+}
+
+public(package) fun assert_max_valuation_window_ms(value: u64) {
+    assert!(
+        value >= min_max_valuation_window_ms!() && value <= max_max_valuation_window_ms!(),
+        EInvalidMaxValuationWindowMs,
     );
 }
 

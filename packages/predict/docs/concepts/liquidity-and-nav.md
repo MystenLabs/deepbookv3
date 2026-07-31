@@ -33,19 +33,21 @@ Each request must clear a minimum size (`min_supply_request` / `min_withdraw_req
 
 ## The flush: one frozen mark for both sides
 
-A daily **flush** values the whole pool once and attempts to drain both queues against that single frozen mark, filling only eligible heads. It is a transaction-local **hot potato** with a strict three-phase shape:
+A daily **flush** values the whole pool once and attempts to drain both queues against that single frozen mark, filling only eligible heads. It has a strict three-stage shape, and only the first stage must be one transaction:
 
-1. **`start_pool_valuation`** engages the valuation lock in `ProtocolConfig` and snapshots the set of active expiry markets into the potato (`PoolValuation`).
-2. **`value_expiry`** is called once per snapshotted market. Each call rebalances that market's cash against the pool (top up / sweep, described below), then folds the market's NAV into a running total — a settled market contributes `0`; a live market contributes its exact `current_nav`.
-3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, runs the queue drain against it, releases the lock, and consumes the potato.
+1. **Snapshot — one atomic transaction.** `start_pool_valuation` engages the valuation lock in `ProtocolConfig`, snapshots the set of active expiry markets into vault-held `PoolValuation`, and returns a `SnapshotStage` hot potato. One `snapshot_expiry_pricer` per market then freezes that market's oracle state, and `seal_valuation_snapshot` consumes the potato. Because the potato has no abilities it cannot leave the transaction, so every market's `Pricer` is loaded at one instant — that simultaneity is what keeps the pool mark exact once valuation spans transactions.
+2. **Valuation — resumable.** `value_expiry` is called once per snapshotted market, across as many transactions as the pool needs. Each call rebalances that market's cash against the pool (top up / sweep, described below), then folds the market's NAV into a running total against its frozen pricer — a market frozen as settled contributes `0`; a live one contributes its exact `current_nav`. This stage reads no oracle and no clock, so the result is the same whether the pool is valued in one transaction or twenty.
+3. **Finish.** `finish_flush` proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, runs the queue drain against it, and releases the lock.
 
-The potato has no abilities, so the sequence cannot be left half-finished: the only way to release the lock is to finish.
+Only stage 1 walks no payout trees, and only stage 2 does — which is why the flush's per-transaction object budget is now one market's worth of strike ticks rather than the whole pool's.
+
+Because the lock is held across transactions, an abandoned flush would freeze the protocol. `abort_valuation_privileged` discards one immediately on the lifecycle authority, and `abort_valuation` becomes permissionless once the flush has been in flight longer than `max_valuation_window_ms`.
 
 PLP bounds live NAV work separately from the flush itself: each active expiry is stored with its expiry timestamp, and market registration rejects a new future market once the active pre-expiry count reaches the upgrade-required live-market cap. Expired or settled markets may still sit in the pool's active-expiry set until a rebalance or valuation pass sweeps them, but they no longer count against the live NAV cap because they do not use a live `current_nav` walk.
 
 ### The flush is privileged, not permissionless
 
-Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`), and the hot potato can be created **only** by starting one, so gating the start gates the whole flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
+Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`), and the `SnapshotStage` potato that admits every `snapshot_expiry_pricer` call can be created **only** by starting one, so gating the start gates the stage that reads the oracle. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
 
 This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. The cap-holder is trusted not to manipulate the live oracle, which is the trust that makes the single frozen mark sound.
 
@@ -77,8 +79,10 @@ There is **no band, no separate supply/withdraw pricing, and no optimistic/conse
 
 ```mermaid
 flowchart TD
-  CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
-  LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
+  CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries + SnapshotStage]
+  LOCK -->|snapshot_expiry_pricer x N, one transaction| FRZ[freeze one Pricer per market at a single instant]
+  FRZ -->|seal_valuation_snapshot consumes the potato| SEAL[snapshot closed]
+  SEAL -->|value_expiry x N, any number of transactions| EXP[rebalance cash, fold exact current_nav at the frozen mark]
   EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
   NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]
   DRAIN --> SUP[supplies first: mint PLP into idle]

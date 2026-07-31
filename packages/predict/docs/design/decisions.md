@@ -415,10 +415,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (bounded blast radius, better key hygiene than the root cap). NAV manipulation is
   closed by privileging the start; dilution by the fair FIFO drain at the frozen mark.
   *Rejected:* a permissionless flush.
-- **Cash maintenance is decoupled from the flush potato.** Cash rebalance, the
+- **Cash maintenance is decoupled from the flush.** Cash rebalance, the
   settled-market sweep, and liquidation are standalone, permissionless, per-market
-  entrypoints; the hot potato exists only for the flush, the one flow that needs the
-  exactly-once-per-market completeness proof. *Rationale:* each maintenance op is
+  entrypoints; the flush's completeness proof and its `SnapshotStage` potato exist only
+  for the one flow that needs exactly-once-per-market valuation. *Rationale:* each maintenance op is
   per-market local and invariant-preserving, so it needs neither the completeness
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.

@@ -208,7 +208,8 @@ fills sooner and this gets cheaper to trigger, while this fix cuts how many node
 honest books generate and buys the cap headroom back. Sizing the threshold before
 the cap is known means picking it twice.
 
-**Provenance:** reported externally as issue 45 (closed as acknowledged and tracked
+**Provenance:** reported as issue 45 in the external audit engagement's own tracker
+(not this repo's issue #45), closed as acknowledged and tracked
 2026-07-30, with this direction stated to the reporter); the cost model and the
 `assert_admitted_mint_ticks` analysis were established while triaging it. Not
 reachable on the deployed anchor, which carries no node cap at all — it applies to
@@ -535,7 +536,7 @@ measured ceiling is below `max_payout_tree_nodes` + pages + base, lower
 one run that reaches the new boundary. If it is above, record the headroom and
 close this item with a register entry.
 
-**Note:** the cap is also what deepbookv3 issue #45 reports as a mint-side denial
+**Note:** the cap is also what the external audit tracker's issue 45 reports as a mint-side denial
 of new strike ranges; it is a deliberate bound, and whatever number this item
 settles on is the one that answer should quote.
 

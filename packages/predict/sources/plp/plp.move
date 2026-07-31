@@ -7,8 +7,7 @@
 /// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
 /// accounting, and the queued LP supply/withdraw requests. It coordinates the
 /// full-pool NAV valuation (a vault-held aggregation over every active market,
-/// resumable across transactions) and
-/// the unified per-market cash flow (initial funding, live rebalance/sweep, and
+/// resumable across transactions) and the unified per-market cash flow (initial funding, live rebalance/sweep, and
 /// settled-market sweep with terminal profit materialization). LPs queue
 /// supply/withdraw requests routed through a loaded Account; each flush
 /// (`finish_flush`) drains them at the frozen pool NAV, minting/burning PLP and
@@ -55,7 +54,6 @@ const EBelowMinBootstrapLiquidity: u64 = 6;
 const EBelowMinFeeIncentiveSponsorship: u64 = 7;
 const EMarketNotSettled: u64 = 8;
 const EMaxLiveExpiryMarketsExceeded: u64 = 9;
-const EValuationSnapshotSealed: u64 = 10;
 const EValuationSnapshotNotSealed: u64 = 11;
 const EExpiryPricerAlreadySnapshotted: u64 = 12;
 const EIncompleteValuationSnapshot: u64 = 13;
@@ -64,6 +62,21 @@ const EValuationDeadlineNotReached: u64 = 15;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
+
+/// Transaction-local proof that the snapshot stage is still open.
+///
+/// `start_pool_valuation` mints one, every `snapshot_expiry_pricer` borrows it, and
+/// `seal_valuation_snapshot` consumes it. It has no abilities, so it cannot be
+/// stored, transferred, or dropped — which makes "the whole snapshot stage runs in
+/// ONE transaction" a property of the type system rather than a keeper convention.
+/// That atomicity is the entire correctness argument for the frozen mark: it is what
+/// makes every market's `Pricer` load at the same instant, so the valuation stage can
+/// then span as many transactions as it needs (audit L10).
+///
+/// It also scopes the stage to whoever started the flush. `snapshot_expiry_pricer`
+/// and `seal_valuation_snapshot` are otherwise permissionless, and a snapshot taken
+/// outside the starter's transaction could pick its own oracle instant per market.
+public struct SnapshotStage {}
 
 /// Pool-level vault state.
 public struct PoolVault has key {
@@ -118,8 +131,8 @@ public struct PoolValuation has store {
     /// the mark AND the sweep-vs-value branch, so no later transaction's clock or
     /// oracle state can change a market's contribution.
     frozen_pricers: VecMap<ID, Option<Pricer>>,
-    /// Set by `seal_valuation_snapshot`; no market may be valued before it and no
-    /// pricer may be snapshotted after it.
+    /// Set by `seal_valuation_snapshot`; no market may be valued before it. Nothing
+    /// may be snapshotted after it because sealing consumes the `SnapshotStage`.
     sealed: bool,
     /// Clock time the flush was started, for the stuck-flush deadline.
     started_at_ms: u64,
@@ -242,27 +255,37 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
 ///
 /// The lock is held until `finish_flush` or `abort_valuation`, across transactions,
 /// and it gates the whole mutation surface (mint, redeem, liquidate, LP
-/// request/cancel, cash rebalance, market creation) — so the books cannot move
-/// while a flush is in flight. `abort_valuation` is the escape if the flush is
-/// abandoned; see its deadline.
+/// request/cancel, cash rebalance, market creation, settlement) — so the books
+/// cannot move while a flush is in flight. `abort_valuation` is the escape if the
+/// flush is abandoned; see its deadline.
+///
+/// Returns the `SnapshotStage` potato: every `snapshot_expiry_pricer` borrows it and
+/// `seal_valuation_snapshot` consumes it, so the transaction does not typecheck
+/// unless the whole snapshot stage lands in it.
 public fun start_pool_valuation(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
     lifecycle_proof: MarketLifecycleProof,
     clock: &Clock,
-) {
+): SnapshotStage {
     config.assert_version();
     lifecycle_proof.destroy_proof();
-    start_pool_valuation_internal(config, vault, clock)
+    start_pool_valuation_internal(config, vault, clock);
+    SnapshotStage {}
 }
 
 /// Freeze one snapshotted market's oracle state for this flush.
 ///
-/// Every call must land in the SAME transaction as `start_pool_valuation` and
-/// `seal_valuation_snapshot`: the resulting `Pricer`s are the single instant the
-/// whole pool is marked at, and atomicity is what makes them simultaneous. This
-/// stage reads oracles only — it never walks a payout tree — so all markets fit
-/// one PTB regardless of book size.
+/// Holding `SnapshotStage` is what admits this call, and that potato cannot leave the
+/// transaction `start_pool_valuation` minted it in — so every `Pricer` here is loaded
+/// at one instant, which is what lets the valuation stage span transactions without
+/// mixing marks (audit L10). This stage reads oracles only — it never walks a payout
+/// tree — so all markets fit one PTB regardless of book size.
+///
+/// The oracle feeding this stage must have been written in an EARLIER transaction:
+/// `pricing::resolve_live_pricer` refuses a read stamped with the current transaction
+/// digest (RP-24), so a keeper cannot refresh and snapshot in one PTB. Refresh first,
+/// then snapshot inside the feeds' freshness windows.
 ///
 /// A market already settled at snapshot time is recorded with no pricer and
 /// contributes 0. An expired-but-unsettled market aborts: it has no well-defined
@@ -272,6 +295,7 @@ public fun start_pool_valuation(
 /// what keeps the settlement gate below from deadlocking against the flush.
 public fun snapshot_expiry_pricer(
     vault: &mut PoolVault,
+    _stage: &SnapshotStage,
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
@@ -287,7 +311,6 @@ public fun snapshot_expiry_pricer(
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
 
     let valuation = vault.valuation.borrow_mut();
-    assert!(!valuation.sealed, EValuationSnapshotSealed);
     assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
     assert!(!valuation.frozen_pricers.contains(&expiry_market_id), EExpiryPricerAlreadySnapshotted);
 
@@ -310,14 +333,19 @@ public fun snapshot_expiry_pricer(
 
 /// Close the snapshot stage once every expected market has a frozen pricer.
 ///
-/// This is the simultaneity proof: after sealing, no further oracle state can enter
-/// the flush, so every market is marked at the instant the snapshot transaction
-/// executed. Valuation may then resume across as many transactions as it needs.
-public fun seal_valuation_snapshot(vault: &mut PoolVault, config: &ProtocolConfig) {
+/// Consuming `SnapshotStage` is the simultaneity proof: the potato dies here, so no
+/// later transaction can add oracle state to this flush, and every market is marked
+/// at the instant the snapshot transaction executed. Valuation may then resume across
+/// as many transactions as it needs.
+public fun seal_valuation_snapshot(
+    vault: &mut PoolVault,
+    stage: SnapshotStage,
+    config: &ProtocolConfig,
+) {
     config.assert_version();
     config.assert_valuation_in_progress();
+    let SnapshotStage {} = stage;
     let valuation = vault.valuation.borrow_mut();
-    assert!(!valuation.sealed, EValuationSnapshotSealed);
     assert!(
         valuation.frozen_pricers.length() == valuation.expected_expiry_markets.length(),
         EIncompleteValuationSnapshot,
@@ -369,7 +397,7 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
 /// was valued exactly once, price the pool NAV, then drain the supply/withdraw queues
 /// at that frozen mark (mint PLP for supplies, burn PLP and pay DUSDC for
-/// withdrawals), release the valuation lock, consume the potato, and return the
+/// withdrawals), release the valuation lock, retire the in-flight valuation, and return the
 /// LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV, net of the
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
@@ -486,7 +514,7 @@ public fun finish_flush(
 public fun abort_valuation(vault: &mut PoolVault, config: &mut ProtocolConfig, clock: &Clock) {
     config.assert_version();
     config.assert_valuation_in_progress();
-    let deadline = vault.valuation.borrow().started_at_ms + constants::max_valuation_window_ms!();
+    let deadline = vault.valuation.borrow().started_at_ms + config.max_valuation_window_ms();
     assert!(clock.timestamp_ms() >= deadline, EValuationDeadlineNotReached);
     vault.abort_valuation_internal(config);
 }
