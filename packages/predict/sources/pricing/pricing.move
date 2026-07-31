@@ -115,7 +115,10 @@ const EBlockScholesPriceUnavailable: u64 = 13;
 const EBlockScholesSVIUnavailable: u64 = 14;
 const EBlockScholesMinVarianceInvalid: u64 = 15;
 const ENonMonotonePriceMemo: u64 = 16;
-/// A live pricer may not be built from an oracle observation written in this transaction.
+/// A live pricer may not be built from an oracle observation written in this
+/// transaction. Named for the observation's provenance (`writer_digest` vs
+/// `tx_context::digest()`), not sender identity — not every read of a same-tx
+/// write is prohibited (Pyth is checked only on the re-anchor branch).
 const EOracleWrittenInThisTransaction: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not

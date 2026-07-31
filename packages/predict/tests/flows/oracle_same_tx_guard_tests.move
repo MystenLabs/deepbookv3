@@ -4,9 +4,9 @@
 /// Flow coverage for the same-transaction oracle-write guard: a live pricer may
 /// not be built from an observation written in the current PTB. Pins Variant A
 /// (mint → update → mint), Variant C (update → redeem seasoned position), the
-/// no-false-positive multi-leg path, the Pyth provenance-only exemptions, and the
-/// accepted residual — the guard is a build-time check, so it refuses write→price
-/// but not price→write (RP-23).
+/// no-false-positive multi-leg path, isolated forward / SVI / fresh-Pyth writes,
+/// the Pyth provenance-only exemptions, and the accepted residual — the guard is
+/// a build-time check, so it refuses write→price but not price→write (RP-23).
 #[test_only]
 module deepbook_predict::oracle_same_tx_guard_tests;
 
@@ -239,6 +239,90 @@ fun multi_leg_mints_share_one_pricer_without_oracle_write() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
+fun write_bs_forward_only_then_load_pricer_same_tx_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Spot stays on the seeded digest; only forward is rewritten in this PTB.
+    fx.set_clock_for_testing(FRESHER_SOURCE_TS);
+    fx.write_bs_forward_in_current_tx_bundle(
+        &mut market,
+        FRESHER_PRICE,
+        FRESHER_SOURCE_TS,
+    );
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_ONE_X,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
+fun write_bs_svi_only_then_load_pricer_same_tx_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.set_clock_for_testing(FRESHER_SOURCE_TS);
+    fx.write_bs_svi_in_current_tx_bundle(&mut market, FRESHER_SOURCE_TS);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_ONE_X,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
+fun write_fresh_pyth_only_then_load_pricer_same_tx_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Re-anchor on: a fresh same-tx Pyth write must trip the guard even though
+    // every Block Scholes observation still carries the seeded digest.
+    fx.set_use_pyth_spot_for_forward_bundle(&mut market, true);
+    fx.set_clock_for_testing(FRESHER_SOURCE_TS);
+    fx.write_pyth_in_current_tx_bundle(
+        &mut market,
+        FRESHER_PRICE,
+        FRESHER_SOURCE_TS,
+    );
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        QUANTITY,
+        LEVERAGE_ONE_X,
+    );
+
+    abort 999
 }
 
 #[test]

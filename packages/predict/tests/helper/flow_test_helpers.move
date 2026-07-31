@@ -854,6 +854,90 @@ public fun write_pyth_in_current_tx_bundle(
     );
 }
 
+/// Write only the Block Scholes forward for this market's expiry, stamped with
+/// the current scenario transaction digest. Leaves spot, SVI, and Pyth alone so
+/// isolated same-tx guard cases can pin the forward check.
+public fun write_bs_forward_in_current_tx_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    forward: u64,
+    source_timestamp_ms: u64,
+) {
+    let underlying = test_constants::propbook_underlying_id();
+    let expiry = market.market.expiry();
+    let latest = market.bs.values().forward(expiry);
+    let ts = if (latest.is_some()) {
+        source_timestamp_ms.max(latest.borrow().read_model_timestamp_ms() + 1)
+    } else {
+        source_timestamp_ms
+    };
+    let mut write_clock = clock::create_for_testing(self.scenario.ctx());
+    write_clock.set_for_testing(self.clock.timestamp_ms());
+    market
+        .bs
+        .values_mut()
+        .apply_value_batch(
+            verify::new_value_batch_for_testing(
+                ts,
+                vector[
+                    verify::new_value_update_for_testing(
+                        block_scholes_sid::forward(underlying, expiry),
+                        ts,
+                        forward as u128,
+                    ),
+                ],
+            ),
+            &write_clock,
+            self.scenario.ctx(),
+        );
+    write_clock.destroy_for_testing();
+}
+
+/// Write only the Block Scholes SVI for this market's expiry, stamped with the
+/// current scenario transaction digest. Leaves spot, forward, and Pyth alone so
+/// isolated same-tx guard cases can pin the SVI check.
+public fun write_bs_svi_in_current_tx_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    source_timestamp_ms: u64,
+) {
+    let underlying = test_constants::propbook_underlying_id();
+    let expiry = market.market.expiry();
+    let latest = market.bs.svi().svi(expiry);
+    let ts = if (latest.is_some()) {
+        source_timestamp_ms.max(latest.borrow().read_model_timestamp_ms() + 1)
+    } else {
+        source_timestamp_ms
+    };
+    let mut write_clock = clock::create_for_testing(self.scenario.ctx());
+    write_clock.set_for_testing(self.clock.timestamp_ms());
+    market
+        .bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                ts,
+                vector[
+                    verify::new_svi_for_testing(
+                        block_scholes_sid::svi(underlying, expiry),
+                        ts,
+                        test_constants::default_svi_a() as u128,
+                        false,
+                        test_constants::default_svi_b() as u128,
+                        test_constants::default_svi_sigma() as u128,
+                        test_constants::default_svi_rho_magnitude() as u128,
+                        false,
+                        test_constants::default_svi_m() as u128,
+                        false,
+                    ),
+                ],
+            ),
+            &write_clock,
+            self.scenario.ctx(),
+        );
+    write_clock.destroy_for_testing();
+}
+
 /// `prepare_live_oracle` at an explicit source timestamp (for staleness tests).
 public fun prepare_live_oracle_at(
     self: &mut Fixture,

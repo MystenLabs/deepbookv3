@@ -978,20 +978,29 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   and smoothing desynchronises mint from exact settlement). The transaction
   digest is constant across a PTB and differs between transactions — zero false
   positives for honest trades that never write a feed.
-- **Risk profile:** `MEASURED` for the atomic path (reproduced on testnet by the
-  adverse fleet FRS actor). Residual cross-transaction risk is accepted: a
+- **Risk profile:** `BEST-GUESS` for the atomic path — unit-pinned under
+  `oracle_same_tx_guard_tests.move`; a dated testnet measurement record is not
+  yet filed under `evidence/`. Residual cross-transaction risk is accepted: a
   trader can still write in tx N and trade in N+1, or sandwich the updater's
   ~1.4–1.8s push, but then carries inventory and cannot guarantee ordering — a
   directional bet, not risk-free extraction. Pricing that residual is separate
   ΔP-surcharge work. Also noted without acting: `pyth_spot_freshness_ms`
   defaults to 10_000, a wide staleness budget relative to 1m markets.
-- **Pinning tests:** `oracle_same_tx_guard_tests.move` — write-then-load aborts;
-  write-then-mint next tx succeeds; Variant A aborts on the second pricer;
-  Variant C aborts; ordinary and multi-leg mints without an oracle write
-  succeed; Pyth same-tx write succeeds when re-anchor is off or the Pyth read
-  is stale. Propbook `pyth_feed_tests.move` —
-  `normalized_spot_preserves_writer_digest_across_read_transaction` pins digest
-  survival through `normalized_spot_from_read`.
+- **Pinning tests:**
+  `write_feed_then_load_pricer_same_tx_aborts`,
+  `write_feed_then_mint_next_tx_succeeds`,
+  `variant_a_mint_update_mint_aborts_on_second_pricer`,
+  `variant_c_write_then_redeem_seasoned_position_aborts`,
+  `ordinary_mint_without_oracle_write_succeeds`,
+  `multi_leg_mints_share_one_pricer_without_oracle_write`,
+  `write_bs_forward_only_then_load_pricer_same_tx_aborts`,
+  `write_bs_svi_only_then_load_pricer_same_tx_aborts`,
+  `write_fresh_pyth_only_then_load_pricer_same_tx_aborts`,
+  `pyth_write_same_tx_succeeds_when_reanchor_disabled`,
+  `pyth_write_same_tx_succeeds_when_pyth_read_is_stale`,
+  `price_then_write_same_tx_is_permitted`.
+  Propbook also pins digest survival across project_read in its own suite
+  (outside this package's test tree).
 - **Reopen when:** a ΔP surcharge or similar cross-tx oracle-move fee lands; the
   redundant `EMintRedeemSameTimestamp` guard is removed as a follow-up; or
   `load_exact_spot_read` (settlement / reference-tick exact history) is brought

@@ -269,6 +269,9 @@ Full localnet runs can produce:
     gas, PnL, and liquidation-efficiency metrics. The artifact list only includes
     files that exist for that run.
 -   `artifacts/chart_gas.png`: mint/redeem and supply/withdraw gas costs.
+    Oracle-refresh + priced-op paths submit two PTBs (same-tx oracle guard); the
+    trace aggregates both receipts' gas into one step so the chart still reports
+    the full refresh-then-trade cost, while events/digest come from the priced op.
 -   `artifacts/chart_market_overview.png`: BTC price, mint/redeem strikes,
     live pre-terminal vault MTM PnL, active book PnL, and live book risk.
 -   `artifacts/chart_vault_pnl_fee_coverage.png`: cumulative fees, net

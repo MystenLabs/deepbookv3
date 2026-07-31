@@ -99,7 +99,7 @@ fun insert_at_duplicate_future_and_zero_sources_are_no_ops() {
 
 #[test]
 fun read_has_valid_timestamp_reports_lane_entry_shape() {
-    let ctx = &mut tx_context::dummy();
+    let ctx = &tx_context::dummy();
     assert!(oracle_lane::read_has_valid_timestamp(&new_read(SPOT_A, T_EARLY, UPDATE_EARLY, ctx)));
     assert!(!oracle_lane::read_has_valid_timestamp(&new_read(SPOT_A, T_ZERO, UPDATE_EARLY, ctx)));
     assert!(!oracle_lane::read_has_valid_timestamp(&new_read(SPOT_A, T_LATE, T_EARLY, ctx)));

@@ -44,10 +44,10 @@ import {
     mintLifecycleCapTx,
     nextOneMonthExpiryMs,
     rebalanceExpiryCashTx,
-    refreshOracleAndFlushTx,
-    refreshOracleAndMintBatchTx,
-    refreshOracleAndMintTx,
-    refreshOracleAndRedeemTx,
+    refreshOracleAndFlushTxs,
+    refreshOracleAndMintBatchTxs,
+    refreshOracleAndMintTxs,
+    refreshOracleAndRedeemTxs,
     registerUnderlyingAndCreateFeedsTx,
     requestSupplyTx,
     requestWithdrawTx,
@@ -1407,20 +1407,21 @@ async function setupSimulation(
     );
     console.log(`[${ts()}]   Bootstrap supply queued: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
-    await executeAndWait(
-        await refreshOracleAndFlushTx({
-            poolVaultId,
-            protocolConfigId,
-            expiryMarketId,
-            pythFeedId,
-            bsValueStoreId,
-            bsSviStoreId,
-            lifecycleCapId,
-            expiry: expiryMs,
-            spot: seed.spot,
-            forward: seed.forward,
-            svi: seed.svi,
-        }),
+    await execute(
+        () =>
+            refreshOracleAndFlushTxs({
+                poolVaultId,
+                protocolConfigId,
+                expiryMarketId,
+                pythFeedId,
+                bsValueStoreId,
+                bsSviStoreId,
+                lifecycleCapId,
+                expiry: expiryMs,
+                spot: seed.spot,
+                forward: seed.forward,
+                svi: seed.svi,
+            }),
         "bootstrap_flush",
     );
     console.log(`[${ts()}]   Bootstrap flush: PLP minted 1:1, idle funded`);
@@ -1473,7 +1474,7 @@ async function executeStressMintBatch(
     const mintRows = stressMintDuplicateRows(row);
     const receipt = await execute(
         () =>
-            refreshOracleAndMintBatchTx({
+            refreshOracleAndMintBatchTxs({
                 pythFeedId: state.pythFeedId,
                 bsValueStoreId: state.bsValueStoreId,
                 bsSviStoreId: state.bsSviStoreId,
@@ -1507,7 +1508,7 @@ async function executeRow(
         const alignedStrike = alignStrikeToTick(row.strike);
         return execute(
             () =>
-                refreshOracleAndMintTx({
+                refreshOracleAndMintTxs({
                     ...mintParamsFromRow(row, state, alignedStrike),
                     expiry: BigInt(state.expiryMs),
                     spot: row.spot,
@@ -1532,7 +1533,7 @@ async function executeRow(
         if (!orderId) throw new Error(`Unknown order_ref ${row.orderRef}`);
         return execute(
             () =>
-                refreshOracleAndRedeemTx({
+                refreshOracleAndRedeemTxs({
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
                     wrapperId: state.accountWrapperId,
@@ -1628,14 +1629,12 @@ async function executeScenario(
     const runFlush = async (afterRow: number, row: ScenarioRow) => {
         const oracle = firstOracleData(row);
         const startedAt = performance.now();
-        // Use `execute` (not `executeAndWait`) so the receipt carries normalized gas;
-        // the flush is recorded as a synthetic `flush` trace step at x = afterRow so
-        // its gas (refresh + value_expiry + LP drain) shows on the gas chart alongside
-        // the trade/pool txs. Refresh is bundled in, matching how mint/redeem gas is
-        // measured.
+        // Use `execute` so the receipt carries normalized gas. Refresh and flush are
+        // two PTBs under the same-tx oracle guard; `execute` aggregates both legs'
+        // gas into one chart point (priced-op events/digest from the flush receipt).
         const receipt = await execute(
             () =>
-                refreshOracleAndFlushTx({
+                refreshOracleAndFlushTxs({
                     poolVaultId: state.poolVaultId,
                     protocolConfigId: state.protocolConfigId,
                     expiryMarketId: state.expiryMarketId,
