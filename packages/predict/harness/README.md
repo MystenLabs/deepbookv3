@@ -83,9 +83,25 @@ near-the-money orders that knock out, so the liquidation pass + NAV-under-liquid
 are exercised), `mint-batch` (batched leveraged mint scaling), `nav-stress` / `nav-stress-atm` /
 `nav-stress-multi` (single-market, ATM-cost, and pool-total flush scaling), and
 `batch-max-book` / `batch-max-markets` (fast batched fills toward the per-market leveraged cap and
-the live-market pool total). Stress strategies that submit large mint PTBs should be run with
-`SIM_GAS_BUDGET=50000000000` so the trader has headroom and the keeper flush is measured against
-the protocol computation ceiling.
+the live-market pool total), and `liq-budget-sweep` / `liq-budget-adverse` (per-mint cost of the
+ambient liquidation pass as the budget rises — healthy and liquidating branches). Stress
+strategies that submit large mint PTBs should be run with `SIM_GAS_BUDGET=50000000000` so the
+trader has headroom and the keeper flush is measured against the protocol computation ceiling.
+
+The two `liq-budget-*` strategies measure the trade path's `trade_liquidation_budget` ceiling. The
+keeper walks the on-chain budget through `TRADE_LIQ_BUDGET_STAGES="<elapsedSeconds>:<budget>,…"`
+(unset = leave the contract default of 24), tracing each rung as `{type:"liqBudget", budget}`, so
+one run sweeps the whole range against a book built once — the pass costs
+`min(budget, active_leveraged_orders)`. `KEEPER_LIQ_BUDGET` sizes the keeper's own permissionless
+`liquidate()` lane and takes `0` to disable it, which the adverse arm needs so liquidatable orders
+survive for a mint's ambient pass to meet:
+
+```
+TRADE_LIQ_BUDGET_STAGES=0:24,900:512,1800:1500,2700:3000 SIM_GAS_BUDGET=50000000000 \
+  python3 -m harness campaign liq-budget-sweep --timeout 3600
+KEEPER_LIQ_BUDGET=0 TRADE_LIQ_BUDGET_STAGES=0:24,900:512,1800:1500,2700:3000 \
+  SIM_GAS_BUDGET=50000000000 python3 -m harness campaign liq-budget-adverse --timeout 3600
+```
 
 `campaign S1 S2 …` runs each named strategy on its **own** localnet (all off one shared hub) to
 completion, tears everything down, then prints a **per-strategy** `analyze` report + an aggregate

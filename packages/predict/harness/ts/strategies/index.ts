@@ -7,6 +7,8 @@ import cleanoutGas from "./cleanoutGas.js";
 import claimMarginal from "./claimMarginal.js";
 import cleanoutGasLiq from "./cleanoutGasLiq.js";
 import fuzz from "./fuzz.js";
+import liqBudgetAdverse from "./liqBudgetAdverse.js";
+import liqBudgetSweep from "./liqBudgetSweep.js";
 import liqChurn from "./liqChurn.js";
 import mintBatch from "./mintBatch.js";
 import mintOnly from "./mintOnly.js";
@@ -23,6 +25,8 @@ export const STRATEGIES: Record<string, Strategy> = {
   [mintOnly.name]: mintOnly,
   [mixedChurn.name]: mixedChurn,
   [liqChurn.name]: liqChurn,
+  [liqBudgetSweep.name]: liqBudgetSweep,
+  [liqBudgetAdverse.name]: liqBudgetAdverse,
   [navStress.name]: navStress,
   [navStressAtm.name]: navStressAtm,
   [navStressMulti.name]: navStressMulti,

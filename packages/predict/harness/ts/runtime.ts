@@ -1303,6 +1303,23 @@ export function setTemplateMaxAdmissionLeverageTx(
     return tx;
 }
 
+// Set the ambient liquidation-pass budget spent before every mint and every live redeem
+// (`ProtocolConfig::trade_liquidation_budget`). Contract bounds are [24, 3000]; outside them
+// the call aborts `EInvalidTradeLiquidationBudget`. The keeper drives this from a ladder
+// (TRADE_LIQ_BUDGET_STAGES) so one run can sweep the budget without republishing.
+export function setTradeLiquidationBudgetTx(protocolConfigId: string, budget: bigint): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_trade_liquidation_budget"),
+        arguments: [
+            tx.object(protocolConfigId),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u64(budget),
+        ],
+    });
+    return tx;
+}
+
 // Pin oracle read freshness to the testnet values. Testnet loosened pyth/bs price
 // freshness from the contract defaults (2s/3s) to 10s so realistic push cadence does
 // not stale-reject reads; the localnet must match or live pricing aborts under load.
