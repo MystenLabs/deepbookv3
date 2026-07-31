@@ -4,7 +4,7 @@ Every Predict trade — a mint or a live redeem — carries a trading fee, and m
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
-This page covers **per-trade** fees. The pool also charges an LP-side **exit** fee: PLP supply and withdraw are still priced at one exact pool-wide mark with no band or spread, and a flat rate is charged on top of that mark — on withdrawals only, as shipped. See [the LP fee](#the-lp-supplywithdraw-fee) below and [./liquidity-and-nav.md](./liquidity-and-nav.md).
+This page covers **per-trade** fees. The pool also charges an LP-side **exit** fee: PLP supply and withdraw are still priced at one exact pool-wide mark with no band or spread, and a flat rate is charged on top of that mark — on withdrawals only, as shipped — optionally scaled by a pool-wide utilization multiplier. See [the LP fee](#the-lp-supplywithdraw-fee) below and [./liquidity-and-nav.md](./liquidity-and-nav.md).
 
 ## Where fees come from
 
@@ -182,7 +182,7 @@ At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee
 
 ## The LP supply/withdraw fee
 
-Everything above is charged on a *trade*. The pool charges one further fee on *LP exit*: a flat rate applied to the DUSDC leg of every executed fill, admin-tunable within a hard `0..5%` envelope.
+Everything above is charged on a *trade*. The pool charges one further fee on *LP exit*: a base rate applied to the DUSDC leg of every executed fill, admin-tunable within a hard `0..5%` envelope, and optionally scaled by pool-wide utilization.
 
 The two legs carry **independent rates**, and they ship asymmetric:
 
@@ -193,7 +193,15 @@ The two legs carry **independent rates**, and they ship asymmetric:
 
 An exit concentrates the pool's outstanding risk on whoever stays: the liabilities the pool has written do not shrink when an LP leaves, so the same risk is carried on a smaller base and risk per dollar rises for the remaining holders. NAV pays the exiting LP the mark, which is the expected value; it does not charge them for the variance they hand to everyone else. That is what the exit fee prices. A deposit moves risk the other way — it dilutes risk per dollar and is a benefit to the pool's health — so the supply leg ships at zero, and the knob exists only to keep that reversible without a package upgrade.
 
-Each leg is charged on the DUSDC side at its own rate, frozen into that flush's mark:
+**20 bps is the risk-handoff charge at normal deployment.** When the pool is more heavily utilized — more payout liability per dollar of LP equity — a utilization multiplier scales that charge up. The ratio is pool-wide `u = total_payout_liability / pool_nav` (clamped to `[0, 1]`), not an idle-share or per-expiry cash ratio: those are griefable through permissionless `rebalance_expiry_cash`, which can relocate cash between idle and expiry markets without changing L/E. The multiplier is a linear ramp from 1.0 at `utilization_threshold` (default 0.8) to `utilization_max_multiplier` (default 1.0 — ramp disabled; ceiling 3×) at `u = 1.0`, mirroring the shape of `expiry_fee_multiplier`. The effective rate frozen into the mark is `min(ceil(base × multiplier), max_plp_fee_rate)`, so the hard 5% envelope survives no matter how the two knobs are set. Both legs are scaled uniformly; supply ships at zero, and any multiple of zero is zero.
+
+The ramp rounds down; the LP-side product then rounds up (to the pool). That makes the LP fee very slightly conservative — the safe direction for a new charge.
+
+The objection to have ready: the fee is highest exactly when LPs most want out and when idle is already too dry to fill them. That is intended — it is what swing pricing does, and the alternative is the last LPs out subsidising the first. It is also why the ceiling is 3× rather than the 10× expiry-fee precedent.
+
+Each flush freezes the scaled rates and the multiplier into its mark (and writes `u` plus a timestamp onto `ProtocolConfig` for the trade path), so every fill in one flush is charged identically. Settled markets contribute 0 to both NAV and liability on the same branch, so a swept market's stale `settled_payout_liability` cannot inflate `u`.
+
+Each leg is charged on the DUSDC side at its own (already scaled) rate, frozen into that flush's mark:
 
 - **Supply** — the fee, if one is ever set, is deducted from the escrowed DUSDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply DUSDC that no new shares were issued against. At the shipped rate of zero a deposit mints its full pro-rata share.
 - **Withdraw** — the fee is withheld from the marked payout, so the requester receives the net. The full escrowed PLP is burned either way.

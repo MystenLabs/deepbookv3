@@ -68,10 +68,10 @@ The two are disjoint: the moment a cut materializes it leaves `exclusion` (its p
 
 `pool_nav` and the PLP `total_supply` are snapshotted **once** and passed to the drain for both queues. This single mark prices supply and withdraw identically:
 
-- **Supply fill:** `fee = ceil(amount × plp_supply_fee_rate)` (zero as shipped), then `shares = floor((amount − fee) × total_supply / pool_nav)`.
-- **Withdraw fill:** `gross = floor(shares × pool_nav / total_supply)`, then `payout = gross − ceil(gross × plp_withdraw_fee_rate)`.
+- **Supply fill:** `fee = ceil(amount × effective_supply_rate)` (zero as shipped), then `shares = floor((amount − fee) × total_supply / pool_nav)`.
+- **Withdraw fill:** `gross = floor(shares × pool_nav / total_supply)`, then `payout = gross − ceil(gross × effective_withdraw_rate)`.
 
-The fee is charged on the DUSDC leg *after* the mark, never inside it, and is retained by the pool — see [fees and rebates](./fees-and-rebates.md#the-lp-supplywithdraw-fee). The mark itself is unchanged by it.
+The effective rates are the configured base rates scaled by the pool-wide utilization multiplier (`u = total_payout_liability / pool_nav`, ramp from 1.0 at the threshold to `utilization_max_multiplier` at full utilization) and clamped to the 5% hard ceiling. Both are frozen into the mark once per flush. The fee is charged on the DUSDC leg *after* the mark, never inside it, and is retained by the pool — see [fees and rebates](./fees-and-rebates.md#the-lp-supplywithdraw-fee). The mark itself is unchanged by it.
 
 There is **no band, no separate supply/withdraw pricing, and no optimistic/conservative stance.** Because the same mark must be fair in both directions, it must equal the *true* recoverable value — which it does, because each per-expiry `current_nav` is exact (see [An active expiry's exact NAV](#an-active-expirys-exact-nav)). This is the NAV-mark invariant: the supply mark must never undercount true value (or a supplier could over-mint and dilute incumbents), and a single exact mark satisfies it in both directions.
 

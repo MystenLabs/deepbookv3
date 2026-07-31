@@ -20,6 +20,7 @@ use deepbook_predict::{
     stake_config::{Self, StakeConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
+use fixed_math::math;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -43,8 +44,26 @@ public struct ProtocolConfig has key {
     /// Fee charged on an executed PLP withdraw fill, in FLOAT_SCALING, withheld
     /// from the marked payout. Retained by the pool, so it accrues to the holders
     /// who stay. Both rates are read once per flush into the frozen mark, so every
-    /// fill in one flush is charged the same pair.
+    /// fill in one flush is charged the same pair. The effective rate a flush
+    /// freezes is this base scaled by `utilization_multiplier` and clamped to
+    /// `max_plp_fee_rate`.
     plp_withdraw_fee_rate: u64,
+    /// Peak fee multiplier at full utilization (`u = 1.0`), in FLOAT_SCALING.
+    /// Ships at 1.0 so the ramp is an exact no-op until raised.
+    utilization_max_multiplier: u64,
+    /// Utilization (`total_payout_liability / pool_nav`) at which the fee
+    /// multiplier begins to ramp, in FLOAT_SCALING. Strictly below 1.0.
+    utilization_threshold: u64,
+    /// Last flush's pool-wide utilization `L/E`, in FLOAT_SCALING. Written only
+    /// inside the capped flush (requires pricing every market), so it is at most
+    /// one flush interval stale and cannot be refreshed permissionlessly. The
+    /// trade path reads this rather than touching `PoolVault`. Zero until the
+    /// first flush ever runs — which is multiplier 1.0 below the default
+    /// threshold, so a fresh deployment is an exact no-op.
+    cached_pool_utilization: u64,
+    /// `epoch_timestamp_ms` of the flush that wrote `cached_pool_utilization`.
+    /// Zero until the first flush.
+    cached_pool_utilization_ms: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
@@ -382,6 +401,33 @@ public fun set_plp_withdraw_fee_rate(
     config.plp_withdraw_fee_rate = rate;
 }
 
+/// Set the peak utilization fee multiplier. Admin-gated, valuation-locked, and
+/// validated against its config-constants envelope. Locked during valuation so a
+/// flush that froze a multiplier into its mark cannot see the knob move mid-drain.
+public fun set_utilization_max_multiplier(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_utilization_max_multiplier(value);
+    config.utilization_max_multiplier = value;
+}
+
+/// Set the utilization threshold at which the fee multiplier begins to ramp.
+/// Same gating as `set_utilization_max_multiplier`.
+public fun set_utilization_threshold(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_utilization_threshold(value);
+    config.utilization_threshold = value;
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -394,6 +440,67 @@ public(package) fun plp_supply_fee_rate(config: &ProtocolConfig): u64 {
 
 public(package) fun plp_withdraw_fee_rate(config: &ProtocolConfig): u64 {
     config.plp_withdraw_fee_rate
+}
+
+public(package) fun utilization_max_multiplier(config: &ProtocolConfig): u64 {
+    config.utilization_max_multiplier
+}
+
+public(package) fun utilization_threshold(config: &ProtocolConfig): u64 {
+    config.utilization_threshold
+}
+
+public(package) fun cached_pool_utilization(config: &ProtocolConfig): u64 {
+    config.cached_pool_utilization
+}
+
+public(package) fun cached_pool_utilization_ms(config: &ProtocolConfig): u64 {
+    config.cached_pool_utilization_ms
+}
+
+/// Linear ramp from 1.0 at `utilization_threshold` to `utilization_max_multiplier`
+/// at `u = 1.0`. Rounds the ramp down (matching `expiry_fee_multiplier`); each
+/// application then rounds its own product — LP fees up, trade fees down.
+public(package) fun utilization_multiplier(config: &ProtocolConfig, utilization: u64): u64 {
+    if (utilization <= config.utilization_threshold) return math::float_scaling!();
+
+    // = (max_multiplier - 1) * (u - threshold) / (1 - threshold), round down.
+    let ramp = math::mul_div_down(
+        config.utilization_max_multiplier - math::float_scaling!(),
+        utilization - config.utilization_threshold,
+        math::float_scaling!() - config.utilization_threshold,
+    );
+    math::float_scaling!() + ramp
+}
+
+/// Scale a base PLP fee rate by the utilization multiplier and clamp to the
+/// upgrade-required `max_plp_fee_rate` ceiling. Rounds the product up (to the
+/// pool; rounding policy R2), matching `lp_book::fee_on`.
+public(package) fun scaled_plp_fee_rate(
+    config: &ProtocolConfig,
+    base_rate: u64,
+    utilization: u64,
+): u64 {
+    let scaled = math::mul_div_up(
+        base_rate,
+        config.utilization_multiplier(utilization),
+        math::float_scaling!(),
+    );
+    scaled.min(config_constants::max_plp_fee_rate!())
+}
+
+/// Write the flush's pool-wide utilization into the trade-path cache. Package-
+/// only and valuation-gated: the ratio requires pricing every market, so it is
+/// only refreshable inside the capped flush and cannot go through a normal admin
+/// setter (those assert `not_valuation_in_progress`).
+public(package) fun write_pool_utilization_cache(
+    config: &mut ProtocolConfig,
+    utilization: u64,
+    timestamp_ms: u64,
+) {
+    config.assert_valuation_in_progress();
+    config.cached_pool_utilization = utilization;
+    config.cached_pool_utilization_ms = timestamp_ms;
 }
 
 public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
@@ -520,6 +627,10 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         plp_supply_fee_rate: config_constants::default_plp_supply_fee_rate!(),
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
+        utilization_max_multiplier: config_constants::default_utilization_max_multiplier!(),
+        utilization_threshold: config_constants::default_utilization_threshold!(),
+        cached_pool_utilization: 0,
+        cached_pool_utilization_ms: 0,
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),

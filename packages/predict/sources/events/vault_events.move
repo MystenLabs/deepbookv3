@@ -192,10 +192,17 @@ public struct FlushExecuted has copy, drop, store {
     /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
     /// Supply-leg fee rate in FLOAT_SCALING, frozen with the mark and charged on
-    /// every supply fill in this flush.
+    /// every supply fill in this flush. Already utilization-scaled and clamped.
     supply_fee_rate: u64,
     /// Withdraw-leg fee rate in FLOAT_SCALING, frozen alongside it.
     withdraw_fee_rate: u64,
+    /// Pool-wide utilization `total_payout_liability / pool_nav` this flush
+    /// computed, in FLOAT_SCALING. Settled markets contribute 0.
+    pool_utilization: u64,
+    /// Utilization fee multiplier this flush froze, in FLOAT_SCALING.
+    utilization_multiplier: u64,
+    /// Timestamp written into the trade-path utilization cache with this flush.
+    pool_utilization_cached_ms: u64,
     /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
@@ -487,6 +494,9 @@ public(package) fun emit_flush_executed(
     total_supply: u64,
     supply_fee_rate: u64,
     withdraw_fee_rate: u64,
+    pool_utilization: u64,
+    utilization_multiplier: u64,
+    pool_utilization_cached_ms: u64,
     active_market_nav: u64,
     market_count: u64,
     idle_balance_before: u64,
@@ -503,6 +513,9 @@ public(package) fun emit_flush_executed(
         total_supply,
         supply_fee_rate,
         withdraw_fee_rate,
+        pool_utilization,
+        utilization_multiplier,
+        pool_utilization_cached_ms,
         active_market_nav,
         market_count,
         idle_balance_before,
@@ -575,6 +588,11 @@ public(package) fun emit_fee_incentives_returned(
 #[test_only]
 public fun flush_executed_fee_rates(event: &FlushExecuted): (u64, u64) {
     (event.supply_fee_rate, event.withdraw_fee_rate)
+}
+
+#[test_only]
+public fun flush_executed_utilization(event: &FlushExecuted): (u64, u64, u64) {
+    (event.pool_utilization, event.utilization_multiplier, event.pool_utilization_cached_ms)
 }
 
 /// The fill events' fields exist for off-chain consumers, which decode them rather

@@ -301,7 +301,12 @@ Shipped state: two independent rates, `plp_supply_fee_rate` (default **0**) and
 `plp_withdraw_fee_rate` (default **20 bps**), each in a `0..5%` envelope, charged
 on the DUSDC leg of executed fills only and retained by the pool. Both are
 admin-tunable to zero without a package upgrade, so shipping enabled is
-reversible; widening past 5% is not.
+reversible; widening past 5% is not. A utilization multiplier
+(`utilization_max_multiplier` / `utilization_threshold`) scales both rates by
+pool-wide `L/E`; it ships disabled at max multiplier 1.0. **P-27 owns
+calibration of the multiplier as well as the base 20 bps** — the threshold
+default (0.8) and the 3× ceiling only matter once the max multiplier is raised
+above 1.0.
 
 **The basis splits in two, and only one half needs calibrating.**
 

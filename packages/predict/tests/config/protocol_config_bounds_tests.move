@@ -518,3 +518,152 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
     destroy(admin_cap);
     scenario.end();
 }
+
+// === Utilization multiplier knobs ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidUtilizationMaxMultiplier)]
+fun utilization_max_multiplier_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_utilization_max_multiplier(
+        &admin_cap,
+        config_constants::min_utilization_max_multiplier!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidUtilizationMaxMultiplier)]
+fun utilization_max_multiplier_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_utilization_max_multiplier(
+        &admin_cap,
+        config_constants::max_utilization_max_multiplier!() + 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidUtilizationThreshold)]
+fun utilization_threshold_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_utilization_threshold(
+        &admin_cap,
+        config_constants::max_utilization_threshold!() + 1,
+    );
+    abort 999
+}
+
+/// At exactly `float_scaling` the ramp denominator is zero. The envelope must
+/// reject it — a comment is not a guard.
+#[test, expected_failure(abort_code = config_constants::EInvalidUtilizationThreshold)]
+fun utilization_threshold_at_full_scale_is_rejected() {
+    config_constants::assert_utilization_threshold(math::float_scaling!());
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_utilization_max_multiplier_during_valuation_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.begin_valuation();
+    config.set_utilization_max_multiplier(
+        &admin_cap,
+        config_constants::min_utilization_max_multiplier!(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_utilization_threshold_during_valuation_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.begin_valuation();
+    config.set_utilization_threshold(&admin_cap, config_constants::min_utilization_threshold!());
+    abort 999
+}
+
+#[test]
+fun utilization_knobs_ship_disabled_and_accept_boundaries() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    assert_eq!(config.utilization_max_multiplier(), math::float_scaling!());
+    assert_eq!(config.utilization_threshold(), 800_000_000);
+    assert_eq!(config.cached_pool_utilization(), 0);
+    assert_eq!(config.cached_pool_utilization_ms(), 0);
+
+    config.set_utilization_max_multiplier(
+        &admin_cap,
+        config_constants::max_utilization_max_multiplier!(),
+    );
+    assert_eq!(config.utilization_max_multiplier(), 3 * math::float_scaling!());
+
+    config.set_utilization_threshold(&admin_cap, config_constants::max_utilization_threshold!());
+    assert_eq!(config.utilization_threshold(), math::float_scaling!() - 1);
+
+    config.set_utilization_threshold(&admin_cap, config_constants::min_utilization_threshold!());
+    assert_eq!(config.utilization_threshold(), 0);
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+/// Hand-checked ramp points. Threshold 0.8, max multiplier 2.0:
+///   u <= 0.8 → 1.0
+///   u = 0.9  → 1.0 + (2−1)·(0.9−0.8)/(1−0.8) = 1.5
+///   u = 1.0  → 2.0
+/// At the shipped max_multiplier of 1.0 the ramp term is arithmetically zero.
+#[test]
+fun utilization_multiplier_ramp_and_default_noop() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Default max_multiplier = 1.0: exact no-op at every utilization.
+    assert_eq!(config.utilization_multiplier(0), math::float_scaling!());
+    assert_eq!(config.utilization_multiplier(800_000_000), math::float_scaling!());
+    assert_eq!(config.utilization_multiplier(math::float_scaling!()), math::float_scaling!());
+
+    config.set_utilization_max_multiplier(&admin_cap, 2 * math::float_scaling!());
+    assert_eq!(config.utilization_multiplier(800_000_000), math::float_scaling!()); // at threshold
+    assert_eq!(config.utilization_multiplier(799_999_999), math::float_scaling!()); // below
+    // mid-ramp: 1.5×
+    assert_eq!(config.utilization_multiplier(900_000_000), 1_500_000_000);
+    // full utilization: max
+    assert_eq!(config.utilization_multiplier(math::float_scaling!()), 2 * math::float_scaling!());
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+/// Product rounds up and clamps to `max_plp_fee_rate`. 2% × 3.0 = 6% → 5%.
+#[test]
+fun scaled_plp_fee_rate_rounds_up_and_clamps_to_max() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    config.set_utilization_max_multiplier(
+        &admin_cap,
+        config_constants::max_utilization_max_multiplier!(),
+    );
+    // 2% base; at u = 1.0 the multiplier is 3× → raw product 60_000_000 → clamp 50_000_000.
+    assert_eq!(
+        config.scaled_plp_fee_rate(20_000_000, math::float_scaling!()),
+        config_constants::max_plp_fee_rate!(),
+    );
+    // Below threshold the multiplier is 1.0, so the base passes through.
+    assert_eq!(config.scaled_plp_fee_rate(20_000_000, 800_000_000), 20_000_000);
+    // Zero base stays zero at any multiplier.
+    assert_eq!(config.scaled_plp_fee_rate(0, math::float_scaling!()), 0);
+
+    // Dust: 1 × 1.5 rounds up to 2 (mul_div_up), proving the LP-side product
+    // rounds to the pool rather than truncating.
+    config.set_utilization_max_multiplier(&admin_cap, 2 * math::float_scaling!());
+    assert_eq!(config.scaled_plp_fee_rate(1, 900_000_000), 2);
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}

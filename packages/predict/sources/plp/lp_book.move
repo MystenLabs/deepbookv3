@@ -80,10 +80,16 @@ public struct FlushMark has drop {
     total_supply: u64,
     executable: bool,
     /// Supply-leg fee in FLOAT_SCALING, frozen with the mark so every request
-    /// drained in this flush is charged the same rate. Ships at zero.
+    /// drained in this flush is charged the same rate. Already scaled by the
+    /// utilization multiplier and clamped to `max_plp_fee_rate`.
     supply_fee_rate: u64,
     /// Withdraw-leg fee in FLOAT_SCALING, frozen with the mark alongside it.
+    /// Already utilization-scaled and clamped, same as the supply leg.
     withdraw_fee_rate: u64,
+    /// Utilization fee multiplier this flush froze, in FLOAT_SCALING. Carried so
+    /// the flush event can report the multiplier the drain was handed, not a
+    /// recomputed one.
+    utilization_multiplier: u64,
 }
 
 /// Executable fill amounts for one queued request (or one partial slice of it) at
@@ -173,16 +179,18 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
-/// Freeze one flush's pricing inputs: the `pool_value / total_supply` mark plus the
-/// per-leg fee rates, in that order — supply before withdraw, matching every other
-/// signature in this flow. Four same-typed arguments, so the order is stated here
-/// rather than left to the call site; a transposition of the two rates is caught by
+/// Freeze one flush's pricing inputs: the `pool_value / total_supply` mark, the
+/// per-leg (already utilization-scaled) fee rates, and the utilization multiplier,
+/// in that order — supply before withdraw, matching every other signature in this
+/// flow. Five same-typed arguments, so the order is stated here rather than left
+/// to the call site; a transposition of the two rates is caught by
 /// `flush_freezes_both_configured_fee_rates`.
 public(package) fun new_flush_mark(
     pool_value: u64,
     total_supply: u64,
     supply_fee_rate: u64,
     withdraw_fee_rate: u64,
+    utilization_multiplier: u64,
 ): FlushMark {
     FlushMark {
         pool_value,
@@ -190,6 +198,7 @@ public(package) fun new_flush_mark(
         executable: is_executable_mark(pool_value, total_supply),
         supply_fee_rate,
         withdraw_fee_rate,
+        utilization_multiplier,
     }
 }
 
@@ -204,6 +213,12 @@ public(package) fun supply_fee_rate(mark: &FlushMark): u64 {
 /// The withdraw-leg rate this mark froze; same reasoning as `supply_fee_rate`.
 public(package) fun withdraw_fee_rate(mark: &FlushMark): u64 {
     mark.withdraw_fee_rate
+}
+
+/// The utilization multiplier this mark froze; same reasoning as the fee-rate
+/// accessors — the event reports what the drain was handed.
+public(package) fun utilization_multiplier(mark: &FlushMark): u64 {
+    mark.utilization_multiplier
 }
 
 public(package) fun supplies_filled(summary: &DrainSummary): u64 {
