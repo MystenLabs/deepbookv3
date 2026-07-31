@@ -25,10 +25,11 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 
 ### Path-Scoped Rules — read before editing files under the glob
 
-- `.claude/rules/move.md` for `packages/**/*.move`
+- `.claude/rules/move.md` for `packages/**/*.move`, `packages/**/Move.toml`, and `packages/**/Published.toml`
 - `.claude/rules/predict-contracts.md` for the Predict-cluster packages `packages/{predict,propbook,block_scholes_oracle,account}/**/*.move` (also read `move.md`)
 - `.claude/rules/unit-tests.md` for `packages/**/tests/**`
 - `.claude/rules/predict-harness.md` for `packages/predict/harness/**`
+- `.claude/rules/predict-deployment.md` for `packages/predict/deployment/**`
 - `.claude/rules/indexer.md` for the CORE crates `crates/{server,indexer,schema}/**` (thin stub)
 - `.claude/rules/scripts.md` for `scripts/**`
 
@@ -37,6 +38,7 @@ This file is the repo-level entry point for coding agents working in `deepbookv3
 - `.claude/rules/code-review.md` when the user asks for a code review or review of uncommitted changes (for a deep Predict smart-contract audit, invoke the `predict-audit` skill at `.claude/skills/predict-audit/` — `rule-sweep.workflow.js` is the per-rule mechanical sweep, `ownership-walk.workflow.js` the per-module ownership conformance).
 - Before proposing/changing any **Predict economics** (NAV/backing, rounding, oracle trust, liquidation, tick/order-id encoding, floor/leverage, supply/withdraw): read `packages/predict/predeploy/README.md` (the system map + authority order), then `open-items.md`, `response-policies.md` (incl. its Rounding policy R1–R3 section), and the settled + rejected lists below. `.claude/predict-design/` and `.redesign/` are personal scratch only — nothing load-bearing lives there; verify any old claim against current HEAD before relying on it.
 - `.claude/rules/harness-strategy.md` when the user wants to add or build a Predict harness trading strategy or test a scenario in the harness (also read `.claude/rules/predict-harness.md`).
+- `.claude/rules/predict-deployment.md` when the user asks to create, change, run, publish, deploy, migrate, resume, audit, or verify a Predict deployment or publication script (also read `.claude/rules/move.md` for package manifests).
 - `.claude/rules/wrap-up.md` when the user says "wrap up".
 
 ## Common Commands

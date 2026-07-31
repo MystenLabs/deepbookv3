@@ -102,6 +102,11 @@ Read this before editing anything under `packages/predict/harness/**`. The harne
 ## Don't
 - Don't modify the Predict Move contracts or `dusdc.move` (deployed to testnet) to suit the
   harness — the harness re-signs oracle updates with a local trusted signer instead.
+- Treat production Move source, `Move.toml`, `Published.toml`, and tracked deployment manifests
+  as read-only inputs. If localnet needs different publication identity, dependency mapping, or
+  configuration, materialize those changes only in the disposable staged harness environment.
+- Build staged packages from the selected Git commit, not another worktree or a mutable cache
+  working tree. A cache may store derived artifacts, but it is never source authority.
 
 ## Bug oracle caveat
 - `analyze.py`'s bug oracle is **abort-only**: it flags transaction aborts, NOT a wrong-but-

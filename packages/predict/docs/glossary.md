@@ -206,8 +206,9 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   `finish_flush` computes `pool_nav`, then `lp_book::drain` mints/burns PLP
   and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
   up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`;
-  non-executable queue heads are protocol-cancelled and refunded; live
-  request-limit misses carry until the third miss expires and refunds them).
+  non-executable queue heads are protocol-cancelled and refunded, as are live
+  request-limit misses at the shipped attempt count of one — above one they carry
+  until their attempts are exhausted).
   Fills are delivered to each account through the balance accumulator
   (`send_funds`); the account absorbs them lazily on its next capital op. The flush is
   **privileged** — started only by a market deployer's `MarketLifecycleCap`

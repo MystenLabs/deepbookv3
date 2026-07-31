@@ -63,7 +63,7 @@ fun empty_live_market_values_at_free_cash() {
     // No orders: NAV is exactly the seeded free cash (no fees yet -> rebate 0).
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, test_constants::default_seeded_expiry_cash());
-    check_nav(&fx, &market, vector[], float!());
+    check_nav(&mut fx, &market, vector[], float!());
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -85,7 +85,7 @@ fun single_one_x_up_order() {
         test_constants::leverage_one_x(),
     );
 
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&mut fx, &market, vector[id], float!());
 
     helpers::return_account_bundle(account);
 
@@ -110,7 +110,7 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
     );
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&mut fx, &market, vector[id], float!());
 
     helpers::return_account_bundle(account);
 
@@ -144,7 +144,7 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
 
     // Both up orders share the strike start boundary -> one tree node priced
     // once at P(strike); the aggregate quantity equals the per-order sum.
-    check_nav(&fx, &market, vector[id1, id2], float!());
+    check_nav(&mut fx, &market, vector[id1, id2], float!());
 
     helpers::return_account_bundle(account);
 
@@ -170,7 +170,7 @@ fun single_leveraged_order_above_floor() {
 
     // value = mul(0.5, 2e9) = 1e9 > floor = mul(floor_shares 5e8, 1.0) = 5e8, so the
     // correction min() picks the floor and the order's net liability is 5e8.
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&mut fx, &market, vector[id], float!());
 
     helpers::return_account_bundle(account);
 
@@ -202,7 +202,7 @@ fun single_leveraged_order_underwater_nets_to_zero() {
     let expiry_market = helpers::market(&market);
     let nav = fx.current_nav_bundle(&market);
     assert_eq!(nav, expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve()));
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&mut fx, &market, vector[id], float!());
 
     helpers::return_account_bundle(account);
 
@@ -264,7 +264,7 @@ fun knocked_out_leveraged_order_marks_at_liquidated_value() {
     // The knocked-out order is credited its full range value (zero live liability),
     // so NAV rises to the knock-out-aware reference — above the old floor-capped
     // mark. `check_nav` asserts `current_nav` equals that independent reference.
-    check_nav(&fx, &market, vector[id], float!());
+    check_nav(&mut fx, &market, vector[id], float!());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -306,7 +306,7 @@ fun mixed_one_x_and_leveraged_book() {
     // strike now carries start quantity (1x up + leveraged up) and end quantity
     // (1x down); only the leveraged order is in the correction book.
     check_nav(
-        &fx,
+        &mut fx,
         &market,
         vector[up, down, leveraged],
         float!(),
@@ -370,7 +370,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
 /// stays solvent (S1 backing). The contract builds its own pricer internally; we
 /// build an identical one (the oracle is frozen within the tx) for the reference.
 fun check_nav(
-    fx: &helpers::Fixture,
+    fx: &mut helpers::Fixture,
     market: &helpers::MarketBundle,
     order_ids: vector<u256>,
     index_now: u64,

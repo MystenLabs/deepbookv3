@@ -32,6 +32,8 @@ public struct BsRead<Value: copy + drop + store> has copy, drop, store {
     published_at_ms: u64,
     /// Sui clock time when the accepting transaction executed.
     recorded_at_ms: u64,
+    /// Digest of the transaction that accepted this observation.
+    writer_digest: vector<u8>,
     value: Value,
 }
 
@@ -143,6 +145,10 @@ public fun read_recorded_at_ms<Value: copy + drop + store>(read: &BsRead<Value>)
     read.recorded_at_ms
 }
 
+public fun read_writer_digest<Value: copy + drop + store>(read: &BsRead<Value>): vector<u8> {
+    read.writer_digest
+}
+
 public fun read_value<Value: copy + drop + store>(read: &BsRead<Value>): Value {
     read.value
 }
@@ -187,10 +193,16 @@ public fun svi_m_is_negative(params: &SVIParams): bool {
 /// the batch events, so a caller must not be able to fabricate it. Holding a `ValueBatch` at all is
 /// proof of a valid Block Scholes signature, so this never sees keys, bytes, or the signer
 /// registry.
-public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBatch, clock: &Clock) {
+public fun apply_value_batch(
+    store: &mut BlockScholesValueStore,
+    batch: ValueBatch,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
     let published_at_ms = batch.value_batch_timestamp();
     let recorded_at_ms = clock.timestamp_ms();
+    let writer_digest = *ctx.digest();
     let updates = batch.into_value_updates();
 
     let update_count = updates.length();
@@ -207,6 +219,7 @@ public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBat
                 update.value_timestamp(),
                 published_at_ms,
                 recorded_at_ms,
+                copy writer_digest,
                 update.value_v(),
             );
             if (stored) applied = applied + 1;
@@ -225,10 +238,16 @@ public fun apply_value_batch(store: &mut BlockScholesValueStore, batch: ValueBat
 
 /// Ingest a verified batch of SVI observations. Same batch-by-value reasoning as
 /// `apply_value_batch`.
-public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, clock: &Clock) {
+public fun apply_svi_batch(
+    store: &mut BlockScholesSVIStore,
+    batch: SviBatch,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
     let published_at_ms = batch.svi_batch_timestamp();
     let recorded_at_ms = clock.timestamp_ms();
+    let writer_digest = *ctx.digest();
     let updates = batch.into_svi_updates();
 
     let update_count = updates.length();
@@ -255,6 +274,7 @@ public fun apply_svi_batch(store: &mut BlockScholesSVIStore, batch: SviBatch, cl
                 update.svi_timestamp(),
                 published_at_ms,
                 recorded_at_ms,
+                copy writer_digest,
                 SVIParams {
                     a_magnitude,
                     a_is_negative,
@@ -349,6 +369,7 @@ fun apply_value(
     model_timestamp_ms: u64,
     published_at_ms: u64,
     recorded_at_ms: u64,
+    writer_digest: vector<u8>,
     value: u128,
 ): bool {
     assert!(store.version == constants::current_version!(), EWrongVersion);
@@ -358,7 +379,7 @@ fun apply_value(
         id,
         store.propbook_underlying_id,
         sid,
-        BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, value },
+        BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, writer_digest, value },
     )
 }
 
@@ -370,6 +391,7 @@ fun apply_svi(
     model_timestamp_ms: u64,
     published_at_ms: u64,
     recorded_at_ms: u64,
+    writer_digest: vector<u8>,
     value: SVIParams,
 ): bool {
     assert!(store.version == constants::current_version!(), EWrongVersion);
@@ -379,7 +401,7 @@ fun apply_svi(
         id,
         store.propbook_underlying_id,
         sid,
-        BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, value },
+        BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, writer_digest, value },
     )
 }
 

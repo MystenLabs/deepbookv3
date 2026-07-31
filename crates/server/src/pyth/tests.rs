@@ -507,16 +507,34 @@ fn chart_history_canonicalizes_tradingview_resolution_aliases() {
 
 #[test]
 fn chart_history_requires_pyth_parameters_and_enforces_range() {
-    let max_range = Duration::from_secs(86_400);
+    let max_range = Duration::from_secs(90 * 86_400);
 
-    // The configured boundary is inclusive.
+    // Intraday queries are bounded to 2161 inclusive candles. Coarser
+    // resolutions therefore receive progressively larger windows.
+    for (resolution, max_span) in [
+        ("1", 129_600),
+        ("2", 259_200),
+        ("5", 648_000),
+        ("15", 1_944_000),
+        ("30", 3_888_000),
+    ] {
+        let boundary =
+            format!("symbol=Crypto.BTC%2FUSD&resolution={resolution}&from=0&to={max_span}");
+        assert!(ChartHistoryQuery::parse(Some(&boundary), max_range).is_ok());
+
+        let one_more_bar = max_span + resolution.parse::<u64>().unwrap() * 60;
+        let oversized =
+            format!("symbol=Crypto.BTC%2FUSD&resolution={resolution}&from=0&to={one_more_bar}");
+        assert!(ChartHistoryQuery::parse(Some(&oversized), max_range).is_err());
+    }
+
+    // Hourly and coarser queries can use the full configured 90-day range.
+    for resolution in ["60", "D", "W", "M"] {
+        let query = format!("symbol=Crypto.BTC%2FUSD&resolution={resolution}&from=0&to=7776000");
+        assert!(ChartHistoryQuery::parse(Some(&query), max_range).is_ok());
+    }
     assert!(ChartHistoryQuery::parse(
-        Some("symbol=Crypto.BTC%2FUSD&resolution=1&from=0&to=86400"),
-        max_range
-    )
-    .is_ok());
-    assert!(ChartHistoryQuery::parse(
-        Some("symbol=Crypto.BTC%2FUSD&resolution=1&from=0&to=86401"),
+        Some("symbol=Crypto.BTC%2FUSD&resolution=60&from=0&to=7776001"),
         max_range,
     )
     .is_err());
@@ -572,7 +590,7 @@ async fn chart_history_rejects_unsupported_queries_without_loading() {
         "symbol=Crypto.ETH%2FUSD&resolution=1&from=1700000000&to=1700003600",
         "symbol=Crypto.BTC%2FUSD&resolution=3&from=1700000000&to=1700003600",
         "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700003600&to=1700000000",
-        "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700100000",
+        "symbol=Crypto.BTC%2FUSD&resolution=1&from=1700000000&to=1700200000",
     ] {
         let response = reqwest::get(
             server_url

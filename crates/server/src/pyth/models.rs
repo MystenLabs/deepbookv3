@@ -6,6 +6,8 @@ use std::{collections::HashSet, time::Duration};
 
 pub(super) const MICROS_PER_SECOND: u64 = 1_000_000;
 const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_DAY: u64 = 86_400;
+const MAX_CHART_HISTORY_BARS: u64 = 2_161;
 
 #[derive(Clone, Debug)]
 pub(super) struct PriceQuery {
@@ -132,6 +134,13 @@ impl ChartHistoryQuery {
         } else {
             (from, to)
         };
+        let resolution_secs = history_resolution_secs(&resolution);
+        let requested_bars = (to - from) / resolution_secs + 1;
+        if requested_bars > MAX_CHART_HISTORY_BARS {
+            return Err(format!(
+                "requested chart history exceeds the maximum of {MAX_CHART_HISTORY_BARS} bars for resolution `{resolution}`"
+            ));
+        }
 
         Ok(Self {
             symbol,
@@ -162,6 +171,22 @@ pub(super) fn normalize_history_resolution(resolution: &str) -> Result<String, S
         }
     };
     Ok(canonical)
+}
+
+fn history_resolution_secs(resolution: &str) -> u64 {
+    match resolution {
+        "D" => SECONDS_PER_DAY,
+        "W" => 7 * SECONDS_PER_DAY,
+        // Calendar months vary in length. Using the shortest possible month
+        // conservatively estimates the most bars Pyth could return.
+        "M" => 28 * SECONDS_PER_DAY,
+        minutes => {
+            minutes
+                .parse::<u64>()
+                .expect("normalized intraday resolution must be numeric")
+                * SECONDS_PER_MINUTE
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

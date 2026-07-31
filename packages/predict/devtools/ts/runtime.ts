@@ -516,6 +516,29 @@ function gasSummaryFromEffects(effects: any): GasUsage {
     };
 }
 
+// A refresh and the priced operation are separate receipts under the same-transaction
+// oracle guard. Keep reporting their combined gas as one logical operation while the
+// priced operation remains the authority for the returned digest, events, and effects.
+function aggregateGas(usages: GasUsage[]): GasUsage {
+    return usages.reduce(
+        (acc, gas) => ({
+            computationCost: acc.computationCost + gas.computationCost,
+            storageCost: acc.storageCost + gas.storageCost,
+            storageRebate: acc.storageRebate + gas.storageRebate,
+            nonRefundableStorageFee:
+                acc.nonRefundableStorageFee + gas.nonRefundableStorageFee,
+            gasTotal: acc.gasTotal + gas.gasTotal,
+        }),
+        {
+            computationCost: 0,
+            storageCost: 0,
+            storageRebate: 0,
+            nonRefundableStorageFee: 0,
+            gasTotal: 0,
+        },
+    );
+}
+
 async function getTransactionWithRetry(digest: string): Promise<any> {
     let lastError: unknown;
 
@@ -828,6 +851,21 @@ async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): P
     addBlockScholesUpdates(tx, params, sourceTimestampMs);
 }
 
+// A refresh and the priced operation it feeds are always separate transactions.
+// `pricing::resolve_live_pricer` aborts `EOracleWrittenInThisTransaction` when an
+// observation carries the current transaction's digest. Return the refresh first so
+// callers can execute both legs in order without weakening snapshot determinism.
+async function refreshThen(
+    params: OracleRefreshParams,
+    addPricedOperation: (tx: Transaction) => void,
+): Promise<Transaction[]> {
+    const refreshTx = new Transaction();
+    await addOracleRefresh(refreshTx, params);
+    const pricedOperationTx = new Transaction();
+    addPricedOperation(pricedOperationTx);
+    return [refreshTx, pricedOperationTx];
+}
+
 // Live-data updater: clamp a provider's real publish timestamp to a valid on-chain
 // source timestamp — `<= Clock - 1` and strictly monotonic — so the oracle history
 // mirrors real wall-clock without ever tripping the freshness gate. Returns null
@@ -893,9 +931,9 @@ export function buildOracleRefreshGridTx(
     return tx;
 }
 
-// Add a grid refresh (one value batch + one SVI batch) to an existing PTB, so a
-// priced op (flush valuation, liquidation) reads fresh inputs within the same
-// atomic transaction rather than depending on a separate earlier refresh. Each
+// Add a grid refresh (one value batch + one SVI batch) to an existing PTB. This
+// must remain a refresh-only PTB: a priced operation appended after it would abort
+// `EOracleWrittenInThisTransaction`. Each
 // series carries its own provider model time; a series whose model time is
 // unknown gets the envelope, and one that momentarily postdates the envelope
 // (cross-stream clock skew) is skipped this push rather than clamped — the store
@@ -1688,13 +1726,10 @@ export function requestWithdrawTx(params: {
 // Refresh the oracle, then run one privileged full-pool flush that drains both LP
 // request queues at the frozen mark. The drain happens inside `finish_flush`; no
 // per-LP coin is returned (fills land on the manager via the accumulator).
-export async function refreshOracleAndFlushTx(
+export async function refreshOracleAndFlushTxs(
     params: OracleRefreshParams & FlushParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addFlush(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addFlush(tx, params));
 }
 
 // Genesis flush with NO active markets: proof -> start (snapshots an empty expected
@@ -1921,37 +1956,30 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     return tx;
 }
 
-export async function refreshOracleAndMintTx(
+export async function refreshOracleAndMintTxs(
     params: OracleRefreshParams & MintParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addMint(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addMint(tx, params));
 }
 
-export async function refreshOracleAndMintBatchTx(
+export async function refreshOracleAndMintBatchTxs(
     params: OracleRefreshParams & { mints: MintParams[] },
-): Promise<Transaction> {
+): Promise<Transaction[]> {
     if (params.mints.length === 0) {
-        throw new Error("refreshOracleAndMintBatchTx requires at least one mint");
+        throw new Error("refreshOracleAndMintBatchTxs requires at least one mint");
     }
 
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    for (const mint of params.mints) {
-        addMint(tx, mint);
-    }
-    return tx;
+    return refreshThen(params, (tx) => {
+        for (const mint of params.mints) {
+            addMint(tx, mint);
+        }
+    });
 }
 
-export async function refreshOracleAndRedeemTx(
+export async function refreshOracleAndRedeemTxs(
     params: OracleRefreshParams & RedeemParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addRedeem(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addRedeem(tx, params));
 }
 
 // Mint test DUSDC and transfer it to `toAddress`. The TreasuryCap is owned by the
@@ -2144,11 +2172,43 @@ export async function executeAndWait(
     return executeWithSignerAndWait(tx, signer, label, gasBudget);
 }
 
+// Execute every PTB in order and return the priced operation's receipt with gas
+// aggregated across all legs.
+export async function executeAllAndWait(
+    txs: Transaction[],
+    label = "transaction",
+    gasBudget: number | bigint = DEFAULT_GAS_BUDGET,
+): Promise<ExecutionReceipt> {
+    if (txs.length === 0) {
+        throw new Error(`${label}: executeAllAndWait requires at least one transaction`);
+    }
+    const receipts: ExecutionReceipt[] = [];
+    for (const [index, tx] of txs.entries()) {
+        const legLabel = txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
+        const settled = await executeAndWait(tx, legLabel, gasBudget);
+        receipts.push({
+            digest: settled.digest,
+            gas: gasSummaryFromEffects(settled.effects),
+            events: settled.events ?? [],
+            objectChanges: settled.objectChanges ?? [],
+            effects: settled.effects,
+        });
+    }
+    const last = receipts[receipts.length - 1]!;
+    return {
+        ...last,
+        gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
+    };
+}
+
 const EXECUTE_MAX_ATTEMPTS = 5;
 const EXECUTE_RETRY_DELAY_MS = 1000;
 
+type BuiltTx = Transaction | Transaction[];
+type BuildTx = BuiltTx | (() => BuiltTx | Promise<BuiltTx>);
+
 export async function execute(
-    buildTx: Transaction | (() => Transaction | Promise<Transaction>),
+    buildTx: BuildTx,
     label = "transaction",
     gasBudget = DEFAULT_GAS_BUDGET,
 ): Promise<ExecutionReceipt> {
@@ -2158,56 +2218,73 @@ export async function execute(
         let raw: any = null;
         try {
             // Build a fresh transaction on each attempt so object versions are re-resolved.
-            tx = typeof buildTx === "function" ? await buildTx() : buildTx;
-            tx.setSender(address);
-            tx.setGasBudget(gasBudget);
-
-            raw = await signAndExecuteGrpc(tx, signer, EXECUTION_TRANSACTION_INCLUDE);
-
-            const status = raw.effects?.status;
-            if (!isSuccessStatus(status)) {
-                const artifactPath = await tryCollectTransactionDebug({
-                    tx,
-                    transactionBytes: submittedTransactionBytes.get(tx) ?? null,
-                    label,
-                    attempt,
-                    gasBudget,
-                    phase: "execution_failure",
-                    raw,
-                });
-                throw markFailedTransactionLogged(
-                    new Error(
-                        `${label} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}${failedTransactionSuffix(artifactPath)}`,
-                    ),
-                );
+            const built = typeof buildTx === "function" ? await buildTx() : buildTx;
+            const txs = Array.isArray(built) ? built : [built];
+            if (txs.length === 0) {
+                throw new Error(`${label}: execute requires at least one transaction`);
             }
 
-            let settled: any;
-            try {
-                settled = await getTransactionWithRetry(raw.digest);
-            } catch (error) {
-                const artifactPath = await tryCollectTransactionDebug({
-                    tx,
-                    transactionBytes: submittedTransactionBytes.get(tx) ?? null,
-                    label,
-                    attempt,
-                    gasBudget,
-                    phase: "post_submit_fetch_error",
-                    raw,
-                    error,
+            const receipts: ExecutionReceipt[] = [];
+            for (const [index, builtTx] of txs.entries()) {
+                tx = builtTx;
+                const legLabel =
+                    txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
+                tx.setSender(address);
+                tx.setGasBudget(gasBudget);
+
+                raw = await signAndExecuteGrpc(tx, signer, EXECUTION_TRANSACTION_INCLUDE);
+
+                const status = raw.effects?.status;
+                if (!isSuccessStatus(status)) {
+                    const artifactPath = await tryCollectTransactionDebug({
+                        tx,
+                        transactionBytes: submittedTransactionBytes.get(tx) ?? null,
+                        label: legLabel,
+                        attempt,
+                        gasBudget,
+                        phase: "execution_failure",
+                        raw,
+                    });
+                    throw markFailedTransactionLogged(
+                        new Error(
+                            `${legLabel} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}${failedTransactionSuffix(artifactPath)}`,
+                        ),
+                    );
+                }
+
+                let settled: any;
+                try {
+                    settled = await getTransactionWithRetry(raw.digest);
+                } catch (error) {
+                    const artifactPath = await tryCollectTransactionDebug({
+                        tx,
+                        transactionBytes: submittedTransactionBytes.get(tx) ?? null,
+                        label: legLabel,
+                        attempt,
+                        gasBudget,
+                        phase: "post_submit_fetch_error",
+                        raw,
+                        error,
+                    });
+                    throw markFailedTransactionLogged(
+                        new Error(
+                            `${legLabel} post-submit fetch failure digest=${raw.digest}: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
+                        ),
+                    );
+                }
+                receipts.push({
+                    digest: raw.digest,
+                    gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
+                    events: settled.events ?? raw.events ?? [],
+                    objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
+                    effects: settled.effects ?? raw.effects,
                 });
-                throw markFailedTransactionLogged(
-                    new Error(
-                        `${label} post-submit fetch failure digest=${raw.digest}: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
-                    ),
-                );
             }
+
+            const last = receipts[receipts.length - 1]!;
             return {
-                digest: raw.digest,
-                gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
-                events: settled.events ?? raw.events ?? [],
-                objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
-                effects: settled.effects ?? raw.effects,
+                ...last,
+                gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
             };
         } catch (error) {
             lastError = error;
