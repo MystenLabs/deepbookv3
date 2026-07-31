@@ -258,6 +258,11 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
 // Apply every due rung of the trade-liquidation-budget ladder. Isolated like the other lanes:
 // a failed set defers to the next tick rather than killing the run, and the stage is only
 // consumed on success so the sweep cannot silently skip a rung it never actually applied.
+//
+// The ladder is in-memory, so a keeper restart replays it from the first rung and walks the budget
+// back DOWN before climbing again. That costs run time, not correctness: every rung is traced, and
+// the analysis joins each probe to the rung in force at its own timestamp, so a replayed sweep
+// reads correctly. Persisting the cursor would buy only the wasted minutes.
 async function applyBudgetStages(startedAt: number) {
   const elapsed = Date.now() - startedAt;
   while (nextBudgetStage < TRADE_LIQ_BUDGET_STAGES.length && TRADE_LIQ_BUDGET_STAGES[nextBudgetStage].atMs <= elapsed) {

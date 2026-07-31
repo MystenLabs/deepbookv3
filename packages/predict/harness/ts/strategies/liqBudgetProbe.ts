@@ -66,8 +66,14 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
     if (lockedId) {
       const m = ctx.markets().find((mk) => mk.id === lockedId);
       if (m) return m;
-      lockedId = null; // locked market settled (shouldn't happen for a >2h market) — re-lock
+      // Locked market settled (shouldn't happen for a >2h market) — re-lock onto a fresh one and
+      // reset EVERY piece of book-derived state with it. Carrying `batch`/`wallHits` across the
+      // re-lock would strand the strategy: a run that reached the wall on the old book holds at
+      // batch==1 with wallHits past its limit, so it would never mint into the new empty book.
+      lockedId = null;
       minted = 0;
+      batch = START_BATCH;
+      wallHits = 0;
     }
     const live = ctx.markets();
     if (!live.length) return null;
