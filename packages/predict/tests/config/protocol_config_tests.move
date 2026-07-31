@@ -43,6 +43,64 @@ fun set_ewma_params_and_enabled_update_config() {
     scenario.end();
 }
 
+/// A freshly created config ships fill-or-kill. Asserted against the stored state the
+/// flush actually reads, not against the default macro, so a constructor that stopped
+/// seeding this field would be caught here.
+#[test]
+fun new_config_ships_with_no_retry() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    assert_eq!(config.lp_request_limit_flush_attempts(), 1);
+
+    // And the admin path moves it, so the getter is not reading a frozen constant.
+    config.set_lp_request_limit_flush_attempts(&admin_cap, 3);
+    assert_eq!(config.lp_request_limit_flush_attempts(), 3);
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_lp_request_limit_flush_attempts_during_valuation_aborts() {
+    // `finish_flush` reads the attempt count mid-PTB and hands it to both queue drains;
+    // moving it under a valuation in flight would change the drain policy between the
+    // mark being frozen and the queues being drained against it.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.begin_valuation();
+    config.set_lp_request_limit_flush_attempts(
+        &admin_cap,
+        config_constants::max_lp_request_limit_flush_attempts!(),
+    );
+    abort 999
+}
+
+/// A fresh config admits any pool size, so merging the cap changes no behaviour until
+/// an operator sets a figure. Asserted against the stored state the flush reads.
+#[test]
+fun new_config_ships_uncapped() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    assert_eq!(config.max_lp_pool_value(), config_constants::max_max_lp_pool_value!());
+
+    config.set_max_lp_pool_value(&admin_cap, 5_000_000_000_000);
+    assert_eq!(config.max_lp_pool_value(), 5_000_000_000_000);
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_max_lp_pool_value_during_valuation_aborts() {
+    // The flush reads the cap mid-PTB and applies it to the supply pass; moving it
+    // under a valuation in flight would change capacity after the mark was frozen.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.begin_valuation();
+    config.set_max_lp_pool_value(&admin_cap, config_constants::min_max_lp_pool_value!());
+    abort 999
+}
+
 #[test]
 fun expiry_market_mint_pause_defaults_false_and_toggles() {
     let mut fx = helpers::setup_market_default();

@@ -209,7 +209,7 @@ public fun required_cash(market: &ExpiryMarket): u64 {
 /// mint, redeem, liquidation, and NAV functions in the same transaction.
 ///
 /// Aborts `pricing::EOracleWrittenInThisTransaction` when any observation that
-/// feeds the returned forward or SVI was written in this transaction (RP-23).
+/// feeds the returned forward or SVI was written in this transaction (RP-24).
 /// Independently submitted refresh-then-trade PTBs are unaffected: the guard
 /// compares observation `writer_digest` to `tx_context::digest()`, not sender
 /// identity, and does not prohibit reads of older observations.

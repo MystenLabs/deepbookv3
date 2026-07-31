@@ -6,7 +6,7 @@
 /// (mint → update → mint), Variant C (update → redeem seasoned position), the
 /// no-false-positive multi-leg path, isolated forward / SVI / fresh-Pyth writes,
 /// the Pyth provenance-only exemptions, and the accepted residual — the guard is
-/// a build-time check, so it refuses write→price but not price→write (RP-23).
+/// a build-time check, so it refuses write→price but not price→write (RP-24).
 #[test_only]
 module deepbook_predict::oracle_same_tx_guard_tests;
 
@@ -404,7 +404,7 @@ fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
 /// trader fills at the stale mark and pushes the correction in one atomic
 /// transaction; only the closing leg must cross a transaction boundary, and since
 /// that leg is a mint of the complement rather than a redeem, no minimum-holding
-/// guard applies to it either. RP-23 accepts this residual — this test pins that
+/// guard applies to it either. RP-24 accepts this residual — this test pins that
 /// it is what ships, so closing the ordering turns the assertion red instead of
 /// changing behavior silently.
 #[test]
