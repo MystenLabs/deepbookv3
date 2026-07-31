@@ -349,6 +349,30 @@ public fun set_plp_withdraw_fee_rate(self: &Fixture, config: &mut ProtocolConfig
     config.set_plp_withdraw_fee_rate(&self.admin_cap, rate);
 }
 
+/// Set the peak utilization fee multiplier through the real admin path.
+public fun set_utilization_max_multiplier(self: &Fixture, config: &mut ProtocolConfig, value: u64) {
+    config.set_utilization_max_multiplier(&self.admin_cap, value);
+}
+
+/// Set the utilization threshold through the real admin path.
+public fun set_utilization_threshold(self: &Fixture, config: &mut ProtocolConfig, value: u64) {
+    config.set_utilization_threshold(&self.admin_cap, value);
+}
+
+/// Set the peak utilization fee multiplier through a market bundle's config.
+public fun set_utilization_max_multiplier_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    value: u64,
+) {
+    self.set_utilization_max_multiplier(&mut market.config, value);
+}
+
+/// Set the utilization threshold through a market bundle's config.
+public fun set_utilization_threshold_bundle(self: &Fixture, market: &mut MarketBundle, value: u64) {
+    self.set_utilization_threshold(&mut market.config, value);
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(

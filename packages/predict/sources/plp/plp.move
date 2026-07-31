@@ -77,10 +77,11 @@ public struct PoolVault has key {
 /// Transaction-local full-pool NAV valuation hot potato.
 ///
 /// `start_pool_valuation` snapshots the active expiry set; each `value_expiry`
-/// runs the per-market cash flush then folds that market's NAV into `total_nav`
-/// exactly once (a swept settled market contributes 0); `finish_flush` proves every
-/// snapshotted market was valued, returns the LP-attributable pool NAV, and drains
-/// the LP queues against it. Has no abilities, so it must be consumed by the finisher.
+/// runs the per-market cash flush then folds that market's NAV and payout
+/// liability into the running totals exactly once (a swept settled market
+/// contributes 0 to both); `finish_flush` proves every snapshotted market was
+/// valued, returns the LP-attributable pool NAV, and drains the LP queues against
+/// it. Has no abilities, so it must be consumed by the finisher.
 public struct PoolValuation {
     pool_vault_id: ID,
     /// Active expiry markets snapshotted at start; every one must be valued.
@@ -89,6 +90,10 @@ public struct PoolValuation {
     valued_expiry_markets: vector<ID>,
     /// Running Σ of each valued market's NAV (settled markets contribute 0).
     total_nav: u64,
+    /// Running Σ of each valued market's `payout_liability` (settled markets
+    /// contribute 0 on the same branch as NAV — a settled market's stale
+    /// `settled_payout_liability` must not inflate utilization).
+    total_liability: u64,
 }
 
 // === Package Initializer ===
@@ -238,8 +243,11 @@ public fun value_expiry(
     let expiry_market_id = market.id();
     valuation.assert_expiry_ready_to_value(expiry_market_id);
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    let nav = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
-        0
+    // Liability must follow the identical branch as NAV: a swept/settled market
+    // still reports its `settled_payout_liability` until winners redeem, and
+    // folding that into utilization would overcharge every withdrawer in the flush.
+    let (nav, liability) = if (vault.sweep_or_rebalance_expiry(market, config, clock)) {
+        (0, 0)
     } else {
         let pricer = market.load_live_pricer(
             config,
@@ -249,10 +257,11 @@ public fun value_expiry(
             bs_svi,
             clock,
         );
-        market.current_nav(&pricer)
+        (market.current_nav(&pricer), market.payout_liability())
     };
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.total_nav = valuation.total_nav + nav;
+    valuation.total_liability = valuation.total_liability + liability;
 }
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
@@ -295,7 +304,7 @@ public fun finish_flush(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
     );
-    let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
+    let PoolValuation { total_nav, total_liability, valued_expiry_markets, .. } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
@@ -309,13 +318,18 @@ public fun finish_flush(
     // Snapshot the share price once (frozen pair), drain both queues against it, then
     // release the valuation lock at the very end. The flush IS the full-pool
     // valuation, so the single FlushExecuted event carries the priced mark and its
-    // idle + active-NAV breakdown.
+    // idle + active-NAV breakdown. Utilization `L/E` is computed here (rebalance-
+    // invariant; cash moving between idle and expiry cash changes neither term),
+    // scales both LP fee rates, and is written to the trade-path cache before the
+    // valuation lock drops.
     let vault_id = vault.id();
+    let utilization = pool_utilization(total_liability, pool_nav);
     let mark = lp_book::new_flush_mark(
         pool_nav,
         total_supply,
-        config.plp_supply_fee_rate(),
-        config.plp_withdraw_fee_rate(),
+        config.scaled_plp_fee_rate(config.plp_supply_fee_rate(), utilization),
+        config.scaled_plp_fee_rate(config.plp_withdraw_fee_rate(), utilization),
+        config.utilization_multiplier(utilization),
     );
     // The mark is the only source for these: the config reads are inlined above so no
     // local survives that the event could report instead of what the drain was handed.
@@ -323,6 +337,7 @@ public fun finish_flush(
     // into a silently-swapped event.
     let frozen_supply_fee_rate = mark.supply_fee_rate();
     let frozen_withdraw_fee_rate = mark.withdraw_fee_rate();
+    let frozen_utilization_multiplier = mark.utilization_multiplier();
     let drain_summary = vault
         .lp
         .drain(
@@ -336,6 +351,10 @@ public fun finish_flush(
             ctx,
         );
     let total_supply_after = vault.lp.total_supply();
+    let utilization_cached_ms = ctx.epoch_timestamp_ms();
+    // Cache write stays inside the valuation lock: the package write path asserts
+    // `valuation_in_progress`, and a normal admin setter cannot reach it.
+    config.write_pool_utilization_cache(utilization, utilization_cached_ms);
     config.end_valuation();
     vault_events::emit_flush_executed(
         vault_id,
@@ -344,6 +363,9 @@ public fun finish_flush(
         total_supply,
         frozen_supply_fee_rate,
         frozen_withdraw_fee_rate,
+        utilization,
+        frozen_utilization_multiplier,
+        utilization_cached_ms,
         total_nav,
         market_count,
         idle_balance_before,
@@ -983,7 +1005,19 @@ fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault
         expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
         total_nav: 0,
+        total_liability: 0,
     }
+}
+
+/// Pool-wide utilization `total_payout_liability / pool_nav`, in FLOAT_SCALING,
+/// clamped to `[0, float_scaling]`. Returns 0 when `pool_nav == 0` rather than
+/// dividing — the flush must never abort on a zero-NAV mark, and a zero
+/// utilization yields multiplier 1.0 below any legal threshold.
+fun pool_utilization(total_liability: u64, pool_nav: u64): u64 {
+    if (pool_nav == 0) return 0;
+    math::mul_div_down(total_liability, math::float_scaling!(), pool_nav).min(
+        math::float_scaling!(),
+    )
 }
 
 /// Abort unless this valuation belongs to `vault`.

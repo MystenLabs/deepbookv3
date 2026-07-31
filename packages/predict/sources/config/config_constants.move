@@ -35,6 +35,8 @@ const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
 const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
+const EInvalidUtilizationMaxMultiplier: u64 = 28;
+const EInvalidUtilizationThreshold: u64 = 29;
 
 // === Fees ===
 
@@ -85,6 +87,49 @@ public(package) fun assert_plp_withdraw_fee_rate(value: u64) {
     assert!(
         value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(),
         EInvalidPlpWithdrawFeeRate,
+    );
+}
+
+/// Peak utilization multiplier at `u = 1.0`, in FLOAT_SCALING. Ships at
+/// `float_scaling` (1.0) so the ramp term is arithmetically zero and the LP /
+/// trade fee surfaces are exact no-ops until an operator raises it. Ceiling is
+/// 3x — tighter than the 10x expiry-fee precedent — because the product is
+/// already clamped to `max_plp_fee_rate` and a wider knob is harder to defend
+/// against the swing-pricing objection (highest fee when LPs most want out).
+public(package) macro fun default_utilization_max_multiplier(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) macro fun min_utilization_max_multiplier(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) macro fun max_utilization_max_multiplier(): u64 {
+    3 * fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_utilization_max_multiplier(value: u64) {
+    assert!(
+        value >= min_utilization_max_multiplier!() && value <= max_utilization_max_multiplier!(),
+        EInvalidUtilizationMaxMultiplier,
+    );
+}
+
+/// Utilization at which the fee multiplier begins to ramp, in FLOAT_SCALING.
+/// Must stay strictly below `float_scaling` — at full scale the ramp denominator
+/// is zero (pinned by `utilization_threshold_at_full_scale_is_rejected`).
+public(package) macro fun default_utilization_threshold(): u64 { 800_000_000 }
+
+public(package) macro fun min_utilization_threshold(): u64 { 0 }
+
+public(package) macro fun max_utilization_threshold(): u64 {
+    fixed_math::math::float_scaling!() - 1
+}
+
+public(package) fun assert_utilization_threshold(value: u64) {
+    assert!(
+        value >= min_utilization_threshold!() && value <= max_utilization_threshold!(),
+        EInvalidUtilizationThreshold,
     );
 }
 
