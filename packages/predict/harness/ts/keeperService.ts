@@ -42,14 +42,16 @@ const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M
 // on-chain `trade_liquidation_budget` below, which the TRADE path spends. Set 0 to disable the
 // lane entirely — the DBU-695 adverse probe needs liquidatable orders to survive long enough
 // for a mint's ambient pass to meet them, and a keeper sweeping them first hides that branch.
-const LIQ_BUDGET = BigInt(process.env.KEEPER_LIQ_BUDGET ?? "24");
+// `||` not `??`: an empty string is BigInt-coercible to 0n, so `KEEPER_LIQ_BUDGET=` would silently
+// disable the lane rather than fall back to the default.
+const LIQ_BUDGET = BigInt(process.env.KEEPER_LIQ_BUDGET || "24");
 // Ladder for the on-chain ambient-pass budget (`ProtocolConfig::trade_liquidation_budget`), as
 // "<elapsedSeconds>:<budget>,…" measured from keeper start — e.g. "0:24,900:512,1800:3000".
 // Each stage is applied once, on the first tick at or after its mark, and traced. Unset (the
 // default) never touches the config, so every existing run keeps the contract default of 24.
 // This exists so ONE run can sweep the budget: the trade path's cost is min(budget, book), so
 // a book built cheaply at 24 can then be re-probed at each higher rung without republishing.
-const TRADE_LIQ_BUDGET_STAGES = (process.env.TRADE_LIQ_BUDGET_STAGES ?? "")
+const TRADE_LIQ_BUDGET_STAGES = (process.env.TRADE_LIQ_BUDGET_STAGES || "")
   .split(",")
   .filter(Boolean)
   .map((s) => {
@@ -62,6 +64,13 @@ const TRADE_LIQ_BUDGET_STAGES = (process.env.TRADE_LIQ_BUDGET_STAGES ?? "")
   })
   .sort((a, b) => a.atMs - b.atMs);
 let nextBudgetStage = 0;
+let budgetStageFailures = 0;
+// A rung that cannot be applied is retried, but not forever. An out-of-range value aborts
+// `EInvalidTradeLiquidationBudget` every single tick, and `protocol_config` is a GUARD module, so
+// the repeated fail records classify as expected preconditions and the run exits 0 having swept
+// nothing. Rather than mirror the contract's bounds here (they are the contract's to own), give up
+// loudly after a few attempts — that covers a bad value, a lost cap, and anything else alike.
+const MAX_BUDGET_STAGE_FAILURES = 3;
 // Flush gas budget. The SINGLE dense market (nav-stress) OOGs at the per-tx COMPUTATION cap
 // (5e9 MIST), not the budget; the pool total binds earlier on the object-runtime cached-objects
 // limit (C-1) at ~16-50% of that cap. Either way the budget only needs headroom above the 5e9 cap.
@@ -267,13 +276,26 @@ async function applyBudgetStages(startedAt: number) {
   const elapsed = Date.now() - startedAt;
   while (nextBudgetStage < TRADE_LIQ_BUDGET_STAGES.length && TRADE_LIQ_BUDGET_STAGES[nextBudgetStage].atMs <= elapsed) {
     const { budget } = TRADE_LIQ_BUDGET_STAGES[nextBudgetStage];
+    // Stamped BEFORE the tx. A probe between the request and the trace record ran under an unknown
+    // budget — the set may already have landed — so the analysis must discard that window rather
+    // than attribute it to either rung. Attributing it to the old rung understates the slope and
+    // overstates the ceiling, which is the unsafe direction.
+    const requestedAtMs = Date.now();
     try {
       await executeAndWait(setTradeLiquidationBudgetTx(PROTOCOL_CONFIG_ID, budget), "trade-liq-budget");
-      appendTrace("keeper", { type: "liqBudget", budget: Number(budget), elapsedMs: elapsed });
+      appendTrace("keeper", { type: "liqBudget", budget: Number(budget), elapsedMs: elapsed, requestedAtMs });
       console.log(`[keeper] trade_liquidation_budget -> ${budget} (t+${Math.round(elapsed / 1000)}s)`);
       nextBudgetStage++;
+      budgetStageFailures = 0;
     } catch (e) {
       appendTrace("keeper", { type: "fail", lane: "liqBudget", tag: errorTag(e) });
+      budgetStageFailures++;
+      if (budgetStageFailures >= MAX_BUDGET_STAGE_FAILURES) {
+        throw new Error(
+          `TRADE_LIQ_BUDGET_STAGES: rung ${budget} failed ${budgetStageFailures}x — the sweep cannot proceed ` +
+            `(last: ${e instanceof Error ? e.message.slice(0, 160) : e})`,
+        );
+      }
       console.warn(`[keeper] trade_liquidation_budget deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
       return; // retry this rung next tick; do not run ahead to a later one
     }

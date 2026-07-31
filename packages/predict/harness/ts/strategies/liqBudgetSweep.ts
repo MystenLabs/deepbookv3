@@ -13,7 +13,9 @@
 // ~73% of the computation cap — expensive, but it fits. So the wall is not expected here, and a
 // declared-but-unreached wall would fail every clean run VACUOUS. It also means an OOG on this arm
 // is genuine news — a scan-only mint that cannot fit is a bigger finding than the one being
-// measured — and leaving it undeclared is what lets the bug oracle flag it instead of whitelisting it.
+// measured. `analyze` raises `liq-budget-wall-undeclared` for exactly that case, which is what
+// fails the run: an OOG is traced as a mintBatch record, not a `fail`, so the bug oracle never
+// sees it and leaving it undeclared alone would print the wall and still exit 0.
 //
 // Run: TRADE_LIQ_BUDGET_STAGES=0:24,900:512,1800:1500,2700:3000 SIM_GAS_BUDGET=50000000000
 //      python3 -m harness campaign liq-budget-sweep --timeout 3600

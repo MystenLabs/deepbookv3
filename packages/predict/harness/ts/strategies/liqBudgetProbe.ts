@@ -33,6 +33,15 @@ const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
 const MAX_BOOK = 5000; // EMaxActiveLeveragedOrders — the per-market index cap
 const START_BATCH = 40; // safely under the ~110-mint atomic-batch OOG ceiling at budget 24
+// Book size at which the fill stops batching and every mint becomes a single-mint probe. Batching
+// exists only to reach a deep book quickly; past this the run's job is to emit n==1 samples, and it
+// must keep emitting them for the WHOLE ladder. MAX_BOOK - FILL_TARGET = 3,000 single mints, ~75
+// minutes at tickMs 1500, which outlasts the documented ladder — so every rung gets probed.
+//
+// Getting this wrong is silent: batching to the index cap saturates the book in ~3 minutes, long
+// before the first rung steps, after which there is nothing left to mint and the run collects
+// nothing while still reporting a clean verdict.
+const FILL_TARGET = 2000;
 
 // After this many consecutive single-mint OOGs the wall is measured and the strategy holds. Without
 // it the probe submits a failing ~cap-sized tx every tick forever: the trader's gas coin drains (an
@@ -53,14 +62,18 @@ export interface LiqBudgetArm {
 }
 
 export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
-  // Batch mints never enter ctx.held, so lock the market and count our own mints. `minted` is
-  // mints ISSUED, which equals the active book only on the healthy arm (leverage low enough that
-  // nothing is ever knocked out). On the adverse arm liquidations leave the index, so
-  // minted >= book and the active count must come from the liquidation events, not from here.
+  // Batch mints never enter ctx.held, so lock the market and track the index ourselves. The book is
+  // mints issued MINUS orders the ambient pass knocked out, counted from each tx's OrderLiquidated
+  // events — on the adverse arm those removals are continuous, so issued-mints alone overstates the
+  // index, and overstating it understates the per-candidate slope and overstates the ceiling the
+  // whole run exists to set. On the healthy arm nothing knocks out and `liquidated` stays 0.
   let lockedId: string | null = null;
   let minted = 0;
+  let liquidated = 0;
   let batch = START_BATCH;
   let wallHits = 0; // consecutive single-mint OOGs; reset by any success
+
+  const book = () => minted - liquidated;
 
   function targetMarket(ctx: StrategyCtx): Mkt | null {
     if (lockedId) {
@@ -72,6 +85,7 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
       // batch==1 with wallHits past its limit, so it would never mint into the new empty book.
       lockedId = null;
       minted = 0;
+      liquidated = 0;
       batch = START_BATCH;
       wallHits = 0;
     }
@@ -100,15 +114,20 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
   return {
     name: arm.name,
     tickMs: 1500,
-    maxOps: 0, // duration-only: fill, then hold and keep probing as the budget ladder steps up
+    maxOps: 0, // duration-only: fill to FILL_TARGET, then probe one mint at a time for the rest
     fund: arm.fund,
     ...(arm.expect ? { expect: arm.expect } : {}),
     async tick(ctx) {
       const market = targetMarket(ctx);
       if (!market || !ctx.snapshot()) return null;
       if (batch === 1 && wallHits >= WALL_CONFIRMATIONS) return null; // wall measured — hold
-      const want = Math.min(batch, MAX_BOOK - minted);
-      if (want <= 0) return null; // at the index cap — hold; the ladder keeps re-probing
+      // Past FILL_TARGET every mint goes out alone, whether or not anything has OOG'd. Halving on
+      // OOG alone is not enough: batching only shrinks when it stops fitting, so a run would sit at
+      // n=5 or n=2 for most of the ladder and emit n==1 samples — the only ones the fit uses — at
+      // the very top rung, if ever.
+      if (book() >= FILL_TARGET) batch = 1;
+      const want = Math.min(batch, MAX_BOOK - book());
+      if (want <= 0) return null; // index cap with nothing knocked out — no room left to probe
       const legs: MintLeg[] = [];
       for (let i = 0; i < want; i++) {
         const l = legFrom(ctx, market);
@@ -117,21 +136,25 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
       if (legs.length === 0) return null;
       try {
         // submitMintBatch traces {type:"mintBatch", n, gas, compGas, …meta}; at n==1 that IS an
-        // ordinary mint's cost, which is the number the ceiling is set from.
-        await ctx.submitMintBatch(market, legs, { minted, batch });
+        // ordinary mint's cost, which is the number the ceiling is set from. `book` is the index
+        // size the ambient pass saw — BEFORE this tx's own mints and knockouts.
+        const res = await ctx.submitMintBatch(market, legs, { book: book(), minted, batch });
+        // The ambient pass in this very tx may have knocked orders out of the index.
+        const knocked = ((res?.events ?? []) as any[]).filter((e) => e.type?.includes("OrderLiquidated")).length;
         minted += legs.length;
+        liquidated += knocked;
         wallHits = 0;
-        ctx.trace({ type: "book", size: minted, market: market.id });
+        ctx.trace({ type: "book", size: book(), minted, liquidated, market: market.id });
         return "mint";
       } catch (e) {
         if (isOog(e)) {
           // The cap: halve and retry smaller. At batch==1 there is nothing left to halve — that
           // IS the wall, so confirm it a few times and then hold.
-          ctx.trace({ type: "mintBatch", n: legs.length, minted, batch, oog: true, err: errorTag(e) });
+          ctx.trace({ type: "mintBatch", n: legs.length, book: book(), minted, batch, oog: true, err: errorTag(e) });
           if (batch === 1) wallHits += 1;
           batch = Math.max(1, Math.floor(batch / 2));
         } else {
-          ctx.trace({ type: "fail", tag: errorTag(e), n: legs.length, minted, batch });
+          ctx.trace({ type: "fail", tag: errorTag(e), n: legs.length, book: book(), minted, batch });
         }
         return null;
       }

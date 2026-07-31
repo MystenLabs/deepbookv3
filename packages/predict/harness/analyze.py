@@ -370,6 +370,7 @@ def _analyze_one(inst: Path) -> list[str]:
     # while N>1 pays N ambient passes in one PTB and would bias the slope. Budget comes from the
     # keeper's ladder records; with no ladder configured there is nothing to sweep, so the section is
     # skipped rather than assuming the contract default.
+    unexpected_wall: str | None = None  # set when a single mint OOGs on an arm that never declared that wall
     rungs = sorted([r for r in recs if r.get("type") == "liqBudget" and r.get("ts")], key=lambda r: r["ts"])
     if rungs:
         def _budget_at(ts: int) -> int:
@@ -381,12 +382,27 @@ def _analyze_one(inst: Path) -> list[str]:
                     break
             return b
 
-        # (budget, book-before-this-mint, comp) for every single-mint probe under a known rung.
+        # A rung's set-tx is submitted at `requestedAtMs` and traced once it lands, so a probe inside
+        # that window ran under an indeterminate budget. Discard those rather than attribute them to
+        # either side: crediting them to the older, lower rung understates the per-candidate slope
+        # and overstates the ceiling. Records without `requestedAtMs` predate the bracketing and
+        # contribute no window.
+        blackouts = [(int(r["requestedAtMs"]), int(r["ts"])) for r in rungs if r.get("requestedAtMs")]
+
+        def _indeterminate(ts: int) -> bool:
+            return any(lo <= ts < hi for lo, hi in blackouts)
+
+        # (budget, book-before-this-mint, comp) for every single-mint probe under a known rung. The
+        # book is the ACTIVE index size the pass walked (mints issued minus knockouts), not mints
+        # issued: on the adverse arm the ambient pass removes orders continuously, and counting
+        # issued mints would overstate the candidates scanned, understate the per-candidate slope,
+        # and overstate the ceiling. `minted` is the pre-DBU-695 field name, kept as a fallback.
         probes = [
-            (_budget_at(r["ts"]), int(r.get("minted", 0)), int(r["compGas"]))
+            (_budget_at(r["ts"]), int(r.get("book", r.get("minted", 0))), int(r["compGas"]))
             for r in recs
             if r.get("type") == "mintBatch" and int(r.get("n", 0)) == 1 and not r.get("oog")
             and r.get("compGas") and r.get("ts") and _budget_at(r["ts"]) > 0
+            and not _indeterminate(r["ts"])
         ]
         print(f"\nliq-budget — single-mint computation vs ambient-pass budget ({len(rungs)} rung(s) applied):")
         by_budget: dict[int, list[tuple[int, int]]] = defaultdict(list)
@@ -416,14 +432,21 @@ def _analyze_one(inst: Path) -> list[str]:
                           f"(the ceiling max_trade_liquidation_budget should be set under, with margin)")
         # The empirical wall: the smallest candidate count at which a SINGLE mint actually OOG'd.
         walls = [
-            (min(_budget_at(r["ts"]), int(r.get("minted", 0))), _budget_at(r["ts"]), int(r.get("minted", 0)))
+            (min(_budget_at(r["ts"]), int(r.get("book", r.get("minted", 0)))),
+             _budget_at(r["ts"]), int(r.get("book", r.get("minted", 0))))
             for r in recs
             if r.get("type") == "mintBatch" and r.get("oog") and int(r.get("n", 0)) == 1
-            and r.get("ts") and _budget_at(r["ts"]) > 0
+            and r.get("ts") and _budget_at(r["ts"]) > 0 and not _indeterminate(r["ts"])
         ]
         if walls:
             cand, b, book = min(walls)
             print(f"  EMPIRICAL wall: a single mint OOG'd at budget {b} / book {book} (~{cand} candidates)")
+            # A strategy that DECLARED this wall was built to reach it; one that did not has just
+            # shown an ordinary mint failing to fit in a tx, which is a finding in its own right and
+            # must fail the run rather than print quietly. The OOG is traced as a mintBatch record,
+            # not a `fail`, so the bug oracle below never sees it — this is what surfaces it.
+            if not _declared_terminals(recs):
+                unexpected_wall = f"liq-budget-wall-undeclared:budget={b},book={book}"
         else:
             print("  no single-mint OOG — every rung reached was affordable at the book this run built")
 
@@ -480,6 +503,8 @@ def _analyze_one(inst: Path) -> list[str]:
                 print(f"     {n}x  {mode}")
 
     signals = list(flagged)
+    if unexpected_wall:
+        signals.append(unexpected_wall)
     signals += [f"adversarial-accepted:{r.get('mode')}" for r in adv_accepted]
     if stuck:
         signals.append("keeper-stuck")  # (1) a bricked settlement/LP lifecycle must fail the run

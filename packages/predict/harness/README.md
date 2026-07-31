@@ -94,7 +94,11 @@ keeper walks the on-chain budget through `TRADE_LIQ_BUDGET_STAGES="<elapsedSecon
 one run sweeps the whole range against a book built once — the pass costs
 `min(budget, active_leveraged_orders)`. `KEEPER_LIQ_BUDGET` sizes the keeper's own permissionless
 `liquidate()` lane and takes `0` to disable it, which the adverse arm needs so liquidatable orders
-survive for a mint's ambient pass to meet:
+survive for a mint's ambient pass to meet.
+
+Each arm fills to a 2,000-order book with batched mints and then sends every mint alone, because
+only single-mint transactions measure the trade path (an N-mint PTB runs N ambient passes). The run
+must outlast the ladder for the sweep to have data at every rung — size `--timeout` accordingly:
 
 ```
 TRADE_LIQ_BUDGET_STAGES=0:24,900:512,1800:1500,2700:3000 SIM_GAS_BUDGET=50000000000 \

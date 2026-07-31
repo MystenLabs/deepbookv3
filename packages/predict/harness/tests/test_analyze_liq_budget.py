@@ -42,6 +42,9 @@ def _synthesise(root: Path, books: list[int], slope: int) -> Path:
     * The first rung also carries a real multi-mint batch. Every mint in a PTB runs its own
       ambient pass, so an N-mint batch costs ~N times a single one; a fit that forgets to restrict
       to n==1 swallows that point and the slope collapses.
+    * Each rung change plants a probe inside the request-to-landed window, priced at the OLD rung.
+      Counting it drags the slope down and the ceiling up — the unsafe direction — so the analysis
+      has to discard the window rather than attribute it to either side.
 
     A probe whose modelled cost exceeds the cap is emitted as an OOG rather than a successful
     mint, which is what the strategy itself does at the wall.
@@ -51,36 +54,50 @@ def _synthesise(root: Path, books: list[int], slope: int) -> Path:
     keeper, trader = [], []
     ts = 1_000_000
     for i, ((elapsed_s, budget), book) in enumerate(zip(LADDER, books)):
+        # The rung's set-tx is requested a tick before it lands, and a probe inside that window ran
+        # under an indeterminate budget. One such probe is planted per rung, priced at the OLD rung
+        # so that counting it would visibly drag the fit — the analysis must drop it.
+        requested = ts + 50
+        if i > 0:
+            prev_budget, prev_book = LADDER[i - 1][1], books[i - 1]
+            trader.append({"type": "mintBatch", "n": 1, "gas": BASE + slope * min(prev_budget, prev_book),
+                           "compGas": BASE + slope * min(prev_budget, prev_book),
+                           "book": book, "batch": 1, "ts": requested + 10})
         ts += 1_000
-        keeper.append({"type": "liqBudget", "budget": budget, "elapsedMs": elapsed_s * 1000, "ts": ts})
+        keeper.append({"type": "liqBudget", "budget": budget, "elapsedMs": elapsed_s * 1000,
+                       "requestedAtMs": requested, "ts": ts})
         single = BASE + slope * min(budget, book)
         if i == 0:
             # The fill phase's batched mints, at the one rung cheap enough for a batch to fit.
             ts += 100
             trader.append({"type": "mintBatch", "n": 8, "gas": 8 * single, "compGas": 8 * single,
-                           "minted": book, "batch": 8, "ts": ts})
+                           "book": book, "batch": 8, "ts": ts})
         for offset in NOISE:
             ts += 100
             comp = single + offset
             trader.append(
-                {"type": "mintBatch", "n": 1, "minted": book, "batch": 1, "ts": ts,
+                {"type": "mintBatch", "n": 1, "book": book, "batch": 1, "ts": ts,
                  "oog": True, "err": "InsufficientGas"}
                 if comp > CAP
                 else {"type": "mintBatch", "n": 1, "gas": comp, "compGas": comp,
-                      "minted": book, "batch": 1, "ts": ts}
+                      "book": book, "batch": 1, "ts": ts}
             )
     (inst / "trace" / "keeper.jsonl").write_text("\n".join(json.dumps(r) for r in keeper))
     (inst / "trace" / "trader.jsonl").write_text("\n".join(json.dumps(r) for r in trader))
     return inst
 
 
-def _report(books: list[int], slope: int) -> str:
+def _run(books: list[int], slope: int) -> tuple[str, list[str]]:
     with tempfile.TemporaryDirectory() as tmp:
         inst = _synthesise(Path(tmp), books, slope)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            analyze._analyze_one(inst)
-        return buf.getvalue()
+            signals = analyze._analyze_one(inst)
+        return buf.getvalue(), signals
+
+
+def _report(books: list[int], slope: int) -> str:
+    return _run(books, slope)[0]
 
 
 def _int_after(report: str, pattern: str) -> int:
@@ -120,6 +137,101 @@ class LiqBudgetAnalysisTests(unittest.TestCase):
         self.assertEqual(_int_after(report, r"stops fitting one tx at ~([\d,]+) candidates"), 2705)
         self.assertRegex(report, r"EMPIRICAL wall: a single mint OOG'd at budget 3000 / book 4600")
         self.assertNotIn("no single-mint OOG", report)
+
+    def test_an_undeclared_wall_fails_the_run(self) -> None:
+        # These fixtures carry no `expect` record, i.e. the arm never declared it was probing for a
+        # wall — so a single mint that cannot fit is an unexpected finding and must fail the run.
+        # The OOG is traced as a mintBatch record rather than a `fail`, so the bug oracle cannot see
+        # it; without an explicit signal the run would print the wall and still exit 0.
+        report, signals = _run([100, 300, 2000, 4600], 1_700_000)
+
+        self.assertIn("EMPIRICAL wall", report)
+        self.assertTrue(
+            any(s.startswith("liq-budget-wall-undeclared") for s in signals),
+            f"expected an undeclared-wall signal, got {signals}",
+        )
+
+    def test_a_declared_wall_does_not_fail_the_run(self) -> None:
+        # The adverse arm declares the computation cap, so reaching it is the point, not a surprise.
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = _synthesise(Path(tmp), [100, 300, 2000, 4600], 1_700_000)
+            trace = inst / "trace" / "trader.jsonl"
+            trace.write_text(
+                trace.read_text()
+                + "\n"
+                + json.dumps({"type": "expect", "terminal": ["InsufficientGas"], "ts": 999_999})
+            )
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                signals = analyze._analyze_one(inst)
+
+        self.assertIn("EMPIRICAL wall", buf.getvalue())
+        self.assertFalse([s for s in signals if s.startswith("liq-budget-wall-undeclared")], signals)
+
+    def test_wall_reports_the_smallest_candidate_count_not_the_last_or_largest(self) -> None:
+        # Two rungs OOG a single mint, at different books. The wall worth reporting is the CHEAPEST
+        # state that could not fit — a ceiling set from the largest would be set above a budget
+        # already known to break. Rungs 1500 (book 1600 -> 1500 candidates) and 3000 (book 3400 ->
+        # 3000 candidates) both OOG at slope 3,000,000: 400,000,000 + 3,000,000*1500 = 4.9e9 fits,
+        # so make it 3,200,000 -> 5.2e9 at 1500 candidates and 9.6e9 at 3000. Smallest = 1500.
+        report = _report([100, 300, 1600, 3400], 3_200_000)
+
+        self.assertRegex(report, r"EMPIRICAL wall: a single mint OOG'd at budget 1500 / book 1600")
+        self.assertNotIn("budget 3000 / book 3400", report)
+
+    def test_a_multi_leg_batch_oog_is_not_reported_as_the_wall(self) -> None:
+        # An N-mint PTB pays N ambient passes, so it OOGs long before a single mint does. Treating
+        # that as the wall would report a ceiling several times lower than the truth and, at the
+        # extreme, condemn a budget that ordinary trading handles comfortably.
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "inst"
+            (inst / "trace").mkdir(parents=True)
+            (inst / "trace" / "keeper.jsonl").write_text(
+                json.dumps({"type": "liqBudget", "budget": 512, "requestedAtMs": 900, "ts": 1000})
+            )
+            (inst / "trace" / "trader.jsonl").write_text("\n".join(json.dumps(r) for r in [
+                # A 40-leg batch cannot fit; single mints at the same budget and book still do.
+                {"type": "mintBatch", "n": 40, "book": 900, "batch": 40, "ts": 1100,
+                 "oog": True, "err": "InsufficientGas"},
+                {"type": "mintBatch", "n": 1, "gas": 900_000_000, "compGas": 900_000_000,
+                 "book": 900, "batch": 1, "ts": 1200},
+                {"type": "mintBatch", "n": 1, "gas": 902_000_000, "compGas": 902_000_000,
+                 "book": 1000, "batch": 1, "ts": 1300},
+            ]))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                analyze._analyze_one(inst)
+            report = buf.getvalue()
+
+        self.assertIn("no single-mint OOG", report)
+        self.assertNotIn("EMPIRICAL wall", report)
+
+    def test_book_is_the_active_index_not_mints_issued(self) -> None:
+        # The adverse arm's ambient pass knocks orders out as it goes, so mints issued runs ahead of
+        # the live index. Reading issued mints as the book overstates the candidates scanned, which
+        # understates the per-candidate slope and overstates the ceiling — the unsafe direction.
+        # Here the true book is a third of mints issued; the fit must recover the true slope.
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "inst"
+            (inst / "trace").mkdir(parents=True)
+            (inst / "trace" / "keeper.jsonl").write_text(
+                json.dumps({"type": "liqBudget", "budget": 3000, "requestedAtMs": 900, "ts": 1000})
+            )
+            rows = []
+            for i, book in enumerate([200, 400, 600, 800]):
+                rows.append({"type": "mintBatch", "n": 1, "book": book, "minted": book * 3,
+                             "gas": BASE + 1_000_000 * book, "compGas": BASE + 1_000_000 * book,
+                             "batch": 1, "ts": 1100 + i * 100})
+            (inst / "trace" / "trader.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                analyze._analyze_one(inst)
+            report = buf.getvalue()
+
+        # Against `book` the slope is exactly 1,000,000. Against `minted` (3x the x-values) it
+        # would read 333,333 and the ceiling would be inflated threefold.
+        self.assertEqual(_int_after(report, r"~([\d,]+) comp/candidate"), 1_000_000)
+        self.assertEqual(_int_after(report, r"stops fitting one tx at ~([\d,]+) candidates"), 4600)
 
     def test_section_is_skipped_when_no_budget_ladder_ran(self) -> None:
         # With no rung applied the in-force budget is the contract default, which the harness must
