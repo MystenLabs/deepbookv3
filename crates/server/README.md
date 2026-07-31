@@ -125,8 +125,12 @@ Configure the server with:
   defaults to `60`.
 - `PYTH_PRO_CHART_HISTORY_CACHE_MAX_ENTRIES` — maximum chart-history responses
   cached per process; defaults to `256`.
-- `PYTH_PRO_CHART_HISTORY_MAX_RANGE_SECS` — maximum `to - from` span accepted
-  by the chart-history route; defaults to `86400` (24 hours).
+- `PYTH_PRO_CHART_HISTORY_MAX_RANGE_SECS` — absolute maximum `to - from` span
+  accepted by the chart-history route; defaults to `7776000` (90 days).
+  Requests are also limited to 2161 candles, so the effective default range is
+  36 hours at 1-minute resolution, 3 days at 2-minute resolution, 7.5 days at
+  5-minute resolution, 22.5 days at 15-minute resolution, 45 days at
+  30-minute resolution, and 90 days at hourly or coarser resolutions.
 
 Latest prices are loaded on demand. The first request after the cache TTL
 expires fetches every allowed feed in one Pyth Pro call and stores the snapshot
