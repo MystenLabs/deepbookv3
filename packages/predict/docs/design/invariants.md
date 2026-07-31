@@ -175,7 +175,10 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Fees
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
-  min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
+  min_fee) × expiry_fee_multiplier × trade_utilization_multiplier`; the Bernoulli
+  term is 0 at `p ∈ {0, 1}`. The utilization term reads the flush-cached pool-wide
+  `L/E` from `ProtocolConfig` (level-based, with staleness decay toward 1.0) and
+  rounds down; a never-written cache is multiplier 1.0.
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
 - PLP supply and withdraw carry independent base rates (`plp_supply_fee_rate`,

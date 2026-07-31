@@ -278,3 +278,13 @@ public(package) fun emit_order_liquidated(
         block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }
+
+// === Test-Only Functions ===
+
+/// The trading fee a live redeem reported. Exists so tests can assert the
+/// utilization-scaled fee the path charged without reconstructing it from
+/// account balances.
+#[test_only]
+public fun live_order_redeemed_trading_fee(event: &LiveOrderRedeemed): u64 {
+    event.trading_fee
+}
