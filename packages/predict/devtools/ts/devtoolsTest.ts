@@ -4,6 +4,7 @@ import test from "node:test";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
+import { transactionClockTimestampMs } from "./grpcClock.js";
 import {
   providerBatchFromJson,
   providerBatchMessageBytes,
@@ -133,4 +134,48 @@ test("gRPC gas charge tracks storage rebates when rotating a pinned coin", () =>
     }),
     -15n,
   );
+});
+
+test("pricing time comes from the exact Clock input rather than the checkpoint", async () => {
+  const requestedVersions: bigint[] = [];
+  const checkpointTimestampMs = 1_755_000_000_279;
+  const timestampMs = await transactionClockTimestampMs(
+    {
+      unchangedConsensusObjects: [{
+        kind: "ReadOnlyRoot",
+        objectId: "0x6",
+        version: "41",
+        digest: "clock-digest",
+      }],
+    },
+    async (version) => {
+      requestedVersions.push(version);
+      return {
+        object: {
+          objectId: "0x6",
+          version,
+          objectType: "0x2::clock::Clock",
+          json: {
+            kind: {
+              oneofKind: "structValue",
+              structValue: {
+                fields: {
+                  timestamp_ms: {
+                    kind: {
+                      oneofKind: "stringValue",
+                      stringValue: "1755000000123",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+    },
+  );
+
+  assert.deepEqual(requestedVersions, [41n]);
+  assert.equal(timestampMs, 1_755_000_000_123);
+  assert.notEqual(timestampMs, checkpointTimestampMs);
 });

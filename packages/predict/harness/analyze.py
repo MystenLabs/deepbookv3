@@ -148,31 +148,22 @@ _STRING_TRACE_FIELDS = {
     "where",
 }
 _BOOLEAN_TRACE_FIELDS = {"fatal", "partial", "oog"}
-_NUMBER_TRACE_FIELDS = {
-    "activeNav",
-    "amount",
+_NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "attempt",
     "book",
     "compGas",
     "computationCost",
     "consecutiveDefers",
     "expiryMs",
-    "gas",
-    "leverage",
     "marketCount",
     "markets",
-    "moneyness",
     "n",
-    "net",
-    "netPremium",
     "nodeCount",
     "nonRefundableStorageFee",
     "nLiquidated",
     "nSettled",
     "nTarget",
     "perMarket",
-    "poolValue",
-    "prob",
     "shares",
     "size",
     "storageCost",
@@ -180,6 +171,16 @@ _NUMBER_TRACE_FIELDS = {
     "stragglers",
     "totalSupply",
 }
+_NONNEGATIVE_NUMBER_TRACE_FIELDS = {
+    "activeNav",
+    "amount",
+    "leverage",
+    "moneyness",
+    "netPremium",
+    "poolValue",
+    "prob",
+}
+_SIGNED_NUMBER_TRACE_FIELDS = {"gas", "net"}
 
 
 def _instances() -> list[Path]:
@@ -213,7 +214,16 @@ def _validate_trace_record(record: dict, actor: str, location: str) -> None:
             valid = isinstance(value, str) and bool(value)
         elif field in _BOOLEAN_TRACE_FIELDS:
             valid = type(value) is bool
-        elif field in _NUMBER_TRACE_FIELDS:
+        elif field in _NONNEGATIVE_INTEGER_TRACE_FIELDS:
+            valid = type(value) is int and value >= 0
+        elif field in _NONNEGATIVE_NUMBER_TRACE_FIELDS:
+            valid = (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value >= 0
+            )
+        elif field in _SIGNED_NUMBER_TRACE_FIELDS:
             valid = (
                 isinstance(value, (int, float))
                 and not isinstance(value, bool)
@@ -259,9 +269,14 @@ def _load(trace_dir: Path) -> list[dict]:
                 raise ValueError(
                     f"{f}:{line_number}: unsupported trace schema {r.get('schema')!r}"
                 )
-            if type(r.get("ts")) is not int or not isinstance(r.get("type"), str):
+            if (
+                type(r.get("ts")) is not int
+                or r["ts"] < 0
+                or not isinstance(r.get("type"), str)
+            ):
                 raise ValueError(
-                    f"{f}:{line_number}: trace record requires integer ts and string type"
+                    f"{f}:{line_number}: trace record requires non-negative integer ts "
+                    "and string type"
                 )
             _validate_trace_record(r, actor, f"{f}:{line_number}")
             r["_actor"] = actor

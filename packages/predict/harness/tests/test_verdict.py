@@ -56,6 +56,60 @@ class VerdictTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "has invalid value None"):
                 analyze._load(trace)
 
+    def test_trace_loader_rejects_impossible_numeric_evidence(self) -> None:
+        records = (
+            (
+                "trader.jsonl",
+                {
+                    "schema": 1,
+                    "type": "mintBatch",
+                    "strategy": "capacity",
+                    "n": -1.5,
+                    "gas": 1,
+                    "compGas": 1,
+                    "ts": 1,
+                },
+            ),
+            (
+                "trader.jsonl",
+                {
+                    "schema": 1,
+                    "type": "mintBatch",
+                    "strategy": "capacity",
+                    "n": 1,
+                    "gas": 1,
+                    "compGas": -3,
+                    "ts": 1,
+                },
+            ),
+            (
+                "keeper.jsonl",
+                {
+                    "schema": 1,
+                    "type": "keeper-stall",
+                    "consecutiveDefers": -2.25,
+                    "lastError": "blocked",
+                    "ts": 1,
+                },
+            ),
+            (
+                "keeper.jsonl",
+                {
+                    "schema": 1,
+                    "type": "liquidate",
+                    "markets": 1,
+                    "gas": 1,
+                    "ts": -1,
+                },
+            ),
+        )
+        for filename, record in records:
+            with self.subTest(record=record), tempfile.TemporaryDirectory() as directory:
+                trace = Path(directory)
+                (trace / filename).write_text(json.dumps(record) + "\n")
+                with self.assertRaisesRegex(ValueError, "invalid value|non-negative"):
+                    analyze._load(trace)
+
     def test_classification_distinguishes_guards_invariants_and_transients(self) -> None:
         expected, transient, flagged = verdict.classify_failures(
             [

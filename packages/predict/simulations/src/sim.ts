@@ -849,11 +849,14 @@ function economicMaintenanceRecord(
 }
 
 function traceStep(row: ScenarioRow, receipt: ExecutionReceipt, wallMs: number): LocalTraceStep {
+    if (receipt.clockTimestampMs === null) {
+        throw new Error(`priced ${row.action} transaction did not read the Sui Clock`);
+    }
     return {
         step: row.step,
         action: row.action,
         digest: receipt.digest,
-        pricingTimestampMs: receipt.timestampMs,
+        pricingTimestampMs: receipt.clockTimestampMs,
         wallMs,
         gas: receipt.gas,
         events: receipt.events.map((event: any) => ({
@@ -1460,11 +1463,14 @@ async function executeScenario(
             `flush_after_row_${afterRow}`,
         );
         const wallMs = performance.now() - startedAt;
+        if (receipt.clockTimestampMs === null) {
+            throw new Error(`flush after row ${afterRow} did not read the Sui Clock`);
+        }
         traceSteps.push({
             step: afterRow,
             action: "flush",
             digest: receipt.digest,
-            pricingTimestampMs: receipt.timestampMs,
+            pricingTimestampMs: receipt.clockTimestampMs,
             wallMs,
             gas: receipt.gas,
             events: receipt.events.map((event: any) => ({
@@ -1500,11 +1506,14 @@ async function executeScenario(
             `rebalance_expiry_cash_after_row_${afterRow}`,
         );
         const wallMs = performance.now() - startedAt;
+        if (receipt.clockTimestampMs === null) {
+            throw new Error(`cash rebalance after row ${afterRow} did not read the Sui Clock`);
+        }
         traceSteps.push({
             step: afterRow,
             action: "rebalance_expiry_cash",
             digest: receipt.digest,
-            pricingTimestampMs: receipt.timestampMs,
+            pricingTimestampMs: receipt.clockTimestampMs,
             wallMs,
             gas: receipt.gas,
             events: receipt.events.map((event: any) => ({

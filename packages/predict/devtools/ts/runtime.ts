@@ -53,6 +53,7 @@ import {
 } from "./localPyth.js";
 import { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson } from "./artifacts.js";
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
+import { transactionClockTimestampMs } from "./grpcClock.js";
 
 export interface GasUsage {
     computationCost: number;
@@ -64,7 +65,7 @@ export interface GasUsage {
 
 export interface ExecutionReceipt {
     digest: string;
-    timestampMs: number;
+    clockTimestampMs: number | null;
     gas: GasUsage;
     events: any[];
     objectChanges: any[];
@@ -542,7 +543,7 @@ function aggregateGas(usages: GasUsage[]): GasUsage {
 
 // Preserve the observable contents of the former single-PTB operation after splitting
 // refresh from pricing: gas, events, and object changes cover every leg in submission
-// order, while the final priced operation remains the scalar digest/effects authority.
+// order, while the final priced operation remains the scalar digest/effects/Clock authority.
 function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceipt {
     const last = receipts[receipts.length - 1]!;
     return {
@@ -567,25 +568,32 @@ async function getTransactionWithRetry(digest: string): Promise<any> {
                         "events",
                         "effects.changed_objects.object_type",
                         "effects.changed_objects.object_id",
-                        "timestamp",
                     ],
                 },
             });
-            if (!response.transaction?.timestamp) {
-                throw new Error(`transaction ${digest} has no checkpoint timestamp`);
+            if (!response.transaction) {
+                throw new Error(`transaction ${digest} was not returned by Sui gRPC`);
             }
-            const timestamp = response.transaction.timestamp;
-            return {
-                ...normalizeTransactionResult(
-                    parseGrpcTransactionResponse(response.transaction, {
-                        include: EXECUTION_TRANSACTION_INCLUDE,
-                    }),
-                ),
-                timestampMs: Number(
-                    timestamp.seconds * 1_000n +
-                    BigInt(timestamp.nanos) / 1_000_000n,
-                ),
-            };
+            const transaction = normalizeTransactionResult(
+                parseGrpcTransactionResponse(response.transaction, {
+                    include: EXECUTION_TRANSACTION_INCLUDE,
+                }),
+            );
+            const clockTimestampMs = await transactionClockTimestampMs(
+                transaction.effects,
+                async (version) => {
+                    const { response: objectResponse } =
+                        await client.ledgerService.getObject({
+                            objectId: CLOCK_ID,
+                            version,
+                            readMask: {
+                                paths: ["object_id", "version", "object_type", "json"],
+                            },
+                        });
+                    return objectResponse;
+                },
+            );
+            return { ...transaction, clockTimestampMs };
         } catch (error) {
             lastError = error;
             await new Promise((resolve) => setTimeout(resolve, 250));
@@ -2257,7 +2265,7 @@ export async function execute(
                 }
                 receipts.push({
                     digest: raw.digest,
-                    timestampMs: settled.timestampMs,
+                    clockTimestampMs: settled.clockTimestampMs,
                     gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
                     events: settled.events ?? raw.events ?? [],
                     objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],

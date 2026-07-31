@@ -379,7 +379,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
 }
 
 export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v3";
-export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v3";
+export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v4";
 export const SCENARIO_PATH = fileURLToPath(
     new URL("../data/generated/normal_scenario.csv", import.meta.url),
 );

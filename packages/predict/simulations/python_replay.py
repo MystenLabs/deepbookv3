@@ -21,6 +21,15 @@ FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
+LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v4"
+LOCAL_TRACE_ACTIONS = {
+    "oracle_mint_ptb",
+    "redeem",
+    "supply",
+    "withdraw",
+    "flush",
+    "rebalance_expiry_cash",
+}
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
     "schema_version": None,
@@ -2862,36 +2871,84 @@ def scenario_pricing_timing(row: dict[str, Any]) -> dict[str, int]:
 
 def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
     trace = json.loads(path.read_text())
+    if not isinstance(trace, dict):
+        raise ValueError(f"pricing trace must be an object: {path}")
+    if trace.get("schema_version") != LOCAL_TRACE_SCHEMA_VERSION:
+        raise ValueError(
+            f"pricing trace must use schema_version='{LOCAL_TRACE_SCHEMA_VERSION}': {path}"
+        )
     steps = trace.get("steps")
     if not isinstance(steps, list):
         raise ValueError(f"pricing trace has no steps array: {path}")
 
     timings: dict[tuple[int, str], dict[str, int]] = {}
-    for step in steps:
+    for index, step in enumerate(steps):
         if not isinstance(step, dict):
-            continue
+            raise ValueError(f"pricing trace step {index} must be an object")
+        step_number = step.get("step")
+        action = step.get("action")
+        pricing_timestamp = step.get("pricingTimestampMs")
+        events = step.get("events")
+        if type(step_number) is not int or step_number < 0:
+            raise ValueError(f"pricing trace step {index} has invalid step")
+        if not isinstance(action, str) or action not in LOCAL_TRACE_ACTIONS:
+            raise ValueError(f"pricing trace step {index} has invalid action")
+        if type(pricing_timestamp) is not int or pricing_timestamp < 0:
+            raise ValueError(
+                f"pricing trace step {(step_number, action)} has invalid pricingTimestampMs"
+            )
+        if not isinstance(events, list):
+            raise ValueError(f"pricing trace step {(step_number, action)} has invalid events")
         observation = None
-        for event in step.get("events", []):
-            full_type = str(event.get("full_type", ""))
+        for event_index, event in enumerate(events):
+            if not isinstance(event, dict):
+                raise ValueError(
+                    f"pricing trace step {(step_number, action)} event {event_index} "
+                    "must be an object"
+                )
+            full_type = event.get("full_type")
+            if not isinstance(full_type, str):
+                raise ValueError(
+                    f"pricing trace step {(step_number, action)} event {event_index} "
+                    "has invalid full_type"
+                )
             if (
                 "BlockScholesObservationRecorded" not in full_type
                 or "SVIParams" not in full_type
             ):
                 continue
-            parsed = event.get("parsedJson") or {}
-            observation = parsed.get("observation") or {}
-            observation = observation.get("fields") or observation
+            parsed = event.get("parsedJson")
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"pricing trace step {(step_number, action)} SVI event has invalid parsedJson"
+                )
+            observation = parsed.get("observation")
+            if not isinstance(observation, dict):
+                raise ValueError(
+                    f"pricing trace step {(step_number, action)} SVI event has invalid observation"
+                )
+            if "fields" in observation:
+                observation = observation["fields"]
+                if not isinstance(observation, dict):
+                    raise ValueError(
+                        f"pricing trace step {(step_number, action)} SVI event has invalid fields"
+                    )
             break
         if observation is None:
             continue
-        key = (int(step["step"]), str(step["action"]))
+        key = (step_number, action)
         if key in timings:
             raise ValueError(f"duplicate SVI timing for trace step {key}")
-        pricing_timestamp = step.get("pricingTimestampMs")
-        if not isinstance(pricing_timestamp, int):
-            raise ValueError(f"pricing trace step {key} has no integer pricingTimestampMs")
+        model_timestamp = observation.get("model_timestamp_ms")
+        if (
+            not isinstance(model_timestamp, str)
+            or not model_timestamp.isdecimal()
+        ):
+            raise ValueError(
+                f"pricing trace step {key} has invalid model_timestamp_ms"
+            )
         timings[key] = {
-            "model_timestamp_ms": int(observation["model_timestamp_ms"]),
+            "model_timestamp_ms": int(model_timestamp),
             "pricing_timestamp_ms": pricing_timestamp,
         }
     return timings
