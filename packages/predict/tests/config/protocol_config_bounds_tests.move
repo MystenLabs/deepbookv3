@@ -592,6 +592,7 @@ fun utilization_knobs_ship_disabled_and_accept_boundaries() {
     assert_eq!(config.utilization_threshold(), 800_000_000);
     assert_eq!(config.cached_pool_utilization(), 0);
     assert_eq!(config.cached_pool_utilization_ms(), 0);
+    assert!(!config.utilization_cache_written());
 
     config.set_utilization_max_multiplier(
         &admin_cap,
@@ -636,6 +637,64 @@ fun utilization_multiplier_ramp_and_default_noop() {
     return_shared(config);
     destroy(admin_cap);
     scenario.end();
+}
+
+/// Trade-path cache: never written → 1.0; fresh → full ramp; mid-decay halves
+/// the surcharge; past decay → 1.0. Hand-checked at threshold 0 / max 2× so
+/// `utilization_multiplier(u) = 1 + u`.
+#[test]
+fun trade_utilization_multiplier_respects_cache_and_decay() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Fresh deployment: cache never written.
+    assert_eq!(config.trade_utilization_multiplier(1_000_000), math::float_scaling!());
+
+    config.set_utilization_max_multiplier(&admin_cap, 2 * math::float_scaling!());
+    config.set_utilization_threshold(&admin_cap, 0);
+    config.set_utilization_cache_fresh_ms(&admin_cap, 1_000);
+    config.set_utilization_cache_decay_ms(&admin_cap, 1_000);
+
+    // u = 1.0 → full multiplier 2.0. Written at t = 0.
+    config.begin_valuation();
+    config.write_pool_utilization_cache(math::float_scaling!(), 0);
+    config.end_valuation();
+
+    assert_eq!(config.trade_utilization_multiplier(0), 2 * math::float_scaling!()); // age 0
+    assert_eq!(config.trade_utilization_multiplier(1_000), 2 * math::float_scaling!()); // at fresh edge
+    // Mid-decay at age 1_500: surcharge 1.0 × (1000-500)/1000 = 0.5 → mult 1.5.
+    assert_eq!(config.trade_utilization_multiplier(1_500), 1_500_000_000);
+    assert_eq!(config.trade_utilization_multiplier(2_000), math::float_scaling!()); // fully decayed
+
+    // Hard cliff: decay_ms = 0 → past fresh is immediately 1.0.
+    config.set_utilization_cache_decay_ms(&admin_cap, 0);
+    assert_eq!(config.trade_utilization_multiplier(1_001), math::float_scaling!());
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidUtilizationCacheFreshMs)]
+fun utilization_cache_fresh_ms_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_utilization_cache_fresh_ms(
+        &admin_cap,
+        config_constants::max_utilization_cache_fresh_ms!() + 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidUtilizationCacheDecayMs)]
+fun utilization_cache_decay_ms_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_utilization_cache_decay_ms(
+        &admin_cap,
+        config_constants::max_utilization_cache_decay_ms!() + 1,
+    );
+    abort 999
 }
 
 /// Product rounds up and clamps to `max_plp_fee_rate`. 2% × 3.0 = 6% → 5%.

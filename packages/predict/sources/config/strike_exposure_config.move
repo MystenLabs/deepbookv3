@@ -103,6 +103,10 @@ public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
 ///
+/// `utilization_multiplier` is a second, pool-wide scale composed after the
+/// expiry ramp (level-based cached `L/E`, not marginal impact). Both multipliers
+/// round down so the trader keeps the dust.
+///
 /// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
 /// before passing timestamps because the fee-rate helper derives time-to-expiry
 /// with exact subtraction.
@@ -112,8 +116,12 @@ public(package) fun trading_fee(
     probability: u64,
     quantity: u64,
     timestamp_ms: u64,
+    utilization_multiplier: u64,
 ): u64 {
-    math::mul_down(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
+    math::mul_down(
+        config.fee_rate(expiry_ms, probability, timestamp_ms, utilization_multiplier),
+        quantity,
+    )
 }
 
 /// Assert entry probability and leverage policy without deriving quantity-dependent
@@ -269,6 +277,11 @@ public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig,
 
 /// Return the 1e9-scaled per-unit trade fee.
 ///
+/// Composition: `max(base·√(p(1−p)), min_fee) × expiry_fee_multiplier ×
+/// utilization_multiplier`, each product rounded down. The utilization term is
+/// a second multiplier rather than a replacement — expiry proximity and pool
+/// risk-per-dollar are independent axes.
+///
 /// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
 /// liveness before this helper derives `expiry_ms - timestamp_ms`.
 fun fee_rate(
@@ -276,11 +289,15 @@ fun fee_rate(
     expiry_ms: u64,
     probability: u64,
     timestamp_ms: u64,
+    utilization_multiplier: u64,
 ): u64 {
     let raw_fee = config.raw_bernoulli_fee_rate(probability);
     let base = raw_fee.max(config.min_fee);
-    let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
-    math::mul_down(base, multiplier)
+    let with_expiry = math::mul_down(
+        base,
+        config.expiry_fee_multiplier(expiry_ms - timestamp_ms),
+    );
+    math::mul_down(with_expiry, utilization_multiplier)
 }
 
 fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {

@@ -981,7 +981,10 @@ fun compute_mint_quote(
 ): MintQuote {
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
-    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let utilization_multiplier = config.trade_utilization_multiplier(clock.timestamp_ms());
+    let raw_fee_amount = market
+        .strike_exposure
+        .trading_fee(entry_probability, quantity, clock, utilization_multiplier);
     let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
@@ -1128,12 +1131,14 @@ fun redeem(
         // the stake discount always leaves a discounted staker a positive net
         // even when the raw fee exceeds the payout (discount-then-clamp could
         // net them exactly zero).
+        let utilization_multiplier = config.trade_utilization_multiplier(clock.timestamp_ms());
         let fee_amount = market
             .strike_exposure
             .trading_fee(
                 range_probability,
                 close_quantity,
                 clock,
+                utilization_multiplier,
             )
             .min(redeem_amount);
         let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);

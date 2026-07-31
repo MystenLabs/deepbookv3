@@ -57,13 +57,23 @@ public struct ProtocolConfig has key {
     /// Last flush's pool-wide utilization `L/E`, in FLOAT_SCALING. Written only
     /// inside the capped flush (requires pricing every market), so it is at most
     /// one flush interval stale and cannot be refreshed permissionlessly. The
-    /// trade path reads this rather than touching `PoolVault`. Zero until the
-    /// first flush ever runs — which is multiplier 1.0 below the default
-    /// threshold, so a fresh deployment is an exact no-op.
+    /// trade path reads this rather than touching `PoolVault`. Meaningful only
+    /// when `utilization_cache_written` is set — a fresh deployment is multiplier
+    /// 1.0 (exact no-op) until the first flush.
     cached_pool_utilization: u64,
     /// `epoch_timestamp_ms` of the flush that wrote `cached_pool_utilization`.
-    /// Zero until the first flush.
+    /// Not a liveness signal on its own: timestamp 0 is a valid clock value in
+    /// tests (and theoretically at genesis), so "never written" is
+    /// `utilization_cache_written == false`.
     cached_pool_utilization_ms: u64,
+    /// Set by the first flush that writes the utilization cache. Distinguishes
+    /// "never flushed" from "flushed at timestamp 0".
+    utilization_cache_written: bool,
+    /// Age below which the trade path trusts `cached_pool_utilization` in full.
+    utilization_cache_fresh_ms: u64,
+    /// Window after `utilization_cache_fresh_ms` over which the trade-path
+    /// utilization surcharge decays linearly to zero. Zero is a hard cliff.
+    utilization_cache_decay_ms: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
@@ -428,6 +438,30 @@ public fun set_utilization_threshold(
     config.utilization_threshold = value;
 }
 
+/// Set how long the trade path trusts a cached utilization in full.
+public fun set_utilization_cache_fresh_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_utilization_cache_fresh_ms(value);
+    config.utilization_cache_fresh_ms = value;
+}
+
+/// Set the post-fresh decay window for the trade-path utilization surcharge.
+public fun set_utilization_cache_decay_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_utilization_cache_decay_ms(value);
+    config.utilization_cache_decay_ms = value;
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -456,6 +490,10 @@ public(package) fun cached_pool_utilization(config: &ProtocolConfig): u64 {
 
 public(package) fun cached_pool_utilization_ms(config: &ProtocolConfig): u64 {
     config.cached_pool_utilization_ms
+}
+
+public(package) fun utilization_cache_written(config: &ProtocolConfig): bool {
+    config.utilization_cache_written
 }
 
 /// Linear ramp from 1.0 at `utilization_threshold` to `utilization_max_multiplier`
@@ -501,6 +539,45 @@ public(package) fun write_pool_utilization_cache(
     config.assert_valuation_in_progress();
     config.cached_pool_utilization = utilization;
     config.cached_pool_utilization_ms = timestamp_ms;
+    config.utilization_cache_written = true;
+}
+
+/// Trade-path utilization multiplier from the flush cache, with staleness decay.
+///
+/// - Cache never written: 1.0 — fresh deployments are a no-op.
+/// - Age ≤ `fresh_ms`: full `utilization_multiplier(cached_u)`.
+/// - Age in `(fresh_ms, fresh_ms + decay_ms)`: the surcharge `(mult − 1)` decays
+///   linearly to zero (multiplier → 1.0). Trusting an old crisis number
+///   indefinitely is worse than not charging.
+/// - Age ≥ `fresh_ms + decay_ms`, or `decay_ms == 0` past fresh: 1.0.
+///
+/// Level-based, not marginal: the trade is charged on the cached pool-wide `u`,
+/// not on how much this position moves it.
+public(package) fun trade_utilization_multiplier(config: &ProtocolConfig, now_ms: u64): u64 {
+    if (!config.utilization_cache_written) return math::float_scaling!();
+
+    let cached_ms = config.cached_pool_utilization_ms;
+    let age = now_ms.saturating_sub(cached_ms);
+    let full = config.utilization_multiplier(config.cached_pool_utilization);
+    if (age <= config.utilization_cache_fresh_ms) return full;
+
+    let decay_ms = config.utilization_cache_decay_ms;
+    if (decay_ms == 0) return math::float_scaling!();
+
+    let elapsed_in_decay = age - config.utilization_cache_fresh_ms;
+    if (elapsed_in_decay >= decay_ms) return math::float_scaling!();
+
+    let surcharge = full - math::float_scaling!();
+    let remaining = math::mul_div_down(surcharge, decay_ms - elapsed_in_decay, decay_ms);
+    math::float_scaling!() + remaining
+}
+
+public(package) fun utilization_cache_fresh_ms(config: &ProtocolConfig): u64 {
+    config.utilization_cache_fresh_ms
+}
+
+public(package) fun utilization_cache_decay_ms(config: &ProtocolConfig): u64 {
+    config.utilization_cache_decay_ms
 }
 
 public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
@@ -631,6 +708,9 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         utilization_threshold: config_constants::default_utilization_threshold!(),
         cached_pool_utilization: 0,
         cached_pool_utilization_ms: 0,
+        utilization_cache_written: false,
+        utilization_cache_fresh_ms: config_constants::default_utilization_cache_fresh_ms!(),
+        utilization_cache_decay_ms: config_constants::default_utilization_cache_decay_ms!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),

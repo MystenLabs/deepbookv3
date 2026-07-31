@@ -15,14 +15,21 @@ The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at cr
 ```text
 base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
 ramped_rate     = base_fee_rate * expiry_fee_multiplier(time_to_expiry)   (>= base_fee_rate)
-trading_fee     = ramped_rate * quantity
+utilized_rate   = ramped_rate * trade_utilization_multiplier(cached_u, age)  (>= ramped_rate)
+trading_fee     = utilized_rate * quantity
 
 fee_after_disc  = trading_fee - trading_fee * (benefit_ratio * max_fee_discount)   (staking)
 builder_fee     = min( fee_after_disc * builder_fee_multiplier , quantity * max_builder_fee_rate )
 congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
 ```
 
-The base trading fee, the expiry ramp, and the staking discount together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
+The base trading fee, the expiry ramp, the utilization multiplier, and the staking discount together set the **fee rate** a trader pays. The utilization term is a **second multiplier** composed after the expiry ramp — pool risk-per-dollar and expiry proximity are independent axes — and rounds down so the trader keeps the dust. It is **level-based** (charged on the cached pool-wide `u`), not marginal: a realistic trade's impact on `L/E` is tiny, and a marginal-impact charge on a per-unit rate would be roughly quadratic in size.
+
+The cache is written by each flush onto `ProtocolConfig` (already on the trade path as a read-only reference — no `PoolVault` dependency, so distinct expiries keep executing in parallel). It is at most one flush interval stale and not permissionlessly refreshable. **Staleness policy:** within `utilization_cache_fresh_ms` (default 1h) the trade path trusts the cached multiplier in full; over the following `utilization_cache_decay_ms` (default 1h) the surcharge `(mult − 1)` decays linearly to zero; past that window the multiplier is 1.0. Trusting an old crisis number indefinitely is worse than not charging. A fresh deployment with no cache written behaves as multiplier 1.0.
+
+The feedback loop this closes: thin cushion → risk costs more on new trades → LP returns rise → capital returns and new risk slows → cushion rebuilds.
+
+The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
 
 ## 1. Base trading fee — a variance (Bernoulli) fee
 

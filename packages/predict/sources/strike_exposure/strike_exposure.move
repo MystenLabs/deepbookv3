@@ -271,12 +271,14 @@ public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
 /// Return the raw per-trade fee for a live price and quantity.
 ///
 /// Fee collection is expiry-market payment accounting; exposure only owns the
-/// snapshotted config needed to price it.
+/// snapshotted config needed to price it. `utilization_multiplier` is threaded
+/// from `ProtocolConfig`'s trade-path cache by the caller.
 public(package) fun trading_fee(
     exposure: &StrikeExposure,
     probability: u64,
     quantity: u64,
     clock: &Clock,
+    utilization_multiplier: u64,
 ): u64 {
     exposure
         .config
@@ -285,6 +287,7 @@ public(package) fun trading_fee(
             probability,
             quantity,
             clock.timestamp_ms(),
+            utilization_multiplier,
         )
 }
 

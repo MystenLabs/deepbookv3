@@ -37,6 +37,8 @@ const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
 const EInvalidUtilizationMaxMultiplier: u64 = 28;
 const EInvalidUtilizationThreshold: u64 = 29;
+const EInvalidUtilizationCacheFreshMs: u64 = 30;
+const EInvalidUtilizationCacheDecayMs: u64 = 31;
 
 // === Fees ===
 
@@ -130,6 +132,41 @@ public(package) fun assert_utilization_threshold(value: u64) {
     assert!(
         value >= min_utilization_threshold!() && value <= max_utilization_threshold!(),
         EInvalidUtilizationThreshold,
+    );
+}
+
+/// Age below which the trade path trusts the cached utilization in full.
+/// Default one hour — roughly "a few flush intervals" under any plausible
+/// keeper cadence; the cadence itself is unsettled (P-27), so this is
+/// admin-tunable rather than tied to a compiled flush period.
+public(package) macro fun default_utilization_cache_fresh_ms(): u64 { 3_600_000 }
+
+public(package) macro fun min_utilization_cache_fresh_ms(): u64 { 0 }
+
+/// One week. Beyond this an operator is no longer "a late flush" — they have
+/// stopped flushing, and the trade path should not keep a crisis surcharge alive.
+public(package) macro fun max_utilization_cache_fresh_ms(): u64 { 604_800_000 }
+
+public(package) fun assert_utilization_cache_fresh_ms(value: u64) {
+    assert!(
+        value >= min_utilization_cache_fresh_ms!() && value <= max_utilization_cache_fresh_ms!(),
+        EInvalidUtilizationCacheFreshMs,
+    );
+}
+
+/// Window after `fresh_ms` over which the utilization surcharge decays linearly
+/// to zero (multiplier → 1.0). Default one hour. Zero means a hard cliff: past
+/// `fresh_ms` the trade path immediately treats the cache as multiplier 1.0.
+public(package) macro fun default_utilization_cache_decay_ms(): u64 { 3_600_000 }
+
+public(package) macro fun min_utilization_cache_decay_ms(): u64 { 0 }
+
+public(package) macro fun max_utilization_cache_decay_ms(): u64 { 604_800_000 }
+
+public(package) fun assert_utilization_cache_decay_ms(value: u64) {
+    assert!(
+        value >= min_utilization_cache_decay_ms!() && value <= max_utilization_cache_decay_ms!(),
+        EInvalidUtilizationCacheDecayMs,
     );
 }
 

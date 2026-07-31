@@ -1,8 +1,6 @@
 # Utilization-scaled fee multiplier — design note
 
-Status: **Phase 1 landed** (LP withdraw fee multiplier + `ProtocolConfig`
-utilization cache). Phase 2 (trader-side multiplier reading the cache) is a
-follow-on PR.
+Status: **Landed** (Phase 1 LP multiplier + Phase 2 trader multiplier).
 
 The earlier recommendation against a trader-side application assumed either
 funnelling trades through `PoolVault` or a per-expiry ratio. Phase 1 caches
@@ -61,11 +59,14 @@ inside the valuation lock.
 Defaults: `utilization_max_multiplier = 1.0` (exact no-op), threshold `0.8`,
 max multiplier ceiling `3.0`.
 
-## Phase 2 (follow-on)
+## Phase 2 (landed)
 
-Read the cached `u` on mint/redeem and compose a second multiplier onto the
-existing trade fee. Do not add `PoolVault` to the trade path. Propose an
-explicit staleness policy for an unusually old cache (decay toward 1.0).
+Read the cached `u` on mint/redeem via `trade_utilization_multiplier`. Compose
+as a second multiplier after the expiry ramp; round the product down. Staleness
+policy: full trust for `utilization_cache_fresh_ms` (default 1h), then linear
+decay of the surcharge to zero over `utilization_cache_decay_ms` (default 1h).
+A never-written cache (`utilization_cache_written == false`) is multiplier 1.0
+— timestamp 0 is a valid clock value and cannot mean "unset".
 
 ## Contention note
 

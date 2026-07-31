@@ -154,6 +154,7 @@ fun trading_fee_probability_above_one_aborts() {
         float!() + 1,
         test_constants::mint_quantity(),
         test_constants::now_ms(),
+        float!(), // utilization multiplier 1.0
     );
     abort 999
 }
@@ -171,6 +172,7 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
             float!(),
             float!(),
             test_constants::now_ms(),
+            float!(), // utilization multiplier 1.0
         ),
         config_constants::default_min_fee!(),
     );

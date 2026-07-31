@@ -373,6 +373,37 @@ public fun set_utilization_threshold_bundle(self: &Fixture, market: &mut MarketB
     self.set_utilization_threshold(&mut market.config, value);
 }
 
+/// Set the trade-path utilization-cache fresh window through a market bundle.
+public fun set_utilization_cache_fresh_ms_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    value: u64,
+) {
+    market.config.set_utilization_cache_fresh_ms(&self.admin_cap, value);
+}
+
+/// Set the trade-path utilization-cache decay window through a market bundle.
+public fun set_utilization_cache_decay_ms_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    value: u64,
+) {
+    market.config.set_utilization_cache_decay_ms(&self.admin_cap, value);
+}
+
+/// Write the trade-path utilization cache through a market bundle. Engages and
+/// releases the valuation lock around the package write path, matching the
+/// flush's privilege without running a full valuation.
+public fun write_pool_utilization_cache_bundle(
+    market: &mut MarketBundle,
+    utilization: u64,
+    timestamp_ms: u64,
+) {
+    market.config.begin_valuation();
+    market.config.write_pool_utilization_cache(utilization, timestamp_ms);
+    market.config.end_valuation();
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(
