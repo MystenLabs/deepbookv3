@@ -331,6 +331,7 @@ class LifecycleTests(unittest.TestCase):
         trader_exit_code: int | None = None,
         trace_lines: dict[str, str] | None = None,
         retain_metrics: bool,
+        support_exit_code: int | None = None,
         time_values: list[float] | None = None,
         fail_manifest_write_at: int | None = None,
         cleanup_failure: OSError | None = None,
@@ -372,7 +373,7 @@ class LifecycleTests(unittest.TestCase):
 
         processes = []
         for pid, returncode in (
-            (1001, None),
+            (1001, support_exit_code),
             (1002, None),
             (1003, None),
             (1004, trader_exit_code),
@@ -387,7 +388,10 @@ class LifecycleTests(unittest.TestCase):
         def terminate(process):
             stopped.append(process)
             if retain_metrics:
-                (campaign_dir / "hub-metrics.json").write_text('{"snapshots":1}')
+                (campaign_dir / "hub-metrics.json").write_text(
+                    '{"schema_version":1,"elapsed_ms":1,'
+                    '"snapshots":1,"source":{}}'
+                )
 
         writes = 0
 
@@ -784,6 +788,18 @@ class LifecycleTests(unittest.TestCase):
             metadata["strategies"]["capacity-single"]["gasBudget"],
             live.GAS_REFILL_FLOOR,
         )
+        self.assertEqual(
+            metadata["cadences"],
+            [
+                {"id": 0, "windowSize": 3, "periodMs": 60_000},
+                {"id": 1, "windowSize": 3, "periodMs": 300_000},
+                {"id": 2, "windowSize": 3, "periodMs": 3_600_000},
+            ],
+        )
+        self.assertEqual(
+            live._grid_spec(metadata),
+            "60000:3,300000:3,3600000:3",
+        )
 
     def test_campaign_timeout_fails_semantically_incomplete_strategy(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -830,7 +846,14 @@ class LifecycleTests(unittest.TestCase):
                 },
                 timeout=1,
                 trace_lines={
-                    "keeper": '{"schema":1,"type":"heartbeat","ts":1}\n'
+                    "keeper": (
+                        '{"schema":1,"type":"liquidate","markets":1,'
+                        '"gas":10,"ts":1}\n'
+                    ),
+                    "trader": (
+                        '{"schema":1,"type":"fail","strategy":"fuzz",'
+                        '"tag":"RPC timeout","ts":2}\n'
+                    ),
                 },
                 retain_metrics=True,
                 time_values=[0.0, 0.0, 2.0, 3.0],
@@ -843,6 +866,48 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(manifest["termination"]["reason"], "no_progress")
             self.assertTrue(report["strategies"][0]["no_progress"])
             self.assertFalse(report["strategies"][0]["bounded_stop"])
+
+    def test_campaign_fails_when_support_exits_with_last_trader(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="support-race",
+                strategy="mint-only",
+                strategy_metadata={
+                    "maxOps": 1,
+                    "requiresTimeout": False,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
+                },
+                trader_exit_code=0,
+                support_exit_code=9,
+                retain_metrics=True,
+            )
+
+            manifest = case["manifest"]
+            self.assertEqual(case["result"], 1)
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(
+                manifest["termination"]["reason"],
+                "support_failure",
+            )
+            self.assertEqual(
+                manifest["outcome"]["support_exit_codes_before_teardown"]["hub"],
+                9,
+            )
+
+    def test_hub_metrics_require_current_schema_and_positive_evidence(self) -> None:
+        valid = {
+            "schema_version": 1,
+            "elapsed_ms": 1,
+            "snapshots": 1,
+            "source": {},
+        }
+        self.assertEqual(live._validate_hub_metrics(valid), valid)
+        with self.assertRaisesRegex(ValueError, "snapshots must be a positive"):
+            live._validate_hub_metrics({**valid, "snapshots": 0})
+        with self.assertRaisesRegex(ValueError, "unknown=unexpected"):
+            live._validate_hub_metrics({**valid, "unexpected": True})
 
     def test_campaign_manifest_completes_only_after_metrics_and_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:

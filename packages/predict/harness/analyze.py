@@ -35,11 +35,138 @@ COMP_CAP = 5_000_000_000
 SHORTEST_CADENCE_MS = 60_000
 KEEPER_BRICK_MIN_ELAPSED_MS = 2 * SHORTEST_CADENCE_MS
 
+_BASE_TRACE_FIELDS = {"schema", "type", "ts"}
+_KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
+    "settle": ({"market", "expiryMs"}, set()),
+    "fail": ({"tag"}, {"lane", "fatal"}),
+    "keeper-stall": ({"consecutiveDefers", "lastError"}, set()),
+    "flush": (
+        {
+            "marketCount",
+            "stragglers",
+            "poolValue",
+            "totalSupply",
+            "activeNav",
+            "gas",
+            "compGas",
+        },
+        set(),
+    ),
+    "liquidate": ({"markets", "gas"}, set()),
+}
+_GAS_BREAKDOWN_FIELDS = {
+    "computationCost",
+    "storageCost",
+    "storageRebate",
+    "nonRefundableStorageFee",
+    "net",
+}
+_TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
+    "expect": ({"strategy", "terminal"}, {"note"}),
+    "fail": (
+        {"strategy", "tag"},
+        {"adversarial", "family", "profile", "n", "book", "where", "fatal"},
+    ),
+    "mint": (
+        {
+            "strategy",
+            "market",
+            "direction",
+            "moneyness",
+            "prob",
+            "leverage",
+            "netPremium",
+            "gas",
+        },
+        set(),
+    ),
+    "redeem": ({"strategy", "market", "partial", "gas"}, {"retry"}),
+    "supply": ({"strategy", "amount", "gas"}, set()),
+    "withdraw": ({"strategy", "shares", "gas"}, set()),
+    "mintBatch": (
+        {"strategy", "n"},
+        {"gas", "compGas", "family", "profile", "book", "oog", "err", "nTarget"},
+    ),
+    "book": (
+        {"strategy", "family", "profile", "size", "markets", "market", "perMarket"},
+        set(),
+    ),
+    "nodes": (
+        {
+            "strategy",
+            "family",
+            "profile",
+            "size",
+            "nodeCount",
+            "markets",
+            "market",
+            "perMarket",
+        },
+        set(),
+    ),
+    "cleanout": (
+        {"strategy", "n", "nLiquidated", "nSettled", *_GAS_BREAKDOWN_FIELDS},
+        set(),
+    ),
+    "redeemAll": ({"strategy", "n", *_GAS_BREAKDOWN_FIELDS}, set()),
+    "claimRebate": ({"strategy", *_GAS_BREAKDOWN_FIELDS}, set()),
+    "cleanupRetry": (
+        {"strategy", "family", "profile", "phase", "attempt", "tag", "n"},
+        set(),
+    ),
+    "adversarial-accepted": ({"strategy", "mode", "market"}, set()),
+}
+_STRATEGY_PROGRESS_TYPES = {
+    "mint",
+    "redeem",
+    "supply",
+    "withdraw",
+    "mintBatch",
+    "book",
+    "nodes",
+    "cleanout",
+    "redeemAll",
+    "claimRebate",
+    "adversarial-accepted",
+}
+
 
 def _instances() -> list[Path]:
     if not config.INSTANCES_DIR.exists():
         return []
     return [d for d in config.INSTANCES_DIR.iterdir() if (d / "trace").exists()]
+
+
+def _validate_trace_record(record: dict, actor: str, location: str) -> None:
+    schemas = _KEEPER_TRACE_SCHEMAS if actor == "keeper" else _TRADER_TRACE_SCHEMAS
+    trace_type = record["type"]
+    if trace_type not in schemas:
+        raise ValueError(f"{location}: unknown {actor} trace type {trace_type!r}")
+    required, optional = schemas[trace_type]
+    missing = sorted(required - record.keys())
+    unknown = sorted(record.keys() - _BASE_TRACE_FIELDS - required - optional)
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if unknown:
+            details.append(f"unknown={','.join(unknown)}")
+        raise ValueError(
+            f"{location}: {actor} {trace_type} trace schema mismatch; "
+            + "; ".join(details)
+        )
+    if trace_type == "mintBatch":
+        required_variant = (
+            {"family", "profile", "book", "oog", "err"}
+            if record.get("oog") is True
+            else {"gas", "compGas"}
+        )
+        missing_variant = sorted(required_variant - record.keys())
+        if missing_variant:
+            raise ValueError(
+                f"{location}: {actor} {trace_type} trace schema mismatch; "
+                f"missing={','.join(missing_variant)}"
+            )
 
 
 def _load(trace_dir: Path) -> list[dict]:
@@ -61,6 +188,7 @@ def _load(trace_dir: Path) -> list[dict]:
                 raise ValueError(
                     f"{f}:{line_number}: trace record requires integer ts and string type"
                 )
+            _validate_trace_record(r, actor, f"{f}:{line_number}")
             r["_actor"] = actor
             records.append(r)
     return records
@@ -302,9 +430,16 @@ def _analyze_one(inst: Path) -> list[str]:
 
 
 def has_strategy_progress(instance: Path, strategy: str) -> bool:
-    """True when a trader emitted evidence beyond its declaration record."""
+    """True when a trader emitted a successful operation or intentional measurement."""
     return any(
-        record.get("strategy") == strategy and record.get("type") != "expect"
+        record.get("strategy") == strategy
+        and (
+            record.get("type") in _STRATEGY_PROGRESS_TYPES
+            or (
+                record.get("type") == "fail"
+                and isinstance(record.get("adversarial"), str)
+            )
+        )
         for record in _load(instance / "trace")
     )
 

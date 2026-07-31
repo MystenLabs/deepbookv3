@@ -87,12 +87,8 @@ def oracle_ready_localnet(
         yield context
 
 
-# Cadence id -> period ms (for the updater grid spec).
-_CADENCE_PERIOD_MS = {0: 60_000, 1: 300_000, 2: 3_600_000, 3: 86_400_000, 4: 604_800_000, 5: 2_592_000_000}
-
-
 def _read_meta() -> dict:
-    """Read the TS registry — { strategies: {...}, cadences: [{id, windowSize}] } — by running
+    """Read the TS registry — { strategies: {...}, cadences: [{id, windowSize, periodMs}] } — by running
     strategies/meta.ts, the single source of truth for runner config + the enabled cadence set."""
     run = subprocess.run(
         ["npx", "tsx", "strategies/meta.ts"], cwd=str(config.TS_DIR), capture_output=True, text=True
@@ -106,7 +102,33 @@ def _read_meta() -> dict:
 def _grid_spec(meta: dict) -> str:
     """Oracle GRID_SPEC ('periodMs:count,...') from the enabled cadence set — each cadence's
     windowSize-period time horizon, partitioned by cadence rank (prod 1m/5m/1h)."""
-    return ",".join(f"{_CADENCE_PERIOD_MS[c['id']]}:{c['windowSize']}" for c in meta["cadences"])
+    return ",".join(f"{c['periodMs']}:{c['windowSize']}" for c in meta["cadences"])
+
+
+def _validate_hub_metrics(value: object) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("hub metrics must be an object")
+    expected = {"schema_version", "elapsed_ms", "snapshots", "source"}
+    missing = sorted(expected - value.keys())
+    unknown = sorted(value.keys() - expected)
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if unknown:
+            details.append(f"unknown={','.join(unknown)}")
+        raise ValueError("hub metrics schema mismatch; " + "; ".join(details))
+    if value["schema_version"] != 1:
+        raise ValueError(
+            f"unsupported hub metrics schema {value['schema_version']!r}"
+        )
+    if type(value["elapsed_ms"]) is not int or value["elapsed_ms"] < 0:
+        raise ValueError("hub metrics elapsed_ms must be a non-negative integer")
+    if type(value["snapshots"]) is not int or value["snapshots"] <= 0:
+        raise ValueError("hub metrics snapshots must be a positive integer")
+    if not isinstance(value["source"], dict):
+        raise ValueError("hub metrics source must be an object")
+    return value
 
 
 def _terminate_group(p: subprocess.Popen) -> None:
@@ -563,11 +585,6 @@ def campaign(
             deadline = (time.time() + timeout) if timeout > 0 else None
             last_gas = 0.0
             while any(trader.poll() is None for _, trader in traders_procs):
-                if deadline and time.time() >= deadline:
-                    termination_reason = "timeout"
-                    timed_out = True
-                    print("campaign: timeout reached; stopping.")
-                    break
                 dead_support = [
                     (name, proc.returncode)
                     for name, proc in support
@@ -578,6 +595,11 @@ def campaign(
                     operational_failed = True
                     print(f"campaign: support process died: {dead_support}; stopping.")
                     break
+                if deadline and time.time() >= deadline:
+                    termination_reason = "timeout"
+                    timed_out = True
+                    print("campaign: timeout reached; stopping.")
+                    break
                 now = time.time()
                 if now - last_gas >= 30:
                     last_gas = now
@@ -587,6 +609,15 @@ def campaign(
 
             trader_exit_codes = {name: proc.poll() for name, proc in traders_procs}
             support_exit_codes = {name: proc.poll() for name, proc in support}
+            dead_support = [
+                (name, support_exit_codes[name])
+                for name, _ in support
+                if support_exit_codes[name] is not None
+            ]
+            if dead_support:
+                termination_reason = "support_failure"
+                operational_failed = True
+                print(f"campaign: support process died: {dead_support}; stopping.")
             strategy_progress = {
                 name: analyze.has_strategy_progress(
                     Path(contexts[name]["instance_dir"]),
@@ -621,15 +652,16 @@ def campaign(
                     and not strategy_progress[name]
                 )
             ]
-            if failed:
-                termination_reason = "trader_failure"
-                operational_failed = True
-            elif incomplete:
-                termination_reason = "incomplete"
-                operational_failed = True
-            elif no_progress:
-                termination_reason = "no_progress"
-                operational_failed = True
+            if not dead_support:
+                if failed:
+                    termination_reason = "trader_failure"
+                    operational_failed = True
+                elif incomplete:
+                    termination_reason = "incomplete"
+                    operational_failed = True
+                elif no_progress:
+                    termination_reason = "no_progress"
+                    operational_failed = True
             print(
                 f"campaign: completed={completed or 'none'} failed={failed or 'none'} "
                 f"bounded_stop={bounded or 'none'} incomplete={incomplete or 'none'} "
@@ -658,9 +690,9 @@ def campaign(
             fatal_error = runtime_cleanup_error
     hub_metrics_error: str | None = None
     try:
-        hub_metrics = json.loads(hub_metrics_path.read_text())
-        if not isinstance(hub_metrics, dict):
-            raise ValueError("hub metrics must be an object")
+        hub_metrics = _validate_hub_metrics(
+            json.loads(hub_metrics_path.read_text())
+        )
     except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
         hub_metrics_error = f"{type(exc).__name__}: {exc}"
         if not operational_failed:

@@ -21,6 +21,7 @@ async function main() {
   const start = Date.now();
   let writes = 0;
   const writeMetrics = () => atomicWriteFile(HUB_METRICS, JSON.stringify({
+    schema_version: 1,
     elapsed_ms: Date.now() - start,
     snapshots: writes,
     source: source.diagnostics?.() ?? {},

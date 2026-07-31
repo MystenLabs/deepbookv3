@@ -26,8 +26,8 @@ const BS_UNDERLYING_ID = 1;
 
 // Public, versioned Block Scholes testnet trust triple. The subscription's
 // `{network, pkg_ver}` selects this verifier deployment on the provider side;
-// startup reads the shared registry over Sui gRPC and refuses a paused, wrong-
-// package, or malformed signer configuration before accepting any market data.
+// startup fail-fast reads the shared registry over Sui gRPC, and every signed
+// batch re-reads it so pause and signer rotation take effect without a restart.
 const BS_PROVIDER_PROFILE = {
   name: "testnet-v1",
   network: "testnet" as const,
@@ -36,6 +36,27 @@ const BS_PROVIDER_PROFILE = {
   registryId: "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
   grpcUrl: "https://fullnode.testnet.sui.io:443",
 };
+
+export function providerPublicKeyFromRegistryObject(result: unknown): Uint8Array {
+  const object = result as any;
+  const expectedType = `${BS_PROVIDER_PROFILE.packageId}::registry::SignerRegistry`;
+  const objectType = object?.objectType ?? object?.type ?? "";
+  if (objectType && objectType !== expectedType) {
+    throw new Error(`Block Scholes registry type mismatch: ${objectType}`);
+  }
+  const json = object?.json?.fields ?? object?.json;
+  if (!json || json.paused !== false) {
+    throw new Error("Block Scholes provider registry is paused or unreadable");
+  }
+  if (typeof json.signer_pubkey !== "string") {
+    throw new Error("Block Scholes provider registry has no signer key");
+  }
+  const publicKey = Uint8Array.from(Buffer.from(json.signer_pubkey, "base64"));
+  if (publicKey.length !== 33 || (publicKey[0] !== 2 && publicKey[0] !== 3)) {
+    throw new Error("Block Scholes provider registry signer key is malformed");
+  }
+  return publicKey;
+}
 
 export interface Svi {
   alpha: number;
@@ -312,7 +333,11 @@ export class DirectWsSource implements MarketSource {
   #acknowledgedSids = new Set<string>();
   #retiredSids = new Map<string, number>();
   #pendingAcks = new Map<number, PendingAck>();
-  #providerPublicKey: Uint8Array | null = null;
+  #registryClient = new SuiGrpcClient({
+    baseUrl: BS_PROVIDER_PROFILE.grpcUrl,
+    network: BS_PROVIDER_PROFILE.network,
+  });
+  #signedBatchQueue: Promise<void> = Promise.resolve();
   #bsOpen = false;
   #bsStartedAtMs = 0;
   #bsSubId = 1;
@@ -328,7 +353,7 @@ export class DirectWsSource implements MarketSource {
 
   async start(expiries: number[]): Promise<void> {
     this.#expiries = expiries;
-    this.#providerPublicKey = await this.#loadProviderPublicKey();
+    await this.#loadProviderPublicKey(true);
     this.#pyth = await PythLazerClient.create({
       token: pythToken(),
       webSocketPoolConfig: { urls: ["wss://pyth-lazer.dourolabs.app/v1/stream"], numConnections: 1 },
@@ -349,37 +374,19 @@ export class DirectWsSource implements MarketSource {
     this.#startBs();
   }
 
-  async #loadProviderPublicKey(): Promise<Uint8Array> {
-    const client = new SuiGrpcClient({
-      baseUrl: BS_PROVIDER_PROFILE.grpcUrl,
-      network: BS_PROVIDER_PROFILE.network,
-    });
-    const { object } = await client.getObject({
+  async #loadProviderPublicKey(announce = false): Promise<Uint8Array> {
+    const { object } = await this.#registryClient.getObject({
       objectId: BS_PROVIDER_PROFILE.registryId,
       include: { json: true },
     });
-    const result = object as any;
-    const expectedType = `${BS_PROVIDER_PROFILE.packageId}::registry::SignerRegistry`;
-    const objectType = result.objectType ?? result.type ?? "";
-    if (objectType && objectType !== expectedType) {
-      throw new Error(`Block Scholes registry type mismatch: ${objectType}`);
+    const publicKey = providerPublicKeyFromRegistryObject(object);
+    if (announce) {
+      console.log(
+        `[bs-signed] trust ready profile=${BS_PROVIDER_PROFILE.name} ` +
+        `package=${BS_PROVIDER_PROFILE.packageId.slice(0, 10)} ` +
+        `registry=${BS_PROVIDER_PROFILE.registryId.slice(0, 10)}`,
+      );
     }
-    const json = result.json?.fields ?? result.json;
-    if (!json || json.paused !== false) {
-      throw new Error(`Block Scholes provider registry is paused or unreadable`);
-    }
-    if (typeof json.signer_pubkey !== "string") {
-      throw new Error(`Block Scholes provider registry has no signer key`);
-    }
-    const publicKey = Uint8Array.from(Buffer.from(json.signer_pubkey, "base64"));
-    if (publicKey.length !== 33 || (publicKey[0] !== 2 && publicKey[0] !== 3)) {
-      throw new Error(`Block Scholes provider registry signer key is malformed`);
-    }
-    console.log(
-      `[bs-signed] trust ready profile=${BS_PROVIDER_PROFILE.name} ` +
-      `package=${BS_PROVIDER_PROFILE.packageId.slice(0, 10)} ` +
-      `registry=${BS_PROVIDER_PROFILE.registryId.slice(0, 10)}`,
-    );
     return publicKey;
   }
 
@@ -423,7 +430,11 @@ export class DirectWsSource implements MarketSource {
         : frame.params
           ? [frame.params]
           : [];
-      for (const entry of entries) this.#handleSignedBatch(entry);
+      for (const entry of entries) {
+        this.#signedBatchQueue = this.#signedBatchQueue.then(() =>
+          this.#handleSignedBatch(entry),
+        );
+      }
     });
     ws.on("error", (error) => this.#fail(new Error(`Block Scholes socket error: ${String(error)}`)));
     ws.on("close", () => {
@@ -488,7 +499,7 @@ export class DirectWsSource implements MarketSource {
     console.log(`[bs-signed] acknowledged ${pending.clientId}: ${received.length} sid(s)`);
   }
 
-  #handleSignedBatch(entry: any): void {
+  async #handleSignedBatch(entry: any): Promise<void> {
     try {
       const data = entry?.data;
       const signature = entry?.signature as BsWireSignature | undefined;
@@ -496,9 +507,13 @@ export class DirectWsSource implements MarketSource {
         throw new Error("Block Scholes signed notification is missing data/signature");
       }
       const batch = providerBatchFromJson(data);
+      // Registry pause and signer rotation are live trust inputs. Re-read them for
+      // every serialized provider batch so an already-running hub cannot continue
+      // under a revoked key or reject a newly-authorized one until restart.
+      const providerPublicKey = await this.#loadProviderPublicKey();
       if (batch.kind === "value") {
         const updates: BsValueUpdate[] = batch.updates;
-        this.#verify(signature, batch.payload);
+        this.#verify(signature, batch.payload, providerPublicKey);
         this.#verifiedValueBatches++;
         for (const update of updates) {
           const sid = sidHex(update.sid);
@@ -525,7 +540,7 @@ export class DirectWsSource implements MarketSource {
         }
       } else {
         const updates: BsSviUpdate[] = batch.updates;
-        this.#verify(signature, batch.payload);
+        this.#verify(signature, batch.payload, providerPublicKey);
         this.#verifiedSviBatches++;
         for (const update of updates) {
           const sid = sidHex(update.sid);
@@ -571,14 +586,17 @@ export class DirectWsSource implements MarketSource {
     }
   }
 
-  #verify(signature: BsWireSignature, payload: Uint8Array): void {
+  #verify(
+    signature: BsWireSignature,
+    payload: Uint8Array,
+    providerPublicKey: Uint8Array,
+  ): void {
     if (
-      this.#providerPublicKey === null ||
       !verifyProviderBatchSignature({
         signature,
         payload,
         verifierPackageId: BS_PROVIDER_PROFILE.packageId,
-        expectedPublicKey: this.#providerPublicKey,
+        expectedPublicKey: providerPublicKey,
       })
     ) {
       throw new Error("Block Scholes batch signature did not match the live testnet registry");

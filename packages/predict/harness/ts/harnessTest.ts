@@ -5,7 +5,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
-import { HubSource, serializableSnapshot } from "./marketSource.js";
+import {
+  HubSource,
+  providerPublicKeyFromRegistryObject,
+  serializableSnapshot,
+} from "./marketSource.js";
 import { gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
 import { abortInfo } from "./trace.js";
@@ -97,4 +101,25 @@ test("hub snapshots require the current complete schema without provider credent
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("provider registry parsing observes signer rotation and pause", () => {
+  const encodedKey = (prefix: number, fill: number) =>
+    Buffer.concat([Buffer.from([prefix]), Buffer.alloc(32, fill)]).toString("base64");
+  const registry = (signerPublicKey: string, paused = false) => ({
+    json: { fields: { paused, signer_pubkey: signerPublicKey } },
+  });
+
+  const first = providerPublicKeyFromRegistryObject(
+    registry(encodedKey(2, 1)),
+  );
+  const rotated = providerPublicKeyFromRegistryObject(
+    registry(encodedKey(3, 2)),
+  );
+
+  assert.notDeepEqual(first, rotated);
+  assert.throws(
+    () => providerPublicKeyFromRegistryObject(registry(encodedKey(2, 1), true)),
+    /registry is paused/,
+  );
 });

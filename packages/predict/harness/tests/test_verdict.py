@@ -15,12 +15,36 @@ class VerdictTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             trace = Path(directory)
             path = trace / "keeper.jsonl"
-            path.write_text('{"schema":1,"type":"heartbeat","ts":1}\nnot-json\n')
+            path.write_text(
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                "not-json\n"
+            )
             with self.assertRaisesRegex(ValueError, "malformed trace JSON"):
                 analyze._load(trace)
 
-            path.write_text('{"type":"heartbeat","ts":1}\n')
+            path.write_text('{"type":"liquidate","markets":1,"gas":10,"ts":1}\n')
             with self.assertRaisesRegex(ValueError, "unsupported trace schema"):
+                analyze._load(trace)
+
+    def test_trace_loader_rejects_unknown_and_missing_type_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory)
+            path = trace / "keeper.jsonl"
+            path.write_text(
+                '{"schema":1,"type":"flush","marketCount":1,"stragglers":0,'
+                '"poolVaule":10,"totalSupply":10,"activeNav":10,"gas":10,'
+                '"compGas":10,"unexpected":true,"ts":1}\n'
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                r"missing=poolValue.*unknown=poolVaule,unexpected",
+            ):
+                analyze._load(trace)
+
+            path.write_text(
+                '{"schema":1,"type":"liquidate","markets":1,"ts":1}\n'
+            )
+            with self.assertRaisesRegex(ValueError, "missing=gas"):
                 analyze._load(trace)
 
     def test_classification_distinguishes_guards_invariants_and_transients(self) -> None:
@@ -110,11 +134,11 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"heartbeat","ts":1}\n'
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
-                '{"schema":1,"type":"expect","terminal":["dynamic_field:0"],"ts":2}\n'
-                '{"schema":1,"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+                '{"schema":1,"type":"expect","strategy":"capacity-tree","terminal":["dynamic_field:0"],"ts":2}\n'
+                '{"schema":1,"type":"fail","strategy":"capacity-tree","tag":"dynamic_field:0","ts":3}\n'
             )
             artifacts = instance / "artifacts" / "failed_transactions"
             artifacts.mkdir(parents=True)
@@ -154,11 +178,11 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"heartbeat","ts":1}\n'
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
-                '{"schema":1,"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
-                '{"schema":1,"type":"fail","tag":"dynamic_field:0","ts":3}\n'
+                '{"schema":1,"type":"expect","strategy":"capacity-tree","terminal":["cached objects limit"],"ts":2}\n'
+                '{"schema":1,"type":"fail","strategy":"capacity-tree","tag":"dynamic_field:0","ts":3}\n'
             )
             artifacts = instance / "artifacts" / "failed_transactions"
             artifacts.mkdir(parents=True)
@@ -193,12 +217,12 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"heartbeat","ts":1}\n'
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
-                '{"schema":1,"type":"expect","terminal":["cached objects limit"],"ts":2}\n'
-                '{"schema":1,"type":"fail","tag":"dynamic_field:0","ts":3}\n'
-                '{"schema":1,"type":"fail","tag":"coin:1","ts":4}\n'
+                '{"schema":1,"type":"expect","strategy":"capacity-tree","terminal":["cached objects limit"],"ts":2}\n'
+                '{"schema":1,"type":"fail","strategy":"capacity-tree","tag":"dynamic_field:0","ts":3}\n'
+                '{"schema":1,"type":"fail","strategy":"capacity-tree","tag":"coin:1","ts":4}\n'
             )
             artifacts = instance / "artifacts" / "failed_transactions"
             artifacts.mkdir(parents=True)
@@ -235,7 +259,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"heartbeat","ts":1}\n'
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
             )
 
             self.assertEqual(analyze.analyze([str(instance)], expect=["fuzz"]), 1)
@@ -270,10 +294,10 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"heartbeat","ts":1}\n'
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
-                '{"schema":1,"type":"mint","strategy":"fuzz","ts":2}\n'
+                '{"schema":1,"type":"supply","strategy":"fuzz","amount":1,"gas":10,"ts":2}\n'
             )
             deployment = {
                 "meta": {"chain_id": "local-chain", "rpc_port": 9000},
@@ -311,6 +335,24 @@ class VerdictTests(unittest.TestCase):
             run_manifest.write_manifest(manifest_path, manifest)
 
             self.assertEqual(analyze.analyze_manifest(manifest_path), 0)
+
+    def test_transient_failure_is_not_strategy_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory)
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "trader.jsonl").write_text(
+                '{"schema":1,"type":"fail","strategy":"fuzz",'
+                '"tag":"RPC timeout","ts":1}\n'
+            )
+
+            self.assertFalse(analyze.has_strategy_progress(instance, "fuzz"))
+
+            (trace / "trader.jsonl").write_text(
+                '{"schema":1,"type":"fail","strategy":"fuzz",'
+                '"adversarial":"wrong-sender","tag":"pricing:1","ts":1}\n'
+            )
+            self.assertTrue(analyze.has_strategy_progress(instance, "fuzz"))
 
 
 if __name__ == "__main__":

@@ -34,7 +34,9 @@ import {
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
 // keeper enables and rolls all three; each windowSize is a count of periods in
 // the future deployment horizon, not a target number of live markets.
-const CADENCE_IDS = [0, 1, 2];
+const CADENCE_IDS = Object.keys(CADENCES)
+  .map(Number)
+  .sort((a, b) => a - b);
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
 const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
