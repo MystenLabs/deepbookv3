@@ -35,6 +35,12 @@ public struct ProtocolConfig has key {
     /// Merged protocol + insurance reserve share of materialized terminal profit,
     /// in FLOAT_SCALING. The complement accrues to LPs.
     protocol_reserve_profit_share: u64,
+    /// Non-refundable fee charged when an LP supply or withdraw request is queued,
+    /// in FLOAT_SCALING. Same rate on both legs. Deducted from the escrowed asset
+    /// at request time (DUSDC → pool idle on supply; PLP burned on withdraw) and
+    /// never returned on fill, cancel, or limit expiry. Accrues to remaining PLP
+    /// holders. Independent of any fill-time PLP fee (DBU-688).
+    plp_request_entry_fee_rate: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
@@ -349,6 +355,19 @@ public fun set_protocol_reserve_profit_share(
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
+/// Set the non-refundable fee charged when an LP supply or withdraw request is
+/// queued. Valuation-locked so the rate cannot shift mid-flush.
+public fun set_plp_request_entry_fee_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_plp_request_entry_fee_rate(rate);
+    config.plp_request_entry_fee_rate = rate;
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -357,6 +376,10 @@ public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
 
 public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
     config.protocol_reserve_profit_share
+}
+
+public(package) fun plp_request_entry_fee_rate(config: &ProtocolConfig): u64 {
+    config.plp_request_entry_fee_rate
 }
 
 public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
@@ -477,6 +500,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
+        plp_request_entry_fee_rate: config_constants::default_plp_request_entry_fee_rate!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),

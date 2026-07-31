@@ -4,7 +4,7 @@ Every Predict trade — a mint or a live redeem — carries a trading fee, and m
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
-This page covers **per-trade** fees. The pool itself charges no LP-side fee: PLP supply and withdraw are priced at one exact pool-wide mark with no band or spread, documented in [./liquidity-and-nav.md](./liquidity-and-nav.md).
+This page covers **per-trade** fees. The pool also charges a non-refundable **LP request entry fee** when a supply or withdraw request is queued — pricing the free option of parking a limit on the pool's own NAV and prepaying per-flush re-evaluation. Fills are still priced at one exact pool-wide mark with no band or spread; see [the LP request entry fee](#the-lp-request-entry-fee) below and [./liquidity-and-nav.md](./liquidity-and-nav.md).
 
 ## Where fees come from
 
@@ -179,6 +179,22 @@ Cash routing at trade time:
 | Trading-loss rebate | funded from trader-paid trading fees | reserved on-chain; claimed on-chain after settlement | (drawn from reserve) | No |
 
 At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `net_premium` budget, capped to the account's available DUSDC before sizing, and pays trading fees, builder fees, and congestion surcharge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is claimed separately after all of that account's expiry positions are closed.
+
+## The LP request entry fee
+
+Everything above is charged on a *trade*. Queuing a PLP supply or withdraw request charges one further fee: a flat `plp_request_entry_fee_rate` (FLOAT_SCALING) applied to the submitted amount at request time, admin-tunable inside a hard `0..50 bps` envelope, shipping at **5 bps**. The same rate applies to both legs.
+
+Without a charge at queue entry, a standing request is a free option on the pool's own NAV — set a limit, wait, cancel if the mark drifts against you. A fill-only fee (when one is configured) does not price that wait; the rational response is to wait for a larger move. The entry fee prices the waiting, because a patient requester requeues every flush while a genuine LP queues once. Separately, every standing request is re-evaluated at each flush at the operator's expense whether it fills or not; the entry fee makes the requester prepay that.
+
+Mechanics:
+
+- **Supply** — the fee is deducted from the DUSDC payment before escrow and joins pool idle immediately. No new shares are issued against it.
+- **Withdraw** — the fee is burned as PLP immediately. Pool value is unchanged and total supply falls, so NAV per share rises for everyone who stays — that is how the charge accrues to the pool.
+- **Non-refundable.** Cancel, fill, and limit-expiry refunds return only the net escrow. Returning the fee when a request succeeds would make waiting free again whenever the wait works.
+- **Rounding** is up, to the pool (rounding policy R2).
+- **Minimum sizes** are checked on the pre-fee submitted amount; the post-fee escrow is guaranteed non-zero inside the envelope.
+
+The entry fee is independent of any fill-time PLP fee. Request limits (`min_plp_out` / `min_dusdc_out`) are compared against the post-entry-fee escrow (and, when a fill fee exists, against the post-fill-fee result).
 
 ## Related reading
 

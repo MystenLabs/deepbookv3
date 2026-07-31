@@ -17,6 +17,7 @@ const ERequestNotFound: u64 = 0;
 const EBelowMinSupplyRequest: u64 = 1;
 const EBelowMinWithdrawRequest: u64 = 2;
 const ENotRequestOwner: u64 = 3;
+const EZeroNetRequest: u64 = 4;
 
 const PAGE_CAPACITY: u64 = 64;
 
@@ -116,26 +117,55 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
     book.withdraw_queue.pending
 }
 
+/// Queue a supply request. The minimum size is checked on the submitted (pre-fee)
+/// amount; the non-refundable entry fee is split off, joined into pool idle, and the
+/// net is escrowed. Returns `(index, entry_fee)`.
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
+    ledger: &mut Ledger,
     payment: Coin<DUSDC>,
     account_id: ID,
     recipient: address,
     min_plp_out: u64,
-): u64 {
-    assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
-    book.supply_queue.enqueue(account_id, recipient, payment.into_balance(), min_plp_out)
+    entry_fee_rate: u64,
+): (u64, u64) {
+    let amount = payment.value();
+    assert!(amount >= constants::min_supply_request!(), EBelowMinSupplyRequest);
+    let fee = entry_fee_on(amount, entry_fee_rate);
+    // Envelope keeps fee < amount for any admitted request; still named so a widened
+    // envelope fails here rather than enqueueing a zero-net request.
+    assert!(amount > fee, EZeroNetRequest);
+    let mut escrow = payment.into_balance();
+    if (fee > 0) {
+        ledger.receive_idle(escrow.split(fee));
+    };
+    let index = book.supply_queue.enqueue(account_id, recipient, escrow, min_plp_out);
+    (index, fee)
 }
 
+/// Queue a withdraw request. The minimum size is checked on the submitted (pre-fee)
+/// amount; the non-refundable entry fee is burned immediately (pool value unchanged,
+/// total supply falls, NAV/share rises — accrues to remaining holders) and the net
+/// is escrowed. Returns `(index, entry_fee)` where `entry_fee` is in PLP units burned.
 public(package) fun request_withdraw<LP>(
     book: &mut LpBook<LP>,
     lp: Coin<LP>,
     account_id: ID,
     recipient: address,
     min_dusdc_out: u64,
-): u64 {
-    assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
-    book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance(), min_dusdc_out)
+    entry_fee_rate: u64,
+    ctx: &mut TxContext,
+): (u64, u64) {
+    let amount = lp.value();
+    assert!(amount >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
+    let fee = entry_fee_on(amount, entry_fee_rate);
+    assert!(amount > fee, EZeroNetRequest);
+    let mut escrow = lp.into_balance();
+    if (fee > 0) {
+        book.treasury_cap.burn(escrow.split(fee).into_coin(ctx));
+    };
+    let index = book.withdraw_queue.enqueue(account_id, recipient, escrow, min_dusdc_out);
+    (index, fee)
 }
 
 public(package) fun cancel_supply_request<LP>(
@@ -746,6 +776,14 @@ fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<u64> {
     math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|payout| {
         if (payout == 0) option::none() else option::some(payout)
     })
+}
+
+/// Entry fee on a submitted request amount, rounded up so dust biases to the pool
+/// (rounding policy R2). Zero rate is an exact no-op. The result never exceeds
+/// `amount`: `max_plp_request_entry_fee_rate` is well below `float_scaling`.
+fun entry_fee_on(amount: u64, rate: u64): u64 {
+    if (rate == 0) return 0;
+    math::mul_div_up(amount, rate, math::float_scaling!())
 }
 
 fun is_executable_mark(pool_value: u64, total_supply: u64): bool {

@@ -226,6 +226,10 @@ public fun setup_market(tick: u64): Fixture {
     // `window == 0` admin config); it is covered by the config unit tests and by
     // dedicated flow tests that re-enable it.
     config.set_template_no_leverage_window_ms(&admin_cap, 0);
+    // Existing LP flow tests pin pre-fee queue/drain arithmetic; zero the shipped
+    // 5 bps entry fee so they stay exact no-ops. Entry-fee coverage sets the rate
+    // explicitly in its own tests.
+    config.set_plp_request_entry_fee_rate(&admin_cap, 0);
     return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
@@ -353,6 +357,11 @@ public fun set_lp_request_limit_flush_attempts(
 /// Set the ceiling on LP-attributable pool value, through the real admin path.
 public fun set_max_lp_pool_value(self: &Fixture, config: &mut ProtocolConfig, max_pool_value: u64) {
     config.set_max_lp_pool_value(&self.admin_cap, max_pool_value);
+}
+
+/// Set the PLP request entry-fee rate through the real admin path.
+public fun set_plp_request_entry_fee_rate(self: &Fixture, config: &mut ProtocolConfig, rate: u64) {
+    config.set_plp_request_entry_fee_rate(&self.admin_cap, rate);
 }
 
 /// Queue an LP supply request through the production entrypoint, so a test covers the

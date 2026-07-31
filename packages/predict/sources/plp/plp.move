@@ -507,16 +507,17 @@ public fun lock_capital(
     vault_events::emit_capital_locked(vault.id(), amount);
 }
 
-/// Queue a supply request: pull `amount` DUSDC from account custody into queue
-/// escrow, recording the account's receive address as the fill recipient. The pull
-/// auto-settles any flush-delivered DUSDC first. The account receives minted PLP
-/// only at a mark that mints at least `min_plp_out` for the whole `amount` — a **price
-/// floor**, not a promise of that many shares: if the pool cap leaves room for only
-/// part of the deposit, the fill is proportionally smaller at the same price and the
+/// Queue a supply request: pull `amount` DUSDC from account custody, charge the
+/// non-refundable entry fee into pool idle, and escrow the net. The pull auto-settles
+/// any flush-delivered DUSDC first. The account receives minted PLP only at a mark that
+/// mints at least `min_plp_out` for the whole **escrowed** (post-entry-fee) amount — a
+/// **price floor**, not a promise of that many shares: if the pool cap leaves room for
+/// only part of the deposit, the fill is proportionally smaller at the same price and the
 /// remainder stays queued with its limit rescaled. At the shipped attempt count of one,
 /// a flush whose mark quotes less cancels and refunds the request there and then; a
-/// higher configured count lets it rest and retry that many flushes first. Returns the
-/// queue index, the handle used to cancel before the flush.
+/// higher configured count lets it rest and retry that many flushes first. The entry fee
+/// is never refunded on fill, cancel, or limit expiry. Returns the queue index, the
+/// handle used to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
@@ -537,29 +538,42 @@ public fun request_supply(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_supply(payment, account_id, recipient, min_plp_out);
+    let (index, entry_fee) = vault
+        .lp
+        .request_supply(
+            &mut vault.expiry_accounting,
+            payment,
+            account_id,
+            recipient,
+            min_plp_out,
+            config.plp_request_entry_fee_rate(),
+        );
     vault_events::emit_supply_requested(
         vault_id,
         account_id,
         recipient,
         index,
-        amount,
+        amount - entry_fee,
+        entry_fee,
         min_plp_out,
         vault.lp.supply_requests_pending(),
     );
     index
 }
 
-/// Queue a withdraw request: pull `amount` PLP shares from account custody into
-/// queue escrow, recording the account's receive address as the fill recipient.
-/// The pull auto-settles any flush-delivered PLP first. The account is paid only at a
-/// mark that quotes at least `min_dusdc_out` for the whole `amount` — a **price
+/// Queue a withdraw request: pull `amount` PLP shares from account custody, burn the
+/// non-refundable entry fee immediately, and escrow the net. The pull auto-settles any
+/// flush-delivered PLP first. Burning the fee leaves pool value unchanged and lowers
+/// total supply, so NAV/share rises for remaining holders — that is how the charge
+/// accrues to the pool. The account is paid only at a mark that quotes at least
+/// `min_dusdc_out` for the whole **escrowed** (post-entry-fee) amount — a **price
 /// floor**, not a promise of that much DUSDC: if idle liquidity covers only part of the
 /// payout, only the shares idle affords are burned, the fill is proportionally smaller
 /// at the same price, and the remainder stays queued with its limit rescaled. At the
 /// shipped attempt count of one, a flush whose mark quotes less cancels and refunds the
 /// request there and then; a higher configured count lets it rest and retry that many
-/// flushes first. Returns the queue index used to cancel before the flush.
+/// flushes first. The entry fee is never refunded. Returns the queue index used to
+/// cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
@@ -580,13 +594,23 @@ public fun request_withdraw(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_withdraw(lp, account_id, recipient, min_dusdc_out);
+    let (index, entry_fee) = vault
+        .lp
+        .request_withdraw(
+            lp,
+            account_id,
+            recipient,
+            min_dusdc_out,
+            config.plp_request_entry_fee_rate(),
+            ctx,
+        );
     vault_events::emit_withdraw_requested(
         vault_id,
         account_id,
         recipient,
         index,
-        amount,
+        amount - entry_fee,
+        entry_fee,
         min_dusdc_out,
         vault.lp.withdraw_requests_pending(),
     );

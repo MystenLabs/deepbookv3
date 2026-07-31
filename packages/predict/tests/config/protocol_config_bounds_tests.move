@@ -23,6 +23,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
+use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
@@ -431,6 +432,66 @@ fun template_trading_loss_rebate_rate_accepts_boundaries() {
         config_constants::max_trading_loss_rebate_rate!(),
     );
     destroy(snapshot);
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+// === PLP request entry fee ===
+//
+// Floor is 0, so there is no reachable below-min case for a `u64`; only the
+// above-max side aborts. Setter is valuation-locked like the fill-fee setters.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpRequestEntryFeeRate)]
+fun plp_request_entry_fee_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_plp_request_entry_fee_rate(
+        &admin_cap,
+        config_constants::max_plp_request_entry_fee_rate!() + 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_plp_request_entry_fee_rate_during_valuation_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.begin_valuation();
+    config.set_plp_request_entry_fee_rate(
+        &admin_cap,
+        config_constants::min_plp_request_entry_fee_rate!(),
+    );
+    abort 999
+}
+
+/// `entry_fee_on` subtracts the fee from the submitted amount; the envelope keeps
+/// the rate far below 1.0 so that never underflows. Pin full-scale rejection here.
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpRequestEntryFeeRate)]
+fun plp_request_entry_fee_rate_at_full_scale_is_rejected() {
+    config_constants::assert_plp_request_entry_fee_rate(math::float_scaling!());
+    abort 999
+}
+
+#[test]
+fun plp_request_entry_fee_rate_ships_at_five_bps_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    assert_eq!(config.plp_request_entry_fee_rate(), 500_000); // 5 bps
+
+    config.set_plp_request_entry_fee_rate(
+        &admin_cap,
+        config_constants::max_plp_request_entry_fee_rate!(),
+    );
+    assert_eq!(config.plp_request_entry_fee_rate(), 5_000_000);
+
+    config.set_plp_request_entry_fee_rate(
+        &admin_cap,
+        config_constants::min_plp_request_entry_fee_rate!(),
+    );
+    assert_eq!(config.plp_request_entry_fee_rate(), 0);
 
     return_shared(config);
     destroy(admin_cap);
