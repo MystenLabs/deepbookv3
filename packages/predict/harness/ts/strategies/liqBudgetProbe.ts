@@ -34,11 +34,22 @@ const TWO_HOURS_MS = 2 * 3_600_000;
 const MAX_BOOK = 5000; // EMaxActiveLeveragedOrders — the per-market index cap
 const START_BATCH = 40; // safely under the ~110-mint atomic-batch OOG ceiling at budget 24
 
+// After this many consecutive single-mint OOGs the wall is measured and the strategy holds. Without
+// it the probe submits a failing ~cap-sized tx every tick forever: the trader's gas coin drains (an
+// OOG still executes and charges), and the trace fills with duplicate wall records. Higher rungs
+// only cost more, so there is nothing left to learn once a 1-leg mint cannot fit.
+const WALL_CONFIRMATIONS = 3;
+
 export interface LiqBudgetArm {
   name: string;
   fund: bigint;
   // The arm's leverage profile — the ONLY difference between the healthy and adverse probes.
   instruction(ctx: StrategyCtx): Instruction;
+  // Declared terminal wall, when reaching it is this arm's PURPOSE. Omit when it is not: `analyze`
+  // fails a run VACUOUS if a declared wall goes unreached, and whitelists it when it is hit — so
+  // declaring a wall an arm is not expected to reach turns every clean run red AND suppresses the
+  // surprise if it ever does happen.
+  expect?: { terminal: string[]; note?: string };
 }
 
 export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
@@ -49,6 +60,7 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
   let lockedId: string | null = null;
   let minted = 0;
   let batch = START_BATCH;
+  let wallHits = 0; // consecutive single-mint OOGs; reset by any success
 
   function targetMarket(ctx: StrategyCtx): Mkt | null {
     if (lockedId) {
@@ -84,10 +96,11 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
     tickMs: 1500,
     maxOps: 0, // duration-only: fill, then hold and keep probing as the budget ladder steps up
     fund: arm.fund,
-    expect: { terminal: ["InsufficientGas"], note: "per-tx computation cap on the ambient liquidation pass" },
+    ...(arm.expect ? { expect: arm.expect } : {}),
     async tick(ctx) {
       const market = targetMarket(ctx);
       if (!market || !ctx.snapshot()) return null;
+      if (batch === 1 && wallHits >= WALL_CONFIRMATIONS) return null; // wall measured — hold
       const want = Math.min(batch, MAX_BOOK - minted);
       if (want <= 0) return null; // at the index cap — hold; the ladder keeps re-probing
       const legs: MintLeg[] = [];
@@ -101,13 +114,15 @@ export function makeLiqBudgetStrategy(arm: LiqBudgetArm): Strategy {
         // ordinary mint's cost, which is the number the ceiling is set from.
         await ctx.submitMintBatch(market, legs, { minted, batch });
         minted += legs.length;
+        wallHits = 0;
         ctx.trace({ type: "book", size: minted, market: market.id });
         return "mint";
       } catch (e) {
         if (isOog(e)) {
-          // The cap: halve and retry smaller. At batch==1 this IS the wall — keep probing so
-          // every later rung of the ladder gets a data point at the same book.
+          // The cap: halve and retry smaller. At batch==1 there is nothing left to halve — that
+          // IS the wall, so confirm it a few times and then hold.
           ctx.trace({ type: "mintBatch", n: legs.length, minted, batch, oog: true, err: errorTag(e) });
+          if (batch === 1) wallHits += 1;
           batch = Math.max(1, Math.floor(batch / 2));
         } else {
           ctx.trace({ type: "fail", tag: errorTag(e), n: legs.length, minted, batch });

@@ -8,6 +8,13 @@
 // Because nothing liquidates, `minted` here IS the active leveraged book, which makes this the
 // arm that yields the clean cost(budget, book) surface. The adverse branch is liq-budget-adverse.
 //
+// This arm declares NO terminal wall, deliberately. At the pre-memo `correction_value` slope
+// (~1.09M/order, the closest measured analogue) a scan-only pass at the 3,000 budget max costs
+// ~73% of the computation cap — expensive, but it fits. So the wall is not expected here, and a
+// declared-but-unreached wall would fail every clean run VACUOUS. It also means an OOG on this arm
+// is genuine news — a scan-only mint that cannot fit is a bigger finding than the one being
+// measured — and leaving it undeclared is what lets the bug oracle flag it instead of whitelisting it.
+//
 // Run: TRADE_LIQ_BUDGET_STAGES=0:24,900:512,1800:1500,2700:3000 SIM_GAS_BUDGET=50000000000
 //      python3 -m harness campaign liq-budget-sweep --timeout 3600
 import { type Instruction } from "../resolver.js";

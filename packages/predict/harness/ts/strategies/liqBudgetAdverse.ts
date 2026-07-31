@@ -21,6 +21,11 @@ import { makeLiqBudgetStrategy } from "./liqBudgetProbe.js";
 export default makeLiqBudgetStrategy({
   name: "liq-budget-adverse",
   fund: 20_000_000_000_000n,
+  // Reaching the computation cap IS this arm's purpose, so it is declared. A VACUOUS verdict here
+  // is still a result — it says the removal branch stays affordable to the top of the allowed
+  // budget range — but it is worth failing the run for, because the more likely cause is that
+  // drift never knocked enough orders under their floor to build the branch under test.
+  expect: { terminal: ["InsufficientGas"], note: "per-tx computation cap on a liquidating ambient pass" },
   instruction: (ctx): Instruction => {
     const p = ctx.rand(0.45, 0.55); // near the money -> high static floor -> tight knock-out level
     return {
