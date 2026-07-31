@@ -1293,6 +1293,64 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-26: The payout-tree cap is derived from the per-transaction object budget
+
+- **Trigger state:** one market's `plp::value_expiry` loads more distinct
+  dynamic-field children than a transaction may hold. The worst case is
+  `max_payout_tree_nodes` (the full `walk_linear`) + `ceil(max_active_leveraged_orders
+  / 64)` liquidation pages (the `correction_value` scan) + the market's base children.
+- **Controller:** partly external (the Sui constant), partly ours (the caps). Reaching
+  it is market-controlled: any actor may mint boundaries up to the node cap, and at
+  the compiled floors ~999 near-certain orders cost ~1,000 DUSDC of recoverable
+  premium plus ~5 DUSDC of fees.
+- **Blast radius:** the market becomes permanently un-valuable, and `finish_flush`
+  requires every snapshotted market valued, so LP supply and withdraw freeze
+  **pool-wide** until that market expires and is swept. This is strictly worse than a
+  degraded fill, which is why the response is a hard bound rather than a tuned one.
+- **Response:** rung 3 — make the over-budget state unrepresentable.
+  `max_payout_tree_nodes` is no longer a chosen number; it is
+  `object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
+  (1,000 − 79 − 40 = **881**). Raising `max_active_leveraged_orders` now shrinks the
+  node cap automatically instead of silently pushing the flush over the ceiling.
+- **Reasoning:** RP-25 removed the *joint* budget across markets but left the
+  *per-market* one at a number that could not fit — 1,000 nodes alone equalled the
+  whole budget, before pages and base children. Picking a smaller literal would have
+  fixed today's arithmetic and left the two caps free to drift apart again; deriving
+  it means the invariant is the definition. The cost is accepted and real: ~12% fewer
+  distinct strike boundaries per market (1,000 → 881), which tightens wide-strike
+  books that Q14 already records as pressing the old cap. Correctness wins because
+  the failure mode is a pool-wide LP freeze, not a narrower grid.
+- **Risk profile:** `MEASURED` for the two terms the derivation rests on — the
+  1,000-child budget and the ~18 base children implied by the single-market abort
+  boundary, both from `evidence/c1-object-cache-flush-2026-07-07.md`. `UNMEASURED`
+  for `valuation_base_children_reserve` itself: source inspection puts the real base
+  under 10 (the registered-expiry row, three enclosing `Table` objects, per-market
+  bookkeeping), the C-1 figure of ~18 came from a fuller PTB that also carried
+  `start_pool_valuation`, `finish_flush` and the LP-queue drain, and the reserve is
+  set to 40 — several times either figure — because the cost of being wrong is
+  asymmetric. C-4 stays open to tighten it against a measured single-market
+  `value_expiry`.
+- **Rejected: leaving the cap and deferring to measurement.** That was C-4's original
+  plan, and it leaves the pool-wide freeze reachable on `main` in the meantime for the
+  price of the fees. Rejected: **excluding an un-valuable market from the flush** —
+  the pool NAV would then understate true value, reintroducing exactly the
+  approximate-NAV error the exact mark exists to avoid (audit L10). Rejected:
+  **chunking the tree walk across transactions** — `PriceMemo` has no `store` and the
+  walk's in-order contract is what `cached_up_price` binary-searches, so a resumable
+  walk is a redesign of the NAV primitive, not a cap change.
+- **Pinning tests:** `valuation_capacity_tests.move` —
+  `one_market_valuation_fits_the_object_budget`,
+  `the_node_cap_is_exactly_the_remaining_budget`,
+  `liquidation_pages_track_the_leveraged_order_cap`. Mutation-checked: restoring the
+  old literal `1_000` fails all three. Note `sui move test` does not enforce the
+  object-runtime limit, which is precisely why the budget is asserted as arithmetic
+  rather than left to a localnet run nobody repeats.
+- **Reopen when:** C-4 measures the base children and the reserve can be tightened; or
+  Sui changes `object_runtime_max_num_cached_objects`; or P-17 lands and honest books
+  need fewer nodes, which changes what the cap costs rather than what it must be.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

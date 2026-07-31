@@ -450,27 +450,37 @@ trust coupling.
 
 ## Capacity and Liveness Findings
 
-### C-4: Per-market `value_expiry` node budget is unsized against one transaction
+### C-4: The valuation base-children reserve is unmeasured
 
-**Severity:** Medium / must be sized or accepted before deployment.
+**Severity:** Low / tighten before deployment; the unsafe case is already closed.
 
-RP-25 removed the *joint* flush budget: valuation is resumable, so each
-`value_expiry` carries one market's dynamic-field children instead of the pool's.
-The *per-market* budget is now well-posed and unverified. One market's caps do not
-obviously fit one transaction's 1,000-child limit: `max_payout_tree_nodes` alone is
-1,000, before `ceil(max_active_leveraged_orders / 64)` = 79 liquidation-book pages
-and the market's base children. Under the old single-PTB flush one market at 982
-nodes already aborted (`evidence/c1-object-cache-flush-2026-07-07.md`), though that
-run also carried the rest of the flush's commands, so it bounds the per-market
-figure loosely from above and cannot be read as the answer.
+RP-25 removed the *joint* flush budget, and RP-26 closed the *per-market* one by
+deriving `max_payout_tree_nodes` from the transaction budget rather than choosing it:
+`object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
+= 1,000 − 79 − 40 = **881**. A single `value_expiry` therefore fits by construction,
+and `valuation_capacity_tests.move` fails if a future edit breaks that.
+
+What remains is the reserve's *size*, not its existence. 40 is deliberately generous:
+source inspection puts the real base children under 10 (the registered-expiry row,
+the three enclosing `Table` objects, per-market bookkeeping), and the C-1 campaign
+implies ~18 inside a fuller PTB that also carried `start_pool_valuation`,
+`finish_flush` and the LP-queue drain — none of which a `value_expiry` transaction
+carries now. So the reserve is likely 2–4× larger than it needs to be, and every
+unit of it is a strike boundary markets cannot use.
 
 **Plan (decision rule pre-registered):** re-run `ts/strategies/treeNodeSweep.ts`
 against the resumable flush, filling ONE market and valuing it in its own
-transaction, to find the node count at which a single `value_expiry` aborts. If the
-measured ceiling is below `max_payout_tree_nodes` + pages + base, lower
-`max_payout_tree_nodes` to leave the measured base-child headroom and follow with
-one run that reaches the new boundary. If it is above, record the headroom and
-close this item with a register entry.
+transaction, and read the base children off the abort boundary — the node count at
+which a single `value_expiry` aborts, minus the pages present. If the measured base
+is below 40, lower `valuation_base_children_reserve` to the measured figure plus a
+stated margin and follow with one run that reaches the new boundary. If it is above
+40, that is a correctness finding on RP-26, not a tuning result: raise the reserve
+and re-derive.
+
+**Why this is no longer a deploy blocker:** the failure it used to guard against —
+a market whose `value_expiry` cannot fit, freezing LP supply and withdraw pool-wide —
+is now unrepresentable. Over-reserving costs strike capacity; under-reserving is what
+was dangerous, and the derivation is on the safe side of it.
 
 **Note:** the cap is also what the external audit tracker's issue 45 reports as a mint-side denial
 of new strike ranges; it is a deliberate bound, and whatever number this item
