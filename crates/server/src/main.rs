@@ -89,7 +89,8 @@ struct Args {
     /// Maximum chart-history responses cached in this process.
     #[clap(env, long, default_value_t = DEFAULT_CHART_HISTORY_CACHE_MAX_ENTRIES)]
     pyth_pro_chart_history_cache_max_entries: u64,
-    /// Maximum chart-history query range, in seconds.
+    /// Absolute maximum chart-history query range, in seconds.
+    /// A resolution-aware candle limit may lower the effective range.
     #[clap(env, long, default_value_t = DEFAULT_CHART_HISTORY_MAX_RANGE_SECS)]
     pyth_pro_chart_history_max_range_secs: u64,
 }
