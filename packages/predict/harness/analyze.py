@@ -363,6 +363,70 @@ def _analyze_one(inst: Path) -> list[str]:
             else:
                 print(f"    => (AB-A)/S = {r1:.1f}x  (BB missing — run longer)")
 
+    # liq-budget: the trade-path ambient-pass ceiling (liqBudgetProbe.ts, DBU-695). The pass costs
+    # min(budget, active_leveraged_orders) candidates, each priced with an un-memoized range_price, so
+    # the model is comp ~ base + slope*candidates: `slope` is the per-candidate cost and `base` is the
+    # mint's own. Only n==1 batches are used — a 1-leg batch is byte-identical to an ordinary mint,
+    # while N>1 pays N ambient passes in one PTB and would bias the slope. Budget comes from the
+    # keeper's ladder records; with no ladder configured there is nothing to sweep, so the section is
+    # skipped rather than assuming the contract default.
+    rungs = sorted([r for r in recs if r.get("type") == "liqBudget" and r.get("ts")], key=lambda r: r["ts"])
+    if rungs:
+        def _budget_at(ts: int) -> int:
+            b = 0
+            for r in rungs:
+                if r["ts"] <= ts:
+                    b = int(r["budget"])
+                else:
+                    break
+            return b
+
+        # (budget, book-before-this-mint, comp) for every single-mint probe under a known rung.
+        probes = [
+            (_budget_at(r["ts"]), int(r.get("minted", 0)), int(r["compGas"]))
+            for r in recs
+            if r.get("type") == "mintBatch" and int(r.get("n", 0)) == 1 and not r.get("oog")
+            and r.get("compGas") and r.get("ts") and _budget_at(r["ts"]) > 0
+        ]
+        print(f"\nliq-budget — single-mint computation vs ambient-pass budget ({len(rungs)} rung(s) applied):")
+        by_budget: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for b, book, c in probes:
+            by_budget[b].append((book, c))
+        for b in sorted(by_budget):
+            pts = by_budget[b]
+            mean_c = sum(c for _, c in pts) // len(pts)
+            books = [bk for bk, _ in pts]
+            cand = min(b, max(books)) if books else 0
+            print(f"  budget {b:>5} (book {min(books):>4}-{max(books):<4}, ~{cand:>4} candidates scanned): "
+                  f"{mean_c:>13,} comp = {mean_c / COMP_CAP * 100:>4.0f}% of cap  [n={len(pts)}]")
+        # Fit on CANDIDATES (= min(budget, book)) rather than budget: below saturation the book, not the
+        # budget, is what the pass actually walks, so regressing on budget alone understates the slope.
+        fit = [(min(b, book), c) for b, book, c in probes]
+        if len({x for x, _ in fit}) >= 2:
+            n = len(fit)
+            sx, sy = sum(x for x, _ in fit), sum(y for _, y in fit)
+            denom = n * sum(x * x for x, _ in fit) - sx * sx
+            if denom:
+                slope = (n * sum(x * y for x, y in fit) - sx * sy) / denom
+                base = (sy - slope * sx) / n
+                print(f"  ~{int(slope):,} comp/candidate (+{int(base):,} base mint)")
+                if slope > 0:
+                    cross = int((COMP_CAP - base) / slope)
+                    print(f"  -> an ordinary mint stops fitting one tx at ~{cross:,} candidates "
+                          f"(the ceiling max_trade_liquidation_budget should be set under, with margin)")
+        # The empirical wall: the smallest candidate count at which a SINGLE mint actually OOG'd.
+        walls = [
+            (min(_budget_at(r["ts"]), int(r.get("minted", 0))), _budget_at(r["ts"]), int(r.get("minted", 0)))
+            for r in recs
+            if r.get("type") == "mintBatch" and r.get("oog") and int(r.get("n", 0)) == 1
+            and r.get("ts") and _budget_at(r["ts"]) > 0
+        ]
+        if walls:
+            cand, b, book = min(walls)
+            print(f"  EMPIRICAL wall: a single mint OOG'd at budget {b} / book {book} (~{cand} candidates)")
+        else:
+            print("  no single-mint OOG — every rung reached was affordable at the book this run built")
+
     # bug oracle (code-aware; tags are module:code). nav-stress breakpoint deferrals excluded (above).
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]
     expected, transient, flagged = _classify(fails)
