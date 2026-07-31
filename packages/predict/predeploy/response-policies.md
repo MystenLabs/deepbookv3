@@ -1039,8 +1039,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   shares to burn are floored from available idle and the payout is then quoted from
   those shares by the same helper a full fill uses, so a partial exit prices identically
   to a whole one and the pool never releases cash it has not destroyed shares for. With
-  no fee set, at most one ulp of idle is left behind rather than the requester being
-  shorted. With a fee set the inversion is deliberately conservative: idle is inverted
+  no withdraw fee set, at most one ulp of idle is left behind rather than the requester being
+  shorted. With the withdraw fee set the inversion is deliberately conservative: idle is inverted
   at the *gross* price, so the leftover is the slice's fee plus that ulp (bounded by the
   `0..5%` envelope). Grossing idle up by `1/(1 - rate)` would fill marginally more but
   needs a second inversion rounded the pool's way at both steps; the remainder is

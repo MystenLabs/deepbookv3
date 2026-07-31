@@ -79,9 +79,11 @@ public struct FlushMark has drop {
     pool_value: u64,
     total_supply: u64,
     executable: bool,
-    /// PLP supply/withdraw fee in FLOAT_SCALING, frozen with the mark so every
-    /// request drained in this flush is charged the same rate.
-    fee_rate: u64,
+    /// Supply-leg fee in FLOAT_SCALING, frozen with the mark so every request
+    /// drained in this flush is charged the same rate. Ships at zero.
+    supply_fee_rate: u64,
+    /// Withdraw-leg fee in FLOAT_SCALING, frozen with the mark alongside it.
+    withdraw_fee_rate: u64,
 }
 
 /// Executable fill amounts for one queued request (or one partial slice of it) at
@@ -171,13 +173,27 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
-public(package) fun new_flush_mark(pool_value: u64, total_supply: u64, fee_rate: u64): FlushMark {
+public(package) fun new_flush_mark(
+    pool_value: u64,
+    total_supply: u64,
+    supply_fee_rate: u64,
+    withdraw_fee_rate: u64,
+): FlushMark {
     FlushMark {
         pool_value,
         total_supply,
         executable: is_executable_mark(pool_value, total_supply),
-        fee_rate,
+        supply_fee_rate,
+        withdraw_fee_rate,
     }
+}
+
+/// The `(supply, withdraw)` rate pair this mark froze. Read off the mark rather than
+/// re-read from config so the flush event reports what the drain was actually handed:
+/// a mark built with the wrong rate is otherwise invisible to every observer, since
+/// the withdraw leg cannot be driven behaviourally from a Move test.
+public(package) fun fee_rates(mark: &FlushMark): (u64, u64) {
+    (mark.supply_fee_rate, mark.withdraw_fee_rate)
 }
 
 public(package) fun supplies_filled(summary: &DrainSummary): u64 {
@@ -214,9 +230,10 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 ///
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
-/// Every fill is charged the mark's frozen fee rate on the DUSDC leg it actually
-/// fills — the slice, not the whole request, when the fill is partial. Refunded and
-/// still-queued requests are never charged.
+/// Every fill is charged its leg's frozen fee rate on the DUSDC it actually fills —
+/// the slice, not the whole request, when the fill is partial. The two legs carry
+/// independent rates and the supply leg ships at zero. Refunded and still-queued
+/// requests are never charged.
 public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
@@ -771,7 +788,7 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// request must be refunded.
 fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<FillQuote> {
     if (!mark.executable) return option::none();
-    let fee = mark.fee_on(amount);
+    let fee = fee_on(amount, mark.supply_fee_rate);
     // = net * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
     math::try_mul_div_down(amount - fee, mark.total_supply, mark.pool_value).and!(|shares| {
@@ -789,19 +806,19 @@ fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<FillQuote> {
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
     math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|gross| {
-        let fee = mark.fee_on(gross);
+        let fee = fee_on(gross, mark.withdraw_fee_rate);
         let payout = gross - fee;
         if (payout == 0) option::none() else option::some(FillQuote { output: payout, fee })
     })
 }
 
-/// Fee withheld from a DUSDC amount at the frozen rate, rounded up so the dust
-/// biases to the pool (rounding policy R2). The result never exceeds `amount`:
-/// `max_plp_fee_rate` is well below `float_scaling`, so `amount - fee` cannot
-/// underflow at either call site.
-fun fee_on(mark: &FlushMark, amount: u64): u64 {
-    if (mark.fee_rate == 0) return 0;
-    math::mul_div_up(amount, mark.fee_rate, math::float_scaling!())
+/// Fee withheld from a DUSDC amount at one of the mark's frozen rates, rounded up
+/// so the dust biases to the pool (rounding policy R2). The result never exceeds
+/// `amount`: `max_plp_fee_rate` is well below `float_scaling`, so `amount - fee`
+/// cannot underflow at either call site.
+fun fee_on(amount: u64, rate: u64): u64 {
+    if (rate == 0) return 0;
+    math::mul_div_up(amount, rate, math::float_scaling!())
 }
 
 fun is_executable_mark(pool_value: u64, total_supply: u64): bool {

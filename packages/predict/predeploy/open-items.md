@@ -273,7 +273,7 @@ including one-minute and five-minute surfaces, so the deviation bound is checked
 where it binds. This needs source rows at those cadences; the current CSV does
 not contain them, so it is a data-collection task before it is a generator task.
 
-### P-27: The PLP supply/withdraw fee ships at 20 bps on an unmeasured leak
+### P-27: The PLP exit fee ships at 20 bps on a partly-unmeasured basis
 
 **Severity:** Undecided policy. Not a correctness bug — the mechanism is
 tested; the open question is whether the rate is right, and whether the leak it
@@ -297,21 +297,41 @@ residual exposure is mark **error**, not mark **staleness**. That distinction
 decides the calibration: the yardstick is the certified error, not the variance
 of the share price between flushes.
 
-Shipped state: one protocol-wide `plp_fee_rate`, default 20 bps, envelope
-`0..5%`, charged on the DUSDC leg of executed fills only and retained by the
-pool. The rate is admin-tunable to zero without a package upgrade, so shipping
-enabled is reversible; widening past 5% is not.
+Shipped state: two independent rates, `plp_supply_fee_rate` (default **0**) and
+`plp_withdraw_fee_rate` (default **20 bps**), each in a `0..5%` envelope, charged
+on the DUSDC leg of executed fills only and retained by the pool. Both are
+admin-tunable to zero without a package upgrade, so shipping enabled is
+reversible; widening past 5% is not.
 
-The 20 bps default is a starting point, not a calibrated number — nothing below
-has been run, so it is not yet known whether it is above or below the per-lap
-edge it is meant to price.
+**The basis splits in two, and only one half needs calibrating.**
 
-**A supplier partly refunds their own fee, and the largest LP refunds most of
-it.** The charge is retained by the pool, so a supplier immediately owns a share
+*Utilization on exit* — the pool's written liabilities do not shrink when an LP
+leaves, so the same risk sits on a smaller base and risk per dollar rises for
+whoever stays. This needs no adversary and no cleverness, and it is why the
+charge belongs on the exit alone: a deposit moves risk the other way. It
+justifies a non-zero exit fee on its own, without a measurement.
+
+*Model estimation error* — NAV is cash less what the pool owes, and what it owes
+comes from a formula over vendor vol with known mispricing. An active LP can
+capture that error at the expense of the LPs who stay. **This is the half that
+needs calibrating, and it is what the experiment below is for.** Sizing against
+the ~1% certified *arithmetic* bound is the wrong yardstick for it: that bound
+is the numerical envelope of the pricer, not the vendor's model error.
+
+The 20 bps default is therefore justified as a floor by the first mechanism and
+unvalidated as a ceiling against the second.
+
+**A filler partly refunds their own fee, and the largest LP refunds most of it.**
+With the supply leg at zero this is now only live on partial exits, but it does
+not disappear: a withdrawer keeping part of their stake recaptures their
+post-withdrawal share of what they just paid, and a *full* exit pays it in
+full. That is the right direction — the charge bites hardest on the exit that
+concentrates the most risk and least on the LP who stays exposed — but it means
+the effective rate is not the nominal one for large partial exits. The charge is retained by the pool, so a supplier immediately owns a share
 of what they just paid. At a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC
-supply at 20 bps: fee 20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so
-the new holding is worth 9_989_989 and the net fee paid is 10_011 — just over
-half. In closed form the net charge is `F * V / (V + n - F)` for a deposit `n`
+supply at 20 bps (the shape, illustrated on the leg that is now zero): fee
+20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so the new holding is
+worth 9_989_989 and the net fee paid is 10_011 — just over half. In closed form the net charge is `F * V / (V + n - F)` for a deposit `n`
 into a pool worth `V`, equivalently `F * (1 - post_fill_share)`, which tends to zero
 as an LP approaches owning the pool, and a round trip costs
 `F_in * (1 - share) + F_out`. The actor best placed to time the mark is
@@ -327,12 +347,12 @@ sizes it is meant to deter, not the nominal one.
 - **Strategy:** drive supply/withdraw against a live book while recording, per
   flush, the realized mark, the reference NAV, and the information available
   one flush earlier. Measure realized round-trip PnL of a timing strategy at
-  `plp_fee_rate = 0`, net of gas and a flush of escrow lockup.
+  both LP fee rates at 0, net of gas and a flush of escrow lockup.
 - **Blocked on:** the Python parity oracle still models scalar NAV, so there is
   no independent reference to difference the realized mark against. Closing
   that gap is the first step, not the experiment. It also does not model this
   fee at all (`simulations/python_replay.py`, marked in-file), so parity runs
-  must stage `plp_fee_rate = 0` until someone derives the fee independently
+  must stage both LP fee rates at 0 until someone derives the fee independently
   there — copying the Move formula across would make the oracle a mirror of the
   code it is supposed to check.
 - **Decision rule:** if zero-fee round-trip PnL is not distinguishable from

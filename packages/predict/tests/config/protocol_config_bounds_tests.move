@@ -440,52 +440,79 @@ fun template_trading_loss_rebate_rate_accepts_boundaries() {
 
 // === PLP supply/withdraw fee ===
 //
-// The envelope floor is 0, so there is no reachable below-min case for a `u64`;
-// only the above-max side aborts.
+// Two independent rates sharing one envelope. The floor is 0, so there is no
+// reachable below-min case for a `u64`; only the above-max side aborts.
 
-/// `lp_book::fee_on` subtracts the fee from the amount it was computed on, and
-/// relies on the envelope keeping the rate strictly below 1.0 for that never to
-/// underflow — inside the mandatory pool-wide flush. That guarantee lives in a
-/// comment; this drives the real validator at full scale, so widening the envelope
-/// to admit it fails here rather than aborting a live flush.
-#[test, expected_failure(abort_code = config_constants::EInvalidPlpFeeRate)]
-fun plp_fee_rate_at_full_scale_is_rejected() {
-    config_constants::assert_plp_fee_rate(math::float_scaling!());
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpSupplyFeeRate)]
+fun plp_supply_fee_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_plp_supply_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!() + 1);
     abort 999
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidPlpFeeRate)]
-fun plp_fee_rate_above_max_aborts() {
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpWithdrawFeeRate)]
+fun plp_withdraw_fee_rate_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_plp_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!() + 1);
+    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!() + 1);
     abort 999
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun set_plp_fee_rate_during_valuation_aborts() {
+fun set_plp_supply_fee_rate_during_valuation_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.begin_valuation();
-    config.set_plp_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    config.set_plp_supply_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_plp_withdraw_fee_rate_during_valuation_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.begin_valuation();
+    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    abort 999
+}
+
+/// `lp_book::fee_on` subtracts the fee from the amount it was computed on, and
+/// relies on the envelope keeping the rate strictly below 1.0 for that never to
+/// underflow — inside the mandatory pool-wide flush. That guarantee lives in a
+/// comment; this drives the real validators at full scale, so widening the envelope
+/// to admit it fails here rather than aborting a live flush.
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpSupplyFeeRate)]
+fun plp_fee_rate_at_full_scale_is_rejected() {
+    config_constants::assert_plp_supply_fee_rate(math::float_scaling!());
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpWithdrawFeeRate)]
+fun plp_withdraw_fee_rate_at_full_scale_is_rejected() {
+    config_constants::assert_plp_withdraw_fee_rate(math::float_scaling!());
+    abort 999
+}
+
+/// The shipped defaults are asymmetric on purpose: entry is free, exit is charged.
+/// Asserted as literals so changing either has to be deliberate, and asserted
+/// together so a change that accidentally symmetrises them fails here.
 #[test]
-fun plp_fee_rate_accepts_boundaries() {
+fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    // 20 bps in FLOAT_SCALING, the shipped default — asserted as a literal so a
-    // change to `default_plp_fee_rate` has to be made deliberately.
-    assert_eq!(config.plp_fee_rate(), 2_000_000);
+    assert_eq!(config.plp_supply_fee_rate(), 0); // entry is not taxed
+    assert_eq!(config.plp_withdraw_fee_rate(), 2_000_000); // 20 bps on exit
 
-    config.set_plp_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
-    assert_eq!(config.plp_fee_rate(), 0);
+    // Each leg moves independently over the shared envelope.
+    config.set_plp_supply_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!());
+    assert_eq!(config.plp_supply_fee_rate(), 50_000_000);
+    assert_eq!(config.plp_withdraw_fee_rate(), 2_000_000); // untouched
 
-    // 5% in FLOAT_SCALING, the envelope ceiling.
-    config.set_plp_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!());
-    assert_eq!(config.plp_fee_rate(), 50_000_000);
+    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    assert_eq!(config.plp_withdraw_fee_rate(), 0);
+    assert_eq!(config.plp_supply_fee_rate(), 50_000_000); // untouched
 
     return_shared(config);
     destroy(admin_cap);

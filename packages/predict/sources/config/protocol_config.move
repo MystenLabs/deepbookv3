@@ -35,13 +35,16 @@ public struct ProtocolConfig has key {
     /// Merged protocol + insurance reserve share of materialized terminal profit,
     /// in FLOAT_SCALING. The complement accrues to LPs.
     protocol_reserve_profit_share: u64,
-    /// Fee charged on executed PLP supply and withdraw fills, in FLOAT_SCALING.
-    /// Charged on the DUSDC leg of each fill — deducted from the input before
-    /// shares are priced on supply, and withheld from the payout on withdraw — and
-    /// retained by the pool, so it accrues to remaining PLP holders. Read once per
-    /// flush into the frozen mark, so every fill in one flush is charged the same
-    /// rate.
-    plp_fee_rate: u64,
+    /// Fee charged on an executed PLP supply fill, in FLOAT_SCALING, deducted from
+    /// the DUSDC taken in before shares are priced. Ships at zero — a deposit
+    /// dilutes the pool's risk per dollar rather than concentrating it, so it is
+    /// not taxed; the knob exists to keep that reversible.
+    plp_supply_fee_rate: u64,
+    /// Fee charged on an executed PLP withdraw fill, in FLOAT_SCALING, withheld
+    /// from the marked payout. Retained by the pool, so it accrues to the holders
+    /// who stay. Both rates are read once per flush into the frozen mark, so every
+    /// fill in one flush is charged the same pair.
+    plp_withdraw_fee_rate: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
@@ -356,14 +359,27 @@ public fun set_protocol_reserve_profit_share(
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
-/// Set the fee charged on executed PLP supply and withdraw fills. Admin-gated and
-/// validated against its config-constants envelope. Locked during valuation so the
-/// rate a flush froze into its mark cannot change midway through that flush.
-public fun set_plp_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
+/// Set the fee charged on executed PLP supply fills. Admin-gated and validated
+/// against its config-constants envelope. Locked during valuation so the rate a
+/// flush froze into its mark cannot change midway through that flush.
+public fun set_plp_supply_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    config_constants::assert_plp_fee_rate(rate);
-    config.plp_fee_rate = rate;
+    config_constants::assert_plp_supply_fee_rate(rate);
+    config.plp_supply_fee_rate = rate;
+}
+
+/// Set the fee charged on executed PLP withdraw fills. Same gating as the supply
+/// leg; the two are independent so the exit charge can move without taxing entry.
+public fun set_plp_withdraw_fee_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_plp_withdraw_fee_rate(rate);
+    config.plp_withdraw_fee_rate = rate;
 }
 
 // === Public-Package Functions ===
@@ -372,8 +388,12 @@ public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
-public(package) fun plp_fee_rate(config: &ProtocolConfig): u64 {
-    config.plp_fee_rate
+public(package) fun plp_supply_fee_rate(config: &ProtocolConfig): u64 {
+    config.plp_supply_fee_rate
+}
+
+public(package) fun plp_withdraw_fee_rate(config: &ProtocolConfig): u64 {
+    config.plp_withdraw_fee_rate
 }
 
 public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
@@ -498,7 +518,8 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
-        plp_fee_rate: config_constants::default_plp_fee_rate!(),
+        plp_supply_fee_rate: config_constants::default_plp_supply_fee_rate!(),
+        plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
