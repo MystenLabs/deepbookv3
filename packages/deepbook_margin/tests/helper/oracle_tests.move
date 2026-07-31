@@ -21,6 +21,7 @@ use deepbook_margin::{
     test_helpers::{
         build_pyth_price_info_object,
         build_pyth_pro_price_info_object,
+        build_pyth_pro_price_info_with_ewma,
         create_test_pyth_config,
     }
 };
@@ -645,7 +646,10 @@ fun test_read_price_pro_matches_legacy_reader() {
     let pyth_config = create_test_pyth_config(); // max_conf_bps = 1000 (10%)
     registry.add_config(&admin_cap, pyth_config);
 
-    let price_info = build_pyth_pro_price_info_object(
+    // Same feed id, price, conf, exponent and timestamp through both packages. The
+    // two readers must produce an identical `PythReading`, or the Pro entrypoints
+    // price differently from the legacy ones they shadow.
+    let legacy_info = build_pyth_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000, // $100
@@ -653,16 +657,28 @@ fun test_read_price_pro_matches_legacy_reader() {
         8,
         clock.timestamp_ms() / 1000,
     );
-
-    let usd_price = calculate_usd_price<USDC>(
-        read_price_pro<USDC>(&price_info, &registry, &clock),
-        &registry,
-        1000000, // 1 USDC
+    let pro_info = build_pyth_pro_price_info_object(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        10000000000,
+        1000000,
+        8,
+        clock.timestamp_ms() / 1000,
     );
-    assert!(usd_price == 100_000_000_000);
+
+    let legacy_reading = read_price<USDC>(&legacy_info, &registry, &clock);
+    let pro_reading = read_price_pro<USDC>(&pro_info, &registry, &clock);
+    assert!(pro_reading.price() == legacy_reading.price());
+    assert!(pro_reading.decimals() == legacy_reading.decimals());
+
+    let legacy_usd = calculate_usd_price<USDC>(legacy_reading, &registry, 1000000);
+    let pro_usd = calculate_usd_price<USDC>(pro_reading, &registry, 1000000); // 1 USDC
+    assert!(pro_usd == legacy_usd);
+    assert!(pro_usd == 100_000_000_000);
 
     destroy(admin_cap);
-    destroy(price_info);
+    destroy(legacy_info);
+    destroy(pro_info);
     test_scenario::return_shared(registry);
     test_scenario::return_shared(clock);
     scenario.end();
@@ -801,8 +817,132 @@ fun test_unvalidated_reading_skips_confidence_bound() {
         clock.timestamp_ms() / 1000,
     );
 
+    // Reaching `price_config` is the whole point: the identical conf through the
+    // validated reader aborts `EInvalidPythPriceConf`
+    // (`test_read_price_pro_confidence_enforced_when_pricing`). Asserting only on
+    // `reading.price()` would never execute the bound at all.
     let reading = read_price_pro_unsafe<USDC>(&price_info, &registry);
     assert!(reading.price() == 10000000000);
+
+    let usd_price = calculate_usd_price<USDC>(reading, &registry, 1000000);
+    assert!(usd_price == 100_000_000_000);
+
+    destroy(admin_cap);
+    destroy(price_info);
+    test_scenario::return_shared(registry);
+    test_scenario::return_shared(clock);
+    scenario.end();
+}
+
+// === Pyth Pro EWMA divergence ===
+// `build_pyth_pro_price_info_object` sets `ema == spot`, so every other Pro test
+// leaves the divergence guard a tautology. These are the only tests that execute it,
+// and the only thing standing between a mutated `read_price_pro` ewma argument and a
+// green CI run.
+
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
+fun test_read_price_pro_rejects_ewma_divergence_high() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(1000000);
+    clock.share_for_testing();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    let pyth_config = create_test_pyth_config(); // max_ewma_difference_bps = 1500 (15%)
+    registry.add_config(&admin_cap, pyth_config);
+
+    // Spot $120 against a $100 EWMA: 20% above, past the 15% bound.
+    let price_info = build_pyth_pro_price_info_with_ewma(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        12000000000,
+        10000000000,
+        50000,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+
+    let _ = read_price_pro<USDC>(&price_info, &registry, &clock);
+
+    destroy(admin_cap);
+    destroy(price_info);
+    test_scenario::return_shared(registry);
+    test_scenario::return_shared(clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
+fun test_read_price_pro_rejects_ewma_divergence_low() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(1000000);
+    clock.share_for_testing();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    let pyth_config = create_test_pyth_config(); // max_ewma_difference_bps = 1500 (15%)
+    registry.add_config(&admin_cap, pyth_config);
+
+    // Spot $80 against a $100 EWMA: 20% below the bound in the other direction.
+    let price_info = build_pyth_pro_price_info_with_ewma(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        8000000000,
+        10000000000,
+        50000,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+
+    let _ = read_price_pro<USDC>(&price_info, &registry, &clock);
+
+    destroy(admin_cap);
+    destroy(price_info);
+    test_scenario::return_shared(registry);
+    test_scenario::return_shared(clock);
+    scenario.end();
+}
+
+/// The guard must not be an unconditional abort: a divergence inside the bound reads
+/// normally, and the reading carries the spot price rather than the EWMA.
+#[test]
+fun test_read_price_pro_accepts_ewma_divergence_within_bound() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(1000000);
+    clock.share_for_testing();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    let pyth_config = create_test_pyth_config(); // max_ewma_difference_bps = 1500 (15%)
+    registry.add_config(&admin_cap, pyth_config);
+
+    // Spot $110 against a $100 EWMA: 10% divergence, inside the 15% bound.
+    let price_info = build_pyth_pro_price_info_with_ewma(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        11000000000,
+        10000000000,
+        50000,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+
+    let reading = read_price_pro<USDC>(&price_info, &registry, &clock);
+    assert!(reading.price() == 11000000000);
 
     destroy(admin_cap);
     destroy(price_info);

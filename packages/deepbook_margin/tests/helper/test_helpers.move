@@ -1654,6 +1654,40 @@ public fun build_pyth_pro_price_info_object(
     price_info_pro::new_price_info_object_for_test(price_info, scenario.ctx())
 }
 
+/// Pro object whose EWMA price differs from the spot price. The builder above sets
+/// `ema == spot`, which makes the divergence guard a tautology; every test that means
+/// to exercise `max_ewma_difference_bps` on a Pro feed must come through here.
+public fun build_pyth_pro_price_info_with_ewma(
+    scenario: &mut Scenario,
+    id: vector<u8>,
+    price_value: u64,
+    ewma_price_value: u64,
+    conf_value: u64,
+    exp_value: u64,
+    timestamp: u64,
+): PriceInfoObjectPro {
+    let price_id = price_identifier_pro::from_byte_vec(id);
+    let price = price_pro::new(
+        i64_pro::new(price_value, false),
+        conf_value,
+        i64_pro::new(exp_value, true),
+        timestamp,
+    );
+    let ewma_price = price_pro::new(
+        i64_pro::new(ewma_price_value, false),
+        conf_value,
+        i64_pro::new(exp_value, true),
+        timestamp,
+    );
+    let price_feed = price_feed_pro::new(price_id, price, ewma_price);
+    let price_info = price_info_pro::new_price_info(
+        timestamp - 2,
+        timestamp - 1,
+        price_feed,
+    );
+    price_info_pro::new_price_info_object_for_test(price_info, scenario.ctx())
+}
+
 // === Pyth Pro price object builders ===
 // Twins of the legacy builders above. Pyth Pro is a separately published package, so
 // its `PriceInfoObject` is a distinct Move type and the Pro entrypoints cannot be
@@ -1747,5 +1781,24 @@ public fun build_stale_usdc_price_info_object_pro(
         50000,
         test_constants::pyth_decimals(),
         (clock.timestamp_ms() / 1000) - stale_seconds,
+    )
+}
+
+/// Fresh BTC feed carrying an arbitrarily wide confidence interval. The confidence
+/// bound is a *pricing* guard asserted in `price_config`, not a read guard, so a
+/// reading taken for telemetry must survive a `conf` this wide.
+public fun build_wide_conf_btc_price_info_object_pro(
+    scenario: &mut Scenario,
+    price_usd: u64,
+    conf_value: u64,
+    clock: &Clock,
+): PriceInfoObjectPro {
+    build_pyth_pro_price_info_object(
+        scenario,
+        test_constants::btc_price_feed_id(),
+        price_usd * test_constants::pyth_multiplier(),
+        conf_value,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
     )
 }
