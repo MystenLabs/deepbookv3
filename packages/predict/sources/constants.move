@@ -66,8 +66,40 @@ public(package) macro fun executable_price_band_factor(): u64 { 100 }
 /// full-pool flush.
 public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 
+/// Sui's `object_runtime_max_num_cached_objects`: distinct dynamic-field children one
+/// transaction may load, cumulative across every command in the PTB. A protocol
+/// constant, verified network-invariant 2026-07-29 — only system transactions get 16x.
+/// Exceeding it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object`.
+public(package) macro fun object_cache_budget(): u64 { 1_000 }
+
+/// Liquidation-book pages one market can carry, at `liquidation_book`'s 64 orders per
+/// page. `correction_value` scans every page during valuation, so these compete with
+/// payout-tree nodes for the same per-transaction budget.
+public(package) macro fun max_liquidation_pages(): u64 {
+    max_active_leveraged_orders!().div_ceil(64)
+}
+
+/// Headroom for the children a single `plp::value_expiry` loads besides the payout
+/// tree and the liquidation book: the registered-expiry row, the three enclosing
+/// `Table` objects, and per-market bookkeeping. Source inspection puts this under 10
+/// and the C-1 campaign implies ~18 in a fuller PTB; the reserve is deliberately
+/// several times that, because it is UNMEASURED against the resumable shape and
+/// running out is a pool-wide LP freeze rather than a degraded fill. C-4 tightens it.
+public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
+
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
-public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
+///
+/// **Derived, not chosen.** `plp::value_expiry` walks every node of one market's tree
+/// in a single transaction, so the cap has to leave room for everything else that
+/// transaction loads. Deriving it means the two caps cannot drift apart: raising
+/// `max_active_leveraged_orders` shrinks this automatically instead of silently
+/// pushing the flush over the ceiling. A cap above the budget is not a tuning mistake
+/// — it makes a market permanently un-valuable, and `finish_flush` requires every
+/// snapshotted market valued, so one such market freezes LP supply and withdraw
+/// pool-wide until it expires. See RP-26.
+public(package) macro fun max_payout_tree_nodes(): u64 {
+    object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()
+}
 
 /// Maximum active leveraged orders one expiry market may carry into NAV.
 public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
