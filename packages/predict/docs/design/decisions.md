@@ -66,11 +66,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **`admin` is a dependency-leaf capability module.** *Rejected:* folding
   `admin`/`AdminCap` into `registry` — it creates a Move import cycle
   (`registry → protocol_config → admin`).
-- **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
-  (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
-  book coexist; the exact live NAV is read by decomposing the per-order liability
-  across the two (`Σ qty·P` over the tree minus the leveraged floor-correction
-  scan over the book).
+- **Two sparse strike indexes, both tick-keyed.** A sparse height-balanced (AVL)
+  payout tree and a flat liquidation book coexist; the exact live NAV is read by
+  decomposing the per-order liability across the two (`Σ qty·P` over the tree
+  minus the leveraged floor-correction scan over the book).
+  *Superseded:* balancing that tree as a treap keyed on `blake2b256(bcs(tick))`.
+  Boundary ticks are caller-chosen, so a rotation key derived from a tick is a
+  rotation key the caller picks: depth held only in expectation over priorities
+  assumed random, and a caller could search for ticks whose priorities descend as
+  the ticks ascend and force a spine. Rotations key on measured subtree height,
+  which bounds depth for every admissible tick set rather than for a random one.
   *Superseded:* a dense paged NAV matrix (`{quantity, floor_shares}` with
   strike-weighted prefix sums), which existed only to make every LP supply/withdraw
   a cheap synchronous read. It and its whole mitigation stack (the valuation

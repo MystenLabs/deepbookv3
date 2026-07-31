@@ -22,9 +22,13 @@
 /// disjoint-book gap; the tree's max-point term is the floor anchor of that
 /// enforced reserve.
 ///
-/// Shape carries no value: `combine_summaries` is associative over the in-order
-/// sequence, so any balanced arrangement of the same boundaries yields identical
-/// summaries, settlement prefixes, and linear-walk totals.
+/// Shape carries no value for a consistent index: `combine_summaries` is
+/// associative over the in-order sequence, so any arrangement of the same
+/// boundaries yields identical summaries, settlement prefixes, and linear-walk
+/// totals. That holds only while every prefix is non-negative, which a consistent
+/// book guarantees. Under a caller/index desync the settlement walk's underflow
+/// abort depends on which prefixes a given shape happens to visit, so it is not a
+/// desync detector — `apply_terms_delta`'s per-boundary assert is the authority.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
@@ -59,6 +63,12 @@ public struct PayoutTerms has copy, drop, store {
 public struct PayoutSummary has copy, drop, store {
     net_start: u64,
     net_end: u64,
+    /// Never exceeds `net_start`, by construction in `boundary_summary` and
+    /// `combine_summaries`. That bound is what makes `combine_summaries`
+    /// associative at u64 scale — and therefore what makes the tree's shape
+    /// irrelevant to every value it reports. A summary term that could outgrow
+    /// `net_start` would break shape-independence with no test to catch it, and
+    /// would also abort `strike_exposure`'s plain `total - max` subtraction.
     max_net_payout_prefix_gain: u64,
 }
 
@@ -283,34 +293,6 @@ fun apply_at(
     option::some(rebalance(nodes, root_tick, node))
 }
 
-/// Write `node` back at `tick`, restoring the height invariant at that position.
-/// Returns the tick now rooting the subtree. One rotation fixes an outside-heavy
-/// child; an inside-heavy one needs its own rotation first so the taller
-/// grandchild ends up on the outside.
-fun rebalance(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode): u64 {
-    let left_height = subtree_height(nodes, node.left);
-    let right_height = subtree_height(nodes, node.right);
-
-    if (left_height > right_height + 1) {
-        let left_tick = *node.left.borrow();
-        let left_node = nodes[left_tick];
-        if (subtree_height(nodes, left_node.right) > subtree_height(nodes, left_node.left)) {
-            node.left = option::some(rotate_left(nodes, left_tick, left_node));
-        };
-        rotate_right(nodes, tick, node)
-    } else if (right_height > left_height + 1) {
-        let right_tick = *node.right.borrow();
-        let right_node = nodes[right_tick];
-        if (subtree_height(nodes, right_node.left) > subtree_height(nodes, right_node.right)) {
-            node.right = option::some(rotate_right(nodes, right_tick, right_node));
-        };
-        rotate_left(nodes, tick, node)
-    } else {
-        resummarize(nodes, tick, node);
-        tick
-    }
-}
-
 fun new_leaf(terms: PayoutTerms, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
         (terms, payout_terms(0, 0))
@@ -394,6 +376,34 @@ fun take_min(nodes: &mut Table<u64, PayoutNode>, tick: u64): (u64, Option<u64>) 
     let (min_tick, remainder) = take_min(nodes, *node.left.borrow());
     node.left = remainder;
     (min_tick, option::some(rebalance(nodes, tick, node)))
+}
+
+/// Write `node` back at `tick`, restoring the height invariant at that position.
+/// Returns the tick now rooting the subtree. One rotation fixes an outside-heavy
+/// child; an inside-heavy one needs its own rotation first so the taller
+/// grandchild ends up on the outside.
+fun rebalance(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode): u64 {
+    let left_height = subtree_height(nodes, node.left);
+    let right_height = subtree_height(nodes, node.right);
+
+    if (left_height > right_height + 1) {
+        let left_tick = *node.left.borrow();
+        let left_node = nodes[left_tick];
+        if (subtree_height(nodes, left_node.right) > subtree_height(nodes, left_node.left)) {
+            node.left = option::some(rotate_left(nodes, left_tick, left_node));
+        };
+        rotate_right(nodes, tick, node)
+    } else if (right_height > left_height + 1) {
+        let right_tick = *node.right.borrow();
+        let right_node = nodes[right_tick];
+        if (subtree_height(nodes, right_node.left) > subtree_height(nodes, right_node.right)) {
+            node.right = option::some(rotate_right(nodes, right_tick, right_node));
+        };
+        rotate_left(nodes, tick, node)
+    } else {
+        resummarize(nodes, tick, node);
+        tick
+    }
 }
 
 fun settlement_prefix_net_payout(
@@ -556,34 +566,67 @@ public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node
 }
 
 #[test_only]
-/// Depth of the whole tree. Bounded depth is the property this module exists to
-/// guarantee against caller-chosen ticks, and no evaluator output reveals it, so
-/// it needs its own observation seam.
-public(package) fun root_height_for_testing(tree: &StrikePayoutTree): u64 {
-    subtree_height(&tree.nodes, tree.root)
+/// Assert the whole tree invariant, recomputing every stored field from the
+/// children rather than trusting it: search order, AVL balance, each node's
+/// `height`, each node's `summary`, and that no node is stranded outside the tree.
+///
+/// Balance alone is not the property that protects money here. A splice that
+/// mislinks a child, or leaves a stale `summary`, yields a perfectly balanced tree
+/// whose settled liability is silently wrong — no abort, no height violation, and
+/// `node_count` still agreeing with the table. Only recomputation catches that.
+///
+/// Returns the tree's height, which is the guarantee this module now makes and
+/// which no evaluator output reveals — so callers get the depth assertion from the
+/// same seam rather than needing a second one.
+public(package) fun assert_tree_invariant_for_testing(tree: &StrikePayoutTree): u64 {
+    let (height, _, reachable) = assert_subtree_invariant(
+        &tree.nodes,
+        tree.root,
+        0,
+        constants::pos_inf_tick!(),
+    );
+    assert!(reachable == tree.node_count);
+    height
 }
 
 #[test_only]
-/// Assert the AVL invariant everywhere: each stored height agrees with the
-/// children it was measured from, and no node's subtrees differ by more than one
-/// level. Recomputing rather than trusting `height` is the point — a rotation that
-/// forgets to re-measure is exactly the bug this catches.
-public(package) fun assert_balanced_for_testing(tree: &StrikePayoutTree) {
-    assert_subtree_balanced(&tree.nodes, tree.root);
-}
+/// Returns `(height, summary, node count)` for the subtree, asserting every
+/// invariant on the way. `lower`/`upper` are the exclusive key bounds this subtree
+/// must lie within — that is what makes a mislinked child detectable.
+fun assert_subtree_invariant(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    lower: u64,
+    upper: u64,
+): (u64, PayoutSummary, u64) {
+    if (root.is_none()) return (0, zero_summary(), 0);
 
-#[test_only]
-fun assert_subtree_balanced(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
-    if (root.is_none()) return 0;
-    let node = nodes[*root.borrow()];
-    let left = assert_subtree_balanced(nodes, node.left);
-    let right = assert_subtree_balanced(nodes, node.right);
+    let tick = *root.borrow();
+    assert!(tick > lower && tick < upper);
+    let node = nodes[tick];
 
-    let taller = left.max(right);
-    let shorter = left.min(right);
-    assert!(taller - shorter <= 1);
+    let (left_height, left_summary, left_count) = assert_subtree_invariant(
+        nodes,
+        node.left,
+        lower,
+        tick,
+    );
+    let (right_height, right_summary, right_count) = assert_subtree_invariant(
+        nodes,
+        node.right,
+        tick,
+        upper,
+    );
 
-    let measured = 1 + taller;
-    assert!(node.height == measured);
-    measured
+    let taller = left_height.max(right_height);
+    assert!(taller - left_height.min(right_height) <= 1);
+    assert!(node.height == 1 + taller);
+
+    let boundary = boundary_summary(node.local_start, node.local_end);
+    let summary = combine_summaries(combine_summaries(left_summary, boundary), right_summary);
+    assert!(node.summary.net_start == summary.net_start);
+    assert!(node.summary.net_end == summary.net_end);
+    assert!(node.summary.max_net_payout_prefix_gain == summary.max_net_payout_prefix_gain);
+
+    (1 + taller, summary, left_count + right_count + 1)
 }
