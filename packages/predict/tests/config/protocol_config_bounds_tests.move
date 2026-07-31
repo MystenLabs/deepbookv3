@@ -446,11 +446,12 @@ fun template_trading_loss_rebate_rate_accepts_boundaries() {
 /// `lp_book::fee_on` subtracts the fee from the amount it was computed on, and
 /// relies on the envelope keeping the rate strictly below 1.0 for that never to
 /// underflow — inside the mandatory pool-wide flush. That guarantee lives in a
-/// comment; this pins it, so widening the envelope past `float_scaling` fails here
-/// rather than aborting a live flush.
-#[test]
-fun plp_fee_rate_envelope_cannot_reach_full_scale() {
-    assert!(config_constants::max_plp_fee_rate!() < math::float_scaling!());
+/// comment; this drives the real validator at full scale, so widening the envelope
+/// to admit it fails here rather than aborting a live flush.
+#[test, expected_failure(abort_code = config_constants::EInvalidPlpFeeRate)]
+fun plp_fee_rate_at_full_scale_is_rejected() {
+    config_constants::assert_plp_fee_rate(math::float_scaling!());
+    abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpFeeRate)]

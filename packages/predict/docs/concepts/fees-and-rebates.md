@@ -189,7 +189,7 @@ It is charged on the DUSDC side in both directions, always at the rate frozen in
 - **Supply** — the fee is deducted from the escrowed DUSDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply DUSDC that no new shares were issued against.
 - **Withdraw** — the fee is withheld from the marked payout, so the requester receives the net. The full escrowed PLP is burned either way.
 
-Both legs leave the charge inside the pool, so it accrues to the PLP holders who stayed rather than to the protocol reserve. Rounding is up, to the pool, consistent with the protocol's dust policy.
+Both legs leave the charge inside the pool, so it accrues to PLP holders pro-rata rather than to the protocol reserve. On the withdraw leg that is exactly the holders who stayed; on the supply leg the payer is a holder the moment the fill lands, so they immediately recapture their own post-fill share of it — the effective supply charge is `F * (1 - post_fill_share)`, which matters for calibration and is recorded in `predeploy/open-items.md` P-27. Rounding is up, to the pool, consistent with the protocol's dust policy.
 
 Two consequences worth stating plainly:
 

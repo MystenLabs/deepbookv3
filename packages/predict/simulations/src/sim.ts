@@ -662,6 +662,7 @@ function normalizeSupplyFilled(event: any): Record<string, unknown> {
         index: decimal(json.index),
         dusdc_amount: decimal(json.dusdc_amount),
         shares_minted: decimal(json.shares_minted),
+        fee_dusdc: decimal(json.fee_dusdc),
         requests_pending_after: decimal(json.requests_pending_after),
     };
 }
@@ -673,6 +674,7 @@ function normalizeWithdrawFilled(event: any): Record<string, unknown> {
         index: decimal(json.index),
         shares_burned: decimal(json.shares_burned),
         dusdc_amount: decimal(json.dusdc_amount),
+        fee_dusdc: decimal(json.fee_dusdc),
         requests_pending_after: decimal(json.requests_pending_after),
     };
 }

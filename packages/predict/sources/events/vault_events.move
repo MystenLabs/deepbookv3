@@ -560,6 +560,8 @@ public(package) fun emit_fee_incentives_returned(
     });
 }
 
+// === Test-Only Functions ===
+
 /// The fill events' fields exist for off-chain consumers, which decode them rather
 /// than calling Move. These readers exist only so tests can assert the fee reported
 /// to those consumers is the fee actually charged: `fee_dusdc` is where pool revenue
