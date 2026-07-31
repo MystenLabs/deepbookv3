@@ -173,6 +173,11 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
+/// Freeze one flush's pricing inputs: the `pool_value / total_supply` mark plus the
+/// per-leg fee rates, in that order — supply before withdraw, matching every other
+/// signature in this flow. Four same-typed arguments, so the order is stated here
+/// rather than left to the call site; a transposition of the two rates is caught by
+/// `flush_freezes_both_configured_fee_rates`.
 public(package) fun new_flush_mark(
     pool_value: u64,
     total_supply: u64,
@@ -188,12 +193,17 @@ public(package) fun new_flush_mark(
     }
 }
 
-/// The `(supply, withdraw)` rate pair this mark froze. Read off the mark rather than
-/// re-read from config so the flush event reports what the drain was actually handed:
-/// a mark built with the wrong rate is otherwise invisible to every observer, since
-/// the withdraw leg cannot be driven behaviourally from a Move test.
-public(package) fun fee_rates(mark: &FlushMark): (u64, u64) {
-    (mark.supply_fee_rate, mark.withdraw_fee_rate)
+/// The supply-leg rate this mark froze. Read off the mark rather than re-read from
+/// config so the flush event reports what the drain was actually handed: a mark
+/// built with the wrong rate is otherwise invisible to every observer, since the
+/// withdraw leg cannot be driven behaviourally from a Move test.
+public(package) fun supply_fee_rate(mark: &FlushMark): u64 {
+    mark.supply_fee_rate
+}
+
+/// The withdraw-leg rate this mark froze; same reasoning as `supply_fee_rate`.
+public(package) fun withdraw_fee_rate(mark: &FlushMark): u64 {
+    mark.withdraw_fee_rate
 }
 
 public(package) fun supplies_filled(summary: &DrainSummary): u64 {
