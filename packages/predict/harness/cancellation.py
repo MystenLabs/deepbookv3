@@ -28,14 +28,19 @@ def _group_exists(process_group: int) -> bool:
         return False
 
 
-def _stop_group(process: subprocess.Popen, process_group: int) -> None:
+def stop_process_group(
+    process: subprocess.Popen,
+    process_group: int,
+    grace_seconds: float = 10,
+) -> None:
+    """Stop and reap a process group even when its original leader has exited."""
     try:
         os.killpg(process_group, signal.SIGTERM)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         process.wait()
         return
 
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
         # Reap the leader as soon as it exits. Otherwise its zombie keeps an
         # otherwise-empty process group visible for the entire grace period.
@@ -47,7 +52,7 @@ def _stop_group(process: subprocess.Popen, process_group: int) -> None:
     if _group_exists(process_group):
         try:
             os.killpg(process_group, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
     process.wait()
 
@@ -88,11 +93,11 @@ def run(
     started = time.monotonic()
     while True:
         if cancel_event.is_set():
-            _stop_group(process, process_group)
+            stop_process_group(process, process_group, 2)
             process.communicate()
             raise RunCancelled("run cancelled")
         if timeout is not None and time.monotonic() - started >= timeout:
-            _stop_group(process, process_group)
+            stop_process_group(process, process_group, 2)
             stdout, stderr = process.communicate()
             raise subprocess.TimeoutExpired(
                 command,

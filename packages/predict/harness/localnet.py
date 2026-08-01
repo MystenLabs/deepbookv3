@@ -202,22 +202,15 @@ def chain_id(
 
 
 def request_stop(proc: subprocess.Popen | None) -> None:
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        os.killpg(proc.pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         pass
 
 
 def stop(proc: subprocess.Popen | None) -> None:
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return
-    request_stop(proc)
-    try:
-        proc.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    cancellation.stop_process_group(proc, proc.pid, 15)
