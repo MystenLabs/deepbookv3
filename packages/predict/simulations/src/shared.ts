@@ -9,6 +9,7 @@ import {
     ts,
     writeJson,
 } from "../../devtools/ts/artifacts.js";
+import { type GasUsage, type OracleFeedIds } from "../../devtools/ts/runtime.js";
 
 export { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson };
 
@@ -87,7 +88,7 @@ export interface LocalTraceStep {
     digest: string;
     pricingTimestampMs: number;
     wallMs: number;
-    gas: GasLike;
+    gas: GasUsage;
     events: LocalTraceEvent[];
 }
 
@@ -95,14 +96,6 @@ export interface LocalTraceEvent {
     type: string;
     full_type: string;
     parsedJson: unknown;
-}
-
-export interface GasLike {
-    computationCost: number;
-    storageCost: number;
-    storageRebate: number;
-    nonRefundableStorageFee: number;
-    gasTotal: number;
 }
 
 export interface LocalTraceFile {
@@ -126,7 +119,7 @@ export interface EconomicRecord {
     state: Record<string, string>;
 }
 
-export interface SimState {
+export interface SimState extends OracleFeedIds {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
@@ -136,9 +129,6 @@ export interface SimState {
     // Propbook feeds replace the in-package oracle + Pyth source. There is no
     // writer cap anymore; BS updates are permissionless verified batches, ingested
     // into the underlying's sid-keyed value/SVI store pair.
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
     // The sender's canonical derived account wrapper (replaces the predict manager).
     // Owner auth is minted per-call from the tx sender, so there are no capital caps.
     accountWrapperId: string;

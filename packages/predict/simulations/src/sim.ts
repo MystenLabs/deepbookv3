@@ -31,6 +31,7 @@ import {
     POOL_VAULT_ID,
     PROTOCOL_CONFIG_ID,
     address,
+    binaryRangeTicks,
     bindFeedsToUnderlyingTx,
     createAccountTx,
     createExpiryMarketTx,
@@ -280,7 +281,11 @@ function sviInput(row: MintRow | OracleRefreshData) {
 // the order ID packs the ticks).
 function mintInput(row: MintRow): Record<string, string> {
     const strike = alignStrikeToTick(row.strike);
-    const { lowerTick, higherTick } = binaryRangeTicks(strike, row.isUp);
+    const { lowerTick, higherTick } = binaryRangeTicks(
+        strike,
+        row.isUp,
+        ORACLE_TICK_SIZE,
+    );
     return {
         order_ref: row.orderRef,
         lower_tick: lowerTick.toString(),
@@ -288,18 +293,6 @@ function mintInput(row: MintRow): Record<string, string> {
         quantity: row.quantity.toString(),
         leverage: row.leverage.toString(),
     };
-}
-
-// Ticks for a binary range. UP `(strike, +inf)` -> (strike/tick, POS_INF_TICK);
-// DOWN `(-inf, strike)` -> (0 = neg-inf, strike/tick). Mirrors range_codec.
-function binaryRangeTicks(
-    strike: bigint,
-    isUp: boolean,
-): { lowerTick: bigint; higherTick: bigint } {
-    const tick = strike / ORACLE_TICK_SIZE;
-    return isUp
-        ? { lowerTick: tick, higherTick: POS_INF_TICK }
-        : { lowerTick: 0n, higherTick: tick };
 }
 
 function rowInput(row: ScenarioRow): Record<string, unknown> {

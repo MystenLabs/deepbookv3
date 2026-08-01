@@ -11,7 +11,7 @@
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
 import { CADENCES } from "./predictConfig.js";
-import { cadenceOf, nextDeployableExpiry } from "./cadenceSchedule.js";
+import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";

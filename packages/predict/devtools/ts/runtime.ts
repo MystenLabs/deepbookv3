@@ -103,12 +103,7 @@ const ONE_MONTH_MS = 30n * ONE_DAY_MS;
 // making the supply==0 re-bootstrap branch unreachable. request_supply/withdraw abort
 // `ENotBootstrapped` until it has run, so the harness locks it before any supply.
 export const MIN_BOOTSTRAP_LIQUIDITY = 10_000_000n;
-const SETUP_TRANSACTION_INCLUDE = {
-    effects: true,
-    events: true,
-    objectTypes: true,
-} as const;
-const EXECUTION_TRANSACTION_INCLUDE = {
+const TRANSACTION_INCLUDE = {
     effects: true,
     events: true,
     objectTypes: true,
@@ -576,7 +571,7 @@ async function getTransactionWithRetry(digest: string): Promise<any> {
             }
             const transaction = normalizeTransactionResult(
                 parseGrpcTransactionResponse(response.transaction, {
-                    include: EXECUTION_TRANSACTION_INCLUDE,
+                    include: TRANSACTION_INCLUDE,
                 }),
             );
             const clockTimestampMs = await transactionClockTimestampMs(
@@ -801,10 +796,13 @@ export async function nextOneMonthExpiryMs(): Promise<bigint> {
 // real wire), and one BS SVI batch for the market's expiry. Routing is by the
 // signed sid inside each update; the two per-underlying stores are the only BS
 // objects the refresh touches.
-interface OracleRefreshParams {
+export interface OracleFeedIds {
     pythFeedId: string;
     bsValueStoreId: string;
     bsSviStoreId: string;
+}
+
+interface OracleRefreshParams extends OracleFeedIds {
     expiry: bigint;
     spot: bigint;
     forward: bigint;
@@ -820,13 +818,10 @@ interface OracleRefreshParams {
     };
 }
 
-interface MintParams {
+interface MintParams extends OracleFeedIds {
     expiryMarketId: string;
     protocolConfigId: string;
     wrapperId: string;
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
     strike: bigint;
     isUp: boolean;
     quantity: bigint;
@@ -836,33 +831,24 @@ interface MintParams {
     maxProbability?: bigint; // per-contract probability cap (1e9); U64_MAX if omitted
 }
 
-interface RedeemParams {
+interface RedeemParams extends OracleFeedIds {
     expiryMarketId: string;
     protocolConfigId: string;
     wrapperId: string;
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
     orderId: string;
     closeQuantity: bigint;
 }
 
-interface LivePricerParams {
+interface LivePricerParams extends OracleFeedIds {
     expiryMarketId: string;
     protocolConfigId: string;
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
 }
 
 // Inputs to drive one privileged full-pool flush (the async LP drain).
-export interface FlushParams {
+export interface FlushParams extends OracleFeedIds {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
     lifecycleCapId: string;
 }
 
@@ -871,7 +857,7 @@ export interface FlushParams {
 // An UP order is `(strike, +inf)` -> lower_tick = strike/tick_size, higher_tick =
 // POS_INF_TICK; a DOWN order is `(-inf, strike)` -> lower_tick = 0 (neg-inf),
 // higher_tick = strike/tick_size.
-function binaryRangeTicks(
+export function binaryRangeTicks(
     strike: bigint,
     isUp: boolean,
     tickSize = ORACLE_TICK_SIZE,
@@ -953,7 +939,7 @@ export interface GridExpiry {
 }
 
 export function buildOracleRefreshGridTx(
-    feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
+    feeds: OracleFeedIds,
     pythSpot1e9: bigint,
     pythTsMs: bigint | null,
     bsSpot: { value1e9: bigint; tsMs: bigint },
@@ -979,7 +965,7 @@ export function buildOracleRefreshGridTx(
 // honestly and the Pyth-stale → BS-forward fallback stays reachable in a run.
 function addOracleRefreshGrid(
     tx: Transaction,
-    feeds: { pythFeedId: string; bsValueStoreId: string; bsSviStoreId: string },
+    feeds: OracleFeedIds,
     pythSpot1e9: bigint,
     pythTsMs: bigint | null,
     bsSpot: { value1e9: bigint; tsMs: bigint },
@@ -1589,10 +1575,7 @@ export function setBlockScholesSignerTx(): Transaction {
 // flush valuation can price `current_nav`. The store pair exists from underlying
 // registration; seeding the per-expiry series rows happens after the market is
 // created (its expiry fixes their sids).
-export async function seedOracleTx(params: {
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
+export async function seedOracleTx(params: OracleFeedIds & {
     expiry: bigint;
     spot: bigint;
     forward: bigint;
@@ -1796,12 +1779,6 @@ export function bareFlushTx(params: {
     return tx;
 }
 
-export interface KeeperFeeds {
-    pythFeedId: string;
-    bsValueStoreId: string;
-    bsSviStoreId: string;
-}
-
 // The keeper's pool-flush PTB: value EVERY active market between start and finish. The durable
 // settlement lane (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
 // are only the boundary-race STRAGGLERS that expired since. Their exact-expiry observations are
@@ -1809,7 +1786,7 @@ export interface KeeperFeeds {
 // durable path: a BS outage aborts this whole PTB (reverting them), but the settlement lane already
 // settled durably, so no brick. Live-market valuation reads the updater-maintained fresh BS feed.
 export function keeperFlushTx(params: {
-    feeds: KeeperFeeds;
+    feeds: OracleFeedIds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
@@ -1898,7 +1875,7 @@ export function keeperSettleTx(params: {
 // One bounded liquidation pass over each live market. Reads the updater-maintained
 // fresh feed via load_live_pricer (no self-refresh).
 export function keeperLiquidateTx(params: {
-    feeds: KeeperFeeds;
+    feeds: OracleFeedIds;
     markets: string[];
     protocolConfigId: string;
     budget: bigint;
@@ -2117,7 +2094,7 @@ export async function executeWithSignerAndWait(
     txSigner: any,
     label = "transaction",
     gasBudget: number | bigint = DEFAULT_GAS_BUDGET,
-    options: any = SETUP_TRANSACTION_INCLUDE,
+    options: any = TRANSACTION_INCLUDE,
 ): Promise<any> {
     const sender = txSigner.getPublicKey().toSuiAddress();
     const artifactGasBudget = BigInt(gasBudget);
@@ -2223,7 +2200,7 @@ export async function execute(
                 tx.setSender(address);
                 tx.setGasBudget(gasBudget);
 
-                raw = await signAndExecuteGrpc(tx, signer, EXECUTION_TRANSACTION_INCLUDE);
+                raw = await signAndExecuteGrpc(tx, signer, TRANSACTION_INCLUDE);
 
                 const status = raw.effects?.status;
                 if (!isSuccessStatus(status)) {

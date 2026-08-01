@@ -19,6 +19,7 @@ import {
   lockCapitalTx,
   mintLifecycleCapTx,
   objectExists,
+  type OracleFeedIds,
   readPlpTotalSupply,
   readSupplyRequestsPending,
   registerUnderlyingAndCreateFeedsTx,
@@ -40,11 +41,7 @@ export const eventField = (b: any, name: string, field: string): string => {
   return ev.parsedJson[field];
 };
 
-export interface Feeds {
-  pythFeedId: string;
-  bsValueStoreId: string;
-  bsSviStoreId: string;
-}
+export type Feeds = OracleFeedIds;
 
 // Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + a
 // lifecycle cap. Returns the feed ids and the cap needed to create/flush markets.

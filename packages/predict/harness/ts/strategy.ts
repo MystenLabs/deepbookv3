@@ -16,6 +16,7 @@ import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
   type CleanoutPosition,
+  type OracleFeedIds,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
   claimRebateOnlyTx,
@@ -74,7 +75,7 @@ export interface GasBreakdown {
 // Everything a strategy can read + do in one tick. The runner owns the actual deps; a
 // strategy only sees this interface.
 export interface StrategyCtx {
-  readonly feeds: any;
+  readonly feeds: OracleFeedIds;
   markets(): Mkt[]; // live markets the keeper is advertising (markets.json)
   snapshot(): Snap | null; // latest oracle snapshot (snapshot.json)
   readonly held: Held[]; // the trader's open orders (runner-maintained)
@@ -148,7 +149,7 @@ export interface Strategy {
 }
 
 export interface ContextDeps {
-  feeds: any;
+  feeds: OracleFeedIds;
   instanceDir: string;
   wrapperId: string;
   label: string;
