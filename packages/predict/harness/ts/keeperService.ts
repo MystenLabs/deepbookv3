@@ -43,13 +43,6 @@ const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
 const LIQ_BUDGET = 24n; // trade_liquidation_budget
-// Flush gas budget. A single dense capacity market can OOG at the per-tx COMPUTATION cap
-// (5e9 MIST), not the budget; the pool total binds earlier on the object-runtime cached-objects
-// limit (C-1) at ~16-50% of that cap. Either way the budget only needs headroom above the 5e9 cap.
-// Set to 15e9 (3x): still lets the single-market flush reach the 5e9 wall, but far below the old
-// 50e9, which needlessly forces larger gas-payment merges. The gRPC executor tracks the pinned
-// coin's remaining balance and merges faucet coins before it drops below this budget.
-const FLUSH_GAS_BUDGET = 15_000_000_000n;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -146,7 +139,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush",
-        FLUSH_GAS_BUDGET,
       );
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {

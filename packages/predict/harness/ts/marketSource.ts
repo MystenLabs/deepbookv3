@@ -10,7 +10,7 @@ import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import WebSocket from "ws";
 
-import { forwardSid, spotSid, sviSid } from "../../devtools/ts/blockScholesSid.js";
+import { PREDICT_ORACLE_ID, forwardSid, spotSid, sviSid } from "../../devtools/ts/blockScholesSid.js";
 import { harnessKey } from "./io.js";
 import {
   type BsSviUpdate,
@@ -22,7 +22,6 @@ import {
 
 export const isoSec = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z";
 const SCALE_1E9 = 1_000_000_000;
-const BS_UNDERLYING_ID = 1;
 
 // Public, versioned Block Scholes testnet trust triple. The subscription's
 // `{network, pkg_ver}` selects this verifier deployment on the provider side;
@@ -626,21 +625,21 @@ export class DirectWsSource implements MarketSource {
     if (!ws) return;
     const active = this.#expiries.filter((ms) => ms > Date.now());
     const spot = {
-      sid: sidHex(spotSid(BS_UNDERLYING_ID)),
+      sid: sidHex(spotSid(PREDICT_ORACLE_ID)),
       feed: "index.px",
       asset: "spot",
       base_asset: "BTC",
       exchange: "blockscholes",
     };
     const forwards = active.map((ms) => ({
-      sid: sidHex(forwardSid(BS_UNDERLYING_ID, BigInt(ms))),
+      sid: sidHex(forwardSid(PREDICT_ORACLE_ID, BigInt(ms))),
       feed: "mark.px",
       asset: "future",
       base_asset: "BTC",
       expiry: isoSec(ms),
     }));
     const svis = active.map((ms) => ({
-      sid: sidHex(sviSid(BS_UNDERLYING_ID, BigInt(ms))),
+      sid: sidHex(sviSid(PREDICT_ORACLE_ID, BigInt(ms))),
       feed: "model.params",
       exchange: "composite",
       asset: "option",

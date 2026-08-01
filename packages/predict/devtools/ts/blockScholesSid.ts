@@ -14,6 +14,10 @@ const KIND_SVI = 2n;
 // constants::float_scaling_decimals!() — the 1e9 fixed-point scale of every value.
 const DECIMALS = 9n;
 
+// The local Predict development system uses one numeric identity for its Pyth
+// feed, Propbook underlying, and Block Scholes series family.
+export const PREDICT_ORACLE_ID = 1;
+
 const VERSION_SHIFT = 248n;
 const KIND_SHIFT = 240n;
 const UNDERLYING_SHIFT = 208n;

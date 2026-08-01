@@ -57,7 +57,7 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   } else {
     await executeAndWait(updatePythTrustedSignerTx(), "trusted-signer");
     await executeAndWait(setBlockScholesSignerTx(), "bs-signer");
-    const feedsR = await executeAndWait(registerUnderlyingAndCreateFeedsTx(1), "feeds");
+    const feedsR = await executeAndWait(registerUnderlyingAndCreateFeedsTx(), "feeds");
     const pythFeedId = found(feedsR, "pyth_feed::PythFeed");
     const bsValueStoreId = found(feedsR, "block_scholes_store::BlockScholesValueStore");
     const bsSviStoreId = found(feedsR, "block_scholes_store::BlockScholesSVIStore");

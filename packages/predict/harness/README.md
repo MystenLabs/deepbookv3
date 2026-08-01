@@ -25,7 +25,7 @@ python3 -m harness cleanup --instances
 | `analyze` | Reduce retained campaign traces into measurements and a contract-bug verdict. | Terminal report and exit status. |
 | `status` / `cleanup` | Inspect or reclaim localnet slots. | Slot registry state. |
 
-The external gas-benchmark worker calls `python3 -m harness benchmark --results-output <path>`. It runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
+The external gas-benchmark worker calls `python3 -m harness benchmark --source <downloaded-snapshot.csv> --results-output <path>`. The worker passes the downloaded source path directly; the task runs the same independent Python replay and parity comparison, retains the canonical run artifacts, and copies only `results.json` to the requested delivery path.
 
 ## Strategy registry
 

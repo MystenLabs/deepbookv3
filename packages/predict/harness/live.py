@@ -41,9 +41,8 @@ from .session import (
 # a pipe. Harmless on a terminal (already line-buffered).
 print = functools.partial(print, flush=True)
 
-# The keeper's per-tx gas budget (mirrors keeperService FLUSH_GAS_BUDGET). Set explicitly for the
-# keeper process so its cheap settle/liquidate/rebalance/roll txs don't inherit a large trader
-# SIM_GAS_BUDGET (batch strategies need 50e9) and each demand a 50e9 gas coin.
+# The keeper's per-transaction budget. The Python launcher owns this value and passes it to the
+# keeper process so its cheap transactions do not inherit a strategy's larger trader budget.
 KEEPER_GAS_BUDGET = 15_000_000_000
 # Refill an actor's aggregate gas below this floor. It exceeds the keeper and
 # trader budgets so the gRPC executor can merge fresh faucet coins into its
@@ -241,7 +240,14 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
         traders_procs = [
             _launch_actor(
                 "traderService.ts",
-                {**base, "TRADER_ADDRESS": a, "STRATEGY": "fuzz"},
+                {
+                    **base,
+                    "TRADER_ADDRESS": a,
+                    "STRATEGY": "fuzz",
+                    "SIM_GAS_BUDGET": str(
+                        meta["strategies"]["fuzz"]["gasBudget"]
+                    ),
+                },
             )
             for a in trader_addrs
         ]

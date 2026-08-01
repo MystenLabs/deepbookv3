@@ -20,6 +20,9 @@ from . import config
 from .session import initialized_localnet
 
 
+SIMULATION_GAS_BUDGET = 1_000_000_000
+
+
 def _positive_int(value: str | int | None, name: str) -> int | None:
     if value in (None, ""):
         return None
@@ -29,20 +32,11 @@ def _positive_int(value: str | int | None, name: str) -> int | None:
     return parsed
 
 
-def _source_path(source: str | None) -> Path:
-    configured = source or os.environ.get("SCENARIO_PATH")
-    return (
-        Path(configured).expanduser()
-        if configured
-        else config.SIMULATIONS_DIR / "data" / "scenario_dataset.csv"
-    )
-
-
 def _generate_scenario(source: Path, scenario: Path, seed: int) -> None:
     if not source.is_file():
         raise FileNotFoundError(
             f"scenario source dataset does not exist: {source}; "
-            "pass --source or set SCENARIO_PATH"
+            "pass --source"
         )
     subprocess.run(
         [
@@ -64,7 +58,7 @@ def _generate_scenario(source: Path, scenario: Path, seed: int) -> None:
 
 def run(
     *,
-    source: str | None = None,
+    source: str,
     seed: int = 0,
     max_rows: int | None = None,
     benchmark: bool = False,
@@ -72,7 +66,7 @@ def run(
 ) -> int:
     if results_output is not None and not benchmark:
         raise ValueError("results_output is only valid for benchmark runs")
-    source_path = _source_path(source)
+    source_path = Path(source).expanduser()
     max_rows = _positive_int(
         max_rows if max_rows is not None else os.environ.get("SIM_MAX_ROWS"),
         "max rows",
@@ -84,7 +78,13 @@ def run(
         scenario = artifacts_dir / "scenario.csv"
         manifest_path = artifacts_dir / "run-manifest.json"
 
-        command = ["npx", "tsx", "simulations/src/sim.ts"]
+        command = [
+            "npx",
+            "tsx",
+            "simulations/src/sim.ts",
+            "--scenario",
+            str(scenario),
+        ]
         if max_rows is not None:
             command.extend(["--max-rows", str(max_rows)])
 
@@ -152,7 +152,7 @@ def run(
                 env={
                     **os.environ,
                     "INSTANCE_DIR": str(instance_dir),
-                    "SCENARIO_PATH": str(scenario),
+                    "SIM_GAS_BUDGET": str(SIMULATION_GAS_BUDGET),
                 },
                 check=True,
             )

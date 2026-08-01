@@ -1,6 +1,5 @@
 import { readFileSync } from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
 
 import {
     FAILED_TRANSACTIONS_DIR,
@@ -371,9 +370,6 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
 
 export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v3";
 export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v4";
-export const SCENARIO_PATH = fileURLToPath(
-    new URL("../data/generated/normal_scenario.csv", import.meta.url),
-);
 export const STATE_PATH = path.join(INSTANCE_DIR, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(INSTANCE_DIR, "artifacts", "local_trace.json");
 export const LOCAL_DATA_PATH = path.join(INSTANCE_DIR, "artifacts", "local_data.json");
@@ -422,7 +418,7 @@ export function parseScenarioText(text: string): ScenarioRow[] {
     });
 }
 
-export function loadScenario(path = SCENARIO_PATH): ScenarioRow[] {
+export function loadScenario(path: string): ScenarioRow[] {
     return parseScenarioText(readFileSync(path, "utf8"));
 }
 

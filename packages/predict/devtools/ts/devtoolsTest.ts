@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
+import { PREDICT_ORACLE_ID, spotSid } from "./blockScholesSid.js";
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
 import { transactionClockTimestampMs } from "./grpcClock.js";
 import {
@@ -14,6 +15,13 @@ import {
 } from "./blockScholesWire.js";
 import { signedValueBatchBytes } from "./localBlockScholes.js";
 import { bytesToHex, hexToBytes } from "./localPyth.js";
+
+test("Predict oracle identity matches the contract spot-series vector", () => {
+  assert.equal(
+    spotSid(PREDICT_ORACLE_ID).toString(16).padStart(64, "0"),
+    "0100000000010900000000000000000000000000000000000000000000000000",
+  );
+});
 
 test("provider value wire round-trips and remains verifier-domain-bound", () => {
   const signerPrivateKey = `0x${"1".padStart(64, "0")}`;

@@ -40,7 +40,6 @@ SCENARIO_COLUMNS = [
 ]
 
 DATA_DIR = Path(__file__).with_name("data")
-SOURCE_DATASET = DATA_DIR / "scenario_dataset.csv"
 SCENARIO_CONFIG = DATA_DIR / "scenario_config.json"
 GENERATED_DIR = DATA_DIR / "generated"
 DEFAULT_RISK_FREE_RATE = 35_000_000
@@ -494,7 +493,7 @@ def generate_scenario(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=SOURCE_DATASET)
+    parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=SCENARIO_CONFIG)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--seed", type=int, default=0)

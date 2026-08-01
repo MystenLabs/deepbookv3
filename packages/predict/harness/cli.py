@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         "parity",
         help="run deterministic TypeScript/localnet and Python model parity",
     )
-    p_parity.add_argument("--source", default=None, help="oracle snapshot CSV")
+    p_parity.add_argument("--source", required=True, help="oracle snapshot CSV")
     p_parity.add_argument("--seed", type=int, default=0)
     p_parity.add_argument("--max-rows", type=int, default=None)
     p_parity.set_defaults(
@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         "benchmark",
         help="run parity and produce gas benchmark results",
     )
-    p_benchmark.add_argument("--source", default=None)
+    p_benchmark.add_argument("--source", required=True, help="oracle snapshot CSV")
     p_benchmark.add_argument("--seed", type=int, default=0)
     p_benchmark.add_argument("--max-rows", type=int, default=None)
     p_benchmark.add_argument(

@@ -64,8 +64,22 @@ class RunManifestTests(unittest.TestCase):
             commands = [call.args[0] for call in run.call_args_list]
             self.assertEqual(
                 commands[0],
-                ["npx", "tsx", "simulations/src/sim.ts", "--max-rows", "5"],
+                [
+                    "npx",
+                    "tsx",
+                    "simulations/src/sim.ts",
+                    "--scenario",
+                    str(artifacts / "scenario.csv"),
+                    "--max-rows",
+                    "5",
+                ],
             )
+            simulation_env = run.call_args_list[0].kwargs["env"]
+            self.assertEqual(
+                simulation_env["SIM_GAS_BUDGET"],
+                str(parity.SIMULATION_GAS_BUDGET),
+            )
+            self.assertNotIn("SCENARIO_PATH", simulation_env)
             self.assertEqual(commands[1][1], "simulations/compare_parity.py")
             self.assertEqual(commands[2][1], "simulations/write_benchmark_results.py")
             self.assertEqual(delivered.read_text(), '{"gas":"ok"}\n')

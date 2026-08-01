@@ -15,15 +15,17 @@ python3 -m harness parity \
   --max-rows 20
 ```
 
-`--max-rows` is optional. The source dataset is not committed; the default ignored path is `simulations/data/scenario_dataset.csv`.
+`--max-rows` is optional. `--source` is required because the source dataset is not committed.
 
 The external benchmark worker calls:
 
 ```bash
-python3 -m harness benchmark --results-output /path/to/results.json
+python3 -m harness benchmark \
+  --source /path/to/scenario_dataset.csv \
+  --results-output /path/to/results.json
 ```
 
-The task honors `SCENARIO_PATH` and `SIM_MAX_ROWS`, runs the independent replay and parity comparison, retains the canonical instance artifacts, and copies `results.json` to the requested delivery path.
+The task passes the generated scenario to the TypeScript executor as an explicit argument, honors `SIM_MAX_ROWS`, runs the independent replay and parity comparison, retains the canonical instance artifacts, and copies `results.json` to the requested delivery path.
 
 ## Outputs
 

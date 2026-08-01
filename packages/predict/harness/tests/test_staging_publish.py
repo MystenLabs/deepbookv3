@@ -636,6 +636,12 @@ class LifecycleTests(unittest.TestCase):
             self.assertTrue(active.exists())
             self.assertFalse(orphan.exists())
 
+    def test_parity_tasks_require_explicit_source(self) -> None:
+        for command in ("parity", "benchmark"):
+            with self.subTest(command=command), self.assertRaises(SystemExit) as raised:
+                cli.main([command])
+            self.assertEqual(raised.exception.code, 2)
+
     def test_refill_gas_uses_floor_above_keeper_budget(self) -> None:
         client_config = Path("client.yaml")
         balance = live.KEEPER_GAS_BUDGET
@@ -853,6 +859,10 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(report["strategies"][0]["result"], "incomplete")
             self.assertFalse((case["campaign_dir"] / "runtime").exists())
             self.assertEqual(manifest["localnets"][0]["role"], "cleanup-survivor")
+            self.assertEqual(
+                case["popen"].call_args_list[1].kwargs["env"]["SIM_GAS_BUDGET"],
+                str(live.KEEPER_GAS_BUDGET),
+            )
             self.assertEqual(
                 case["popen"].call_args_list[3].kwargs["env"]["SIM_GAS_BUDGET"],
                 "50000000000",

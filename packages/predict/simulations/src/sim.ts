@@ -11,7 +11,6 @@ import {
     LOCAL_TRACE_PARTIAL_PATH,
     LOCAL_TRACE_SCHEMA_VERSION,
     PYTHON_DATA_PATH,
-    SCENARIO_PATH as DEFAULT_SCENARIO_PATH,
     STATE_PATH,
     type EconomicDataFile,
     type EconomicRecord,
@@ -120,25 +119,34 @@ interface AliasState {
 }
 
 function parseArgs() {
+    let scenario: string | undefined;
     let maxRows: number | undefined;
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
-        if (args[i] !== "--max-rows") {
-            throw new Error(`Unsupported sim argument ${args[i]}`);
-        }
+        const argument = args[i];
         const value = args[i + 1];
-        if (value === undefined || !/^[1-9][0-9]*$/.test(value)) {
-            throw new Error("--max-rows requires a positive integer");
+        if (argument === "--scenario") {
+            if (scenario !== undefined) throw new Error("--scenario may only be provided once");
+            if (value === undefined || value.trim().length === 0 || value.startsWith("--")) {
+                throw new Error("--scenario requires a path");
+            }
+            scenario = value;
+            i += 1;
+            continue;
         }
-        maxRows = parseInt(value, 10);
-        i += 1;
+        if (argument === "--max-rows") {
+            if (maxRows !== undefined) throw new Error("--max-rows may only be provided once");
+            if (value === undefined || !/^[1-9][0-9]*$/.test(value)) {
+                throw new Error("--max-rows requires a positive integer");
+            }
+            maxRows = parseInt(value, 10);
+            i += 1;
+            continue;
+        }
+        throw new Error(`Unsupported sim argument ${argument}`);
     }
-    return { maxRows };
-}
-
-function scenarioPath(): string {
-    const configured = process.env.SCENARIO_PATH?.trim();
-    return configured && configured.length > 0 ? configured : DEFAULT_SCENARIO_PATH;
+    if (scenario === undefined) throw new Error("--scenario is required");
+    return { scenario, maxRows };
 }
 
 function initialEconomicState(
@@ -1107,7 +1115,7 @@ async function setupSimulation(
     // create the underlying's Block Scholes store pair (canonical at creation —
     // every expiry's series lives in these two stores, keyed by sid).
     result = await executeAndWait(
-        registerUnderlyingAndCreateFeedsTx(1),
+        registerUnderlyingAndCreateFeedsTx(),
         "register_underlying_and_create_feeds",
     );
     const pythFeedChange = result.objectChanges.find(
@@ -1662,7 +1670,7 @@ function runPythonReplay(scenarioPath: string, expiryMs: string, maxRows?: numbe
 
 async function main() {
     const args = parseArgs();
-    const scenario = scenarioPath();
+    const scenario = args.scenario;
     const scenarioConfig = readJson<Record<string, any>>(SCENARIO_CONFIG_PATH);
     if (scenarioConfig.schema_version !== 1) {
         throw new Error(`unsupported scenario config schema_version: ${String(scenarioConfig.schema_version)}`);

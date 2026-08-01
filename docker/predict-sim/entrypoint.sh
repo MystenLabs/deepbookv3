@@ -35,6 +35,17 @@ trap report_failure EXIT
 
 set -euo pipefail
 
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <scenario-source.csv>" >&2
+    exit 2
+fi
+
+SCENARIO_SOURCE="$1"
+if [ ! -f "${SCENARIO_SOURCE}" ]; then
+    echo "ERROR: scenario source does not exist: ${SCENARIO_SOURCE}" >&2
+    exit 1
+fi
+
 # Tee all output to log file.
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -48,9 +59,11 @@ cd "${PREDICT_DIR}"
 npm install
 cd /workspace/repo
 
-# Run the localnet benchmark flow. The benchmark service passes SIM_MAX_ROWS
-# and optionally SCENARIO_PATH through the job environment.
-PYTHONPATH="${PREDICT_DIR}" python3 -m harness benchmark --results-output "${RESULTS}"
+# Run the localnet benchmark flow. The benchmark service passes the downloaded
+# source path as the required container argument and SIM_MAX_ROWS in the environment.
+PYTHONPATH="${PREDICT_DIR}" python3 -m harness benchmark \
+    --source "${SCENARIO_SOURCE}" \
+    --results-output "${RESULTS}"
 
 if [ ! -f "${RESULTS}" ]; then
     echo "ERROR: results.json not found after localnet run" >&2

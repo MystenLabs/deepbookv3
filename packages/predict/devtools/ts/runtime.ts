@@ -36,7 +36,7 @@ import {
     WORMHOLE_STATE_ID,
     getSigner,
 } from "./env.js";
-import { forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
+import { PREDICT_ORACLE_ID, forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
 import {
     signedSviBatchBytes,
     signedValueBatchBytes,
@@ -80,11 +80,6 @@ const COIN_REGISTRY_ID = "0xc";
 // fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
-// Pyth Lazer feed id (the propbook spot feed key) and the Propbook underlying id.
-// The harness binds one market to one Pyth feed and one split BS source set for
-// that underlying, so a single source id serves both.
-const PYTH_FEED_ID = 1;
-const BS_UNDERLYING_ID = PYTH_FEED_ID;
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -114,11 +109,11 @@ export const signer = getSigner();
 export const address = signer.getPublicKey().toSuiAddress();
 export { POOL_VAULT_ID, PROTOCOL_CONFIG_ID };
 
-const DEFAULT_GAS_BUDGET = gasBudgetFromEnv();
-
 function gasBudgetFromEnv(): bigint {
     const raw = process.env.SIM_GAS_BUDGET?.trim();
-    if (!raw) return 1_000_000_000n;
+    if (!raw) {
+        throw new Error("SIM_GAS_BUDGET is required when no explicit gas budget is supplied");
+    }
     if (!/^[1-9][0-9]*$/.test(raw)) {
         throw new Error(`SIM_GAS_BUDGET must be a positive integer MIST value, got "${raw}"`);
     }
@@ -984,7 +979,7 @@ function addOracleRefreshGrid(
     const spotTs = seriesTs(bsSpot.tsMs);
     if (spotTs !== null) {
         valueUpdates.push({
-            sid: spotSid(BS_UNDERLYING_ID),
+            sid: spotSid(PREDICT_ORACLE_ID),
             timestampMs: spotTs,
             value: bsSpot.value1e9,
         });
@@ -993,7 +988,7 @@ function addOracleRefreshGrid(
         const ts = seriesTs(g.forwardTsMs);
         if (ts !== null) {
             valueUpdates.push({
-                sid: forwardSid(BS_UNDERLYING_ID, g.expiry),
+                sid: forwardSid(PREDICT_ORACLE_ID, g.expiry),
                 timestampMs: ts,
                 value: g.forward,
             });
@@ -1019,7 +1014,7 @@ function addPythFeedUpdate(
 ): void {
     const updateBytes = lazerUpdateFromConfig(
         localPythConfig(),
-        PYTH_FEED_ID,
+        PREDICT_ORACLE_ID,
         spot,
         sourceTimestampMs,
     );
@@ -1040,7 +1035,7 @@ function addPythFeedUpdate(
 // Settlement observation: same re-signed Lazer spot update as addPythFeedUpdate, but
 // stored via `insert_at` at the exact whole-second expiry timestamp for `try_settle`.
 function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, expiryMs: bigint): void {
-    const updateBytes = lazerUpdateFromConfig(localPythConfig(), PYTH_FEED_ID, spot, expiryMs);
+    const updateBytes = lazerUpdateFromConfig(localPythConfig(), PREDICT_ORACLE_ID, spot, expiryMs);
     const update = tx.moveCall({
         target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),
         arguments: [tx.object(PYTH_LAZER_STATE_ID), tx.object(CLOCK_ID), tx.pure.vector("u8", Array.from(updateBytes))],
@@ -1125,7 +1120,7 @@ function sviBatchUpdate(
     timestampMs: bigint,
 ): BsSviUpdate {
     return {
-        sid: sviSid(BS_UNDERLYING_ID, expiry),
+        sid: sviSid(PREDICT_ORACLE_ID, expiry),
         timestampMs,
         aMagnitude: svi.a,
         aNegative: svi.aNegative,
@@ -1148,9 +1143,9 @@ function addBlockScholesUpdates(
         params,
         publishedAtMs,
         [
-            { sid: spotSid(BS_UNDERLYING_ID), timestampMs: publishedAtMs, value: params.spot },
+            { sid: spotSid(PREDICT_ORACLE_ID), timestampMs: publishedAtMs, value: params.spot },
             {
-                sid: forwardSid(BS_UNDERLYING_ID, params.expiry),
+                sid: forwardSid(PREDICT_ORACLE_ID, params.expiry),
                 timestampMs: publishedAtMs,
                 value: params.forward,
             },
@@ -1419,7 +1414,7 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
 // permanent Pyth spot feed, and admin-create the underlying's Block Scholes store
 // pair. The stores are canonical at creation (their registry binding is made in
 // the same call), so no separate BS bind step exists.
-export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction {
+export function registerUnderlyingAndCreateFeedsTx(): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: target("registry", "register_underlying"),
@@ -1428,19 +1423,19 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
             tx.object(ADMIN_CAP_ID),
-            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
         ],
     });
     tx.moveCall({
         target: propbookTarget("registry", "create_and_share_pyth_feed"),
-        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(feedId)],
+        arguments: [tx.object(ORACLE_REGISTRY_ID), tx.pure.u32(PREDICT_ORACLE_ID)],
     });
     tx.moveCall({
         target: propbookTarget("registry", "create_and_share_block_scholes_stores"),
         arguments: [
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
-            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
         ],
     });
     return tx;
@@ -1464,7 +1459,7 @@ export function setCadenceConfigTx(params: {
             tx.object(REGISTRY_ID),
             tx.object(PROTOCOL_CONFIG_ID),
             tx.object(ADMIN_CAP_ID),
-            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
             tx.pure.u8(params.cadenceId),
             tx.pure.u64(params.tickSize),
             tx.pure.u64(params.admissionTickSize),
@@ -1487,7 +1482,7 @@ export function bindFeedsToUnderlyingTx(params: { pythFeedId: string }): Transac
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.object(params.pythFeedId),
-            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
         ],
     });
     return tx;
@@ -1588,7 +1583,7 @@ export async function seedOracleTx(params: OracleFeedIds & {
 
 // Create the expiry market for one Propbook underlying. No spot is read at
 // creation. The registry validates, against propbook's canonical binding, that
-// the Pyth feed and the Block Scholes store pair are bound to `BS_UNDERLYING_ID`
+// the Pyth feed and the Block Scholes store pair are bound to `PREDICT_ORACLE_ID`
 // (run `bindFeedsToUnderlyingTx` first; the store pair binds at creation).
 // `create_and_share_expiry_market` returns one ID and
 // registers the market with the vault as a zero-cash accounting row (not mintable
@@ -1608,7 +1603,7 @@ export function createExpiryMarketTx(params: {
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.lifecycleCapId),
-            tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.u32(PREDICT_ORACLE_ID),
             tx.pure.u8(params.cadenceId),
             tx.object(CLOCK_ID),
         ],
@@ -2093,7 +2088,7 @@ export async function executeWithSignerAndWait(
     tx: Transaction,
     txSigner: any,
     label = "transaction",
-    gasBudget: number | bigint = DEFAULT_GAS_BUDGET,
+    gasBudget: number | bigint = gasBudgetFromEnv(),
     options: any = TRANSACTION_INCLUDE,
 ): Promise<any> {
     const sender = txSigner.getPublicKey().toSuiAddress();
@@ -2164,7 +2159,7 @@ export async function executeWithSignerAndWait(
 export async function executeAndWait(
     tx: Transaction,
     label = "transaction",
-    gasBudget: number | bigint = DEFAULT_GAS_BUDGET,
+    gasBudget: number | bigint = gasBudgetFromEnv(),
 ): Promise<any> {
     return executeWithSignerAndWait(tx, signer, label, gasBudget);
 }
@@ -2178,7 +2173,7 @@ type BuildTx = BuiltTx | (() => BuiltTx | Promise<BuiltTx>);
 export async function execute(
     buildTx: BuildTx,
     label = "transaction",
-    gasBudget = DEFAULT_GAS_BUDGET,
+    gasBudget = gasBudgetFromEnv(),
 ): Promise<ExecutionReceipt> {
     let lastError: unknown;
     for (let attempt = 0; attempt < EXECUTE_MAX_ATTEMPTS; attempt++) {
