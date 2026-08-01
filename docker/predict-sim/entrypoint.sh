@@ -30,24 +30,23 @@ report_failure() {
     if [ "$exit_code" -eq 0 ]; then return; fi
     LOGS=$(tail -100 "$LOG_FILE" 2>/dev/null | json_escape)
     callback "failure" -d "{\"error\": \"sim exited with code ${exit_code}\", \"logs\": ${LOGS}}"
+    return "$exit_code"
 }
 trap report_failure EXIT
 
 set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <scenario-source.csv>" >&2
+# Tee all output to log file, including input-contract failures.
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+if [ -z "${SCENARIO_PATH:-}" ]; then
+    echo "ERROR: SCENARIO_PATH is required" >&2
     exit 2
 fi
-
-SCENARIO_SOURCE="$1"
-if [ ! -f "${SCENARIO_SOURCE}" ]; then
-    echo "ERROR: scenario source does not exist: ${SCENARIO_SOURCE}" >&2
+if [ ! -f "${SCENARIO_PATH}" ]; then
+    echo "ERROR: scenario source does not exist: ${SCENARIO_PATH}" >&2
     exit 1
 fi
-
-# Tee all output to log file.
-exec > >(tee -a "$LOG_FILE") 2>&1
 
 callback "started"
 
@@ -59,10 +58,10 @@ cd "${PREDICT_DIR}"
 npm install
 cd /workspace/repo
 
-# Run the localnet benchmark flow. The benchmark service passes the downloaded
-# source path as the required container argument and SIM_MAX_ROWS in the environment.
+# Run the localnet benchmark flow. The benchmark service owns the downloaded
+# source path and passes it with SIM_MAX_ROWS in the job environment.
 PYTHONPATH="${PREDICT_DIR}" python3 -m harness benchmark \
-    --source "${SCENARIO_SOURCE}" \
+    --source "${SCENARIO_PATH}" \
     --results-output "${RESULTS}"
 
 if [ ! -f "${RESULTS}" ]; then
