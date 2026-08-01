@@ -29,7 +29,7 @@ import {
   readActiveMarketIds,
   readMarketExpiry,
   rebalanceExpiryCashTx,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
 // keeper enables and rolls all three; each windowSize is a count of periods in

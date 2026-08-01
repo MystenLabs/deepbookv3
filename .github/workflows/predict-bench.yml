@@ -42,7 +42,7 @@ jobs:
         run: |
           npm run build
           npm test
-          python3 -m py_compile harness/*.py simulations/*.py simulations/data/*.py
+          python3 -m py_compile harness/*.py simulations/*.py
           python3 -m unittest discover -s harness/tests -p 'test_*.py' -v
           python3 -m unittest discover -s predeploy/tests -p 'test_*.py' -v
           python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v

@@ -13,7 +13,6 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from devtools import run_manifest
 from harness import (
     analyze,
     cancellation,
@@ -22,6 +21,7 @@ from harness import (
     live,
     oracle_setup,
     publish,
+    run_manifest,
     session,
     staging,
 )

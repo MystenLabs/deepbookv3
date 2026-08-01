@@ -23,7 +23,7 @@ import {
   clampedPythTimestampMs,
   clampedSourceTimestampMs,
   executeWithSignerAndWait,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = run until SIGTERM
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);

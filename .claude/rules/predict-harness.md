@@ -1,11 +1,13 @@
 ---
 paths:
   - "packages/predict/harness/**"
+  - "packages/predict/devtools/**"
+  - "packages/predict/simulations/**"
 ---
 
 # Predict Localnet Harness
 
-Read this before editing anything under `packages/predict/harness/**`. The harness is a worktree-free, real-data Sui-localnet staging sim for Predict: Python owns orchestration, `harness/ts` owns live actors and strategies, and `devtools/ts` is the shared execution/wire substrate used by both the harness and simulations. `packages/predict/harness/README.md` is the user-facing overview; this file is the editing-critical knowledge.
+Read this before editing the Predict local development system under `packages/predict/{harness,devtools,simulations}/**`. The harness is a worktree-free, real-data Sui-localnet staging sim for Predict: Python owns orchestration, `harness/ts` owns live actors and strategies, and `devtools/ts` is the shared execution/wire substrate used by both the harness and simulations. `packages/predict/harness/README.md` is the user-facing overview; this file is the editing-critical knowledge.
 
 ## Build & verify
 - TypeScript: `cd packages/predict && npm run build && npm test`.

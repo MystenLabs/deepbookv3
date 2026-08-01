@@ -7,8 +7,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from unittest import mock
 
-from devtools import run_manifest
-from harness import parity
+from harness import parity, run_manifest
 
 
 class RunManifestTests(unittest.TestCase):

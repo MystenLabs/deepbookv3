@@ -20,7 +20,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from devtools.run_manifest import (
+from .run_manifest import (
     complete_manifest,
     localnet_record,
     new_manifest,

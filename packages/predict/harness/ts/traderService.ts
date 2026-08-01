@@ -23,7 +23,7 @@ import {
   deriveAccountWrapperId,
   executeWithSignerAndWait,
   readPlpBalance,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 const TRADER_ADDRESS = requiredEnv("TRADER_ADDRESS");
 const INSTANCE_DIR = requiredEnv("INSTANCE_DIR");

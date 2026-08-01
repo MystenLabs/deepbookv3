@@ -64,7 +64,7 @@ devtools/ts
   ├─ local Pyth and Block Scholes signed payload helpers
   └─ Block Scholes BCS/signature codec
 
-devtools/run_manifest.py
+harness/run_manifest.py
   └─ shared versioned lifecycle and provenance manifest for campaign, parity, and benchmark
 ```
 

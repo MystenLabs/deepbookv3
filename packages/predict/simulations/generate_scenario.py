@@ -6,16 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import random
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SIM_DIR = Path(__file__).resolve().parents[1]
-if str(SIM_DIR) not in sys.path:
-    sys.path.insert(0, str(SIM_DIR))
-
-import python_replay as replay  # noqa: E402
+import python_replay as replay
 
 SCENARIO_COLUMNS = [
     "tx",
@@ -44,9 +39,10 @@ SCENARIO_COLUMNS = [
     "price_source_timestamp_ms",
 ]
 
-SOURCE_DATASET = Path(__file__).with_name("scenario_dataset.csv")
-SCENARIO_CONFIG = Path(__file__).with_name("scenario_config.json")
-GENERATED_DIR = Path(__file__).with_name("generated")
+DATA_DIR = Path(__file__).with_name("data")
+SOURCE_DATASET = DATA_DIR / "scenario_dataset.csv"
+SCENARIO_CONFIG = DATA_DIR / "scenario_config.json"
+GENERATED_DIR = DATA_DIR / "generated"
 DEFAULT_RISK_FREE_RATE = 35_000_000
 MAX_ROW_ATTEMPTS = 100
 DUSDC = 1_000_000

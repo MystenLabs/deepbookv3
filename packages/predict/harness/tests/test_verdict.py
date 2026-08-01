@@ -6,8 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from devtools import run_manifest
-from harness import analyze, verdict
+from harness import analyze, run_manifest, verdict
 
 
 class VerdictTests(unittest.TestCase):

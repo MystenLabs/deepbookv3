@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 SIM_DIR = Path(__file__).resolve().parents[1]
-GENERATOR = SIM_DIR / "data" / "generate_scenario.py"
+GENERATOR = SIM_DIR / "generate_scenario.py"
 CONFIG = SIM_DIR / "data" / "scenario_config.json"
 SOURCE_HEADER = (
     "spot,forward,a,b,rho,rho_negative,m,m_negative,sigma,"

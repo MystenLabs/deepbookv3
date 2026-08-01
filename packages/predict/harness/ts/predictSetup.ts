@@ -27,7 +27,7 @@ import {
   setBlockScholesSignerTx,
   setCadenceConfigTx,
   updatePythTrustedSignerTx,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 export const isoSec = (ms: number) => new Date(ms).toISOString().slice(0, 19) + "Z";
 export const found = (b: any, t: string): string => {

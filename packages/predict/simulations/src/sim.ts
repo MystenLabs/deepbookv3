@@ -58,7 +58,7 @@ import {
     setTemplateMaxAdmissionLeverageTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 const DUSDC_DECIMALS = 1_000_000n;
 const FLOAT_SCALING = 1_000_000_000n;

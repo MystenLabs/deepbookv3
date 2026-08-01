@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from devtools.run_manifest import (
+from .run_manifest import (
     complete_manifest,
     file_input,
     localnet_record,
@@ -47,7 +47,7 @@ def _generate_scenario(source: Path, scenario: Path, seed: int) -> None:
     subprocess.run(
         [
             "python3",
-            "simulations/data/generate_scenario.py",
+            "simulations/generate_scenario.py",
             "--source",
             str(source),
             "--config",

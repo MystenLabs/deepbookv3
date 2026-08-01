@@ -28,7 +28,7 @@ import {
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 const SCALE = 1_000_000_000n;
 const ADMISSION_K = 0.2;

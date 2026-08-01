@@ -19,9 +19,8 @@ import math
 from collections import Counter
 from pathlib import Path
 
-from devtools.run_manifest import load_manifest
-
 from . import config, measurements, verdict
+from .run_manifest import load_manifest
 
 # The Sui per-tx COMPUTATION cap: max_gas_computation_bucket = 5,000,000 units (a protocol constant,
 # verified identical localnet/testnet/mainnet) x the reference gas price. Localnet/testnet RGP 1000 ->
