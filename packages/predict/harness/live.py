@@ -13,7 +13,6 @@ import functools
 import json
 import os
 import shutil
-import signal
 import subprocess
 import threading
 import time
@@ -29,7 +28,7 @@ from devtools.run_manifest import (
     write_manifest,
 )
 
-from . import config, localnet
+from . import cancellation, config, localnet
 from .session import (
     create_funded_address,
     initialized_localnet,
@@ -50,11 +49,6 @@ KEEPER_GAS_BUDGET = 15_000_000_000
 # trader budgets so the gRPC executor can merge fresh faucet coins into its
 # exact-version pinned payment before that coin drops below the next budget.
 GAS_REFILL_FLOOR = 60_000_000_000
-LIVE_TRADER_DUSDC = "1000000000000"
-
-
-def _raise_keyboard_interrupt(*_) -> None:
-    raise KeyboardInterrupt()
 
 
 def _refill_gas(client_config: Path, faucet_port: int, address: str) -> int | None:
@@ -63,6 +57,15 @@ def _refill_gas(client_config: Path, faucet_port: int, address: str) -> int | No
         localnet.fund(faucet_port, address, times=1)
         return balance
     return None
+
+
+def _launch_actor(script: str, env: dict[str, str]) -> subprocess.Popen:
+    return subprocess.Popen(
+        ["npx", "tsx", script],
+        cwd=str(config.TS_DIR),
+        env=env,
+        start_new_session=True,
+    )
 
 
 @contextlib.contextmanager
@@ -195,22 +198,6 @@ def _validate_hub_metrics(value: object) -> dict:
     return value
 
 
-def _terminate_group(p: subprocess.Popen) -> None:
-    """SIGTERM (then SIGKILL) the process's whole group so npx -> tsx -> node all die."""
-    if p.poll() is not None:
-        return
-    try:
-        os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        p.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    except ProcessLookupError:
-        pass
-
-
 def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
     """Bring up the full running sim: localnet + Predict keeper + oracle updater + N fuzz
     traders.
@@ -224,28 +211,27 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
     Every subprocess runs in its own process group; every gas address is auto-refilled.
     Holds until Ctrl-C/SIGTERM, or `seconds`.
     """
-    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
-    grid_spec = _grid_spec(_read_meta())
+    meta = _read_meta()
+    grid_spec = _grid_spec(meta)
     max_restarts = 5
     with oracle_ready_localnet(name, keep=True) as ctx:
         trader_addrs = [create_funded_address(ctx["client_config"], ctx["faucet_port"]) for _ in range(traders)]
         base = {**os.environ, "INSTANCE_DIR": str(ctx["instance_dir"]), "DURATION_MS": "0"}
 
         def launch_keeper() -> subprocess.Popen:
-            return subprocess.Popen(
-                ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                env={
+            return _launch_actor(
+                "keeperService.ts",
+                {
                     **base,
                     "TRADER_ADDRESSES": ",".join(trader_addrs),
-                    "TRADER_DUSDC": LIVE_TRADER_DUSDC,
+                    "TRADER_DUSDC": meta["strategies"]["fuzz"]["fund"],
                     "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
                 },
-                start_new_session=True,
             )
 
         def launch_updater() -> subprocess.Popen:
             env = {**base, "UPDATER_ADDRESS": ctx["updater_address"], "GRID_SPEC": grid_spec}
-            return subprocess.Popen(["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR), env=env, start_new_session=True)
+            return _launch_actor("oracleService.ts", env)
 
         core = {"keeper": launch_keeper(), "updater": launch_updater()}
         launchers = {"keeper": launch_keeper, "updater": launch_updater}
@@ -253,11 +239,9 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
         restart_at = {"keeper": 0.0, "updater": 0.0}
         healthy_window = 120  # a core proc alive this long since its last restart has recovered
         traders_procs = [
-            subprocess.Popen(
-                ["npx", "tsx", "traderService.ts"],
-                cwd=str(config.TS_DIR),
-                env={**base, "TRADER_ADDRESS": a, "STRATEGY": "fuzz"},
-                start_new_session=True,
+            _launch_actor(
+                "traderService.ts",
+                {**base, "TRADER_ADDRESS": a, "STRATEGY": "fuzz"},
             )
             for a in trader_addrs
         ]
@@ -299,11 +283,9 @@ def hold(name: str | None = None, seconds: int = 0, traders: int = 0) -> int:
                         if bal is not None:
                             print(f"[gas] refilling {addr[:10]} (bal {bal / 1e9:.2f} SUI)")
                 time.sleep(2)
-        except KeyboardInterrupt:
-            print("tearing down...")
         finally:
             for p in (*core.values(), *traders_procs):
-                _terminate_group(p)
+                cancellation.stop_process_group(p, p.pid)
     return 1 if give_up else 0  # non-zero so a supervised give-up is a programmatic failure
 
 
@@ -356,12 +338,7 @@ def _campaign_validation_error(
     duration_only = [
         strategy
         for strategy in strategies
-        if bool(
-            strat_meta[strategy].get(
-                "requiresTimeout",
-                int(strat_meta[strategy]["maxOps"]) == 0,
-            )
-        )
+        if strat_meta[strategy]["requiresTimeout"]
     ]
     if timeout == 0 and duration_only:
         return (
@@ -375,8 +352,8 @@ def _setup_campaign_localnets(
     strategies: list[str],
     stack: contextlib.ExitStack,
     setup_concurrency: int,
-    on_ready: Callable[[str, dict, dict], None] | None = None,
-) -> tuple[dict[str, dict], dict[str, dict]]:
+    on_ready: Callable[[str, dict, float], None] | None = None,
+) -> dict[str, dict]:
     """Enter localnets concurrently and give ExitStack teardown ownership.
 
     A worker records its lease immediately after __enter__ succeeds. If setup is
@@ -385,7 +362,6 @@ def _setup_campaign_localnets(
     """
 
     contexts: dict[str, dict] = {}
-    setup_rows: dict[str, dict] = {}
     leases: list[_CampaignLocalnetLease] = []
     leases_lock = threading.Lock()
     cancel_event = threading.Event()
@@ -420,18 +396,8 @@ def _setup_campaign_localnets(
                 # close the same lease and ExitStack's later callback becomes a no-op.
                 stack.callback(lease.close)
                 contexts[strategy] = ctx
-                deployment = ctx["deployment"]
-                setup_rows[strategy] = {
-                    "run_id": ctx["run_id"],
-                    "instance_dir": str(ctx["instance_dir"]),
-                    "setup_duration_s": setup_duration_s,
-                    "rpc_port": ctx["rpc_port"],
-                    "chain_id": deployment["meta"]["chain_id"],
-                    "package_ids": deployment["packages"],
-                    "object_ids": deployment["objects"],
-                }
                 if on_ready is not None:
-                    on_ready(strategy, ctx, setup_rows[strategy])
+                    on_ready(strategy, ctx, setup_duration_s)
                 print(
                     f"campaign: {strategy} localnet ready in "
                     f"{setup_duration_s:.1f}s ({len(contexts)}/{len(strategies)})"
@@ -442,7 +408,7 @@ def _setup_campaign_localnets(
         if setup_errors:
             raise RuntimeError("localnet setup failed: " + " | ".join(setup_errors))
         setup_complete = True
-        return contexts, setup_rows
+        return contexts
     finally:
         if not setup_complete:
             cancel_event.set()
@@ -475,7 +441,6 @@ def campaign(
     """
     from . import analyze  # local import to avoid any import cycle
 
-    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
     # Per-strategy runner config + the enabled cadence set from the TS registry (single source).
     try:
         meta = _read_meta()
@@ -508,9 +473,12 @@ def campaign(
     fatal_error: str | None = None
     operational_failed = False
     timed_out = False
+    interrupted = False
     trader_exit_codes: dict[str, int | None] = {}
     support_exit_codes: dict[str, int | None] = {}
-    strategy_progress: dict[str, bool] = {}
+    strategy_progress = dict.fromkeys(strategies, False)
+    strategy_results: dict[str, str] = {}
+    contexts: dict[str, dict] = {}
     manifest = new_manifest(
         engine="campaign",
         run_id=campaign_id,
@@ -538,7 +506,11 @@ def campaign(
     }
     write_manifest(manifest_path, manifest)
 
-    def record_ready_localnet(strategy: str, context: dict, row: dict) -> None:
+    def record_ready_localnet(
+        strategy: str,
+        context: dict,
+        setup_duration_s: float,
+    ) -> None:
         manifest["localnets"].append(
             localnet_record(
                 role=strategy,
@@ -546,7 +518,7 @@ def campaign(
                 instance_dir=context["instance_dir"],
                 manifest_path=manifest_path,
                 deployment=context["deployment"],
-                setup_duration_s=row["setup_duration_s"],
+                setup_duration_s=setup_duration_s,
                 actors=[],
             )
         )
@@ -554,18 +526,17 @@ def campaign(
 
     try:
         with contextlib.ExitStack() as stack:
-            hub = subprocess.Popen(
-                ["npx", "tsx", "hub.ts"], cwd=str(config.TS_DIR),
-                env={
+            hub = _launch_actor(
+                "hub.ts",
+                {
                     **os.environ,
                     "HUB_SNAPSHOT": str(hub_snapshot),
                     "HUB_METRICS": str(hub_metrics_path),
                     "GRID_SPEC": grid_spec,
                     "DURATION_MS": "0",
                 },
-                start_new_session=True,
             )
-            stack.callback(_terminate_group, hub)
+            stack.callback(cancellation.stop_process_group, hub, hub.pid)
             support: list[tuple[str, subprocess.Popen]] = [("hub", hub)]
             traders_procs: list[tuple[str, subprocess.Popen]] = []
             gas: list[tuple[Path, int, str]] = []
@@ -573,7 +544,7 @@ def campaign(
                 f"hub started (pid {hub.pid}); bringing up {len(strategies)} "
                 f"strategy localnet(s) with capacity {localnet_capacity}..."
             )
-            contexts, _ = _setup_campaign_localnets(
+            contexts = _setup_campaign_localnets(
                 strategies,
                 stack,
                 setup_concurrency,
@@ -593,52 +564,60 @@ def campaign(
                     "INSTANCE_DIR": str(ctx["instance_dir"]),
                     "DURATION_MS": "0",
                 }
-                keeper = subprocess.Popen(
-                    ["npx", "tsx", "keeperService.ts"], cwd=str(config.TS_DIR),
-                    env={
+                keeper = _launch_actor(
+                    "keeperService.ts",
+                    {
                         **base,
                         "TRADER_DUSDC": strat_meta[strategy]["fund"],
                         "TRADER_ADDRESSES": addr,
                         "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
                     },
-                    start_new_session=True,
                 )
-                stack.callback(_terminate_group, keeper)
+                stack.callback(cancellation.stop_process_group, keeper, keeper.pid)
                 manifest_localnet["actors"].append("keeper")
                 write_manifest(manifest_path, manifest)
-                updater = subprocess.Popen(
-                    ["npx", "tsx", "oracleService.ts"], cwd=str(config.TS_DIR),
-                    env={
+                updater = _launch_actor(
+                    "oracleService.ts",
+                    {
                         **base,
                         "UPDATER_ADDRESS": ctx["updater_address"],
                         "GRID_SPEC": grid_spec,
                         "HUB_SNAPSHOT": str(hub_snapshot),
                     },
-                    start_new_session=True,
                 )
-                stack.callback(_terminate_group, updater)
+                stack.callback(cancellation.stop_process_group, updater, updater.pid)
                 manifest_localnet["actors"].append("updater")
                 write_manifest(manifest_path, manifest)
                 support.extend([
                     (f"{strategy}:keeper", keeper),
                     (f"{strategy}:updater", updater),
                 ])
-                trader = subprocess.Popen(
-                    ["npx", "tsx", "traderService.ts"], cwd=str(config.TS_DIR),
-                    env={
+                trader = _launch_actor(
+                    "traderService.ts",
+                    {
                         **base,
                         "TRADER_ADDRESS": addr,
                         "STRATEGY": strategy,
                         "SIM_GAS_BUDGET": str(strat_meta[strategy]["gasBudget"]),
                     },
-                    start_new_session=True,
                 )
-                stack.callback(_terminate_group, trader)
+                stack.callback(cancellation.stop_process_group, trader, trader.pid)
                 traders_procs.append((strategy, trader))
                 manifest_localnet["actors"].append("trader")
                 write_manifest(manifest_path, manifest)
                 for actor in (ctx["active"], ctx["updater_address"], addr):
                     gas.append((ctx["client_config"], ctx["faucet_port"], actor))
+
+            def capture_exit_codes() -> None:
+                trader_exit_codes.update(
+                    (name, proc.poll()) for name, proc in traders_procs
+                )
+                support_exit_codes.update(
+                    (name, proc.poll()) for name, proc in support
+                )
+
+            # Registered last so it snapshots codes before actor teardown callbacks run.
+            stack.callback(capture_exit_codes)
 
             print(
                 f"campaign: running {', '.join(strategies)} in parallel; "
@@ -671,76 +650,84 @@ def campaign(
                         _refill_gas(client_config, faucet_port, addr)
                 time.sleep(2)
 
-            trader_exit_codes = {name: proc.poll() for name, proc in traders_procs}
-            support_exit_codes = {name: proc.poll() for name, proc in support}
-            dead_support = [
-                (name, support_exit_codes[name])
-                for name, _ in support
-                if support_exit_codes[name] is not None
-            ]
-            if dead_support:
-                termination_reason = "support_failure"
-                operational_failed = True
-                print(f"campaign: support process died: {dead_support}; stopping.")
-            strategy_progress = {
-                name: analyze.has_strategy_progress(
-                    Path(contexts[name]["instance_dir"]),
-                    name,
-                )
-                for name, _ in traders_procs
-            }
-            completed = [name for name, code in trader_exit_codes.items() if code == 0]
-            failed = [name for name, code in trader_exit_codes.items() if code not in (None, 0)]
-            bounded = [
-                name
-                for name, code in trader_exit_codes.items()
-                if (
-                    code is None
-                    and timed_out
-                    and strat_meta[name]["requiresTimeout"]
-                    and strategy_progress[name]
-                )
-            ]
-            incomplete = [
-                name
-                for name, code in trader_exit_codes.items()
-                if code is None and timed_out and not strat_meta[name]["requiresTimeout"]
-            ]
-            no_progress = [
-                name
-                for name, code in trader_exit_codes.items()
-                if (
-                    code is None
-                    and timed_out
-                    and strat_meta[name]["requiresTimeout"]
-                    and not strategy_progress[name]
-                )
-            ]
-            if not dead_support:
-                if failed:
-                    termination_reason = "trader_failure"
-                    operational_failed = True
-                elif incomplete:
-                    termination_reason = "incomplete"
-                    operational_failed = True
-                elif no_progress:
-                    termination_reason = "no_progress"
-                    operational_failed = True
-            print(
-                f"campaign: completed={completed or 'none'} failed={failed or 'none'} "
-                f"bounded_stop={bounded or 'none'} incomplete={incomplete or 'none'} "
-                f"no_progress={no_progress or 'none'}."
-            )
+            capture_exit_codes()
+        dead_support = [
+            (name, code)
+            for name, code in support_exit_codes.items()
+            if code is not None
+        ]
+        if dead_support:
+            termination_reason = "support_failure"
+            operational_failed = True
+            print(f"campaign: support process died: {dead_support}; stopping.")
     except KeyboardInterrupt:
         termination_reason = "interrupted"
         operational_failed = True
+        interrupted = True
         fatal_error = "KeyboardInterrupt"
         print("tearing down...")
-    except BaseException as exc:
+    except Exception as exc:
         termination_reason = "setup_failure" if termination_reason == "setup" else "harness_failure"
         operational_failed = True
         fatal_error = f"{type(exc).__name__}: {exc}"
         print(f"campaign: {fatal_error}")
+
+    try:
+        strategy_progress.update(
+            {
+                strategy: analyze.has_strategy_progress(
+                    Path(contexts[strategy]["instance_dir"]),
+                    strategy,
+                )
+                for strategy in strategies
+                if strategy in trader_exit_codes and strategy in contexts
+            }
+        )
+    except Exception as exc:
+        if not interrupted:
+            termination_reason = "setup_failure" if termination_reason == "setup" else "harness_failure"
+            operational_failed = True
+            fatal_error = f"{type(exc).__name__}: {exc}"
+            print(f"campaign: {fatal_error}")
+
+    for strategy in strategies:
+        code = trader_exit_codes.get(strategy)
+        if code == 0:
+            result = "completed"
+        elif code is not None:
+            result = "failed"
+        elif timed_out and strat_meta[strategy]["requiresTimeout"] and strategy_progress[strategy]:
+            result = "bounded_stop"
+        elif interrupted:
+            result = "incomplete"
+        elif timed_out and strat_meta[strategy]["requiresTimeout"]:
+            result = "no_progress"
+        else:
+            result = "incomplete"
+        strategy_results[strategy] = result
+
+    by_result = {
+        result: [name for name, actual in strategy_results.items() if actual == result]
+        for result in ("completed", "failed", "bounded_stop", "incomplete", "no_progress")
+    }
+    if not operational_failed:
+        if by_result["failed"]:
+            termination_reason = "trader_failure"
+            operational_failed = True
+        elif by_result["incomplete"]:
+            termination_reason = "incomplete"
+            operational_failed = True
+        elif by_result["no_progress"]:
+            termination_reason = "no_progress"
+            operational_failed = True
+    print(
+        "campaign: "
+        + " ".join(
+            f"{result}={by_result[result] or 'none'}"
+            for result in by_result
+        )
+        + "."
+    )
 
     campaign_finished = time.time()
     runtime_cleanup_error: str | None = None
@@ -754,7 +741,7 @@ def campaign(
             fatal_error = runtime_cleanup_error
     hub_metrics_error: str | None = None
     try:
-        hub_metrics = _validate_hub_metrics(
+        _validate_hub_metrics(
             json.loads(hub_metrics_path.read_text())
         )
     except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
@@ -772,25 +759,8 @@ def campaign(
             {
                 "strategy": strategy,
                 "trader_exit_code_before_teardown": trader_exit_codes.get(strategy),
-                "completed": trader_exit_codes.get(strategy) == 0,
                 "progressed": strategy_progress.get(strategy, False),
-                "bounded_stop": (
-                    trader_exit_codes.get(strategy) is None
-                    and timed_out
-                    and strat_meta[strategy]["requiresTimeout"]
-                    and strategy_progress.get(strategy, False)
-                ),
-                "incomplete": (
-                    trader_exit_codes.get(strategy) is None
-                    and timed_out
-                    and not strat_meta[strategy]["requiresTimeout"]
-                ),
-                "no_progress": (
-                    trader_exit_codes.get(strategy) is None
-                    and timed_out
-                    and strat_meta[strategy]["requiresTimeout"]
-                    and not strategy_progress.get(strategy, False)
-                ),
+                "result": strategy_results[strategy],
             }
             for strategy in strategies
         ],
@@ -815,6 +785,7 @@ def campaign(
         analysis_error = "KeyboardInterrupt"
         termination_reason = "interrupted"
         operational_failed = True
+        interrupted = True
         fatal_error = analysis_error
     except Exception as exc:
         analysis_result = 1
@@ -826,7 +797,7 @@ def campaign(
 
     manifest["outcome"]["analysis_exit_code"] = analysis_result
     manifest["outcome"]["analysis_error"] = analysis_error
-    exit_code = 1 if operational_failed else analysis_result
+    exit_code = 130 if interrupted else (1 if operational_failed else analysis_result)
     if termination_reason == "interrupted":
         status = "interrupted"
     elif exit_code:
@@ -843,4 +814,6 @@ def campaign(
         error=fatal_error or analysis_error,
     )
     write_manifest(manifest_path, manifest)
+    if interrupted:
+        raise KeyboardInterrupt
     return exit_code

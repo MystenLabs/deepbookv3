@@ -357,9 +357,12 @@ class LifecycleTests(unittest.TestCase):
         trace_lines: dict[str, str] | None = None,
         retain_metrics: bool,
         support_exit_code: int | None = None,
-        time_values: list[float] | None = None,
+        support_poll_values: list[int | None] | None = None,
+        time_values: list[float | BaseException] | None = None,
         fail_manifest_write_at: int | None = None,
         cleanup_failure: OSError | None = None,
+        expect_interrupt: bool = False,
+        teardown_interrupt: bool = False,
     ) -> dict:
         instance = root / f"{case_name}-instance"
         instance.mkdir()
@@ -381,20 +384,10 @@ class LifecycleTests(unittest.TestCase):
                 "objects": {"pool": "0xpool"},
             },
         }
-        setup_row = {
-            "run_id": context["run_id"],
-            "instance_dir": str(instance),
-            "setup_duration_s": 1.0,
-            "rpc_port": 9000,
-            "chain_id": "local-chain",
-            "package_ids": context["deployment"]["packages"],
-            "object_ids": context["deployment"]["objects"],
-        }
-
         def setup(_strategies, _stack, _concurrency, on_ready=None):
             if on_ready is not None:
-                on_ready(strategy, context, setup_row)
-            return {strategy: context}, {strategy: setup_row}
+                on_ready(strategy, context, 1.0)
+            return {strategy: context}
 
         processes = []
         for pid, returncode in (
@@ -406,16 +399,23 @@ class LifecycleTests(unittest.TestCase):
             process = mock.Mock(pid=pid, returncode=returncode)
             process.poll.return_value = returncode
             processes.append(process)
+        if support_poll_values is not None:
+            processes[0].poll.side_effect = support_poll_values
         campaigns = root / f"{case_name}-campaigns"
         campaign_dir = campaigns / "campaign-test"
         stopped = []
+        teardown_interrupted = False
 
-        def terminate(process):
+        def terminate(process, *_args):
+            nonlocal teardown_interrupted
             stopped.append(process)
             if retain_metrics:
                 (campaign_dir / "hub-metrics.json").write_text(
                     json.dumps(self._valid_hub_metrics())
                 )
+            if teardown_interrupt and not teardown_interrupted:
+                teardown_interrupted = True
+                raise KeyboardInterrupt
 
         writes = 0
 
@@ -467,12 +467,11 @@ class LifecycleTests(unittest.TestCase):
             )
             patches.enter_context(
                 mock.patch.object(
-                    live,
-                    "_terminate_group",
+                    live.cancellation,
+                    "stop_process_group",
                     side_effect=terminate,
                 )
             )
-            patches.enter_context(mock.patch.object(live.signal, "signal"))
             patches.enter_context(
                 mock.patch.object(
                     run_manifest,
@@ -481,12 +480,11 @@ class LifecycleTests(unittest.TestCase):
                 )
             )
             if time_values is not None:
-                times = iter(time_values)
                 patches.enter_context(
                     mock.patch.object(
                         live.time,
                         "time",
-                        side_effect=lambda: next(times),
+                        side_effect=time_values,
                     )
                 )
             if fail_manifest_write_at is not None:
@@ -512,11 +510,16 @@ class LifecycleTests(unittest.TestCase):
                     return_value=0,
                 )
             )
-            result = live.campaign(
-                [strategy],
-                timeout=timeout,
-                concurrency=1,
-            )
+            if expect_interrupt:
+                with self.assertRaises(KeyboardInterrupt):
+                    live.campaign([strategy], timeout=timeout, concurrency=1)
+                result = 130
+            else:
+                result = live.campaign(
+                    [strategy],
+                    timeout=timeout,
+                    concurrency=1,
+                )
 
         return {
             "result": result,
@@ -847,8 +850,7 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(case["result"], 1)
             self.assertEqual(manifest["status"], "failed")
             self.assertEqual(manifest["termination"]["reason"], "incomplete")
-            self.assertTrue(report["strategies"][0]["incomplete"])
-            self.assertFalse(report["strategies"][0]["bounded_stop"])
+            self.assertEqual(report["strategies"][0]["result"], "incomplete")
             self.assertFalse((case["campaign_dir"] / "runtime").exists())
             self.assertEqual(manifest["localnets"][0]["role"], "cleanup-survivor")
             self.assertEqual(
@@ -888,8 +890,106 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(case["result"], 1)
             self.assertEqual(manifest["status"], "failed")
             self.assertEqual(manifest["termination"]["reason"], "no_progress")
-            self.assertTrue(report["strategies"][0]["no_progress"])
-            self.assertFalse(report["strategies"][0]["bounded_stop"])
+            self.assertEqual(report["strategies"][0]["result"], "no_progress")
+
+    def test_campaign_timeout_accepts_duration_strategy_with_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="bounded-stop",
+                strategy="fuzz",
+                strategy_metadata={
+                    "maxOps": 0,
+                    "requiresTimeout": True,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
+                },
+                timeout=1,
+                trace_lines={
+                    "trader": (
+                        '{"schema":1,"type":"supply","strategy":"fuzz",'
+                        '"amount":1,"gas":10,"ts":2}\n'
+                    ),
+                },
+                retain_metrics=True,
+                time_values=[0.0, 0.0, 2.0, 3.0],
+            )
+
+            manifest = case["manifest"]
+            self.assertEqual(case["result"], 0)
+            self.assertEqual(manifest["status"], "complete")
+            self.assertEqual(manifest["termination"]["reason"], "timeout")
+            self.assertEqual(
+                manifest["outcome"]["strategies"][0]["result"],
+                "bounded_stop",
+            )
+
+    def test_campaign_interrupt_finalizes_manifest_and_propagates(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="interrupted",
+                strategy="fuzz",
+                strategy_metadata={
+                    "maxOps": 0,
+                    "requiresTimeout": True,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
+                },
+                timeout=10,
+                retain_metrics=True,
+                time_values=[0.0, 0.0, KeyboardInterrupt(), 3.0],
+                expect_interrupt=True,
+            )
+
+            manifest = case["manifest"]
+            self.assertEqual(manifest["status"], "interrupted")
+            self.assertEqual(
+                manifest["termination"],
+                {
+                    "reason": "interrupted",
+                    "error": "KeyboardInterrupt",
+                    "exit_code": 130,
+                },
+            )
+
+    def test_campaign_interrupt_during_timeout_teardown_finalizes_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            case = self._run_campaign_case(
+                Path(raw_tmp),
+                case_name="teardown-interrupted",
+                strategy="fuzz",
+                strategy_metadata={
+                    "maxOps": 0,
+                    "requiresTimeout": True,
+                    "fund": "1",
+                    "gasBudget": 2_000_000_000,
+                },
+                timeout=1,
+                trace_lines={
+                    "trader": (
+                        '{"schema":1,"type":"supply","strategy":"fuzz",'
+                        '"amount":1,"gas":10,"ts":2}\n'
+                    ),
+                },
+                retain_metrics=True,
+                time_values=[0.0, 0.0, 2.0, 3.0],
+                expect_interrupt=True,
+                teardown_interrupt=True,
+            )
+
+            manifest = case["manifest"]
+            self.assertEqual(manifest["status"], "interrupted")
+            self.assertEqual(manifest["termination"]["exit_code"], 130)
+            self.assertEqual(
+                manifest["outcome"]["strategies"][0],
+                {
+                    "strategy": "fuzz",
+                    "trader_exit_code_before_teardown": None,
+                    "progressed": True,
+                    "result": "bounded_stop",
+                },
+            )
 
     def test_campaign_fails_when_support_exits_with_last_trader(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -904,7 +1004,7 @@ class LifecycleTests(unittest.TestCase):
                     "gasBudget": 2_000_000_000,
                 },
                 trader_exit_code=0,
-                support_exit_code=9,
+                support_poll_values=[None, 9],
                 retain_metrics=True,
             )
 
@@ -1147,7 +1247,7 @@ class LifecycleTests(unittest.TestCase):
                 side_effect=lambda name, keep, cancel_event=None: Manager(name),
             ),
         ):
-            contexts, rows = live._setup_campaign_localnets(
+            contexts = live._setup_campaign_localnets(
                 ["a", "b"],
                 stack,
                 2,
@@ -1157,7 +1257,6 @@ class LifecycleTests(unittest.TestCase):
             )
 
         self.assertEqual(set(contexts), {"a", "b"})
-        self.assertEqual(set(rows), {"a", "b"})
         self.assertCountEqual(ready, [("a", "a-run"), ("b", "b-run")])
 
     def test_campaign_interrupt_cancels_blocked_setup_worker(self) -> None:
@@ -1208,7 +1307,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(observed_cancel[0].is_set())
         stop.assert_called_once_with()
 
-    def test_cancellable_setup_command_kills_blocked_process_group(self) -> None:
+    def test_cancellable_setup_command_kills_group_after_leader_exits(self) -> None:
         cancel_event = threading.Event()
         failures: list[BaseException] = []
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -1223,11 +1322,10 @@ class LifecycleTests(unittest.TestCase):
                 "time.sleep(30)\n"
             )
             leader_script = (
-                "import os, subprocess, sys, time\n"
+                "import os, subprocess, sys\n"
                 "from pathlib import Path\n"
                 "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
                 "subprocess.Popen([sys.executable, '-c', sys.argv[3], sys.argv[2]])\n"
-                "time.sleep(30)\n"
             )
 
             def run_blocked_command() -> None:
