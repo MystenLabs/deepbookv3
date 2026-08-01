@@ -16,7 +16,7 @@ from python_indexes.liquidation_book import (
     encode_order_id,
 )
 from python_indexes.strike_payout_tree import StrikePayoutTree
-from sim_artifacts import load_local_trace
+from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
@@ -234,7 +234,6 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
 
-    validate_scenario_config(config)
     VAULT_SEED = _capital_int(config, "normal", "vault_seed")
     MANAGER_SEED = _capital_int(config, "normal", "manager_seed")
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
@@ -3359,11 +3358,6 @@ def replay(
             "records": derived_records,
         }
     return canonical, derived
-
-
-def write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2))
 
 
 def main() -> None:

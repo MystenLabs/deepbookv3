@@ -56,17 +56,14 @@ def _is_finite_number(value: Any) -> bool:
     )
 
 
-def load_json_object(path: Path, schema_version: str) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    if data.get("schema_version") != schema_version:
-        raise ValueError(f"{path} must use schema_version='{schema_version}'")
-    return data
-
-
 def load_local_trace(path: Path) -> dict[str, Any]:
-    trace = load_json_object(path, LOCAL_TRACE_SCHEMA_VERSION)
+    trace = json.loads(path.read_text())
+    if not isinstance(trace, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    if trace.get("schema_version") != LOCAL_TRACE_SCHEMA_VERSION:
+        raise ValueError(
+            f"{path} must use schema_version='{LOCAL_TRACE_SCHEMA_VERSION}'"
+        )
     _require_exact_fields(trace, _TRACE_FIELDS, str(path))
     steps = trace["steps"]
     if not isinstance(steps, list) or not steps:

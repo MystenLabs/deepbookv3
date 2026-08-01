@@ -154,7 +154,7 @@ def complete_manifest(
     reason: str,
     exit_code: int,
     error: BaseException | str | None = None,
-) -> dict[str, Any]:
+) -> None:
     if status not in TERMINAL_STATUSES:
         raise ValueError(f"invalid terminal manifest status: {status}")
     manifest["status"] = status
@@ -168,7 +168,6 @@ def complete_manifest(
         "error": rendered_error,
         "exit_code": exit_code,
     }
-    return manifest
 
 
 def _require_exact_fields(
