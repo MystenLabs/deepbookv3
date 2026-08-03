@@ -1373,6 +1373,64 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-27: The flush skips a market outside its active set instead of aborting
+
+- **Trigger state:** a caller passes `snapshot_expiry_pricer` or `value_expiry` a market
+  that is not in `expected_expiry_markets` — the active set `start_pool_valuation` read
+  on-chain at execution.
+- **Controller:** the caller's own staleness, plus anyone who sweeps. The flush's market
+  list is built off-chain before submitting, and `rebalance_expiry_cash` is
+  permissionless, so any settle-and-sweep between that read and execution invalidates the
+  list. The operator's own settlement lane does exactly this on every roll.
+- **Blast radius (before):** `EExpiryMarketNotActive` failed the entire flush. Observed on
+  testnet `predict-6-24` as repeated `plp::assert_expiry_ready_to_value` abort 0 — about
+  13 failures in 3 hours on one keeper. No LP request fills while it persists, so it is an
+  LP-queue liveness failure driven by a routine race rather than by any pool state.
+- **Response:** rung 3 for the failure mode — make the divergence harmless instead of
+  fatal. Both stages return early for a market outside the set. Nothing is valued, no cash
+  moves, and the market contributes 0.
+- **Reasoning:** `expected_expiry_markets` is read **on-chain**, not supplied by the
+  caller, so it is authoritative and the caller's list is only a hint about which commands
+  to emit. A hint being stale in the "market already left" direction should not be an
+  error. The alternative — fixing only the keeper — leaves the race live for every other
+  caller and depends on an off-chain read staying coherent with execution, which it cannot
+  be in general.
+- **Duty inventory (the abort's job, and what carries it now):** the abort enforced that a
+  valued market belongs to the flush. That is still enforced, at the set level rather than
+  per call: `seal_valuation_snapshot` requires a frozen pricer for **every** expected
+  market, and `finish_flush` requires **every** expected market valued. So a market that
+  genuinely belongs to the flush cannot be skipped by either stage without one of those
+  aborting — the exactly-once completeness proof is untouched. What is given up is the
+  per-call diagnostic: a caller passing a market the flush never wanted now gets silence
+  rather than an abort. Accepted, because the on-chain set is authoritative and the
+  keeper's own signal is that flushes stop failing. `EExpiryMarketAlreadyValued` is
+  unchanged and still guards double-counting.
+- **Risk profile:** `MEASURED` for the failure removed
+  (`evidence/rp27-flush-active-set-race-2026-07-30.md`): an on-chain testnet abort with a
+  transaction digest, ~13 failures in 3 hours on one operator. The skip itself is a
+  structural argument, not a measurement.
+- **Rejected: fixing only the caller.** A caller can narrow the window — re-read the
+  active set as late as possible, and wait for the preceding settlement to be visible
+  before reading, since a read issued immediately after a submit can still see pre-tx
+  shared-object state. That is worth doing and is tracked off this repo. But it narrows
+  the window rather than closing it: the read and the execution are separate points in
+  time by construction, and any third-party sweep reopens it for every caller. **Rejected: tolerating the opposite
+  direction** (a market that entered the set after the caller's read). That one still
+  aborts at the seal, and should: the flush would otherwise mark a pool it had not fully
+  valued. Market creation is lock-gated and operator-driven, so the window is small and
+  the retry is cheap.
+- **Pinning tests:** `pool_valuation_flow_tests.move` —
+  `a_swept_market_left_in_the_keepers_list_is_skipped_not_fatal` (settles and sweeps a
+  market, then flushes with it still in hand, and asserts the flush completes at an exact
+  mark). Mutation-checked: restoring the abort fails it. The duty carriers are pinned by
+  `seal_aborts_when_an_active_market_has_no_frozen_pricer` and
+  `finish_aborts_when_a_snapshotted_market_is_unvalued`.
+- **Reopen when:** a caller needs to distinguish "skipped because stale" from "valued",
+  which would need an event rather than a return; or the flush's market list stops being
+  caller-supplied, which would make the divergence unrepresentable and the skip dead code.
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

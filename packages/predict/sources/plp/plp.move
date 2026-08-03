@@ -45,7 +45,6 @@ use sui::{
 };
 use token::deep::DEEP;
 
-const EExpiryMarketNotActive: u64 = 0;
 const EExpiryMarketAlreadyValued: u64 = 1;
 const EMissingExpiryValuation: u64 = 3;
 const ENotBootstrapped: u64 = 4;
@@ -316,7 +315,14 @@ public fun snapshot_expiry_pricer(
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
 
     let valuation = vault.valuation.borrow_mut();
-    assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
+    // Not in this flush's active set: skip rather than abort. The caller builds its
+    // market list off-chain before submitting, and anything that sweeps a settled market
+    // in the meantime — `rebalance_expiry_cash` is permissionless, and the ordinary
+    // settle-then-sweep roll calls it — leaves that list holding a market this flush has no
+    // business touching. Aborting made a routine race fail the whole flush (RP-27).
+    // Skipping is safe because `expected_expiry_markets` is read on-chain here, not
+    // supplied: see `assert_snapshot_complete` for why nothing real can be skipped.
+    if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;
     assert!(!valuation.frozen_pricers.contains(&expiry_market_id), EExpiryPricerAlreadySnapshotted);
 
     let frozen = if (market.is_settled()) {
@@ -386,7 +392,11 @@ public fun value_expiry(
     let frozen = {
         let valuation = vault.valuation.borrow();
         assert!(valuation.sealed, EValuationSnapshotNotSealed);
-        valuation.assert_expiry_ready_to_value(expiry_market_id);
+        // Same stale-list tolerance as the snapshot stage: a market outside the flush's
+        // active set was skipped there too, so it has no frozen pricer and contributes
+        // nothing. Returning keeps a stale keeper entry from failing the flush.
+        if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;
+        valuation.assert_expiry_not_already_valued(expiry_market_id);
         *valuation.frozen_pricers.get(&expiry_market_id)
     };
 
@@ -1215,9 +1225,14 @@ fun assert_valuation_starter(vault: &PoolVault, ctx: &TxContext) {
     assert!(vault.valuation.borrow().started_by == ctx.sender(), ENotValuationStarter);
 }
 
-/// Abort unless the market is in the snapshot and not already valued (exactly-once).
-fun assert_expiry_ready_to_value(valuation: &PoolValuation, expiry_market_id: ID) {
-    assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
+/// Abort if this market has already been valued in this flush (exactly-once).
+///
+/// The companion "is it in the snapshot" check is deliberately NOT an abort — see
+/// `snapshot_expiry_pricer`. Membership is still enforced, just at the set level rather
+/// than per call: `seal_valuation_snapshot` requires a frozen pricer for every expected
+/// market and `finish_flush` requires every expected market valued, so a market that
+/// belongs to the flush cannot be skipped by either stage without one of those failing.
+fun assert_expiry_not_already_valued(valuation: &PoolValuation, expiry_market_id: ID) {
     assert!(
         !valuation.valued_expiry_markets.contains(&expiry_market_id),
         EExpiryMarketAlreadyValued,

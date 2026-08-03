@@ -518,13 +518,20 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
 // now a field of the vault it belongs to, so finishing one vault's flush against
 // another is unrepresentable rather than rejected at runtime.
 
-#[test, expected_failure(abort_code = plp::EExpiryMarketNotActive)]
-fun snapshotting_a_swept_inactive_market_aborts() {
+/// The Q18 regression: a keeper builds its market list off-chain, a market is settled
+/// and swept before the flush executes, and the flush is then handed a market that is no
+/// longer in the active set. That used to abort `EExpiryMarketNotActive` and fail the
+/// whole flush — observed on testnet as repeated `assert_expiry_ready_to_value` aborts.
+/// Both stages now skip it, and the flush completes.
+#[test]
+fun a_swept_market_left_in_the_keepers_list_is_skipped_not_fatal() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
     bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
+    // Settle and sweep the market out of the active set, exactly as the keeper's own
+    // settlement lane does between reading the list and submitting the flush.
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
@@ -536,12 +543,19 @@ fun snapshotting_a_swept_inactive_market_aborts() {
     fx.rebalance_expiry_cash_bundle(&mut market);
     helpers::return_market_bundle(market);
 
+    // Flush anyway, with the stale market still in hand.
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
     fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market, option::none(), option::none());
 
-    abort 999
+    // The swept market contributed nothing, so the pool marks at idle — the sweep
+    // already returned its cash. Exact, so a silent double-count would fail here.
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 #[test]
