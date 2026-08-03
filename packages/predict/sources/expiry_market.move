@@ -207,6 +207,12 @@ public fun required_cash(market: &ExpiryMarket): u64 {
 ///
 /// The returned `Pricer` is bound to `market.id()` and can be passed into live
 /// mint, redeem, liquidation, and NAV functions in the same transaction.
+///
+/// Aborts `pricing::EOracleWrittenInThisTransaction` when any observation that
+/// feeds the returned forward or SVI was written in this transaction (RP-24).
+/// Independently submitted refresh-then-trade PTBs are unaffected: the guard
+/// compares observation `writer_digest` to `tx_context::digest()`, not sender
+/// identity, and does not prohibit reads of older observations.
 public fun load_live_pricer(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -215,6 +221,7 @@ public fun load_live_pricer(
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
     clock: &Clock,
+    ctx: &TxContext,
 ): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
@@ -226,6 +233,7 @@ public fun load_live_pricer(
         market.propbook_underlying_id,
         market.expiry,
         clock,
+        ctx,
     )
 }
 
@@ -839,10 +847,10 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, and
-/// per-market config and starts with zero expiry cash; it needs no live spot at
-/// creation (strikes are absolute ticks, so there is no grid to center). Current
-/// oracle object IDs stay in Propbook and are resolved on every priced flow.
+/// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
+/// starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
+/// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
+/// priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     propbook_underlying_id: u32,

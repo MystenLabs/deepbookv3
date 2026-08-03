@@ -142,6 +142,7 @@ public fun bind_feeds_to_underlying(
         &mut oracle_registry,
         propbook_admin_cap,
         test_constants::propbook_underlying_id(),
+        test_constants::block_scholes_base_asset(),
         scenario.ctx(),
     );
     return_shared(pyth);

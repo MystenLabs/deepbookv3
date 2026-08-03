@@ -89,7 +89,7 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
 /// close as a settled one.
 #[test, expected_failure(abort_code = strike_exposure::EWrongCloseOutcome)]
 fun settled_payout_of_live_close_terms_aborts() {
-    let (fx, oracle, harness, order) = live_exposure(LEVERAGE_TWO_X);
+    let (mut fx, oracle, harness, order) = live_exposure(LEVERAGE_TWO_X);
     let pricer = fx.load_pricer_bundle(&oracle);
     let terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
     assert!(terms.is_live());
@@ -104,7 +104,7 @@ fun settled_payout_of_live_close_terms_aborts() {
 /// keeps it on the live arm.
 #[test]
 fun one_x_order_absent_from_index_stays_live_not_liquidated() {
-    let (fx, oracle, harness, order) = live_exposure(test_constants::leverage_one_x());
+    let (mut fx, oracle, harness, order) = live_exposure(test_constants::leverage_one_x());
 
     assert!(!order.is_leveraged());
     assert!(!harness.exposure.is_active_order(&order));

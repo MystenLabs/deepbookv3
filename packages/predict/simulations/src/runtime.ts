@@ -70,10 +70,10 @@ const COIN_REGISTRY_ID = "0xc";
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
 // Pyth Lazer feed id (the propbook spot feed key) and the Propbook underlying id.
-// The harness binds one market to one Pyth feed and one split BS source set for
-// that underlying, so a single source id serves both.
+// Propbook binds that underlying id to the provider's exact base-asset spelling.
 const PYTH_FEED_ID = 1;
 const BS_UNDERLYING_ID = PYTH_FEED_ID;
+const BS_BASE_ASSET = "BTC";
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -188,11 +188,7 @@ async function collectTransactionDebug(params: {
     label: string;
     attempt: number;
     gasBudget: bigint;
-    phase:
-        | "rpc_error"
-        | "retryable_rpc_error"
-        | "execution_failure"
-        | "post_submit_fetch_error";
+    phase: "rpc_error" | "retryable_rpc_error" | "execution_failure" | "post_submit_fetch_error";
     raw?: unknown;
     error?: unknown;
 }): Promise<string> {
@@ -277,7 +273,9 @@ async function tryCollectTransactionDebug(params: Parameters<typeof collectTrans
 }
 
 function failedTransactionSuffix(artifactPath: string | null): string {
-    return artifactPath === null ? " failed_tx_artifact=<logging_failed>" : ` failed_tx=${artifactPath}`;
+    return artifactPath === null
+        ? " failed_tx_artifact=<logging_failed>"
+        : ` failed_tx=${artifactPath}`;
 }
 
 function gasSummaryFromEffects(effects: any): GasUsage {
@@ -292,6 +290,21 @@ function gasSummaryFromEffects(effects: any): GasUsage {
         storageRebate,
         gasTotal: computationCost + storageCost - storageRebate,
     };
+}
+
+// Gas charts historically measured refresh+priced-op as one PTB. After the same-tx
+// guard those are two receipts; aggregate both so chart_gas still reports the full
+// cost of "refresh then trade", while events/digest come from the priced-op receipt.
+function aggregateGas(usages: GasUsage[]): GasUsage {
+    return usages.reduce(
+        (acc, gas) => ({
+            computationCost: acc.computationCost + gas.computationCost,
+            storageCost: acc.storageCost + gas.storageCost,
+            storageRebate: acc.storageRebate + gas.storageRebate,
+            gasTotal: acc.gasTotal + gas.gasTotal,
+        }),
+        { computationCost: 0, storageCost: 0, storageRebate: 0, gasTotal: 0 },
+    );
 }
 
 async function getTransactionBlockWithRetry(digest: string): Promise<any> {
@@ -402,14 +415,13 @@ async function nextSourceTimestampMs(): Promise<bigint> {
 
 export async function nextOneMonthExpiryMs(): Promise<bigint> {
     const now = await clockTimestampMs();
-    return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
+    return (now / ONE_MONTH_MS + 1n) * ONE_MONTH_MS;
 }
 
-// One oracle refresh writes all propbook slots: a permissionless Pyth Lazer spot
-// update, one BS value batch carrying spot + forward (they share a batch on the
-// real wire), and one BS SVI batch for the market's expiry. Routing is by the
-// signed sid inside each update; the two per-underlying stores are the only BS
-// objects the refresh touches.
+// One oracle refresh writes all Propbook slots: a permissionless Pyth Lazer spot
+// update, then separate Block Scholes spot, forward, and SVI batches. The expiry
+// batches carry descriptor witnesses, and the two per-underlying stores are the
+// only Block Scholes objects the refresh touches.
 interface OracleRefreshParams {
     pythFeedId: string;
     bsValueStoreId: string;
@@ -531,42 +543,66 @@ function addPythFeedUpdate(
 // Block Scholes updates for one expiry: sign real batches with the local signer
 // key (registered on the localnet `SignerRegistry`), mint the hot-potato batches
 // through the verifier, and ingest them through the production
-// `block_scholes_store::apply_*_batch` path. Spot and forward share one value
-// batch, as they do on the real wire; SVI rides its own batch. The sim always
-// sends fresh data, so `publishedAtMs` serves as both the envelope (published-at)
-// and per-update (model) timestamp.
+// `block_scholes_store::apply_*_batch` path. Spot, forward, and SVI are separate
+// typed batches with descriptor witnesses, matching the production writer. The
+// sim always sends fresh data, so `publishedAtMs` is both the envelope and model
+// timestamp.
 function addBlockScholesUpdates(
     tx: Transaction,
     params: OracleRefreshParams,
     publishedAtMs: bigint,
 ): void {
-    const valueMessage = signedValueBatchBytes({
+    const spotMessage = signedValueBatchBytes({
         signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
         verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
         batchTimestampMs: publishedAtMs,
         updates: [
             {
-                sid: spotSid(BS_UNDERLYING_ID),
+                sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET),
                 timestampMs: publishedAtMs,
                 value: params.spot,
             },
+        ],
+    });
+    const spotBatch = tx.moveCall({
+        target: bsOracleTarget("verify", "verify_and_create_value_batch"),
+        arguments: [
+            tx.object(BS_SIGNER_REGISTRY_ID),
+            tx.pure.vector("u8", Array.from(spotMessage)),
+        ],
+    });
+    tx.moveCall({
+        target: propbookTarget("block_scholes_store", "apply_spot_batch"),
+        arguments: [tx.object(params.bsValueStoreId), spotBatch, tx.object(CLOCK_ID)],
+    });
+
+    const forwardMessage = signedValueBatchBytes({
+        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+        batchTimestampMs: publishedAtMs,
+        updates: [
             {
-                sid: forwardSid(BS_UNDERLYING_ID, params.expiry),
+                sid: forwardSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, params.expiry),
                 timestampMs: publishedAtMs,
                 value: params.forward,
             },
         ],
     });
-    const valueBatch = tx.moveCall({
+    const forwardBatch = tx.moveCall({
         target: bsOracleTarget("verify", "verify_and_create_value_batch"),
         arguments: [
             tx.object(BS_SIGNER_REGISTRY_ID),
-            tx.pure.vector("u8", Array.from(valueMessage)),
+            tx.pure.vector("u8", Array.from(forwardMessage)),
         ],
     });
     tx.moveCall({
-        target: propbookTarget("block_scholes_store", "apply_value_batch"),
-        arguments: [tx.object(params.bsValueStoreId), valueBatch, tx.object(CLOCK_ID)],
+        target: propbookTarget("block_scholes_store", "apply_forward_batch"),
+        arguments: [
+            tx.object(params.bsValueStoreId),
+            forwardBatch,
+            tx.pure.vector("u64", [params.expiry]),
+            tx.object(CLOCK_ID),
+        ],
     });
 
     const sviMessage = signedSviBatchBytes({
@@ -575,7 +611,7 @@ function addBlockScholesUpdates(
         batchTimestampMs: publishedAtMs,
         updates: [
             {
-                sid: sviSid(BS_UNDERLYING_ID, params.expiry),
+                sid: sviSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, params.expiry),
                 timestampMs: publishedAtMs,
                 aMagnitude: params.svi.a,
                 aNegative: params.svi.aNegative,
@@ -590,14 +626,16 @@ function addBlockScholesUpdates(
     });
     const sviBatch = tx.moveCall({
         target: bsOracleTarget("verify", "verify_and_create_svi_batch"),
-        arguments: [
-            tx.object(BS_SIGNER_REGISTRY_ID),
-            tx.pure.vector("u8", Array.from(sviMessage)),
-        ],
+        arguments: [tx.object(BS_SIGNER_REGISTRY_ID), tx.pure.vector("u8", Array.from(sviMessage))],
     });
     tx.moveCall({
         target: propbookTarget("block_scholes_store", "apply_svi_batch"),
-        arguments: [tx.object(params.bsSviStoreId), sviBatch, tx.object(CLOCK_ID)],
+        arguments: [
+            tx.object(params.bsSviStoreId),
+            sviBatch,
+            tx.pure.vector("u64", [params.expiry]),
+            tx.object(CLOCK_ID),
+        ],
     });
 }
 
@@ -774,6 +812,7 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.string(BS_BASE_ASSET),
         ],
     });
     return tx;
@@ -1047,16 +1086,28 @@ export function requestWithdrawTx(params: {
     return tx;
 }
 
+// A refresh and the priced op it feeds are two transactions, never one:
+// `pricing::resolve_live_pricer` aborts `EOracleWrittenInThisTransaction` when a
+// price-feeding observation carries the current transaction's digest. Returns the
+// refresh PTB followed by the trade PTB; run them with `execute` / `executeAllAndWait`.
+async function refreshThen(
+    params: OracleRefreshParams,
+    addTrade: (tx: Transaction) => void,
+): Promise<Transaction[]> {
+    const refreshTx = new Transaction();
+    await addOracleRefresh(refreshTx, params);
+    const tradeTx = new Transaction();
+    addTrade(tradeTx);
+    return [refreshTx, tradeTx];
+}
+
 // Refresh the oracle, then run one privileged full-pool flush that drains both LP
 // request queues at the frozen mark. The drain happens inside `finish_flush`; no
 // per-LP coin is returned (fills land on the manager via the accumulator).
-export async function refreshOracleAndFlushTx(
+export async function refreshOracleAndFlushTxs(
     params: OracleRefreshParams & FlushParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addFlush(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addFlush(tx, params));
 }
 
 // Create the sender's canonical derived account wrapper and share it. `new` derives
@@ -1124,42 +1175,40 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     tx.moveCall({
         target: target("plp", "lock_capital"),
         // `lock_capital(vault, config, admin_cap, payment)`.
-        arguments: [tx.object(poolVaultId), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID), coin],
+        arguments: [
+            tx.object(poolVaultId),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            coin,
+        ],
     });
     return tx;
 }
 
-export async function refreshOracleAndMintTx(
+export async function refreshOracleAndMintTxs(
     params: OracleRefreshParams & MintParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addMint(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addMint(tx, params));
 }
 
-export async function refreshOracleAndMintBatchTx(
+export async function refreshOracleAndMintBatchTxs(
     params: OracleRefreshParams & { mints: MintParams[] },
-): Promise<Transaction> {
+): Promise<Transaction[]> {
     if (params.mints.length === 0) {
-        throw new Error("refreshOracleAndMintBatchTx requires at least one mint");
+        throw new Error("refreshOracleAndMintBatchTxs requires at least one mint");
     }
 
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    for (const mint of params.mints) {
-        addMint(tx, mint);
-    }
-    return tx;
+    return refreshThen(params, (tx) => {
+        for (const mint of params.mints) {
+            addMint(tx, mint);
+        }
+    });
 }
 
-export async function refreshOracleAndRedeemTx(
+export async function refreshOracleAndRedeemTxs(
     params: OracleRefreshParams & RedeemParams,
-): Promise<Transaction> {
-    const tx = new Transaction();
-    await addOracleRefresh(tx, params);
-    addRedeem(tx, params);
-    return tx;
+): Promise<Transaction[]> {
+    return refreshThen(params, (tx) => addRedeem(tx, params));
 }
 
 export async function executeAndWait(
@@ -1187,7 +1236,9 @@ export async function executeAndWait(
             error,
         });
         throw markFailedTransactionLogged(
-            new Error(`${label} rpc failure: ${String(error)}${failedTransactionSuffix(artifactPath)}`),
+            new Error(
+                `${label} rpc failure: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
+            ),
         );
     }
 
@@ -1228,11 +1279,43 @@ export async function executeAndWait(
     }
 }
 
+// Run PTBs in order. Returns the last receipt (priced-op events/digest) with gas
+// summed across every leg so refresh+trade stays one chart point.
+export async function executeAllAndWait(
+    txs: Transaction[],
+    label = "transaction",
+    gasBudget = DEFAULT_GAS_BUDGET,
+): Promise<ExecutionReceipt> {
+    if (txs.length === 0) {
+        throw new Error(`${label}: executeAllAndWait requires at least one transaction`);
+    }
+    const receipts: ExecutionReceipt[] = [];
+    for (const [index, tx] of txs.entries()) {
+        const legLabel = txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
+        const settled = await executeAndWait(tx, legLabel, gasBudget);
+        receipts.push({
+            digest: settled.digest,
+            gas: gasSummaryFromEffects(settled.effects),
+            events: settled.events ?? [],
+            objectChanges: settled.objectChanges ?? [],
+            effects: settled.effects,
+        });
+    }
+    const last = receipts[receipts.length - 1]!;
+    return {
+        ...last,
+        gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
+    };
+}
+
 const EXECUTE_MAX_ATTEMPTS = 5;
 const EXECUTE_RETRY_DELAY_MS = 1000;
 
+type BuiltTx = Transaction | Transaction[];
+type BuildTx = BuiltTx | (() => BuiltTx | Promise<BuiltTx>);
+
 export async function execute(
-    buildTx: Transaction | (() => Transaction | Promise<Transaction>),
+    buildTx: BuildTx,
     label = "transaction",
     gasBudget = DEFAULT_GAS_BUDGET,
 ): Promise<ExecutionReceipt> {
@@ -1242,58 +1325,74 @@ export async function execute(
         let raw: any = null;
         try {
             // Build a fresh transaction on each attempt so object versions are re-resolved.
-            tx = typeof buildTx === "function" ? await buildTx() : buildTx;
-            tx.setSender(address);
-            tx.setGasBudget(gasBudget);
-
-            raw = await client.signAndExecuteTransaction({
-                transaction: tx,
-                signer,
-                options: EXECUTION_RESPONSE_OPTIONS,
-            });
-
-            const status = raw.effects?.status;
-            if (!isSuccessStatus(status)) {
-                const artifactPath = await tryCollectTransactionDebug({
-                    tx,
-                    label,
-                    attempt,
-                    gasBudget,
-                    phase: "execution_failure",
-                    raw,
-                });
-                throw markFailedTransactionLogged(
-                    new Error(
-                        `${label} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}${failedTransactionSuffix(artifactPath)}`,
-                    ),
-                );
+            const built = typeof buildTx === "function" ? await buildTx() : buildTx;
+            const txs = Array.isArray(built) ? built : [built];
+            if (txs.length === 0) {
+                throw new Error(`${label}: execute requires at least one transaction`);
             }
 
-            let settled: any;
-            try {
-                settled = await getTransactionBlockWithRetry(raw.digest);
-            } catch (error) {
-                const artifactPath = await tryCollectTransactionDebug({
-                    tx,
-                    label,
-                    attempt,
-                    gasBudget,
-                    phase: "post_submit_fetch_error",
-                    raw,
-                    error,
+            const receipts: ExecutionReceipt[] = [];
+            for (const [index, builtTx] of txs.entries()) {
+                tx = builtTx;
+                const legLabel = txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
+                tx.setSender(address);
+                tx.setGasBudget(gasBudget);
+
+                raw = await client.signAndExecuteTransaction({
+                    transaction: tx,
+                    signer,
+                    options: EXECUTION_RESPONSE_OPTIONS,
                 });
-                throw markFailedTransactionLogged(
-                    new Error(
-                        `${label} post-submit fetch failure digest=${raw.digest}: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
-                    ),
-                );
+
+                const status = raw.effects?.status;
+                if (!isSuccessStatus(status)) {
+                    const artifactPath = await tryCollectTransactionDebug({
+                        tx,
+                        label: legLabel,
+                        attempt,
+                        gasBudget,
+                        phase: "execution_failure",
+                        raw,
+                    });
+                    throw markFailedTransactionLogged(
+                        new Error(
+                            `${legLabel} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}${failedTransactionSuffix(artifactPath)}`,
+                        ),
+                    );
+                }
+
+                let settled: any;
+                try {
+                    settled = await getTransactionBlockWithRetry(raw.digest);
+                } catch (error) {
+                    const artifactPath = await tryCollectTransactionDebug({
+                        tx,
+                        label: legLabel,
+                        attempt,
+                        gasBudget,
+                        phase: "post_submit_fetch_error",
+                        raw,
+                        error,
+                    });
+                    throw markFailedTransactionLogged(
+                        new Error(
+                            `${legLabel} post-submit fetch failure digest=${raw.digest}: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
+                        ),
+                    );
+                }
+                receipts.push({
+                    digest: raw.digest,
+                    gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
+                    events: settled.events ?? raw.events ?? [],
+                    objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
+                    effects: settled.effects ?? raw.effects,
+                });
             }
+
+            const last = receipts[receipts.length - 1]!;
             return {
-                digest: raw.digest,
-                gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
-                events: settled.events ?? raw.events ?? [],
-                objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
-                effects: settled.effects ?? raw.effects,
+                ...last,
+                gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
             };
         } catch (error) {
             lastError = error;

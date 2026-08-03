@@ -66,11 +66,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **`admin` is a dependency-leaf capability module.** *Rejected:* folding
   `admin`/`AdminCap` into `registry` — it creates a Move import cycle
   (`registry → protocol_config → admin`).
-- **Two sparse strike indexes, both tick-keyed.** A sparse payout treap
-  (quantity + floor-share prefixes, deriving net payout) and a flat liquidation
-  book coexist; the exact live NAV is read by decomposing the per-order liability
-  across the two (`Σ qty·P` over the tree minus the leveraged floor-correction
-  scan over the book).
+- **Two sparse strike indexes, both tick-keyed.** A sparse height-balanced (AVL)
+  payout tree and a flat liquidation book coexist; the exact live NAV is read by
+  decomposing the per-order liability across the two (`Σ qty·P` over the tree
+  minus the leveraged floor-correction scan over the book).
+  *Superseded:* balancing that tree as a treap keyed on `blake2b256(bcs(tick))`.
+  Boundary ticks are caller-chosen, so a rotation key derived from a tick is a
+  rotation key the caller picks: depth held only in expectation over priorities
+  assumed random, and a caller could search for ticks whose priorities descend as
+  the ticks ascend and force a spine. Rotations key on measured subtree height,
+  which bounds depth for every admissible tick set rather than for a random one.
   *Superseded:* a dense paged NAV matrix (`{quantity, floor_shares}` with
   strike-weighted prefix sums), which existed only to make every LP supply/withdraw
   a cheap synchronous read. It and its whole mitigation stack (the valuation
@@ -274,11 +279,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **The Block Scholes feeds became signed-series stores gated by the production
 	  verifier.** The three per-source feed objects and the stub
 	  `block_scholes_oracle` package were replaced by two per-underlying stores
-	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs,
+	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs and
 	  written only through batch types the `bs_oracle` signature verifier mints.
-	  Holding a verified batch is the provenance proof, so relayers are untrusted;
-	  a series id encodes kind, underlying, value scale, and expiry, so a valid
-	  observation can only land in the slot it was signed for. Each observation
+	  Holding a verified batch is the provenance proof, so relayers are untrusted.
+	  Each store pair is immutably bound to one provider base-asset spelling; typed
+	  spot, forward, and SVI ingestion derives the accepted ids through the
+	  provider-owned `bs_sid` package from the complete subscription descriptor,
+	  and forward/SVI expiry witnesses are checked through that derivation. Each observation
 	  carries the provider's model time and batch-envelope time separately:
 	  freshness and the SVI roll-down anchor both key on the model time — the
 	  envelope is transport metadata — replacing on-chain change-detection that
@@ -287,7 +294,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted
   writer (retains our own key custody in the trust set), and an on-chain
   sid→slot mapping table (a registration step per new expiry on the market-roll
-  path; deriving the id from the slot's own identity needs no state).
+  path; deriving the provider-defined id from immutable store identity needs no state).
 
 ## One canonical strike representation — absolute ticks (recent)
 

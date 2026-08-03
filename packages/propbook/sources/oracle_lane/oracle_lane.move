@@ -10,11 +10,15 @@ use sui::{event, table::{Self, Table}};
 
 /// A source value paired with its source publication time and on-chain recording time.
 /// Raw and normalized projections preserve this envelope so consumers can apply one freshness policy.
+/// `writer_digest` is the digest of the transaction that accepted the observation; consumers use it
+/// to refuse pricing against an observation written in the same PTB.
 public struct OracleRead<Value: copy + drop + store> has copy, drop, store {
     /// Source publication time in Unix milliseconds and the key used for exact reads.
     source_timestamp_ms: u64,
     /// Sui clock time in Unix milliseconds when the update transaction executed.
     update_timestamp_ms: u64,
+    /// Digest of the transaction that wrote this observation.
+    writer_digest: vector<u8>,
     value: Value,
 }
 
@@ -50,6 +54,10 @@ public fun read_source_timestamp_ms<Value: copy + drop + store>(read: &OracleRea
 
 public fun read_update_timestamp_ms<Value: copy + drop + store>(read: &OracleRead<Value>): u64 {
     read.update_timestamp_ms
+}
+
+public fun read_writer_digest<Value: copy + drop + store>(read: &OracleRead<Value>): vector<u8> {
+    read.writer_digest
 }
 
 public fun read_value<Value: copy + drop + store>(read: &OracleRead<Value>): Value {
@@ -90,12 +98,34 @@ public(package) fun new<Payload: copy + drop + store>(ctx: &mut TxContext): Orac
     }
 }
 
+/// Build a new observation envelope stamped with the current transaction's digest.
 public(package) fun new_read<Value: copy + drop + store>(
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,
     value: Value,
+    ctx: &TxContext,
 ): OracleRead<Value> {
-    OracleRead { source_timestamp_ms, update_timestamp_ms, value }
+    OracleRead {
+        source_timestamp_ms,
+        update_timestamp_ms,
+        writer_digest: *ctx.digest(),
+        value,
+    }
+}
+
+/// Rebuild an envelope with a new value while preserving the writer's digest.
+/// Normalized projections must use this so they keep the digest of the transaction
+/// that wrote the observation, not the one that later read it.
+public(package) fun project_read<FromValue: copy + drop + store, ToValue: copy + drop + store>(
+    read: &OracleRead<FromValue>,
+    value: ToValue,
+): OracleRead<ToValue> {
+    OracleRead {
+        source_timestamp_ms: read.source_timestamp_ms,
+        update_timestamp_ms: read.update_timestamp_ms,
+        writer_digest: read.writer_digest,
+        value,
+    }
 }
 
 // === Public-Package Write Functions ===

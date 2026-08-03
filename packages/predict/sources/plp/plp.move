@@ -232,6 +232,7 @@ public fun value_expiry(
     bs_values: &BlockScholesValueStore,
     bs_svi: &BlockScholesSVIStore,
     clock: &Clock,
+    ctx: &TxContext,
 ) {
     config.assert_version();
     config.assert_valuation_in_progress();
@@ -248,6 +249,7 @@ public fun value_expiry(
             bs_values,
             bs_svi,
             clock,
+            ctx,
         );
         market.current_nav(&pricer)
     };
@@ -263,11 +265,23 @@ public fun value_expiry(
 /// pending-protocol-profit exclusion priced from the aggregate profit basis).
 ///
 /// `supply_budget` and `withdraw_budget` bound how many requests each queue may
-/// process this flush (`None` = unbounded). Filled heads, protocol-refunded
-/// non-executable heads, and live limit misses count as processed; a live limit
-/// miss remains queued and stops that queue for the flush. A withdrawal whose
-/// quote is valid but exceeds idle carries without spending budget. The budgets
-/// are independent, so a supply backlog does not consume withdrawal capacity.
+/// process this flush (`None` = unbounded). Fills — whole or partial — and
+/// protocol-refunded heads — non-executable, or quoting below the request's own
+/// minimum output — all count as processed. At `ProtocolConfig`'s shipped attempt
+/// count of one, a head that misses its limit is refunded by the flush that reaches
+/// it; above one it stays queued and stops that queue for the flush. The budgets are
+/// independent, so a supply backlog does not consume withdrawal capacity.
+///
+/// Capacity bounds each pass on top of the budgets and refunds nothing: supplies fill
+/// only up to `ProtocolConfig`'s LP pool-value cap, withdrawals only up to idle. A head
+/// larger than the room left fills to the room, spends flush budget, and keeps its
+/// remainder queued at a rescaled limit; a head with no usable room carries untouched
+/// and spends none. Either way the pass stops, so an unbounded budget does not mean
+/// every queued request is processed (RP-23).
+///
+/// Because queueing is permissionless and a refunded request returns its escrow in the
+/// same transaction, an operator should bound both budgets in production rather than
+/// rely on queue length staying small — see RP-12.
 public fun finish_flush(
     valuation: PoolValuation,
     vault: &mut PoolVault,
@@ -308,6 +322,8 @@ public fun finish_flush(
             vault_id,
             supply_budget,
             withdraw_budget,
+            config.lp_request_limit_flush_attempts(),
+            config.max_lp_pool_value(),
             ctx,
         );
     let total_supply_after = vault.lp.total_supply();
@@ -494,9 +510,13 @@ public fun lock_capital(
 /// Queue a supply request: pull `amount` DUSDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
 /// auto-settles any flush-delivered DUSDC first. The account receives minted PLP
-/// only if a future flush can mint at least `min_plp_out`; after three limit misses
-/// the request is cancelled and refunded. Returns the queue index, the handle used
-/// to cancel before the flush.
+/// only at a mark that mints at least `min_plp_out` for the whole `amount` — a **price
+/// floor**, not a promise of that many shares: if the pool cap leaves room for only
+/// part of the deposit, the fill is proportionally smaller at the same price and the
+/// remainder stays queued with its limit rescaled. At the shipped attempt count of one,
+/// a flush whose mark quotes less cancels and refunds the request there and then; a
+/// higher configured count lets it rest and retry that many flushes first. Returns the
+/// queue index, the handle used to cancel before the flush.
 public fun request_supply(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,
@@ -532,10 +552,14 @@ public fun request_supply(
 
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
-/// The pull auto-settles any flush-delivered PLP first. The request fills only if a
-/// future flush can pay at least `min_dusdc_out`; after three limit misses the
-/// request is cancelled and refunded. Returns the queue index used to cancel before
-/// the flush.
+/// The pull auto-settles any flush-delivered PLP first. The account is paid only at a
+/// mark that quotes at least `min_dusdc_out` for the whole `amount` — a **price
+/// floor**, not a promise of that much DUSDC: if idle liquidity covers only part of the
+/// payout, only the shares idle affords are burned, the fill is proportionally smaller
+/// at the same price, and the remainder stays queued with its limit rescaled. At the
+/// shipped attempt count of one, a flush whose mark quotes less cancels and refunds the
+/// request there and then; a higher configured count lets it rest and retry that many
+/// flushes first. Returns the queue index used to cancel before the flush.
 public fun request_withdraw(
     vault: &mut PoolVault,
     wrapper: &mut AccountWrapper,

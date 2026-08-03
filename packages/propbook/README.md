@@ -129,19 +129,14 @@ A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvel
 Block Scholes data lives in two per-underlying shared objects:
 
 - `block_scholes_store::BlockScholesValueStore`: latest spot and forward
-  observations, keyed by signed series id (spot and forward ride one signed
-  value batch and are separated only by their ids).
+  observations for one immutable provider base asset, keyed by signed series id.
 - `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets,
-  keyed by signed series id (SVI arrives as its own signed batch).
+  bound to the same base asset and keyed by signed series id.
 
-Writes are permissionless and enter only through `apply_value_batch` /
-`apply_svi_batch`, which take a batch type that only the Block Scholes
+Writes are permissionless and enter only through `apply_spot_batch`,
+`apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes
 verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid
-provider signature, so the relayer that lands it is untrusted. A series id
-names its own slot (`block_scholes_sid` derives ids from kind, underlying,
-value scale, and expiry), so nothing on the write path decides where a value
-belongs, and reads derive the id they want rather than accepting one from a
-caller.
+provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
 
 Each stored observation carries three clocks: the provider model time the
 series data is "as of" (held fixed across retransmissions of an unchanged
@@ -205,11 +200,7 @@ unbound intermediate state:
 - `replace_pyth_binding_for_underlying` replaces the active Pyth feed for one
   Propbook underlying.
 
-Block Scholes stores sit outside the source catalog: a signed series names its
-own underlying, so `create_and_share_block_scholes_stores` creates the pair and
-records it as canonical in one admin-gated step, and an underlying keeps that
-pair for its lifetime — there is no store rebinding. Predict market creation
-requires Pyth bound plus both stores present.
+Block Scholes stores sit outside the source catalog: `create_and_share_block_scholes_stores` binds the exact provider base-asset spelling, creates the pair, and records it as canonical for one underlying in a single admin-gated step. The value and SVI stores independently retain the same immutable spelling, and an underlying keeps that pair for its lifetime — there is no store rebinding. Predict market creation requires Pyth bound plus both stores present.
 
 Source assignment remains sticky: once a source key has been assigned to an
 underlying, that source key can only be reused for the same underlying. Replacing
@@ -228,14 +219,15 @@ Typical discovery question:
 > What is the Propbook Pyth oracle object for BTC?
 
 Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
-Block Scholes store lookups are
-`propbook_block_scholes_value_store_id_for_underlying(registry, propbook_underlying_id)`
-and
-`propbook_block_scholes_svi_store_id_for_underlying(registry, propbook_underlying_id)`.
+Block Scholes lookup is
+`propbook_block_scholes_store_pair_for_underlying(registry, propbook_underlying_id)`.
+Use `block_scholes_value_store_id(&pair)` and
+`block_scholes_svi_store_id(&pair)` to read the two shared-object IDs from the
+returned pair.
 
 ## Events
 
-Propbook emits generic oracle events:
+Pyth-backed sources emit generic oracle events:
 
 - `ObservationRecorded<OracleRead<Payload>>`
 - `ObservationInserted<OracleRead<Payload>>`
@@ -243,10 +235,11 @@ Propbook emits generic oracle events:
 - `OracleBound`
 - `OracleRebound`
 
-For BS forward and SVI rows, the payload includes the expiry, so the
-generic event is enough to index per-expiry writes. BS spot is source-level and
-does not carry an expiry. Exact-insert events include the source timestamp in the
-`OracleRead` envelope.
+Block Scholes stores emit their dedicated event surface:
+
+- `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
+- `BlockScholesObservationRecorded<Observation>` records every stored observation with its store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
+- `BlockScholesBatchIngested` records every verified batch with its store ID, provider publication time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

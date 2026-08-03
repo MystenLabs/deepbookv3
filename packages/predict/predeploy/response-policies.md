@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-27. This is the tracked register of **settled response-policy
+Updated 2026-07-30. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -91,8 +91,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   recipient with `RequestCancelled`, and the flush continues. Filled and
   protocol-refunded heads both count against that queue's per-flush budget and
   toward `FlushExecuted.requests_processed`. A withdrawal whose quote is valid
-  but exceeds idle is different: it stays queued, consumes no withdraw budget,
-  and the withdrawal pass stops FIFO-until-dry.
+  but exceeds idle is different: it is not refused at all — idle pays as much of it as
+  it covers and the unfilled balance stays queued at the head, after which the pass
+  stops (RP-23). Only if idle cannot buy even one whole share does the head carry
+  untouched, consuming no withdraw budget.
 - **Reasoning:** the drain must be total over request content. Beyond the
   stall, a fill that *fits* at a dust mark mints ~1e18 shares; `total_supply`
   only shrinks via withdrawals, so the inflated supply persists after NAV
@@ -117,7 +119,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `oversized_supply_that_exceeds_u64_shares_refunds`,
   `non_executable_supply_refunds_spend_supply_budget`,
   `non_executable_withdraw_refunds_spend_withdraw_budget`, and
-  `withdrawals_stop_when_idle_is_dry_and_carry`. The fixed_math package
+  `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, or a new LP request type adds another
@@ -418,40 +420,101 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-12: LP request limit misses carry for three flush attempts (resolves P-7)
+## RP-12: LP request attempts are admin-tunable and ship at one — fill-or-kill (resolves P-7)
 
 - **Trigger state:** a queued LP supply or withdraw request reaches the head of
   its FIFO queue during a flush, the frozen mark is executable, but the quoted
   output is below the request's minimum output (`min_plp_out` for supply,
   `min_dusdc_out` for withdraw).
 - **Controller:** market (the frozen mark) × user (the request-time limit). The
-  protocol controls only the retry policy once the request is at the head.
-- **Blast radius:** `lp_book::drain` runs inside `finish_flush`; blindly filling
-  a limit-missing request gives the user unbounded slippage, while immediately
-  cancelling on the first miss makes ordinary mark volatility a poor LP UX.
-- **Response:** skip/carry with bounded expiry. A live limit miss increments the
-  request's miss count, emits `RequestLimitMissed`, counts against that queue's
-  per-flush processed budget, leaves the request at the head, and stops that
-  queue for the flush. On the third miss, the request is protocol-cancelled and
-  refunded with `RequestCancelled.reason = 2` (`limit expired`) instead of
-  carrying indefinitely. The user cannot modify a queued limit; changing price
-  protection means cancelling and submitting a new request.
-- **Reasoning:** carrying across a small fixed number of flush attempts absorbs
-  ordinary NAV noise without forcing users to monitor and re-submit after every
-  miss. Expiry bounds queue blockage: an overly tight or stale limit cannot
-  permanently block later FIFO requests. The fixed value is upgrade-required
-  (`lp_request_limit_flush_attempts = 3`) rather than per-user configurable to
-  keep the public surface and queue semantics simple pre-deploy.
-- **Risk profile:** `BEST-GUESS` — the UX win depends on actual flush cadence
-  and NAV volatility. The liveness risk is bounded by the three-attempt expiry,
-  and users retain the explicit cancel path while pending.
+  protocol controls only what happens to the request once it is at the head.
+- **Blast radius:** `lp_book::drain` runs inside `finish_flush`, and every LP
+  entry and exit passes through it. Blindly filling a limit-missing request gives
+  the user unbounded slippage; leaving one queued at the head holds up every
+  request behind it, so the head-of-queue policy is a pool-wide liveness control,
+  not a per-user UX knob. The two settings move the cost between two different
+  failure modes: at one attempt the queue cannot be held, but each miss is
+  *processed* (pop, refund, event) and the drain continues, so with unbounded
+  budgets a single flush does work proportional to the queued-request count —
+  inside the one mandatory flush PTB, which is already measured at 47-92% of the
+  computation ceiling on a saturated pool
+  (`evidence/c1-price-memo-2026-07-01.md`) and whose OOG stalls valuation and both
+  queues (`evidence/c1-nav-stress-2026-06-30.md`). Above one attempt the per-flush
+  work is truncated by the `break` instead, at the cost of the blocking.
+- **Response:** the attempt count is admin-tunable
+  (`protocol_config::set_lp_request_limit_flush_attempts`, bounds 1–3) and
+  **ships at 1**. At 1 a miss protocol-cancels and refunds immediately — the head
+  is popped, its escrow returned, `RequestCancelled.reason = 2` emitted, and the
+  drain continues to the next request in the same flush. A miss spends one unit of
+  that queue's processed budget, exactly like a fill, so every head is resolved by
+  the flush that reaches it and nothing is held over. Above 1 a missing head
+  instead stays queued, emits `RequestLimitMissed`, and stops that queue for the
+  flush, refunding on its final attempt. The user cannot modify a queued limit;
+  changing price protection means submitting a new request.
+- **Reasoning:** the queue is shared, so the cost of retrying a miss is paid by
+  everyone behind it, not by the requester. The superseded policy (a compiled
+  three attempts, stopping the queue on each miss) reasoned only about an honest
+  too-tight limit and concluded expiry "bounds queue blockage". It does not: the
+  bound is per request, and requests compose. `min_output` is unbounded at
+  admission and escrow is refunded in full, so anyone could pre-stuff a queue
+  with minimum-sized requests carrying an unsatisfiable limit and delay every
+  later LP by ~2 flushes per request for the price of gas — measured at 2N+1
+  flushes of total blockage for N requests, so 201 flushes with no honest LP exit
+  at N=100 (external audit, issue #42). Shipping at 1 removes the amplification
+  and the blocking together: a griefing request costs the same single budget unit
+  as an honest one and is gone. The affordance given up is a resting limit, and
+  keeping the attempt count as config rather than deleting the retry keeps that
+  recoverable without an upgrade — the number is a tuning parameter for LP-queue
+  liveness alongside flush cadence. The ceiling of 3 is deliberate: it caps the
+  blocking an operator can create at the pre-fix behaviour, so raising the knob is
+  never worse *on that axis* than what was measured.
+  **The per-flush work this shifts onto the drain is bounded by the operator's
+  budgets, not by the protocol.** Nothing caps pending requests per account or per
+  queue, `min_output` is unbounded at admission, and a refunded request returns its
+  escrow in the same transaction — so the same capital re-queues indefinitely at
+  gas cost. Running a flush with `supply_budget`/`withdraw_budget` = `None` is
+  therefore not a supported production configuration under this policy; both must
+  be bounded so one flush's drain work is capped regardless of queue depth. This is
+  an operational precondition, and the marginal cost of one refunded head against
+  the flush's remaining headroom is **not yet measured**.
+- **Risk profile:** split, because only one axis was measured.
+  `MEASURED` for the blockage the **superseded** policy allowed — reproduced and
+  quantified at 2N+1 flushes for N limit-missing requests
+  (`evidence/rp12-lp-queue-head-of-line-2026-07-29.md`), which is what raising the
+  knob buys back, bounded by the ceiling. `BEST-GUESS` for the **shipped** setting
+  on both of its axes: the per-flush drain cost under a deep queue was not
+  measured (see Reasoning — budgets must be bounded), and how often an honest limit
+  misses depends on flush cadence and NAV volatility, which are also unmeasured.
+  The pinning tests below hold the queue open at one attempt and pin that the
+  blocking returns above it; neither is a gas or rate measurement. **The knob is a
+  liveness control, not a UX preference** — raising it above 1 knowingly re-enables
+  head-of-line blocking and should follow a measured miss rate rather than an
+  intuition about volatility.
 - **Pinning tests:** `lp_book_tests.move` —
-  `supply_limit_miss_carries_then_fills_when_mark_improves`,
-  `supply_limit_expires_after_three_misses`,
-  `withdraw_limit_miss_carries_then_fills_when_mark_improves`, and
-  `withdraw_limit_expires_after_three_misses`.
-- **Reopen when:** flush cadence changes materially, the retry count becomes
-  user-configurable, or LP request limits become mutable in-place.
+  `supply_limit_miss_refunds_at_the_flush_that_reaches_it`,
+  `supply_limit_miss_does_not_block_later_requests`,
+  `withdraw_limit_miss_refunds_at_the_flush_that_reaches_it`,
+  `withdraw_limit_miss_does_not_block_later_requests`, and `limit_miss_spends_one_budget_unit`;
+  for the tunable path,
+  `supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts`,
+  `supply_limit_expires_after_three_misses_at_three_attempts`,
+  `raising_attempts_reintroduces_head_of_line_blocking`, and
+  `withdraw_limit_miss_carries_then_expires_at_three_attempts`. `lp_flow_tests.move`
+  drives the production request-then-flush path at both settings —
+  `flush_refunds_limit_miss_at_the_default_attempt_count` and
+  `flush_carries_limit_miss_when_admin_raises_the_attempt_count` — which is what pins
+  the attempt count to configured state rather than to a constant.
+  `protocol_config_tests.move` pins the shipped value on a fresh config
+  (`new_config_ships_with_no_retry`) and the valuation-lock guard on the setter
+  (`set_lp_request_limit_flush_attempts_during_valuation_aborts`); the tunable envelope
+  is pinned in `risk_config_tests.move`.
+- **Reopen when:** measured miss rates on a live cadence show honest LPs
+  re-submitting often enough to want a resting limit back. Raising the attempt
+  count is the cheap, bounded lever; the durable answer is a retry that cannot
+  block the primary queue (a separate retry queue), after which the ceiling can be
+  revisited. Also reopen if LP request limits become mutable in-place, or if a
+  per-account pending-request cap is added — that bounds queue spam but is not a
+  substitute here, because accounts are permissionless.
 
 ---
 
@@ -942,6 +1005,164 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   re-anchoring branch (the ceiling would then need to move or be duplicated), or
   a cross-source deviation guard lands and changes which side of the ladder an
   out-of-envelope print belongs on (RP-5).
+
+---
+
+## RP-23: Supplies fill up to the pool-value cap and the remainder holds its queue place (DBU-684)
+
+- **Trigger state:** a queued LP supply reaches the head of the supply pass at a
+  frozen mark where filling it would raise LP-attributable pool value above
+  `ProtocolConfig.max_lp_pool_value`.
+- **Controller:** operator (sets the cap) × market (NAV moves the pool under a
+  fixed cap without anyone depositing) × user (chooses the deposit size).
+- **Blast radius:** capacity gates the supply pass only — withdrawals, already-issued
+  PLP, and the genesis lock are never checked against it, so the cap closes the pool
+  to new capital and can never trap capital already in it. It does reach exits
+  **indirectly**: supplies drain first precisely because their fresh cash funds the
+  same flush's withdrawals, so refusing supplies leaves idle lower and a large exit
+  can hit the FIFO-until-idle-dry carry a flush earlier than it otherwise would.
+- **Response:** fill what fits, keep the rest in place, and stop the pass. A head with
+  room fills entirely; a head larger than the remaining headroom is **partially filled
+  up to the cap**, its unfilled balance left escrowed at the head with its queue
+  position, index, and owner intact; the pass then breaks. A head that finds no room at
+  all — or a prefix so small it prices to zero shares — is left untouched and the pass
+  breaks without spending flush budget. Headroom is measured against the frozen mark
+  **plus the supplies already filled this flush**, so requests cannot collectively
+  overshoot. Nothing is refunded for capacity: an LP who would rather hold cash than a
+  place in line cancels.
+  Breaking forfeits no throughput, because once the cap is reached nothing behind the
+  head could fill either; walking the rest of the queue would only spend budget and one
+  event per request to refuse each in turn. It also bounds per-flush drain work at O(1)
+  under a binding cap, which matters given the flush's event ceiling (RP-12).
+- **Withdrawals partially fill on the same principle.** A head whose payout exceeds idle
+  is paid what idle covers and keeps the balance queued, rather than carrying whole. The
+  shares to burn are floored from available idle and the payout is then quoted from
+  those shares by the same helper a full fill uses, so a partial exit prices identically
+  to a whole one and the pool never releases cash it has not destroyed shares for; at
+  most one ulp of idle is left behind rather than the requester being shorted.
+- **Carried limits are rescaled, rounded in the requester's favour.** A partially filled
+  request keeps asking for the same *price*, so its `min_output` is scaled to the
+  remaining amount and rounded **up** — at worst the carried request is held to a
+  fractionally stricter limit than it originally signed, never a laxer one.
+- **Ordering — the limit is checked first.** A partial fill mints fewer shares (or pays
+  less DUSDC) than the whole request, so it is only defensible if the *price* was
+  acceptable. Pricing is linear at a frozen mark, so "this prefix clears the LP's rate"
+  is exactly the existing `shares >= min_output` test on the full amount — checking the
+  limit first costs no new arithmetic and makes `min_output` a **price floor rather than
+  an absolute output floor**. A request that both misses its limit and finds a full pool
+  reports the limit miss, and an attempt-bearing request keeps its resting behaviour
+  rather than being consumed by a transient capacity state.
+- **Reasoning:** capacity is a pool-level property, and pool value is exact only
+  at the flush — an admission-time check would have to compare against a stale
+  snapshot, since no NAV is stored between flushes. Enforcing at the drain keeps
+  the cap exact at the cost of holding escrow for one flush interval. Capping
+  *value* rather than cumulative deposits avoids new running-total state that
+  every fill and withdrawal would have to maintain, and it measures the quantity an
+  operator actually wants bounded — pool size. The consequence is that trading
+  profit alone can carry a pool above its cap, after which supplies wait
+  until NAV falls back; that is intended, and it is why the setter is documented as
+  closing the pool rather than forcing an exit. Withdrawals drain after supplies,
+  so the headroom an exit frees is priced at the *next* flush, not the current one
+  — the mark is frozen, and re-reading it mid-drain would break the single-mark
+  guarantee that makes supply and withdraw prices agree.
+- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but no launch
+  figure has been chosen and the cap is inert at its default, so nothing about how
+  it behaves against real deposit flow has been measured.
+- **Pinning tests:** `lp_book_tests.move` — `supply_within_pool_cap_fills`,
+  `supply_larger_than_headroom_partially_fills_to_the_cap`,
+  `supply_carries_when_the_pool_has_no_headroom`,
+  `supplies_cannot_collectively_exceed_the_pool_cap_in_one_flush`,
+  `supply_carries_when_pool_is_already_over_cap`,
+  `pool_cap_does_not_gate_withdrawals`,
+  `full_pool_holds_the_supply_queue_instead_of_clearing_it`,
+  `partially_filled_head_keeps_its_place_across_flushes`,
+  `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`, and
+  `capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush` end to end.
+  The branch order is pinned by `over_cap_and_under_limit_takes_the_limit_branch`,
+  which reads it off queue state — a limit miss pops and refunds the head while a
+  capacity stop leaves it queued and spends no budget — plus
+  `limit_miss_is_not_partially_filled_into_available_headroom` and, for the prefix
+  price guard, `supply_prefix_below_the_requests_price_is_carried_not_filled` and
+  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`.
+  `lp_flow_tests.move` pins the cap to configured state rather than a constant
+  (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
+  `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
+  `protocol_config_tests.move` pins the shipped default and the valuation-lock
+  guard; `risk_config_tests.move` pins the bounds and the floor.
+- **Reopen when:** a launch figure is set (the profile should become `MEASURED`
+  against observed deposit flow); or a request-time admission check is wanted for
+  UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or
+  withdrawals are ever drained before supplies, which would change whose headroom is
+  being measured; or per-flush drain work is bounded structurally rather than by the
+  operator's budgets, which would also bound how much of a capped pool's queue one
+  flush churns through (see RP-12's per-flush cost note).
+
+---
+
+## RP-24: Same-transaction oracle writes cannot feed a live pricer
+
+- **Trigger state:** a PTB writes a Propbook observation (Pyth Lazer update or
+  Block Scholes batch) and then builds a live `Pricer` that would consume that
+  observation for the returned forward or SVI.
+- **Controller:** external / adversarial — Propbook writes are permissionless
+  once the caller holds a verifier-produced payload (`LazerUpdate`,
+  `ValueBatch`, `SviBatch`). A trader running their own Pyth Lazer subscription
+  can obtain such a payload.
+- **Blast radius:** every live-pricing path that loads a pricer
+  (`mint_*`, `redeem_live`, `liquidate`, `plp::value_expiry`). One push
+  re-anchors every live market on that underlying.
+- **Response:** **abort** at `pricing::resolve_live_pricer` with
+  `EOracleWrittenInThisTransaction` when any observation that feeds the returned
+  price carries this transaction's digest. Pyth is checked only on the
+  re-anchor branch (`use_pyth_spot_for_forward` and a fresh read); when the flag
+  is off or the read is stale, Pyth is provenance-only and must not trip the
+  guard.
+- **Reasoning:** Without the guard, Variant A (mint → update → mint of the
+  complement) extracts a risk-free box: the two legs together pay $1 and cost
+  less than $1 against a stale-then-fresh forward. Variant C (update → redeem a
+  seasoned position) marks an older position at the inflated print in the same
+  PTB. `EMintRedeemSameTimestamp` only partially covers mint→redeem of a
+  freshly opened order and does not cover cross-leg minting or seasoned
+  redeems. Rejected alternatives: mint-path-only guard (reroutable through
+  redeem/liquidate/second market); clock-timestamp comparison (Sui's `Clock`
+  advances per checkpoint, so honest trades sharing a checkpoint with the
+  updater would false-positive); `ctx.sender()` (cannot distinguish a router);
+  EWMA/smoothed oracle (`oracle_lane::update` no-ops on non-advancing
+  timestamps, so a buffer of signed payloads can converge an EWMA in one PTB,
+  and smoothing desynchronises mint from exact settlement). The transaction
+  digest is constant across a PTB and differs between transactions — zero false
+  positives for honest trades that never write a feed.
+- **Risk profile:** `BEST-GUESS` for the atomic path — unit-pinned under
+  `oracle_same_tx_guard_tests.move`; a dated testnet measurement record is not
+  yet filed under `evidence/`. Residual cross-transaction risk is accepted: a
+  trader can still write in tx N and trade in N+1, or sandwich the updater's
+  ~1.4–1.8s push, but then carries inventory and cannot guarantee ordering — a
+  directional bet, not risk-free extraction. Pricing that residual is separate
+  ΔP-surcharge work. Also noted without acting: `pyth_spot_freshness_ms`
+  defaults to 10_000, a wide staleness budget relative to 1m markets.
+- **Pinning tests:**
+  `write_feed_then_load_pricer_same_tx_aborts`,
+  `write_feed_then_mint_next_tx_succeeds`,
+  `variant_a_mint_update_mint_aborts_on_second_pricer`,
+  `variant_c_write_then_redeem_seasoned_position_aborts`,
+  `ordinary_mint_without_oracle_write_succeeds`,
+  `multi_leg_mints_share_one_pricer_without_oracle_write`,
+  `write_bs_forward_only_then_load_pricer_same_tx_aborts`,
+  `write_bs_svi_only_then_load_pricer_same_tx_aborts`,
+  `write_fresh_pyth_only_then_load_pricer_same_tx_aborts`,
+  `pyth_write_same_tx_succeeds_when_reanchor_disabled`,
+  `pyth_write_same_tx_succeeds_when_pyth_read_is_stale`,
+  `price_then_write_same_tx_is_permitted`.
+  Propbook also pins digest survival across project_read in its own suite
+  (outside this package's test tree).
+- **Reopen when:** a ΔP surcharge or similar cross-tx oracle-move fee lands; the
+  redundant `EMintRedeemSameTimestamp` guard is removed as a follow-up; or
+  `load_exact_spot_read` (settlement / reference-tick exact history) is brought
+  under a same-tx policy after an explicit threat-model review (different path:
+  `insert_at` already bounds carry via `ESettlementCarryExceedsWindow`).
+- **Layout note:** adding `writer_digest` to `OracleRead` / `BsRead` changes
+  Propbook struct layouts — requires a fresh publish of propbook and predict,
+  not a compatible upgrade.
 
 ---
 

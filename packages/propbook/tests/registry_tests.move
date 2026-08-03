@@ -8,7 +8,7 @@ use propbook::{
     pyth_feed::{Self as pyth_feed, PythFeed},
     registry::{Self, OracleMetadata, OracleRegistry, RegistryAdminCap}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::{string::String, unit_test::{assert_eq, destroy}};
 use sui::{event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
@@ -218,27 +218,29 @@ fun create_block_scholes_stores_records_both_lookups() {
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
 
-    assert_eq!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(BTC_UNDERLYING_ID),
-        option::some(value_store_id),
-    );
-    assert_eq!(
-        registry.propbook_block_scholes_svi_store_id_for_underlying(BTC_UNDERLYING_ID),
-        option::some(svi_store_id),
-    );
+    let pair = registry
+        .propbook_block_scholes_store_pair_for_underlying(BTC_UNDERLYING_ID)
+        .destroy_some();
+    assert_eq!(pair.block_scholes_value_store_id(), value_store_id);
+    assert_eq!(pair.block_scholes_svi_store_id(), svi_store_id);
     assert!(value_store_id != svi_store_id);
 
     let events = event::events_by_type<registry::BlockScholesStoresRegistered>();
     assert_eq!(events.length(), 1);
-    let (event_underlying_id, event_value_id, event_svi_id) = registry::stores_registered_fields(
-        &events[0],
-    );
+    let (
+        event_underlying_id,
+        event_value_id,
+        event_svi_id,
+        event_base_asset,
+    ) = registry::stores_registered_fields(&events[0]);
     assert_eq!(event_underlying_id, BTC_UNDERLYING_ID);
     assert_eq!(event_value_id, value_store_id);
     assert_eq!(event_svi_id, svi_store_id);
+    assert_eq!(event_base_asset, btc());
 
     return_shared(registry);
     destroy(admin_cap);
@@ -259,15 +261,11 @@ fun store_lookups_are_none_for_an_underlying_without_a_pair() {
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
 
-    assert!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
-    );
-    assert!(
-        registry.propbook_block_scholes_svi_store_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
-    );
+    assert!(registry.propbook_block_scholes_store_pair_for_underlying(ETH_UNDERLYING_ID).is_none());
 
     return_shared(registry);
     destroy(admin_cap);
@@ -288,12 +286,14 @@ fun creating_a_second_store_pair_for_an_underlying_aborts() {
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
     registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
 
@@ -313,26 +313,55 @@ fun each_underlying_gets_its_own_store_pair() {
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
     let (eth_value_id, _eth_svi_id) = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         ETH_UNDERLYING_ID,
+        eth(),
         scenario.ctx(),
     );
 
     assert!(btc_value_id != eth_value_id);
-    assert_eq!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(BTC_UNDERLYING_ID),
-        option::some(btc_value_id),
-    );
-    assert_eq!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(ETH_UNDERLYING_ID),
-        option::some(eth_value_id),
-    );
+    let btc_pair = registry
+        .propbook_block_scholes_store_pair_for_underlying(BTC_UNDERLYING_ID)
+        .destroy_some();
+    let eth_pair = registry
+        .propbook_block_scholes_store_pair_for_underlying(ETH_UNDERLYING_ID)
+        .destroy_some();
+    assert_eq!(btc_pair.block_scholes_value_store_id(), btc_value_id);
+    assert_eq!(eth_pair.block_scholes_value_store_id(), eth_value_id);
 
     return_shared(registry);
     destroy(admin_cap);
     scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EInvalidBlockScholesBaseAsset)]
+fun creating_store_pair_with_empty_base_asset_aborts() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        b"".to_string(),
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+fun btc(): String {
+    b"BTC".to_string()
+}
+
+fun eth(): String {
+    b"ETH".to_string()
 }
