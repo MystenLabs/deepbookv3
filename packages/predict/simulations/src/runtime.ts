@@ -70,10 +70,10 @@ const COIN_REGISTRY_ID = "0xc";
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
 // Pyth Lazer feed id (the propbook spot feed key) and the Propbook underlying id.
-// The harness binds one market to one Pyth feed and one split BS source set for
-// that underlying, so a single source id serves both.
+// Propbook binds that underlying id to the provider's exact base-asset spelling.
 const PYTH_FEED_ID = 1;
 const BS_UNDERLYING_ID = PYTH_FEED_ID;
+const BS_BASE_ASSET = "BTC";
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -188,11 +188,7 @@ async function collectTransactionDebug(params: {
     label: string;
     attempt: number;
     gasBudget: bigint;
-    phase:
-        | "rpc_error"
-        | "retryable_rpc_error"
-        | "execution_failure"
-        | "post_submit_fetch_error";
+    phase: "rpc_error" | "retryable_rpc_error" | "execution_failure" | "post_submit_fetch_error";
     raw?: unknown;
     error?: unknown;
 }): Promise<string> {
@@ -277,7 +273,9 @@ async function tryCollectTransactionDebug(params: Parameters<typeof collectTrans
 }
 
 function failedTransactionSuffix(artifactPath: string | null): string {
-    return artifactPath === null ? " failed_tx_artifact=<logging_failed>" : ` failed_tx=${artifactPath}`;
+    return artifactPath === null
+        ? " failed_tx_artifact=<logging_failed>"
+        : ` failed_tx=${artifactPath}`;
 }
 
 function gasSummaryFromEffects(effects: any): GasUsage {
@@ -417,7 +415,7 @@ async function nextSourceTimestampMs(): Promise<bigint> {
 
 export async function nextOneMonthExpiryMs(): Promise<bigint> {
     const now = await clockTimestampMs();
-    return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
+    return (now / ONE_MONTH_MS + 1n) * ONE_MONTH_MS;
 }
 
 // One oracle refresh writes all propbook slots: a permissionless Pyth Lazer spot
@@ -546,42 +544,66 @@ function addPythFeedUpdate(
 // Block Scholes updates for one expiry: sign real batches with the local signer
 // key (registered on the localnet `SignerRegistry`), mint the hot-potato batches
 // through the verifier, and ingest them through the production
-// `block_scholes_store::apply_*_batch` path. Spot and forward share one value
-// batch, as they do on the real wire; SVI rides its own batch. The sim always
-// sends fresh data, so `publishedAtMs` serves as both the envelope (published-at)
-// and per-update (model) timestamp.
+// `block_scholes_store::apply_*_batch` path. Spot, forward, and SVI are separate
+// typed batches with descriptor witnesses, matching the production writer. The
+// sim always sends fresh data, so `publishedAtMs` is both the envelope and model
+// timestamp.
 function addBlockScholesUpdates(
     tx: Transaction,
     params: OracleRefreshParams,
     publishedAtMs: bigint,
 ): void {
-    const valueMessage = signedValueBatchBytes({
+    const spotMessage = signedValueBatchBytes({
         signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
         verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
         batchTimestampMs: publishedAtMs,
         updates: [
             {
-                sid: spotSid(BS_UNDERLYING_ID),
+                sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET),
                 timestampMs: publishedAtMs,
                 value: params.spot,
             },
+        ],
+    });
+    const spotBatch = tx.moveCall({
+        target: bsOracleTarget("verify", "verify_and_create_value_batch"),
+        arguments: [
+            tx.object(BS_SIGNER_REGISTRY_ID),
+            tx.pure.vector("u8", Array.from(spotMessage)),
+        ],
+    });
+    tx.moveCall({
+        target: propbookTarget("block_scholes_store", "apply_spot_batch"),
+        arguments: [tx.object(params.bsValueStoreId), spotBatch, tx.object(CLOCK_ID)],
+    });
+
+    const forwardMessage = signedValueBatchBytes({
+        signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+        verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+        batchTimestampMs: publishedAtMs,
+        updates: [
             {
-                sid: forwardSid(BS_UNDERLYING_ID, params.expiry),
+                sid: forwardSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, params.expiry),
                 timestampMs: publishedAtMs,
                 value: params.forward,
             },
         ],
     });
-    const valueBatch = tx.moveCall({
+    const forwardBatch = tx.moveCall({
         target: bsOracleTarget("verify", "verify_and_create_value_batch"),
         arguments: [
             tx.object(BS_SIGNER_REGISTRY_ID),
-            tx.pure.vector("u8", Array.from(valueMessage)),
+            tx.pure.vector("u8", Array.from(forwardMessage)),
         ],
     });
     tx.moveCall({
-        target: propbookTarget("block_scholes_store", "apply_value_batch"),
-        arguments: [tx.object(params.bsValueStoreId), valueBatch, tx.object(CLOCK_ID)],
+        target: propbookTarget("block_scholes_store", "apply_forward_batch"),
+        arguments: [
+            tx.object(params.bsValueStoreId),
+            forwardBatch,
+            tx.pure.vector("u64", [params.expiry]),
+            tx.object(CLOCK_ID),
+        ],
     });
 
     const sviMessage = signedSviBatchBytes({
@@ -590,7 +612,7 @@ function addBlockScholesUpdates(
         batchTimestampMs: publishedAtMs,
         updates: [
             {
-                sid: sviSid(BS_UNDERLYING_ID, params.expiry),
+                sid: sviSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, params.expiry),
                 timestampMs: publishedAtMs,
                 aMagnitude: params.svi.a,
                 aNegative: params.svi.aNegative,
@@ -605,14 +627,16 @@ function addBlockScholesUpdates(
     });
     const sviBatch = tx.moveCall({
         target: bsOracleTarget("verify", "verify_and_create_svi_batch"),
-        arguments: [
-            tx.object(BS_SIGNER_REGISTRY_ID),
-            tx.pure.vector("u8", Array.from(sviMessage)),
-        ],
+        arguments: [tx.object(BS_SIGNER_REGISTRY_ID), tx.pure.vector("u8", Array.from(sviMessage))],
     });
     tx.moveCall({
         target: propbookTarget("block_scholes_store", "apply_svi_batch"),
-        arguments: [tx.object(params.bsSviStoreId), sviBatch, tx.object(CLOCK_ID)],
+        arguments: [
+            tx.object(params.bsSviStoreId),
+            sviBatch,
+            tx.pure.vector("u64", [params.expiry]),
+            tx.object(CLOCK_ID),
+        ],
     });
 }
 
@@ -789,6 +813,7 @@ export function registerUnderlyingAndCreateFeedsTx(feedId: number): Transaction 
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.pure.u32(BS_UNDERLYING_ID),
+            tx.pure.string(BS_BASE_ASSET),
         ],
     });
     return tx;
@@ -1151,7 +1176,12 @@ export function lockCapitalTx(poolVaultId: string): Transaction {
     tx.moveCall({
         target: target("plp", "lock_capital"),
         // `lock_capital(vault, config, admin_cap, payment)`.
-        arguments: [tx.object(poolVaultId), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID), coin],
+        arguments: [
+            tx.object(poolVaultId),
+            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(ADMIN_CAP_ID),
+            coin,
+        ],
     });
     return tx;
 }
@@ -1207,7 +1237,9 @@ export async function executeAndWait(
             error,
         });
         throw markFailedTransactionLogged(
-            new Error(`${label} rpc failure: ${String(error)}${failedTransactionSuffix(artifactPath)}`),
+            new Error(
+                `${label} rpc failure: ${String(error)}${failedTransactionSuffix(artifactPath)}`,
+            ),
         );
     }
 
@@ -1303,8 +1335,7 @@ export async function execute(
             const receipts: ExecutionReceipt[] = [];
             for (const [index, builtTx] of txs.entries()) {
                 tx = builtTx;
-                const legLabel =
-                    txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
+                const legLabel = txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
                 tx.setSender(address);
                 tx.setGasBudget(gasBudget);
 

@@ -109,7 +109,9 @@ function stressMintLeverageFromEnv(): bigint | null {
     const raw = process.env.SIM_STRESS_LEVERAGE?.trim();
     if (!raw) return null;
     if (!/^[0-9]+(\.[0-9]+)?$/.test(raw)) {
-        throw new Error(`SIM_STRESS_LEVERAGE must be a decimal multiple like "2" or "1.5", got "${raw}"`);
+        throw new Error(
+            `SIM_STRESS_LEVERAGE must be a decimal multiple like "2" or "1.5", got "${raw}"`,
+        );
     }
     const [whole, frac = ""] = raw.split(".");
     const scaled = BigInt(whole) * FLOAT_SCALING + BigInt((frac + "000000000").slice(0, 9));
@@ -241,8 +243,7 @@ function stressMintRows(rows: ScenarioRow[], targetMintCount: number): MintRow[]
 
 function stressCapitalMultiplier(actualMintCount: number, sourceMintRowCount: number): bigint {
     const mintMultiple =
-        (BigInt(actualMintCount) + BigInt(sourceMintRowCount) - 1n) /
-        BigInt(sourceMintRowCount);
+        (BigInt(actualMintCount) + BigInt(sourceMintRowCount) - 1n) / BigInt(sourceMintRowCount);
     return mintMultiple * STRESS_CAPITAL_HEADROOM;
 }
 
@@ -483,8 +484,8 @@ function normalizePythObservation(event: any): Record<string, unknown> {
     };
 }
 
-// One oracle refresh lands as two `BlockScholesBatchIngested` events (one value
-// batch carrying spot + forward, one SVI batch). The event carries counts, not
+// One oracle refresh lands as three `BlockScholesBatchIngested` events (spot,
+// forward, then SVI). The event carries counts, not
 // values, so the parity row's values come from the refresh inputs on the scenario
 // row; the event assertions confirm the chain accepted every update. The values
 // remain chain-checked downstream: order/flush parity round-trips the stored
@@ -492,11 +493,10 @@ function normalizePythObservation(event: any): Record<string, unknown> {
 function assertBlockScholesBatchIngested(event: any): void {
     const json = event.parsedJson ?? {};
     const updateCount = BigInt(decimal(json.update_count));
-    const matched = BigInt(decimal(json.matched));
     const applied = BigInt(decimal(json.applied));
-    if (updateCount === 0n || matched !== updateCount || applied !== updateCount) {
+    if (updateCount === 0n || applied !== updateCount) {
         throw new Error(
-            `Block Scholes batch not fully applied: update_count=${updateCount} matched=${matched} applied=${applied}`,
+            `Block Scholes batch not fully applied: update_count=${updateCount} applied=${applied}`,
         );
     }
 }
@@ -542,8 +542,12 @@ function normalizeOrderMinted(event: any, orderRef: string | null): Record<strin
 function normalizePricingSourceTimestamps(json: any): Record<string, string> {
     return {
         pyth_spot_source_timestamp_ms: decimal(json.pyth_spot_source_timestamp_ms),
-        block_scholes_spot_source_timestamp_ms: decimal(json.block_scholes_spot_source_timestamp_ms),
-        block_scholes_forward_source_timestamp_ms: decimal(json.block_scholes_forward_source_timestamp_ms),
+        block_scholes_spot_source_timestamp_ms: decimal(
+            json.block_scholes_spot_source_timestamp_ms,
+        ),
+        block_scholes_forward_source_timestamp_ms: decimal(
+            json.block_scholes_forward_source_timestamp_ms,
+        ),
         block_scholes_svi_source_timestamp_ms: decimal(json.block_scholes_svi_source_timestamp_ms),
     };
 }
@@ -750,9 +754,9 @@ function normalizeUpdates(
         else if (fullType.includes("::block_scholes_store::BlockScholesBatchIngested")) {
             assertBlockScholesBatchIngested(event);
             pendingBsBatches++;
-            // The second batch of a refresh (value, then SVI) completes the
+            // The third batch of a refresh (spot, forward, then SVI) completes the
             // synthetic surface update.
-            if (pendingBsBatches === 2) {
+            if (pendingBsBatches === 3) {
                 updates.push(blockScholesSurfaceUpdateFromRow(row));
                 pendingBsBatches = 0;
             }
@@ -761,8 +765,8 @@ function normalizeUpdates(
         else if (name === "OrderMinted") {
             updates.push(normalizeOrderMinted(event, mintOrderRefs[mintIndex] ?? null));
             mintIndex++;
-        }
-        else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
+        } else if (name === "LiveOrderRedeemed")
+            updates.push(normalizeLiveOrderRedeemed(event, row));
         else if (name === "LiquidatedOrderRedeemed")
             updates.push(normalizeLiquidatedOrderRedeemed(event, row));
         else if (name === "SettledOrderRedeemed")
@@ -780,7 +784,7 @@ function normalizeUpdates(
             updates.push(normalizeExpiryProfitMaterialized(event));
     }
     if (pendingBsBatches !== 0) {
-        throw new Error("incomplete Block Scholes batch pair in transaction events");
+        throw new Error("incomplete Block Scholes batch set in transaction events");
     }
     if (mintIndex !== mintOrderRefs.length) {
         throw new Error(`expected ${mintOrderRefs.length} OrderMinted events, saw ${mintIndex}`);
@@ -1139,10 +1143,7 @@ function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapi
     };
 }
 
-function scaleSimulationCapital(
-    capital: SimulationCapital,
-    multiplier: bigint,
-): SimulationCapital {
+function scaleSimulationCapital(capital: SimulationCapital, multiplier: bigint): SimulationCapital {
     return {
         vaultSeed: capital.vaultSeed * multiplier,
         managerSeed: capital.managerSeed * multiplier,
@@ -1283,9 +1284,7 @@ async function setupSimulation(
     const bsValueStoreId: string = bsValueStoreChange.objectId;
     const bsSviStoreId: string = bsSviStoreChange.objectId;
     console.log(`[${ts()}]   PythFeed: ${pythFeedId}`);
-    console.log(
-        `[${ts()}]   BlockScholes stores: values=${bsValueStoreId} svi=${bsSviStoreId}`,
-    );
+    console.log(`[${ts()}]   BlockScholes stores: values=${bsValueStoreId} svi=${bsSviStoreId}`);
 
     // Admin-bind global Pyth to the canonical underlying (separate tx: the feed
     // must already be shared).
@@ -1663,14 +1662,7 @@ async function executeScenario(
             })),
         });
         records.push(
-            economicMaintenanceRecord(
-                afterRow,
-                "flush",
-                row,
-                receipt,
-                economicState,
-                aliases,
-            ),
+            economicMaintenanceRecord(afterRow, "flush", row, receipt, economicState, aliases),
         );
         process.stdout.write(
             `[${ts()}]   -- flush after row ${afterRow} (drained LP queues, gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
