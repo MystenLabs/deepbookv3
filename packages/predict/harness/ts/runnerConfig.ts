@@ -24,6 +24,20 @@ export function requiredNonnegativeInt(name: string): number {
   return value;
 }
 
+/** Parse a non-negative bigint env knob, naming the variable on a bad value.
+ *
+ * `BigInt(process.env.X || "d")` throws a bare SyntaxError at module load, which kills the keeper
+ * before it can write any trace — surfacing as `no-keeper-trace` rather than as the typo it is. */
+export function bigintEnv(name: string, fallback: bigint): bigint {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const value = raw.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
+  }
+  return BigInt(value);
+}
+
 export interface BudgetRung {
   atMs: number;
   budget: bigint;

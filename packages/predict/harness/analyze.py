@@ -60,7 +60,7 @@ _KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         },
         set(),
     ),
-    "liquidate": ({"markets", "gas"}, set()),
+    "liquidate": ({"markets", "gas"}, {"budget"}),
     # One rung of the trade-liquidation-budget ladder. `requestedAtMs` is stamped before the
     # set-tx so the analysis can discard probes that ran while the in-force budget was
     # indeterminate; it is optional so a rung traced by an older runner still loads.
@@ -455,7 +455,6 @@ def _analyze_one(inst: Path) -> list[str]:
     # the section is skipped rather than assuming the contract default.
     no_data = False           # the section ran but collected no single-mint samples at all
     insufficient_fit = False  # samples too clustered (or unphysical) to support a ceiling
-    unexpected_wall: str | None = None
     wall_tags: set[str] = set()  # OOG tags from the probe, used as declared-wall evidence
     rungs = sorted([r for r in recs if r.get("type") == "liqBudget" and r.get("ts")], key=lambda r: r["ts"])
     if rungs:
@@ -490,6 +489,16 @@ def _analyze_one(inst: Path) -> list[str]:
             and not _indeterminate(r["ts"])
         ]
         print(f"\nliq-budget — single-mint computation vs ambient-pass budget ({len(rungs)} rung(s) applied):")
+        # The adverse arm nets only its OWN transactions' knockouts, so a keeper liquidation lane
+        # running alongside it silently leaves the book over-counted — candidates overstated, slope
+        # understated, ceiling overstated. That is the unsafe direction, and KEEPER_LIQ_BUDGET=0 is
+        # documented but unenforced, so refuse the run rather than trust the operator remembered.
+        keeper_sweeping = any(int(r.get("budget", 0)) > 0 for r in recs if r.get("type") == "liquidate")
+        adverse = any(r.get("profile") == "adverse" for r in recs if r.get("type") == "mintBatch")
+        if keeper_sweeping and adverse:
+            print("  REFUSED — the keeper's liquidate() lane ran alongside the adverse probe, so the "
+                  "traced book over-counts (re-run with KEEPER_LIQ_BUDGET=0)")
+            insufficient_fit = True
         by_budget: dict[int, list[tuple[int, int]]] = defaultdict(list)
         for budget, book, comp in probes:
             by_budget[budget].append((book, comp))
@@ -528,8 +537,12 @@ def _analyze_one(inst: Path) -> list[str]:
                     print(f"  -> an ordinary mint stops fitting one tx at ~{cross:,} candidates "
                           f"(the ceiling max_trade_liquidation_budget should be set under, with margin)")
                     if cross > max(xs) * MAX_LIQ_BUDGET_EXTRAPOLATION:
-                        print(f"     CAUTION: that is {cross / max(xs):.0f}x beyond the largest measured "
-                              f"count ({max(xs)}) — extrapolation, not measurement")
+                        # An advisory line is not enough: a 17x extrapolation prints to the same
+                        # precision as a measurement and would otherwise exit clean, which is the
+                        # confident-number-from-thin-data shape this section exists to refuse.
+                        print(f"     REJECTED: that is {cross / max(xs):.0f}x beyond the largest measured "
+                              f"count ({max(xs)}) — extrapolation, not measurement; run to a deeper book")
+                        insufficient_fit = True
         # The empirical wall: the smallest candidate count at which a SINGLE mint actually OOG'd.
         walls = [
             (min(_budget_at(r["ts"]), int(r.get("book", 0))),
@@ -540,18 +553,22 @@ def _analyze_one(inst: Path) -> list[str]:
         ]
         if walls:
             candidates, budget, book = min(walls)
-            print(f"  EMPIRICAL wall: a single mint OOG'd at budget {budget} / book {book} (~{candidates} candidates)")
-            # The trader submits through `signExecThreaded`, which — unlike the keeper's
-            # `executeAndWait` — writes no failed-tx artifact, and the strategy traces the OOG as a
-            # mintBatch record rather than a `fail`. Neither source the declared-wall check reads can
-            # see it, so an arm that reached exactly the wall it declared would be failed VACUOUS for
-            # not reaching it. Feed the OOG's own tag forward as the evidence.
+            # Bracket it. A single mint fitting at X and failing at Y locates the wall in (X, Y]; the
+            # failing count alone reads as though it were the measured limit, and it is the line a
+            # reader is most likely to quote. `fit` holds every successful sample.
+            largest_ok = max((x for x, _ in fit), default=0)
+            bracket = (f"between {largest_ok} and {candidates} candidates"
+                       if largest_ok and largest_ok < candidates
+                       else f"at or below {candidates} candidates")
+            print(f"  EMPIRICAL wall: a single mint OOG'd at budget {budget} / book {book} "
+                  f"(~{candidates} candidates) — the wall lies {bracket}")
+            # Reaching the cap is a measurement outcome, not a failure: neither arm declares it as
+            # a terminal wall, and neither raises a signal for hitting it. The trader also submits
+            # through `signExecThreaded`, which — unlike the keeper's `executeAndWait` — writes no
+            # failed-tx artifact, and the OOG is traced as a `mintBatch` rather than a `fail`, so it
+            # reaches the bug oracle by neither route. That is deliberate here.
             wall_tags = {str(r.get("err", "")) for r in recs
                          if r.get("type") == "mintBatch" and r.get("oog") and r.get("err")}
-            # An arm that DECLARED this wall was built to reach it; one that did not has just shown
-            # an ordinary mint failing to fit, which is a finding in its own right.
-            if not verdict.declared_terminals(recs):
-                unexpected_wall = f"liq-budget-wall-undeclared:budget={budget},book={book}"
         elif not probes:
             # No successful single-mint samples AND no wall: the run measured nothing. Claiming
             # "affordable" here would be an affirmative safety claim drawn from zero evidence.
@@ -637,8 +654,6 @@ def _analyze_one(inst: Path) -> list[str]:
                 print(f"     {n}x  {mode}")
 
     signals = list(flagged)
-    if unexpected_wall:
-        signals.append(unexpected_wall)
     if no_data:
         signals.append("liq-budget-no-samples")
     if insufficient_fit:

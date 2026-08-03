@@ -122,6 +122,16 @@ Read this before editing the Predict local development system under `packages/pr
   `no-keeper-trace` and (campaign) `missing-trace:<name>` (an instance/strategy that never produced
   a trace), `keeper-stuck` (operational fails with zero successful flush — a bricked settlement/LP
   lifecycle), and `fatal-crash` (a top-level actor crash, a `{fatal:true}` trace).
+- **liq-budget gates on having measured, not on what it measured.** `liq-budget-no-samples`
+  (the run collected no single-mint probe) and `liq-budget-fit-unusable` (candidate counts too
+  clustered for a 4x lever arm, an unphysical negative base mint, a crossing more than 3x past
+  the largest measured count, or the keeper's liquidate lane running alongside the adverse
+  probe) both fail the run. **Reaching the computation cap does NOT** — "the budget max fits"
+  and "it does not" are equally valid answers, so neither arm declares a terminal wall and
+  neither declares `done`; the wall is reported as a bracket between the largest count that
+  fit and the smallest that did not. Declaring `expect` here would fail a run that
+  legitimately never reaches the cap (VACUOUS), and declaring `done` opts out of the runner's
+  `bounded_stop` branch, so a `--timeout` stop reports `incomplete` and exits non-zero.
 - **`capacity-single` and `capacity-pool` measure the per-tx COMPUTATION cap, not the gas budget.** The keeper flush OOGs when
   its `computationCost` hits `max_gas_computation_bucket = 5M units × RGP` (localnet/testnet 5e9 MIST,
   mainnet 5e8 — a protocol constant, so the OOG book size is network-independent), NOT the 50,000-SUI

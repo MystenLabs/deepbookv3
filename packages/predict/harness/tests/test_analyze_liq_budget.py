@@ -148,18 +148,39 @@ class LiqBudgetAnalysisTests(unittest.TestCase):
         self.assertRegex(report, r"EMPIRICAL wall: a single mint OOG'd at budget 3000 / book 4600")
         self.assertNotIn("no single-mint OOG", report)
 
-    def test_an_undeclared_wall_fails_the_run(self) -> None:
-        # These fixtures carry no `expect` record, i.e. the arm never declared it was probing for a
-        # wall — so a single mint that cannot fit is an unexpected finding and must fail the run.
-        # The OOG is traced as a mintBatch record rather than a `fail`, so the bug oracle cannot see
-        # it; without an explicit signal the run would print the wall and still exit 0.
+    def test_reaching_the_wall_is_a_result_not_a_failure(self) -> None:
+        # "The budget max fits" and "the budget max does not fit" are equally valid answers to the
+        # question this instrument asks, so neither may be encoded as pass/fail. A run that reaches
+        # the computation cap has measured something and must exit clean; only a run that measured
+        # NOTHING (or produced an unusable fit) fails.
         report, signals = _run([100, 300, 2000, 4600], 1_700_000)
 
         self.assertIn("EMPIRICAL wall", report)
-        self.assertTrue(
-            any(s.startswith("liq-budget-wall-undeclared") for s in signals),
-            f"expected an undeclared-wall signal, got {signals}",
-        )
+        self.assertEqual(signals, [], f"reaching the wall must not fail the run: {signals}")
+
+    def test_the_wall_is_reported_as_a_bracket_not_a_point(self) -> None:
+        # A single mint fitting at 1,500 candidates and failing at 3,000 locates the wall in
+        # (1500, 3000]. Printing only the failing count reads as though 3,000 were the measured
+        # limit — and that is the line a reader quotes when setting the ceiling.
+        report, _ = _run([100, 300, 2000, 4600], 1_700_000)
+
+        self.assertRegex(report, r"the wall lies between 1500 and 3000 candidates")
+
+    def test_a_ceiling_far_beyond_the_measured_range_is_refused(self) -> None:
+        # Samples spanning 24-300 candidates cannot justify a ceiling near 5,000: it is a 17x
+        # extrapolation printed to the same precision as a measurement. An advisory note is not
+        # enough — it exited clean, which is the confident-number-from-thin-data shape.
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = [
+                {"type": "mintBatch", "strategy": "liq-budget-healthy", "n": 1,
+                 "gas": 45_000_000 + 1_000_000 * bk, "compGas": 45_000_000 + 1_000_000 * bk,
+                 "book": bk, "batch": 1, "ts": 1100 + i}
+                for i, bk in enumerate([24, 100, 200, 300])
+            ]
+            report, signals = self._one_rung_trace(Path(tmp), rows)
+
+        self.assertIn("REJECTED", report)
+        self.assertIn("liq-budget-fit-unusable", signals)
 
     def test_a_declared_wall_does_not_fail_the_run(self) -> None:
         # The adverse arm declares the computation cap, so reaching it is the point, not a surprise.
@@ -343,6 +364,58 @@ class LiqBudgetAnalysisTests(unittest.TestCase):
         self.assertIn("fit REJECTED", report)
         self.assertNotIn("stops fitting one tx", report)
         self.assertIn("liq-budget-fit-unusable", signals)
+
+    def test_a_competing_keeper_liquidation_lane_refuses_the_adverse_fit(self) -> None:
+        # The adverse probe nets only its OWN transactions' knockouts, so orders swept by the
+        # keeper's permissionless lane are invisible and the traced book over-counts — candidates
+        # overstated, slope understated, ceiling overstated. KEEPER_LIQ_BUDGET=0 is documented but
+        # unenforced, so the analysis refuses rather than trusting the operator remembered.
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "inst"
+            (inst / "trace").mkdir(parents=True)
+            _write_trace(inst / "trace" / "keeper.jsonl", [
+                {"type": "liqBudget", "budget": 3000, "requestedAtMs": 900, "ts": 1000},
+                {"type": "liquidate", "markets": 1, "gas": 1_000, "budget": 24, "ts": 1050},
+            ])
+            _write_trace(inst / "trace" / "trader.jsonl", [
+                {"type": "mintBatch", "strategy": "liq-budget-adverse", "n": 1,
+                 "family": "liq-budget", "profile": "adverse",
+                 "gas": 400_000_000 + 1_000_000 * bk, "compGas": 400_000_000 + 1_000_000 * bk,
+                 "book": bk, "batch": 1, "ts": 1100 + i}
+                for i, bk in enumerate([200, 800, 1600, 2400])
+            ])
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                signals = analyze._analyze_one(inst)
+            report = buf.getvalue()
+
+        self.assertIn("REFUSED", report)
+        self.assertIn("KEEPER_LIQ_BUDGET=0", report)
+        self.assertIn("liq-budget-fit-unusable", signals)
+
+    def test_a_keeper_lane_does_not_refuse_the_healthy_fit(self) -> None:
+        # Nothing knocks out on the healthy arm, so the keeper's lane cannot corrupt its book and
+        # must not block an otherwise-good measurement.
+        with tempfile.TemporaryDirectory() as tmp:
+            inst = Path(tmp) / "inst"
+            (inst / "trace").mkdir(parents=True)
+            _write_trace(inst / "trace" / "keeper.jsonl", [
+                {"type": "liqBudget", "budget": 3000, "requestedAtMs": 900, "ts": 1000},
+                {"type": "liquidate", "markets": 1, "gas": 1_000, "budget": 24, "ts": 1050},
+            ])
+            _write_trace(inst / "trace" / "trader.jsonl", [
+                {"type": "mintBatch", "strategy": "liq-budget-healthy", "n": 1,
+                 "family": "liq-budget", "profile": "healthy",
+                 "gas": 400_000_000 + 1_000_000 * bk, "compGas": 400_000_000 + 1_000_000 * bk,
+                 "book": bk, "batch": 1, "ts": 1100 + i}
+                for i, bk in enumerate([200, 800, 1600, 2400])
+            ])
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                signals = analyze._analyze_one(inst)
+
+        self.assertNotIn("REFUSED", buf.getvalue())
+        self.assertEqual(signals, [])
 
     def test_section_is_skipped_when_no_budget_ladder_ran(self) -> None:
         # With no rung applied the in-force budget is the contract default, which the harness must

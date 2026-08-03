@@ -48,7 +48,11 @@ import { errorTag, isOog } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
 const TWO_HOURS_MS = 2 * 3_600_000;
-const MAX_BOOK = 5_000; // EMaxActiveLeveragedOrders — the per-market index cap
+// Deliberately BELOW EMaxActiveLeveragedOrders (5,000). `evidence/c1-nav-stress-2026-06-30.md`
+// records a single-market flush OOGing at ~4,580 leveraged orders, and this strategy emits no
+// `book` records, so `analyze`'s capacity-breakpoint masking would not exempt that OOG — it would
+// land in the bug oracle as a flagged abort on any run long enough to grow the book that far.
+const MAX_BOOK = 4_000;
 const FUND = 20_000_000_000_000n;
 const GAS_BUDGET = 50_000_000_000;
 const START_BATCH = 40; // safely under the ~110-mint atomic-batch OOG ceiling at budget 24
@@ -60,6 +64,11 @@ const FILL_TARGET = 2_000;
 // the probe submits a failing ~cap-sized transaction every tick forever: an OOG still executes and
 // charges, so the trader's gas coin drains and the trace fills with duplicate wall records.
 const WALL_CONFIRMATIONS = 3;
+// Ticks spent in the single-mint phase before "no samples yet" counts as a broken sweep rather
+// than the phase simply having just begun. The runner evaluates `failure()` after EVERY tick, so a
+// predicate that merely says "the fill finished" fires one tick before the first probe can happen
+// and kills the run at ~75s with nothing collected.
+const PROBE_GRACE_TICKS = 20;
 
 export type LiqBudgetProfile = "healthy" | "adverse";
 
@@ -105,7 +114,9 @@ export function createLiqBudgetStrategy(profile: LiqBudgetProfile): Strategy {
   let minted = 0;
   let liquidated = 0;
   let probes = 0;
-  let batch = START_BATCH;
+  let probeTicks = 0; // ticks spent in the single-mint phase
+  let fillBatch = START_BATCH; // batch size used while re-filling, halved on any OOG
+  let batch = START_BATCH; // the size actually submitted this tick
   let wallHits = 0; // consecutive single-mint OOGs; reset by any success
 
   const book = () => minted - liquidated;
@@ -128,6 +139,7 @@ export function createLiqBudgetStrategy(profile: LiqBudgetProfile): Strategy {
       lockedId = market.id;
       minted = 0;
       liquidated = 0;
+      fillBatch = START_BATCH;
       batch = START_BATCH;
       wallHits = 0;
     }
@@ -161,25 +173,32 @@ export function createLiqBudgetStrategy(profile: LiqBudgetProfile): Strategy {
     maxOps: 0, // duration-only: fill to FILL_TARGET, then probe one mint at a time
     fund: FUND,
     gasBudget: GAS_BUDGET,
-    expect: config.expect,
-    // Semantically complete once the wall is pinned: higher rungs only cost more, so there is
-    // nothing left to learn from a book and budget that already cannot fit one mint.
-    done: () => batch === 1 && wallHits >= WALL_CONFIRMATIONS,
-    // A sweep that produced no single-mint samples measured nothing, however cleanly it ran. Report
-    // that as a terminal failure rather than let an empty run pass for a successful one.
+    // No `expect` on either arm, and no `done`. Both are stress-probe machinery, and this is a
+    // measurement: "the budget max fits" and "the budget max does not fit" are equally valid
+    // results, so neither may be encoded as the success criterion. Declaring the wall fails a run
+    // that legitimately never reaches it (VACUOUS); declaring `done` opts the strategy out of the
+    // runner's `bounded_stop` branch, so the documented `--timeout` stop reports `incomplete` and
+    // exits non-zero on a perfectly good sweep. Duration-only, like the capacity family.
+    //
+    // What DOES fail the run is collecting nothing — see `failure()` — or an analysis that cannot
+    // fit a usable line, which `analyze` signals separately.
     failure: () =>
-      probes === 0 && book() >= FILL_TARGET
-        ? `liq-budget-${profile}: reached a book of ${book()} without collecting a single-mint probe`
+      probeTicks >= PROBE_GRACE_TICKS && probes === 0
+        ? `liq-budget-${profile}: ${probeTicks} ticks in the single-mint phase without one probe`
         : null,
     async tick(ctx) {
       const market = pickMarket(ctx);
       if (!market || !ctx.snapshot()) return null;
       if (batch === 1 && wallHits >= WALL_CONFIRMATIONS) return null; // wall measured — hold
-      // Past FILL_TARGET every mint goes out alone, whether or not anything has OOG'd. Halving on
-      // OOG alone is not enough: batching only shrinks when it stops fitting, so a run would sit at
-      // n=5 or n=2 for most of the ladder and emit n==1 samples — the only ones the fit uses — at
-      // the very top rung, if ever.
-      if (book() >= FILL_TARGET) batch = 1;
+      // At or above the target every mint goes out alone; below it, batch to refill. Halving on OOG
+      // alone is not enough: batching only shrinks when it stops fitting, so a run would sit at n=5
+      // or n=2 for most of the ladder and emit n==1 samples — the only ones the fit uses — at the
+      // very top rung, if ever. The refill arm matters on `adverse`, where the ambient pass can
+      // knock out far more per mint than one tick replaces: without it the book drains to the fixed
+      // point where knockouts equal one per tick, and the upper rungs measure a book of ~100
+      // instead of thousands — on exactly the branch this exists to characterise.
+      batch = book() >= FILL_TARGET ? 1 : fillBatch;
+      if (batch === 1) probeTicks += 1;
       const want = Math.min(batch, MAX_BOOK - book());
       if (want <= 0) return null; // index cap with nothing knocked out — no room left to probe
       const legs: MintLeg[] = [];
@@ -217,7 +236,7 @@ export function createLiqBudgetStrategy(profile: LiqBudgetProfile): Strategy {
             oog: true, err: errorTag(error),
           });
           if (batch === 1) wallHits += 1;
-          batch = Math.max(1, Math.floor(batch / 2));
+          else fillBatch = Math.max(1, Math.floor(fillBatch / 2));
         } else {
           ctx.trace({ type: "fail", tag: errorTag(error), n: legs.length, book: book(), family: "liq-budget", profile });
         }

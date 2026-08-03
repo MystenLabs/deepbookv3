@@ -164,18 +164,71 @@ test("liq-budget probe keeps emitting single mints once the fill target is reach
     },
   } as unknown as Parameters<typeof strategy.tick>[0];
 
-  for (let i = 0; i < 400; i++) await strategy.tick(ctx);
+  // Mirror traderService: it evaluates failure() after EVERY tick and throws on a non-null result.
+  // Checking only at the end hides a predicate that is briefly true mid-run — which is exactly how
+  // a version that killed every run 75 seconds in passed its test.
+  for (let i = 0; i < 400; i++) {
+    await strategy.tick(ctx);
+    const semanticFailure = strategy.failure?.();
+    assert.equal(semanticFailure, null, `failure() fired at tick ${i}: ${semanticFailure}`);
+  }
 
   const singles = submitted.filter((n) => n === 1).length;
   const minted = submitted.reduce((total, n) => total + n, 0);
   assert.ok(minted >= 2_000, `expected the fill to pass FILL_TARGET, minted ${minted}`);
   assert.ok(singles > 100, `expected sustained single-mint probes, got ${singles}`);
-  // And the run is only reported complete once it has something to report.
+});
+
+test("liq-budget cannot hold the book when the ambient pass outpaces minting, and says so", async () => {
+  // On the adverse arm every mint's pass can knock out more orders than the mint adds, and batching
+  // makes it WORSE — an N-mint PTB runs N passes, so it knocks out ~N times as many. There is no
+  // refill rate that wins that race. The guarantee is therefore not "the book is held" but "a run
+  // whose book collapsed does not go on to report a ceiling": the surviving samples cover a narrow
+  // candidate range, and the analysis refuses to fit one (see the Python span-guard tests).
+  const strategy = createLiqBudgetStrategy("adverse");
+  let book = 0;
+  const candidateCounts: number[] = [];
+  const ctx = {
+    markets: () => [{ id: "0xm", expiryMs: Date.now() + 8 * 3_600_000 }],
+    snapshot: () => ({}),
+    rand: (lo: number, hi: number) => (lo + hi) / 2,
+    pick: <T,>(items: T[]) => items[0],
+    leverageCap: () => 5,
+    resolve: () => ({
+      feasible: true, lowerTick: 1, higherTick: 2, strikeUsd: 100, predictedProbability: 0.5,
+      quantity: 1n, leverage1e9: 1_100_000_000n, maxProbability1e9: 1n, maxCost: 1n,
+    }),
+    trace: () => {},
+    submitMintBatch: async (_market: unknown, legs: unknown[]) => {
+      candidateCounts.push(book);
+      book += legs.length;
+      const knocked = Math.min(book, legs.length * 20); // pathological drain
+      book -= knocked;
+      return { events: Array.from({ length: knocked }, () => ({ type: "…::OrderLiquidated" })) };
+    },
+  } as unknown as Parameters<typeof strategy.tick>[0];
+
+  for (let i = 0; i < 600; i++) await strategy.tick(ctx);
+
+  // It keeps trying rather than wedging, and it never claims a book it does not have.
+  assert.ok(candidateCounts.length > 100, "strategy stopped submitting under drain");
+  const settled = candidateCounts.slice(-100);
+  assert.ok(Math.max(...settled) < 500, "fixture did not actually reproduce the drain");
+  // The run still produced probes, so `failure()` stays null — the analysis, not the strategy, is
+  // what refuses to turn a collapsed range into a ceiling.
   assert.equal(strategy.failure?.(), null);
 });
 
-test("liq-budget declares the computation cap only on the arm expected to reach it", () => {
-  assert.equal(createLiqBudgetStrategy("healthy").expect, undefined);
-  assert.deepEqual(createLiqBudgetStrategy("adverse").expect?.terminal, ["InsufficientGas"]);
-  assert.equal(createLiqBudgetStrategy("healthy").gasBudget, 50_000_000_000);
+test("liq-budget encodes neither outcome as pass/fail", () => {
+  // "The budget max fits" and "it does not" are equally valid answers, so neither arm may declare
+  // the computation cap (a declared wall never reached fails the run VACUOUS) and neither may
+  // declare `done` (which opts out of the runner's bounded-stop branch, so a --timeout stop reports
+  // `incomplete` and exits non-zero on a good sweep).
+  for (const profile of ["healthy", "adverse"] as const) {
+    const strategy = createLiqBudgetStrategy(profile);
+    assert.equal(strategy.expect, undefined, `${profile} must not declare a terminal wall`);
+    assert.equal(strategy.done, undefined, `${profile} must not declare semantic completion`);
+    assert.equal(strategy.maxOps, 0);
+    assert.equal(strategy.gasBudget, 50_000_000_000);
+  }
 });

@@ -15,7 +15,7 @@ import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
-import { budgetLadder, definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
+import { bigintEnv, budgetLadder, definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
@@ -44,11 +44,12 @@ const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
 // Budget the KEEPER spends on its own permissionless `liquidate()` lane. Distinct from the on-chain
-// `trade_liquidation_budget` the TRADE path spends, which the ladder below drives. `||` not `??`:
-// an empty string is BigInt-coercible to 0n, so `KEEPER_LIQ_BUDGET=` would silently disable the
-// lane rather than fall back. Set 0 deliberately for the liq-budget adverse probe, which needs
-// liquidatable orders to survive long enough for a mint's ambient pass to meet them.
-const LIQ_BUDGET = BigInt(process.env.KEEPER_LIQ_BUDGET || "24");
+// `trade_liquidation_budget` the TRADE path spends, which the ladder below drives. Parsed through
+// `bigintEnv` so a typo names the variable rather than throwing a bare SyntaxError at module load —
+// which would kill the keeper before it wrote any trace, surfacing as `no-keeper-trace`. Set 0
+// deliberately for the liq-budget adverse probe, which needs liquidatable orders to survive long
+// enough for a mint's ambient pass to meet them.
+const LIQ_BUDGET = bigintEnv("KEEPER_LIQ_BUDGET", 24n);
 // Ladder for the on-chain ambient-pass budget, measured from keeper start. Unset (the default)
 // never touches the config, so every existing run keeps the contract default.
 const TRADE_LIQ_BUDGET_STAGES = budgetLadder(process.env.TRADE_LIQ_BUDGET_STAGES || "");
@@ -179,7 +180,10 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
         keeperLiquidateTx({ feeds, markets: live.map((m) => m.id), protocolConfigId: PROTOCOL_CONFIG_ID, budget: LIQ_BUDGET }),
         "liquidate",
       );
-      appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr) });
+      // `budget` is traced so the analysis can tell whether this lane was competing with a
+      // liq-budget probe: the probe nets only its OWN transactions' knockouts, so a keeper sweeping
+      // alongside it leaves the probe's book over-counted — and that overstates the ceiling.
+      appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr), budget: Number(LIQ_BUDGET) });
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
       console.warn(`[keeper] liquidate skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);

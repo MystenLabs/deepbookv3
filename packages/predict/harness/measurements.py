@@ -68,7 +68,12 @@ def batch_computation(
     for record in records:
         if record.get("type") != "mintBatch":
             continue
+        # Namespaced by family: this is no longer the only family emitting mintBatch records, and
+        # two families sharing a profile name would otherwise average into one meaningless row.
+        family = record.get("family")
         profile = str(record.get("profile") or record.get("phase") or "default")
+        if family:
+            profile = f"{family}/{profile}"
         size = int(record["n"])
         if record.get("oog"):
             oogs.add((profile, size))
