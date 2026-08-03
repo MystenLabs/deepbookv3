@@ -461,7 +461,7 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
     // Regression for #c24d8d (payout-tree node GC): removing an interior range must leave the tree
     // walked IDENTICALLY by the canonical evaluators (settled_payout_liability, net_payout_reserve_
     // terms). Remove a middle range whose two boundaries are interior nodes so they GC out via
-    // merge_subtrees, then verify the post-GC tree against independently hand-computed values AND a
+    // join_subtrees, then verify the post-GC tree against independently hand-computed values AND a
     // freshly rebuilt survivor-only tree (the prior remove tests only checked node presence/reserve,
     // never the evaluators over a GC-mutated structure).
     let ctx = &mut tx_context::dummy();
@@ -470,7 +470,7 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
     insert_range(&mut tree, 4, 10, 50, 0); // R2 — removed below; ticks 4,10 are unique to it + interior
     insert_range(&mut tree, 6, 12, 30, 0); // R3
 
-    // R2's boundaries (ticks 4, 10) GC out via merge_subtrees; the settlement points below (e.g.
+    // R2's boundaries (ticks 4, 10) GC out via join_subtrees; the settlement points below (e.g.
     // settle_at_tick(10)=30, not 80) and the rebuilt-tree metamorphic prove they left no trace.
     remove_range(&mut tree, 4, 10, 50, 0);
 
