@@ -17,7 +17,7 @@ use deepbook_margin::{
         calculate_target_amount,
         test_conversion_config,
     },
-    test_constants::{Self, USDC},
+    test_constants::{Self, SUI, USDC},
     test_helpers::{
         build_pyth_price_info_object,
         build_pyth_pro_price_info_object,
@@ -943,6 +943,86 @@ fun test_read_price_pro_accepts_ewma_divergence_within_bound() {
 
     let reading = read_price_pro<USDC>(&price_info, &registry, &clock);
     assert!(reading.price() == 11000000000);
+
+    destroy(admin_cap);
+    destroy(price_info);
+    test_scenario::return_shared(registry);
+    test_scenario::return_shared(clock);
+    scenario.end();
+}
+
+// === The asset tag itself ===
+// `PythReading.coin_type` is a regression barrier: it converts a reading routed to the
+// wrong leg from a silent mis-price into an abort. A barrier with no test protecting it
+// is not a barrier - deleting the assert in `price_config` left the whole suite green.
+// These two stand on it, in both directions.
+
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EReadingAssetMismatch)]
+fun test_reading_consumed_as_the_wrong_asset_aborts() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(1000000);
+    clock.share_for_testing();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    registry.add_config(&admin_cap, create_test_pyth_config());
+
+    // A completely valid SUI reading: right feed id, fresh, tight confidence, EWMA in
+    // band. Nothing about it is malformed - it is simply not a USDC price.
+    let price_info = build_pyth_price_info_object(
+        &mut scenario,
+        test_constants::sui_price_feed_id(),
+        10000000000,
+        1000000,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+    let sui_reading = read_price<SUI>(&price_info, &registry, &clock);
+
+    let _ = calculate_usd_price<USDC>(sui_reading, &registry, 1000000);
+
+    destroy(admin_cap);
+    destroy(price_info);
+    test_scenario::return_shared(registry);
+    test_scenario::return_shared(clock);
+    scenario.end();
+}
+
+/// The control: the identical reading consumed as the asset it is actually for prices
+/// normally. Without this, an assert that always aborted would pass the test above.
+#[test]
+fun test_reading_consumed_as_its_own_asset_prices_normally() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(1000000);
+    clock.share_for_testing();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    registry.add_config(&admin_cap, create_test_pyth_config());
+
+    let price_info = build_pyth_price_info_object(
+        &mut scenario,
+        test_constants::sui_price_feed_id(),
+        10000000000, // $100
+        1000000,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+    let sui_reading = read_price<SUI>(&price_info, &registry, &clock);
+
+    // SUI carries 9 decimals in the test config, so 1 SUI is 1_000_000_000.
+    let usd = calculate_usd_price<SUI>(sui_reading, &registry, 1_000_000_000);
+    assert!(usd == 100_000_000_000);
 
     destroy(admin_cap);
     destroy(price_info);
