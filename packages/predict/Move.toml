@@ -24,11 +24,10 @@ token = { local = "../token" }
 # so the publishable root declares the `dep-replacements` linking below. Pinned
 # to the exact source used by the testnet deployment.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
-# Block Scholes signed-oracle verifier. Predict source does not use it directly —
-# BS data is read through propbook's stores — but test fixtures mint verified
-# batches through it to seed those stores. Same pin propbook declares; upstream
-# `Published.toml` owns its testnet package identity.
-bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "11d952488bc50f3a2526549a8cd6d4817ae20cc7" }
+# Block Scholes verifier. Predict source reads asset-bound observations through
+# propbook's typed store API; the direct dependency remains for test fixtures
+# that mint verifier-authenticated batches.
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
 # for typechecking only; `dep-replacements` tells `sui client publish` to link

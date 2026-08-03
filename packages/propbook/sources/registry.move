@@ -8,6 +8,7 @@
 module propbook::registry;
 
 use propbook::{block_scholes_store, pyth_feed::{Self, PythFeed}};
+use std::string::String;
 use sui::{event, table::{Self, Table}};
 
 const ESourceAlreadyExists: u64 = 0;
@@ -17,6 +18,7 @@ const ESourceAlreadyBound: u64 = 3;
 const EBindingAlreadyExists: u64 = 4;
 const EBindingNotFound: u64 = 5;
 const EBlockScholesStoresAlreadyExist: u64 = 6;
+const EInvalidBlockScholesBaseAsset: u64 = 7;
 
 // Stable discriminators stored in source keys, binding keys, metadata, and events.
 public(package) macro fun kind_pyth(): u8 {
@@ -42,13 +44,12 @@ public struct OracleRegistry has key {
     bindings: Table<OracleBindingKey, OracleMetadata>,
     /// Provider/source pair to the sole underlying it may serve.
     source_bindings: Table<OracleSourceKey, u32>,
-    /// Underlying to its Block Scholes store pair. Stores carry no source id — a signed series
-    /// names its own underlying — so they bind directly here rather than through the source
-    /// catalog, and an underlying has at most one pair for its lifetime.
+    /// Underlying to its canonical Block Scholes store pair. Each store owns the immutable
+    /// Block Scholes base asset that gates its reads and writes.
     block_scholes_stores: Table<u32, BlockScholesStorePair>,
 }
 
-/// The two shared objects holding one underlying's Block Scholes series.
+/// The two canonical shared Block Scholes objects of one Propbook underlying.
 public struct BlockScholesStorePair has copy, drop, store {
     value_store_id: ID,
     svi_store_id: ID,
@@ -97,6 +98,7 @@ public struct BlockScholesStoresRegistered has copy, drop {
     propbook_underlying_id: u32,
     value_store_id: ID,
     svi_store_id: ID,
+    block_scholes_base_asset: String,
 }
 
 /// Records an atomic replacement of an existing canonical binding slot.
@@ -145,30 +147,21 @@ public fun propbook_pyth_id_for_underlying(
     registry.canonical_oracle_id(pyth_binding_key(propbook_underlying_id))
 }
 
-/// Resolves the canonical Block Scholes value store, which a consumer checks its argument against
-/// before pricing from it: a store names its own underlying, but only this binding says which store
-/// is the one for that underlying.
-public fun propbook_block_scholes_value_store_id_for_underlying(
+/// Resolves the complete immutable Block Scholes binding for an underlying.
+public fun propbook_block_scholes_store_pair_for_underlying(
     registry: &OracleRegistry,
     propbook_underlying_id: u32,
-): Option<ID> {
+): Option<BlockScholesStorePair> {
     if (!registry.block_scholes_stores.contains(propbook_underlying_id)) {
         option::none()
     } else {
-        option::some(registry.block_scholes_stores.borrow(propbook_underlying_id).value_store_id)
+        option::some(*registry.block_scholes_stores.borrow(propbook_underlying_id))
     }
 }
 
-/// Resolves the canonical Block Scholes SVI store. Same trust role as the value store binding.
-public fun propbook_block_scholes_svi_store_id_for_underlying(
-    registry: &OracleRegistry,
-    propbook_underlying_id: u32,
-): Option<ID> {
-    if (!registry.block_scholes_stores.contains(propbook_underlying_id)) {
-        option::none()
-    } else {
-        option::some(registry.block_scholes_stores.borrow(propbook_underlying_id).svi_store_id)
-    }
+/// Returns one binding's canonical value and SVI store identities.
+public fun block_scholes_store_pair_fields(pair: &BlockScholesStorePair): (ID, ID) {
+    (pair.value_store_id, pair.svi_store_id)
 }
 
 /// Returns the canonical Pyth binding metadata for external composition or inspection.
@@ -220,32 +213,42 @@ public fun create_and_share_pyth_feed(
     propbook_pyth_id
 }
 
-/// Create and share this underlying's Block Scholes store pair and record it as canonical.
-/// Admin-gated and once per underlying: the binding is what lets a consumer reject a store it was
-/// not meant to price from, so a second pair would leave two stores each able to claim the
-/// underlying with nothing to choose between them.
+/// Create and share this underlying's Block Scholes store partition and bind its source identity.
+/// Admin-gated and once per underlying so consumers have one immutable descriptor and store pair.
 public fun create_and_share_block_scholes_stores(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,
     propbook_underlying_id: u32,
+    block_scholes_base_asset: String,
     ctx: &mut TxContext,
 ): (ID, ID) {
     assert!(
         !registry.block_scholes_stores.contains(propbook_underlying_id),
         EBlockScholesStoresAlreadyExist,
     );
+    assert!(!block_scholes_base_asset.is_empty(), EInvalidBlockScholesBaseAsset);
     let value_store_id = block_scholes_store::create_and_share_value_store(
-        propbook_underlying_id,
+        copy block_scholes_base_asset,
         ctx,
     );
-    let svi_store_id = block_scholes_store::create_and_share_svi_store(propbook_underlying_id, ctx);
+    let svi_store_id = block_scholes_store::create_and_share_svi_store(
+        copy block_scholes_base_asset,
+        ctx,
+    );
     registry
         .block_scholes_stores
-        .add(propbook_underlying_id, BlockScholesStorePair { value_store_id, svi_store_id });
+        .add(
+            propbook_underlying_id,
+            BlockScholesStorePair {
+                value_store_id,
+                svi_store_id,
+            },
+        );
     event::emit(BlockScholesStoresRegistered {
         propbook_underlying_id,
         value_store_id,
         svi_store_id,
+        block_scholes_base_asset,
     });
     (value_store_id, svi_store_id)
 }

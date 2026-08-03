@@ -314,8 +314,7 @@ fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
     abort ETickNotInPriceMemo
 }
 
-/// A store names the underlying it holds, but only the registry says which store is the one for
-/// that underlying, so the binding is checked here rather than taking the object's own word.
+/// Validate all supplied feed objects against Propbook's canonical bindings.
 fun assert_current_oracles(
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -324,18 +323,15 @@ fun assert_current_oracles(
     bs_svi: &BlockScholesSVIStore,
 ) {
     assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
-    assert!(
-        propbook_registry
-            .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_values.value_store_id()),
-        EWrongBlockScholesValueStore,
+    let block_scholes_binding = propbook_registry.propbook_block_scholes_store_pair_for_underlying(
+        propbook_underlying_id,
     );
-    assert!(
-        propbook_registry
-            .propbook_block_scholes_svi_store_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_svi.svi_store_id()),
-        EWrongBlockScholesSVIStore,
-    );
+    assert!(block_scholes_binding.is_some(), EWrongBlockScholesValueStore);
+    let (value_store_id, svi_store_id) = block_scholes_binding
+        .destroy_some()
+        .block_scholes_store_pair_fields();
+    assert!(value_store_id == bs_values.value_store_id(), EWrongBlockScholesValueStore);
+    assert!(svi_store_id == bs_svi.svi_store_id(), EWrongBlockScholesSVIStore);
 }
 
 fun assert_current_pyth(
