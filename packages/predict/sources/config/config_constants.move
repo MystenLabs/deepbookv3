@@ -33,6 +33,8 @@ const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
 const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
+// Becomes 28 when rebasing onto DBU-688 (#1186), which claims 26/27 for the fill fees.
+const EInvalidPlpRequestEntryFeeRate: u64 = 26;
 
 // === Fees ===
 
@@ -68,6 +70,28 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     assert!(
         value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
         EInvalidTradeLiquidationBudget,
+    );
+}
+
+// === LP Request Entry Fee ===
+
+/// Non-refundable fee charged when an LP supply or withdraw request is queued, in
+/// FLOAT_SCALING — 5 bps by default. Prices the free option of parking a limit on
+/// the pool's own NAV and prepays the per-flush re-evaluation cost. Accrues to the
+/// pool (remaining PLP holders), never the protocol reserve. Shared by both legs.
+public(package) macro fun default_plp_request_entry_fee_rate(): u64 { 500_000 }
+
+public(package) macro fun min_plp_request_entry_fee_rate(): u64 { 0 }
+
+/// 50 bps ceiling. Far below `float_scaling`, so `amount - fee` cannot underflow
+/// on the request path (pinned by `plp_request_entry_fee_rate_at_full_scale_is_rejected`).
+public(package) macro fun max_plp_request_entry_fee_rate(): u64 { 5_000_000 }
+
+public(package) fun assert_plp_request_entry_fee_rate(value: u64) {
+    assert!(
+        value >= min_plp_request_entry_fee_rate!()
+            && value <= max_plp_request_entry_fee_rate!(),
+        EInvalidPlpRequestEntryFeeRate,
     );
 }
 

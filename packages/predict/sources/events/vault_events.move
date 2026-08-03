@@ -73,32 +73,39 @@ public struct DeepUnstaked has copy, drop, store {
     amount: u64,
 }
 
-/// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
-/// will be delivered to `recipient` (the account's receive address) at a later flush.
-/// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
-/// whole `amount` before the request fills, but a fill capped by pool capacity delivers
-/// proportionally less at that same price. `index` is the queue handle used to cancel.
+/// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed (net of the
+/// non-refundable `entry_fee`, which joined pool idle) and a fill will be delivered to
+/// `recipient` (the account's receive address) at a later flush. `min_plp_out` is a
+/// price floor: the frozen mark must mint at least this much for the whole `amount`
+/// before the request fills, but a fill capped by pool capacity delivers proportionally
+/// less at that same price. `index` is the queue handle used to cancel.
 public struct SupplyRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
     index: u64,
+    /// Net DUSDC escrowed after the entry fee.
     amount: u64,
+    /// Non-refundable entry fee, in DUSDC, retained by the pool.
+    entry_fee: u64,
     min_plp_out: u64,
     requests_pending_after: u64,
 }
 
-/// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is a price
-/// floor: the frozen mark must pay at least this much for the whole `amount` before the
-/// request fills, but a fill limited by available idle pays proportionally less at that
-/// same price.
+/// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed (net
+/// of the non-refundable `entry_fee`, which was burned) and DUSDC will be delivered to
+/// `recipient` at a later flush. `min_dusdc_out` is a price floor: the frozen mark must
+/// pay at least this much for the whole `amount` before the request fills, but a fill
+/// limited by available idle pays proportionally less at that same price.
 public struct WithdrawRequested has copy, drop, store {
     pool_vault_id: ID,
     account_id: ID,
     recipient: address,
     index: u64,
+    /// Net PLP escrowed after the entry fee was burned.
     amount: u64,
+    /// Non-refundable entry fee, in PLP units burned at request time.
+    entry_fee: u64,
     min_dusdc_out: u64,
     requests_pending_after: u64,
 }
@@ -338,6 +345,7 @@ public(package) fun emit_supply_requested(
     recipient: address,
     index: u64,
     amount: u64,
+    entry_fee: u64,
     min_plp_out: u64,
     requests_pending_after: u64,
 ) {
@@ -347,6 +355,7 @@ public(package) fun emit_supply_requested(
         recipient,
         index,
         amount,
+        entry_fee,
         min_plp_out,
         requests_pending_after,
     });
@@ -358,6 +367,7 @@ public(package) fun emit_withdraw_requested(
     recipient: address,
     index: u64,
     amount: u64,
+    entry_fee: u64,
     min_dusdc_out: u64,
     requests_pending_after: u64,
 ) {
@@ -367,6 +377,7 @@ public(package) fun emit_withdraw_requested(
         recipient,
         index,
         amount,
+        entry_fee,
         min_dusdc_out,
         requests_pending_after,
     });
@@ -542,4 +553,24 @@ public(package) fun emit_fee_incentives_returned(
         amount,
         pool_reserve_after,
     });
+}
+
+#[test_only]
+public fun supply_requested_entry_fee(event: &SupplyRequested): u64 {
+    event.entry_fee
+}
+
+#[test_only]
+public fun supply_requested_amount(event: &SupplyRequested): u64 {
+    event.amount
+}
+
+#[test_only]
+public fun withdraw_requested_entry_fee(event: &WithdrawRequested): u64 {
+    event.entry_fee
+}
+
+#[test_only]
+public fun withdraw_requested_amount(event: &WithdrawRequested): u64 {
+    event.amount
 }

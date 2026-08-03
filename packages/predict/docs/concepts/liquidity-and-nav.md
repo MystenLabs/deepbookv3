@@ -25,11 +25,11 @@ PLP is registered as a 6-decimal currency, matching DUSDC's 6 decimals. Fixed-po
 
 LPs do not mint or burn PLP synchronously against a live valuation. Instead they **queue a request** that a later flush prices and fills at one pool-wide mark. This decouples the LP's transaction from the (privileged, oracle-reading) valuation, so an LP can never time their entry or exit against a self-supplied oracle snapshot.
 
-- **`request_supply`** escrows a DUSDC payment, records the requesting account's receive address as the fill recipient, and stores `min_plp_out`, the minimum PLP the frozen mark must mint. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
-- **`request_withdraw`** escrows PLP, records the account recipient, and stores `min_dusdc_out`, the minimum DUSDC the frozen mark must pay. It returns a queue index.
-- **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
+- **`request_supply`** pulls a DUSDC payment, charges the non-refundable `plp_request_entry_fee_rate` into pool idle, escrows the net, records the requesting account's receive address as the fill recipient, and stores `min_plp_out`, the minimum PLP the frozen mark must mint for that net. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
+- **`request_withdraw`** pulls PLP, burns the non-refundable entry fee immediately (pool value unchanged, total supply falls, NAV/share rises for remaining holders), escrows the net, records the account recipient, and stores `min_dusdc_out` against that net. It returns a queue index.
+- **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the **net** escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it. The entry fee is never refunded.
 
-Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush fills or refunds the request, or the LP cancels it.
+Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`) on the **pre-fee** submitted amount. Escrowed funds sit in the queue until the flush fills or refunds the request, or the LP cancels it. See [fees and rebates](./fees-and-rebates.md#the-lp-request-entry-fee) for the economic rationale.
 
 ## The flush: one frozen mark for both sides
 

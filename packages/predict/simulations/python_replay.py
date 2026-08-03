@@ -1960,9 +1960,16 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
 # later privileged flush that drains the queue at one EXACT frozen mark
 # (current_nav). plp::supply_shares mints `amount * total_supply / pool_value`
 # (bootstrap 1:1 when total_supply == 0 AND pool_value == 0); plp::withdraw_dusdc
-# pays `shares * pool_value / total_supply` — NO withdraw fee (the band fee died with
-# the approximate-NAV world). Both round down; a dust request that prices to 0 is
-# refunded.
+# pays `shares * pool_value / total_supply`. Both round down; a dust request that
+# prices to 0 is refunded.
+#
+# THIS MODEL DOES NOT INCLUDE THE PLP REQUEST ENTRY FEE (`plp_request_entry_fee_rate`).
+# The contract charges it at queue time on both legs (DUSDC into idle on supply; PLP
+# burned on withdraw), so a parity run against a deployment with a NON-ZERO rate will
+# mismatch escrowed amounts, idle, and total_supply on request rows, and shares /
+# payouts on fills that follow. Until the fee is modelled here, a parity run is
+# INVALID unless the staged rate is 0. Deliberately not mirrored from the Move source:
+# this file is the INDEPENDENT oracle.
 #
 # These synchronous helpers are for the long Python-only replay. Normal parity
 # queues requests and drains them later in `parity_flush_updates`.
