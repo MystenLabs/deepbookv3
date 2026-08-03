@@ -159,9 +159,14 @@ public fun propbook_block_scholes_store_pair_for_underlying(
     }
 }
 
-/// Returns one binding's canonical value and SVI store identities.
-public fun block_scholes_store_pair_fields(pair: &BlockScholesStorePair): (ID, ID) {
-    (pair.value_store_id, pair.svi_store_id)
+/// Returns the canonical value-store identity for external composition or discovery.
+public fun block_scholes_value_store_id(pair: &BlockScholesStorePair): ID {
+    pair.value_store_id
+}
+
+/// Returns the canonical SVI-store identity for external composition or discovery.
+public fun block_scholes_svi_store_id(pair: &BlockScholesStorePair): ID {
+    pair.svi_store_id
 }
 
 /// Returns the canonical Pyth binding metadata for external composition or inspection.
@@ -491,6 +496,11 @@ public fun init_for_testing(ctx: &mut TxContext) {
 /// The event's fields exist for off-chain discovery, so this reader exists only so tests can
 /// assert the reported pair is the one the registry bound.
 #[test_only]
-public fun stores_registered_fields(event: &BlockScholesStoresRegistered): (u32, ID, ID) {
-    (event.propbook_underlying_id, event.value_store_id, event.svi_store_id)
+public fun stores_registered_fields(event: &BlockScholesStoresRegistered): (u32, ID, ID, String) {
+    (
+        event.propbook_underlying_id,
+        event.value_store_id,
+        event.svi_store_id,
+        event.block_scholes_base_asset,
+    )
 }

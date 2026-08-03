@@ -82,6 +82,7 @@ public struct BlockScholesSVIStore has key {
 public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy, drop {
     propbook_oracle_id: ID,
     sid: u256,
+    /// `0` = spot, `1` = forward, and `2` = SVI.
     series_kind: u8,
     /// Absolute unix-millisecond expiry; zero for the non-expiring spot series.
     expiry_ms: u64,
@@ -110,10 +111,12 @@ public fun svi_store_id(store: &BlockScholesSVIStore): ID {
     store.id.to_inner()
 }
 
+/// Returns the immutable provider base-asset spelling for external composition or devInspect.
 public fun value_store_base_asset(store: &BlockScholesValueStore): String {
     store.block_scholes_base_asset
 }
 
+/// Returns the immutable provider base-asset spelling for external composition or devInspect.
 public fun svi_store_base_asset(store: &BlockScholesSVIStore): String {
     store.block_scholes_base_asset
 }

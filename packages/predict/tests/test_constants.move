@@ -10,6 +10,7 @@ module deepbook_predict::test_constants;
 
 use deepbook_predict::{constants, market_manager};
 use fixed_math::math;
+use std::string::String;
 
 // === Test Addresses ===
 const ADMIN: address = @0x0;
@@ -42,6 +43,12 @@ public fun pyth_feed_id(): u32 { 1 }
 /// from `pyth_feed_id` (a source id) on purpose — they live in different
 /// namespaces and must not be conflated.
 public fun propbook_underlying_id(): u32 { 42 }
+
+/// Provider base-asset spelling bound to the default underlying's Block Scholes stores.
+public fun block_scholes_base_asset(): String { b"BTC".to_string() }
+
+/// Provider base-asset spelling used by fixtures for a different underlying's stores.
+public fun foreign_block_scholes_base_asset(): String { b"ETH".to_string() }
 
 /// Quote-asset id recorded in the propbook canonical binding. Predict's binding
 /// check ignores it; the value only has to be stable for the fixture.

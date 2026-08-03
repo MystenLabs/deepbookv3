@@ -327,11 +327,15 @@ fun assert_current_oracles(
         propbook_underlying_id,
     );
     assert!(block_scholes_binding.is_some(), EWrongBlockScholesValueStore);
-    let (value_store_id, svi_store_id) = block_scholes_binding
-        .destroy_some()
-        .block_scholes_store_pair_fields();
-    assert!(value_store_id == bs_values.value_store_id(), EWrongBlockScholesValueStore);
-    assert!(svi_store_id == bs_svi.svi_store_id(), EWrongBlockScholesSVIStore);
+    let block_scholes_binding = block_scholes_binding.destroy_some();
+    assert!(
+        block_scholes_binding.block_scholes_value_store_id() == bs_values.value_store_id(),
+        EWrongBlockScholesValueStore,
+    );
+    assert!(
+        block_scholes_binding.block_scholes_svi_store_id() == bs_svi.svi_store_id(),
+        EWrongBlockScholesSVIStore,
+    );
 }
 
 fun assert_current_pyth(

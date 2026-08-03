@@ -724,6 +724,7 @@ fun bind_pyth_spot_and_surface(scenario: &mut Scenario, admin_cap: &RegistryAdmi
         &mut oracle_registry,
         admin_cap,
         test_constants::propbook_underlying_id(),
+        test_constants::block_scholes_base_asset(),
         scenario.ctx(),
     );
     return_shared(pyth);
