@@ -64,16 +64,17 @@ def external_dependency_specs(
     }
     specs: dict[str, GitDependency] = {}
     for name in config.GIT_DEP_NAMES:
+        consumers = ("propbook",) if name == "bs_sid" else tuple(manifests)
         sources = {
             consumer: _git_source(manifest, name)
             for consumer, manifest in manifests.items()
+            if consumer in consumers
         }
-        if sources["predict"] != sources["propbook"]:
+        if len({tuple(sorted(source.items())) for source in sources.values()}) != 1:
             raise ValueError(
-                f"{name} dependency drift between Predict and Propbook: "
-                f"{sources['predict']} != {sources['propbook']}"
+                f"{name} dependency drift between canonical consumers: {sources}"
             )
-        source = sources["predict"]
+        source = next(iter(sources.values()))
         if not _FULL_SHA.fullmatch(source["rev"]):
             raise ValueError(f"{name} must use a full 40-character commit SHA")
         specs[name] = GitDependency(

@@ -119,7 +119,7 @@ high gas budget because this mode does not benchmark individual mint gas;
 
 1. Generates fresh localnet genesis.
 2. Starts localnet.
-3. Uses the shared Python publisher to copy the exact package sources into the run workspace, resolve disposable upstream locks and framework pins against localnet under the Testnet build environment, and record isolated addresses in `Pub.sim.toml`; normal dependency verification remains enabled. It publishes Token, DUSDC, Fixed Math, Account, upstream Wormhole, upstream Pyth Lazer, the Block Scholes verifier, Propbook, and Predict. Propbook's package init creates and shares the `OracleRegistry` and mints the `RegistryAdminCap` to the publisher.
+3. Uses the shared Python publisher to copy the exact package sources into the run workspace, resolve disposable upstream locks and framework pins against localnet under the Testnet build environment, and record isolated addresses in `Pub.sim.toml`; normal dependency verification remains enabled. It publishes Token, DUSDC, Fixed Math, Account, upstream Wormhole, upstream Pyth Lazer, the Block Scholes verifier and SID library, Propbook, and Predict. Propbook's package init creates and shares the `OracleRegistry` and mints the `RegistryAdminCap` to the publisher.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
    vault, registers the Propbook underlying + feeds, binds the feeds, applies
    the expiry-fee template config and max admission leverage, enables the

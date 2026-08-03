@@ -186,6 +186,8 @@ class PublicationPlanTests(unittest.TestCase):
             'rev = "1111111111111111111111111111111111111111" }\n'
             'bs_oracle = { git = "https://example/bs.git", subdir = "move", '
             'rev = "2222222222222222222222222222222222222222" }\n\n'
+            'bs_sid = { git = "https://example/bs.git", subdir = "move/sid", '
+            'rev = "2222222222222222222222222222222222222222" }\n\n'
             "[dep-replacements.testnet]\n"
             'pyth_lazer = { git = "https://example/pyth.git", subdir = "sui", '
             'rev = "1111111111111111111111111111111111111111", '
@@ -205,6 +207,7 @@ class PublicationPlanTests(unittest.TestCase):
             pyth = root / "workspace" / "deps" / "pyth"
             wormhole = root / "workspace" / "deps" / "wormhole"
             bs_oracle = root / "workspace" / "deps" / "bs"
+            bs_sid = root / "workspace" / "deps" / "bs_sid"
 
             publish.rewrite_consumer(
                 manifest,
@@ -214,17 +217,20 @@ class PublicationPlanTests(unittest.TestCase):
                 "0x22",
                 bs_oracle,
                 "0x33",
+                bs_sid,
+                "0x44",
             )
             rewritten = manifest.read_text()
 
             self.assertIn(f'pyth_lazer = {{ local = "{pyth}" }}', rewritten)
             self.assertIn(f'bs_oracle = {{ local = "{bs_oracle}" }}', rewritten)
+            self.assertIn(f'bs_sid = {{ local = "{bs_sid}" }}', rewritten)
             self.assertIn("[dep-replacements.testnet]", rewritten)
             self.assertIn('published-at = "0x22"', rewritten)
             self.assertNotIn("dep-replacements.sim", rewritten)
             self.assertEqual(canonical_manifest.read_text(), canonical)
 
-    def test_bs_oracle_rewrite_aligns_only_staged_framework_dependencies(self) -> None:
+    def test_block_scholes_rewrite_aligns_only_staged_framework_dependencies(self) -> None:
         canonical = (
             '[package]\nname = "bs_oracle"\nedition = "2024"\nversion = "0.0.1"\n\n'
             "# Explicitly pinned rather than left to the implicit Sui floor.\n"
@@ -248,7 +254,7 @@ class PublicationPlanTests(unittest.TestCase):
             staged_manifest.parent.mkdir()
             staged_manifest.write_text(canonical)
 
-            publish.rewrite_bs_oracle(staged_manifest)
+            publish.rewrite_block_scholes_package(staged_manifest)
             rewritten = staged_manifest.read_text()
 
             self.assertIn("[dependencies]\n", rewritten)
