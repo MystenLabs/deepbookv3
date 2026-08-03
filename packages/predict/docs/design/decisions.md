@@ -279,11 +279,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **The Block Scholes feeds became signed-series stores gated by the production
 	  verifier.** The three per-source feed objects and the stub
 	  `block_scholes_oracle` package were replaced by two per-underlying stores
-	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs,
+	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs and
 	  written only through batch types the `bs_oracle` signature verifier mints.
-	  Holding a verified batch is the provenance proof, so relayers are untrusted;
-	  a series id encodes kind, underlying, value scale, and expiry, so a valid
-	  observation can only land in the slot it was signed for. Each observation
+	  Holding a verified batch is the provenance proof, so relayers are untrusted.
+	  Each store pair is immutably bound to one provider base-asset spelling; typed
+	  spot, forward, and SVI ingestion derives the accepted ids through the
+	  provider-owned `bs_sid` package from the complete subscription descriptor,
+	  and forward/SVI expiry witnesses are checked through that derivation. Each observation
 	  carries the provider's model time and batch-envelope time separately:
 	  freshness and the SVI roll-down anchor both key on the model time — the
 	  envelope is transport metadata — replacing on-chain change-detection that
@@ -292,7 +294,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted
   writer (retains our own key custody in the trust set), and an on-chain
   sid→slot mapping table (a registration step per new expiry on the market-roll
-  path; deriving the id from the slot's own identity needs no state).
+  path; deriving the provider-defined id from immutable store identity needs no state).
 
 ## One canonical strike representation — absolute ticks (recent)
 
