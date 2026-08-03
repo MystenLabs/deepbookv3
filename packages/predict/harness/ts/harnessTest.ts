@@ -10,8 +10,9 @@ import {
   providerPublicKeyFromRegistryObject,
   serializableSnapshot,
 } from "./marketSource.js";
-import { gridExpiries } from "./runnerConfig.js";
+import { budgetLadder, gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
+import { createLiqBudgetStrategy } from "./strategies/liqBudget.js";
 import { abortInfo } from "./trace.js";
 
 test("cadence scheduling treats window size as a time horizon and reserves higher-rank boundaries", () => {
@@ -122,4 +123,59 @@ test("provider registry parsing observes signer rotation and pause", () => {
     () => providerPublicKeyFromRegistryObject(registry(encodedKey(2, 1), true)),
     /registry is paused/,
   );
+});
+
+test("budget ladder parses, orders by time, and rejects malformed rungs", () => {
+  assert.deepEqual(budgetLadder(""), []);
+  assert.deepEqual(
+    budgetLadder("1800:1500,0:24,2700:3000,900:512").map((rung) => [rung.atMs, rung.budget]),
+    [
+      [0, 24n],
+      [900_000, 512n],
+      [1_800_000, 1500n],
+      [2_700_000, 3000n],
+    ],
+  );
+  // A typo must fail at load, not as a BigInt TypeError an hour into the campaign it configures.
+  assert.throws(() => budgetLadder("900:"), /invalid TRADE_LIQ_BUDGET_STAGES entry/);
+  assert.throws(() => budgetLadder("abc"), /invalid TRADE_LIQ_BUDGET_STAGES entry/);
+});
+
+test("liq-budget probe keeps emitting single mints once the fill target is reached", async () => {
+  // The failure this pins made the instrument useless without looking broken: batching all the way
+  // to the index cap saturates the book long before a ladder steps, after which nothing is minted
+  // and the run collects no single-mint samples at all while still reporting cleanly.
+  const strategy = createLiqBudgetStrategy("healthy");
+  const submitted: number[] = [];
+  const ctx = {
+    markets: () => [{ id: "0xm", expiryMs: Date.now() + 8 * 3_600_000 }],
+    snapshot: () => ({}),
+    rand: (lo: number, hi: number) => (lo + hi) / 2,
+    pick: <T,>(items: T[]) => items[0],
+    leverageCap: () => 5,
+    resolve: () => ({
+      feasible: true, lowerTick: 1, higherTick: 2, strikeUsd: 100, predictedProbability: 0.5,
+      quantity: 1n, leverage1e9: 1_100_000_000n, maxProbability1e9: 1n, maxCost: 1n,
+    }),
+    trace: () => {},
+    submitMintBatch: async (_market: unknown, legs: unknown[]) => {
+      submitted.push(legs.length);
+      return { events: [] };
+    },
+  } as unknown as Parameters<typeof strategy.tick>[0];
+
+  for (let i = 0; i < 400; i++) await strategy.tick(ctx);
+
+  const singles = submitted.filter((n) => n === 1).length;
+  const minted = submitted.reduce((total, n) => total + n, 0);
+  assert.ok(minted >= 2_000, `expected the fill to pass FILL_TARGET, minted ${minted}`);
+  assert.ok(singles > 100, `expected sustained single-mint probes, got ${singles}`);
+  // And the run is only reported complete once it has something to report.
+  assert.equal(strategy.failure?.(), null);
+});
+
+test("liq-budget declares the computation cap only on the arm expected to reach it", () => {
+  assert.equal(createLiqBudgetStrategy("healthy").expect, undefined);
+  assert.deepEqual(createLiqBudgetStrategy("adverse").expect?.terminal, ["InsufficientGas"]);
+  assert.equal(createLiqBudgetStrategy("healthy").gasBudget, 50_000_000_000);
 });

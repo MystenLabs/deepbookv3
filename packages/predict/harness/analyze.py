@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from . import config, measurements, verdict
@@ -27,6 +27,14 @@ from .run_manifest import load_manifest
 # 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but the binding limit is the 5M UNITS of work, so an OOG book
 # size is network-independent. Capacity measurements compare compGas against this.
 COMP_CAP = 5_000_000_000
+
+# The liq-budget fit extrapolates a production ceiling from sampled points, so it needs a real
+# lever arm: the largest candidate count sampled must be at least this many times the smallest.
+# Below that the line is fitted to a cluster and the crossing is noise dressed as a measurement.
+MIN_LIQ_BUDGET_FIT_SPAN = 4
+# Beyond this multiple of the largest count actually measured, the crossing is reported as an
+# extrapolation rather than presented as a measured limit.
+MAX_LIQ_BUDGET_EXTRAPOLATION = 3
 
 # The shortest keeper cadence (1m). A run shorter than this has produced no expected flush, so a
 # "never flushed" keeper is not yet a brick; a keeper that has NOT flushed past ~2x this (bootstrap +
@@ -53,6 +61,10 @@ _KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         set(),
     ),
     "liquidate": ({"markets", "gas"}, set()),
+    # One rung of the trade-liquidation-budget ladder. `requestedAtMs` is stamped before the
+    # set-tx so the analysis can discard probes that ran while the in-force budget was
+    # indeterminate; it is optional so a rung traced by an older runner still loads.
+    "liqBudget": ({"budget"}, {"elapsedMs", "requestedAtMs"}),
 }
 _GAS_BREAKDOWN_FIELDS = {
     "computationCost",
@@ -85,7 +97,7 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
     "withdraw": ({"strategy", "shares", "gas"}, set()),
     "mintBatch": (
         {"strategy", "n"},
-        {"gas", "compGas", "family", "profile", "book", "oog", "err", "nTarget"},
+        {"gas", "compGas", "family", "profile", "book", "oog", "err", "nTarget", "batch"},
     ),
     "book": (
         {"strategy", "family", "profile", "size", "markets", "market", "perMarket"},
@@ -149,6 +161,10 @@ _STRING_TRACE_FIELDS = {
 _BOOLEAN_TRACE_FIELDS = {"fatal", "partial", "oog"}
 _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "attempt",
+    "batch",
+    "budget",
+    "elapsedMs",
+    "requestedAtMs",
     "book",
     "compGas",
     "computationCost",
@@ -429,6 +445,122 @@ def _analyze_one(inst: Path) -> list[str]:
                 + ", ".join(f"{profile}:N={size}" for profile, size in batch_oogs)
             )
 
+
+    # liq-budget: the trade-path ambient-pass ceiling (strategies/liqBudget.ts, DBU-695). The pass
+    # costs min(budget, active_leveraged_orders) candidates, each priced with an un-memoized
+    # range_price, so the model is comp ~ base + slope*candidates: `slope` is the per-candidate cost
+    # and `base` is the mint's own. Only n==1 batches are used — a 1-leg batch is byte-identical to
+    # an ordinary mint, while an N-mint PTB pays N ambient passes and would flatten the slope.
+    # Budget comes from the keeper's ladder records; with no ladder there is nothing to sweep, so
+    # the section is skipped rather than assuming the contract default.
+    no_data = False           # the section ran but collected no single-mint samples at all
+    insufficient_fit = False  # samples too clustered (or unphysical) to support a ceiling
+    unexpected_wall: str | None = None
+    wall_tags: set[str] = set()  # OOG tags from the probe, used as declared-wall evidence
+    rungs = sorted([r for r in recs if r.get("type") == "liqBudget" and r.get("ts")], key=lambda r: r["ts"])
+    if rungs:
+        def _budget_at(ts: int) -> int:
+            budget = 0
+            for rung in rungs:
+                if rung["ts"] <= ts:
+                    budget = int(rung["budget"])
+                else:
+                    break
+            return budget
+
+        # A rung's set-tx is submitted at `requestedAtMs` and traced once it lands, so a probe inside
+        # that window ran under an indeterminate budget. Discard those rather than attribute them to
+        # either side: crediting them to the older, lower rung understates the per-candidate slope
+        # and overstates the ceiling.
+        blackouts = [(int(r["requestedAtMs"]), int(r["ts"])) for r in rungs if r.get("requestedAtMs")]
+
+        def _indeterminate(ts: int) -> bool:
+            return any(lo <= ts < hi for lo, hi in blackouts)
+
+        # (budget, book-before-this-mint, comp). `book` is the ACTIVE index the pass walked — mints
+        # issued MINUS knockouts, which the strategy nets before tracing. On the adverse arm the pass
+        # removes orders continuously, so counting issued mints would overstate candidates scanned,
+        # understate the slope, and overstate the ceiling. Per-tx knockouts stay recoverable from
+        # consecutive records, since book_next - book_prev = legs - knocked.
+        probes = [
+            (_budget_at(r["ts"]), int(r.get("book", 0)), int(r["compGas"]))
+            for r in recs
+            if r.get("type") == "mintBatch" and int(r.get("n", 0)) == 1 and not r.get("oog")
+            and r.get("compGas") and r.get("ts") and _budget_at(r["ts"]) > 0
+            and not _indeterminate(r["ts"])
+        ]
+        print(f"\nliq-budget — single-mint computation vs ambient-pass budget ({len(rungs)} rung(s) applied):")
+        by_budget: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        for budget, book, comp in probes:
+            by_budget[budget].append((book, comp))
+        for budget in sorted(by_budget):
+            points = by_budget[budget]
+            mean_comp = sum(c for _, c in points) // len(points)
+            books = [b for b, _ in points]
+            candidates = min(budget, max(books))
+            print(f"  budget {budget:>5} (book {min(books):>4}-{max(books):<4}, ~{candidates:>4} candidates scanned): "
+                  f"{mean_comp:>13,} comp = {mean_comp / COMP_CAP * 100:>4.0f}% of cap  [n={len(points)}]")
+        # Fit on CANDIDATES (= min(budget, book)) rather than budget: below saturation the book, not
+        # the budget, is what the pass walks, so regressing on budget alone understates the slope.
+        fit = [(min(budget, book), comp) for budget, book, comp in probes]
+        xs = {x for x, _ in fit}
+        span = (max(xs) / min(xs)) if xs and min(xs) > 0 else 0
+        if len(xs) < 2 or span < MIN_LIQ_BUDGET_FIT_SPAN:
+            print(f"  fit SKIPPED — candidate counts span only {min(xs, default=0)}-{max(xs, default=0)}"
+                  f" ({span:.1f}x, want >={MIN_LIQ_BUDGET_FIT_SPAN}x); widen the ladder or run longer")
+            insufficient_fit = True
+        else:
+            n = len(fit)
+            sx, sy = sum(x for x, _ in fit), sum(y for _, y in fit)
+            denom = n * sum(x * x for x, _ in fit) - sx * sx
+            if denom:
+                slope = (n * sum(x * y for x, y in fit) - sx * sy) / denom
+                base = (sy - slope * sx) / n
+                print(f"  ~{int(slope):,} comp/candidate (+{int(base):,} base mint)")
+                if base < 0:
+                    # A mint cannot cost less than nothing: the line is being driven by noise rather
+                    # than by the candidate count, however wide the span looks.
+                    print("  fit REJECTED — negative base mint is unphysical; the samples do not "
+                          "constrain the line")
+                    insufficient_fit = True
+                elif slope > 0:
+                    cross = int((COMP_CAP - base) / slope)
+                    print(f"  -> an ordinary mint stops fitting one tx at ~{cross:,} candidates "
+                          f"(the ceiling max_trade_liquidation_budget should be set under, with margin)")
+                    if cross > max(xs) * MAX_LIQ_BUDGET_EXTRAPOLATION:
+                        print(f"     CAUTION: that is {cross / max(xs):.0f}x beyond the largest measured "
+                              f"count ({max(xs)}) — extrapolation, not measurement")
+        # The empirical wall: the smallest candidate count at which a SINGLE mint actually OOG'd.
+        walls = [
+            (min(_budget_at(r["ts"]), int(r.get("book", 0))),
+             _budget_at(r["ts"]), int(r.get("book", 0)))
+            for r in recs
+            if r.get("type") == "mintBatch" and r.get("oog") and int(r.get("n", 0)) == 1
+            and r.get("ts") and _budget_at(r["ts"]) > 0 and not _indeterminate(r["ts"])
+        ]
+        if walls:
+            candidates, budget, book = min(walls)
+            print(f"  EMPIRICAL wall: a single mint OOG'd at budget {budget} / book {book} (~{candidates} candidates)")
+            # The trader submits through `signExecThreaded`, which — unlike the keeper's
+            # `executeAndWait` — writes no failed-tx artifact, and the strategy traces the OOG as a
+            # mintBatch record rather than a `fail`. Neither source the declared-wall check reads can
+            # see it, so an arm that reached exactly the wall it declared would be failed VACUOUS for
+            # not reaching it. Feed the OOG's own tag forward as the evidence.
+            wall_tags = {str(r.get("err", "")) for r in recs
+                         if r.get("type") == "mintBatch" and r.get("oog") and r.get("err")}
+            # An arm that DECLARED this wall was built to reach it; one that did not has just shown
+            # an ordinary mint failing to fit, which is a finding in its own right.
+            if not verdict.declared_terminals(recs):
+                unexpected_wall = f"liq-budget-wall-undeclared:budget={budget},book={book}"
+        elif not probes:
+            # No successful single-mint samples AND no wall: the run measured nothing. Claiming
+            # "affordable" here would be an affirmative safety claim drawn from zero evidence.
+            print("  NO single-mint samples collected — this run measured nothing (check the fill "
+                  "reached FILL_TARGET and that the ladder outlasts it)")
+            no_data = True
+        else:
+            print("  no single-mint OOG — every rung reached was affordable at the book this run built")
+
     # Bug oracle (code-aware; tags are module:code). Capacity breakpoint deferrals are excluded above.
     fails = [r for r in recs if r.get("type") == "fail" and not r.get("_navbreak")]
     expected, transient, flagged = verdict.classify_failures(fails)
@@ -462,7 +594,8 @@ def _analyze_one(inst: Path) -> list[str]:
 
         reached = {d for d in declared
                    if any(d in m for m in vm_msgs)
-                   or any(_declared_package_abort(t) and d in t for t in flagged + list(expected))}
+                   or any(_declared_package_abort(t) and d in t for t in flagged + list(expected))
+                   or any(d in t for t in wall_tags)}
         kept: list[str] = []
         for t in flagged:
             if _declared_package_abort(t):
@@ -504,6 +637,12 @@ def _analyze_one(inst: Path) -> list[str]:
                 print(f"     {n}x  {mode}")
 
     signals = list(flagged)
+    if unexpected_wall:
+        signals.append(unexpected_wall)
+    if no_data:
+        signals.append("liq-budget-no-samples")
+    if insufficient_fit:
+        signals.append("liq-budget-fit-unusable")
     signals += [f"adversarial-accepted:{r.get('mode')}" for r in adv_accepted]
     if stuck:
         signals.append("keeper-stuck")  # (1) a bricked settlement/LP lifecycle must fail the run
