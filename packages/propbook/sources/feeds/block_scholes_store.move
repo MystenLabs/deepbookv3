@@ -453,7 +453,7 @@ fun apply_value(
     writer_digest: vector<u8>,
     value: u128,
 ): bool {
-    assert!(store.version == constants::current_version!(), EWrongVersion);
+    // `apply_checked_value_batch` validates the store version before entering the batch loop.
     let id = store.value_store_id();
     apply(
         &mut store.values,
@@ -477,7 +477,7 @@ fun apply_svi(
     writer_digest: vector<u8>,
     value: SVIParams,
 ): bool {
-    assert!(store.version == constants::current_version!(), EWrongVersion);
+    // `apply_checked_svi_batch` validates the store version before entering the batch loop.
     let id = store.svi_store_id();
     apply(
         &mut store.svis,
