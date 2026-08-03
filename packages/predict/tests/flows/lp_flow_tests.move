@@ -284,14 +284,16 @@ fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
 
 fun set_supply_fee(fx: &mut helpers::Fixture, rate: u64) {
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let config_id = fx.config_id();
+    let mut config = fx.scenario_mut().take_shared_by_id<ProtocolConfig>(config_id);
     fx.set_plp_supply_fee_rate(&mut config, rate);
     return_shared(config);
 }
 
 fun set_withdraw_fee(fx: &mut helpers::Fixture, rate: u64) {
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let config_id = fx.config_id();
+    let mut config = fx.scenario_mut().take_shared_by_id<ProtocolConfig>(config_id);
     fx.set_plp_withdraw_fee_rate(&mut config, rate);
     return_shared(config);
 }
