@@ -467,7 +467,9 @@ def _analyze_one(inst: Path) -> list[str]:
         for t in flagged:
             if _declared_package_abort(t):
                 expected[f"declared:{t[:32]}"] += 1            # package abort itself names a declared wall
-            elif framework_allowance[t] > 0 and reached and not undeclared_vm:
+            elif (
+                framework_allowance[t] > 0 or not verdict.MOVE_ABORT.match(t)
+            ) and reached and not undeclared_vm:
                 framework_allowance[t] -= 1
                 expected["declared-wall (framework)"] += 1     # framework tag whose real cause IS a declared VM wall
             else:

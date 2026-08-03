@@ -64,7 +64,14 @@ TRANSIENT_MARKERS = (
 MOVE_ABORT = re.compile(r"^[a-z_][a-z0-9_]*:\d+$")
 # Semantic VM walls whose trace tag names only the framework call that surfaced
 # them. Keep this mapping exact: a declared message must never whitelist every
-# abort from an unknown/framework module.
+# abort from an unknown/framework MODULE, i.e. a `module:code` tag.
+#
+# It does not cover the common case on its own. Under the gRPC executor the wall
+# surfaces as a bare `MovePrimitiveRuntimeError` with no module in the message,
+# so `errorTag` yields a raw string rather than `module:code`. Those are allowed
+# by the raw-tag branch in `analyze`, gated on the declared wall being
+# corroborated by the failed-tx artifact and no undeclared VM error being
+# present — evidence, not a name match.
 SEMANTIC_FRAMEWORK_TAGS = {
     "cached objects limit": {"dynamic_field:0"},
 }
