@@ -19,6 +19,7 @@ const EPriceFeedIdMismatch: u64 = 3;
 const EInvalidPythPriceConf: u64 = 4;
 const EInvalidOracleConfig: u64 = 5;
 const EInvalidPrice: u64 = 6;
+const EReadingAssetMismatch: u64 = 7;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -58,6 +59,12 @@ public struct PythReading has copy, drop {
     /// for telemetry (the deposit event) is never rejected for a wide interval.
     /// Unvalidated reads carry `none` and skip the check, as they always have.
     conf: Option<u64>,
+    /// The asset this price is *for*, stamped by the reader from the same config row
+    /// the feed id was checked against. `price_config` asserts it matches the type it
+    /// is being consumed as, so a reading routed to the wrong leg aborts instead of
+    /// silently mis-pricing. Without it, transposing the base and quote readings at a
+    /// call site is invisible: both are well-formed, both pass every other guard.
+    coin_type: TypeName,
 }
 
 public(package) fun price(self: &PythReading): u64 {
@@ -269,6 +276,10 @@ fun price_config<T>(
 ): ConversionConfig {
     let type_config = registry.get_config_for_type<T>();
 
+    // The reading must be for the asset it is being priced as. Every pricing path
+    // funnels through here, so this is the one place that has to hold.
+    assert!(reading.coin_type == type_config.type_name, EReadingAssetMismatch);
+
     // Validated readings carry a confidence bound; unvalidated ones never did.
     reading
         .conf
@@ -342,6 +353,7 @@ public(package) fun read_price_unsafe<T>(
         price: price.get_price().get_magnitude_if_positive(),
         decimals: price.get_expo().get_magnitude_if_negative() as u8,
         conf: option::none(),
+        coin_type: type_config.type_name,
     }
 }
 
@@ -388,6 +400,7 @@ public(package) fun read_price_pro_unsafe<T>(
         price: price.get_price().get_magnitude_if_positive(),
         decimals: price.get_expo().get_magnitude_if_negative() as u8,
         conf: option::none(),
+        coin_type: type_config.type_name,
     }
 }
 
@@ -408,7 +421,12 @@ fun validate_reading(
         EInvalidPythPrice,
     );
 
-    PythReading { price: pyth_price, decimals: pyth_decimals, conf: option::some(pyth_conf) }
+    PythReading {
+        price: pyth_price,
+        decimals: pyth_decimals,
+        conf: option::some(pyth_conf),
+        coin_type: type_config.type_name,
+    }
 }
 
 fun validate_feed_id(price_feed_id: vector<u8>, type_config: CoinTypeData) {
