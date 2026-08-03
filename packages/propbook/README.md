@@ -219,14 +219,15 @@ Typical discovery question:
 > What is the Propbook Pyth oracle object for BTC?
 
 Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
-Block Scholes store lookups are
-`propbook_block_scholes_value_store_id_for_underlying(registry, propbook_underlying_id)`
-and
-`propbook_block_scholes_svi_store_id_for_underlying(registry, propbook_underlying_id)`.
+Block Scholes lookup is
+`propbook_block_scholes_store_pair_for_underlying(registry, propbook_underlying_id)`.
+Use `block_scholes_value_store_id(&pair)` and
+`block_scholes_svi_store_id(&pair)` to read the two shared-object IDs from the
+returned pair.
 
 ## Events
 
-Propbook emits generic oracle events:
+Pyth-backed sources emit generic oracle events:
 
 - `ObservationRecorded<OracleRead<Payload>>`
 - `ObservationInserted<OracleRead<Payload>>`
@@ -234,10 +235,11 @@ Propbook emits generic oracle events:
 - `OracleBound`
 - `OracleRebound`
 
-For BS forward and SVI rows, the payload includes the expiry, so the
-generic event is enough to index per-expiry writes. BS spot is source-level and
-does not carry an expiry. Exact-insert events include the source timestamp in the
-`OracleRead` envelope.
+Block Scholes stores emit their dedicated event surface:
+
+- `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
+- `BlockScholesObservationRecorded<Observation>` records every stored observation with its store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
+- `BlockScholesBatchIngested` records every verified batch with its store ID, provider publication time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

@@ -418,11 +418,10 @@ export async function nextOneMonthExpiryMs(): Promise<bigint> {
     return (now / ONE_MONTH_MS + 1n) * ONE_MONTH_MS;
 }
 
-// One oracle refresh writes all propbook slots: a permissionless Pyth Lazer spot
-// update, one BS value batch carrying spot + forward (they share a batch on the
-// real wire), and one BS SVI batch for the market's expiry. Routing is by the
-// signed sid inside each update; the two per-underlying stores are the only BS
-// objects the refresh touches.
+// One oracle refresh writes all Propbook slots: a permissionless Pyth Lazer spot
+// update, then separate Block Scholes spot, forward, and SVI batches. The expiry
+// batches carry descriptor witnesses, and the two per-underlying stores are the
+// only Block Scholes objects the refresh touches.
 interface OracleRefreshParams {
     pythFeedId: string;
     bsValueStoreId: string;
