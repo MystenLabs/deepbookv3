@@ -150,7 +150,7 @@ function finderPrompt(lane, round, known) {
   return `You are the "${lane.key}" lens of a deep, prior-aware smart-contract audit of DeepBook Predict and its split-out sibling packages (propbook, account). This is a MAXIMAL last-line-of-defense audit — be exhaustive.
 
 FIRST read these two files and follow them exactly:
-  1. ${SKILL}/primer.md          (protocol, current module map, scope, prior-awareness, empirical toolbox, report format)
+  1. ${SKILL}/primer.md          (shared scope, authority, execution, evidence, and report contract)
   2. ${SKILL}/lenses/${lane.file}  (your lens: deliverables, focus areas, empirical mandate, output)
 You may also cite ${SKILL}/references/*.md.
 
@@ -161,9 +161,7 @@ THIS IS FIND ROUND ${round} OF A LOOP-UNTIL-DRY AUDIT. The following candidates 
 ${known || '(none yet — first round)'}
 
 DISCIPLINE (binding):
-- Read-only on packages/*/sources/**. Verify every claim against the actual function body + call sites (grep), not its name.
-- Be prior-aware: a candidate matching a settled decision or committed policy (${SETTLED_SOURCES}) gets settled_ref=<D-id-or-policy-ref> and severity Info.
-- You MAY write and run Python sims in the scratchpad. You may NOT run sui build/test or localnet (hand those to the main loop as a recipe in evidence).
+- Follow the primer's source, prior-awareness, scratch, and main-loop boundaries. Verify every claim against the actual function body and call sites, not its name.
 - Quality over noise, but in maximal mode err toward surfacing a code-grounded candidate (verify will refute the wrong ones). Cap at your ${maxFindings} highest-value NEW findings this round. High/Critical MUST have concrete evidence.
 
 Emit ONLY via the StructuredOutput schema. settled_ref="" and evidence="" only when truly empty.`
@@ -191,7 +189,7 @@ const LENSES = [
   { tag: 'repro', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REPRODUCE. Trace the exact PTB-ordered sequence through the real mint/redeem/liquidate/settle/flush code (and write a Python sim if the break is economic). Does it actually reach the cited line with all preconditions co-occurring? If they cannot co-exist, verdict "refuted"; if it genuinely triggers, "confirmed". Cite the call chain / sim seed.' },
 ]
 
-const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md for the module map + prior-awareness. The .claude/predict-review/ files are STALE — trust the current tree. Do NOT run sui build/test or localnet; reason from source, grep, git, and Python. STAY SCOPED: read the cited files + their direct callers/feeds, not the whole repo; keep it tight (a quick scoped check, not an exploration). Verdicts: confirmed (real, reproducible) / refuted (wrong, preconditions can't co-occur, or already mitigated) / settled (matches a D-id, cite it) / uncertain. Provide file:line / git / sim evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object (no markdown fences, no prose around it).`
+const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md and follow its scope, prior-awareness, source, scratch, and main-loop boundaries. STAY SCOPED: read the cited files + their direct callers/feeds, not the whole repo; keep it tight (a quick scoped check, not an exploration). Verdicts: confirmed (real, reproducible) / refuted (wrong, preconditions can't co-occur, or already mitigated) / settled (matches a D-id, cite it) / uncertain. Provide file:line / git / sim evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object (no markdown fences, no prose around it).`
 
 function verifyPrompt(f, laneKey, lens) {
   return `${VERIFY_PREAMBLE}\n\nFINDING (lane "${laneKey}"):\n${JSON.stringify(f, null, 2)}\n\n${lens.build()}`
@@ -339,8 +337,8 @@ const PROMOTE_SCHEMA = {
 const coverageBlob = lanes.map(l => `[${l.lane}]\n  coverage: ${l.coverage}\n  top3: ${(l.top3 || []).join(' | ')}`).join('\n\n')
 const keptTitles = kept.map(f => `${f.severity} (${f.lane}): ${f.title}`).join('\n') || '(none)'
 const promoteRes = await agent(
-  `You are the completeness/promotion critic for a Predict smart-contract audit. Read ${SKILL}/primer.md for the module map, prior-awareness, and report format.\n\n`
-  + `Below are every lens's COVERAGE notes + top-3, and the findings ALREADY captured. Lenses sometimes state a real issue inside coverage/aside text (a "VERIFIED-SOUND" note that hides a caveat, a sharp observation about a dropped gate, a missing-coverage admission) without promoting it to a finding. Identify any HIGH-SIGNAL observation in the coverage that is NOT already represented in the findings list, confirm it against the actual code (grep/read), and emit it as a proper finding. Do NOT duplicate existing findings, do NOT invent issues ungrounded in the coverage, and tag anything matching a settled decision with its D-id (settled_ref). Do not run sui build/test or localnet.\n\n`
+  `You are the completeness/promotion critic for a Predict smart-contract audit. Read ${SKILL}/primer.md and follow its scope, prior-awareness, source, scratch, main-loop, and report boundaries.\n\n`
+  + `Below are every lens's COVERAGE notes + top-3, and the findings ALREADY captured. Lenses sometimes state a real issue inside coverage/aside text (a "VERIFIED-SOUND" note that hides a caveat, a sharp observation about a dropped gate, a missing-coverage admission) without promoting it to a finding. Identify any HIGH-SIGNAL observation in the coverage that is NOT already represented in the findings list, confirm it against the actual code (grep/read), and emit it as a proper finding. Do NOT duplicate existing findings, do NOT invent issues ungrounded in the coverage, and tag anything matching a settled decision with its D-id (settled_ref).\n\n`
   + `ALREADY-CAPTURED FINDINGS:\n${keptTitles}\n\nCOVERAGE NOTES:\n${coverageBlob}`,
   { schema: PROMOTE_SCHEMA, effort: 'high', phase: 'Promote', label: 'promote:coverage-critic' })
 const promoted = (promoteRes && promoteRes.findings) || []

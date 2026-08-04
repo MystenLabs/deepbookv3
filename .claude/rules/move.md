@@ -7,9 +7,7 @@ paths:
 
 # Sui Move Instructions
 
-**Update the matching rule file** when you discover new Move patterns, gotchas, or best practices during sessions: general Move (any package) → this file; Predict-specific (architecture, economics, capacity) → `.claude/rules/predict-contracts.md`. Before adding a rule, check whether an existing one already covers it; a new rule should name the failure it prevents. Point at measured findings and history (stress docs, git, design records) instead of restating their numbers.
-
-Predict-specific rules (package architecture, config/capability shapes, API shape, validation ownership, economics, gas/capacity) live in [predict-contracts.md](predict-contracts.md) — auto-injected for the Predict-cluster packages (`packages/{predict,propbook,account}/**/*.move`); read it explicitly otherwise.
+**Update this file** when you discover a general Move pattern, gotcha, or best practice that applies across packages. Before adding a rule, check whether an existing one already covers it; a new rule should name the failure it prevents. Point at measured findings and history (stress docs, git, design records) instead of restating their numbers.
 
 - Comments are opt-in, not a coverage requirement. Use comments to explain module responsibility, public API contracts, ownership boundaries, invariants, unit/scaling conventions, lifecycle state, sequencing requirements, gas/storage tradeoffs, external dependency quirks, or non-obvious math.
 
@@ -161,7 +159,6 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 ## Tool Calling Instructions
 
-- Build, test, and formatting commands live in [CLAUDE.md § Common verification commands](../../CLAUDE.md#common-verification-commands). The high test gas limit is required because sui 1.66+ lowered the default test gas budget.
 - When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding.
 - Before claiming Move or protocol work is complete, run the impacted package test suite(s) and confirm they pass with zero failures. If the change affects multiple packages or local package manifests, run each impacted package's tests.
 - When you have completed making Move changes, run `pnpm install --frozen-lockfile && pnpm format:move` before opening the PR. CI runs the same script (`format:move:check`) over the same file set, so a clean local run means a clean check.

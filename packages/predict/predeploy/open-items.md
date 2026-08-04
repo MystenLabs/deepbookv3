@@ -1,15 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-29. **The single source of truth for open work.** Anything that
-needs conscious attention — a bug, a suspicion, an undecided question, an audit
-finding — lands here first; if it is not on this list, it does not need
-addressing. An item that needs measurement carries its experiment plan inline
-(question, harness strategy, decision rule written before the run); run results
-land as immutable dated records in `evidence/`. An item exits only by deletion
-in the PR that resolves it; if the resolution embodied a judgment call, the
-decision graduates to `response-policies.md`. There is no third destination.
-Raw audit output stays in ignored agent scratchpads; this file is the tracked
-manifest.
+Updated 2026-07-29. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 

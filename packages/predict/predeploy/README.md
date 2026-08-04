@@ -4,10 +4,7 @@
 human sessions, and no session retains memory — every session starts with total
 amnesia. This directory is the externalized state of the development process,
 kept durable, machine-legible, and cross-checked so any session can pick up
-work without anyone's head as the router. Around it: the rules files
-(`.claude/rules/`) are the working program each session runs; the harness
-measures instead of guessing; the audit skill re-verifies; the public docs
-(`packages/predict/docs/`) disclose — always derived from here, never leading.
+work without anyone's head as the router.
 
 **The pipeline.** Everything that needs conscious attention — a bug, a
 suspicion, an undecided question, an audit finding — lands in `open-items.md`
@@ -28,7 +25,7 @@ finding — never leave a known disagreement standing.
    policy; binds reviewers and future changes.
 3. **`open-items.md`** — live work state, including in-flight experiment plans.
 4. **`packages/predict/docs/design/decisions.md` (canonical settled + rejected design decisions),
-   `.claude/rules/*.md`** — standing design record and working rules. Repository [CLAUDE.md](../../../CLAUDE.md) routes both.
+   `.claude/rules/*.md`** — standing design record and working rules.
 5. **`packages/predict/docs/`** — public disclosure; must describe the behavior
    recorded above, never lead it.
 
@@ -40,7 +37,7 @@ finding — never leave a known disagreement standing.
 | `response-policies.md` | THE END — every decision that outlives an item: chosen tail-state behavior, accepted risks, guard removals, and the rounding policy (R1–R3) | At most one entry resolves a given item; guard removals require a duty inventory |
 | `evidence/` | Immutable dated run records, each anchored to the item (or register entry) it serves | Append-only; naming `<item>-<instrument>-<date>.md`; nothing unreferenced |
 | `check.py` | The system linter: pinning tests exist, ID cross-refs resolve, MEASURED links evidence, evidence is anchored and referenced, no dead paths | Run on any diff touching this directory or guards; audit preflight runs it too |
-| [Design decisions](../docs/design/decisions.md) | CANONICAL settled + rejected design decisions with don't-revisit-unless conditions | What the mechanism IS; the register is how it BEHAVES in tail states. Repository [CLAUDE.md](../../../CLAUDE.md) points here |
+| [Design decisions](../docs/design/decisions.md) | CANONICAL settled + rejected design decisions with don't-revisit-unless conditions | What the mechanism IS; the register is how it BEHAVES in tail states |
 | `.claude/rules/*.md` | Working rules per surface (move, tests, harness, indexer, code review) | Accumulated session knowledge; update when a session learns something durable |
 | `.claude/skills/predict-audit/` | The deep-audit harness (lenses, workflows, primer) | Audit runs must re-verify register entries at HEAD and not re-flag verified ones |
 | `packages/predict/harness/` | Localnet staging sim + strategies + bug-oracle analyzers | `.claude/rules/predict-harness.md` + `harness-strategy.md` are its rules |

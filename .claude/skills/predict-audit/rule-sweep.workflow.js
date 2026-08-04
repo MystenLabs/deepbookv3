@@ -115,9 +115,9 @@ if (wantRules && !FAMILIES.length) {
 }
 
 const PRELUDE = `You are an agent in the Predict RULE SWEEP — a per-rule conformance audit of the MECHANICAL repo rules. FIRST read:
-  1. ${SKILL}/primer.md  (current module map, scope, prior-awareness, report format)
+  1. ${SKILL}/primer.md  (shared scope, authority, execution, evidence, and report contract)
   2. the source rules: .claude/rules/move.md, .claude/rules/predict-contracts.md, .claude/rules/code-review.md, and .claude/rules/unit-tests.md.
-Apply packages/predict/predeploy/README.md § Authority order; general guidance comes after the repository-specific sources it names. A candidate matching a committed decision, policy, or open item is a non-finding (tag it). Do not use local ignored design scratch as authority for audit triage. The .claude/predict-review map is STALE — trust primer.md + the current tree. Read-only on source; do NOT run sui build/test or localnet (the watchdog kills subagents — the main loop runs the compiler in reconciliation). Your job is ONE rule only; do not report other rules' violations or the ownership-walk's R1-R7.`
+Follow the primer's scope, prior-awareness, source, scratch, and main-loop boundaries. Your job is one rule only; do not report other rules' violations or the ownership walk's R1–R7.`
 
 const FINDING = {
   type: 'object',

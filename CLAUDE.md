@@ -48,7 +48,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 
 ## Predict context
 
-Before proposing or changing Predict economics—including NAV/backing, rounding, oracle trust, liquidation, order-id or tick encoding, floor/leverage, supply, or withdrawal—read the [Predict development-system map](packages/predict/predeploy/README.md), [open-items register](packages/predict/predeploy/open-items.md), [response-policy register](packages/predict/predeploy/response-policies.md) including its rounding policy, and [design decisions](packages/predict/docs/design/decisions.md). Do not re-litigate a settled decision or reintroduce a rejected direction unless its recorded revisit condition is met; check the response-policy register before adding, removing, or weakening a guard.
+Before proposing or changing Predict protocol behavior, follow the [Predict development-system authority order and lifecycle](packages/predict/predeploy/README.md), which routes settled mechanisms, tail-state policies, open work, measurements, and public disclosure to their owners.
 
 The [Predict protocol documentation](packages/predict/docs/README.md) explains current public behavior; it does not outrank source, tests, or the development-system authority order. Treat design and research documents as leads to verify against current source, git history, and tests rather than executable truth.
 
@@ -59,7 +59,7 @@ Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as 
 ### Move
 
 - Build a package: `sui move build --path packages/<package>`.
-- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000`.
+- Test a package: `sui move test --path packages/<package> --gas-limit 100000000000`; the high gas limit is required because Sui 1.66+ lowered the default test gas budget.
 - Build Predict with warnings denied: `sui move build --path packages/predict --warnings-are-errors`.
 - After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000`.
 - Format Move before opening a pull request: `pnpm install --frozen-lockfile && pnpm format:move`; do not use `bunx` or `npx` because CI uses the repository-pinned formatter dependency.

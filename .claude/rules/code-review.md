@@ -1,13 +1,13 @@
 # Code Review Patterns
 
-Read this manual-trigger file when the user asks for a code review. It is routed by [CLAUDE.md](../../CLAUDE.md), not by path frontmatter. These patterns are accumulated from real PR review feedback; update this file when reviewers catch new patterns.
+Read this manual-trigger file when the user asks for a code review; it is not path-scoped. These patterns are accumulated from real PR review feedback; update this file when reviewers catch new patterns.
 
 ## Review Scope
 
 - When the user asks to "review uncommitted changes" or "review uncomitted changes", review the full working-tree diff.
 - For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`; for Predict-touching Move reviews additionally `.claude/rules/predict-contracts.md`.
-- **Deep Predict smart-contract audit.** For an explicitly approved deep audit of the Predict contracts, use the [Predict audit skill](../skills/predict-audit/SKILL.md). It owns the fixed three-package source scope (`predict`, `propbook`, and `account`), the external `bs_oracle` trust-boundary treatment, lens selection, workflows, and finding format.
-- Treat design/research docs (`packages/predict/predeploy/`, `.redesign/`, `.claude/predict-design/`) as **leads to verify against current HEAD**, not ground truth — verify every load-bearing claim against Move source + git + `sui move test`.
+- **Deep Predict smart-contract audit.** For an explicitly approved deep audit of the Predict contracts, use the [Predict audit skill](../skills/predict-audit/SKILL.md), which owns that audit's scope and execution contract.
+- Apply the [Predict development-system authority order](../../packages/predict/predeploy/README.md#authority-order) to design and research material, and verify every load-bearing claim against Move source, git, and `sui move test`.
 - Findings should focus on correctness, regressions, missing coverage, and brittle assumptions.
 - Say whether the diff is safe as a standalone PR or only as an intermediate step that requires follow-up work in the same branch.
 
