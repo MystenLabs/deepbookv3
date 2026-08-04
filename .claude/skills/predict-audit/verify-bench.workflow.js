@@ -24,7 +24,7 @@ let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const CORPUS_PATH = A.corpusPath || `${SKILL}/evals/verify_corpus.json`
-const SETTLED_SOURCES = 'packages/predict/docs/design/decisions.md (settled and rejected mechanism decisions), packages/predict/predeploy/response-policies.md (Rounding policy R1-R3 and RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
+const SETTLED_SOURCES = 'packages/predict/predeploy/README.md § Authority order and the owning registers it routes'
 const CODEX = 'codex:codex-rescue'
 const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
 function sevOf(s) { return SEVRANK[(s || '').toLowerCase()] || 0 }

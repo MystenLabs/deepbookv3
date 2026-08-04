@@ -36,8 +36,8 @@ if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(none provided)'
 const maxViolations = A.maxViolations || 10
-// There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
-// registers (design decisions + predeploy policies and open items), which the PRELUDE already makes every agent read.
+// There is no cross-run adjudication carry: durable dispositions follow the committed authority order,
+// which the PRELUDE already makes every agent read.
 
 // Map units = subsystem clusters. Each map agent builds the responsibility-map entries for its modules.
 const MAP_UNITS = [
@@ -75,7 +75,7 @@ if (wantUnits && !UNITS.length) {
 const PRELUDE = `You are an agent in the Predict OWNERSHIP WALK — a recursive conformance audit of the ownership/boundary/policy rules. FIRST read these and follow them exactly:
   1. ${SKILL}/primer.md           (protocol, current module map, scope, prior-awareness, report format)
   2. ${SKILL}/references/ownership-rules.md  (R1-R7 — the rule-set you enforce, with intentional exceptions)
-Be prior-aware: packages/predict/docs/design/decisions.md + packages/predict/predeploy/response-policies.md (including Rounding policy R1-R3) + packages/predict/predeploy/open-items.md are the committed sources of truth. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
+Apply packages/predict/predeploy/README.md § Authority order for prior-awareness and register precedence. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
 
 const MODULE_ENTRY = {
   type: 'object',

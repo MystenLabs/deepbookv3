@@ -16,7 +16,7 @@ lean into Move's grain: fields are module-private (only the declarer mutates cor
 ## How to apply (per function)
 For each function, ask its node's questions below against the module's **responsibility-map entry** (what it
 SHOULD own) and the entries of modules it composes. A violation is a **misplaced responsibility**, not a
-style nit. Before flagging, check the **known intentional exceptions** in `packages/predict/docs/design/decisions.md` and committed predeploy policy/open items — these rules false-positive heavily on deliberate architecture.
+style nit. Before flagging, follow the [Predict development-system authority order](../../../../packages/predict/predeploy/README.md#authority-order) to the known intentional exceptions — these rules false-positive heavily on deliberate architecture.
 
 ---
 
