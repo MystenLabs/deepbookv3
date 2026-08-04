@@ -1385,7 +1385,10 @@ class LifecycleTests(unittest.TestCase):
                     self.fail(f"setup process {pid} still exists after cancellation")
                 try:
                     state = stat_path.read_text().split(") ", 1)[1][0]
-                except FileNotFoundError:
+                except (FileNotFoundError, ProcessLookupError):
+                    # The pid passed `kill(pid, 0)` a moment ago but was reaped before the read.
+                    # Linux raises ProcessLookupError (ESRCH) rather than FileNotFoundError for a
+                    # vanished /proc entry, so catching only the latter makes this flake on CI.
                     continue
                 # Linux containers may leave the orphaned grandchild as an
                 # unreaped zombie briefly. A zombie is dead and holds no pipes.

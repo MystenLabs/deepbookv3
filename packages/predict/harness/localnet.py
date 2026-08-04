@@ -154,7 +154,15 @@ def balance(client_config: Path, address: str) -> int:
             client_config,
             ["balance", address, "--coin-type", "0x2::sui::SUI"],
         )
+        # `sui client balance --json` returns a two-element array: [coin_entries, has_more].
+        # `SuiClientCommandResult::Balance` is `#[serde(untagged)]` over
+        # `(Vec<(Option<GetCoinInfoResponse>, Vec<Coin>)>, bool)`, so the coin list is the FIRST
+        # element rather than the response itself. Without unwrapping it every lookup raises and
+        # returns -1, which `_refill_gas`'s `0 <= balance` gate reads as "nothing to do" — so no
+        # address is ever refilled, silently, and long runs drift into gas exhaustion.
         entries = data if isinstance(data, list) else [data]
+        if entries and isinstance(entries[0], list):
+            entries = entries[0]
         if not entries:
             return 0
         entry = entries[0]
