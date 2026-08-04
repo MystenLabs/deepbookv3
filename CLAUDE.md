@@ -1,6 +1,6 @@
 # DeepBook V3
 
-DeepBook V3 is a decentralized order book on Sui. This file is the canonical entry point for coding agents; `AGENTS.md` is a relative symlink to it so every agent reads the same repository guidance.
+DeepBook V3 is a decentralized order book on Sui. This file is the canonical entry point for coding agents; `AGENTS.md` contains only a portable pointer here so every agent has one repository-guidance source.
 
 ## Authority and context
 
@@ -28,12 +28,12 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 
 | Files or surface | Required guidance |
 | --- | --- |
-| Move source and package manifests | [Sui Move instructions](.claude/rules/move.md) |
-| Predict, Propbook, and Account Move contracts | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
-| Move unit tests | [Unit-test rules](.claude/rules/unit-tests.md) |
-| Predict localnet harness | [Predict harness rules](.claude/rules/predict-harness.md) |
-| Core indexer, server, and schema crates | [Indexer rules](.claude/rules/indexer.md) |
-| TypeScript transaction scripts | [Scripts rules](.claude/rules/scripts.md) |
+| `packages/**/*.move`, `packages/**/Move.toml`, `packages/**/Published.toml` | [Sui Move instructions](.claude/rules/move.md) |
+| `packages/{predict,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
+| `packages/**/tests/**` | [Unit-test rules](.claude/rules/unit-tests.md) |
+| `packages/predict/harness/**` | [Predict harness rules](.claude/rules/predict-harness.md) |
+| `crates/{server,schema,indexer}/**` | [Indexer rules](.claude/rules/indexer.md) |
+| `scripts/**` | [Scripts rules](.claude/rules/scripts.md) |
 
 ### Manual-trigger rules
 
@@ -47,7 +47,9 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 
 ## Predict context
 
-Before proposing or changing Predict economics, start with the [Predict development-system map](packages/predict/predeploy/README.md), then read the linked open-work, response-policy, evidence, and design-decision surfaces required by the task. The [Predict protocol documentation](packages/predict/docs/README.md) explains current public behavior; it does not outrank source, tests, or the development-system authority order.
+Before proposing or changing Predict economics—including NAV/backing, rounding, oracle trust, liquidation, order-id or tick encoding, floor/leverage, supply, or withdrawal—read the [Predict development-system map](packages/predict/predeploy/README.md), [open-items register](packages/predict/predeploy/open-items.md), [response-policy register](packages/predict/predeploy/response-policies.md) including its rounding policy, and [design decisions](packages/predict/docs/design/decisions.md). Do not re-litigate a settled decision or reintroduce a rejected direction unless its recorded revisit condition is met; check the response-policy register before adding, removing, or weakening a guard.
+
+The [Predict protocol documentation](packages/predict/docs/README.md) explains current public behavior; it does not outrank source, tests, or the development-system authority order. Treat design and research documents as leads to verify against current source, git history, and tests rather than executable truth.
 
 Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as ignored personal scratch. Nothing another contributor needs to continue the work may live only there.
 
@@ -58,9 +60,10 @@ Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as 
 - Build a package: `sui move build --path packages/<package>`.
 - Test a package: `sui move test --path packages/<package> --gas-limit 100000000000`.
 - Build Predict with warnings denied: `sui move build --path packages/predict --warnings-are-errors`.
+- After changing Predict pricing, pool or vault accounting, oracle math, or public protocol flows, run the full Predict suite: `sui move test --path packages/predict --gas-limit 100000000000`.
 - Format Move before opening a pull request: `pnpm install --frozen-lockfile && pnpm format:move`; do not use `bunx` or `npx` because CI uses the repository-pinned formatter dependency.
 
-Run every `sui move build` and `sui move test` in the main session, not in a subagent. Preserve the command's real exit code; do not pipe a build or test through `tail`.
+Run every `sui move build` and `sui move test` in the main session, not in a subagent. Preserve the command's real exit code with `${PIPESTATUS[0]}` when a pipeline is unavoidable, or inspect the output for `error` and `Test result:`; never pipe a build or test through `tail`, which reports `tail`'s status.
 
 ### Rust
 
@@ -71,6 +74,17 @@ Run every `sui move build` and `sui move test` in the main session, not in a sub
 
 - Lint: `pnpm run lint`.
 - Format: `pnpm run prettier:fix`.
+
+## Working norms
+
+- State material assumptions and unresolved choices before implementation; do not hide ambiguity or silently select among meaningfully different interpretations.
+- Prefer the minimum change that satisfies the request; do not add speculative features, abstractions, configurability, or unrelated refactors.
+- Keep edits surgical, preserve established local style, and remove only imports, variables, functions, or files made obsolete by the requested change.
+- Define verifiable acceptance before coding and run the smallest relevant check first, expanding to the required package or integration suite as the affected behavior demands.
+- Protocol behavior changes require tests in the owning package; complex tests use short scenario comments and explain non-obvious expected-value arithmetic.
+- Update nearby comments and the owning public documentation when behavior changes; tests and documentation land with the code rather than as deferred follow-up work.
+- Expected values and generated fixtures must be independent of the implementation under test; follow the [unit-test rules](.claude/rules/unit-tests.md) for the full contract.
+- Predict source is organized by domain subsystem and Predict tests mirror those source folders except for shared helpers and broad flow tests; the [Predict contract rules](.claude/rules/predict-contracts.md) own the detailed layout.
 
 ## Updating context
 
@@ -93,4 +107,4 @@ Context prose uses one physical line per paragraph, list item, and blockquote. Y
 
 ## Pull requests
 
-Use the repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md). Write the summary, motivation, decisions, scope, tests, and risk in plain engineering language that a contributor can understand without access to private repositories or internal context. Include a DBU identifier in the branch name or pull-request title when the work has a Linear ticket; mechanical documentation and configuration chores may be unticketed.
+Before creating a branch for a pull request, ask the user for the branch name. Use the repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md). Write the summary, motivation, decisions, scope, tests, and risk in plain engineering language that a contributor can understand without access to private repositories or internal context. Include a DBU identifier in the branch name or pull-request title when the work has a Linear ticket; mechanical documentation and configuration chores may be unticketed.
