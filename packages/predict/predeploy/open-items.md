@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-29. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-04. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -42,101 +42,6 @@ alongside data quality, key custody, and pause discretion.
 
 ## Contract Findings
 
-### P-23: The Pyth re-anchor can substitute a staler spot than the one it replaces
-
-**Severity:** Medium; on the default pricing path.
-
-`pricing::resolve_live_pricer` enters the re-anchoring branch on the Pyth spot's
-own freshness alone and never compares it against
-`block_scholes_spot_source_timestamp_ms`, the model time of the Block Scholes
-spot it is displacing. The branch exists to carry the Block Scholes basis on a
-*higher-frequency* spot, but nothing enforces that the substitute is actually
-fresher: with `use_pyth_spot_for_forward` set (the default), a Pyth spot at the
-edge of its window can re-anchor a forward whose Block Scholes spot is
-sub-second old, and `forward = pyth_spot * bs_forward / bs_spot` then prices the
-market at the older of the two clocks. The magnitude is the underlying's move
-across the age gap, and the gap widened when the Pyth default moved from 2s to
-10s alongside the model-clock cutover. Trade timing is caller-chosen, so this is
-an adverse-selection surface rather than a liveness one.
-
-**Action:** Gate the re-anchor on relative freshness — require the Pyth source
-timestamp to be at least as recent as the Block Scholes spot model time (or
-bound the skew) — or record why substituting a staler spot is acceptable and
-what bounds the resulting error.
-
-### P-24: BS spot/forward model-time staleness aborts the pool-wide flush, unregistered
-
-**Severity:** Medium; liveness, unregistered response policy.
-
-Freshness moving from the batch envelope to the per-series model time is the
-correct economic reading, but it creates a halt mode the envelope clock did not
-have: a series the provider retransmits unchanged keeps its original model time,
-so it ages out even while transport is visibly alive. Past the window,
-`load_live_pricer` aborts, `plp::value_expiry` aborts with it, and the flush is
-one PTB over every active market — so a single un-refreshed series defers every
-queued LP fill pool-wide.
-
-RP-21 registers exactly this for SVI at its 60s window. The spot and forward
-lane runs the same mechanism at `block_scholes_price_freshness_ms` — 10s by
-default, six times tighter — and has no corresponding entry, so the blast-radius
-classification for the tighter of the two lanes is undecided rather than
-accepted. The flush requires every live market's spot, forward, *and* SVI to be
-simultaneously inside their windows, so the exposure compounds across expiries
-rather than being per-market.
-
-The supporting measurement does not yet settle it. The harness updater counts
-pinned retransmissions per series (`harness/ts/oracleService.ts`) and the first
-live run observed 8 pinned forward and 8 pinned SVI retransmissions across 73
-pushes, but a count is not the quantity that decides the question — the maximum
-*consecutive* pinned age per series is. A 10s window is breached by one run of
-pins, and pins cluster in quiet markets rather than arriving independently.
-
-**Action:** Extend the harness probe to report max consecutive pinned age per
-series, run it long enough to cover a quiet period, then either register the
-spot/forward lane's abort in `response-policies.md` alongside RP-21 with that
-measurement as its risk profile, or move the lane down the blast-radius ladder
-(skip/carry the affected market rather than aborting the flush).
-
-### P-25: Provider width overflow aborts a mandatory path with no named error
-
-**Severity:** Low; diagnosability and unregistered response.
-
-`pricing::narrow_price` and `narrow_svi` are checked `u128 -> u64` casts, and
-they run *before* `assert_inputs_pricing_safe`. A provider value above `u64::MAX`
-therefore aborts on the cast with a bare VM arithmetic error rather than the
-named envelope code that covers every strictly narrower violation, in a path the
-flush must complete. Not adding an assert is correct per the general rule
-against wrapping primitive overflow; the gap is that a provider-controlled
-variable can abort a mandatory path with an abort code no runbook can map and no
-response policy classifies. No test exercises the claim that the narrowing is
-the guard.
-
-**Action:** Either return absence from the narrowing and treat an
-unrepresentable observation as unavailable (reusing
-`EBlockScholesPriceUnavailable`), or keep the cast and register the abort with
-the rest of the provider-quality residuals so the operational response is
-written down.
-
-### P-26: An underlying's Block Scholes store pair can never be repointed
-
-**Severity:** Low pre-deploy; one-way door after.
-
-`registry::create_and_share_block_scholes_stores` is create-once per underlying
-(`EBlockScholesStoresAlreadyExist`) with no admin replacement path, while the
-Pyth lane carries `replace_pyth_binding_for_underlying` for exactly this
-purpose. The stated reason — that a second pair would leave two stores each able
-to claim the underlying with nothing to choose between them — does not hold: the
-registry binding *is* what chooses, which is why the Pyth replacement is safe.
-If a pair is ever created against the wrong underlying, or becomes unusable
-under a future store shape, that underlying has no on-chain route to a working
-pair and every market on it is stranded behind a package upgrade. Adding the
-setter is free while pre-deploy and impossible to add compatibly later only in
-the sense that the absence has to be lived with.
-
-**Action:** Add an admin-gated replacement for an underlying's store pair
-mirroring `replace_pyth_binding_for_underlying`, or record the decision that the
-pair is deliberately permanent and what the recovery path is if one is wrong.
-
 ### P-5: BS zero/non-normalizable updates can blank live reads
 
 **Severity:** Low.
@@ -168,57 +73,6 @@ guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case.
-
-### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
-
-**Severity:** Open envelope-hardening item; non-blocking for the skew-pricing
-correction. No sampled Block Scholes surface triggers it (`g(k) >= 0` over the
-scanned band on 4,000 sampled surfaces), and observed `b` is roughly 3,000 times
-below the constructed corner. The contract nevertheless accepts the corner
-because it bounds each SVI parameter independently and does not enforce
-butterfly freedom (`g(k) >= 0`).
-
-**Condition and controller.** The fixed-point counterexample uses an admitted
-surface with `a=1`, `b=max_svi_input`, `rho=-1`, `m=0`, and `sigma=min` at a
-forward of `100e9`. The trusted surface source controls these inputs; a trader
-cannot choose them. Exploitation additionally requires pre-existing offsetting
-ranges, a pool flush while the surface is active, and queued LP withdrawals.
-Under that surface the adjusted digital is non-monotone. `walk_linear` nets
-signed boundary contributions tree-wide and floors once at the aggregate,
-whereas `compute_range_price` floors each order at zero; without an active-book
-monotonicity guard the tree can therefore net away real liability and make
-`current_nav` overstate withdrawable value.
-
-**Economic impact.** The replay uses two ranges with `1e9` raw DUSDC units of
-quantity each, a $1,000 face value per range at six decimals. Per-order pricing
-returns `0` for `(80e9, 90e9]` and `898,433,481` raw units ($898.433481, or
-89.843% of face) for `(95e9, 105e9]`, so the contract's own per-order liability
-is $898.433481. `walk_linear` nets the first signed contribution before flooring
-and reports `255,159,574` raw units ($255.159574, or 25.516% of face): an
-absolute liability understatement of `643,273,907` raw units ($643.273907, or
-64.327% of face), which is 71.6% of the per-order liability. `current_nav`
-overstates by the same absolute amount; its percentage error depends on the
-market's free cash. This is an internal accounting discrepancy, not a claim that
-a live contract quote is 64% inaccurate.
-
-**Evidence grade.** The mechanism follows directly from `walk_linear`'s
-tree-wide signed netting versus `compute_range_price`'s per-order zero floor;
-the numbers above are reproduced by the fixed-point replay. They are a synthetic
-accepted-envelope counterexample, not a live-pool measurement or a realistic
-loss estimate.
-
-**Action:** Measure a `b`-specific envelope against observed surface history and
-evaluate a source-level butterfly/monotonicity admission check. The active-book
-price-memo guard prevents the known NAV overstatement by aborting valuation on a
-non-monotone active boundary set, so the completed-valuation-discrepancy risk is
-closed (only P-13 now describes a live valuation gap). Because the guard
-aborts rather than reprices, and the pool flush values every active market in one
-transaction, an admitted non-monotone surface now stalls that flush until the
-surface is replaced — the residual is a surface-quality admission gap plus this
-flush-liveness cost, not a mispriced NAV. Surface quality remains a trusted input
-for single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
-review; quantitative framing corrected 2026-07-11; active-book guard added by
-DBU-548.)
 
 ### P-13: Boundary aggregation can understate positive liability by one raw unit
 

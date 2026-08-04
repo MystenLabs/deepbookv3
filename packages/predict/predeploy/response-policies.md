@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-07-30. This is the tracked register of **settled response-policy
+Updated 2026-08-04. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -197,30 +197,56 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   for unsettled past-expiry markets, or boundary carry-availability
   measurement justifies an admin settlement fallback or a different window.
 
-## RP-5: BS-vs-Pyth basis/deviation circuit breakers removed
+## RP-5: Oracle source quality is accepted inside the pricing envelope (resolves P-23, P-25)
 
 - **Trigger state / threat:** a compromised or adversarial Block Scholes
-  operator steering live pricing away from the Pyth spot.
+  operator steering live pricing away from the Pyth spot; a provider magnitude
+  that does not fit Predict's `u64` pricing domain; or, while
+  `use_pyth_spot_for_forward` is set, an independently fresh Pyth spot whose
+  source timestamp is older than the Block Scholes spot model time.
 - **Controller:** external (oracle operator).
 - **Blast radius:** every live price — entry prices, NAV marks, liquidation.
 - **Response:** accept + disclose (commit `057f9565`). The cross-feed
   deviation guards are gone; the static pricing-safe envelope remains
   (positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`,
   sigma band, positive minimum total variance). A correct-but-adversarial
-  source can steer prices anywhere inside that envelope.
+  source can steer prices anywhere inside that envelope. The source switch is
+  absolute rather than relative: while `use_pyth_spot_for_forward` is set,
+  every independently fresh usable Pyth spot reanchors the Block Scholes basis,
+  even when the Block Scholes spot is newer; only Pyth's own freshness boundary
+  selects the Block Scholes-forward fallback. A signed Block Scholes magnitude
+  above `u64::MAX` aborts with the named `EBlockScholesInputTooWide` error before
+  narrowing; it is not relabelled as unavailable and cannot reach the narrower
+  semantic envelope.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity
   cannot be resolved by a consumer-side band. The real mitigation is the
   verifier: BS observations now enter only through signature-verified batches
   (S-4 resolved), so the residual is provider quality, not push access.
+  `use_pyth_spot_for_forward` is a source-preference setting, not a
+  newest-observation chooser: adding a relative-time gate would make the chosen
+  source depend on cross-provider clock ordering and introduce another
+  observable switching boundary. Provider-width failure keeps the same
+  fail-closed response as a checked cast, but names the provider-controlled
+  condition so mandatory-path aborts are diagnosable separately from the
+  semantic pricing envelope.
 - **Risk profile:** `BEST-GUESS`; bounded only by the envelope and the
-  provider's signing integrity.
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+  provider's signing integrity. The timestamp skew between independently fresh
+  Pyth and Block Scholes observations is bounded by their configured absolute
+  freshness windows, not by relative ordering.
+- **Pinning tests:** `pricing_tests.move` —
+  `use_pyth_spot_for_forward_selects_the_live_forward_source`,
+  `fresh_pyth_remains_selected_when_block_scholes_is_newer`, and
+  `live_forward_switches_source_exactly_at_pyth_staleness_boundary`;
+  `pricing_guard_tests.move` —
+  `block_scholes_price_above_u64_aborts_with_named_width_error` and
+  `block_scholes_svi_above_u64_aborts_with_named_width_error`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
-  admits — revisit whether any cross-feed sanity band is worth reintroducing as
-  a skip, not an abort (S-4 resolved: the verifier landed).
+  admits, relative source skew produces unacceptable marks, or width overflow
+  becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
+  a bounded-skew source rule, or explicit unavailable classification rather than
+  an undifferentiated mandatory-path abort.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -605,33 +631,46 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-15: Non-monotone active-book BS surfaces block NAV valuation
+## RP-15: Block Scholes guarantees butterfly-free surfaces; active-book inversions fail closed (resolves P-11)
 
-- **Trigger state:** during `current_nav`, the active payout tree asks for UP
-  prices at increasing strike ticks and a fresh Block Scholes surface makes a
-  higher strike price above a lower strike price.
+- **Trigger state:** despite the provider's guarantee that every published SVI
+  surface is monotone and butterfly-arbitrage-free, a fresh Block Scholes
+  surface makes a higher-strike UP price exceed a lower-strike UP price. During
+  `current_nav`, the active payout tree exposes that inversion at two increasing
+  boundary ticks.
 - **Controller:** external — the BS surface publisher controls the shape inside
-  Predict's pricing-safe envelope.
-- **Blast radius:** one market's active book can abort that market's NAV read.
-  Because pool flush uses one frozen mark for all LP supply and withdraw fills,
-  this can block LP fills pool-wide until the surface is corrected.
-- **Response:** abort and retry with a valid surface. The recovery path is the
-  same operational path as stale or missing oracle data: publish a fresh,
-  usable BS surface and rerun valuation.
+  Predict's pricing-safe envelope; traders cannot choose SVI parameters.
+- **Blast radius:** single-order pricing trusts the provider's surface and
+  floors an inverted range to zero. NAV adds a defense-in-depth active-book
+  check: one exposed inversion aborts that market's NAV read, and because the
+  pool flush uses one frozen mark for all LP supply and withdraw fills, it can
+  block LP fills pool-wide until the surface is corrected.
+- **Response:** accept the provider guarantee for surface admission; do not add
+  an on-chain `g(k) >= 0` or tighter synthetic-parameter envelope. If an active
+  book nevertheless exposes an inversion, abort valuation and retry after the
+  provider publishes a corrected surface. This converts the known aggregate-NAV
+  overstatement into fail-closed liveness.
 - **Reasoning:** `strike_payout_tree::walk_linear` relies on active boundary
   prices being monotone. Skipping the market or carrying a partial mark would
   poison the single LP mark used for both supply and withdraw, while allowing
-  the inverted segment through can overstate pool NAV.
-- **Risk profile:** `BEST-GUESS` — reachability depends on the BS publisher
-  signing an arbitrageable surface that also intersects the active book
-  (S-4 resolved: only the registered signer can produce observations).
+  the inverted segment through can overstate pool NAV. Surface quality is part
+  of the trusted Block Scholes provider contract rather than an invariant the
+  signature or Predict Move code proves; the active-book check stays as a
+  narrow accounting backstop rather than duplicating the provider's global
+  surface validation on chain.
+- **Risk profile:** `BEST-GUESS` — no sampled Block Scholes surface violated
+  butterfly freedom, and reachability requires the trusted publisher to violate
+  its guarantee with a surface whose inversion intersects the active book. The
+  guarantee is not enforced by Predict on chain.
 - **Pinning tests:** `pricing_guard_tests.move` —
   `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
   `current_nav_flow_tests.move` —
   `current_nav_rejects_non_monotone_active_book_surface`.
-- **Reopen when:** NAV valuation gains a safe per-market skip/carry design, the
-  LP flush no longer uses one shared mark for both queues, or the production BS
-  verifier proves monotonicity before the surface reaches Predict.
+- **Reopen when:** Block Scholes changes or violates the surface guarantee,
+  Predict accepts another SVI publisher without the same guarantee, the
+  active-book guard is removed, NAV valuation gains a safe per-market
+  skip/carry design, or the LP flush no longer uses one shared mark for both
+  queues.
 
 ---
 
@@ -898,21 +937,29 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-21: Unchanged SVI tuples roll down from their first source timestamp (resolves P-2)
+## RP-21: Block Scholes series age from their model timestamps (resolves P-2, P-24)
 
-- **Trigger state:** the Block Scholes publisher retransmits an unchanged
-  normalized SVI tuple while time-to-expiry decreases, including inside the
-  wider SVI freshness window near expiry.
+- **Trigger state:** the Block Scholes publisher retransmits an unchanged spot,
+  forward, or normalized SVI tuple. The transport envelope advances, but the
+  series retains the model timestamp at which the provider last derived that
+  value; for SVI, time-to-expiry also continues to decrease.
 - **Controller:** external × protocol clock — the publisher controls the
-  parameter tuple and envelope cadence; elapsed time is objective on-chain
-  state.
+  series values, model timestamps, and envelope cadence; elapsed time is
+  objective on-chain state.
 - **Blast radius:** every live quote, mint, redeem, liquidation, and NAV read
-  for the tuple's expiry. Because a flush must value every active market, one
-  affected expiry blocks the pool-wide flush and all queued LP fills. Exact
-  settlement does not use SVI.
-- **Response:** proceed with anchored remaining-time roll-down. The provider
-  stamps each tuple with its model timestamp (`model_timestamp_ms`) and holds
-  it fixed across retransmissions of an unchanged tuple; the store orders each
+  that consumes the series. A stale spot affects every market on the
+  underlying; a stale forward or SVI affects its expiry. Because a flush must
+  value every active market, any one stale required series blocks the pool-wide
+  flush and all queued LP fills. Exact settlement does not use Block Scholes.
+- **Response:** fail closed on model age, regardless of transport activity.
+  Spot and forward age out at `block_scholes_price_freshness_ms` (10s by
+  default); SVI ages out at `block_scholes_svi_freshness_ms` (60s by default,
+  configurable up to a 120s maximum). A retransmission refreshes nothing
+  economically. Recovery is a newly derived signed series with a newer model
+  timestamp, followed by retrying the affected action or flush. Before SVI
+  reaches that boundary, proceed with anchored remaining-time roll-down. The
+  provider stamps each tuple with `model_timestamp_ms` and holds it fixed across
+  retransmissions of an unchanged tuple; the store orders each
   series by that model time (the batch envelope only breaks ties between
   retransmissions), so the roll-down anchor is the tuple's own signed model
   time and a changed tuple carries a new one. Predict computes
@@ -924,48 +971,51 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   are themselves tiny on short-dated surfaces — a 1e9 floor costs up to a whole
   raw unit of `a`, and a short-dated `a` is only about ten raw units, so the
   truncation alone breached the ratified price-deviation bound (P-14's defect,
-  one layer upstream). Freshness uses the same model timestamp: a retransmission
-  refreshes nothing economically, so an unchanged tuple ages out of the SVI
-  freshness window (default 60s, configurable up to a 120s maximum) and pricing
-  halts until the publisher re-derives the tuple. That bound also caps the
+  one layer upstream). The SVI freshness bound also caps the
   roll-down attenuation at `anchor_tte / remaining <= 1 + freshness / remaining`,
   which puts the floor-to-zero arm (`anchor_tte >= 1e9 * remaining_ms`) out of
   reach of any live quote; the residual non-positive-variance cases are the
   sign/cancellation ones — they depend on the sign of `a` and on cancellation
   between `a` and `b·inner`, not on `a` alone. The existing
   `ENonPositiveVariance` guard remains authoritative for that state, including
-  in pool valuation. Recovery is for the publisher to send a changed usable
-  tuple, which carries a new model anchor, followed by retrying the affected
-  action or flush.
+  in pool valuation.
 - **Reasoning:** transport freshness and parameter age answer different
-  questions. A one-second retransmit proves the feed is live but does not make
-  an unchanged variance-to-expiry calibration new. Preserving both timestamps
-  lets the protocol reject an unavailable stream while consuming the current
-  tuple at the remaining horizon, without a separate near-expiry mode or
-  minimum-time cutoff. The pre-expiry variance abort is an explicitly accepted
-  mandatory-path interruption: it should be rare for provider-calibrated
-  surfaces, the low-frequency flush is retriable, and flooring variance to a
-  fabricated positive value would hide an unusable effective surface.
+  questions. A retransmit proves the delivery path is live but does not make an
+  unchanged price, forward, or variance calibration new. The mandatory pricing
+  path therefore requires every consumed model to be inside its own absolute
+  window at the same valuation instant; it does not carry a stale model or
+  partially value a pool. Preserving both timestamps also lets SVI consume the
+  current tuple at the remaining horizon without a separate near-expiry mode or
+  minimum-time cutoff. The pre-expiry variance abort is likewise accepted: the
+  flush is retriable, and flooring variance to a fabricated positive value
+  would hide an unusable effective surface.
 - **Risk profile:** `BEST-GUESS` — the timestamp and arithmetic policy are
-  deterministic and pinned. The expected rarity and timely publisher recovery
-  are not measured; whether linear roll-down is the best calibration model is
-  deliberately owned by the still-open O-1 calibration work.
+  deterministic and pinned. The longest consecutive model age per series, and
+  therefore the frequency of a 10s or 60s breach during quiet markets, is not
+  measured; aggregate pinned-retransmission counts do not answer that question.
+  This measurement is operational validation of the accepted fail-closed
+  policy, not a prerequisite for its correctness. Whether linear roll-down is
+  the best calibration model remains owned by the still-open O-1 calibration
+  work.
 - **Pinning tests:** `pricing_tests.move` —
   `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
   `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
   `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
   `identical_svi_retransmit_holds_the_anchor_and_the_source_time`;
   `pricing_guard_tests.move` —
+  `live_quote_with_a_freshly_retransmitted_but_aged_spot_model_aborts`,
+  `live_quote_with_a_freshly_retransmitted_but_aged_forward_model_aborts`,
+  `live_quote_with_a_freshly_retransmitted_but_aged_svi_model_aborts`,
   `pre_expiry_roll_down_keeps_positive_variance`,
   `terminal_roll_down_to_zero_is_preempted_by_model_freshness`, and
   `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
   correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
   units against a 21-unit budget).
-- **Reopen when:** the provider changes tuple or timestamp semantics, an
-  effective-zero surface materially interrupts LP flush liveness or lacks
-  timely changed-tuple recovery, Predict adopts a calibrated non-linear horizon
-  transform, or live pricing stops consuming SVI total variance as
-  variance-to-expiry.
+- **Reopen when:** the provider changes series or timestamp semantics, observed
+  model-age breaches materially interrupt LP flush liveness or lack timely
+  recovery, Predict adopts partial/async pool valuation, Predict adopts a
+  calibrated non-linear horizon transform, or live pricing stops consuming SVI
+  total variance as variance-to-expiry.
 
 ---
 
@@ -1172,6 +1222,46 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Layout note:** adding `writer_digest` to `OracleRead` / `BsRead` changes
   Propbook struct layouts — requires a fresh publish of propbook and predict,
   not a compatible upgrade.
+
+---
+
+## RP-25: Block Scholes stores are permanent per underlying (resolves P-26)
+
+- **Trigger state / threat:** an operator attempts to create a second Block
+  Scholes store pair for an underlying, or the current pair needs recovery from
+  bad observations or a future store-version change.
+- **Controller:** protocol administration creates the pair once; the signed
+  provider advances observations in that pair; package upgrades own structural
+  recovery.
+- **Blast radius:** one underlying and every Predict market that reads its
+  canonical pair. A structurally unusable pair can block live pricing and the
+  pool-wide flush until an upgrade supplies a recovery path.
+- **Response:** reject replacement with
+  `EBlockScholesStoresAlreadyExist`. Correct provider data by writing a newer
+  signed observation into the existing pair; migrate its stored version in
+  place with `migrate_value_store` / `migrate_svi_store`; if a future shape
+  cannot be migrated in place, add the concrete structural recovery in a
+  package upgrade. There is deliberately no pre-deployed admin rebind.
+- **Reasoning:** a Pyth wrapper represents one replaceable provider source, but
+  a Block Scholes store is source-agnostic storage keyed directly by the
+  underlying: signed spot, forward, and SVI series for that underlying all
+  advance the same pair. Creation derives the store's internal underlying from
+  the same registry key, so it cannot accidentally create a pair that claims a
+  different underlying. A generic rebind would instead let an admin switch all
+  markets to fresh empty state without a concrete migration requirement; an
+  additive upgrade can introduce a narrower recovery if one becomes necessary.
+- **Risk profile:** `BEST-GUESS` — correction by newer observations and the
+  current version gate are deterministic; no structural failure requiring
+  replacement has been observed.
+- **Pinning tests:** `registry_tests.move` —
+  `creating_a_second_store_pair_for_an_underlying_aborts`;
+  `block_scholes_store_tests.move` —
+  `a_new_store_reports_its_underlying_and_running_version`,
+  `migrating_a_value_store_already_at_the_running_version_aborts`, and
+  `migrating_an_svi_store_already_at_the_running_version_aborts`.
+- **Reopen when:** a concrete failure cannot be corrected by a newer signed
+  observation or in-place migration, and an additive package upgrade cannot
+  provide a sufficiently narrow recovery path.
 
 ---
 

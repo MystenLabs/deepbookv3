@@ -211,6 +211,14 @@ records it as canonical in one admin-gated step, and an underlying keeps that
 pair for its lifetime — there is no store rebinding. Predict market creation
 requires Pyth bound plus both stores present.
 
+The pair is source-agnostic storage rather than a subscription binding. A bad
+observation is corrected by a newer signed observation in the same store, and
+package-version changes use `migrate_value_store` / `migrate_svi_store` in
+place. If a future store shape cannot be recovered in place, the package
+upgrade that introduces that concrete shape must also introduce its structural
+recovery; Propbook does not pre-authorize a generic admin switch to a fresh,
+empty pair.
+
 Source assignment remains sticky: once a source key has been assigned to an
 underlying, that source key can only be reused for the same underlying. Replacing
 BTC's Pyth feed from source A to source B does not free source A for another

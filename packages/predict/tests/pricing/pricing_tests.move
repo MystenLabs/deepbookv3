@@ -458,6 +458,40 @@ fun use_pyth_spot_for_forward_selects_the_live_forward_source() {
     fx.finish();
 }
 
+/// Decision-pinned: the setting selects Pyth whenever Pyth is independently fresh; it is not a
+/// newest-observation chooser. Here both Block Scholes price rows have later model timestamps, but
+/// the still-fresh Pyth spot remains the live anchor and carries the 1.0 Block Scholes basis.
+#[test]
+fun fresh_pyth_remains_selected_when_block_scholes_is_newer() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    fx.set_pyth_bundle(&mut oracle, DIVERGED_PYTH_SPOT, PYTH_SOURCE_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        BLOCK_SCHOLES_SPOT_SOURCE_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        BLOCK_SCHOLES_FORWARD_SOURCE_MS,
+        test_constants::default_live_price(),
+    );
+
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert!(
+        pricer.pyth_spot_source_timestamp_ms() < pricer.block_scholes_spot_source_timestamp_ms(),
+    );
+    test_helpers::assert_within(
+        pricer.up_price(strike(DIVERGED_PYTH_SPOT)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 /// Decision-pinned: the live forward switches source exactly at the Pyth
 /// staleness boundary (`pricing::load_live_pricer`, fallback documented in-code).
 /// While Pyth is fresh — inclusive: `now − freshness_ts == max_age` — the

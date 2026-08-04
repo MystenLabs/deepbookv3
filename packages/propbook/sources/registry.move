@@ -44,7 +44,8 @@ public struct OracleRegistry has key {
     source_bindings: Table<OracleSourceKey, u32>,
     /// Underlying to its Block Scholes store pair. Stores carry no source id — a signed series
     /// names its own underlying — so they bind directly here rather than through the source
-    /// catalog, and an underlying has at most one pair for its lifetime.
+    /// catalog. The pair is permanent storage for that underlying: newer signed observations and
+    /// in-place version migrations recover it without an admin source switch.
     block_scholes_stores: Table<u32, BlockScholesStorePair>,
 }
 
@@ -221,9 +222,11 @@ public fun create_and_share_pyth_feed(
 }
 
 /// Create and share this underlying's Block Scholes store pair and record it as canonical.
-/// Admin-gated and once per underlying: the binding is what lets a consumer reject a store it was
-/// not meant to price from, so a second pair would leave two stores each able to claim the
-/// underlying with nothing to choose between them.
+/// Admin-gated and once per underlying: unlike a replaceable Pyth source wrapper, these stores are
+/// the source-agnostic canonical storage that every signed series for the underlying advances.
+/// Bad observations are corrected by newer signed rows, version changes migrate in place, and a
+/// structural replacement — if one is ever required — belongs in the package upgrade that defines
+/// its migration rather than in a generic pre-deployed rebind.
 public fun create_and_share_block_scholes_stores(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,

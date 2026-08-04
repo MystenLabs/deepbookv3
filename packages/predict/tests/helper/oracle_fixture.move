@@ -508,6 +508,24 @@ public fun set_bs_spot_for_testing_bundle(
     self.set_bs_spot_for_testing(&mut oracle.bs, source_timestamp_ms, spot);
 }
 
+/// Overwrite only the BS spot row with its provider-native width. Used to pin the named width
+/// boundary that production pricing applies after the verified store read.
+public fun set_bs_spot_raw_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    spot: u128,
+) {
+    let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
+    apply_value_batch_updates(
+        &mut self.scenario,
+        &mut oracle.bs,
+        vector[verify::new_value_update_for_testing(sid, source_timestamp_ms, spot)],
+        source_timestamp_ms,
+        &self.clock,
+    );
+}
+
 /// Overwrite only the BS forward row for this fixture's expiry through the real
 /// ingest path. Used by stale-surface guard tests that need fresh prices but a
 /// stale SVI row.
@@ -608,6 +626,43 @@ public fun set_bs_svi_for_testing_bundle(
         svi_m_magnitude,
         svi_m_is_negative,
     );
+}
+
+/// Overwrite the BS SVI row with a provider-native `a` magnitude while keeping the other fields at
+/// their production-valid defaults. Used to pin Predict's named width boundary.
+public fun set_bs_svi_a_raw_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    svi_a_magnitude: u128,
+) {
+    let sid = block_scholes_sid::svi(test_constants::propbook_underlying_id(), self.expiry);
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    oracle
+        .bs
+        .svi_mut()
+        .apply_svi_batch(
+            verify::new_svi_batch_for_testing(
+                source_timestamp_ms,
+                vector[
+                    verify::new_svi_for_testing(
+                        sid,
+                        source_timestamp_ms,
+                        svi_a_magnitude,
+                        false,
+                        test_constants::default_svi_b() as u128,
+                        test_constants::default_svi_sigma() as u128,
+                        test_constants::default_svi_rho_magnitude() as u128,
+                        false,
+                        test_constants::default_svi_m() as u128,
+                        false,
+                    ),
+                ],
+            ),
+            &self.clock,
+            &ctx,
+        );
+    end_seed_tx(restore);
 }
 
 /// Re-send an unchanged SVI tuple in a later batch: the envelope advances while the tuple keeps the
