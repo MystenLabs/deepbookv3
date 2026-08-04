@@ -10,11 +10,11 @@
 /// the only cash a mint pays in that the pool does not immediately own.
 ///
 /// Every expectation is derived from the design formula
-/// `rate = gamma * utilization * (delta / net_payout) * p * (1 - p)`, capped, with
-/// `utilization` and `delta / net_payout` written out from a hand-derived book
-/// state rather than read back from the contract. Only `p` comes from the quote:
-/// it is an input to the formula, and the fixture's exact Cody-approximation
-/// probability is not independently derivable (see `quote_mint_tests`).
+/// `rate = gamma * (delta / net_payout) * p * (1 - p)`, capped, with
+/// `delta / net_payout` written out from a hand-derived book state rather than
+/// read back from the contract. Only `p` comes from the quote: it is an input to
+/// the formula, and the fixture's exact Cody-approximation probability is not
+/// independently derivable (see `quote_mint_tests`).
 #[test_only]
 module deepbook_predict::inventory_skew_flow_tests;
 
@@ -24,25 +24,15 @@ use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::assert_eq;
 
 /// Full-strength skew: `gamma = 1.0` makes the rate exactly
-/// `utilization * crowding * p(1-p)`, so every expectation below is a product of
-/// two hand-derived fractions and the Bernoulli variance.
+/// `crowding * p(1-p)`, so every expectation below is a product of one
+/// hand-derived fraction and the Bernoulli variance.
 const GAMMA_ONE: u64 = 1_000_000_000;
-/// A cap at 1.0 cannot bind — `utilization`, `crowding`, and `p(1-p)` are all at
-/// most 1.0, and `p(1-p)` peaks at 0.25.
+/// A cap at 1.0 cannot bind — `crowding` and `p(1-p)` are all at most 1.0, and
+/// `p(1-p)` peaks at 0.25.
 const CAP_UNBOUNDED: u64 = 1_000_000_000;
 /// 1% per contract: far below the ~0.25 uncapped ATM rate, so the cap binds and
 /// the charge stops depending on `p` at all.
 const CAP_ONE_PERCENT: u64 = 10_000_000;
-
-/// Capital basis at one contract of net payout. Every book state in the saturating
-/// tests carries at least that, so `utilization` pins at 1.0 and the tests isolate
-/// the crowding term.
-const BASIS_SATURATING: u64 = 1_000_000_000;
-/// Capital basis at four contracts, so the one-, two-, and three-contract book
-/// states below sit at utilization 0.25, 0.5, and 0.75 exactly.
-const BASIS_FOUR_CONTRACTS: u64 = 4_000_000_000;
-const UTILIZATION_QUARTER: u64 = 250_000_000;
-const UTILIZATION_HALF: u64 = 500_000_000;
 
 /// The fixture's default backing buffer. A range whose peak sits below the book's
 /// max point only consumes the `λ` share of its own dollar.
@@ -68,11 +58,10 @@ const SKEW_REBATE_ON: bool = true;
 fun setup_skew_market(
     gamma: u64,
     cap: u64,
-    capital_basis: u64,
     rebate_enabled: bool,
 ): (helpers::Fixture, ID, helpers::Trader) {
     let mut fx = helpers::setup_market_default();
-    fx.set_template_inventory_skew(gamma, cap, capital_basis, rebate_enabled);
+    fx.set_template_inventory_skew(gamma, cap, rebate_enabled);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -136,7 +125,6 @@ fun first_mint_pays_the_full_crowding_rate_and_the_market_escrows_it() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_SATURATING,
         SKEW_OFF,
     );
     let mut market = fx.take_market_bundle(expiry_id);
@@ -153,10 +141,9 @@ fun first_mint_pays_the_full_crowding_rate_and_the_market_escrows_it() {
     helpers::assert_atm_entry_probability(quote.entry_probability());
 
     // Empty book: the candidate's whole dollar becomes the new max point, so
-    // `delta == net_payout` and crowding is 1.0. Post-trade liability is one
-    // contract, at or above the basis, so utilization pins at 1.0. With
-    // `gamma == 1.0` the rate collapses to `p(1-p)`, and one contract of quantity
-    // makes the charge equal the rate.
+    // `delta == net_payout` and crowding is 1.0. With `gamma == 1.0` the rate
+    // collapses to `p(1-p)`, and one contract of quantity makes the charge equal
+    // the rate.
     let expected_charge = variance_of(quote.entry_probability());
     assert_eq!(quote.inventory_skew_charge(), expected_charge);
     // The charge is its own line item outside the fee cap, added to the debit.
@@ -195,7 +182,6 @@ fun cold_range_pays_the_lambda_share_and_a_pile_on_pays_the_whole_dollar() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_SATURATING,
         SKEW_OFF,
     );
     let mut market = fx.take_market_bundle(expiry_id);
@@ -225,9 +211,8 @@ fun cold_range_pays_the_lambda_share_and_a_pile_on_pays_the_whole_dollar() {
 
     // The DOWN complement never overlaps the resting contract, so its range peak
     // is 0 while the book's max point is 1e9: it cannot lift the max point at all
-    // and consumes only `λ` of its own dollar. Utilization is still saturated
-    // (1.25e9 of liability against a 1e9 basis), so crowding is the only factor
-    // that moved and the charge falls to a quarter of the pile-on charge.
+    // and consumes only `λ` of its own dollar. Crowding is the only factor that
+    // moved and the charge falls to a quarter of the pile-on charge.
     let cold = fx.quote_mint_bundle(
         &market,
         constants::neg_inf!(),
@@ -262,7 +247,6 @@ fun the_cap_bounds_the_charge_independently_of_the_probability() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_ONE_PERCENT,
-        BASIS_SATURATING,
         SKEW_OFF,
     );
     let market = fx.take_market_bundle(expiry_id);
@@ -293,7 +277,6 @@ fun closing_with_rebates_disabled_leaves_the_escrow_untouched() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_FOUR_CONTRACTS,
         SKEW_OFF,
     );
     let mut market = fx.take_market_bundle(expiry_id);
@@ -307,6 +290,8 @@ fun closing_with_rebates_disabled_leaves_the_escrow_untouched() {
         test_constants::leverage_one_x(),
     );
     let charge = opening.inventory_skew_charge();
+    // Sole order: crowding 1.0, so the charge is exactly the Bernoulli variance.
+    assert_eq!(charge, variance_of(opening.entry_probability()));
     let order = fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -316,12 +301,6 @@ fun closing_with_rebates_disabled_leaves_the_escrow_untouched() {
         test_constants::leverage_one_x(),
         opening.all_in_cost(),
         std::u64::max_value!(),
-    );
-    // One contract against a four-contract basis is a quarter utilized, and the
-    // opening mint's crowding is 1.0.
-    assert_eq!(
-        charge,
-        math::mul_down(UTILIZATION_QUARTER, variance_of(opening.entry_probability())),
     );
 
     // A close must land in a later millisecond than its mint, so step the clock
@@ -339,11 +318,10 @@ fun closing_with_rebates_disabled_leaves_the_escrow_untouched() {
 }
 
 #[test]
-fun closing_the_only_order_earns_no_rebate() {
+fun closing_the_only_order_rebates_its_full_crowding_charge() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_FOUR_CONTRACTS,
         SKEW_REBATE_ON,
     );
     let mut market = fx.take_market_bundle(expiry_id);
@@ -357,6 +335,7 @@ fun closing_the_only_order_earns_no_rebate() {
         test_constants::leverage_one_x(),
     );
     let charge = opening.inventory_skew_charge();
+    assert!(charge > 0);
     let order = fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -369,13 +348,19 @@ fun closing_the_only_order_earns_no_rebate() {
     );
 
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    // Close-side crowding is also 1.0 (`C = 0`). ATM variance after a 1ms roll
+    // is at least the opening variance, so the unclamped rebate covers the
+    // escrow and the close drains it fully.
+    let at_close = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    assert!(variance_of(at_close.entry_probability()) >= charge);
     fx.redeem_bundle(&mut market, &mut account, order, test_constants::mint_quantity());
-
-    // Closing the book's only order empties it, so the rate is priced at zero
-    // post-removal utilization: the round trip pays the opening charge in full and
-    // gets nothing back, even with rebates enabled.
-    assert!(charge > 0);
-    assert_eq!(helpers::market(&market).skew_reserve(), charge);
+    assert_eq!(helpers::market(&market).skew_reserve(), 0);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -383,17 +368,17 @@ fun closing_the_only_order_earns_no_rebate() {
 }
 
 #[test]
-fun round_trip_rebate_is_priced_at_the_lower_post_removal_utilization() {
+fun piled_close_rebates_full_crowding_not_a_lower_load_factor() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_FOUR_CONTRACTS,
         SKEW_REBATE_ON,
     );
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    // First contract: liability goes 0 -> 1e9, so utilization after is 0.25.
+    // Both contracts pile onto the same peak: each pays crowding 1.0, so they
+    // pay the same charge at a shared probability (no load factor left to diverge).
     let first = fx.quote_mint_bundle(
         &market,
         helpers::strike_tick(),
@@ -403,7 +388,7 @@ fun round_trip_rebate_is_priced_at_the_lower_post_removal_utilization() {
     );
     let variance = variance_of(first.entry_probability());
     let first_charge = first.inventory_skew_charge();
-    assert_eq!(first_charge, math::mul_down(UTILIZATION_QUARTER, variance));
+    assert_eq!(first_charge, variance);
     fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -415,8 +400,6 @@ fun round_trip_rebate_is_priced_at_the_lower_post_removal_utilization() {
         std::u64::max_value!(),
     );
 
-    // Second contract piles onto the same peak: liability goes 1e9 -> 2e9, so this
-    // one is priced at utilization 0.5 — twice the first contract's rate.
     let second = fx.quote_mint_bundle(
         &market,
         helpers::strike_tick(),
@@ -425,7 +408,7 @@ fun round_trip_rebate_is_priced_at_the_lower_post_removal_utilization() {
         test_constants::leverage_one_x(),
     );
     let second_charge = second.inventory_skew_charge();
-    assert_eq!(second_charge, math::mul_down(UTILIZATION_HALF, variance));
+    assert_eq!(second_charge, variance);
     let second_order = fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -453,15 +436,12 @@ fun round_trip_rebate_is_priced_at_the_lower_post_removal_utilization() {
     let close_variance = variance_of(at_close.entry_probability());
     fx.redeem_bundle(&mut market, &mut account, second_order, test_constants::mint_quantity());
 
-    // Closing the second contract takes liability back to 1e9, so the rebate is
-    // priced at utilization 0.25 — the level the FIRST contract paid, not the 0.5
-    // this one did. The round trip therefore loses the utilization it created,
-    // before the two trade fees are even counted.
+    // Closing the second contract still has crowding 1.0 (peak falls by a full
+    // N while the first contract remains). The rebate is the full close-side
+    // variance — not a lower utilization tier — so at equal `p` it would match
+    // the opening charge exactly.
     let rebate = escrow_after_mints - helpers::market(&market).skew_reserve();
-    assert_eq!(rebate, math::mul_down(UTILIZATION_QUARTER, close_variance));
-    assert!(rebate < second_charge);
-    // Rebates are paid only out of collected charges, so the escrow keeps exactly
-    // what the two mints paid in minus what the close claimed.
+    assert_eq!(rebate, close_variance);
     assert_eq!(helpers::market(&market).skew_reserve(), first_charge + second_charge - rebate);
 
     helpers::return_account_bundle(account);
@@ -474,7 +454,6 @@ fun the_escrow_caps_a_rebate_worth_more_than_the_market_collected() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_SATURATING,
         SKEW_REBATE_ON,
     );
     let mut market = fx.take_market_bundle(expiry_id);
@@ -533,17 +512,16 @@ fun the_escrow_caps_a_rebate_worth_more_than_the_market_collected() {
         std::u64::max_value!(),
     );
     // Both mints sit on the same range at the same tick, so each pays the full
-    // crowding rate at the saturated utilization: the escrow is two off-the-money
-    // variances, not zero, and the clamp below is not vacuous.
+    // crowding rate: the escrow is two off-the-money variances, not zero, and the
+    // clamp below is not vacuous.
     let escrow = first.inventory_skew_charge() + second.inventory_skew_charge();
     assert_eq!(first.inventory_skew_charge(), second.inventory_skew_charge());
     assert!(escrow > 0);
     assert_eq!(helpers::market(&market).skew_reserve(), escrow);
 
     // Close back at the money, where `p(1-p)` peaks. Both contracts are on the same
-    // range, so the close releases its whole dollar (crowding 1.0) and the one left
-    // behind still saturates the basis (utilization 1.0): the rate is the full
-    // at-the-money variance, priced above everything the two mints paid in.
+    // range, so the close releases its whole dollar (crowding 1.0): the rate is the
+    // full at-the-money variance, priced above everything the two mints paid in.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let at_close = fx.quote_mint_bundle(
         &market,
@@ -571,7 +549,6 @@ fun the_escrow_is_held_out_of_the_pool_mark() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_SATURATING,
         SKEW_OFF,
     );
     let mut market = fx.take_market_bundle(expiry_id);
@@ -639,7 +616,6 @@ fun settlement_releases_the_residual_escrow_without_moving_cash() {
     let (mut fx, expiry_id, trader) = setup_skew_market(
         GAMMA_ONE,
         CAP_UNBOUNDED,
-        BASIS_SATURATING,
         SKEW_OFF,
     );
     let mut market = fx.take_market_bundle(expiry_id);

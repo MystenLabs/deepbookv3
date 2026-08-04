@@ -27,11 +27,6 @@ use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
-/// An arbitrary non-default skew capital basis (1,000 DUSDC). The knob has no
-/// envelope — every `u64` is a legal basis — so the test only needs a value
-/// distinguishable from the inert `0` default.
-const SKEW_CAPITAL_BASIS: u64 = 1_000_000_000;
-
 /// Create a real shared `ProtocolConfig` (all template values at defaults) and
 /// an `AdminCap`, ready for admin setter calls in the next transaction.
 fun new_shared_config(): (Scenario, AdminCap, ID) {
@@ -262,11 +257,10 @@ fun inventory_skew_defaults_are_inert_and_settable_knobs_snapshot() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    // Shipping defaults: gamma and the capital basis are both zero and rebates are
-    // off, so the whole feature is a no-op until an operator arms it.
+    // Shipping defaults: gamma is zero (the sole kill switch) and rebates are off,
+    // so the whole feature is a no-op until an operator arms it.
     let shipped = config.strike_exposure_config_snapshot();
     assert_eq!(shipped.inventory_skew_gamma(), 0);
-    assert_eq!(shipped.skew_capital_basis(), 0);
     assert!(!shipped.inventory_skew_rebate_enabled());
     // The cap ships non-binding at 100% of quantity.
     assert_eq!(shipped.inventory_skew_cap(), config_constants::max_inventory_skew_cap!());
@@ -277,13 +271,11 @@ fun inventory_skew_defaults_are_inert_and_settable_knobs_snapshot() {
         config_constants::max_inventory_skew_gamma!(),
     );
     config.set_template_inventory_skew_cap(&admin_cap, config_constants::min_inventory_skew_cap!());
-    config.set_template_skew_capital_basis(&admin_cap, SKEW_CAPITAL_BASIS);
     config.set_template_inventory_skew_rebate_enabled(&admin_cap, true);
 
     let armed = config.strike_exposure_config_snapshot();
     assert_eq!(armed.inventory_skew_gamma(), config_constants::max_inventory_skew_gamma!());
     assert_eq!(armed.inventory_skew_cap(), config_constants::min_inventory_skew_cap!());
-    assert_eq!(armed.skew_capital_basis(), SKEW_CAPITAL_BASIS);
     assert!(armed.inventory_skew_rebate_enabled());
     destroy(armed);
 

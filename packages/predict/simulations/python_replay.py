@@ -112,11 +112,11 @@ TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 # Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
-# Inventory skew (Ho-Stoll placement shift). Defaults match Move inert ship values.
+# Inventory skew (locality-only transaction charge). Defaults match Move inert ship values.
+# Rate = gamma * (delta / net_payout) * p * (1 - p); gamma == 0 is the sole kill switch.
 INVENTORY_SKEW_GAMMA = 0
 INVENTORY_SKEW_CAP = FLOAT_SCALING
 INVENTORY_SKEW_REBATE_ENABLED = False
-SKEW_CAPITAL_BASIS = INITIAL_EXPIRY_CASH
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
 # Dynamic mint-admission cap. Actual liquidation still uses LIQUIDATION_LTV.
@@ -1536,14 +1536,9 @@ def inventory_skew_rate(
     *,
     adding: bool,
 ) -> int:
-    """Per-unit inventory skew rate at post-add (mint) or post-remove (redeem) util."""
-    if (
-        INVENTORY_SKEW_GAMMA == 0
-        or net_payout == 0
-        or SKEW_CAPITAL_BASIS == 0
-        or probability == 0
-        or probability == FLOAT_SCALING
-    ):
+    """Locality-only per-unit inventory skew rate: gamma · crowding · p(1-p)."""
+    # Kill switch: must precede marginal_reserve_consumption / range-max walks.
+    if INVENTORY_SKEW_GAMMA == 0 or net_payout == 0 or probability == 0 or probability == FLOAT_SCALING:
         return 0
     delta = marginal_reserve_consumption(
         model,
@@ -1552,17 +1547,9 @@ def inventory_skew_rate(
         net_payout,
         adding=adding,
     )
-    liability = payout_reserve(model)
-    if adding:
-        util_basis = liability + delta
-    else:
-        util_basis = liability - delta if liability >= delta else 0
-    u = mul_div_round_down(util_basis, FLOAT_SCALING, SKEW_CAPITAL_BASIS)
-    if u > FLOAT_SCALING:
-        u = FLOAT_SCALING
     crowding = mul_div_round_down(delta, FLOAT_SCALING, net_payout)
     variance = deepbook_mul(probability, FLOAT_SCALING - probability)
-    rate = deepbook_mul(deepbook_mul(deepbook_mul(INVENTORY_SKEW_GAMMA, u), crowding), variance)
+    rate = deepbook_mul(deepbook_mul(INVENTORY_SKEW_GAMMA, crowding), variance)
     return rate if rate < INVENTORY_SKEW_CAP else INVENTORY_SKEW_CAP
 
 

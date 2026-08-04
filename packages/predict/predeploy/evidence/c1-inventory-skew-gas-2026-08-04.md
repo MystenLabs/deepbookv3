@@ -17,9 +17,11 @@ Two new reads on `StrikeExposure`:
 
 - `marginal_reserve_consumption(lower, higher, net_payout, adding)` — how much
   enforced payout reserve a candidate range would add or release, via
-  `strike_payout_tree::range_max_net_payout`.
+  `strike_payout_tree::range_max_net_payout` (and, on remove,
+  `complement_max_net_payout`).
 - `inventory_skew_charge(...)` — that consumption priced into a per-unit rate
-  `gamma · utilization · (delta / net_payout) · p(1 − p)`, capped.
+  `gamma · (delta / net_payout) · p(1 − p)`, capped. Pool-wide load is not in
+  this product (priced by the utilization fee multiplier instead).
 
 `quote_mint_terms` calls the charge once per mint. `quote_live_close` calls it
 once per live close, and only when the expiry snapshotted
@@ -40,10 +42,12 @@ tick inside the flush and did move the model.
 The added cost is per-transaction, on mint and on rebate-enabled close.
 
 **At the shipped defaults the added cost is nil.** `inventory_skew_rate`
-short-circuits on `gamma == 0 || capital_basis == 0` before touching the tree,
-and both ship at `0`; `quote_live_close` short-circuits on
+short-circuits on `gamma == 0` (the sole kill switch) before touching the
+tree, and gamma ships at `0`; `quote_live_close` short-circuits on
 `inventory_skew_rebate_enabled == false`, which also ships off. An unarmed
-market pays two config field reads and two comparisons per mint.
+market pays one config field read and one comparison per mint. Unit test
+`gamma_zero_kill_switch_returns_zero_on_a_piled_book` pins the kill switch
+against a book that would otherwise force range-max walks.
 
 ## Estimated cost when armed
 
@@ -61,10 +65,9 @@ The tree is height-balanced (AVL, rotations driven by measured height), so
   close) at a fully saturated 1,000-node book;
 - **typical ≈ 20–35 loads** at a realistic 20–100-boundary book (`h ≈ 5–8`).
 
-On top of that: one `net_payout_reserve_terms` root read, one
-`payout_liability`, and roughly six `mul_down`/`mul_div_down` fixed-point ops.
-No `exp`, no `ln`, no oracle read — the charge is pure integer arithmetic over
-values the book already stores.
+On top of that: one `net_payout_reserve_terms` root read and roughly four
+`mul_down`/`mul_div_down` fixed-point ops. No `exp`, no `ln`, no oracle read —
+the charge is pure integer arithmetic over values the book already stores.
 
 For scale on the same transaction: a mint **already** runs `apply_range` twice
 (the start and end boundary), and those are read-**write** descents with
@@ -80,8 +83,8 @@ The A/B that produces a measured number, matching `c1-skew-gas-2026-07-09.md`'s
 instrument:
 
 1. Harness `batch-max-book` on localnet with `SIM_GAS_BUDGET=50000000000`,
-   two sides at the same commit: `gamma = 0` (control) vs `gamma` armed with a
-   non-zero `skew_capital_basis` and `inventory_skew_rebate_enabled = true`.
+   two sides at the same commit: `gamma = 0` (control) vs `gamma` armed with
+   `inventory_skew_rebate_enabled = true`.
 2. Report **per-mint** and **per-close** computation, not the flush slope — the
    flush is not on this feature's path. Sample at a small book and again near
    the 1,000-node cap, because the cost is `O(log n)` in boundary count, not in
@@ -91,8 +94,8 @@ instrument:
    a per-op delta that is negligible standalone is the one to re-measure inside
    a 100-mint PTB before arming `gamma` in production.
 
-Until (1)–(3) run, `gamma` and `skew_capital_basis` stay at their inert `0`
-defaults, so nothing here gates the deploy.
+Until (1)–(3) run, `gamma` stays at its inert `0` default, so nothing here
+gates the deploy.
 
 ## Amendment — complement-max on the close path (2026-08-04)
 
@@ -116,6 +119,13 @@ close's existing write-side `remove_range` work. **Revised per-close estimate
 when armed: low-to-mid single-digit percent** vs the prior low single-digit
 figure that assumed one range walk; mint estimate unchanged.
 
-The round-trip invariant in `decisions.md` depends on this complement read —
-falling back to `g_removal = 0` would be cheaper but was rejected here because
-the extra two `O(log n)` descents stay inside the same capacity band.
+The round-trip crowding equality in `decisions.md` depends on this complement
+read — falling back to `g_removal = 0` would be cheaper but was rejected here
+because the extra two `O(log n)` descents stay inside the same capacity band.
+
+## Amendment — load factor removed (2026-08-04)
+
+`skew_capital_basis` / `u_after` left the rate. Kill switch is `gamma == 0`
+alone; the early return still precedes every range-max walk. Mint-path
+arithmetic is slightly cheaper (no liability/utilization mul). Close-path tree
+cost unchanged.

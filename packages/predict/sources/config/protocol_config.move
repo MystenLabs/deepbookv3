@@ -202,17 +202,6 @@ public fun set_template_inventory_skew_rebate_enabled(
     config.strike_exposure_template_config.set_inventory_skew_rebate_enabled(enabled);
 }
 
-/// Set the capital basis newly created expiry markets measure skew utilization
-/// against, in DUSDC base units. `0` (the default) makes the charge inert.
-public fun set_template_skew_capital_basis(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_skew_capital_basis(value);
-}
-
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
 /// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
 public fun set_benefit_powers(

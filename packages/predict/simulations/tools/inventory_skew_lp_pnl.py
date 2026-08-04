@@ -3,6 +3,11 @@
 
 Builds a piled-inventory synthetic scenario, replays with gamma=0 (baseline)
 and gamma>0 (skew on, rebates off), and reports terminal LP profit.
+
+Rate form (locality only): gamma · (delta / net_payout) · p(1 − p).
+`gamma` is the per-unit rate at maximum crowding and maximum uncertainty
+(p = 1/2), times four — the uncapped peak is gamma/4. Recalibrate after any
+formula change; do not carry values from the old u_after form.
 """
 
 from __future__ import annotations
@@ -122,7 +127,6 @@ def run_once(*, gamma: int, rebate_enabled: bool) -> dict[str, Any]:
     replay.INVENTORY_SKEW_GAMMA = gamma
     replay.INVENTORY_SKEW_CAP = FLOAT
     replay.INVENTORY_SKEW_REBATE_ENABLED = rebate_enabled
-    replay.SKEW_CAPITAL_BASIS = replay.INITIAL_EXPIRY_CASH
 
     rows = replay.parse_scenario_text(build_piled_csv())
     canonical, _ = replay.replay(
@@ -175,15 +179,42 @@ def run_once(*, gamma: int, rebate_enabled: bool) -> dict[str, Any]:
 
 def main() -> None:
     baseline = run_once(gamma=0, rebate_enabled=False)
-    skewed = run_once(gamma=500_000_000, rebate_enabled=False)
+    # Sweep locality-only gammas. Peak uncapped rate is gamma/4, so 0.10 → 2.5%
+    # of notional at coin-flip full crowding; 0.20 → 5%; 0.40 → 10%.
+    candidates = [
+        50_000_000,  # 0.05
+        100_000_000,  # 0.10
+        200_000_000,  # 0.20
+        400_000_000,  # 0.40
+    ]
+    sweeps = [run_once(gamma=g, rebate_enabled=False) for g in candidates]
+    # Prefer the smallest gamma that still lifts returned pool cash — keep the
+    # armed intensity modest once load is no longer in the product.
+    chosen = next(
+        (
+            s
+            for s in sweeps
+            if s["returned_pool_cash"] > baseline["returned_pool_cash"]
+            or s["terminal_lp_profit"] > baseline["terminal_lp_profit"]
+        ),
+        sweeps[-1],
+    )
+    skewed = chosen
     # While net_losses_to_fill > 0, materialize_expiry_profit reports lp_profit=0
     # even as returned expiry cash replenishes the vault. Compare the cash that
     # actually returns to the pool — that is the LP-owned residual.
     delta_returned = skewed["returned_pool_cash"] - baseline["returned_pool_cash"]
     delta_lp_profit = skewed["terminal_lp_profit"] - baseline["terminal_lp_profit"]
     report = {
+        "formula": "gamma * (delta / net_payout) * p * (1 - p)",
+        "gamma_meaning": (
+            "per-unit rate at maximum crowding and maximum uncertainty (p=1/2), "
+            "times four; uncapped peak rate = gamma/4"
+        ),
         "baseline": baseline,
+        "sweep": sweeps,
         "skewed": skewed,
+        "calibrated_gamma": skewed["gamma"],
         "delta_returned_pool_cash": delta_returned,
         "delta_returned_pool_cash_dusdc": delta_returned / DUSDC,
         "delta_lp_profit": delta_lp_profit,
@@ -192,7 +223,8 @@ def main() -> None:
             "Piled up-binary inventory on one strike; skew escrow residual returns "
             "to LPs at terminal closeout. Rebates disabled (ship default). "
             "Gate uses returned_pool_cash because terminal_lp_profit stays 0 while "
-            "net_losses_to_fill absorbs recoveries."
+            "net_losses_to_fill absorbs recoveries. Gamma recalibrated for the "
+            "locality-only rate (no u_after / capital-basis factor)."
         ),
     }
     out = SIM_DIR / "artifacts" / "inventory_skew_lp_pnl.json"
@@ -208,7 +240,8 @@ def main() -> None:
         sys.exit(2)
     print(
         "\nGATE PASSED: skew increases returned pool cash "
-        f"(+{delta_returned} raw); safe to implement Move."
+        f"(+{delta_returned} raw) at gamma={skewed['gamma']}; "
+        "locality-only calibration ok."
     )
 
 

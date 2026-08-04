@@ -8,10 +8,11 @@
 /// itself be an admissible order, so the interesting middle case never appears:
 /// a candidate that overtakes the book's max point only PARTWAY, paying the full
 /// dollar on the overshoot and `λ` on the rest. The removal branches and the
-/// zero-net-payout short-circuit are likewise only reachable from a direct call.
+/// zero-net-payout / gamma-zero short-circuits are likewise only reachable from
+/// a direct call.
 ///
 /// Expectations are hand-derived from the book's step profile and the documented
-/// `delta = λN + (1 − λ)g` / `rate = gamma · u · (delta / N) · p(1 − p)`, never
+/// `delta = λN + (1 − λ)g` / `rate = gamma · (delta / N) · p(1 − p)`, never
 /// read back from a contract call. The book itself is built through the real
 /// quote/allocate mint path so the profile is one a production market can reach.
 #[test_only]
@@ -26,6 +27,7 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
+use fixed_math::math;
 use std::unit_test::assert_eq;
 use sui::{clock::Clock, object::{Self, UID}, test_scenario::return_shared};
 
@@ -50,13 +52,10 @@ const BOOK_PAYOUT_LIABILITY: u64 = 3_250_000_000;
 /// cold side's peak of 1e9 it reaches 3.5e9, overshooting `M = 3e9` by 0.5e9.
 const OVERSHOOTING_NET_PAYOUT: u64 = 2_500_000_000;
 
-/// Skew intensity 1.0, so the rate reduces to `u × crowding × p(1 − p)`.
+/// Skew intensity 1.0, so the rate reduces to `crowding × p(1 − p)`.
 const GAMMA_ONE: u64 = 1_000_000_000;
 /// 100%: above every rate the formula can produce (it peaks at `gamma / 4`).
 const CAP_NON_BINDING: u64 = 1_000_000_000;
-/// 8.5e9 DUSDC base units — twice the overshooting candidate's post-trade
-/// liability, so utilization lands on exactly one half.
-const CAPITAL_BASIS: u64 = 8_500_000_000;
 /// A coin flip, where `p(1 − p) = 0.25` peaks.
 const HALF_PROBABILITY: u64 = 500_000_000;
 
@@ -64,7 +63,7 @@ const HALF_PROBABILITY: u64 = 500_000_000;
 /// net payout, so the reserve it consumes is neither `λN` nor `N`.
 #[test]
 fun partial_overlap_splits_between_the_peak_and_the_buffer() {
-    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING);
     // The hand arithmetic below assumes the shipped λ; pin it rather than let a
     // default change silently rewrite every expectation into a passing one.
     assert_eq!(
@@ -94,11 +93,11 @@ fun partial_overlap_splits_between_the_peak_and_the_buffer() {
 /// (`delta / N = 0.4`), not the `λ` or `1.0` the two flow-reachable cases pin.
 #[test]
 fun partial_overlap_charge_prices_a_fractional_crowding_term() {
-    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING);
 
-    // u = (3.25e9 + 1e9) / 8.5e9 = 0.5, crowding = 1e9 / 2.5e9 = 0.4, and the
-    // coin-flip variance is 0.25: rate = 1.0 × 0.5 × 0.4 × 0.25 = 0.05. At 1x the
-    // candidate's quantity is its net payout, so the charge is 0.05 × 2.5e9.
+    // crowding = 1e9 / 2.5e9 = 0.4, coin-flip variance = 0.25:
+    // rate = 1.0 × 0.4 × 0.25 = 0.1. At 1x the candidate's quantity is its net
+    // payout, so the charge is 0.1 × 2.5e9 = 250e6.
     assert_eq!(
         harness
             .exposure
@@ -110,7 +109,7 @@ fun partial_overlap_charge_prices_a_fractional_crowding_term() {
                 HALF_PROBABILITY,
                 true,
             ),
-        125_000_000,
+        250_000_000,
     );
 
     cleanup(fx, oracle, harness);
@@ -121,7 +120,7 @@ fun partial_overlap_charge_prices_a_fractional_crowding_term() {
 /// so `g = 3e9 − max(0, 1e9) = 2e9` and `delta = 0.25 × 1e9 + 2e9`.
 #[test]
 fun removing_the_peak_range_stops_at_the_complement() {
-    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING);
 
     assert_eq!(
         harness
@@ -143,7 +142,7 @@ fun removing_the_peak_range_stops_at_the_complement() {
 /// true `g = 10e6`, not 100e6. `delta = 0.25 × 90e6 + 10e6 = 32_500_000`.
 #[test]
 fun two_near_peaks_close_releases_min_n_and_m_minus_c() {
-    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING);
     let high_q = 200_000_000;
     let near_q = 190_000_000;
     let close_n = 100_000_000;
@@ -172,7 +171,7 @@ fun two_near_peaks_close_releases_min_n_and_m_minus_c() {
 /// add, and the branch that keeps a cold close from over-claiming.
 #[test]
 fun removing_a_cold_range_releases_only_its_lambda_share() {
-    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING);
 
     // R = 1e9 < M = 3e9, so g = 0 and delta = 0.25 × 1e9.
     assert_eq!(
@@ -194,7 +193,7 @@ fun removing_a_cold_range_releases_only_its_lambda_share() {
 /// `N` and releases the whole dollar.
 #[test]
 fun closing_the_only_exposure_releases_the_whole_dollar() {
-    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING);
     let lower = test_constants::default_strike_tick();
     let higher = constants::pos_inf_tick!();
     harness.mint(&pricer, lower, higher, UP_QUANTITY, fx.clock());
@@ -208,10 +207,10 @@ fun closing_the_only_exposure_releases_the_whole_dollar() {
 }
 
 /// Immediate open-then-close of the same range and size: `g_add == g_removal`
-/// (hence equal deltas), which is what makes the rebate/charge invariant tight.
+/// (hence equal deltas), which is what makes charge == rebate at a shared `p`.
 #[test]
 fun open_then_close_same_range_has_equal_max_point_gains() {
-    let (fx, oracle, mut harness, pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, mut harness, pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING);
     let lower = constants::neg_inf!();
     let higher = test_constants::default_strike_tick();
     // Candidate that partially overtakes the peak — the interesting middle branch.
@@ -229,11 +228,68 @@ fun open_then_close_same_range_has_equal_max_point_gains() {
     cleanup(fx, oracle, harness);
 }
 
+/// With load removed from the rate, equal crowding at a shared probability makes
+/// the skew charge equal the skew rebate. The round trip's loss is then exactly
+/// the two trade-fee floors — pin `min_fee > 0` so a future zeroing of that floor
+/// cannot silently make the round trip free on the fee+skew axes.
+#[test]
+fun same_range_round_trip_nets_zero_on_skew_and_loses_exactly_the_two_fees() {
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING);
+    let lower = test_constants::default_strike_tick();
+    let higher = constants::pos_inf_tick!();
+    let quantity = UP_QUANTITY;
+
+    let charge = harness
+        .exposure
+        .inventory_skew_charge(lower, higher, quantity, quantity, HALF_PROBABILITY, true);
+    assert!(charge > 0);
+    harness.mint(&pricer, lower, higher, quantity, fx.clock());
+    let rebate = harness
+        .exposure
+        .inventory_skew_charge(lower, higher, quantity, quantity, HALF_PROBABILITY, false);
+    assert_eq!(charge, rebate);
+
+    // Fixture ships with `base_fee` floored so the per-leg fee binds at `min_fee`.
+    // Quantity × min_fee is the independent fee each leg pays.
+    let min_fee = config_constants::default_min_fee!();
+    assert!(min_fee > 0);
+    let fee_per_leg = math::mul_down(min_fee, quantity);
+    assert!(fee_per_leg > 0);
+    // Skew cancels; remaining debit on the fee+skew axes is exactly two fees.
+    assert_eq!(fee_per_leg + fee_per_leg + charge - rebate, fee_per_leg + fee_per_leg);
+
+    cleanup(fx, oracle, harness);
+}
+
+/// `gamma == 0` is the sole kill switch and must return before any payout-tree
+/// walk. A piled book would otherwise force two range-max descents; with gamma
+/// disarmed the charge is still exactly zero.
+#[test]
+fun gamma_zero_kill_switch_returns_zero_on_a_piled_book() {
+    let (fx, oracle, harness, _pricer) = skew_book(0, CAP_NON_BINDING);
+
+    assert_eq!(
+        harness
+            .exposure
+            .inventory_skew_charge(
+                test_constants::default_strike_tick(),
+                constants::pos_inf_tick!(),
+                UP_QUANTITY,
+                UP_QUANTITY,
+                HALF_PROBABILITY,
+                true,
+            ),
+        0,
+    );
+
+    cleanup(fx, oracle, harness);
+}
+
 /// A fully-floored order has no net payout, so it consumes no reserve — and the
 /// short-circuit is what keeps the crowding term from dividing by zero.
 #[test]
 fun zero_net_payout_consumes_nothing_and_is_never_charged() {
-    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING);
 
     assert_eq!(
         harness
@@ -269,7 +325,6 @@ fun zero_net_payout_consumes_nothing_and_is_never_charged() {
 fun empty_skew_book(
     gamma: u64,
     cap: u64,
-    capital_basis: u64,
 ): (OracleFixture, OracleBundle, ExposureHarness, Pricer) {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
@@ -285,7 +340,6 @@ fun empty_skew_book(
         expiry_ms,
         gamma,
         cap,
-        capital_basis,
     );
 
     fx.scenario_mut().next_tx(test_constants::admin());
@@ -301,9 +355,8 @@ fun empty_skew_book(
 fun skew_book(
     gamma: u64,
     cap: u64,
-    capital_basis: u64,
 ): (OracleFixture, OracleBundle, ExposureHarness, Pricer) {
-    let (fx, oracle, mut harness, pricer) = empty_skew_book(gamma, cap, capital_basis);
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(gamma, cap);
 
     harness.mint(
         &pricer,
@@ -353,14 +406,12 @@ fun create_and_share_exposure_harness(
     expiry_ms: u64,
     gamma: u64,
     cap: u64,
-    capital_basis: u64,
 ): ID {
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
     let mut config = strike_exposure_config::new();
     config.set_inventory_skew_gamma(gamma);
     config.set_inventory_skew_cap(cap);
-    config.set_skew_capital_basis(capital_basis);
     let exposure = strike_exposure::new(
         expiry_market_id,
         expiry_ms,

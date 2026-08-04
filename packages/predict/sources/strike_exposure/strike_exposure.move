@@ -358,8 +358,9 @@ public(package) fun marginal_reserve_consumption(
 /// This is a transaction-price shift, not a shift of the quoted mid: the charge
 /// rides alongside the trade fee and is escrowed, so entry probability, floors,
 /// NAV, and the payout reserve are all untouched by it. `adding` prices a mint
-/// against the pre-mint book and a live close against the post-removal book, which
-/// is what makes an immediate round trip lose (see `inventory_skew_rate`).
+/// against the pre-mint book and a live close against the post-removal book. At a
+/// shared probability the two legs cancel on the skew term; the trade-fee floor
+/// is what keeps an immediate round trip from profiting (see `inventory_skew_rate`).
 public(package) fun inventory_skew_charge(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -882,23 +883,19 @@ fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
     )
 }
 
-/// Return the per-unit inventory-skew rate, in FLOAT_SCALING:
-/// `gamma * utilization * (delta / net_payout) * p * (1 - p)`, capped.
+/// Locality-only rate: `gamma · (delta / net_payout) · p(1 − p)`, capped.
+/// Pool-wide load is priced by the utilization fee multiplier on
+/// `ProtocolConfig`, not here — that denominator is live pool equity, while a
+/// snapshotted basis could not respond to LP withdrawals.
 ///
-/// The three factors are the three things that make a fill expensive for the pool:
-/// how much of the snapshotted capital basis the reserve already uses
-/// (`utilization`, sampled at the post-trade level), how much of this order's own
-/// dollar lands on the book's peak rather than spread across it (`delta /
-/// net_payout`, the crowding term), and how uncertain the contract is (`p(1-p)`,
-/// which vanishes at both ends where the range is nearly settled either way).
-/// A same-range same-size round trip always loses: `g_add == g_removal` (see
-/// `marginal_reserve_consumption`), so the crowding factors match, and the close
-/// is priced at the strictly lower post-removal utilization — before either leg's
-/// trade fee.
+/// `gamma == 0` (the kill switch) returns before any payout-tree read, so a
+/// disarmed market pays no skew gas. Bernoulli variance is used directly rather
+/// than its square root: the fee curve wants the mild `sqrt` shape, but the skew
+/// charge should fall off fast away from a coin flip.
 ///
-/// Bernoulli variance is used directly rather than its square root: the fee curve
-/// wants the mild `sqrt` shape, but the skew charge should fall off fast away from
-/// a coin flip, where crowding is what the pool is actually exposed to.
+/// A same-range same-size round trip has `g_add == g_removal`, so the skew charge
+/// and rebate are equal at a shared probability; the round trip cannot profit
+/// because both legs still pay the trade fee (`min_fee` floor).
 fun inventory_skew_rate(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -908,8 +905,8 @@ fun inventory_skew_rate(
     adding: bool,
 ): u64 {
     let gamma = exposure.config.inventory_skew_gamma();
-    let capital_basis = exposure.config.skew_capital_basis();
-    if (gamma == 0 || capital_basis == 0 || net_payout == 0) return 0;
+    // Kill switch: must precede `marginal_reserve_consumption` / range-max walks.
+    if (gamma == 0 || net_payout == 0) return 0;
     // A certain contract has no inventory risk to price, and the variance term
     // would be zero anyway.
     if (probability == 0 || probability == math::float_scaling!()) return 0;
@@ -920,29 +917,10 @@ fun inventory_skew_rate(
         net_payout,
         adding,
     );
-    let liability = exposure.payout_liability();
-    let post_trade_liability = if (adding) {
-        liability + delta
-    } else {
-        // The reserve this close releases cannot exceed the reserve it is part of;
-        // clamp rather than abort so a rounding disagreement between the aggregate
-        // and the marginal formula cannot brick a close.
-        liability.saturating_sub(delta)
-    };
-    // Utilization above the basis is fully utilized; splitting the branch also
-    // keeps the scaled numerator inside u64 for any basis.
-    let utilization = if (post_trade_liability >= capital_basis) {
-        math::float_scaling!()
-    } else {
-        math::mul_div_down(post_trade_liability, math::float_scaling!(), capital_basis)
-    };
     // `delta <= net_payout` (it is `λ(N − g) + g` with `g <= N`), so crowding is a
     // fraction and cannot overflow the scaling.
     let crowding = math::mul_div_down(delta, math::float_scaling!(), net_payout);
     let variance = math::mul_down(probability, math::float_scaling!() - probability);
-    let rate = math::mul_down(
-        math::mul_down(math::mul_down(gamma, utilization), crowding),
-        variance,
-    );
+    let rate = math::mul_down(math::mul_down(gamma, crowding), variance);
     rate.min(exposure.config.inventory_skew_cap())
 }

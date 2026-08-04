@@ -218,13 +218,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   add lock contention for no solvency benefit.
 - **Inventory skew is priced into the transaction, not the mid.** A mint that pushes
   the book's enforced payout reserve up pays an extra unsigned line item beside the
-  premium and the penalty fee — `gamma · u_after · (delta / net_payout) · p(1 − p)`,
-  capped by `inventory_skew_cap` and charged on quantity. `delta` is the *marginal*
-  reserve the range consumes under `payout_liability = M + λ(T − M)`: a range that
-  piles onto the current peak consumes its full net payout, one over cold strikes
-  consumes only its λ share, so the charge tracks the capital the order actually
-  encumbers rather than its notional. Closing live releases reserve, so it may earn
-  the mirror-image rebate, priced at the *post-removal* utilization.
+  premium and the penalty fee — locality only:
+  `gamma · (delta / net_payout) · p(1 − p)`, capped by `inventory_skew_cap` and
+  charged on quantity. Pool-wide load (`total_payout_liability / pool_nav`) is
+  priced separately by the utilization fee multiplier on `ProtocolConfig`; the
+  skew no longer carries a snapshotted capital-basis factor that could not respond
+  to LP withdrawals. `delta` is the *marginal* reserve the range consumes under
+  `payout_liability = M + λ(T − M)`: a range that piles onto the current peak
+  consumes its full net payout, one over cold strikes consumes only its λ share,
+  so the charge tracks the capital the order actually encumbers rather than its
+  notional. Closing live releases reserve, so it may earn the mirror-image rebate.
   *Rationale:* skew belongs where it can be escrowed and refunded to the party who
   later relieves the crowding; folding it into the quoted price would smear it across
   every holder and re-open the drift the mid shift died of (see "No inventory-aware
@@ -232,24 +235,23 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   *Key structural choices:* the charge is escrowed in `expiry_cash.skew_reserve`,
   counted in `required_cash` and held out of `free_cash`, so a rebate is always
   pre-funded and never a claim on LP capital; rebates are capped at the live reserve
-  and the settlement residual falls to the pool. `skew_capital_basis` is snapshotted
-  at market creation rather than derived from live cash, so the rate cannot be moved
-  by depositing or withdrawing around a trade. Skew sits outside the trading-fee cap
-  (it is a separate line item, like the penalty fee) and outside
+  and the settlement residual falls to the pool. Skew sits outside the trading-fee
+  cap (it is a separate line item, like the penalty fee) and outside
   `entry_probability`, the floors, the NAV mark, and `exact_live_liability`.
   *Invariant:* a mint-then-close round trip of the same range and size never profits.
   With `R` the in-range peak and `C` the complement peak (`M = max(R, C)`), the
   max-point moves are `g_add = max(M, R + N) − M` and
   `g_removal = M₁ − max(R₁ − N, C)` at the post-add book
   (`M₁ = max(C, R + N)`, `R₁ = R + N`), which collapse to the same value:
-  `g_removal = max(C, R + N) − M = g_add`. The crowding factors therefore match, and
-  the rebate is priced at the strictly lower post-removal utilization, so
-  rebate < charge with no reliance on fees. (An earlier removal shortcut that
+  `g_removal = max(C, R + N) − M = g_add`. The crowding factors therefore match, so
+  at a shared probability the skew charge equals the skew rebate and the skew term
+  nets to zero. Profit prevention moved from the skew mechanism to the trade fee:
+  both legs still pay `min_fee` (and any higher Bernoulli fee), so the round trip
+  is strictly negative by twice that floor. (An earlier removal shortcut that
   returned bare `N` whenever `R = M` overstated relief whenever `C > M − N` and
-  invalidated this proof; the complement-max form is what makes it tight.)
-  *Ships inert:* `inventory_skew_gamma = 0`, `skew_capital_basis = 0`, and
-  `inventory_skew_rebate_enabled = false`, so the rate short-circuits before any tree
-  read until an admin arms it.
+  broke `g_add == g_removal`; the complement-max form is what keeps crowding equal.)
+  *Ships inert:* `inventory_skew_gamma = 0` (the sole kill switch — short-circuits
+  before any tree read) and `inventory_skew_rebate_enabled = false`.
 
 ## Oracle extraction (recent)
 

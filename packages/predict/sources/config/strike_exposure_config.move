@@ -50,16 +50,13 @@ public struct StrikeExposureConfig has store {
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
     no_leverage_window_ms: u64,
-    /// Intensity of the inventory-skew charge, in FLOAT_SCALING. `0` disables it.
+    /// Intensity of the inventory-skew charge, in FLOAT_SCALING. `0` disables it
+    /// (the sole kill switch; short-circuits before any payout-tree read).
     inventory_skew_gamma: u64,
     /// Ceiling on the per-unit inventory-skew rate, in FLOAT_SCALING.
     inventory_skew_cap: u64,
     /// Whether a live close pays back a skew rebate from the escrowed reserve.
     inventory_skew_rebate_enabled: bool,
-    /// Capital the skew utilization measures payout liability against, in DUSDC
-    /// base units. Snapshotted at creation rather than read from live expiry cash,
-    /// so LP deposits and withdrawals do not move the charge. `0` disables the skew.
-    skew_capital_basis: u64,
 }
 
 /// Mint admission outcome: the net premium charged for the order and the static
@@ -121,10 +118,6 @@ public(package) fun inventory_skew_cap(config: &StrikeExposureConfig): u64 {
 
 public(package) fun inventory_skew_rebate_enabled(config: &StrikeExposureConfig): bool {
     config.inventory_skew_rebate_enabled
-}
-
-public(package) fun skew_capital_basis(config: &StrikeExposureConfig): u64 {
-    config.skew_capital_basis
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -225,7 +218,6 @@ public(package) fun new(): StrikeExposureConfig {
         inventory_skew_gamma: config_constants::default_inventory_skew_gamma!(),
         inventory_skew_cap: config_constants::default_inventory_skew_cap!(),
         inventory_skew_rebate_enabled: config_constants::default_inventory_skew_rebate_enabled!(),
-        skew_capital_basis: config_constants::default_skew_capital_basis!(),
     }
 }
 
@@ -245,7 +237,6 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         inventory_skew_gamma: config.inventory_skew_gamma,
         inventory_skew_cap: config.inventory_skew_cap,
         inventory_skew_rebate_enabled: config.inventory_skew_rebate_enabled,
-        skew_capital_basis: config.skew_capital_basis,
     }
 }
 
@@ -316,10 +307,6 @@ public(package) fun set_inventory_skew_rebate_enabled(
     enabled: bool,
 ) {
     config.inventory_skew_rebate_enabled = enabled;
-}
-
-public(package) fun set_skew_capital_basis(config: &mut StrikeExposureConfig, value: u64) {
-    config.skew_capital_basis = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.
