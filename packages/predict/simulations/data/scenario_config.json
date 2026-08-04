@@ -1,4 +1,5 @@
 {
+    "schema_version": 1,
     "source": {
         "expiry_ms": "1779955200000",
         "settlement_timestamp_ms": "1779955200001",

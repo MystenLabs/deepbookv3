@@ -3,10 +3,14 @@
 // owns submit + account funding + the op counter; the strategy decides what to do each tick.
 // It ticks on the strategy's pace until the strategy's maxOps (run-to-completion) or
 // DURATION_MS. Run one process per trader address. Default strategy "fuzz" = the original
-// behavior, so `up` / `up-many` are unchanged.
+// behavior for a `live` trader.
 import { readFileSync } from "node:fs";
 
-import { getSignerForAddress } from "./env.js";
+import { getSignerForAddress } from "../../devtools/ts/env.js";
+import {
+  requiredEnv,
+  requiredNonnegativeInt,
+} from "./runnerConfig.js";
 import { makeContext } from "./strategy.js";
 import { getStrategy } from "./strategies/index.js";
 import { appendTrace, errorTag } from "./trace.js";
@@ -16,19 +20,16 @@ import {
   createAccountTx,
   depositOwnedCoinTx,
   deriveAccountWrapperId,
+  executeWithSignerAndWait,
   readPlpBalance,
-  signExecThreaded,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
-const TRADER_ADDRESS = process.env.TRADER_ADDRESS ?? "";
-const INSTANCE_DIR = process.env.INSTANCE_DIR ?? ".";
-const DURATION_MS = Number(process.env.DURATION_MS ?? 0);
-const STRATEGY = process.env.STRATEGY ?? "fuzz";
+const TRADER_ADDRESS = requiredEnv("TRADER_ADDRESS");
+const INSTANCE_DIR = requiredEnv("INSTANCE_DIR");
+const DURATION_MS = requiredNonnegativeInt("DURATION_MS");
+const STRATEGY = requiredEnv("STRATEGY");
 const LABEL = TRADER_ADDRESS.slice(0, 8);
-// Plumb SIM_GAS_BUDGET to the trader so a batched op can reach the real 5e9 computation cap (the
-// mint-batch experiment); default 2e9 for ordinary strategies. (Was hardcoded 2e9 — the keeper had its
-// own FLUSH_GAS_BUDGET, so SIM_GAS_BUDGET never reached the trader and mint-batch OOG'd at 2e9, not the cap.)
-const GAS_BUDGET = Number(process.env.SIM_GAS_BUDGET ?? 2_000_000_000);
+const GAS_BUDGET = BigInt(requiredEnv("SIM_GAS_BUDGET"));
 
 const signer = getSignerForAddress(TRADER_ADDRESS);
 const wrapperId = deriveAccountWrapperId(TRADER_ADDRESS);
@@ -42,11 +43,13 @@ const readJson = (p: string): any => {
 };
 
 async function submit(tx: any, label: string): Promise<any> {
-  tx.setSender(TRADER_ADDRESS);
-  tx.setGasBudget(GAS_BUDGET);
-  const r = await signExecThreaded(tx, signer, { showEffects: true, showEvents: true });
-  if (r.effects?.status?.status !== "success") throw new Error(`${label}: ${JSON.stringify(r.effects?.status)}`);
-  return r;
+  return executeWithSignerAndWait(
+    tx,
+    signer,
+    label,
+    GAS_BUDGET,
+    { effects: true, events: true },
+  );
 }
 
 async function waitForFeeds(): Promise<any> {
@@ -62,9 +65,9 @@ async function fundAndSetup(): Promise<void> {
   await submit(createAccountTx(), "create-account");
   // Wait for the keeper to transfer DUSDC to this address, then deposit it.
   for (let i = 0; i < 120; i++) {
-    const coins = await client.getCoins({ owner: TRADER_ADDRESS, coinType: DUSDC_TYPE });
-    if (coins.data.length > 0) {
-      await submit(depositOwnedCoinTx(wrapperId, coins.data[0].coinObjectId), "deposit");
+    const coins = await client.listCoins({ owner: TRADER_ADDRESS, coinType: DUSDC_TYPE });
+    if (coins.objects.length > 0) {
+      await submit(depositOwnedCoinTx(wrapperId, coins.objects[0].objectId), "deposit");
       return;
     }
     await sleep(1000);
@@ -103,6 +106,9 @@ async function main() {
       ctx.trace({ type: "fail", tag: errorTag(e) });
       if (skips % 25 === 0) console.warn(`[trader ${LABEL}] skip: ${e instanceof Error ? e.message.slice(0, 90) : e}`);
     }
+    const semanticFailure = strategy.failure?.();
+    if (semanticFailure) throw new Error(`${strategy.name} incomplete: ${semanticFailure}`);
+    if (strategy.done?.()) break;
     if (strategy.maxOps > 0 && ops >= strategy.maxOps) break; // run-to-completion
     if (deadline && Date.now() >= deadline) break;
     await sleep(strategy.tickMs);

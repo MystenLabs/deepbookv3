@@ -7,20 +7,29 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import config, suicli
+from . import cancellation, config, suicli
 
 
-def genesis(config_dir: Path, rpc_port: int) -> Path:
+def genesis(
+    config_dir: Path,
+    rpc_port: int,
+    cancel_event: threading.Event | None = None,
+) -> Path:
     """Generate fresh genesis; return the client.yaml path (RPC port patched)."""
     if config_dir.exists():
         shutil.rmtree(config_dir)
     config_dir.mkdir(parents=True)
-    suicli.run(["genesis", "--force", "--working-dir", str(config_dir)])
+    suicli.run(
+        ["genesis", "--force", "--working-dir", str(config_dir)],
+        cancel_event=cancel_event,
+    )
+    cancellation.check(cancel_event)
 
     client_config = config_dir / "client.yaml"
     if rpc_port != config.RPC_BASE:
@@ -48,48 +57,85 @@ def start(config_dir: Path, rpc_port: int, faucet_port: int, log_path: Path) -> 
     )
 
 
-def _rpc(rpc_port: int, method: str, params=None) -> dict:
-    body = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
-    ).encode()
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{rpc_port}",
-        data=body,
-        headers={"Content-Type": "application/json"},
+def _client_json(
+    client_config: Path,
+    args: list[str],
+    cancel_event: threading.Event | None = None,
+) -> object:
+    """Run a read through the current Sui CLI transport and parse its JSON output."""
+    cp = suicli.client(
+        client_config,
+        [*args, "--json"],
+        check=False,
+        timeout=5,
+        cancel_event=cancel_event,
     )
-    with urllib.request.urlopen(req, timeout=5) as resp:
-        return json.loads(resp.read())
+    if cp.returncode != 0:
+        raise suicli.SuiError(cp.stderr.strip() or cp.stdout.strip())
+    return suicli.parse_json_lenient(cp.stdout)
 
 
-def wait_for_rpc(rpc_port: int, timeout: float = 90.0) -> None:
+def wait_for_rpc(
+    client_config: Path,
+    rpc_port: int,
+    timeout: float = 90.0,
+    cancel_event: threading.Event | None = None,
+) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        cancellation.check(cancel_event)
         try:
-            r = _rpc(rpc_port, "sui_getLatestCheckpointSequenceNumber")
-            if "result" in r:
+            if chain_id(client_config, cancel_event):
                 return
-        except (urllib.error.URLError, ConnectionError, OSError, json.JSONDecodeError):
+        except (
+            subprocess.SubprocessError,
+            suicli.SuiError,
+            OSError,
+            json.JSONDecodeError,
+            # An unrecognised chain-identifier shape must degrade to a bring-up TIMEOUT, not an
+            # unhandled crash out of the poll loop on the first successful RPC. `chain_id` raises
+            # ValueError for a payload it cannot read, and a future CLI format change would
+            # otherwise take the whole harness down with no diagnosis.
+            ValueError,
+        ):
             pass
-        time.sleep(1)
+        if cancel_event is not None:
+            cancel_event.wait(timeout=1)
+        else:
+            time.sleep(1)
     raise TimeoutError(f"localnet RPC not ready on :{rpc_port} after {timeout}s")
 
 
-def wait_for_faucet(faucet_port: int, timeout: float = 60.0) -> None:
+def wait_for_faucet(
+    faucet_port: int,
+    timeout: float = 60.0,
+    cancel_event: threading.Event | None = None,
+) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
+        cancellation.check(cancel_event)
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{faucet_port}/", timeout=5)
             return
         except urllib.error.HTTPError:
             return  # any HTTP response means the faucet is up
         except (urllib.error.URLError, ConnectionError, OSError):
-            time.sleep(1)
+            if cancel_event is not None:
+                cancel_event.wait(timeout=1)
+            else:
+                time.sleep(1)
     raise TimeoutError(f"faucet not ready on :{faucet_port} after {timeout}s")
 
 
-def fund(faucet_port: int, address: str, times: int = 2) -> None:
+def fund(
+    faucet_port: int,
+    address: str,
+    times: int = 2,
+    cancel_event: threading.Event | None = None,
+) -> None:
     body = json.dumps({"FixedAmountRequest": {"recipient": address}}).encode()
     for _ in range(times):
+        cancellation.check(cancel_event)
         try:
             req = urllib.request.Request(
                 f"http://127.0.0.1:{faucet_port}/v1/gas",
@@ -99,43 +145,99 @@ def fund(faucet_port: int, address: str, times: int = 2) -> None:
             urllib.request.urlopen(req, timeout=10).read()
         except (urllib.error.URLError, OSError):
             pass
+        if cancel_event is not None:
+            cancel_event.wait(timeout=1)
+        else:
+            time.sleep(1)
+    cancellation.check(cancel_event)
+    if cancel_event is not None:
+        cancel_event.wait(timeout=1)
+    else:
         time.sleep(1)
-    time.sleep(1)
+    cancellation.check(cancel_event)
 
 
-def balance(rpc_port: int, address: str) -> int:
+def balance(client_config: Path, address: str) -> int:
     """Total SUI balance (MIST) for an address, or -1 if the query fails."""
     try:
-        return int(_rpc(rpc_port, "suix_getBalance", [address])["result"]["totalBalance"])
-    except (urllib.error.URLError, ConnectionError, OSError, KeyError, ValueError, json.JSONDecodeError):
+        data = _client_json(
+            client_config,
+            ["balance", address, "--coin-type", "0x2::sui::SUI"],
+        )
+        # `sui client balance --json` returns a two-element array: [coin_entries, has_more].
+        # `SuiClientCommandResult::Balance` is `#[serde(untagged)]` over
+        # `(Vec<(Option<GetCoinInfoResponse>, Vec<Coin>)>, bool)`, so the coin list is the FIRST
+        # element rather than the response itself. Without unwrapping it every lookup raises and
+        # returns -1, which `_refill_gas`'s `0 <= balance` gate reads as "nothing to do" — so no
+        # address is ever refilled, silently, and long runs drift into gas exhaustion.
+        entries = data if isinstance(data, list) else [data]
+        if entries and isinstance(entries[0], list):
+            entries = entries[0]
+        if not entries:
+            return 0
+        entry = entries[0]
+        if not isinstance(entry, dict):
+            raise ValueError("unexpected balance response")
+        value = (
+            entry.get("totalBalance")
+            or entry.get("total_balance")
+            or entry.get("balance")
+        )
+        if isinstance(value, dict):
+            value = value.get("balance") or value.get("coinBalance")
+        return int(value)
+    except (subprocess.SubprocessError, suicli.SuiError, OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return -1
 
 
-def active_address(client_config: Path) -> str:
-    return suicli.client_text(client_config, ["active-address"])
+def active_address(
+    client_config: Path,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    return suicli.client(
+        client_config,
+        ["active-address"],
+        cancel_event=cancel_event,
+    ).stdout.strip()
 
 
-def chain_id(rpc_port: int) -> str:
-    return _rpc(rpc_port, "sui_getChainIdentifier")["result"]
+def chain_id(
+    client_config: Path,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    data = _client_json(
+        client_config,
+        ["chain-identifier"],
+        cancel_event,
+    )
+    if isinstance(data, str):
+        return data
+    if isinstance(data, dict):
+        # The pinned CLI emits a bare string; newer ones emit an object. sui 1.76 prints
+        # {"base58": "69WiPg…", "hex": "4c78adac"} — `hex` is the identifier every caller wants
+        # (it is what the retired `sui_getChainIdentifier` JSON-RPC returned), so prefer it and keep
+        # the older key names for the pinned build.
+        value = (
+            data.get("chainIdentifier")
+            or data.get("chain_identifier")
+            or data.get("hex")
+            or data.get("base58")
+        )
+        if isinstance(value, str):
+            return value
+    raise ValueError(f"unexpected chain identifier response: {data!r}")
 
 
 def request_stop(proc: subprocess.Popen | None) -> None:
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        os.killpg(proc.pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
         pass
 
 
 def stop(proc: subprocess.Popen | None) -> None:
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return
-    request_stop(proc)
-    try:
-        proc.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+    cancellation.stop_process_group(proc, proc.pid, 15)

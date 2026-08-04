@@ -60,7 +60,9 @@ python3 .claude/skills/predict-audit/preflight.py               # drift lint FIR
 python3 packages/predict/predeploy/check.py                     # dev-system linter: register pinning tests, ID cross-refs, MEASURED links, dead paths
 sui move build --path packages/<pkg> --warnings-are-errors   # pkg ∈ predict propbook account
 sui move test  --path packages/<pkg> --gas-limit 100000000000   # each of the three (predict is the big suite)
-(cd packages/predict/simulations && bash run.sh --python-only)   # sim smoke; localnet `bash run.sh` is also main-loop-only
+(cd packages/predict && npm run build && npm test)
+(cd packages/predict && python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v)
+(cd packages/predict && python3 -m harness parity --source /path/to/scenario_dataset.csv --max-rows 20) # localnet parity, MAIN LOOP only
 ```
 `preflight.py` guards the primer (the single point of failure — its module map + D-id citations reach every subagent): a missing module path is fatal, and a cited D-id without an explicit canonical decision or response-policy entry warns. `check.py` guards the predeploy system itself (a register decision whose pinning test vanished is un-enforced; a dangling tracker cross-ref means a broken workflow). The workflows also self-warn if `groundTruth` looks empty/short, but run the lint yourself so drift is caught before the launch questionnaire.
 
@@ -124,7 +126,7 @@ The whole-codebase last-line-of-defense run is the exception, not the default. F
 
 ## Hard rules (non-negotiable)
 - **Read-only on source.** Never modify `packages/*/sources/**`. Audit-run writes are reports (to `.claude/predict-review/reports/<date>/`, gitignored), temp sims/scripts (to the session scratchpad), and the reasoned curation update to `packages/predict/predeploy/open-items.md`.
-- **Compiler/localnet run in the MAIN LOOP, never in a subagent.** `sui build`, `sui test`, and localnet `bash run.sh` trip the 600s subagent watchdog and the run is lost (the `CLAUDE.md` "Common verification commands" guardrail). The orchestrator runs these itself and passes results in as `args`; subagents reason from source, grep, git, and **Python** sims (fast, watchdog-safe).
+- **Compiler/localnet run in the MAIN LOOP, never in a subagent.** `sui build`, `sui test`, and `python3 -m harness parity` trip the 600s subagent watchdog and the run is lost (the `CLAUDE.md` "Common verification commands" guardrail). The orchestrator runs these itself and passes results in as `args`; subagents reason from source, grep, git, and **Python** sims (fast, watchdog-safe).
 - **After editing `consolidate.py`, run `python3 .claude/skills/predict-audit/evals/test_consolidate.py`** (main loop). It locks the no-slip and id/dedup invariants found across skill reviews. It exits non-zero on regression; treat a red as a blocker.
 - **Check the REAL exit code.** Never pipe `sui build`/`test` through `tail` (it masks failures). Grep the captured log for `error`/`Test result`, or read `${PIPESTATUS[0]}`.
 - **Be prior-aware. Do not re-litigate settled decisions.** Before raising anything, apply the [Predict development-system authority order](../../../packages/predict/predeploy/README.md#authority-order). Do not use local ignored design scratch as authority for audit triage. A finding that matches an accepted/rejected decision is tagged with its D-id or committed-policy reference and downranked to Info, not raised as new.

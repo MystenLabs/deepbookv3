@@ -181,7 +181,8 @@ export async function settlementPrice(
 
 // A market's current NAV mark (the per-expiry recoverable value the flush prices
 // against). Loads a fresh live pricer, then reads `current_nav(market, &pricer)` —
-// see packages/predict/sources/expiry_market.move:221 and harness runtime.ts:476-481.
+// see packages/predict/sources/expiry_market.move and the shared localnet reader in
+// packages/predict/devtools/ts/runtime.ts.
 // `Pricer` has copy+drop, so the unconsumed borrow is fine in a read-only inspect.
 export async function currentNav(
 	client: ReadClient,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the legacy gas-benchmark results file from a local trace."""
+"""Write the gas-benchmark results file from a local trace."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from sim_artifacts import load_json_object, normalized_action, write_json
+from sim_artifacts import load_local_trace, normalized_action, write_json
 
 
 RESULTS_SCHEMA_VERSION = "results_v3"
@@ -25,13 +25,13 @@ def stat(values: list[float]) -> dict[str, float]:
 
 
 def execution_result(step: dict[str, Any]) -> dict[str, float]:
-    gas = step.get("gas") or {}
+    gas = step["gas"]
     return {
-        "wallMs": float(step.get("wallMs") or 0),
-        "computationCost": float(gas.get("computationCost") or 0),
-        "storageCost": float(gas.get("storageCost") or 0),
-        "storageRebate": float(gas.get("storageRebate") or 0),
-        "gasTotal": float(gas.get("gasTotal") or 0),
+        "wallMs": float(step["wallMs"]),
+        "computationCost": float(gas["computationCost"]),
+        "storageCost": float(gas["storageCost"]),
+        "storageRebate": float(gas["storageRebate"]),
+        "gasTotal": float(gas["gasTotal"]),
     }
 
 
@@ -46,8 +46,8 @@ def summarize(rows: list[dict[str, float]]) -> dict[str, Any]:
 def build_results(trace: dict[str, Any]) -> dict[str, Any]:
     by_action: dict[str, list[dict[str, float]]] = defaultdict(list)
 
-    for step in trace.get("steps", []):
-        action = normalized_action(str(step.get("action", "")))
+    for step in trace["steps"]:
+        action = normalized_action(step["action"])
         by_action[action].append(execution_result(step))
 
     mints = by_action.get("mint", [])
@@ -80,7 +80,7 @@ def main() -> None:
 
     trace_path = Path(sys.argv[1])
     out_path = Path(sys.argv[2])
-    trace = load_json_object(trace_path, "predict_local_trace_v3")
+    trace = load_local_trace(trace_path)
     write_json(out_path, build_results(trace))
     print(f"wrote {out_path}")
 

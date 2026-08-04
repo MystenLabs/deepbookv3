@@ -1,20 +1,61 @@
 // Market-data sources behind one `MarketSource` interface.
 //
 // - DirectWsSource owns the provider WS pair (Pyth Lazer spot + Block Scholes per-expiry
-//   forward/SVI). Used by a single `harness up` and by the shared hub.
+//   forward/SVI). Used by a single `harness live` and by the shared hub.
 // - HubSource reads a global snapshot written by ONE hub, so N parallel localnets share a
 //   single WS pair instead of opening one each.
-// - ReplaySource re-plays a recorded hub stream (deterministic market dynamics): it maps
-//   recorded expiries onto the current grid by sorted position and stamps fresh timestamps,
-//   so the recorded spot path + term structure run against the replay localnet's clock.
 import { readFileSync } from "node:fs";
 
 import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 import WebSocket from "ws";
 
+import { PREDICT_ORACLE_ID, forwardSid, spotSid, sviSid } from "../../devtools/ts/blockScholesSid.js";
 import { harnessKey } from "./io.js";
+import {
+  type BsSviUpdate,
+  type BsValueUpdate,
+  type BsWireSignature,
+  providerBatchFromJson,
+  verifyProviderBatchSignature,
+} from "../../devtools/ts/blockScholesWire.js";
 
 export const isoSec = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z";
+const SCALE_1E9 = 1_000_000_000;
+
+// Public, versioned Block Scholes testnet trust triple. The subscription's
+// `{network, pkg_ver}` selects this verifier deployment on the provider side;
+// startup fail-fast reads the shared registry over Sui gRPC, and every signed
+// batch re-reads it so pause and signer rotation take effect without a restart.
+const BS_PROVIDER_PROFILE = {
+  name: "testnet-v1",
+  network: "testnet" as const,
+  pkgVer: 1,
+  packageId: "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6",
+  registryId: "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
+  grpcUrl: "https://fullnode.testnet.sui.io:443",
+};
+
+export function providerPublicKeyFromRegistryObject(result: unknown): Uint8Array {
+  const object = result as any;
+  const expectedType = `${BS_PROVIDER_PROFILE.packageId}::registry::SignerRegistry`;
+  const objectType = object?.objectType ?? object?.type ?? "";
+  if (objectType && objectType !== expectedType) {
+    throw new Error(`Block Scholes registry type mismatch: ${objectType}`);
+  }
+  const json = object?.json?.fields ?? object?.json;
+  if (!json || json.paused !== false) {
+    throw new Error("Block Scholes provider registry is paused or unreadable");
+  }
+  if (typeof json.signer_pubkey !== "string") {
+    throw new Error("Block Scholes provider registry has no signer key");
+  }
+  const publicKey = Uint8Array.from(Buffer.from(json.signer_pubkey, "base64"));
+  if (publicKey.length !== 33 || (publicKey[0] !== 2 && publicKey[0] !== 3)) {
+    throw new Error("Block Scholes provider registry signer key is malformed");
+  }
+  return publicKey;
+}
 
 export interface Svi {
   alpha: number;
@@ -23,14 +64,28 @@ export interface Svi {
   m: number;
   sigma: number;
 }
+export interface FixedSvi {
+  a: bigint;
+  aNegative: boolean;
+  b: bigint;
+  sigma: bigint;
+  rho: bigint;
+  rhoNegative: boolean;
+  m: bigint;
+  mNegative: boolean;
+}
 // One expiry's provider data with each series' own model timestamp — when that data is "as of",
 // pinned by the provider across retransmissions of an unchanged value. The on-chain stores order
 // and age series by this clock, so discarding it would collapse the dual-clock contract the
 // updater exists to exercise.
 export interface ExpiryData {
   forward: number;
+  /// Exact provider integer at the signed subscription's decimals=9 scale.
+  forward1e9: bigint;
   forwardTsMs: number;
   svi: Svi;
+  /// Exact provider integers/sign bits used when re-domain-signing for localnet.
+  svi1e9: FixedSvi;
   sviTsMs: number;
 }
 export interface MarketSnapshot {
@@ -48,48 +103,154 @@ export interface MarketSource {
   start(expiries: number[]): Promise<void>;
   ensureExpiries(want: number[]): void;
   latest(): MarketSnapshot | null;
+  diagnostics?(): Record<string, unknown>;
   stop(): void;
 }
 
-// Parse a snapshot JSON object ({spot1e9, publishedAtMs, expiries:{ms:{forward,forwardTsMs,svi,
-// sviTsMs}}}) into a MarketSnapshot. Older recordings without per-series timestamps fall back to
-// the publish time. mapByPosition remaps the recorded expiries onto `wanted` by sorted index
-// (replay); otherwise it filters to exactly the wanted expiries (hub).
-function snapshotFrom(h: any, wanted: number[], mapByPosition: boolean): MarketSnapshot {
-  const publishedAtMs = Number(h.publishedAtMs);
-  const entry = (e: any): ExpiryData => ({
-    forward: e.forward,
-    forwardTsMs: Number(e.forwardTsMs ?? publishedAtMs),
-    svi: e.svi,
-    sviTsMs: Number(e.sviTsMs ?? publishedAtMs),
-  });
+export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    spot1e9: snapshot.spot1e9.toString(),
+    publishedAtMs: snapshot.publishedAtMs.toString(),
+    bsSpot1e9: snapshot.bsSpot1e9.toString(),
+    bsSpotTsMs: snapshot.bsSpotTsMs,
+    expiries: Object.fromEntries(
+      [...snapshot.expiries.entries()].map(([expiryMs, entry]) => [
+        String(expiryMs),
+        {
+          forward: entry.forward,
+          forward1e9: entry.forward1e9.toString(),
+          forwardTsMs: entry.forwardTsMs,
+          svi: entry.svi,
+          svi1e9: {
+            a: entry.svi1e9.a.toString(),
+            aNegative: entry.svi1e9.aNegative,
+            b: entry.svi1e9.b.toString(),
+            sigma: entry.svi1e9.sigma.toString(),
+            rho: entry.svi1e9.rho.toString(),
+            rhoNegative: entry.svi1e9.rhoNegative,
+            m: entry.svi1e9.m.toString(),
+            mNegative: entry.svi1e9.mNegative,
+          },
+          sviTsMs: entry.sviTsMs,
+        },
+      ]),
+    ),
+  };
+}
+
+function strictObject(
+  value: unknown,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  const object = value as Record<string, unknown>;
+  const expected = new Set(keys);
+  const missing = keys.filter((key) => !(key in object));
+  const unknown = Object.keys(object).filter((key) => !expected.has(key));
+  if (missing.length || unknown.length) {
+    throw new Error(
+      `${label} schema mismatch` +
+      (missing.length ? `; missing=${missing.join(",")}` : "") +
+      (unknown.length ? `; unknown=${unknown.join(",")}` : ""),
+    );
+  }
+  return object;
+}
+
+function integerString(value: unknown, label: string): bigint {
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) {
+    throw new Error(`${label} must be an integer string`);
+  }
+  return BigInt(value);
+}
+
+function finiteNumber(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${label} must be a finite number`);
+  }
+  return value;
+}
+
+// Parse the current versioned hub snapshot. Missing and unknown fields fail the read;
+// callers retry the next atomic snapshot instead of silently manufacturing semantics.
+function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
+  const h = strictObject(
+    raw,
+    ["schemaVersion", "spot1e9", "publishedAtMs", "bsSpot1e9", "bsSpotTsMs", "expiries"],
+    "snapshot",
+  );
+  if (h.schemaVersion !== 1) {
+    throw new Error(`unsupported snapshot schemaVersion: ${String(h.schemaVersion)}`);
+  }
+  const encodedExpiries = h.expiries;
+  if (encodedExpiries === null || typeof encodedExpiries !== "object" || Array.isArray(encodedExpiries)) {
+    throw new Error("snapshot.expiries must be an object");
+  }
+  const entry = (e: any): ExpiryData => {
+    const encoded = strictObject(
+      e,
+      ["forward", "forward1e9", "forwardTsMs", "svi", "svi1e9", "sviTsMs"],
+      "snapshot expiry",
+    );
+    const encodedSvi = strictObject(
+      encoded.svi,
+      ["alpha", "beta", "rho", "m", "sigma"],
+      "snapshot expiry.svi",
+    );
+    const encodedFixed = strictObject(
+      encoded.svi1e9,
+      ["a", "aNegative", "b", "sigma", "rho", "rhoNegative", "m", "mNegative"],
+      "snapshot expiry.svi1e9",
+    );
+    const boolean = (value: unknown, label: string): boolean => {
+      if (typeof value !== "boolean") throw new Error(`${label} must be a boolean`);
+      return value;
+    };
+    const svi: Svi = {
+      alpha: finiteNumber(encodedSvi.alpha, "snapshot expiry.svi.alpha"),
+      beta: finiteNumber(encodedSvi.beta, "snapshot expiry.svi.beta"),
+      rho: finiteNumber(encodedSvi.rho, "snapshot expiry.svi.rho"),
+      m: finiteNumber(encodedSvi.m, "snapshot expiry.svi.m"),
+      sigma: finiteNumber(encodedSvi.sigma, "snapshot expiry.svi.sigma"),
+    };
+    return {
+      forward: finiteNumber(encoded.forward, "snapshot expiry.forward"),
+      forward1e9: integerString(encoded.forward1e9, "snapshot expiry.forward1e9"),
+      forwardTsMs: finiteNumber(encoded.forwardTsMs, "snapshot expiry.forwardTsMs"),
+      svi,
+      svi1e9: {
+        a: integerString(encodedFixed.a, "snapshot expiry.svi1e9.a"),
+        aNegative: boolean(encodedFixed.aNegative, "snapshot expiry.svi1e9.aNegative"),
+        b: integerString(encodedFixed.b, "snapshot expiry.svi1e9.b"),
+        sigma: integerString(encodedFixed.sigma, "snapshot expiry.svi1e9.sigma"),
+        rho: integerString(encodedFixed.rho, "snapshot expiry.svi1e9.rho"),
+        rhoNegative: boolean(encodedFixed.rhoNegative, "snapshot expiry.svi1e9.rhoNegative"),
+        m: integerString(encodedFixed.m, "snapshot expiry.svi1e9.m"),
+        mNegative: boolean(encodedFixed.mNegative, "snapshot expiry.svi1e9.mNegative"),
+      },
+      sviTsMs: finiteNumber(encoded.sviTsMs, "snapshot expiry.sviTsMs"),
+    };
+  };
   const expiries = new Map<number, ExpiryData>();
-  if (mapByPosition) {
-    const recorded = Object.keys(h.expiries ?? {}).map(Number).sort((a, b) => a - b);
-    const sortedWanted = [...wanted].sort((a, b) => a - b);
-    for (let i = 0; i < sortedWanted.length && i < recorded.length; i++) {
-      const e = h.expiries[String(recorded[i])];
-      if (e) expiries.set(sortedWanted[i], entry(e));
-    }
-  } else {
-    for (const ms of wanted) {
-      const e = h.expiries?.[String(ms)];
-      if (e) expiries.set(ms, entry(e));
-    }
+  for (const ms of wanted) {
+    const e = (encodedExpiries as Record<string, unknown>)[String(ms)];
+    if (e) expiries.set(ms, entry(e));
   }
   return {
-    spot1e9: BigInt(h.spot1e9),
-    publishedAtMs: BigInt(h.publishedAtMs),
-    // Recordings that predate the separate BS spot lane carried only the Pyth spot; fall
-    // back to it so old hubs/replays keep working.
-    bsSpot1e9: BigInt(h.bsSpot1e9 ?? h.spot1e9),
-    bsSpotTsMs: Number(h.bsSpotTsMs ?? publishedAtMs),
+    spot1e9: integerString(h.spot1e9, "snapshot.spot1e9"),
+    publishedAtMs: integerString(h.publishedAtMs, "snapshot.publishedAtMs"),
+    bsSpot1e9: integerString(h.bsSpot1e9, "snapshot.bsSpot1e9"),
+    bsSpotTsMs: finiteNumber(h.bsSpotTsMs, "snapshot.bsSpotTsMs"),
     expiries,
   };
 }
 
-const PYTH_TOKEN = harnessKey("PYTH_PRO_API_KEY");
-const BS_KEY = harnessKey("BLOCK_SCHOLES_API_KEY");
+const pythToken = () => harnessKey("PYTH_PRO_API_KEY");
+const blockScholesKey = () => harnessKey("BLOCK_SCHOLES_API_KEY");
 
 // Pyth Lazer history endpoint (settlement, independent of the live stream): the EXACT spot
 // at a past timestamp. Mirrors deepbook-services' fetchExactLazerPayload (POST /v1/price,
@@ -111,7 +272,7 @@ export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<
     try {
       const res = await fetch(PYTH_HISTORY_URL, {
         method: "POST",
-        headers: { Authorization: `Bearer ${PYTH_TOKEN}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${pythToken()}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           timestamp: timestampUs, priceFeedIds: [1], properties: ["price", "exponent"],
           formats: ["leEcdsa"], jsonBinaryEncoding: "base64", parsed: true, channel: PYTH_HISTORY_CHANNEL,
@@ -131,23 +292,69 @@ export async function fetchExactSpot1e9(expiryMs: number, retries = 3): Promise<
   throw lastErr;
 }
 
-// Direct provider-WS source: Pyth Lazer (spot) + Block Scholes (per-expiry fwd/svi).
+type BsRoute =
+  | { kind: "spot" }
+  | { kind: "forward"; expiryMs: number }
+  | { kind: "svi"; expiryMs: number };
+
+type PendingAck = {
+  clientId: string;
+  expectedSids: Set<string>;
+  expectedItems: Map<string, Record<string, unknown>>;
+  sentAtMs: number;
+};
+
+const sidHex = (sid: bigint): string => `0x${sid.toString(16).padStart(64, "0")}`;
+const fixedNumber = (value: bigint): number => Number(value) / SCALE_1E9;
+const sviView = (raw: FixedSvi): Svi => ({
+  alpha: fixedNumber(raw.a) * (raw.aNegative ? -1 : 1),
+  beta: fixedNumber(raw.b),
+  rho: fixedNumber(raw.rho) * (raw.rhoNegative ? -1 : 1),
+  m: fixedNumber(raw.m) * (raw.mNegative ? -1 : 1),
+  sigma: fixedNumber(raw.sigma),
+});
+
+// Direct provider source: Pyth Lazer plus Block Scholes' SUI-signed testnet
+// stream. Every BS frame is reconstructed byte-for-byte and checked against the
+// live testnet SignerRegistry before its values enter the cache. The localnet
+// later re-signs those exact fixed-point values for its freshly published
+// verifier package because the provider signature is domain-bound to testnet.
 export class DirectWsSource implements MarketSource {
   #pyth: PythLazerClient | null = null;
   #bs: WebSocket | null = null;
   #spot1e9: bigint | null = null;
   #spotMs = 0n;
-  #bsSpot: { v: number; tsMs: number } | null = null;
-  #fwd = new Map<number, { v: number; tsMs: number }>();
-  #svi = new Map<number, { svi: Svi; tsMs: number }>();
+  #bsSpot: { raw1e9: bigint; tsMs: number } | null = null;
+  #fwd = new Map<number, { raw1e9: bigint; tsMs: number }>();
+  #svi = new Map<number, { raw1e9: FixedSvi; tsMs: number }>();
   #expiries: number[] = [];
+  #routes = new Map<string, BsRoute>();
+  #acknowledgedSids = new Set<string>();
+  #retiredSids = new Map<string, number>();
+  #pendingAcks = new Map<number, PendingAck>();
+  #registryClient = new SuiGrpcClient({
+    baseUrl: BS_PROVIDER_PROFILE.grpcUrl,
+    network: BS_PROVIDER_PROFILE.network,
+  });
+  #signedBatchQueue: Promise<void> = Promise.resolve();
   #bsOpen = false;
-  #bsSubId = 0;
+  #bsStartedAtMs = 0;
+  #bsSubId = 1;
+  #fatal: Error | null = null;
+  #stopping = false;
+  #verifiedValueBatches = 0;
+  #verifiedSviBatches = 0;
+  #invalidBatches = 0;
+  #unknownSids = 0;
+  #retiredSidUpdates = 0;
+  #preAckUpdates = 0;
+  #acknowledgedSubscriptions = 0;
 
   async start(expiries: number[]): Promise<void> {
     this.#expiries = expiries;
+    await this.#loadProviderPublicKey(true);
     this.#pyth = await PythLazerClient.create({
-      token: PYTH_TOKEN,
+      token: pythToken(),
       webSocketPoolConfig: { urls: ["wss://pyth-lazer.dourolabs.app/v1/stream"], numConnections: 1 },
     });
     this.#pyth.addMessageListener((ev: any) => {
@@ -163,76 +370,342 @@ export class DirectWsSource implements MarketSource {
       properties: ["price", "exponent"], formats: ["leEcdsa"],
       deliveryFormat: "binary", parsed: true, channel: "real_time",
     });
-    await this.#startBs();
+    this.#startBs();
   }
 
-  async #startBs(): Promise<void> {
+  async #loadProviderPublicKey(announce = false): Promise<Uint8Array> {
+    const { object } = await this.#registryClient.getObject({
+      objectId: BS_PROVIDER_PROFILE.registryId,
+      include: { json: true },
+    });
+    const publicKey = providerPublicKeyFromRegistryObject(object);
+    if (announce) {
+      console.log(
+        `[bs-signed] trust ready profile=${BS_PROVIDER_PROFILE.name} ` +
+        `package=${BS_PROVIDER_PROFILE.packageId.slice(0, 10)} ` +
+        `registry=${BS_PROVIDER_PROFILE.registryId.slice(0, 10)}`,
+      );
+    }
+    return publicKey;
+  }
+
+  #startBs(): void {
     const ws = new WebSocket("wss://prod-websocket-api.blockscholes.com/");
     this.#bs = ws;
+    this.#bsStartedAtMs = Date.now();
     ws.on("open", () =>
-      ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "authenticate", params: { api_key: BS_KEY } })));
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "authenticate",
+        params: { api_key: blockScholesKey() },
+      })));
     ws.on("message", (raw) => {
-      let f: any; try { f = JSON.parse(String(raw)); } catch { return; }
-      if (f.result === "ok") {
+      let frame: any;
+      try {
+        frame = JSON.parse(String(raw));
+      } catch {
+        this.#fail(new Error("Block Scholes emitted invalid JSON"));
+        return;
+      }
+      if (frame.id === 1) {
+        if (frame.result !== "ok") {
+          this.#fail(
+            new Error(`Block Scholes authentication failed: ${JSON.stringify(frame.error ?? frame.result)}`),
+          );
+          return;
+        }
         this.#bsOpen = true;
         this.#subscribeBsGrid();
         return;
       }
-      if (f.method !== "subscription") return;
-      const list = Array.isArray(f.params) ? f.params : f.params ? [f.params] : [];
-      for (const entry of list) {
-        // Provider source timestamp (format option `timestamp: "ms"`) rides the delivery
-        // entry's `data`, one per group flush, and applies to every value it carries — the
-        // same read the production oracle-collector uses. A per-value `timestamp` wins if the
-        // provider ever adds one; 0 when absent, and the consumer substitutes the publish time.
-        const entryTsMs = Number(entry?.data?.timestamp ?? 0) || 0;
-        for (const v of entry?.data?.values || []) {
-          const sid: string = v.sid || "";
-          const tsMs = Number(v.timestamp ?? entryTsMs) || 0;
-          if (sid.startsWith("fwd_") && Number.isFinite(Number(v.v))) this.#fwd.set(Number(sid.slice(4)), { v: Number(v.v), tsMs });
-          else if (sid.startsWith("svi_")) this.#svi.set(Number(sid.slice(4)), { svi: { alpha: +v.alpha || 0, beta: +v.beta || 0, rho: +v.rho || 0, m: +v.m || 0, sigma: +v.sigma || 0 }, tsMs });
-          else if (sid.startsWith("spot_") && Number.isFinite(Number(v.v))) this.#bsSpot = { v: Number(v.v), tsMs };
-        }
+      if (this.#pendingAcks.has(Number(frame.id))) {
+        this.#handleAck(Number(frame.id), frame);
+        return;
+      }
+      if (frame.method !== "subscription") return;
+      const entries = Array.isArray(frame.params)
+        ? frame.params
+        : frame.params
+          ? [frame.params]
+          : [];
+      for (const entry of entries) {
+        this.#signedBatchQueue = this.#signedBatchQueue.then(() =>
+          this.#handleSignedBatch(entry),
+        );
       }
     });
-    ws.on("error", (e) => console.warn("[bs] socket error:", String(e).slice(0, 120)));
+    ws.on("error", (error) => this.#fail(new Error(`Block Scholes socket error: ${String(error)}`)));
+    ws.on("close", () => {
+      if (!this.#stopping && this.#fatal === null) {
+        this.#fail(new Error("Block Scholes socket closed unexpectedly"));
+      }
+    });
   }
 
-  // Subscribe the full current BS grid under STABLE client_ids ("forwards"/"svi"), re-sending the
-  // entire future-only batch. Re-sending the same client_id REPLACES that subscription's batch
-  // WHOLESALE on the BS server (not additive), so rolled-off expiries are evicted automatically and
-  // the active subscription set never grows. Mirrors the production updater (deepbook-services
-  // propbook-price-updater/blockScholes.ts), which is immune to the grid-drain for this reason.
-  // Per-expiry `sid`s are kept for routing; the client_id is the stable group. (Our grid sizes stay
-  // well under the BS ~20-per-batch chunk threshold; chunk like production if that's ever exceeded.)
+  #handleAck(id: number, frame: any): void {
+    const pending = this.#pendingAcks.get(id);
+    if (!pending) return;
+    if (frame.error) {
+      this.#fail(new Error(`Block Scholes ${pending.clientId} subscription failed: ${JSON.stringify(frame.error)}`));
+      return;
+    }
+    const groups = Array.isArray(frame.result) ? frame.result : [];
+    const items = groups.flatMap((group: any) => group?.batch?.batch ?? []);
+    const actual = new Set<string>(items.map((item: any) => String(item.sid)));
+    const expected = [...pending.expectedSids].sort();
+    const received = [...actual].sort();
+    const configOk = groups.length > 0 && groups.every((group: any) => {
+      const batch = group?.batch;
+      const format = batch?.options?.format;
+      const signature = batch?.options?.signature;
+      const domain = signature?.domain;
+      return (
+        batch?.client_id === pending.clientId &&
+        format?.timestamp === "ms" &&
+        format?.hexify === false &&
+        Number(format?.decimals) === 9 &&
+        signature?.type === "SUI" &&
+        (signature?.signature_schema ?? "ecdsa") === "ecdsa" &&
+        domain?.network === BS_PROVIDER_PROFILE.network &&
+        Number(domain?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer
+      );
+    });
+    const itemsOk = items.every((item: any) => {
+      const expectedItem = pending.expectedItems.get(String(item.sid));
+      return (
+        expectedItem !== undefined &&
+        Object.entries(expectedItem).every(([key, value]) => item?.[key] === value)
+      );
+    });
+    if (
+      !configOk ||
+      !itemsOk ||
+      expected.length !== received.length ||
+      expected.some((sid, index) => sid !== received[index])
+    ) {
+      this.#fail(
+        new Error(
+          `Block Scholes ${pending.clientId} acknowledgement mismatch ` +
+          `(expected ${expected.length} configured sids, received ${received.length})`,
+        ),
+      );
+      return;
+    }
+    this.#pendingAcks.delete(id);
+    for (const sid of received) this.#acknowledgedSids.add(sid);
+    this.#acknowledgedSubscriptions++;
+    console.log(`[bs-signed] acknowledged ${pending.clientId}: ${received.length} sid(s)`);
+  }
+
+  async #handleSignedBatch(entry: any): Promise<void> {
+    try {
+      const data = entry?.data;
+      const signature = entry?.signature as BsWireSignature | undefined;
+      if (!data || !signature || !Array.isArray(data.values)) {
+        throw new Error("Block Scholes signed notification is missing data/signature");
+      }
+      const batch = providerBatchFromJson(data);
+      // Registry pause and signer rotation are live trust inputs. Re-read them for
+      // every serialized provider batch so an already-running hub cannot continue
+      // under a revoked key or reject a newly-authorized one until restart.
+      const providerPublicKey = await this.#loadProviderPublicKey();
+      if (batch.kind === "value") {
+        const updates: BsValueUpdate[] = batch.updates;
+        this.#verify(signature, batch.payload, providerPublicKey);
+        this.#verifiedValueBatches++;
+        for (const update of updates) {
+          const sid = sidHex(update.sid);
+          const route = this.#routes.get(sid);
+          if (!route) {
+            if (this.#isRetiredSid(sid)) this.#retiredSidUpdates++;
+            else this.#unknownSids++;
+            continue;
+          }
+          if (!this.#acknowledgedSids.has(sid)) {
+            this.#preAckUpdates++;
+            continue;
+          }
+          if (route?.kind === "spot") {
+            this.#bsSpot = { raw1e9: update.value, tsMs: Number(update.timestampMs) };
+          } else if (route?.kind === "forward") {
+            this.#fwd.set(route.expiryMs, {
+              raw1e9: update.value,
+              tsMs: Number(update.timestampMs),
+            });
+          } else {
+            this.#unknownSids++;
+          }
+        }
+      } else {
+        const updates: BsSviUpdate[] = batch.updates;
+        this.#verify(signature, batch.payload, providerPublicKey);
+        this.#verifiedSviBatches++;
+        for (const update of updates) {
+          const sid = sidHex(update.sid);
+          const route = this.#routes.get(sid);
+          if (!route) {
+            if (this.#isRetiredSid(sid)) this.#retiredSidUpdates++;
+            else this.#unknownSids++;
+            continue;
+          }
+          if (!this.#acknowledgedSids.has(sid)) {
+            this.#preAckUpdates++;
+            continue;
+          }
+          if (route.kind !== "svi") {
+            this.#unknownSids++;
+            continue;
+          }
+          this.#svi.set(route.expiryMs, {
+            raw1e9: {
+              a: update.aMagnitude,
+              aNegative: update.aNegative,
+              b: update.b,
+              sigma: update.sigma,
+              rho: update.rhoMagnitude,
+              rhoNegative: update.rhoNegative,
+              m: update.mMagnitude,
+              mNegative: update.mNegative,
+            },
+            tsMs: Number(update.timestampMs),
+          });
+        }
+      }
+      const verified = this.#verifiedValueBatches + this.#verifiedSviBatches;
+      if (verified <= 3 || verified % 30 === 0) {
+        console.log(
+          `[bs-signed] verified batch #${verified} kind=${batch.kind} ` +
+          `values=${batch.updates.length} published_at_ms=${batch.batchTimestampMs}`,
+        );
+      }
+    } catch (error) {
+      this.#invalidBatches++;
+      this.#fail(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  #verify(
+    signature: BsWireSignature,
+    payload: Uint8Array,
+    providerPublicKey: Uint8Array,
+  ): void {
+    if (
+      !verifyProviderBatchSignature({
+        signature,
+        payload,
+        verifierPackageId: BS_PROVIDER_PROFILE.packageId,
+        expectedPublicKey: providerPublicKey,
+      })
+    ) {
+      throw new Error("Block Scholes batch signature did not match the live testnet registry");
+    }
+  }
+
+  #fail(error: Error): void {
+    if (this.#fatal !== null) return;
+    this.#fatal = error;
+    console.warn(`[bs-signed] fatal: ${error.message.slice(0, 240)}`);
+    this.#bs?.close();
+  }
+
+  #isRetiredSid(sid: string): boolean {
+    const expiresAtMs = this.#retiredSids.get(sid);
+    if (expiresAtMs === undefined) return false;
+    if (expiresAtMs >= Date.now()) return true;
+    this.#retiredSids.delete(sid);
+    return false;
+  }
+
+  // Subscribe the full current grid under stable client_ids. The client supplies
+  // Propbook's packed u256 ids because today's stores derive those exact ids at
+  // read time; each acknowledgement is checked before the stream is trusted.
   #subscribeBsGrid(): void {
     const ws = this.#bs;
     if (!ws) return;
-    const fmt = { timestamp: "ms", hexify: false, decimals: 9 };
-    const active = this.#expiries.filter((ms) => ms > Date.now()); // future-only; passed boundaries evicted
+    const active = this.#expiries.filter((ms) => ms > Date.now());
+    const spot = {
+      sid: sidHex(spotSid(PREDICT_ORACLE_ID)),
+      feed: "index.px",
+      asset: "spot",
+      base_asset: "BTC",
+      exchange: "blockscholes",
+    };
+    const forwards = active.map((ms) => ({
+      sid: sidHex(forwardSid(PREDICT_ORACLE_ID, BigInt(ms))),
+      feed: "mark.px",
+      asset: "future",
+      base_asset: "BTC",
+      expiry: isoSec(ms),
+    }));
+    const svis = active.map((ms) => ({
+      sid: sidHex(sviSid(PREDICT_ORACLE_ID, BigInt(ms))),
+      feed: "model.params",
+      exchange: "composite",
+      asset: "option",
+      base_asset: "BTC",
+      model: "SVI",
+      expiry: isoSec(ms),
+    }));
+    const nextRoutes = new Map<string, BsRoute>();
+    nextRoutes.set(spot.sid, { kind: "spot" });
+    active.forEach((expiryMs, index) => {
+      nextRoutes.set(forwards[index].sid, { kind: "forward", expiryMs });
+      nextRoutes.set(svis[index].sid, { kind: "svi", expiryMs });
+    });
+    const retiredUntilMs = Date.now() + 10_000;
+    for (const sid of this.#routes.keys()) {
+      if (!nextRoutes.has(sid)) this.#retiredSids.set(sid, retiredUntilMs);
+    }
+    this.#routes = nextRoutes;
+    this.#acknowledgedSids = new Set<string>();
+
+    const firstId = this.#bsSubId + 1;
     this.#bsSubId += 3;
-    // The signed BS spot series (`index.px`) — a real observation with its own model time,
-    // NOT the Pyth spot relabeled; the on-chain BS spot slot is fed from this. Re-sent with
-    // the grid for simplicity (replace-wholesale makes it idempotent).
-    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId, method: "subscribe", params: [{
-      frequency: "1000ms", retransmit_frequency: "1000ms", client_id: "spot",
-      batch: [{ sid: "spot_BTC", feed: "index.px", asset: "spot", base_asset: "BTC", quote_asset: "USD" }],
-      options: { format: fmt },
-    }] }));
-    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId + 1, method: "subscribe", params: [{
-      frequency: "1000ms", client_id: "forwards",
-      batch: active.map((ms) => ({ sid: `fwd_${ms}`, feed: "mark.px", asset: "future", base_asset: "BTC", expiry: isoSec(ms) })),
-      options: { format: fmt },
-    }] }));
-    ws.send(JSON.stringify({ jsonrpc: "2.0", id: this.#bsSubId + 2, method: "subscribe", params: [{
-      frequency: "1000ms", retransmit_frequency: "1000ms", client_id: "svi",
-      batch: active.map((ms) => ({ sid: `svi_${ms}`, feed: "model.params", exchange: "composite", asset: "option", base_asset: "BTC", model: "SVI", expiry: isoSec(ms) })),
-      options: { format: fmt },
-    }] }));
+    this.#sendSubscription(firstId, "spot", [spot]);
+    this.#sendSubscription(firstId + 1, "forwards", forwards);
+    this.#sendSubscription(firstId + 2, "svi", svis);
   }
 
-  // Roll the warmed grid forward by re-sending the full future-only batch under the stable
-  // client_ids (replace-wholesale evicts the boundaries that passed); prune their cached data.
+  #sendSubscription(id: number, clientId: string, batch: Record<string, unknown>[]): void {
+    const ws = this.#bs;
+    if (!ws) return;
+    const expectedSids = new Set(batch.map((item) => String(item.sid)));
+    const expectedItems = new Map(
+      batch.map((item) => [String(item.sid), item]),
+    );
+    this.#pendingAcks.set(id, {
+      clientId,
+      expectedSids,
+      expectedItems,
+      sentAtMs: Date.now(),
+    });
+    ws.send(JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method: "subscribe",
+      params: [{
+        frequency: "1000ms",
+        retransmit_frequency: "1000ms",
+        client_id: clientId,
+        batch,
+        options: {
+          format: { timestamp: "ms", hexify: false, decimals: 9 },
+          signature: {
+            type: "SUI",
+            signature_schema: "ecdsa",
+            domain: {
+              network: BS_PROVIDER_PROFILE.network,
+              pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
+            },
+          },
+        },
+      }],
+    }));
+  }
+
+  // Roll the warmed grid forward by replacing the provider batches wholesale;
+  // prune expired cached rows so memory and routing stay bounded.
   ensureExpiries(want: number[]): void {
     const same = want.length === this.#expiries.length && want.every((ms, i) => ms === this.#expiries[i]);
     this.#expiries = [...want];
@@ -243,6 +716,18 @@ export class DirectWsSource implements MarketSource {
   }
 
   latest(): MarketSnapshot | null {
+    if (this.#fatal !== null) throw this.#fatal;
+    if (!this.#bsOpen && Date.now() - this.#bsStartedAtMs > 10_000) {
+      this.#fail(new Error("Block Scholes authentication timed out"));
+      throw this.#fatal;
+    }
+    const staleAck = [...this.#pendingAcks.values()].find(
+      (pending) => Date.now() - pending.sentAtMs > 10_000,
+    );
+    if (staleAck) {
+      this.#fail(new Error(`Block Scholes ${staleAck.clientId} acknowledgement timed out`));
+      throw this.#fatal;
+    }
     if (this.#spot1e9 == null || this.#bsSpot == null) return null;
     const expiries = new Map<number, ExpiryData>();
     for (const ms of this.#expiries) {
@@ -250,9 +735,11 @@ export class DirectWsSource implements MarketSource {
       const svi = this.#svi.get(ms);
       if (forward != null && svi) {
         expiries.set(ms, {
-          forward: forward.v,
+          forward: fixedNumber(forward.raw1e9),
+          forward1e9: forward.raw1e9,
           forwardTsMs: forward.tsMs,
-          svi: svi.svi,
+          svi: sviView(svi.raw1e9),
+          svi1e9: svi.raw1e9,
           sviTsMs: svi.tsMs,
         });
       }
@@ -260,15 +747,41 @@ export class DirectWsSource implements MarketSource {
     return {
       spot1e9: this.#spot1e9,
       publishedAtMs: this.#spotMs,
-      bsSpot1e9: BigInt(Math.round(this.#bsSpot.v * 1e9)),
+      bsSpot1e9: this.#bsSpot.raw1e9,
       bsSpotTsMs: this.#bsSpot.tsMs,
       expiries,
     };
   }
 
+  diagnostics(): Record<string, unknown> {
+    return {
+      provider_profile: BS_PROVIDER_PROFILE.name,
+      provider_network: BS_PROVIDER_PROFILE.network,
+      provider_pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
+      verifier_package_id: BS_PROVIDER_PROFILE.packageId,
+      signer_registry_id: BS_PROVIDER_PROFILE.registryId,
+      authenticated: this.#bsOpen,
+      acknowledged_subscriptions: this.#acknowledgedSubscriptions,
+      pending_acknowledgements: this.#pendingAcks.size,
+      verified_value_batches: this.#verifiedValueBatches,
+      verified_svi_batches: this.#verifiedSviBatches,
+      invalid_batches: this.#invalidBatches,
+      unknown_sids: this.#unknownSids,
+      retired_sid_updates: this.#retiredSidUpdates,
+      pre_ack_updates: this.#preAckUpdates,
+      fatal: this.#fatal?.message ?? null,
+    };
+  }
+
   stop(): void {
+    this.#stopping = true;
     this.#pyth?.shutdown();
     this.#bs?.close();
+    console.log(
+      `[bs-signed] summary: acks=${this.#acknowledgedSubscriptions} ` +
+      `value_batches=${this.#verifiedValueBatches} svi_batches=${this.#verifiedSviBatches} ` +
+      `invalid=${this.#invalidBatches} unknown_sids=${this.#unknownSids}`,
+    );
   }
 }
 
@@ -284,51 +797,10 @@ export class HubSource implements MarketSource {
   }
   latest(): MarketSnapshot | null {
     try {
-      return snapshotFrom(JSON.parse(readFileSync(this.path, "utf8")), this.#wanted, false);
+      return snapshotFrom(JSON.parse(readFileSync(this.path, "utf8")), this.#wanted);
     } catch {
       return null;
     }
-  }
-  stop(): void {}
-}
-
-// Re-plays a recorded hub stream (JSONL of snapshots), one record per poll, remapping
-// recorded expiries onto the current grid and stamping a fresh publish time so the values
-// stay within the on-chain freshness window.
-export class ReplaySource implements MarketSource {
-  #records: any[] = [];
-  #i = 0;
-  #wanted: number[] = [];
-  constructor(private readonly path: string) {}
-  async start(expiries: number[]): Promise<void> {
-    this.#wanted = expiries;
-    this.#records = readFileSync(this.path, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
-  }
-  ensureExpiries(want: number[]): void {
-    this.#wanted = want;
-  }
-  latest(): MarketSnapshot | null {
-    if (this.#records.length === 0) return null;
-    const h = this.#records[Math.min(this.#i, this.#records.length - 1)];
-    this.#i++;
-    const snap = snapshotFrom(h, this.#wanted, true);
-    // Rebase EVERY clock by one offset so relative ages survive the replay. Refreshing only
-    // the envelope hands the store fresh batches whose model times still carry the
-    // recording's absolute age — the store accepts them and Predict immediately rejects
-    // them as stale.
-    const nowMs = Date.now();
-    const offsetMs = nowMs - Number(snap.publishedAtMs);
-    const shift = (tsMs: number): number => (tsMs > 0 ? tsMs + offsetMs : 0);
-    const expiries = new Map<number, ExpiryData>();
-    for (const [ms, e] of snap.expiries) {
-      expiries.set(ms, { ...e, forwardTsMs: shift(e.forwardTsMs), sviTsMs: shift(e.sviTsMs) });
-    }
-    return {
-      ...snap,
-      publishedAtMs: BigInt(nowMs),
-      bsSpotTsMs: shift(snap.bsSpotTsMs),
-      expiries,
-    };
   }
   stop(): void {}
 }

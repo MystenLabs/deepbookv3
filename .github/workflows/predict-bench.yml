@@ -20,6 +20,34 @@ env:
   BENCH_API_URL: https://deepbook-predict-bench.api.mystenlabs.com
 
 jobs:
+  unit:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Use Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Predict development dependencies
+        working-directory: packages/predict
+        run: npm install
+      - name: Run Predict harness checks
+        working-directory: packages/predict
+        run: |
+          npm run build
+          npm test
+          python3 -m py_compile harness/*.py simulations/*.py
+          python3 -m unittest discover -s harness/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s predeploy/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s simulations/tests -p 'test_*.py' -v
+          python3 predeploy/check.py
+
   trigger-benchmark:
     runs-on: ubuntu-latest
     if: >
@@ -86,7 +114,7 @@ jobs:
 
             case "$STATUS" in
               success)
-                echo "Benchmark completed successfully"
+                echo "Localnet parity and benchmark completed successfully"
                 exit 0
                 ;;
               failed)

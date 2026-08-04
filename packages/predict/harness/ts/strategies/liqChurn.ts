@@ -12,7 +12,7 @@ const liqChurn: Strategy = {
   fund: 10_000_000_000_000n,
   async tick(ctx) {
     ctx.pruneSettled();
-    const market = ctx.randomExpiry();
+    const market = ctx.randomLeveragedExpiry();
     if (!market || !ctx.snapshot()) return null;
     const p = ctx.rand(0.45, 0.55); // near the money
     const inst: Instruction = {

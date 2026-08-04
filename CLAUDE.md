@@ -31,7 +31,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | `packages/**/*.move`, `packages/**/Move.toml`, `packages/**/Published.toml` | [Sui Move instructions](.claude/rules/move.md) |
 | `packages/{predict,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
 | `packages/**/tests/**` | [Unit-test rules](.claude/rules/unit-tests.md) |
-| `packages/predict/harness/**` | [Predict harness rules](.claude/rules/predict-harness.md) |
+| `packages/predict/{harness,devtools,simulations}/**` | [Predict harness rules](.claude/rules/predict-harness.md) |
 | `packages/predict/deployment/**` | [Predict deployment rules](.claude/rules/predict-deployment.md) |
 | `crates/{server,schema,indexer}/**` | [Indexer rules](.claude/rules/indexer.md) |
 | `scripts/**` | [Scripts rules](.claude/rules/scripts.md) |

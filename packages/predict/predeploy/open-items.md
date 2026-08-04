@@ -467,22 +467,12 @@ The binding wall is now identified (object-cache, 2026-07-07 above); the compute
 runs below are superseded for the pool total (compute is not the wall), and what
 remains open is the FIX, not the measurement. Retained for context:
 
-- Payout-tree probe — DONE 2026-07-07 (`ts/strategies/treeNodeSweep.ts`,
-  `ts/strategies/treeNodeCumulative.ts`): filling one 1× market to the node cap
+- Historical payout-tree probes — DONE 2026-07-07: filling one 1× market to the node cap
   and two markets to 586 each proved the pool-total wall is the object-runtime
   cached-objects limit, cumulative across the PTB, not compute
   (`evidence/c1-object-cache-flush-2026-07-07.md`). The `c_node`/compute terms are
   moot for the pool total — object count binds first.
-- Worst-branch per-order cost (`ts/strategies/navStressAtm.ts`): the measured
-  expensive-branch (`exp_series`, moderate moneyness) cost replaces the
-  fuzz-derived ~3,644 units/order in the cap sizing; if the joint budget at
-  current caps exceeds ~60% of the wall, cap tightening becomes a deploy
-  blocker. Verify the branch was reached via the gas-by-moneyness buckets.
-- Pool-total confirmation (`ts/strategies/navStressMulti.ts` or the faster
-  `ts/strategies/batchMaxMarkets.ts`): confirms the binding constraint is the
-  sum over markets under one wall and measures the per-market base. Size LP
-  capital first so `EInsufficientCash` does not bound the book before flush
-  gas does.
+- Historical worst-branch and pool-total compute probes are superseded by the object-count result above, and their one-off strategy files were retired. If a fix needs a fresh boundary measurement, extend the retained `packages/predict/harness/ts/strategies/capacity.ts` family rather than restoring the old probes.
 - Any final cap change is followed by one run that reaches the new boundary
   and proves the flush stays under the safety target.
 
