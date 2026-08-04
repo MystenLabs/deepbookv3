@@ -178,9 +178,13 @@ and contributors. For *how* each mechanism works, follow the links into
   min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
-- PLP supply and withdraw carry **no fee**. The former uncertainty-band withdraw
-  fee (`withdraw_fee_alpha`) was deleted with the approximate-NAV band — the exact
-  single-mark NAV has no valuation uncertainty to price.
+- PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
+  `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the DUSDC leg
+  **outside** the mark and retained by the pool, so it accrues to remaining
+  holders; request limits are measured net of it, and it rounds up to the pool.
+  The former uncertainty-band withdraw fee (`withdraw_fee_alpha`) was deleted with
+  the approximate-NAV band and is not what this is — the exact single-mark NAV
+  still has no valuation uncertainty to price, and the mark is unchanged.
 
 ## Lifecycle
 

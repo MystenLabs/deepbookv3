@@ -25,10 +25,19 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
-    test_constants
+    test_constants,
+    vault_events
 };
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
+use sui::{event, test_scenario::return_shared};
+
+/// 5% in FLOAT_SCALING — the `max_plp_fee_rate` ceiling.
+const MAX_PLP_FEE_RATE: u64 = 50_000_000;
+/// 20 bps in FLOAT_SCALING — the shipped `default_plp_withdraw_fee_rate`.
+const DEFAULT_WITHDRAW_FEE_RATE: u64 = 2_000_000;
+/// A `min_supply!()` deposit filling at a 1.0 mark against the genesis lock, charged
+/// the 5% ceiling: fee = 500_000, so 9_500_000 is minted on top of the 10_000_000 lock.
+const SUPPLY_AFTER_MAX_FEE: u64 = 19_500_000;
 
 /// Account funding for the LP staging the request; well above `min_supply_request`.
 const LP_DEPOSIT: u64 = 1_000_000_000;
@@ -129,6 +138,9 @@ fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
 #[test]
 fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
     let (mut fx, mut account) = setup_pool_with_lp();
+    // Isolate the cap. Redundant against today's zero default, kept so a future
+    // non-zero supply default cannot silently shift every figure below.
+    set_supply_fee(&mut fx, 0);
     set_max_pool_value(&mut fx, 20_000_000);
     // Consume the whole 10 DUSDC of headroom first.
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
@@ -150,6 +162,7 @@ fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
 #[test]
 fun flush_fills_the_same_supply_when_the_pool_is_uncapped() {
     let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, 0);
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
 
     flush(&mut fx);
@@ -158,6 +171,76 @@ fun flush_fills_the_same_supply_when_the_pool_is_uncapped() {
     assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
 
     helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+// === Fee rates are read from config by the flush ===
+
+/// Entry is free as shipped. This is the whole point of splitting the rate: a
+/// deposit dilutes the pool's risk per dollar rather than concentrating it, so the
+/// default supply leg charges nothing and a deposit mints its full 1:1 share.
+#[test]
+fun flush_does_not_charge_the_supply_leg_at_the_shipped_default() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    flush(&mut fx);
+
+    assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// The supply rate must reach the drain from `ProtocolConfig`, not a compiled
+/// constant. The drain-level tests in `lp_book_tests` hand the rates to
+/// `new_flush_mark` by hand and so structurally cannot see a disconnected knob:
+/// a `finish_flush` that ignored config and froze zero passes all of them.
+#[test]
+fun flush_charges_a_configured_supply_fee() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, MAX_PLP_FEE_RATE);
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    flush(&mut fx);
+
+    assert_pending_and_supply(&mut fx, 0, SUPPLY_AFTER_MAX_FEE);
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// The withdraw leg cannot be driven behaviourally here — a unit-test accumulator
+/// root carries no settlement funds, so a fill's PLP never reaches account custody
+/// to be withdrawn (see the module doc). This asserts the frozen pair the flush
+/// actually took instead, which covers the withdraw rate's wiring and, because the
+/// two rates are set to different values, would also catch them being swapped.
+#[test]
+fun flush_freezes_both_configured_fee_rates() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+
+    // Shipped defaults first: entry free, exit charged.
+    flush(&mut fx);
+    let events = event::events_by_type<vault_events::FlushExecuted>();
+    assert_eq!(events.length(), 1);
+    let (supply_rate, withdraw_rate) = vault_events::flush_executed_fee_rates(&events[0]);
+    assert_eq!(supply_rate, 0);
+    assert_eq!(withdraw_rate, DEFAULT_WITHDRAW_FEE_RATE);
+
+    // Then two distinct non-default values, so a swap cannot pass.
+    set_supply_fee(&mut fx, MAX_PLP_FEE_RATE);
+    set_withdraw_fee(&mut fx, 0);
+
+    // `events_by_type` is scoped to the current transaction, so this is the second
+    // flush's own event, not an accumulation.
+    flush(&mut fx);
+    let events = event::events_by_type<vault_events::FlushExecuted>();
+    assert_eq!(events.length(), 1);
+    let (supply_rate, withdraw_rate) = vault_events::flush_executed_fee_rates(&events[0]);
+    assert_eq!(supply_rate, MAX_PLP_FEE_RATE);
+    assert_eq!(withdraw_rate, 0);
+
     fx.finish();
 }
 
@@ -196,6 +279,20 @@ fun set_attempts(fx: &mut helpers::Fixture, attempts: u64) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     fx.set_lp_request_limit_flush_attempts(&mut config, attempts);
+    return_shared(config);
+}
+
+fun set_supply_fee(fx: &mut helpers::Fixture, rate: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    fx.set_plp_supply_fee_rate(&mut config, rate);
+    return_shared(config);
+}
+
+fun set_withdraw_fee(fx: &mut helpers::Fixture, rate: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    fx.set_plp_withdraw_fee_rate(&mut config, rate);
     return_shared(config);
 }
 

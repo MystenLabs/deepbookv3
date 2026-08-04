@@ -273,6 +273,110 @@ including one-minute and five-minute surfaces, so the deviation bound is checked
 where it binds. This needs source rows at those cadences; the current CSV does
 not contain them, so it is a data-collection task before it is a generator task.
 
+### P-27: The PLP exit fee ships at 20 bps on a partly-unmeasured basis
+
+**Severity:** Undecided policy. Not a correctness bug — the mechanism is
+tested; the open question is whether the rate is right, and whether the leak it
+prices is real at all.
+
+A fill at an exact mark is provably value-neutral to incumbents: supplying `D`
+into pool value `V` over `S` shares mints `D·S/V`, leaving `V/S` unchanged.
+Extraction therefore requires the mark to differ from true recoverable value.
+Two facts make that gap non-zero: the certified NAV error is bounded near 1% in
+the worst case, and incumbents are involuntary counterparties who cannot
+decline a fill or requote it. Whoever chooses when to transact selects against
+that error one-directionally.
+
+The counter-argument is that this is ordinary trading, not extraction, and that
+a fee only shifts the thresholds a timer needs. That is correct in the limit
+where the mark is exact; it is exactly the limit that is not established.
+
+Predict is forward-priced — requests queue before the mark exists — which is
+the standard mitigation for the *stale-NAV* form of this problem, so the
+residual exposure is mark **error**, not mark **staleness**. That distinction
+decides the calibration: the yardstick is the certified error, not the variance
+of the share price between flushes.
+
+Shipped state: two independent rates, `plp_supply_fee_rate` (default **0**) and
+`plp_withdraw_fee_rate` (default **20 bps**), each in a `0..5%` envelope, charged
+on the DUSDC leg of executed fills only and retained by the pool. Both are
+admin-tunable to zero without a package upgrade, so shipping enabled is
+reversible; widening past 5% is not.
+
+**The basis splits in two, and only one half needs calibrating.**
+
+*Utilization on exit* — the pool's written liabilities do not shrink when an LP
+leaves, so the same risk sits on a smaller base and risk per dollar rises for
+whoever stays. This needs no adversary and no cleverness, and it is why the
+charge belongs on the exit alone: a deposit moves risk the other way. It
+justifies a non-zero exit fee on its own, without a measurement.
+
+*Model estimation error* — NAV is cash less what the pool owes, and what it owes
+comes from a formula over vendor vol with known mispricing. An active LP can
+capture that error at the expense of the LPs who stay. **This is the half that
+needs calibrating, and it is what the experiment below is for.** Sizing against
+the ~1% certified *arithmetic* bound is the wrong yardstick for it: that bound
+is the numerical envelope of the pricer, not the vendor's model error.
+
+The 20 bps default is therefore justified as a floor by the first mechanism and
+unvalidated as a ceiling against the second.
+
+**A withdrawer partly refunds their own fee, and the deviation is largest for
+the smallest exits.** The charge is retained by the pool, so a withdrawer who is
+not fully exiting still owns a share of what they just paid. For a holder of `s`
+of `S` shares withdrawing `w` at fee `F`, the net charge is
+`F * (1 - post_withdrawal_share)` where the share is `(s - w) / (S - w)`. At
+`w = s` the recapture term is exactly zero, so a **full exit pays `F` in full**;
+the deviation grows as the exit shrinks relative to what the holder keeps, and
+is largest for a holder who still owns much of the pool afterwards. That is the
+right direction — the charge bites hardest on the exit that concentrates the most
+risk, least on the LP who stays exposed — but any calibration below must target
+the *effective* rate at the sizes it is meant to deter, not the nominal one.
+
+The same identity holds on the supply leg, which is one more reason entry ships
+at zero: a supplier is a holder the instant the fill lands. Illustrated on that
+now-dormant leg, at a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC supply at
+20 bps: fee 20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so the new
+holding is worth 9_989_989 and the net charge is 10_011 — just over half. In
+closed form that is `F * V / (V + n - F)` for a deposit `n` into a pool worth
+`V`, equivalently `F * (1 - post_fill_share)`.
+
+**The split roughly halves the shipped cost of the strategy this item exists to
+measure.** A round trip costs `F_in * (1 - share) + F_out`; with `F_in = 0` as
+shipped that is now just `F_out`, so the timing loop pays a flat 20 bps rather
+than the ~40 bps a symmetric 20 bps would have charged a small LP. A pure
+outside timer — deposit, wait a flush, exit fully — recaptures nothing on either
+leg and pays exactly the nominal exit rate. The measurement below must be read
+against that figure, not against the symmetric one the item was first written
+for.
+
+**Experiment plan** (decision rule written before the run):
+
+- **Question:** does the realized fill mark deviate from a higher-precision
+  reference NAV at fill time, in a direction a submitter can predict at
+  *submit* time?
+- **Strategy:** drive supply/withdraw against a live book while recording, per
+  flush, the realized mark, the reference NAV, and the information available
+  one flush earlier. Measure realized round-trip PnL of a timing strategy at
+  both LP fee rates at 0, net of gas and a flush of escrow lockup.
+- **Blocked on:** the Python parity oracle still models scalar NAV, so there is
+  no independent reference to difference the realized mark against. Closing
+  that gap is the first step, not the experiment. It also does not model this
+  fee at all (`simulations/python_replay.py`, marked in-file), so parity runs
+  must stage both LP fee rates at 0 until someone derives the fee independently
+  there — copying the Move formula across would make the oracle a mirror of the
+  code it is supposed to check.
+- **Decision rule:** if zero-fee round-trip PnL is not distinguishable from
+  zero at the observed flush cadence, set the default to 0 and keep the knob.
+  If it is positive, set the rate above the measured per-lap edge and record
+  the measurement as the basis. Either outcome graduates to
+  `response-policies.md`; "it feels safer with a fee" does not.
+
+**Note:** the measurement depends on the flush cadence, which is itself
+unsettled — the keeper default and this repo's design record disagree, and
+every per-day figure in the discussion moves with it. Settle the cadence before
+running, or the result is not interpretable.
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation

@@ -1038,8 +1038,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   is paid what idle covers and keeps the balance queued, rather than carrying whole. The
   shares to burn are floored from available idle and the payout is then quoted from
   those shares by the same helper a full fill uses, so a partial exit prices identically
-  to a whole one and the pool never releases cash it has not destroyed shares for; at
-  most one ulp of idle is left behind rather than the requester being shorted.
+  to a whole one and the pool never releases cash it has not destroyed shares for. With
+  no withdraw fee set, at most one ulp of idle is left behind rather than the requester being
+  shorted. With the withdraw fee set the inversion is deliberately conservative: idle is inverted
+  at the *gross* price, so the leftover is the slice's fee plus that ulp (bounded by the
+  `0..5%` envelope). Grossing idle up by `1/(1 - rate)` would fill marginally more but
+  needs a second inversion rounded the pool's way at both steps; the remainder is
+  bounded and the next flush picks it up.
 - **Carried limits are rescaled, rounded in the requester's favour.** A partially filled
   request keeps asking for the same *price*, so its `min_output` is scaled to the
   remaining amount and rounded **up** — at worst the carried request is held to a
@@ -1083,7 +1088,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   capacity stop leaves it queued and spends no budget — plus
   `limit_miss_is_not_partially_filled_into_available_headroom` and, for the prefix
   price guard, `supply_prefix_below_the_requests_price_is_carried_not_filled` and
-  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`.
+  `withdraw_prefix_below_the_requests_price_is_carried_not_paid`. The fee-set
+  leftover bound above is pinned by
+  `withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle`, and the
+  prefix price guard under a fee by
+  `capped_partial_supply_at_its_own_price_fills_with_the_fee`.
   `lp_flow_tests.move` pins the cap to configured state rather than a constant
   (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
   `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).

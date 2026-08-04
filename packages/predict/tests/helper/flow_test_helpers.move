@@ -340,6 +340,16 @@ public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolCon
     config.set_trade_liquidation_budget(&self.admin_cap, budget);
 }
 
+/// Set the PLP supply-leg fee rate through the real admin path.
+public fun set_plp_supply_fee_rate(self: &Fixture, config: &mut ProtocolConfig, rate: u64) {
+    config.set_plp_supply_fee_rate(&self.admin_cap, rate);
+}
+
+/// Set the PLP withdraw-leg fee rate through the real admin path.
+public fun set_plp_withdraw_fee_rate(self: &Fixture, config: &mut ProtocolConfig, rate: u64) {
+    config.set_plp_withdraw_fee_rate(&self.admin_cap, rate);
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(
