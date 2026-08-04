@@ -24,7 +24,7 @@ import {
   executeAndWait,
   fundAddressDusdcTx,
   keeperFlushTxs,
-  executeAllAndWait,
+  execute,
   abortValuationTx,
   keeperLiquidateTx,
   keeperSettleTx,
@@ -133,7 +133,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       await executeAndWait(
         abortValuationTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "abort-stranded-valuation",
-        FLUSH_GAS_BUDGET,
       );
       appendTrace("keeper", { type: "valuation-aborted", lane: "recovery" });
     }
@@ -182,7 +181,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       // The flush is a sequence now: settle+snapshot (atomic), one value_expiry per
       // market, then finish. A failure part-way leaves the valuation lock held, so the
       // catch below discards it rather than letting the whole protocol sit frozen.
-      const fr = await executeAllAndWait(
+      const fr = await execute(
         keeperFlushTxs({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush",
       );
@@ -205,7 +204,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
         await executeAndWait(
           abortValuationTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
           "abort-valuation",
-          FLUSH_GAS_BUDGET,
         );
         appendTrace("keeper", { type: "valuation-aborted" });
         console.warn("[keeper] discarded the in-flight valuation, lock released");
