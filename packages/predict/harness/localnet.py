@@ -87,7 +87,17 @@ def wait_for_rpc(
         try:
             if chain_id(client_config, cancel_event):
                 return
-        except (subprocess.SubprocessError, suicli.SuiError, OSError, json.JSONDecodeError):
+        except (
+            subprocess.SubprocessError,
+            suicli.SuiError,
+            OSError,
+            json.JSONDecodeError,
+            # An unrecognised chain-identifier shape must degrade to a bring-up TIMEOUT, not an
+            # unhandled crash out of the poll loop on the first successful RPC. `chain_id` raises
+            # ValueError for a payload it cannot read, and a future CLI format change would
+            # otherwise take the whole harness down with no diagnosis.
+            ValueError,
+        ):
             pass
         if cancel_event is not None:
             cancel_event.wait(timeout=1)
@@ -203,7 +213,16 @@ def chain_id(
     if isinstance(data, str):
         return data
     if isinstance(data, dict):
-        value = data.get("chainIdentifier") or data.get("chain_identifier")
+        # The pinned CLI emits a bare string; newer ones emit an object. sui 1.76 prints
+        # {"base58": "69WiPg…", "hex": "4c78adac"} — `hex` is the identifier every caller wants
+        # (it is what the retired `sui_getChainIdentifier` JSON-RPC returned), so prefer it and keep
+        # the older key names for the pinned build.
+        value = (
+            data.get("chainIdentifier")
+            or data.get("chain_identifier")
+            or data.get("hex")
+            or data.get("base58")
+        )
         if isinstance(value, str):
             return value
     raise ValueError(f"unexpected chain identifier response: {data!r}")

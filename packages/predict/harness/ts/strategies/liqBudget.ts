@@ -31,12 +31,12 @@
 // liquidatable candidates — which are not merely priced but removed from the paged index and from
 // the payout treap. That is the branch the ceiling question is really about.
 //
-// Only `adverse` declares a terminal wall. At the pre-memo `correction_value` slope (~1.09M/order,
-// the closest measured analogue) a scan-only pass at the 3,000 max costs ~3.26e9 of the 5e9
-// computation cap — expensive, but it fits — so declaring the wall on `healthy` would fail every
-// clean run VACUOUS, and would whitelist the OOG if it ever did happen. An undeclared arm that
-// OOGs a single mint raises `liq-budget-wall-undeclared` in the analysis instead: a scan-only mint
-// that cannot fit is a bigger finding than the one being measured.
+// NEITHER arm declares a terminal wall, and neither declares `done`. "The budget max fits" and "it
+// does not" are equally valid answers to the question this asks, so the outcome must not be encoded
+// as pass/fail: a declared wall that goes unreached fails the run VACUOUS, and `done` opts the
+// strategy out of the runner's bounded-stop branch so a `--timeout` stop reports `incomplete`. What
+// fails a run is measuring NOTHING — see `failure()` — or an analysis that cannot fit a usable
+// line, which `analyze` signals separately. Reaching the cap is reported as a bracket, not a fault.
 //
 // Run `adverse` with KEEPER_LIQ_BUDGET=0. The keeper's own permissionless liquidate() lane would
 // otherwise sweep the liquidatable orders before a mint's ambient pass could reach them, and
@@ -76,7 +76,6 @@ interface LiqBudgetConfig {
   leverage: (ctx: StrategyCtx, probability: number) => number;
   probability: [number, number];
   directions: ("UP" | "DN")[];
-  expect?: { terminal: string[]; note?: string };
 }
 
 const CONFIG: Record<LiqBudgetProfile, LiqBudgetConfig> = {
@@ -89,10 +88,6 @@ const CONFIG: Record<LiqBudgetProfile, LiqBudgetConfig> = {
     leverage: (ctx, probability) => ctx.leverageCap(probability) * ctx.rand(0.9, 0.99),
     probability: [0.45, 0.55], // near the money -> high static floor -> tight knock-out level
     directions: ["UP", "DN"],
-    expect: {
-      terminal: ["InsufficientGas"],
-      note: "per-tx computation cap on a liquidating ambient pass",
-    },
   },
 };
 

@@ -234,6 +234,34 @@ class VerdictTests(unittest.TestCase):
                 signals,
             )
 
+    def test_declared_wall_amnesty_requires_corroborating_vm_evidence(self) -> None:
+        # The raw-tag branch exists because the producer's tag names only the framework call. It is
+        # gated on the failed-tx artifact corroborating the declared wall — evidence, not a name
+        # match. Without an artifact, a raw failure is an ordinary unexplained failure and must
+        # still reach the oracle; otherwise declaring any terminal silently excuses everything.
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory)
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+            )
+            (trace / "trader.jsonl").write_text(
+                '{"schema":1,"type":"expect","strategy":"capacity-tree",'
+                '"terminal":["cached objects limit"],"ts":2}\n'
+                + json.dumps({
+                    "schema": 1, "type": "fail", "strategy": "capacity-tree",
+                    "tag": "TypeError: Cannot read properties of undefined", "ts": 3,
+                }) + "\n"
+            )
+            # No artifacts/ directory at all: nothing corroborates the declared wall.
+            signals = analyze._analyze_one(instance)
+
+        self.assertTrue(
+            any("TypeError" in s for s in signals),
+            f"an uncorroborated raw failure must still be flagged, got {signals}",
+        )
+
     def test_declared_wall_accepts_the_raw_tag_the_producer_actually_emits(self) -> None:
         # `capacity-tree` declares "cached objects limit". Under the gRPC executor that wall
         # surfaces as a bare MovePrimitiveRuntimeError with no module in the message, so the trace

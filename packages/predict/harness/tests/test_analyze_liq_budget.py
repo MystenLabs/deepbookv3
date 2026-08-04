@@ -182,27 +182,6 @@ class LiqBudgetAnalysisTests(unittest.TestCase):
         self.assertIn("REJECTED", report)
         self.assertIn("liq-budget-fit-unusable", signals)
 
-    def test_a_declared_wall_does_not_fail_the_run(self) -> None:
-        # The adverse arm declares the computation cap, so reaching it is the point, not a surprise.
-        with tempfile.TemporaryDirectory() as tmp:
-            inst = _synthesise(Path(tmp), [100, 300, 2000, 4600], 1_700_000)
-            trace = inst / "trace" / "trader.jsonl"
-            trace.write_text(
-                trace.read_text()
-                + "\n"
-                + json.dumps({"type": "expect", "strategy": "liq-budget-adverse", "terminal": ["InsufficientGas"], "ts": 999_999, "schema": 1})
-            )
-            buf = io.StringIO()
-            with redirect_stdout(buf):
-                signals = analyze._analyze_one(inst)
-
-        # The whole run must come back clean, not merely free of the undeclared-wall signal: the
-        # trader submits via a path that writes no failed-tx artifact and traces its OOG as a
-        # mintBatch rather than a `fail`, so neither source the declared-wall check normally reads
-        # can see it — an arm that reached exactly the wall it declared would be failed VACUOUS.
-        self.assertIn("EMPIRICAL wall", buf.getvalue())
-        self.assertEqual(signals, [], f"a declared, reached wall must not fail the run: {signals}")
-
     def test_wall_reports_the_smallest_candidate_count_not_the_last_or_largest(self) -> None:
         # Two rungs OOG a single mint, at different books. The wall worth reporting is the CHEAPEST
         # state that could not fit — a ceiling set from the largest would be set above a budget
