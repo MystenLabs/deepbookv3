@@ -18,6 +18,10 @@ const TOTAL_FEE_AMOUNT: u64 = 50;
 const EXPECTED_REBATE_RESERVE: u64 = 20;
 /// Cash left after draining below the rebate reserve (10 < reserve 20).
 const CASH_BELOW_RESERVE: u64 = 10;
+/// A collected inventory-skew charge. Unlike the rebate reserve this is a direct
+/// dollar total, so the escrow equals the credited amount at any rebate rate.
+const SKEW_CHARGE: u64 = 30;
+const PARTIAL_SKEW_REBATE: u64 = 12;
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun assert_backing_underfunded_aborts() {
@@ -161,5 +165,100 @@ fun resolve_rebate_reserve_above_unresolved_basis_aborts() {
     let mut cash = expiry_cash::new(config);
 
     cash.resolve_rebate_reserve_for_fee_basis(FEE_AMOUNT);
+    abort 999
+}
+
+// === Inventory-skew escrow ===
+
+#[test]
+fun skew_reserve_is_withheld_from_free_cash_and_added_to_required_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+
+    // A mint pays 100 in and 30 of it was the skew charge. Cash rises by the whole
+    // payment; only the charge is reserved, so LP-visible free cash rises by 70.
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    assert_eq!(cash.balance(), CASH_AMOUNT); // 100
+    assert_eq!(cash.skew_reserve(), SKEW_CHARGE); // 30
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - SKEW_CHARGE); // 100 - 30 = 70
+    // No fee was collected, so the rebate reserve is 0 and required cash is the
+    // payout liability plus the skew escrow alone.
+    assert_eq!(cash.required_cash(FEE_AMOUNT), FEE_AMOUNT + SKEW_CHARGE); // 40 + 30 = 70
+
+    destroy(cash);
+}
+
+#[test]
+fun skew_reserve_stacks_with_the_rebate_reserve() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE); // 0.5
+    let mut cash = expiry_cash::new(config);
+
+    // Fee 40 at rate 0.5 reserves 20; the skew charge reserves its own 30. Both are
+    // withheld, so 70 of the 80 in cash is spoken for.
+    cash.collect_trade_fee(
+        coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance(),
+        FEE_AMOUNT,
+    );
+    cash.receive(coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    assert_eq!(cash.balance(), FEE_AMOUNT + FEE_AMOUNT); // 80
+    assert_eq!(cash.free_cash(), 80 - EXPECTED_REBATE_RESERVE - SKEW_CHARGE); // 80 - 20 - 30 = 30
+    assert_eq!(
+        cash.required_cash(CASH_AMOUNT),
+        CASH_AMOUNT + EXPECTED_REBATE_RESERVE + SKEW_CHARGE,
+    ); // 100 + 20 + 30 = 150
+
+    destroy(cash);
+}
+
+#[test]
+fun paying_a_skew_rebate_draws_down_the_escrow_and_frees_the_rest() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    let rebate = cash.pay_skew_rebate(PARTIAL_SKEW_REBATE);
+
+    assert_eq!(rebate.value(), PARTIAL_SKEW_REBATE); // 12
+    assert_eq!(cash.balance(), CASH_AMOUNT - PARTIAL_SKEW_REBATE); // 88
+    assert_eq!(cash.skew_reserve(), SKEW_CHARGE - PARTIAL_SKEW_REBATE); // 18
+    // The rebate leaves cash and the escrow together, so free cash is unchanged:
+    // 100 - 30 = 70 before, 88 - 18 = 70 after.
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - SKEW_CHARGE); // 70
+
+    // Releasing the residual at settlement moves it to free cash without moving
+    // any coins.
+    cash.release_skew_reserve();
+    assert_eq!(cash.skew_reserve(), 0);
+    assert_eq!(cash.balance(), CASH_AMOUNT - PARTIAL_SKEW_REBATE); // 88
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - PARTIAL_SKEW_REBATE); // 88
+
+    destroy(rebate);
+    destroy(cash);
+}
+
+#[test, expected_failure(abort_code = expiry_cash::ESkewRebateExceedsReserve)]
+fun skew_rebate_above_the_escrow_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
+    // Cash alone cannot fund a rebate: the escrow is the whole budget, so a claim
+    // above it aborts even though the balance would cover it.
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    let rebate = cash.pay_skew_rebate(SKEW_CHARGE + 1);
+    destroy(rebate);
     abort 999
 }

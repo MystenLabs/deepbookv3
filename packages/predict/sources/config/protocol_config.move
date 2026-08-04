@@ -169,6 +169,50 @@ public fun set_template_backing_buffer_lambda(
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
 }
 
+/// Set the inventory-skew intensity snapshotted by newly created expiry markets.
+/// `0` (the default) makes the charge inert.
+public fun set_template_inventory_skew_gamma(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_skew_gamma(value);
+}
+
+/// Set the per-unit inventory-skew rate ceiling snapshotted by newly created
+/// expiry markets.
+public fun set_template_inventory_skew_cap(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_skew_cap(value);
+}
+
+/// Set whether newly created expiry markets pay the inventory-skew rebate back on
+/// a live close.
+public fun set_template_inventory_skew_rebate_enabled(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_skew_rebate_enabled(enabled);
+}
+
+/// Set the capital basis newly created expiry markets measure skew utilization
+/// against, in DUSDC base units. `0` (the default) makes the charge inert.
+public fun set_template_skew_capital_basis(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_skew_capital_basis(value);
+}
+
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
 /// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
 public fun set_benefit_powers(

@@ -216,6 +216,33 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **`stake_deep` / `unstake_deep` carry no valuation-lock gate.** Staked DEEP is
   excluded from `lp_pool_value`, so neither can move the flush mark; gating them would
   add lock contention for no solvency benefit.
+- **Inventory skew is priced into the transaction, not the mid.** A mint that pushes
+  the book's enforced payout reserve up pays an extra unsigned line item beside the
+  premium and the penalty fee — `gamma · u_after · (delta / net_payout) · p(1 − p)`,
+  capped by `inventory_skew_cap` and charged on quantity. `delta` is the *marginal*
+  reserve the range consumes under `payout_liability = M + λ(T − M)`: a range that
+  piles onto the current peak consumes its full net payout, one over cold strikes
+  consumes only its λ share, so the charge tracks the capital the order actually
+  encumbers rather than its notional. Closing live releases reserve, so it may earn
+  the mirror-image rebate, priced at the *post-removal* utilization.
+  *Rationale:* skew belongs where it can be escrowed and refunded to the party who
+  later relieves the crowding; folding it into the quoted price would smear it across
+  every holder and re-open the drift the mid shift died of (see "No inventory-aware
+  mid shift" below — that rejection stands, this is a different placement).
+  *Key structural choices:* the charge is escrowed in `expiry_cash.skew_reserve`,
+  counted in `required_cash` and held out of `free_cash`, so a rebate is always
+  pre-funded and never a claim on LP capital; rebates are capped at the live reserve
+  and the settlement residual falls to the pool. `skew_capital_basis` is snapshotted
+  at market creation rather than derived from live cash, so the rate cannot be moved
+  by depositing or withdrawing around a trade. Skew sits outside the trading-fee cap
+  (it is a separate line item, like the penalty fee) and outside
+  `entry_probability`, the floors, the NAV mark, and `exact_live_liability`.
+  *Invariant:* a mint-then-close round trip never profits — the rebate is priced at
+  the post-removal utilization, which is strictly below the utilization the charge was
+  priced at, before fees.
+  *Ships inert:* `inventory_skew_gamma = 0`, `skew_capital_basis = 0`, and
+  `inventory_skew_rebate_enabled = false`, so the rate short-circuits before any tree
+  read until an admin arms it.
 
 ## Oracle extraction (recent)
 
@@ -274,7 +301,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **No inventory-aware mid shift.** *Rejected:* skewing the quoted mid by pool
   inventory — the aggregate drifts when the SVI surface moves and it carried an `i64`
   overflow risk (built, then fully reverted). Revisit only if the drift and overflow
-  are solved AND skew is shown to help LPs.
+  are solved AND skew is shown to help LPs. *Still rejected:* inventory skew now ships
+  as an unsigned, escrowed charge on the transaction (see "Inventory skew is priced
+  into the transaction, not the mid" above), which avoids both failure modes by never
+  touching the quoted mid.
 
 - **The Block Scholes feeds became signed-series stores gated by the production
 	  verifier.** The three per-source feed objects and the stub

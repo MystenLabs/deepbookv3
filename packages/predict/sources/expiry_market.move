@@ -73,7 +73,10 @@ public struct ExpiryMarket has key {
 /// `quantity` is the exact requested quantity or the conservatively budget-sized
 /// fill. `trading_fee` is the post-stake-discount fee before sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
-/// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
+/// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
+/// + inventory_skew_charge`. The skew charge is its own line item, outside the
+/// trading-fee cap and outside the loss-rebate fee basis, because it is escrowed
+/// for close-side rebates rather than earned as revenue.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -82,6 +85,7 @@ public struct MintQuote has copy, drop {
     fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
+    inventory_skew_charge: u64,
     all_in_cost: u64,
 }
 
@@ -127,6 +131,12 @@ public fun cash_balance(market: &ExpiryMarket): u64 {
 /// Return unresolved rebate reserve for SDK and devInspect state reads.
 public fun rebate_reserve(market: &ExpiryMarket): u64 {
     market.cash.rebate_reserve()
+}
+
+/// Return the inventory-skew escrow still available for close-side rebates, for
+/// SDK and devInspect state reads.
+public fun skew_reserve(market: &ExpiryMarket): u64 {
+    market.cash.skew_reserve()
 }
 
 /// Return local fee incentives for SDK and devInspect state reads.
@@ -389,6 +399,11 @@ public fun builder_fee(quote: &MintQuote): u64 {
 /// Return the quoted EWMA congestion surcharge for SDK and devInspect consumers.
 public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
+}
+
+/// Return the quoted inventory-skew charge for SDK and devInspect consumers.
+public fun inventory_skew_charge(quote: &MintQuote): u64 {
+    quote.inventory_skew_charge
 }
 
 /// Return the total quoted account withdrawal for SDK and devInspect consumers.
@@ -748,6 +763,9 @@ public fun try_settle(
     if (spot.is_none()) return false;
     let settlement_price = spot.destroy_some();
     market.strike_exposure.record_settlement(settlement_price);
+    // No live order can close after settlement, so the rebate budget is spent:
+    // release the residual so the sweep hands it to LPs instead of stranding it.
+    market.cash.release_skew_reserve();
     config_events::emit_market_settled(
         market.id(),
         market.propbook_underlying_id,
@@ -972,6 +990,7 @@ fun mint_prepared(
         quote.fee_incentive_subsidy,
         quote.builder_fee,
         quote.penalty_fee,
+        quote.inventory_skew_charge,
         clock.timestamp_ms(),
     );
     minted_order.id()
@@ -994,8 +1013,9 @@ fun compute_mint_quote(
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let net_premium = terms.net_premium();
+    let inventory_skew_charge = terms.skew_charge();
     let all_in_cost =
-        net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee;
+        net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee + inventory_skew_charge;
 
     MintQuote {
         quantity,
@@ -1005,6 +1025,7 @@ fun compute_mint_quote(
         fee_incentive_subsidy,
         builder_fee,
         penalty_fee,
+        inventory_skew_charge,
         all_in_cost,
     }
 }
@@ -1050,8 +1071,11 @@ fun settle_mint_payment(
     let mut fee_payment = payment.split(trader_fee_amount);
     fee_payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.collect_trade_fee(account, fee_payment, trader_fee_amount, ctx);
-    // Remaining balance is the net premium plus the penalty surplus.
+    // Remaining balance is the net premium plus the penalty and skew surplus.
     market.cash.receive(payment);
+    // The skew charge is cash like the rest, but reserved: it may only leave as a
+    // close-side rebate until settlement releases whatever is left to LPs.
+    market.cash.credit_skew_reserve(quote.inventory_skew_charge);
 
     market.assert_cash_backing();
 }
@@ -1158,12 +1182,17 @@ fun redeem(
             close_quantity,
         ).min(redeem_amount - fee_amount);
         let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+        // Skew rebates are paid only out of collected skew charges, so the escrow
+        // caps the quoted claim. Unlike the deductions above it is credited to the
+        // trader on top of the payout, so it never competes with them.
+        let skew_rebate_amount = terms.skew_rebate().min(market.cash.skew_reserve());
         // Close-side all-in slippage floor: the net credited to the account is
-        // `redeem_amount` minus the fee, builder fee, and penalty just computed —
-        // asserted before the payment applies them. `0` disables. Mirror of mint's
-        // `max_cost`.
+        // `redeem_amount` plus the skew rebate, minus the fee, builder fee, and
+        // penalty just computed — asserted before the payment applies them. `0`
+        // disables. Mirror of mint's `max_cost`.
         assert!(
-            redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
+            redeem_amount + skew_rebate_amount - fee_amount - builder_fee_amount - penalty_amount >=
+                min_proceeds,
             ERedeemProceedsBelowMin,
         );
 
@@ -1194,6 +1223,7 @@ fun redeem(
             fee_amount,
             builder_fee_amount,
             penalty_amount,
+            skew_rebate_amount,
             builder_code_id,
             ctx,
         );
@@ -1212,6 +1242,7 @@ fun redeem(
             fee_amount,
             builder_fee_amount,
             penalty_amount,
+            skew_rebate_amount,
             clock.timestamp_ms(),
         );
         return (order.id(), replacement_order_id)
@@ -1257,10 +1288,11 @@ fun redeem(
 
 /// Settle a live redeem per an already-computed payment decomposition: pay out
 /// `redeem_amount`, route the fee and builder fee, and credit the account with
-/// the remainder. The caller owns the decomposition (each amount pre-clamped so
-/// the splits below cannot underflow) and the `min_proceeds` guard, and passes
-/// its single `builder_code_id` read so the fee amount and the routing
-/// destination cannot come from different reads.
+/// the remainder plus the skew rebate. The caller owns the decomposition (each
+/// amount pre-clamped so the splits below cannot underflow, and the rebate capped
+/// at the escrow that funds it) and the `min_proceeds` guard, and passes its
+/// single `builder_code_id` read so the fee amount and the routing destination
+/// cannot come from different reads.
 ///
 /// The EWMA penalty is withheld from the payout and kept in expiry cash
 /// as surplus.
@@ -1271,11 +1303,15 @@ fun settle_live_redeem_payment(
     fee_amount: u64,
     builder_fee_amount: u64,
     penalty_amount: u64,
+    skew_rebate_amount: u64,
     builder_code_id: Option<ID>,
     ctx: &mut TxContext,
 ) {
     // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
     let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
+    // The rebate leaves the skew escrow, not the payout, so it adds to the credit
+    // rather than being carved out of it.
+    payout.join(market.cash.pay_skew_rebate(skew_rebate_amount));
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     predict_account::record_gross_received_from_expiry(account, market.id(), redeem_amount, ctx);

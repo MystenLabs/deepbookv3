@@ -35,6 +35,8 @@ const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
 const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
+const EInvalidInventorySkewGamma: u64 = 28;
+const EInvalidInventorySkewCap: u64 = 29;
 
 // === Fees ===
 
@@ -241,6 +243,61 @@ public(package) fun assert_backing_buffer_lambda(value: u64) {
         EInvalidBackingBufferLambda,
     );
 }
+
+// === Inventory Skew ===
+
+/// Intensity of the inventory-skew charge, in FLOAT_SCALING. The per-unit rate is
+/// `gamma * utilization * (delta / net_payout) * p * (1 - p)`, so `gamma` is the
+/// rate a maximally-crowded order at full utilization would pay on a coin-flip
+/// contract, times four. Ships at `0`: the charge is inert until an operator
+/// enables it, because the LP benefit is only established by replay so far.
+public(package) macro fun default_inventory_skew_gamma(): u64 { 0 }
+
+public(package) macro fun min_inventory_skew_gamma(): u64 { 0 }
+
+public(package) macro fun max_inventory_skew_gamma(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_inventory_skew_gamma(value: u64) {
+    assert!(
+        value >= min_inventory_skew_gamma!() && value <= max_inventory_skew_gamma!(),
+        EInvalidInventorySkewGamma,
+    );
+}
+
+/// Hard ceiling on the per-unit inventory-skew rate, in FLOAT_SCALING. A rate of
+/// `float_scaling` would charge the order's whole max payout, so the default is
+/// non-binding: the formula itself peaks at `gamma / 4`. Lower it to bound how
+/// punitive the charge can get on the most crowded ranges.
+public(package) macro fun default_inventory_skew_cap(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) macro fun min_inventory_skew_cap(): u64 { 0 }
+
+public(package) macro fun max_inventory_skew_cap(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_inventory_skew_cap(value: u64) {
+    assert!(
+        value >= min_inventory_skew_cap!() && value <= max_inventory_skew_cap!(),
+        EInvalidInventorySkewCap,
+    );
+}
+
+/// Whether a live close pays the inventory-skew rebate back out of the escrowed
+/// reserve. Ships off, so the charge is one-way until an operator turns the
+/// give-back on. No bounds helper: a bool has no invalid value.
+public(package) macro fun default_inventory_skew_rebate_enabled(): bool { false }
+
+/// Capital the skew utilization measures payout liability against, in DUSDC base
+/// units, snapshotted per expiry at market creation. No bounds helper: every u64
+/// is a legal basis, and `0` is the inert default that short-circuits the rate
+/// (a live expiry's own cash cannot be used — utilization must not move with the
+/// deposits and withdrawals the charge is meant to price).
+public(package) macro fun default_skew_capital_basis(): u64 { 0 }
 
 // === Pricing ===
 

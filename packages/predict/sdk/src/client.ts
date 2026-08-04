@@ -134,8 +134,15 @@ export interface MintQuote {
 	premium: number;
 	fees: { trading: number; subsidy: number; builder: number; penalty: number };
 	/**
-	 * All-in account debit: premium + (trading − subsidy) + builder + penalty —
-	 * exactly what the chain withdraws; pass this (plus your buffer) as maxCost.
+	 * Inventory-skew charge (quote units), escrowed for close-side rebates rather
+	 * than earned as fee revenue. Zero unless the expiry snapshotted a non-zero
+	 * gamma; billed on top of `fees`, so `cost` already includes it.
+	 */
+	inventorySkewCharge: number;
+	/**
+	 * All-in account debit: premium + (trading − subsidy) + builder + penalty +
+	 * skew charge — exactly what the chain withdraws; pass this (plus your buffer)
+	 * as maxCost.
 	 */
 	cost: number;
 	quantity: number;
@@ -151,6 +158,8 @@ export interface RedeemQuote {
 	/** Gross close value before fees. */
 	gross: number;
 	fees: { trading: number; builder: number; penalty: number };
+	/** Inventory-skew rebate credited on top of `gross`, out of the skew escrow. */
+	inventorySkewRebate: number;
 	quantityClosed: number;
 	remaining: number;
 	/** True when the position would close as a liquidated tombstone (zero payout). */
@@ -541,11 +550,13 @@ export class PredictClient {
 				r.raw.netPremium +
 				(r.raw.tradingFee - r.raw.feeIncentiveSubsidy) +
 				r.raw.builderFee +
-				r.raw.penaltyFee;
+				r.raw.penaltyFee +
+				r.raw.inventorySkewCharge;
 			return {
 				entryProbability: r.entryProbability,
 				premium: r.netPremium,
 				fees: r.fees,
+				inventorySkewCharge: r.inventorySkewCharge,
 				cost: rawToUsdc(costRaw),
 				quantity: r.quantity,
 				raw: {
@@ -572,6 +583,7 @@ export class PredictClient {
 				proceeds: r.proceeds,
 				gross: r.gross,
 				fees: { trading: r.fees.trading, builder: r.fees.builder, penalty: r.fees.penalty },
+				inventorySkewRebate: r.inventorySkewRebate,
 				quantityClosed: r.quantityClosed,
 				remaining: r.remaining,
 				wouldLiquidate: r.liquidated,

@@ -50,6 +50,16 @@ public struct StrikeExposureConfig has store {
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
     no_leverage_window_ms: u64,
+    /// Intensity of the inventory-skew charge, in FLOAT_SCALING. `0` disables it.
+    inventory_skew_gamma: u64,
+    /// Ceiling on the per-unit inventory-skew rate, in FLOAT_SCALING.
+    inventory_skew_cap: u64,
+    /// Whether a live close pays back a skew rebate from the escrowed reserve.
+    inventory_skew_rebate_enabled: bool,
+    /// Capital the skew utilization measures payout liability against, in DUSDC
+    /// base units. Snapshotted at creation rather than read from live expiry cash,
+    /// so LP deposits and withdrawals do not move the charge. `0` disables the skew.
+    skew_capital_basis: u64,
 }
 
 /// Mint admission outcome: the net premium charged for the order and the static
@@ -99,6 +109,22 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
+}
+
+public(package) fun inventory_skew_gamma(config: &StrikeExposureConfig): u64 {
+    config.inventory_skew_gamma
+}
+
+public(package) fun inventory_skew_cap(config: &StrikeExposureConfig): u64 {
+    config.inventory_skew_cap
+}
+
+public(package) fun inventory_skew_rebate_enabled(config: &StrikeExposureConfig): bool {
+    config.inventory_skew_rebate_enabled
+}
+
+public(package) fun skew_capital_basis(config: &StrikeExposureConfig): u64 {
+    config.skew_capital_basis
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -196,6 +222,10 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
+        inventory_skew_gamma: config_constants::default_inventory_skew_gamma!(),
+        inventory_skew_cap: config_constants::default_inventory_skew_cap!(),
+        inventory_skew_rebate_enabled: config_constants::default_inventory_skew_rebate_enabled!(),
+        skew_capital_basis: config_constants::default_skew_capital_basis!(),
     }
 }
 
@@ -212,6 +242,10 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         no_leverage_window_ms: config.no_leverage_window_ms,
+        inventory_skew_gamma: config.inventory_skew_gamma,
+        inventory_skew_cap: config.inventory_skew_cap,
+        inventory_skew_rebate_enabled: config.inventory_skew_rebate_enabled,
+        skew_capital_basis: config.skew_capital_basis,
     }
 }
 
@@ -265,6 +299,27 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {
     config_constants::assert_no_leverage_window_ms(window_ms);
     config.no_leverage_window_ms = window_ms;
+}
+
+public(package) fun set_inventory_skew_gamma(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_skew_gamma(value);
+    config.inventory_skew_gamma = value;
+}
+
+public(package) fun set_inventory_skew_cap(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_skew_cap(value);
+    config.inventory_skew_cap = value;
+}
+
+public(package) fun set_inventory_skew_rebate_enabled(
+    config: &mut StrikeExposureConfig,
+    enabled: bool,
+) {
+    config.inventory_skew_rebate_enabled = enabled;
+}
+
+public(package) fun set_skew_capital_basis(config: &mut StrikeExposureConfig, value: u64) {
+    config.skew_capital_basis = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.

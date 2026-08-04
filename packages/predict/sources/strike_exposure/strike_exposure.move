@@ -76,6 +76,11 @@ public struct MintTerms has drop {
     entry_probability: u64,
     net_premium: u64,
     floor_shares: u64,
+    /// Inventory-skew charge for this range, priced against the book as it stands
+    /// BEFORE the mint. It must be sampled here: `allocate_mint_order` inserts the
+    /// order, after which the marginal reserve consumption this charge prices is no
+    /// longer observable.
+    inventory_skew_charge: u64,
 }
 
 /// Compute-once terms for one prospective close of `order`. Built only by
@@ -118,6 +123,10 @@ public struct LiveCloseTerms has drop {
     remove_floor_shares: u64,
     redeem_amount: u64,
     range_probability: u64,
+    /// Inventory-skew rebate the closed slice earns back, priced against the book
+    /// as it stands BEFORE the removal (`0` unless the expiry snapshotted the
+    /// rebate on). The paying reserve caps it, so this is the claim, not the payment.
+    inventory_skew_rebate: u64,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -134,6 +143,10 @@ public(package) fun quantity(terms: &MintTerms): u64 {
 
 public(package) fun leverage(terms: &MintTerms): u64 {
     terms.leverage
+}
+
+public(package) fun skew_charge(terms: &MintTerms): u64 {
+    terms.inventory_skew_charge
 }
 
 public(package) fun is_liquidated(terms: &CloseTerms): bool {
@@ -174,6 +187,10 @@ public(package) fun redeem_amount(terms: &CloseTerms): u64 {
 
 public(package) fun range_probability(terms: &CloseTerms): u64 {
     terms.live_terms().range_probability
+}
+
+public(package) fun skew_rebate(terms: &CloseTerms): u64 {
+    terms.live_terms().inventory_skew_rebate
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -288,6 +305,69 @@ public(package) fun trading_fee(
         )
 }
 
+/// Return how much enforced payout reserve `net_payout` over the tick range
+/// `(lower_tick, higher_tick]` would consume (`adding`) or release (`!adding`).
+///
+/// The reserve is `L = M + λ(T − M)` for book max-point `M` and total `T`, so a
+/// candidate's marginal cost splits into the `λ` it always adds to the total and
+/// the part that also lifts the max point: with `R` the existing peak inside the
+/// range, the max-point gain is `g = max(M, R + N) − M` and
+/// `delta = λN + (1 − λ)g`. A range whose peak already carries the whole book
+/// (`R == M`) pays `g == N` — the full dollar — while a cold range far below the
+/// peak pays only `λN`.
+public(package) fun marginal_reserve_consumption(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    adding: bool,
+): u64 {
+    if (net_payout == 0) return 0;
+    let (max_net_payout, _) = exposure.payout.net_payout_reserve_terms();
+    let range_max = exposure.payout.range_max_net_payout(lower_tick, higher_tick);
+    let max_point_gain = if (adding) {
+        // Clamp, don't abort: a candidate that stays below the current peak lifts
+        // the max point by nothing, which is the `max(M, R + N)` in the formula.
+        (range_max + net_payout).saturating_sub(max_net_payout)
+    } else {
+        // A removal is the add formula evaluated at the POST-removal book, which
+        // collapses to the same two cases: the peak only drops when it sits inside
+        // this range (`R == M`, since `R <= M` always), and then both `M` and `R`
+        // fall by `N`, leaving `g == N`.
+        if (range_max < max_net_payout) 0 else net_payout
+    };
+    // = λN + (1 − λ)g, and `g <= N` in both branches, so the subtraction is exact.
+    math::mul_down(exposure.config.backing_buffer_lambda(), net_payout - max_point_gain)
+        + max_point_gain
+}
+
+/// Return the inventory-skew charge for `quantity` contracts over the tick range
+/// `(lower_tick, higher_tick]` at `probability`, in DUSDC base units.
+///
+/// This is a transaction-price shift, not a shift of the quoted mid: the charge
+/// rides alongside the trade fee and is escrowed, so entry probability, floors,
+/// NAV, and the payout reserve are all untouched by it. `adding` prices a mint
+/// against the pre-mint book and a live close against the post-removal book, which
+/// is what makes an immediate round trip lose (see `inventory_skew_rate`).
+public(package) fun inventory_skew_charge(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    quantity: u64,
+    probability: u64,
+    adding: bool,
+): u64 {
+    let rate = exposure.inventory_skew_rate(
+        lower_tick,
+        higher_tick,
+        net_payout,
+        probability,
+        adding,
+    );
+    math::mul_down(rate, quantity)
+}
+
 /// Return whether a leveraged order remains in the liquidation index. One-x
 /// orders are never indexed and always return false.
 public(package) fun is_active_order(exposure: &StrikeExposure, order: &Order): bool {
@@ -352,6 +432,7 @@ public(package) fun quote_mint_terms(
         );
     // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
+    let floor_shares = admission.floor_shares();
     MintTerms {
         expiry_market_id: exposure.expiry_market_id,
         lower_tick,
@@ -360,7 +441,15 @@ public(package) fun quote_mint_terms(
         leverage,
         entry_probability,
         net_premium: admission.net_premium(),
-        floor_shares: admission.floor_shares(),
+        floor_shares,
+        inventory_skew_charge: exposure.inventory_skew_charge(
+            lower_tick,
+            higher_tick,
+            quantity - floor_shares,
+            quantity,
+            entry_probability,
+            true,
+        ),
     }
 }
 
@@ -433,7 +522,7 @@ public(package) fun quote_close(
     };
     exposure.close_terms(
         order,
-        CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
+        CloseOutcome::Live(exposure.quote_live_close(order, close_quantity, range_probability)),
     )
 }
 
@@ -609,11 +698,17 @@ fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
     order.quantity() - order.floor_shares()
 }
 
-/// Quote one prospective live close as pure terms from the already-priced
-/// range probability: the floor-share split and the redeem facts, touching
-/// neither the book nor the oracle. The trade fee is recovered via
-/// `trading_fee` from the returned `range_probability`.
-fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64): LiveCloseTerms {
+/// Quote one prospective live close as terms from the already-priced range
+/// probability: the floor-share split and the redeem facts, touching neither the
+/// book nor the oracle. The trade fee is recovered via `trading_fee` from the
+/// returned `range_probability`. The book is read only to price the skew rebate,
+/// which must be sampled before `process_live_close` removes the slice.
+fun quote_live_close(
+    exposure: &StrikeExposure,
+    order: &Order,
+    close_quantity: u64,
+    range_probability: u64,
+): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
@@ -639,11 +734,25 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
     // value; the shortfall stays in expiry cash.
     let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
 
+    let inventory_skew_rebate = if (exposure.config.inventory_skew_rebate_enabled()) {
+        exposure.inventory_skew_charge(
+            order.lower_tick(),
+            order.higher_tick(),
+            close_quantity - remove_floor_shares,
+            close_quantity,
+            range_probability,
+            false,
+        )
+    } else {
+        0
+    };
+
     LiveCloseTerms {
         close_quantity,
         remove_floor_shares,
         redeem_amount,
         range_probability,
+        inventory_skew_rebate,
     }
 }
 
@@ -760,4 +869,68 @@ fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )
+}
+
+/// Return the per-unit inventory-skew rate, in FLOAT_SCALING:
+/// `gamma * utilization * (delta / net_payout) * p * (1 - p)`, capped.
+///
+/// The three factors are the three things that make a fill expensive for the pool:
+/// how much of the snapshotted capital basis the reserve already uses
+/// (`utilization`, sampled at the post-trade level), how much of this order's own
+/// dollar lands on the book's peak rather than spread across it (`delta /
+/// net_payout`, the crowding term), and how uncertain the contract is (`p(1-p)`,
+/// which vanishes at both ends where the range is nearly settled either way).
+/// A round trip in one book state always loses: the close is priced at the LOWER
+/// post-removal utilization, so its rebate cannot exceed the charge the open paid,
+/// and both legs still pay the trade fee.
+///
+/// Bernoulli variance is used directly rather than its square root: the fee curve
+/// wants the mild `sqrt` shape, but the skew charge should fall off fast away from
+/// a coin flip, where crowding is what the pool is actually exposed to.
+fun inventory_skew_rate(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    probability: u64,
+    adding: bool,
+): u64 {
+    let gamma = exposure.config.inventory_skew_gamma();
+    let capital_basis = exposure.config.skew_capital_basis();
+    if (gamma == 0 || capital_basis == 0 || net_payout == 0) return 0;
+    // A certain contract has no inventory risk to price, and the variance term
+    // would be zero anyway.
+    if (probability == 0 || probability == math::float_scaling!()) return 0;
+
+    let delta = exposure.marginal_reserve_consumption(
+        lower_tick,
+        higher_tick,
+        net_payout,
+        adding,
+    );
+    let liability = exposure.payout_liability();
+    let post_trade_liability = if (adding) {
+        liability + delta
+    } else {
+        // The reserve this close releases cannot exceed the reserve it is part of;
+        // clamp rather than abort so a rounding disagreement between the aggregate
+        // and the marginal formula cannot brick a close.
+        liability.saturating_sub(delta)
+    };
+    // Utilization above the basis is fully utilized; splitting the branch also
+    // keeps the scaled numerator inside u64 for any basis.
+    let utilization = if (post_trade_liability >= capital_basis) {
+        math::float_scaling!()
+    } else {
+        math::mul_div_down(post_trade_liability, math::float_scaling!(), capital_basis)
+    };
+    // `delta <= net_payout` (it is `λ(N − g) + g` with `g <= N`), so crowding is a
+    // fraction and cannot overflow the scaling.
+    let crowding = math::mul_div_down(delta, math::float_scaling!(), net_payout);
+    let variance = math::mul_down(probability, math::float_scaling!() - probability);
+    let rate = math::mul_down(
+        math::mul_down(math::mul_down(gamma, utilization), crowding),
+        variance,
+    );
+    rate.min(exposure.config.inventory_skew_cap())
 }

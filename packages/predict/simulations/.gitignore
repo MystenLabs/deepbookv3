@@ -1,4 +1,5 @@
 runs/
+artifacts/
 data/generated/
 data/scenario_dataset.csv
 node_modules/

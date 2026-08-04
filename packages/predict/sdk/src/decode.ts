@@ -53,6 +53,7 @@ const OrderMintedBcs = bcs.struct("OrderMinted", {
 	fee_incentive_subsidy: bcs.u64(),
 	builder_fee: bcs.u64(),
 	penalty_fee: bcs.u64(),
+	inventory_skew_charge: bcs.u64(),
 	builder_code_id: bcs.option(bcs.Address),
 });
 
@@ -69,6 +70,7 @@ const LiveOrderRedeemedBcs = bcs.struct("LiveOrderRedeemed", {
 	trading_fee: bcs.u64(),
 	builder_fee: bcs.u64(),
 	penalty_fee: bcs.u64(),
+	inventory_skew_rebate: bcs.u64(),
 	builder_code_id: bcs.option(bcs.Address),
 });
 
@@ -208,6 +210,12 @@ export interface MintReceipt {
 	/** Net premium paid into LP backing, in quote units. */
 	netPremium: number;
 	fees: { trading: number; subsidy: number; builder: number; penalty: number };
+	/**
+	 * Inventory-skew charge, in quote units. Escrowed by the market for close-side
+	 * rebates rather than earned as fee revenue, so it is billed alongside the fees
+	 * but reported separately. Zero unless the expiry snapshotted a non-zero gamma.
+	 */
+	inventorySkewCharge: number;
 	builderCodeId: string | null;
 	raw: {
 		quantity: bigint;
@@ -216,6 +224,7 @@ export interface MintReceipt {
 		feeIncentiveSubsidy: bigint;
 		builderFee: bigint;
 		penaltyFee: bigint;
+		inventorySkewCharge: bigint;
 		leverage: bigint;
 		entryProbability: bigint;
 	};
@@ -234,13 +243,20 @@ export interface RedeemReceipt {
 	 * the remaining quantity — update your stored id or it goes silently stale.
 	 */
 	replacementOrderId: bigint | null;
-	/** NET quote credited to the account: gross − trading − builder − penalty
-	 * (verified against the deployed settle path; 0 for a liquidated tombstone). */
+	/** NET quote credited to the account: gross + skew rebate − trading − builder −
+	 * penalty (verified against the deployed settle path; 0 for a liquidated
+	 * tombstone). */
 	proceeds: number;
 	/** Gross close value before fees (the event's redeem_amount). */
 	gross: number;
 	liquidated: boolean;
 	fees: { trading: number; builder: number; penalty: number };
+	/**
+	 * Inventory-skew rebate paid out of the market's skew escrow, in quote units.
+	 * Unlike the fees this is credited TO the account. Zero unless the expiry
+	 * snapshotted rebates on.
+	 */
+	inventorySkewRebate: number;
 	builderCodeId: string | null;
 	raw: {
 		quantityClosed: bigint;
@@ -250,6 +266,7 @@ export interface RedeemReceipt {
 		tradingFee: bigint;
 		builderFee: bigint;
 		penaltyFee: bigint;
+		inventorySkewRebate: bigint;
 	};
 }
 
@@ -335,6 +352,7 @@ export function decodeMints(cfg: PredictConfig, result: DecodableTransactionResu
 				builder: fromRaw(BigInt(e.builder_fee), 6),
 				penalty: fromRaw(BigInt(e.penalty_fee), 6),
 			},
+			inventorySkewCharge: fromRaw(BigInt(e.inventory_skew_charge), 6),
 			builderCodeId: optId(e.builder_code_id),
 			raw: {
 				quantity: BigInt(e.quantity),
@@ -343,10 +361,27 @@ export function decodeMints(cfg: PredictConfig, result: DecodableTransactionResu
 				feeIncentiveSubsidy: BigInt(e.fee_incentive_subsidy),
 				builderFee: BigInt(e.builder_fee),
 				penaltyFee: BigInt(e.penalty_fee),
+				inventorySkewCharge: BigInt(e.inventory_skew_charge),
 				leverage: BigInt(e.leverage),
 				entryProbability: BigInt(e.entry_probability),
 			},
 		}),
+	);
+}
+
+function liveProceedsRaw(e: {
+	redeem_amount: string;
+	trading_fee: string;
+	builder_fee: string;
+	penalty_fee: string;
+	inventory_skew_rebate: string;
+}): bigint {
+	return (
+		BigInt(e.redeem_amount) +
+		BigInt(e.inventory_skew_rebate) -
+		BigInt(e.trading_fee) -
+		BigInt(e.builder_fee) -
+		BigInt(e.penalty_fee)
 	);
 }
 
@@ -372,15 +407,9 @@ export function decodeRedeems(
 			remaining: fromRaw(BigInt(e.remaining_quantity), 6),
 			replacementOrderId:
 				e.replacement_order_id == null ? null : BigInt(e.replacement_order_id),
-			// settle_live_redeem_payment credits redeem_amount minus all three
-			// fee components — the event's redeem_amount is GROSS.
-			proceeds: fromRaw(
-				BigInt(e.redeem_amount) -
-					BigInt(e.trading_fee) -
-					BigInt(e.builder_fee) -
-					BigInt(e.penalty_fee),
-				6,
-			),
+			// settle_live_redeem_payment credits redeem_amount plus the skew rebate,
+			// minus all three fee components — the event's redeem_amount is GROSS.
+			proceeds: fromRaw(liveProceedsRaw(e), 6),
 			gross: fromRaw(BigInt(e.redeem_amount), 6),
 			liquidated: false,
 			fees: {
@@ -388,19 +417,17 @@ export function decodeRedeems(
 				builder: fromRaw(BigInt(e.builder_fee), 6),
 				penalty: fromRaw(BigInt(e.penalty_fee), 6),
 			},
+			inventorySkewRebate: fromRaw(BigInt(e.inventory_skew_rebate), 6),
 			builderCodeId: optId(e.builder_code_id),
 			raw: {
 				quantityClosed: BigInt(e.quantity_closed),
 				remaining: BigInt(e.remaining_quantity),
-				proceeds:
-					BigInt(e.redeem_amount) -
-					BigInt(e.trading_fee) -
-					BigInt(e.builder_fee) -
-					BigInt(e.penalty_fee),
+				proceeds: liveProceedsRaw(e),
 				gross: BigInt(e.redeem_amount),
 				tradingFee: BigInt(e.trading_fee),
 				builderFee: BigInt(e.builder_fee),
 				penaltyFee: BigInt(e.penalty_fee),
+				inventorySkewRebate: BigInt(e.inventory_skew_rebate),
 			},
 		}),
 	);
@@ -424,6 +451,7 @@ export function decodeRedeems(
 			gross: 0,
 			liquidated: true,
 			fees: { trading: 0, builder: 0, penalty: 0 },
+			inventorySkewRebate: 0,
 			builderCodeId: null,
 			raw: {
 				quantityClosed: BigInt(e.quantity_closed),
@@ -433,6 +461,7 @@ export function decodeRedeems(
 				tradingFee: 0n,
 				builderFee: 0n,
 				penaltyFee: 0n,
+				inventorySkewRebate: 0n,
 			},
 		}),
 	);

@@ -1,0 +1,31 @@
+{
+  "baseline": {
+    "gamma": 0,
+    "rebate_enabled": false,
+    "terminal_lp_profit": 0,
+    "terminal_protocol_profit": 0,
+    "returned_pool_cash": 49964588736,
+    "skew_charged": 0,
+    "skew_rebated": 0,
+    "net_skew_retained": 0,
+    "mint_count": 40,
+    "live_redeem_count": 8
+  },
+  "skewed": {
+    "gamma": 500000000,
+    "rebate_enabled": false,
+    "terminal_lp_profit": 0,
+    "terminal_protocol_profit": 0,
+    "returned_pool_cash": 49964618600,
+    "skew_charged": 29864,
+    "skew_rebated": 0,
+    "net_skew_retained": 29864,
+    "mint_count": 40,
+    "live_redeem_count": 8
+  },
+  "delta_returned_pool_cash": 29864,
+  "delta_returned_pool_cash_dusdc": 0.029864,
+  "delta_lp_profit": 0,
+  "helps_lps": true,
+  "notes": "Piled up-binary inventory on one strike; skew escrow residual returns to LPs at terminal closeout. Rebates disabled (ship default). Gate uses returned_pool_cash because terminal_lp_profit stays 0 while net_losses_to_fill absorbs recoveries."
+}
