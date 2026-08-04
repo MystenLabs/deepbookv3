@@ -13,7 +13,7 @@ import { parseU64LE } from "./parse.js";
 // An owner's stored account balance for a coin type (defaults to the quote coin,
 // DUSDC on testnet). Chains `account::load_account(wrapper)` →
 // `account::balance<T>(account, root, clock)`; the u64 is command 1's return —
-// see packages/account/sources/account.move:{86,92} and harness runtime.ts:458-466.
+// see packages/account/sources/account.move and packages/predict/devtools/ts/runtime.ts.
 // The wrapper id is derived off-chain (no read needed).
 export async function accountBalance(
 	client: ReadClient,

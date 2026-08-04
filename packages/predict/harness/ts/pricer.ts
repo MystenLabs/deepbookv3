@@ -20,6 +20,24 @@ export interface Svi {
   sigma: number;
 }
 
+/** Apply Predict's transaction-time roll-down to provider-anchored SVI a/b. */
+export function rollDownSvi(
+  svi: Svi,
+  sourceTimestampMs: number,
+  expiryMs: number,
+  pricingTimestampMs: number,
+): Svi | null {
+  const anchorTteMs = expiryMs - sourceTimestampMs;
+  const remainingMs = expiryMs - pricingTimestampMs;
+  if (anchorTteMs <= 0 || remainingMs <= 0) return null;
+  const fraction = remainingMs / anchorTteMs;
+  return {
+    ...svi,
+    a: svi.a * fraction,
+    b: svi.b * fraction,
+  };
+}
+
 // Standard normal CDF via erf (Abramowitz-Stegun 7.1.26, |err| < 1.5e-7).
 export function normalCdf(x: number): number {
   return 0.5 * (1 + erf(x / Math.SQRT2));

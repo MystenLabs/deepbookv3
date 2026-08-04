@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import os
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -17,12 +16,48 @@ from python_indexes.liquidation_book import (
     encode_order_id,
 )
 from python_indexes.strike_payout_tree import StrikePayoutTree
+from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
 DERIVED_SCHEMA_VERSION = "predict_derived_v2"
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
+SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
+    "schema_version": None,
+    "source": {
+        "expiry_ms": None,
+        "settlement_timestamp_ms": None,
+        "settlement_price": None,
+    },
+    "capital": {
+        "normal": {"manager_seed": None, "vault_seed": None},
+        "long": {"manager_seed": None, "vault_seed": None},
+    },
+    "generation": {
+        "normal": {"min_mint_spend": None, "max_mint_spend": None},
+        "long": {"min_mint_spend": None, "max_mint_spend": None},
+    },
+    "protocol": {
+        "base_fee": None,
+        "min_fee": None,
+        "min_entry_probability": None,
+        "max_entry_probability": None,
+        "trade_liquidation_budget": None,
+        "valuation_liquidation_budget": None,
+        "liquidation_head_scan_divisor": None,
+        "curve_samples": None,
+        "protocol_reserve_profit_share": None,
+        "trading_loss_rebate_rate": None,
+        "max_expiry_allocation": None,
+        "initial_expiry_cash": None,
+        "expiry_fee_window_ms": None,
+        "expiry_fee_max_multiplier": None,
+        "max_admission_leverage": None,
+        "liquidation_ltv": None,
+        "backing_buffer_lambda": None,
+    },
+}
 ORACLE_REFRESH_FIELDS = (
     "spot",
     "forward",
@@ -35,8 +70,7 @@ ORACLE_REFRESH_FIELDS = (
     "sigma",
     "risk_free_rate",
 )
-# Lightweight mirror of Move config defaults. scenario_config.json may override
-# these only when the corresponding localnet setup is intentionally extended.
+# Lightweight mirror initialized from the complete scenario_config.json contract.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ENTRY_PROBABILITY = 10_000_000
@@ -133,20 +167,52 @@ INV_13_U128 = 76_923_077
 
 def load_scenario_config(path: Path | None = None) -> dict[str, Any]:
     config_path = path if path is not None else DEFAULT_SCENARIO_CONFIG_PATH
-    return json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text())
+    validate_scenario_config(config)
+    return config
 
 
-def _config_int(config: dict[str, Any], section: str, key: str, default: int) -> int:
-    value = config.get(section, {}).get(key, default)
-    return int(value)
+def _validate_config_object(
+    value: Any,
+    schema: dict[str, Any],
+    path: str,
+) -> None:
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be an object")
+    missing = sorted(set(schema) - set(value))
+    unknown = sorted(set(value) - set(schema))
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append(f"missing={','.join(missing)}")
+        if unknown:
+            details.append(f"unknown={','.join(unknown)}")
+        raise ValueError(f"{path} schema mismatch; {'; '.join(details)}")
+    for key, nested in schema.items():
+        child = value[key]
+        child_path = f"{path}.{key}"
+        if isinstance(nested, dict):
+            _validate_config_object(child, nested, child_path)
+        elif key == "schema_version":
+            if child != 1:
+                raise ValueError(f"unsupported scenario config schema_version: {child}")
+        elif not isinstance(child, str) or not child.isdecimal():
+            raise ValueError(f"{child_path} must be a non-negative integer string")
 
 
-def _capital_int(config: dict[str, Any], mode: str, key: str, default: int) -> int:
-    value = config.get("capital", {}).get(mode, {}).get(key, default)
-    return int(value)
+def validate_scenario_config(config: Any) -> None:
+    _validate_config_object(config, SCENARIO_CONFIG_SCHEMA, "scenario config")
 
 
-def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> None:
+def _config_int(config: dict[str, Any], section: str, key: str) -> int:
+    return int(config[section][key])
+
+
+def _capital_int(config: dict[str, Any], mode: str, key: str) -> int:
+    return int(config["capital"][mode][key])
+
+
+def apply_scenario_config(config: dict[str, Any]) -> None:
     global VAULT_SEED
     global MANAGER_SEED
     global INITIAL_TOTAL_PLP_SUPPLY
@@ -162,103 +228,85 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global TRADING_LOSS_REBATE_RATE
     global MAX_EXPIRY_ALLOCATION
     global INITIAL_EXPIRY_CASH
-    global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global BACKING_BUFFER_LAMBDA
     global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
 
-    capital_mode = "long" if long_run else "normal"
-    VAULT_SEED = _capital_int(config, capital_mode, "vault_seed", VAULT_SEED)
-    MANAGER_SEED = _capital_int(config, capital_mode, "manager_seed", MANAGER_SEED)
+    VAULT_SEED = _capital_int(config, "normal", "vault_seed")
+    MANAGER_SEED = _capital_int(config, "normal", "manager_seed")
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
 
-    BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
-    MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
+    BASE_FEE = _config_int(config, "protocol", "base_fee")
+    MIN_FEE = _config_int(config, "protocol", "min_fee")
     MIN_ENTRY_PROBABILITY = _config_int(
         config,
         "protocol",
         "min_entry_probability",
-        MIN_ENTRY_PROBABILITY,
     )
     MAX_ENTRY_PROBABILITY = _config_int(
         config,
         "protocol",
         "max_entry_probability",
-        MAX_ENTRY_PROBABILITY,
     )
-    TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
+    TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget")
     VALUATION_LIQUIDATION_BUDGET = _config_int(
         config,
         "protocol",
         "valuation_liquidation_budget",
-        VALUATION_LIQUIDATION_BUDGET,
     )
     LIQUIDATION_HEAD_SCAN_DIVISOR = _config_int(
         config,
         "protocol",
         "liquidation_head_scan_divisor",
-        LIQUIDATION_HEAD_SCAN_DIVISOR,
     )
-    CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples", CURVE_SAMPLES)
+    CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples")
     PROTOCOL_RESERVE_PROFIT_SHARE = _config_int(
         config,
         "protocol",
         "protocol_reserve_profit_share",
-        PROTOCOL_RESERVE_PROFIT_SHARE,
     )
     TRADING_LOSS_REBATE_RATE = _config_int(
         config,
         "protocol",
         "trading_loss_rebate_rate",
-        TRADING_LOSS_REBATE_RATE,
     )
     MAX_EXPIRY_ALLOCATION = _config_int(
         config,
         "protocol",
         "max_expiry_allocation",
-        MAX_EXPIRY_ALLOCATION,
     )
     INITIAL_EXPIRY_CASH = _config_int(
         config,
         "protocol",
         "initial_expiry_cash",
-        INITIAL_EXPIRY_CASH,
     )
     BACKING_BUFFER_LAMBDA = _config_int(
         config,
         "protocol",
         "backing_buffer_lambda",
-        BACKING_BUFFER_LAMBDA,
     )
-    TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
     EXPIRY_FEE_WINDOW_MS = _config_int(
         config,
         "protocol",
         "expiry_fee_window_ms",
-        EXPIRY_FEE_WINDOW_MS,
     )
     EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
         config,
         "protocol",
         "expiry_fee_max_multiplier",
-        EXPIRY_FEE_MAX_MULTIPLIER,
     )
     MAX_ADMISSION_LEVERAGE = _config_int(
         config,
         "protocol",
         "max_admission_leverage",
-        MAX_ADMISSION_LEVERAGE,
     )
-    LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv", LIQUIDATION_LTV)
+    LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv")
 
 
-def config_source_value(config: dict[str, Any], key: str) -> int | None:
-    source = config.get("source", {})
-    if key not in source:
-        return None
-    return int(source[key])
+def config_source_value(config: dict[str, Any], key: str) -> int:
+    return int(config["source"][key])
 
 
 class I64:
@@ -532,14 +580,13 @@ def mul_div_round_up(a: int, b: int, c: int) -> int:
 
 
 def live_forward(spot: int, forward: int) -> int:
-    # Mirror pricing::load_live_pricer fresh-spot branch: the on-chain forward used for
-    # every live quote/valuation/liquidation is NOT the pushed forward, but is
-    # re-derived from the live Pyth spot and the stored Block Scholes basis as
-    # mul_down(spot, div_down(forward, spot)). That round-trip is lossy (two floors), so it
-    # generally differs from `forward` by a few units. In the localnet parity flow
-    # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
-    # is exactly the forward the contracts price with.
-    return deepbook_mul(spot, deepbook_div(forward, spot))
+    # Mirror pricing::load_live_pricer's single
+    # mul_div_down(pyth_spot, bs_forward, bs_spot). The localnet parity flow
+    # pushes identical Pyth and Block Scholes spots in the same PTB, so the spot
+    # terms cancel exactly and the on-chain forward is the supplied BS forward.
+    if spot <= 0:
+        raise ValueError("live forward requires a positive spot")
+    return forward
 
 
 def assert_valid_leverage(leverage: int) -> None:
@@ -809,22 +856,20 @@ def normal_pdf(value: I64) -> int:
 def variance_sqrt_and_d2(a: I64, b: int, inner: int, k: I64) -> tuple[int, I64]:
     """Total variance, sqrt(w) and d2 at u128/1e18, mirroring pricing.move.
 
-    `b` and `inner` are both 1e9-scaled, so their product IS the 1e18 variance
-    increment; narrowing it back to 1e9 would discard the whole low-variance
-    signal on a short-dated surface. The integer square root of a 1e18-scaled
-    value is its 1e9-scaled root, so sqrt(w) comes back at the scale the rest of
-    the formula uses. Returns (sqrt(w) @1e9, d2 @1e9).
+    `a` and `b` arrive already rolled down and 1e18-scaled. `inner` is 1e9, so
+    the product comes back down by 1e9 to remain at 1e18. The integer square
+    root of a 1e18-scaled value is its 1e9-scaled root. Returns
+    (sqrt(w) @1e9, d2 @1e9).
     """
-    increment = b * inner
-    a_scaled = a.magnitude * F
+    increment = b * inner // F
     if a.is_negative:
-        if increment <= a_scaled:
+        if increment <= a.magnitude:
             raise ValueError("SVI total variance must be positive")
-        total_var = increment - a_scaled
+        total_var = increment - a.magnitude
     else:
-        if increment + a_scaled == 0:
+        if increment + a.magnitude == 0:
             raise ValueError("SVI total variance must be positive")
-        total_var = increment + a_scaled
+        total_var = increment + a.magnitude
     sqrt_var = sqrt_u128(total_var)
 
     # d2 = -(k + w/2) / sqrt(w): the numerator stays at 1e18 and the divisor is the
@@ -870,7 +915,7 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
 
     slope_ratio = k_minus_m.div_scaled(I64(sq))
     slope = rho.add(slope_ratio)
-    w_prime = I64(svi["b"]).mul_scaled(slope)
+    w_prime = I64(svi["b"] * slope.magnitude // (F * F), slope.is_negative)
     if w_prime.magnitude == 0:
         return nd2
 
@@ -881,10 +926,11 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
 
 
 def svi_cache_key(svi: dict[str, Any]) -> tuple[int, bool, int, int, bool, int, bool, int]:
+    scale = 1 if svi.get("at1e18") else F
     return (
-        svi["a"],
+        svi["a"] * scale,
         svi.get("aNegative", False),
-        svi["b"],
+        svi["b"] * scale,
         svi["rho"],
         svi["rhoNegative"],
         svi["m"],
@@ -920,6 +966,7 @@ def compute_up_price_cached(
             "m": m,
             "mNegative": m_negative,
             "sigma": sigma,
+            "at1e18": True,
         },
         forward,
         strike,
@@ -1083,10 +1130,10 @@ def current_order_floor_amount(model: dict[str, Any], order: dict[str, Any]) -> 
 
 
 def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int | None = None) -> int | None:
-    if not model.get("exact_time"):
+    if not model.get("wall_clock_time"):
         return None
     now_ms = model.get("now_ms") if timestamp_ms is None else timestamp_ms
-    expiry_ms = model.get("expiry_ms")
+    expiry_ms = model.get("pricing_expiry_ms")
     if now_ms is None or expiry_ms is None:
         raise ValueError("exact-time fee ramp requires now_ms and expiry_ms")
     return max(0, expiry_ms - now_ms)
@@ -1236,10 +1283,7 @@ def exact_live_liability(model: dict[str, Any]) -> int:
     return max(0, linear - correction)
 
 
-def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] | None = None) -> int:
-    # `curve` is accepted for call-site compatibility but ignored: the exact walk
-    # needs no curve. (Kept positional so the Python-only derived sampler, which
-    # passes a curve, still type-checks.)
+def live_position_liability(model: dict[str, Any]) -> int:
     return exact_live_liability(model)
 
 
@@ -1513,6 +1557,44 @@ def svi_input(row: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def pricing_svi(
+    raw_svi: dict[str, Any],
+    *,
+    expiry_ms: int | None = None,
+    model_timestamp_ms: int | None = None,
+    pricing_timestamp_ms: int | None = None,
+) -> dict[str, Any]:
+    """Build the transaction-local 1e18 SVI tuple consumed by pricing.move."""
+    timing = (expiry_ms, model_timestamp_ms, pricing_timestamp_ms)
+    if all(value is None for value in timing):
+        remaining_ms = 1
+        anchor_tte_ms = 1
+    elif any(value is None for value in timing):
+        raise ValueError("SVI roll-down requires expiry, model, and pricing timestamps")
+    else:
+        assert expiry_ms is not None
+        assert model_timestamp_ms is not None
+        assert pricing_timestamp_ms is not None
+        remaining_ms = expiry_ms - pricing_timestamp_ms
+        anchor_tte_ms = expiry_ms - model_timestamp_ms
+        if remaining_ms <= 0 or anchor_tte_ms <= 0:
+            raise ValueError("SVI roll-down requires model and pricing timestamps before expiry")
+        if pricing_timestamp_ms < model_timestamp_ms:
+            raise ValueError("SVI pricing timestamp cannot precede the provider model timestamp")
+
+    return {
+        "a": raw_svi["a"] * F * remaining_ms // anchor_tte_ms,
+        "aNegative": raw_svi.get("aNegative", False),
+        "b": raw_svi["b"] * F * remaining_ms // anchor_tte_ms,
+        "rho": raw_svi["rho"],
+        "rhoNegative": raw_svi["rhoNegative"],
+        "m": raw_svi["m"],
+        "mNegative": raw_svi["mNegative"],
+        "sigma": raw_svi["sigma"],
+        "at1e18": True,
+    }
+
+
 def mint_input(row: dict[str, Any]) -> dict[str, str]:
     # Mirror sim.ts mintInput: the canonical mint input is the (lower_tick,
     # higher_tick) pair the entrypoint takes directly (no standalone range key).
@@ -1579,10 +1661,24 @@ def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
+def apply_inline_oracle_refresh(
+    model: dict[str, Any],
+    row: dict[str, Any],
+    updates: list[dict[str, Any]],
+    pricing_timing: dict[str, int] | None = None,
+) -> None:
     oracle = row if row["action"] == "oracle_mint_ptb" else row["oracleRefresh"]
     model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
-    model["current_svi"] = oracle
+    model["current_svi"] = pricing_svi(
+        oracle,
+        expiry_ms=model.get("pricing_expiry_ms") if pricing_timing else None,
+        model_timestamp_ms=(
+            pricing_timing["model_timestamp_ms"] if pricing_timing else None
+        ),
+        pricing_timestamp_ms=(
+            pricing_timing["pricing_timestamp_ms"] if pricing_timing else None
+        ),
+    )
     updates.append(pyth_feed_update(oracle))
     updates.append(block_scholes_surface_update(oracle))
 
@@ -2515,7 +2611,7 @@ def build_derived_record(
     if sampled_global:
         if model["minted_min_strike"] is not None and model["minted_max_strike"] is not None:
             curve = build_valuation_curve(model)
-        liability = live_position_liability(model, curve)
+        liability = live_position_liability(model)
         try:
             vault_value = compute_pool_value(model, state, curve, liability)
         except ValueError:
@@ -2762,14 +2858,72 @@ def exact_row_timestamp_ms(row: dict[str, Any]) -> int:
     return int(timestamp)
 
 
-def flush_checkpoints(row_count: int) -> set[int]:
-    raw = os.environ.get("SIM_FLUSH_AFTER", "")
-    if raw:
-        return {
-            int(value)
-            for part in raw.split(",")
-            if (value := part.strip()).isdigit() and int(value) > 0
+def scenario_pricing_timing(row: dict[str, Any]) -> dict[str, int]:
+    source_timestamp = row.get("sourceTimestampMs")
+    if source_timestamp is None:
+        raise ValueError(
+            f"SVI roll-down requires source_timestamp_ms at scenario line {row['lineNumber']}"
+        )
+    return {
+        "model_timestamp_ms": int(source_timestamp),
+        "pricing_timestamp_ms": exact_row_timestamp_ms(row),
+    }
+
+
+def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
+    trace = load_local_trace(path)
+
+    timings: dict[tuple[int, str], dict[str, int]] = {}
+    for step in trace["steps"]:
+        step_number = step["step"]
+        action = step["action"]
+        pricing_timestamp = step["pricingTimestampMs"]
+        observation = None
+        for event in step["events"]:
+            full_type = event["full_type"]
+            if (
+                "BlockScholesObservationRecorded" not in full_type
+                or "SVIParams" not in full_type
+            ):
+                continue
+            parsed = event.get("parsedJson")
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"pricing trace step {(step_number, action)} SVI event has invalid parsedJson"
+                )
+            observation = parsed.get("observation")
+            if not isinstance(observation, dict):
+                raise ValueError(
+                    f"pricing trace step {(step_number, action)} SVI event has invalid observation"
+                )
+            if "fields" in observation:
+                observation = observation["fields"]
+                if not isinstance(observation, dict):
+                    raise ValueError(
+                        f"pricing trace step {(step_number, action)} SVI event has invalid fields"
+                    )
+            break
+        if observation is None:
+            continue
+        key = (step_number, action)
+        if key in timings:
+            raise ValueError(f"duplicate SVI timing for trace step {key}")
+        model_timestamp = observation.get("model_timestamp_ms")
+        if (
+            not isinstance(model_timestamp, str)
+            or not model_timestamp.isdecimal()
+        ):
+            raise ValueError(
+                f"pricing trace step {key} has invalid model_timestamp_ms"
+            )
+        timings[key] = {
+            "model_timestamp_ms": int(model_timestamp),
+            "pricing_timestamp_ms": pricing_timestamp,
         }
+    return timings
+
+
+def flush_checkpoints(row_count: int) -> set[int]:
     return {checkpoint for checkpoint in (300, 999) if checkpoint <= row_count}
 
 
@@ -2787,9 +2941,10 @@ def parity_flush_updates(
     row: dict[str, Any],
     supply_queue: list[dict[str, Any]],
     withdraw_queue: list[dict[str, Any]],
+    pricing_timing: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     updates: list[dict[str, Any]] = []
-    apply_inline_oracle_refresh(model, row, updates)
+    apply_inline_oracle_refresh(model, row, updates, pricing_timing)
     updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
     sync_updates, pool_value, synced_state = flush_valuation(model, state)
     updates.extend(sync_updates)
@@ -2900,9 +3055,12 @@ def replay(
     settlement_price: int | None = None,
     settlement_timestamp_ms: int | None = None,
     terminal_closeout: bool = False,
+    pricing_timings: dict[tuple[int, str], dict[str, int]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     if exact_time and expiry_ms is None:
         raise ValueError("exact-time replay requires expiry_ms")
+    if pricing_timings is not None and expiry_ms is None:
+        raise ValueError("observed SVI timing replay requires expiry_ms")
     if terminal_closeout:
         if not exact_time:
             raise ValueError("terminal closeout requires exact-time replay")
@@ -2920,7 +3078,8 @@ def replay(
         "next_sequence": 0,
         "orders": {},
         "exact_time": exact_time,
-        "expiry_ms": expiry_ms if exact_time else None,
+        "wall_clock_time": exact_time or pricing_timings is not None,
+        "pricing_expiry_ms": expiry_ms if exact_time or pricing_timings is not None else None,
         "now_ms": None,
         "liquidation": LiquidationBook(),
         "lp_refs": {},
@@ -2976,15 +3135,30 @@ def replay(
         set() if exact_time else cash_rebalance_checkpoints(total_steps, flush_after)
     )
 
+    def pricing_timing(row: dict[str, Any], action: str) -> dict[str, int] | None:
+        if pricing_timings is not None:
+            key = (int(row["step"]), action)
+            timing = pricing_timings.get(key)
+            if timing is None:
+                raise ValueError(f"pricing trace has no SVI observation for step {key}")
+            return timing
+        if exact_time:
+            return scenario_pricing_timing(row)
+        return None
+
     def append_maintenance_record(after_row: int, row: dict[str, Any]) -> None:
         if after_row in flush_after:
             maintenance_action = "flush"
+            maintenance_timing = pricing_timing(row, maintenance_action)
+            if maintenance_timing is not None:
+                model["now_ms"] = maintenance_timing["pricing_timestamp_ms"]
             maintenance_updates = parity_flush_updates(
                 model,
                 state,
                 row,
                 supply_queue,
                 withdraw_queue,
+                maintenance_timing,
             )
         elif after_row in rebalance_after:
             maintenance_action = "rebalance_expiry_cash"
@@ -3008,19 +3182,27 @@ def replay(
     for step_index, row in enumerate(rows):
         updates: list[dict[str, Any]] = []
         action = row["action"]
-        row_timestamp_ms = exact_row_timestamp_ms(row) if exact_time else row["step"]
+        action_timing = (
+            pricing_timing(row, action)
+            if action in ("oracle_mint_ptb", "redeem") or exact_time
+            else None
+        )
+        row_timestamp_ms = (
+            action_timing["pricing_timestamp_ms"]
+            if action_timing is not None
+            else exact_row_timestamp_ms(row)
+            if exact_time
+            else row["step"]
+        )
         model["now_ms"] = row_timestamp_ms
         scan_active_count = active_order_count(model)
         if action == "oracle_mint_ptb":
-            model["current_forward"] = live_forward(row["spot"], row["forward"])
-            model["current_svi"] = row
-            updates.append(pyth_feed_update(row))
-            updates.append(block_scholes_surface_update(row))
+            apply_inline_oracle_refresh(model, row, updates, action_timing)
             scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))
         elif action == "redeem":
-            apply_inline_oracle_refresh(model, row, updates)
+            apply_inline_oracle_refresh(model, row, updates, action_timing)
             scan_active_count = active_order_count(model)
             # Mirror Move `redeem_internal`: the bounded liquidation pass runs on every
             # live-market redeem (before the is-liquidated check), so it advances the
@@ -3033,7 +3215,7 @@ def replay(
             if exact_time:
                 # Long Python-only replay keeps the synchronous fill model so the
                 # economic charts still see LP fills + pool funding.
-                apply_inline_oracle_refresh(model, row, updates)
+                apply_inline_oracle_refresh(model, row, updates, action_timing)
                 scan_active_count = active_order_count(model)
                 pool_value, synced_state = append_pool_sync_phase(model, state, updates)
                 updates.append(supply_update(model, row, pool_value, synced_state))
@@ -3062,7 +3244,7 @@ def replay(
                 supply_queue_index += 1
         elif action == "withdraw":
             if exact_time:
-                apply_inline_oracle_refresh(model, row, updates)
+                apply_inline_oracle_refresh(model, row, updates, action_timing)
                 scan_active_count = active_order_count(model)
                 pool_value, synced_state = append_pool_sync_phase(model, state, updates)
                 updates.append(withdraw_update(model, row, pool_value, synced_state))
@@ -3188,46 +3370,41 @@ def replay(
     return canonical, derived
 
 
-def write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", default=str(Path(__file__).with_name("data") / "generated" / "normal_scenario.csv"))
-    parser.add_argument("--out")
-    parser.add_argument("--derived-out")
+    parser.add_argument("--out", required=True)
     parser.add_argument("--max-rows", type=int)
     parser.add_argument("--config", type=Path, default=DEFAULT_SCENARIO_CONFIG_PATH)
-    parser.add_argument("--long-run", action="store_true")
+    parser.add_argument("--pricing-trace", type=Path)
+    parser.add_argument("--expiry-ms", type=int)
     args = parser.parse_args()
 
-    if not args.out and not args.derived_out:
-        parser.error("at least one of --out / --derived-out is required")
+    if args.pricing_trace is not None and args.expiry_ms is None:
+        parser.error("--pricing-trace requires --expiry-ms from the local market")
 
     config = load_scenario_config(args.config)
-    apply_scenario_config(config, long_run=args.long_run)
-    expiry_ms = config_source_value(config, "expiry_ms")
-    settlement_price = config_source_value(config, "settlement_price")
-    settlement_timestamp_ms = config_source_value(config, "settlement_timestamp_ms")
+    apply_scenario_config(config)
+    expiry_ms = (
+        args.expiry_ms
+        if args.expiry_ms is not None
+        else config_source_value(config, "expiry_ms")
+    )
+    pricing_timings = (
+        load_pricing_timings(args.pricing_trace)
+        if args.pricing_trace is not None
+        else None
+    )
 
     rows = parse_scenario(Path(args.scenario))
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
-    canonical, derived = replay(
+    canonical, _ = replay(
         rows,
-        collect_derived=bool(args.derived_out),
-        exact_time=args.long_run,
         expiry_ms=expiry_ms,
-        settlement_price=settlement_price,
-        settlement_timestamp_ms=settlement_timestamp_ms,
-        terminal_closeout=args.long_run,
+        pricing_timings=pricing_timings,
     )
-    if args.out:
-        write_json(Path(args.out), canonical)
-    if args.derived_out:
-        write_json(Path(args.derived_out), derived)
+    write_json(Path(args.out), canonical)
 
 
 if __name__ == "__main__":

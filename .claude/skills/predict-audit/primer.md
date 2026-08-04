@@ -106,8 +106,8 @@ Prior-awareness cuts BOTH ways: a register or ledger entry that no longer matche
 
 ## Empirical toolbox (lens 09 owns it; any lens may use Python)
 `packages/predict/simulations/` is a real localnet + Python economic harness:
-- `bash run.sh` — fresh **localnet**: runs the generated scenario against localnet AND a Python mirror, checks economic parity. **Localnet runs ONLY in the main loop** (heavy/long → trips the subagent watchdog).
-- `bash run.sh --python-only` — long **Python** replay: exact-time economics, settlement, charts. Python is fast and **safe to run inside a subagent**.
+- `cd packages/predict && python3 -m harness parity --source /path/to/scenario_dataset.csv --max-rows N` — fresh **localnet** plus the independent Python mirror and exact economic parity comparison. **Localnet runs only in the main loop**.
+- `python_replay.py` and ad-hoc Python simulations written to the scratchpad are subagent-safe when they do not start a localnet.
 - `python_indexes/` mirrors the Move `strike_payout_tree` + `liquidation_book`; `python_replay.py` mirrors mint admission / pricing / NAV. Reuse these to write **new adversarial scenarios** and property/fuzz checks (randomized mint/redeem/liquidate/supply/withdraw sequences asserting solvency, NAV supply/withdraw symmetry, rounding direction, no-underflow). The existing harness is a *parity* harness (one vault/market/manager, happy-path rows) — to find bugs you must author new stress scenarios, not just rerun it.
 Write all temp sims/scripts to the session scratchpad, never into the package.
 

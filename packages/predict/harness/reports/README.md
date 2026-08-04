@@ -1,10 +1,10 @@
-# nav-stress reports
+# Historical capacity reports
 
-Gas-scaling charts from the `nav-stress` harness strategy — measures the maximum leverage-book size
+Gas-scaling charts from the former `nav-stress` harness strategy — measures the maximum leverage-book size
 the on-chain NAV flush (`plp::value_expiry`) can value in one PTB.
 
 ## `navstress_gas.png`
-From run `nav-stress-jun30-184711-22946` (single 1h market, low-leverage held book; run in progress).
+From run `nav-stress-jun30-184711-22946` (single 1h market, low-leverage held book).
 
 - **Top — per-mint gas vs book size:** flat ~6.3M MIST (0.0063 SUI). Standalone mints are cheap and
   do NOT scale with the book — the old "100-mint PTB = 3-5B computation" was a *batching* artifact

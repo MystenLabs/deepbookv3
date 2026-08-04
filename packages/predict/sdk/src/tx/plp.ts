@@ -10,8 +10,8 @@ import { generateAuth } from "./common.js";
 // Queue a supply request pulling `amountRaw` (raw DUSDC u64) from the account's existing
 // custody balance. `request_supply` auto-settles DUSDC then `account.withdraw`s the payment
 // into queue escrow; the PLP fill is delivered at the next flush, not returned here. Command
-// order is auth → request (auth is a hot potato consumed by this call). Ports harness
-// `requestSupplyFromCustodyTx` (runtime.ts:1260) against deployed sig
+// order is auth → request (auth is a hot potato consumed by this call). Ports
+// `requestSupplyFromCustodyTx` from `packages/predict/devtools/ts/runtime.ts` against deployed sig
 // `git show ec99cfae:.../plp/plp.move:517` — 7 moveCall args (ctx implicit).
 export function requestSupply(
 	cfg: PredictConfig,
@@ -36,7 +36,8 @@ export function requestSupply(
 // Queue a withdraw request pulling `sharesRaw` (raw PLP u64) from account custody into queue
 // escrow. Auto-settles flush-delivered PLP first; the DUSDC fill lands on the account at the
 // next flush (no `withdraw_settled` entrypoint). Command order is auth → request. Ports
-// harness `requestWithdrawTx` (runtime.ts:1288); deployed sig `.../plp/plp.move:545` — 7 args.
+// `requestWithdrawTx` from `packages/predict/devtools/ts/runtime.ts`; deployed sig
+// `.../plp/plp.move:545` — 7 args.
 export function requestWithdraw(
 	cfg: PredictConfig,
 	tx: Transaction,

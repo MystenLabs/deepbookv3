@@ -10,25 +10,25 @@
 // need raw control (e.g. the adversarial probe sending a deliberately-over-cap order).
 import { readFileSync } from "node:fs";
 
-import { RESOLVER_MARKET } from "./predictConfig.js";
+import { rollDownSvi } from "./pricer.js";
+import { NO_LEVERAGE_WINDOW_MS, RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
   type CleanoutPosition,
+  type OracleFeedIds,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
   claimRebateOnlyTx,
   cleanoutAccountTx,
   mintBatchTx,
   mintTx,
-  readCurrentNav,
-  readIdleBalance,
   readIsSettled,
   redeemSettledAllTx,
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
-} from "./runtime.js";
+} from "../../devtools/ts/runtime.js";
 
 const SCALE = 1_000_000_000n;
 const ADMISSION_K = 0.2;
@@ -41,8 +41,13 @@ export interface Mkt {
 }
 export interface Snap {
   spot1e9: string;
+  bsSpot1e9: string;
   publishedAtMs: string;
-  expiries: Record<string, { forward: number; svi: { alpha: number; beta: number; rho: number; m: number; sigma: number } }>;
+  expiries: Record<string, {
+    forward: number;
+    sviTsMs: number;
+    svi: { alpha: number; beta: number; rho: number; m: number; sigma: number };
+  }>;
 }
 export interface Held {
   orderId: string;
@@ -70,7 +75,7 @@ export interface GasBreakdown {
 // Everything a strategy can read + do in one tick. The runner owns the actual deps; a
 // strategy only sees this interface.
 export interface StrategyCtx {
-  readonly feeds: any;
+  readonly feeds: OracleFeedIds;
   markets(): Mkt[]; // live markets the keeper is advertising (markets.json)
   snapshot(): Snap | null; // latest oracle snapshot (snapshot.json)
   readonly held: Held[]; // the trader's open orders (runner-maintained)
@@ -93,14 +98,12 @@ export interface StrategyCtx {
   submitMintBatch(market: Mkt, legs: MintLeg[], meta?: Record<string, unknown>): Promise<any>;
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
-  currentNav(market: Mkt): Promise<bigint>; // market's current_nav mark (devInspect; DUSDC 1e6)
-  idleBalance(): Promise<bigint>; // pool idle DUSDC (devInspect)
 
   // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
   // position on THIS account then claims its rebate, and return + trace the full gas breakdown
   // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
   cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
-  // Cleanout split (claim-marginal test): redeemAll = the N redeems WITHOUT the claim (leaves an
+  // Cleanup claim profile: redeemAll = the N redeems WITHOUT the claim (leaves an
   // unresolved summary); claimRebate = the claim ALONE (once positions are closed). Diffing them
   // isolates whether a searcher's marginal cost of adding the claim is a refund (bundles it) or a
   // cost (skips it, leaving non-owed accounts' reserve unresolved).
@@ -114,6 +117,7 @@ export interface StrategyCtx {
   leverageCap(p: number): number;
   nearestExpiry(): Mkt | null;
   randomExpiry(): Mkt | null;
+  randomLeveragedExpiry(): Mkt | null;
   pruneSettled(): void; // drop held orders whose market is no longer live (settled)
   trace(record: Record<string, unknown>): void;
 }
@@ -127,17 +131,25 @@ export interface Strategy {
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
+  gasBudget?: number; // MIST; raise only for measurements whose PTB must reach a protocol wall
   // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
   // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
   // (e.g. the object-cache limit "cached objects limit", which bricks a normal flush but is the whole
   // point here) is expected, not a bug oracle hit; a run that never reaches a declared wall fails as
   // VACUOUS (a stress that did not stress). Scope narrowly — this whitelist is per-strategy, not global.
   expect?: { terminal: string[]; note?: string };
+  // Optional semantic completion for phased strategies whose useful work is
+  // not naturally expressed as an operation count.
+  done?: () => boolean;
+  // Optional terminal failure for phased measurement strategies. The runner
+  // exits non-zero instead of reporting a semantically incomplete sweep as
+  // successful merely because its retry budget was exhausted.
+  failure?: () => string | null;
   tick(ctx: StrategyCtx): Promise<OpKind | null>;
 }
 
 export interface ContextDeps {
-  feeds: any;
+  feeds: OracleFeedIds;
   instanceDir: string;
   wrapperId: string;
   label: string;
@@ -180,11 +192,39 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     const exp = snap?.expiries?.[String(market.expiryMs)];
     if (!snap || !exp) return null;
     const spot = Number(snap.spot1e9) / 1e9;
-    const svi = { a: exp.svi.alpha, b: exp.svi.beta, rho: exp.svi.rho, m: exp.svi.m, sigma: exp.svi.sigma };
-    return { pythSpot: spot, bsSpot: spot, bsForward: Number(exp.forward), svi };
+    const rawSvi = {
+      a: exp.svi.alpha,
+      b: exp.svi.beta,
+      rho: exp.svi.rho,
+      m: exp.svi.m,
+      sigma: exp.svi.sigma,
+    };
+    // Match load_live_pricer: use Block Scholes' own signed spot for the
+    // basis re-anchor, then roll a/b from the signed SVI model timestamp to
+    // this quote's wall-clock time. Using Pyth as both spots and leaving SVI
+    // at its anchor made near-expiry max-probability guards reject otherwise
+    // valid strategy quotes.
+    const svi = rollDownSvi(rawSvi, Number(exp.sviTsMs), market.expiryMs, Date.now());
+    if (!svi) return null;
+    return {
+      pythSpot: spot,
+      bsSpot: Number(snap.bsSpot1e9) / 1e9,
+      bsForward: Number(exp.forward),
+      svi,
+    };
   };
 
   const resolve = (inst: Instruction, market: Mkt): Resolved | null => {
+    // Leave a small transaction-build margin outside the protocol's strict
+    // one-hour no-leverage window. Without this common gate, strategies spent
+    // most of their ticks submitting guaranteed strike_exposure_config:6
+    // aborts against 1m/5m/nearest-hour markets.
+    if (
+      Math.round(inst.leverage * 1e9) > Number(SCALE) &&
+      market.expiryMs - Date.now() < NO_LEVERAGE_WINDOW_MS + 5_000
+    ) {
+      return null;
+    }
     const env = envFor(market);
     if (!env) return null;
     const r = resolveMint(inst, env, RESOLVER_MARKET);
@@ -313,12 +353,6 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     async refreshPlp() {
       plpShares = await deps.readPlpBalance(deps.traderAddress);
     },
-    async currentNav(market) {
-      return readCurrentNav(market.id, deps.feeds);
-    },
-    async idleBalance() {
-      return readIdleBalance();
-    },
 
     async cleanout(marketId, positions) {
       const res = await deps.submit(
@@ -370,6 +404,13 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     },
     randomExpiry() {
       const m = markets();
+      return m.length ? pick(m) : null;
+    },
+    randomLeveragedExpiry() {
+      const now = Date.now();
+      const m = markets().filter(
+        (market) => market.expiryMs - now >= NO_LEVERAGE_WINDOW_MS + 5_000,
+      );
       return m.length ? pick(m) : null;
     },
     pruneSettled() {

@@ -14,10 +14,14 @@ from pathlib import Path
 HARNESS_DIR = Path(__file__).resolve().parent
 PREDICT_DIR = HARNESS_DIR.parent
 PACKAGES_DIR = PREDICT_DIR.parent
+REPO_DIR = PACKAGES_DIR.parent
+SIMULATIONS_DIR = PREDICT_DIR / "simulations"
+SCENARIO_CONFIG = SIMULATIONS_DIR / "data" / "scenario_config.json"
 
 TS_DIR = HARNESS_DIR / "ts"
 LOCALNETS_DIR = HARNESS_DIR / ".localnets"
 INSTANCES_DIR = LOCALNETS_DIR / "instances"
+CAMPAIGNS_DIR = LOCALNETS_DIR / "campaigns"
 STATE_FILE = LOCALNETS_DIR / "state.json"
 LOCK_FILE = LOCALNETS_DIR / "state.lock"
 
@@ -30,7 +34,7 @@ PUBFILE_NAME = "Pub.sim.toml"
 GAS_BUDGET = 5_000_000_000
 
 # --- Ports -----------------------------------------------------------------
-# Only the fullnode JSON-RPC (9000) and faucet (9123) are fixed; swarm /
+# Only the fullnode service (9000) and faucet (9123) are fixed; swarm /
 # validator / consensus / metrics ports are genesis-randomized and disjoint
 # between instances, so offsetting just these two isolates a localnet.
 RPC_BASE = 9000
@@ -41,7 +45,7 @@ SLOT_COUNT = 32  # generous slot/port ceiling; real parallelism = --concurrency
 # Local packages (under packages/) staged by mirroring the subtree, so their
 # relative `local = "../foo"` deps resolve inside the workspace unchanged.
 # Verified against predict/Move.lock: predict's closure is these locals plus the
-# git deps below. deepbook is intentionally NOT here (run.sh only published it to
+# git deps below. deepbook is intentionally NOT here (the old runner published it to
 # drag `token` in transitively; `token` is a no-dep leaf we publish directly).
 LOCAL_CLOSURE = [
     "fixed_math",
@@ -75,7 +79,7 @@ STAGE_IGNORE = (
 
 
 def sui_binary() -> str:
-    """Resolve the sui binary the same way run.sh does."""
+    """Resolve the Sui CLI used for localnet lifecycle and package publication."""
     env = os.environ.get("SUI_BINARY")
     if env:
         return env

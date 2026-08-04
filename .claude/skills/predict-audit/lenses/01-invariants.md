@@ -60,8 +60,7 @@ Back the load-bearing invariants with a sim, written to the scratchpad:
   of mint/redeem/liquidate/supply/withdraw, asserting after each step: cash-backing holds, NAV supply==withdraw,
   no negative balances, conservation of DUSDC across the trader/LP/protocol/builder split, and rounding favors
   the protocol (never the user). Report any sequence that breaks an invariant as a finding with the seed/inputs.
-- Python sims are subagent-safe. A **localnet** parity run (`bash run.sh`) is main-loop-only — if you need one,
-  state the exact command + scenario and hand it back rather than running it yourself.
+- Python sims are subagent-safe. A **localnet** parity run (`cd packages/predict && python3 -m harness parity --source <dataset> --max-rows N`) is main-loop-only — if you need one, state the exact command and scenario and hand it back rather than running it yourself.
 - Distinguish a real maintained-by-construction invariant (R1) from one that only happens to hold on the
   tested paths.
 
