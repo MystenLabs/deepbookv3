@@ -2430,10 +2430,10 @@ public fun pyth_id(self: &Fixture): ID { self.pyth_id }
 public fun create_foreign_block_scholes_stores(
     self: &mut Fixture,
     propbook_underlying_id: u32,
-): (ID, ID) {
+): propbook_registry::BlockScholesStorePair {
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let (value_store_id, svi_store_id) = propbook_registry::create_and_share_block_scholes_stores(
+    let pair = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         &self.propbook_admin_cap,
         propbook_underlying_id,
@@ -2441,7 +2441,7 @@ public fun create_foreign_block_scholes_stores(
         self.scenario.ctx(),
     );
     return_shared(oracle_registry);
-    (value_store_id, svi_store_id)
+    pair
 }
 
 public fun propbook_admin_cap(self: &Fixture): &RegistryAdminCap { &self.propbook_admin_cap }

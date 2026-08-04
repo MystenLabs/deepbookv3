@@ -226,7 +226,7 @@ public fun create_and_share_block_scholes_stores(
     propbook_underlying_id: u32,
     block_scholes_base_asset: String,
     ctx: &mut TxContext,
-): (ID, ID) {
+): BlockScholesStorePair {
     assert!(
         !registry.block_scholes_stores.contains(propbook_underlying_id),
         EBlockScholesStoresAlreadyExist,
@@ -240,22 +240,18 @@ public fun create_and_share_block_scholes_stores(
         copy block_scholes_base_asset,
         ctx,
     );
-    registry
-        .block_scholes_stores
-        .add(
-            propbook_underlying_id,
-            BlockScholesStorePair {
-                value_store_id,
-                svi_store_id,
-            },
-        );
+    let pair = BlockScholesStorePair {
+        value_store_id,
+        svi_store_id,
+    };
+    registry.block_scholes_stores.add(propbook_underlying_id, copy pair);
     event::emit(BlockScholesStoresRegistered {
         propbook_underlying_id,
         value_store_id,
         svi_store_id,
         block_scholes_base_asset,
     });
-    (value_store_id, svi_store_id)
+    pair
 }
 
 /// Admin-bind this Pyth source feed to a canonical Propbook underlying.

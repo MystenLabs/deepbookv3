@@ -12,6 +12,7 @@ const TIMESTAMP_PRECISION = "ms";
 export const PREDICT_ORACLE_ID = 1;
 // Canonical provider spelling used for store binding and every SID/subscription descriptor.
 export const PREDICT_BLOCK_SCHOLES_BASE_ASSET = "BTC";
+export const PREDICT_BLOCK_SCHOLES_QUOTE_ASSET = "USD";
 
 const encodedString = (value: string): Uint8Array => bcs.string().serialize(value).toBytes();
 const encodedU8 = (value: number): Uint8Array => bcs.u8().serialize(value).toBytes();
@@ -58,7 +59,7 @@ export function spotSid(oraclePackageId: string, baseAsset: string): bigint {
             encodedString("spot"),
             encodedString("blockscholes"),
             encodedString(baseAsset),
-            encodedString("USD"),
+            encodedString(PREDICT_BLOCK_SCHOLES_QUOTE_ASSET),
             none(),
             encodedBool(false),
             none(),
@@ -76,7 +77,7 @@ export function forwardSid(oraclePackageId: string, baseAsset: string, expiryMs:
             encodedString("future"),
             encodedString("composite"),
             encodedString(baseAsset),
-            encodedString("USD"),
+            encodedString(PREDICT_BLOCK_SCHOLES_QUOTE_ASSET),
             some(expiryAt(expiryMs)),
             none(),
             none(),

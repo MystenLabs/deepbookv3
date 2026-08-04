@@ -214,13 +214,15 @@ fun create_block_scholes_stores_records_the_pair_lookup() {
 
     let mut registry = scenario.take_shared<OracleRegistry>();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let (value_store_id, svi_store_id) = registry::create_and_share_block_scholes_stores(
+    let created_pair = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
         btc(),
         scenario.ctx(),
     );
+    let value_store_id = created_pair.block_scholes_value_store_id();
+    let svi_store_id = created_pair.block_scholes_svi_store_id();
 
     let pair = registry
         .propbook_block_scholes_store_pair_for_underlying(BTC_UNDERLYING_ID)
@@ -309,20 +311,22 @@ fun each_underlying_gets_its_own_store_pair() {
 
     let mut registry = scenario.take_shared<OracleRegistry>();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let (btc_value_id, _btc_svi_id) = registry::create_and_share_block_scholes_stores(
+    let btc_created_pair = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
         btc(),
         scenario.ctx(),
     );
-    let (eth_value_id, _eth_svi_id) = registry::create_and_share_block_scholes_stores(
+    let eth_created_pair = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         ETH_UNDERLYING_ID,
         eth(),
         scenario.ctx(),
     );
+    let btc_value_id = btc_created_pair.block_scholes_value_store_id();
+    let eth_value_id = eth_created_pair.block_scholes_value_store_id();
 
     assert!(btc_value_id != eth_value_id);
     let btc_pair = registry

@@ -238,10 +238,10 @@ public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): O
 public fun create_foreign_block_scholes_stores(
     self: &mut OracleFixture,
     propbook_underlying_id: u32,
-): (ID, ID) {
+): propbook_registry::BlockScholesStorePair {
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let (value_store_id, svi_store_id) = propbook_registry::create_and_share_block_scholes_stores(
+    let pair = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         &self.propbook_admin_cap,
         propbook_underlying_id,
@@ -250,7 +250,7 @@ public fun create_foreign_block_scholes_stores(
     );
     return_shared(oracle_registry);
     self.scenario.next_tx(test_constants::admin());
-    (value_store_id, svi_store_id)
+    pair
 }
 
 /// Return the shared objects taken by `take_oracle_bundle`.

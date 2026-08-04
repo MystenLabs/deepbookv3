@@ -12,6 +12,7 @@ import WebSocket from "ws";
 
 import {
   PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+  PREDICT_BLOCK_SCHOLES_QUOTE_ASSET,
   forwardSid,
   spotSid,
   sviSid,
@@ -310,22 +311,74 @@ type PendingAck = {
   sentAtMs: number;
 };
 
+type BlockScholesSubscription = {
+  expectedSid: string;
+  request: Record<string, unknown>;
+};
+
 const sidHex = (sid: bigint): string => `0x${sid.toString(16).padStart(64, "0")}`;
 
-export function blockScholesForwardSubscription(expiryMs: number) {
+export function blockScholesSpotSubscription(): BlockScholesSubscription {
   return {
-    sid: sidHex(
+    expectedSid: sidHex(
+      spotSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
+    ),
+    request: {
+      feed: "index.px",
+      asset: "spot",
+      exchange: "blockscholes",
+      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+      quote_asset: PREDICT_BLOCK_SCHOLES_QUOTE_ASSET,
+    },
+  };
+}
+
+export function blockScholesForwardSubscription(expiryMs: number): BlockScholesSubscription {
+  return {
+    expectedSid: sidHex(
       forwardSid(
         BS_PROVIDER_PROFILE.packageId,
         PREDICT_BLOCK_SCHOLES_BASE_ASSET,
         BigInt(expiryMs),
       ),
     ),
-    feed: "mark.px",
-    asset: "future",
-    exchange: "composite",
-    base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
-    expiry: isoSec(expiryMs),
+    request: {
+      feed: "mark.px",
+      asset: "future",
+      exchange: "composite",
+      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+      quote_asset: PREDICT_BLOCK_SCHOLES_QUOTE_ASSET,
+      expiry: isoSec(expiryMs),
+    },
+  };
+}
+
+export function blockScholesSubscribeRequest(
+  id: number,
+  clientId: string,
+  batch: Record<string, unknown>[],
+) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "subscribe",
+    params: [{
+      frequency: "1000ms",
+      retransmit_frequency: "1000ms",
+      client_id: clientId,
+      batch,
+      options: {
+        format: { timestamp: "ms", hexify: false, decimals: 9 },
+        signature: {
+          type: "SUI",
+          pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
+          signature_schema: "ecdsa",
+          domain: {
+            network: BS_PROVIDER_PROFILE.network,
+          },
+        },
+      },
+    }],
   };
 }
 
@@ -499,9 +552,9 @@ export class DirectWsSource implements MarketSource {
         format?.hexify === false &&
         Number(format?.decimals) === 9 &&
         signature?.type === "SUI" &&
+        Number(signature?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer &&
         (signature?.signature_schema ?? "ecdsa") === "ecdsa" &&
-        domain?.network === BS_PROVIDER_PROFILE.network &&
-        Number(domain?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer
+        domain?.network === BS_PROVIDER_PROFILE.network
       );
     });
     const itemsOk = items.every((item: any) => {
@@ -657,30 +710,26 @@ export class DirectWsSource implements MarketSource {
     const ws = this.#bs;
     if (!ws) return;
     const active = this.#expiries.filter((ms) => ms > Date.now());
-    const spot = {
-      sid: sidHex(spotSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET)),
-      feed: "index.px",
-      asset: "spot",
-      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
-      exchange: "blockscholes",
-    };
+    const spot = blockScholesSpotSubscription();
     const forwards = active.map(blockScholesForwardSubscription);
-    const svis = active.map((ms) => ({
-      sid: sidHex(
+    const svis: BlockScholesSubscription[] = active.map((ms) => ({
+      expectedSid: sidHex(
         sviSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET, BigInt(ms)),
       ),
-      feed: "model.params",
-      exchange: "composite",
-      asset: "option",
-      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
-      model: "SVI",
-      expiry: isoSec(ms),
+      request: {
+        feed: "model.params",
+        exchange: "composite",
+        asset: "option",
+        base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+        model: "SVI",
+        expiry: isoSec(ms),
+      },
     }));
     const nextRoutes = new Map<string, BsRoute>();
-    nextRoutes.set(spot.sid, { kind: "spot" });
+    nextRoutes.set(spot.expectedSid, { kind: "spot" });
     active.forEach((expiryMs, index) => {
-      nextRoutes.set(forwards[index].sid, { kind: "forward", expiryMs });
-      nextRoutes.set(svis[index].sid, { kind: "svi", expiryMs });
+      nextRoutes.set(forwards[index].expectedSid, { kind: "forward", expiryMs });
+      nextRoutes.set(svis[index].expectedSid, { kind: "svi", expiryMs });
     });
     const retiredUntilMs = Date.now() + 10_000;
     for (const sid of this.#routes.keys()) {
@@ -696,12 +745,12 @@ export class DirectWsSource implements MarketSource {
     this.#sendSubscription(firstId + 2, "svi", svis);
   }
 
-  #sendSubscription(id: number, clientId: string, batch: Record<string, unknown>[]): void {
+  #sendSubscription(id: number, clientId: string, batch: BlockScholesSubscription[]): void {
     const ws = this.#bs;
     if (!ws) return;
-    const expectedSids = new Set(batch.map((item) => String(item.sid)));
+    const expectedSids = new Set(batch.map((item) => item.expectedSid));
     const expectedItems = new Map(
-      batch.map((item) => [String(item.sid), item]),
+      batch.map((item) => [item.expectedSid, item.request]),
     );
     this.#pendingAcks.set(id, {
       clientId,
@@ -709,28 +758,9 @@ export class DirectWsSource implements MarketSource {
       expectedItems,
       sentAtMs: Date.now(),
     });
-    ws.send(JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      method: "subscribe",
-      params: [{
-        frequency: "1000ms",
-        retransmit_frequency: "1000ms",
-        client_id: clientId,
-        batch,
-        options: {
-          format: { timestamp: "ms", hexify: false, decimals: 9 },
-          signature: {
-            type: "SUI",
-            signature_schema: "ecdsa",
-            domain: {
-              network: BS_PROVIDER_PROFILE.network,
-              pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
-            },
-          },
-        },
-      }],
-    }));
+    ws.send(JSON.stringify(
+      blockScholesSubscribeRequest(id, clientId, batch.map((item) => item.request)),
+    ));
   }
 
   // Roll the warmed grid forward by replacing the provider batches wholesale;

@@ -28,15 +28,11 @@ There are two write shapes:
   timestamp is valid and no read already exists at that exact source timestamp.
   It does not mutate `latest`; invalid or duplicate inserts are no-ops.
 
-Pyth consumers should use the `source_timestamp_ms` returned on raw or normalized
-`OracleRead` values when they need a liveness reference. Block Scholes uses its
-latest-only typed stores and `BsRead` clocks described below.
+Pyth consumers should use the `source_timestamp_ms` returned on raw or normalized `OracleRead` values when they need a liveness reference. Block Scholes uses its latest-only typed stores and `BsRead` clocks described below.
 
 ## Canonical Propbook Reads And Raw Source Reads
 
-Propbook stores source-native fields and also exposes canonical Propbook
-normalized reads for consumers that want normalized values instead of raw source
-payloads. Pyth modules follow this read pattern:
+Propbook stores source-native fields and also exposes canonical Propbook normalized reads for consumers that want normalized values instead of raw source payloads. Pyth modules follow this read pattern:
 
 - `raw_*`: returns `OracleRead<Raw*>` and aborts when the requested raw
   observation does not exist.
@@ -50,25 +46,18 @@ exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
 
-For Block Scholes, latest-only typed reads expose source spot plus per-expiry forward and SVI
-payloads from permanent stores. Spot and forward reads return `none` when the requested
-observation is absent; SVI reads expose the stored provider parameters directly.
+For Block Scholes, latest-only typed reads expose source spot plus per-expiry forward and SVI payloads from permanent stores. Spot and forward reads return `none` when the requested observation is absent; SVI reads expose the stored provider parameters directly.
 
 ## Exact Timestamp Inserts
 
-Propbook does not have a separate settlement or minute-bucket write mode. Pyth feeds
-can insert source-native observations into `exact_reads`, keyed by the exact
-source timestamp derived from the update:
+Propbook does not have a separate settlement or minute-bucket write mode. Pyth feeds can insert source-native observations into `exact_reads`, keyed by the exact source timestamp derived from the update:
 
 - Pyth uses the Lazer envelope timestamp in microseconds, which must already be an
   exact whole millisecond. The envelope at a tick carries Pyth's canonical price as
   of that tick, so a consumer settling at the tick resolves the right mark even when
   Pyth generated that price earlier and carried it forward.
-A Pyth read for `timestamp_ms` succeeds only if a source observation was inserted at
-exactly that timestamp and exposed by the source module's `*_at` getter. There is no
-first-transaction-after-minute fallback and no Propbook-specific "official resolution"
-policy. Block Scholes stores retain only the latest observation per series and expose no
-exact-history getter.
+
+A Pyth read for `timestamp_ms` succeeds only if a source observation was inserted at exactly that timestamp and exposed by the source module's `*_at` getter. There is no first-transaction-after-minute fallback and no Propbook-specific "official resolution" policy. Block Scholes stores retain only the latest observation per series and expose no exact-history getter.
 
 ## Pyth Feed
 
@@ -124,15 +113,10 @@ A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvel
 
 Block Scholes data lives in two per-underlying shared objects:
 
-- `block_scholes_store::BlockScholesValueStore`: latest spot and forward
-  observations for one immutable provider base asset, keyed by signed series id.
-- `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets,
-  bound to the same base asset and keyed by signed series id.
+- `block_scholes_store::BlockScholesValueStore`: latest spot and forward observations for one immutable provider base asset, keyed by signed series id.
+- `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets, bound to the same base asset and keyed by signed series id.
 
-Writes are permissionless and enter only through `apply_spot_batch`,
-`apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes
-verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid
-provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
+Writes are permissionless and enter only through `apply_spot_batch`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
 
 Each stored observation carries three clocks: the provider model time the
 series data is "as of" (held fixed across retransmissions of an unchanged
@@ -214,12 +198,7 @@ Typical discovery question:
 
 > What is the Propbook Pyth oracle object for BTC?
 
-Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The
-Block Scholes lookup is
-`propbook_block_scholes_store_pair_for_underlying(registry, propbook_underlying_id)`.
-Use `block_scholes_value_store_id(&pair)` and
-`block_scholes_svi_store_id(&pair)` to read the two shared-object IDs from the
-returned pair.
+Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The Block Scholes lookup is `propbook_block_scholes_store_pair_for_underlying(registry, propbook_underlying_id)`. Use `block_scholes_value_store_id(&pair)` and `block_scholes_svi_store_id(&pair)` to read the two shared-object IDs from the returned pair.
 
 ## Events
 
