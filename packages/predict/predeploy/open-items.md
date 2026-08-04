@@ -57,6 +57,37 @@ package is superseded though still live. Whether the relayer and the live
 testnet deployment should move to the current lineage is an open question for
 whoever owns the next testnet republish.
 
+### S-6: The `bs_sid` copy the deployment executes is never the one anything tests
+
+**Severity:** Deploy gate.
+
+The series-id derivation is checked on every edge but the deployed one.
+`DirectWsSource` hard-fails a subscription whose acknowledgement does not return
+exactly the locally derived ids, so TypeScript-against-provider is verified at
+every subscribe; the localnet run signs batches carrying TypeScript-derived ids
+and pushes them through `apply_*_batch`, which aborts `ESeriesIdMismatch` unless
+they equal the Move derivation, so Move-against-TypeScript is verified by every
+green harness run.
+
+Both of those exercise a `bs_sid` the harness publishes itself from the pinned
+source. A real deployment links the provider's published package instead, whose
+bytecode nothing compares against that source. If the two ever diverge, every
+subscription acknowledges, every batch verifies, and ingestion aborts against a
+store whose expectations no test has ever read.
+
+Separately unpinned: the `block_scholes_base_asset` bound at
+`registry::create_and_share_block_scholes_stores` is checked only non-empty and
+is permanent per P-26. A spelling that is wrong but *real* routes another
+asset's honestly-signed data into this underlying's markets with every check
+passing, on-chain and off, because the series id is correct for what it names.
+
+**Action:** Before a value-bearing deployment, devInspect the created stores'
+`spot_sid()` / `forward_sid(expiry)` / `svi_sid(expiry)` and assert they equal
+the ids the subscription layer derives. Those getters are `public fun` so an
+external caller can ask the chain what it will accept; nothing asks today.
+Confirm the bound base asset against the subscription config in the same step
+and record the answer, since no code path can.
+
 ## Contract Findings
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
@@ -334,6 +365,35 @@ layer 1 settling across a poisoned key without mutating it; layer 1 refusing
 beyond `fallback_reach_ms`; and, if layer 2 ships, no effect before the window
 elapses.
 
+### P-31: A provider envelope ahead of the Sui clock silently empties the feed
+
+**Severity:** Medium; liveness, misattributed failure.
+
+`block_scholes_store::apply` returns `false` rather than aborting when
+`published_at_ms > recorded_at_ms` — the batch's envelope time is ahead of the
+Sui `Clock` at execution. The transaction still succeeds, so the relayer sees
+success, and the only signal is `applied` reading below `update_count` in
+`BlockScholesBatchIngested`. Skipping is the right response for one unusable
+entry, but this particular condition is not per-entry: the provider's publish
+clock and the Sui checkpoint clock are independent, so a provider running even
+slightly ahead at relay latency fails *every* observation in *every* batch. The
+feed then looks like it is ingesting while nothing is ever stored, and pricing
+halts a freshness window later on `EBlockScholesPriceStale` — an error naming
+provider staleness for what is actually clock skew on our side of the boundary.
+
+The comparison has a real duty and is not simply removable: accepting a
+future-dated envelope would let that observation win the `(model, published)`
+ordering against every honest later batch at equal model time, pinning the
+series until its model time advances.
+
+**Action:** Measure the observed `published_at_ms - recorded_at_ms` distribution
+against the live provider before a value-bearing deployment, and alert on
+`update_count > 0 && applied == 0` sustained across consecutive batches, which
+is what distinguishes this from a genuinely quiet feed. If the observed margin
+is thin, decide the response deliberately — a bounded tolerance on the
+comparison is a `response-policies.md` decision, not a silent widening.
+
+
 ## Access and Governance
 
 ### G-1: Root admin caps have no on-chain revocation or rotation
@@ -469,6 +529,25 @@ correctness today.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.
+- The store pair could be one object. The verifier's two batch types force two
+  typed entry functions, not two stores; a single store would drop
+  `BlockScholesStorePair`, one registry id, one of the two binding checks in
+  `pricing::assert_current_oracles`, and the duplicated
+  `block_scholes_base_asset` field whose two copies agree only by construction
+  and can never be checked against each other on-chain.
+- Every series id is scoped to the verifier package id
+  (`type_name::original_id<PackageMarker>()`), so repointing Propbook at a new
+  `bs_oracle` publication rotates the entire identity space at once: stored rows
+  go dead and unprunable, and reads fail closed with no error distinguishing it
+  from a stopped feed. The revision bump in this cutover already moved it once.
+  Deployment procedure should treat a verifier repoint as feed re-provisioning
+  rather than a configuration change.
+- The upstream publication metadata records a live `UpgradeCap` for `bs_sid`.
+  Sui pins linkage at publish, so a provider-side upgrade cannot move Propbook's
+  derivation on its own, but a future Propbook upgrade rebuilt against a newer
+  revision would, silently. Upstream's manifest states nothing there depends on
+  retaining the capability, and the burn commitment obtained for the verifier
+  package does not cover this one — worth asking for it.
 
 ### H-6: Maintainability backlog
 
