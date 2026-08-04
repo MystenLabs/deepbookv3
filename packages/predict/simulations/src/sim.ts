@@ -376,7 +376,7 @@ function normalizePythObservation(event: any): Record<string, unknown> {
 // row; the event assertions confirm the chain accepted every update. The values
 // remain chain-checked downstream: order/flush parity round-trips the stored
 // series through on-chain `load_live_pricer`.
-function assertBlockScholesBatchIngested(event: any): void {
+function blockScholesBatchSeriesKind(event: any): number {
     const json = event.parsedJson ?? {};
     const updateCount = BigInt(decimal(json.update_count));
     const applied = BigInt(decimal(json.applied));
@@ -385,6 +385,11 @@ function assertBlockScholesBatchIngested(event: any): void {
             `Block Scholes batch not fully applied: update_count=${updateCount} applied=${applied}`,
         );
     }
+    const seriesKind = Number(decimal(json.series_kind));
+    if (!Number.isInteger(seriesKind) || seriesKind < 0 || seriesKind > 2) {
+        throw new Error(`invalid Block Scholes series_kind ${String(json.series_kind)}`);
+    }
+    return seriesKind;
 }
 
 // Rebuild the synthetic surface update the Python replay emits from the row's
@@ -636,7 +641,12 @@ function normalizeUpdates(
         )
             updates.push(normalizePythObservation(event));
         else if (fullType.includes("::block_scholes_store::BlockScholesBatchIngested")) {
-            assertBlockScholesBatchIngested(event);
+            const seriesKind = blockScholesBatchSeriesKind(event);
+            if (seriesKind !== pendingBsBatches) {
+                throw new Error(
+                    `Block Scholes batch order mismatch: expected series_kind=${pendingBsBatches}, saw ${seriesKind}`,
+                );
+            }
             pendingBsBatches++;
             // The third batch of a refresh (spot, forward, then SVI) completes the
             // synthetic surface update.

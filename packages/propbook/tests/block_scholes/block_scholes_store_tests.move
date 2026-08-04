@@ -26,6 +26,7 @@ use sui::{clock::{Self, Clock}, event, test_scenario::{Self as test, Scenario, r
 const ADMIN: address = @0xAD;
 const SERIES_KIND_SPOT: u8 = 0;
 const SERIES_KIND_FORWARD: u8 = 1;
+const SERIES_KIND_SVI: u8 = 2;
 const SPOT_EXPIRY_MS: u64 = 0;
 
 const EXPIRY_A: u64 = 1_700_100_000_000;
@@ -77,6 +78,9 @@ fun a_spot_observation_lands_with_all_three_clocks() {
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
     assert_eq!(read.read_published_at_ms(), PUBLISHED_EARLY);
     assert_eq!(read.read_recorded_at_ms(), CHAIN_TIME_MS);
+    let events = event::events_by_type<store::BlockScholesBatchIngested>();
+    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_SPOT);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -421,7 +425,8 @@ fun a_model_time_after_its_own_envelope_is_skipped() {
     assert_eq!(store::forward(&value_store, EXPIRY_B).destroy_some().read_value(), FORWARD_B);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 2);
     assert_eq!(applied, 1);
 
@@ -617,6 +622,9 @@ fun an_svi_batch_lands_every_parameter_source_native() {
     assert_eq!(params.svi_m_magnitude(), SVI_M_MAG);
     assert_eq!(params.svi_m_is_negative(), SVI_M_NEG);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
+    let events = event::events_by_type<store::BlockScholesBatchIngested>();
+    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_SVI);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(svi_store);
@@ -725,10 +733,17 @@ fun an_ingested_batch_reports_what_it_carried_and_stored() {
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
     assert_eq!(events.length(), 2);
-    let (oracle_id, published_at_ms, update_count, applied) = store::batch_ingested_fields(
+    let (
+        oracle_id,
+        series_kind,
+        published_at_ms,
+        update_count,
+        applied,
+    ) = store::batch_ingested_fields(
         &events[1],
     );
     assert_eq!(oracle_id, value_id);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(published_at_ms, PUBLISHED_MID);
     assert_eq!(update_count, 2);
     assert_eq!(applied, 1);
@@ -765,7 +780,8 @@ fun a_series_repeated_within_one_batch_resolves_by_model_time() {
     assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 3);
     assert_eq!(applied, 2);
 

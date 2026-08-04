@@ -207,7 +207,7 @@ fun assert_metadata(
 // === Block Scholes stores ===
 
 #[test]
-fun create_block_scholes_stores_records_both_lookups() {
+fun create_block_scholes_stores_records_the_pair_lookup() {
     let mut scenario = test::begin(ADMIN);
     registry::init_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);

@@ -10,6 +10,8 @@ const TIMESTAMP_PRECISION = "ms";
 // The local Predict development system uses one numeric identity for its Pyth
 // feed and Propbook underlying.
 export const PREDICT_ORACLE_ID = 1;
+// Canonical provider spelling used for store binding and every SID/subscription descriptor.
+export const PREDICT_BLOCK_SCHOLES_BASE_ASSET = "BTC";
 
 const encodedString = (value: string): Uint8Array => bcs.string().serialize(value).toBytes();
 const encodedU8 = (value: number): Uint8Array => bcs.u8().serialize(value).toBytes();

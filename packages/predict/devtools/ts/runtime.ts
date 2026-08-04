@@ -36,7 +36,13 @@ import {
     WORMHOLE_STATE_ID,
     getSigner,
 } from "./env.js";
-import { PREDICT_ORACLE_ID, forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
+import {
+    PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+    PREDICT_ORACLE_ID,
+    forwardSid,
+    spotSid,
+    sviSid,
+} from "./blockScholesSid.js";
 import {
     signedSviBatchBytes,
     signedValueBatchBytes,
@@ -80,8 +86,6 @@ const COIN_REGISTRY_ID = "0xc";
 // fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
-// Propbook binds the local underlying to the provider's exact base-asset spelling.
-const BS_BASE_ASSET = "BTC";
 // Strike range encoding (range_codec / constants.move): two u30 ticks packed
 // `lower | (higher << TICK_BITS)`. `raw_strike = tick * tick_size`. Tick 0 is the
 // neg-inf sentinel (lower side); `POS_INF_TICK` is the pos-inf sentinel (higher
@@ -919,11 +923,11 @@ export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | n
     return ts;
 }
 
-// Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then a
-// single BS value batch (spot + every forward) and a single BS SVI batch (every
-// SVI set). Pre-warms the whole boundary grid in a single transaction under one
-// (clamped) envelope timestamp, while each series keeps its own provider model
-// time — the clock the on-chain stores order and age series by.
+// Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then
+// separate BS spot, forward, and SVI batches. Pre-warms the whole boundary grid
+// in a single transaction under one (clamped) envelope timestamp, while each
+// series keeps its own provider model time — the clock the on-chain stores order
+// and age series by.
 export interface GridExpiry {
     expiry: bigint;
     forward: bigint;
@@ -947,7 +951,7 @@ export function buildOracleRefreshGridTx(
     return tx;
 }
 
-// Add a grid refresh (one value batch + one SVI batch) to an existing PTB. This
+// Add a grid refresh (spot, forward, and SVI batches) to an existing PTB. This
 // must remain a refresh-only PTB: a priced operation appended after it would abort
 // `EOracleWrittenInThisTransaction`. Each
 // series carries its own provider model time; a series whose model time is
@@ -980,7 +984,7 @@ function addOracleRefreshGrid(
     const spotTs = seriesTs(bsSpot.tsMs);
     if (spotTs !== null) {
         spotUpdate = {
-            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET),
+            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
             timestampMs: spotTs,
             value: bsSpot.value1e9,
         };
@@ -992,7 +996,11 @@ function addOracleRefreshGrid(
             forwardUpdates.push({
                 expiryMs: g.expiry,
                 update: {
-                    sid: forwardSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, g.expiry),
+                    sid: forwardSid(
+                        BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+                        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+                        g.expiry,
+                    ),
                     timestampMs: ts,
                     value: g.forward,
                 },
@@ -1169,7 +1177,7 @@ function sviBatchUpdate(
     timestampMs: bigint,
 ): BsSviUpdate {
     return {
-        sid: sviSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, expiry),
+        sid: sviSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET, expiry),
         timestampMs,
         aMagnitude: svi.a,
         aNegative: svi.aNegative,
@@ -1192,7 +1200,7 @@ function addBlockScholesUpdates(
         params,
         publishedAtMs,
         {
-            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET),
+            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
             timestampMs: publishedAtMs,
             value: params.spot,
         },
@@ -1200,7 +1208,11 @@ function addBlockScholesUpdates(
             {
                 expiryMs: params.expiry,
                 update: {
-                    sid: forwardSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, BS_BASE_ASSET, params.expiry),
+                    sid: forwardSid(
+                        BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+                        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+                        params.expiry,
+                    ),
                     timestampMs: publishedAtMs,
                     value: params.forward,
                 },
@@ -1497,7 +1509,7 @@ export function registerUnderlyingAndCreateFeedsTx(): Transaction {
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.pure.u32(PREDICT_ORACLE_ID),
-            tx.pure.string(BS_BASE_ASSET),
+            tx.pure.string(PREDICT_BLOCK_SCHOLES_BASE_ASSET),
         ],
     });
     return tx;

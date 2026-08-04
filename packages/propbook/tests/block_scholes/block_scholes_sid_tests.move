@@ -16,6 +16,24 @@ use std::{string::String, type_name, unit_test::assert_eq};
 const EXPIRY_MS: u64 = 1_785_888_000_000;
 /// Block Scholes signs every Propbook scalar and SVI value at nine decimal places.
 const DECIMALS: u8 = 9;
+const ORACLE_VECTOR_SCOPE: address =
+    @0x1111111111111111111111111111111111111111111111111111111111111111;
+const SPOT_HYPE_OFFICIAL: u256 = 0x215ab77d29adef1066cb6a229a7e74e083bee79b5aff973a36d2ba2aa8f560f3;
+
+#[test]
+fun spot_matches_the_official_pinned_id() {
+    assert_eq!(
+        sid::index_px(
+            ORACLE_VECTOR_SCOPE,
+            b"spot".to_string(),
+            b"HYPE".to_string(),
+            option::none(),
+            DECIMALS,
+            b"ms".to_string(),
+        ),
+        SPOT_HYPE_OFFICIAL,
+    );
+}
 
 #[test]
 fun spot_matches_the_official_descriptor() {

@@ -10,7 +10,12 @@ import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import WebSocket from "ws";
 
-import { forwardSid, spotSid, sviSid } from "../../devtools/ts/blockScholesSid.js";
+import {
+  PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+  forwardSid,
+  spotSid,
+  sviSid,
+} from "../../devtools/ts/blockScholesSid.js";
 import { harnessKey } from "./io.js";
 import {
   type BsSviUpdate,
@@ -22,9 +27,9 @@ import {
 
 export const isoSec = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z";
 const SCALE_1E9 = 1_000_000_000;
-const BS_BASE_ASSET = "BTC";
 
-// Public, versioned Block Scholes testnet trust triple. The subscription's
+// Public, versioned Block Scholes testnet trust triple. The IDs are the deployment recorded by
+// the exact upstream source revision pinned in Predict's Move.toml. The subscription's
 // `{network, pkg_ver}` selects this verifier deployment on the provider side;
 // startup fail-fast reads the shared registry over Sui gRPC, and every signed
 // batch re-reads it so pause and signer rotation take effect without a restart.
@@ -32,8 +37,8 @@ const BS_PROVIDER_PROFILE = {
   name: "testnet-v1",
   network: "testnet" as const,
   pkgVer: 1,
-  packageId: "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6",
-  registryId: "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
+  packageId: "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+  registryId: "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
   grpcUrl: "https://fullnode.testnet.sui.io:443",
 };
 
@@ -306,6 +311,33 @@ type PendingAck = {
 };
 
 const sidHex = (sid: bigint): string => `0x${sid.toString(16).padStart(64, "0")}`;
+
+export function blockScholesForwardSubscription(expiryMs: number) {
+  return {
+    sid: sidHex(
+      forwardSid(
+        BS_PROVIDER_PROFILE.packageId,
+        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+        BigInt(expiryMs),
+      ),
+    ),
+    feed: "mark.px",
+    asset: "future",
+    exchange: "composite",
+    base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+    expiry: isoSec(expiryMs),
+  };
+}
+
+export function subscriptionItemMatches(
+  expected: Record<string, unknown>,
+  actual: unknown,
+): boolean {
+  return Object.entries(expected).every(
+    ([key, value]) => (actual as Record<string, unknown> | null)?.[key] === value,
+  );
+}
+
 const fixedNumber = (value: bigint): number => Number(value) / SCALE_1E9;
 const sviView = (raw: FixedSvi): Svi => ({
   alpha: fixedNumber(raw.a) * (raw.aNegative ? -1 : 1),
@@ -476,7 +508,7 @@ export class DirectWsSource implements MarketSource {
       const expectedItem = pending.expectedItems.get(String(item.sid));
       return (
         expectedItem !== undefined &&
-        Object.entries(expectedItem).every(([key, value]) => item?.[key] === value)
+        subscriptionItemMatches(expectedItem, item)
       );
     });
     if (
@@ -626,25 +658,21 @@ export class DirectWsSource implements MarketSource {
     if (!ws) return;
     const active = this.#expiries.filter((ms) => ms > Date.now());
     const spot = {
-      sid: sidHex(spotSid(BS_PROVIDER_PROFILE.packageId, BS_BASE_ASSET)),
+      sid: sidHex(spotSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET)),
       feed: "index.px",
       asset: "spot",
-      base_asset: BS_BASE_ASSET,
+      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
       exchange: "blockscholes",
     };
-    const forwards = active.map((ms) => ({
-      sid: sidHex(forwardSid(BS_PROVIDER_PROFILE.packageId, BS_BASE_ASSET, BigInt(ms))),
-      feed: "mark.px",
-      asset: "future",
-      base_asset: BS_BASE_ASSET,
-      expiry: isoSec(ms),
-    }));
+    const forwards = active.map(blockScholesForwardSubscription);
     const svis = active.map((ms) => ({
-      sid: sidHex(sviSid(BS_PROVIDER_PROFILE.packageId, BS_BASE_ASSET, BigInt(ms))),
+      sid: sidHex(
+        sviSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET, BigInt(ms)),
+      ),
       feed: "model.params",
       exchange: "composite",
       asset: "option",
-      base_asset: BS_BASE_ASSET,
+      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
       model: "SVI",
       expiry: isoSec(ms),
     }));

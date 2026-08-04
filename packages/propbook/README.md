@@ -4,9 +4,9 @@ Propbook is a source-oracle package for prediction-market data. It stores source
 facts and discovery metadata, but it does not decide whether an observation is
 safe for a specific consumer's pricing or settlement math.
 
-## Core Model
+## Pyth Lane Model
 
-Every live source stream is stored through an `oracle_lane::OracleLane<Payload>`.
+Every Pyth live source stream is stored through an `oracle_lane::OracleLane<Payload>`.
 A lane owns:
 
 - `latest`: the most recent accepted source observation.
@@ -28,14 +28,15 @@ There are two write shapes:
   timestamp is valid and no read already exists at that exact source timestamp.
   It does not mutate `latest`; invalid or duplicate inserts are no-ops.
 
-Consumers should use the `source_timestamp_ms` returned on raw or normalized
-`OracleRead` values when they need a liveness reference.
+Pyth consumers should use the `source_timestamp_ms` returned on raw or normalized
+`OracleRead` values when they need a liveness reference. Block Scholes uses its
+latest-only typed stores and `BsRead` clocks described below.
 
 ## Canonical Propbook Reads And Raw Source Reads
 
 Propbook stores source-native fields and also exposes canonical Propbook
 normalized reads for consumers that want normalized values instead of raw source
-payloads. Every source module follows the same read pattern:
+payloads. Pyth modules follow this read pattern:
 
 - `raw_*`: returns `OracleRead<Raw*>` and aborts when the requested raw
   observation does not exist.
@@ -49,14 +50,13 @@ exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
 
-For Block Scholes, raw reads expose source spot plus per-expiry forward and SVI
-payloads from permanent source-level feed objects. Normalized spot and forward
-reads return `none` when the requested observation is absent or zero; normalized
-SVI reads expose the stored SVI parameters directly.
+For Block Scholes, latest-only typed reads expose source spot plus per-expiry forward and SVI
+payloads from permanent stores. Spot and forward reads return `none` when the requested
+observation is absent; SVI reads expose the stored provider parameters directly.
 
 ## Exact Timestamp Inserts
 
-Propbook does not have a separate settlement or minute-bucket write mode. Feeds
+Propbook does not have a separate settlement or minute-bucket write mode. Pyth feeds
 can insert source-native observations into `exact_reads`, keyed by the exact
 source timestamp derived from the update:
 
@@ -64,15 +64,11 @@ source timestamp derived from the update:
   exact whole millisecond. The envelope at a tick carries Pyth's canonical price as
   of that tick, so a consumer settling at the tick resolves the right mark even when
   Pyth generated that price earlier and carried it forward.
-- Block Scholes spot, forward, and SVI use each update's published millisecond
-  timestamp directly.
-
-A read for `timestamp_ms` succeeds only if a source observation was inserted or
-latest-updated at exactly that timestamp and exposed by the source module's
-`*_at` getter. There is no first-transaction-after-minute fallback and no
-Propbook-specific "official resolution" policy. Consumers that need a terminal
-price should define which exact timestamp they are sampling and read the exact
-Propbook value at that timestamp.
+A Pyth read for `timestamp_ms` succeeds only if a source observation was inserted at
+exactly that timestamp and exposed by the source module's `*_at` getter. There is no
+first-transaction-after-minute fallback and no Propbook-specific "official resolution"
+policy. Block Scholes stores retain only the latest observation per series and expose no
+exact-history getter.
 
 ## Pyth Feed
 
@@ -239,7 +235,7 @@ Block Scholes stores emit their dedicated event surface:
 
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
 - `BlockScholesObservationRecorded<Observation>` records every stored observation with its store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
-- `BlockScholesBatchIngested` records every verified batch with its store ID, provider publication time, verified update count, and applied update count, including batches where no series advanced.
+- `BlockScholesBatchIngested` records every verified batch with its store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

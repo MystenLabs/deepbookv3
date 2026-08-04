@@ -94,6 +94,8 @@ public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy
 /// during a stretch where no series moved and no observation event is emitted.
 public struct BlockScholesBatchIngested has copy, drop {
     propbook_oracle_id: ID,
+    /// `0` = spot, `1` = forward, and `2` = SVI.
+    series_kind: u8,
     published_at_ms: u64,
     /// Verified observations carried by the batch.
     update_count: u64,
@@ -366,6 +368,7 @@ fun apply_checked_value_batch(
 
     event::emit(BlockScholesBatchIngested {
         propbook_oracle_id: store.value_store_id(),
+        series_kind,
         published_at_ms,
         update_count,
         applied,
@@ -433,6 +436,7 @@ fun apply_checked_svi_batch(
 
     event::emit(BlockScholesBatchIngested {
         propbook_oracle_id: store.svi_store_id(),
+        series_kind: series_kind_svi!(),
         published_at_ms,
         update_count,
         applied,
@@ -510,10 +514,16 @@ public fun observation_recorded_fields<Observation: copy + drop>(
 }
 
 /// The batch event's fields exist for off-chain consumers, which decode them rather than calling
-/// Move, so this reader exists only so tests can assert the counts are right.
+/// Move, so this reader exists only so tests can assert the decoded fields are right.
 #[test_only]
-public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u64, u64, u64) {
-    (event.propbook_oracle_id, event.published_at_ms, event.update_count, event.applied)
+public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u8, u64, u64, u64) {
+    (
+        event.propbook_oracle_id,
+        event.series_kind,
+        event.published_at_ms,
+        event.update_count,
+        event.applied,
+    )
 }
 
 /// Ordering is lexicographic on (model time, envelope time) — the provider names the per-series

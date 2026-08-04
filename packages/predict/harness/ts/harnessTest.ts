@@ -7,8 +7,10 @@ import test from "node:test";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import {
   HubSource,
+  blockScholesForwardSubscription,
   providerPublicKeyFromRegistryObject,
   serializableSnapshot,
+  subscriptionItemMatches,
 } from "./marketSource.js";
 import { budgetLadder, gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
@@ -123,6 +125,25 @@ test("provider registry parsing observes signer rotation and pause", () => {
     () => providerPublicKeyFromRegistryObject(registry(encodedKey(2, 1), true)),
     /registry is paused/,
   );
+});
+
+test("forward subscriptions spell and acknowledge the complete SID identity", () => {
+  const descriptor = blockScholesForwardSubscription(1_785_250_800_000);
+  assert.deepEqual(descriptor, {
+    sid: "0x1da97230ccd81eb5cfc2c4253f9088d83c71309dca38a68973814b7e8e253de0",
+    feed: "mark.px",
+    asset: "future",
+    exchange: "composite",
+    base_asset: "BTC",
+    expiry: "2026-07-28T15:00:00Z",
+  });
+  assert.equal(subscriptionItemMatches(descriptor, descriptor), true);
+  assert.equal(
+    subscriptionItemMatches(descriptor, { ...descriptor, exchange: "deribit" }),
+    false,
+  );
+  const { exchange: _exchange, ...missingExchange } = descriptor;
+  assert.equal(subscriptionItemMatches(descriptor, missingExchange), false);
 });
 
 test("budget ladder parses, orders by time, and rejects malformed rungs", () => {
