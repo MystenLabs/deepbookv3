@@ -12,6 +12,15 @@ DeepBook V3 is a decentralized order book on Sui. This file is the canonical ent
 
 Use repository-relative pointers instead of copying facts between context files. Local Markdown links are for navigable documents; backticks are for source paths, commands, and identifiers.
 
+Context surfaces use four roles:
+
+- **Entrypoint:** `CLAUDE.md` owns repository-wide directives and routes readers to narrower context; `AGENTS.md` only points here.
+- **Directive:** `.claude/rules/*.md` owns what contributors must do for a path or task; it points to facts, decisions, and evidence instead of copying them.
+- **Workflow:** `.claude/skills/*/SKILL.md` owns an executable procedure, its trigger, and its output contract; it does not become a second home for repository facts.
+- **Domain owner:** Source, tests, package documentation, registers, and evidence own component behavior, decisions, state, and measurements. An area hub may route to narrower owners within its domain.
+
+Authority pointers flow from entrypoints, directives, workflows, and consumers toward the owning surface. Owners do not point back to an entrypoint merely to say they are routed. Related-reading links may be reciprocal only when they are navigational and do not establish precedence.
+
 ## Repository map
 
 - `packages/` contains Sui Move packages.
@@ -21,6 +30,8 @@ Use repository-relative pointers instead of copying facts between context files.
 - `.claude/skills/` contains explicitly invoked specialist workflows.
 
 ## Context routing
+
+Read context in this order: start here, load the matching path-scoped and task-triggered directives, load a matching skill when the task calls for it, then follow only the owner pointers needed for the work.
 
 Do not assume a scoped rule is already in context. Claude Code may inject a rule through its `paths:` frontmatter, while Codex and other agents may not; before editing a matching file, open the rule yourself if it was not injected. Manual-trigger rules must always be read when the task matches.
 
@@ -101,6 +112,8 @@ Route durable information to one owner instead of appending it wherever it was d
 | Predict measurement | A dated record under `packages/predict/predeploy/evidence/`, following the [predeploy lifecycle](packages/predict/predeploy/README.md) |
 | Public Predict explanation or risk | [Predict protocol documentation](packages/predict/docs/README.md) |
 | Raw working notes or generated audit output | Ignored scratch only; extract durable results before another contributor needs them |
+
+When context moves, update the owner, replace consumer text that still needs the behavior with a direct pointer, delete the remaining copies, and update a router only if the owner would otherwise be unreachable. Land those changes together so the repository never represents two authoritative versions.
 
 Before changing repository guidance, check the owning file for an existing rule, name the failure the new directive prevents, and point to source, tests, decisions, or evidence instead of restating their details. When the user asks to wrap up, follow the proposal gate in the [wrap-up workflow](.claude/rules/wrap-up.md).
 
