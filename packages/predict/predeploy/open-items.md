@@ -534,14 +534,20 @@ the LP-queue drain and several other markets, so it is not a per-market figure. 
 reserve is therefore likely ~20× larger than needed, and every unit of it is a strike
 boundary markets cannot use.
 
-**Plan (decision rule pre-registered):** re-run `ts/strategies/treeNodeSweep.ts`
-against the resumable flush, filling ONE market and valuing it in its own
+**Plan (decision rule pre-registered):** run `ts/strategies/capacity.ts` on its `tree`
+profile against the resumable flush, filling ONE market and valuing it in its own
 transaction, and read the base children off the abort boundary — the node count at
 which a single `value_expiry` aborts, minus the pages present. If the measured base
 is below 40, lower `valuation_base_children_reserve` to the measured figure plus a
 stated margin and follow with one run that reaches the new boundary. If it is above
 40, that is a correctness finding on RP-26, not a tuning result: raise the reserve
 and re-derive.
+
+The run must carry **leveraged** orders, not the 1x-only book the superseded
+`treeNodeSweep` strategy used (`evidence/c1-object-cache-flush-2026-07-07.md`): 1x
+orders create no liquidation-book pages, so a 1x sweep exercises neither the page term
+nor the interaction between the two, and at the derived cap it can no longer reach the
+object ceiling at all.
 
 **Why this is no longer a deploy blocker:** the failure it used to guard against —
 a market whose `value_expiry` cannot fit, freezing LP supply and withdraw pool-wide —
