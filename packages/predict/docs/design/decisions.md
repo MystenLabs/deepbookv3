@@ -27,7 +27,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (the liquidated state is derived from the order's absence from the active
   index, not stored). *Rejected:* residual-paying liquidation; a stored
   tombstone table (removed as a duplicate of the account position).
-- **The ask-price band applies to mint only — redeems price at the live mark.**
+- **D025 — The ask-price band applies to mint only — redeems price at the live mark.**
   The mint-time `[min_entry_probability, max_entry_probability]` band is admission policy: the protocol
   declines to become counterparty in the tail price regions where the curve is
   least reliable. Once a contract is live, redeeming at the live mark is the
@@ -107,7 +107,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   reserve↔payout pairing (a reserve and its payout derive from the same quantity
   via the *identical* helper). *Rejected:* mixed ceil/floor primitives, which
   introduced super-additivity drift and were deleted.
-- **Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
+- **D026 — Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
   the `u64` mul ceiling is accepted because the failure mode is a graceful per-tx
   mint abort at extreme strike×quantity (never a brick), and inline `u128` casts
   duplicated `fixed_math` semantics inside a core module. *Rejected:* the widening.
@@ -122,7 +122,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Backing and solvency (recent)
 
-- **The live cash-backing reserve is a settlement floor plus a tunable liquidity
+- **D030 — The live cash-backing reserve is a settlement floor plus a tunable liquidity
   buffer**: `max_net_payout + λ · (Σ net_payout − max_net_payout)`, with
   `λ` (`backing_buffer_lambda`) an admin template value, default 0.25. The floor
   — the maximum summed payout at any *single* settlement price — pays every
@@ -516,7 +516,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   one formula. *Rejected:* a per-market or per-expiry selector, which would let two
   live markets on the same underlying disagree about the forward and produce a
   mixed pool NAV for no calibration benefit.
-- **No cross-source deviation guard comes with it.** Flipping the setting can move
+- **D031 — No cross-source deviation guard comes with it.** Flipping the setting can move
   every live mark by the current Pyth-vs-Block-Scholes divergence. Nothing bounds
   that divergence directly: the envelope bounds each formula's inputs, and the
   re-anchored forward is deliberately not re-checked against it (its own bound is

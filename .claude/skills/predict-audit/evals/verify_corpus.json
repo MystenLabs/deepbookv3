@@ -28,7 +28,7 @@
     {
       "id": "settled-nav-no-band",
       "expect": "settled",
-      "why": "Settled (AGENTS 'L10 supply mark = EXACT current_nav, no conservative band'): current_nav is the exact per-expiry recoverable value, one mark for supply and withdraw. A finding demanding a conservative haircut band is arguing against a settled decision.",
+      "why": "Settled (packages/predict/docs/design/decisions.md, 'current_nav is the exact per-expiry mark — one mark, no band'): current_nav is the exact per-expiry recoverable value, one mark for supply and withdraw. A finding demanding a conservative haircut band is arguing against a settled decision.",
       "severity": "Medium", "title": "current_nav lacks a conservative haircut, so the supply mark can over-count recoverable value",
       "location": "packages/predict/sources/plp/plp.move (value_expiry / current_nav)",
       "claim": "Without a haircut band the NAV mark can overstate recoverable value and dilute incumbents on supply.",

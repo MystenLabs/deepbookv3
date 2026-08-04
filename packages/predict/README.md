@@ -35,5 +35,4 @@ response policies, harness experiment ledger, and audit obligations — starts a
 order). Read it before proposing or changing protocol behavior; it is how work
 stays coherent across sessions and contributors.
 
-See the repository root `CLAUDE.md` / `AGENTS.md` and `.claude/rules/` for
-contributor conventions.
+See the repository root [CLAUDE.md](../../CLAUDE.md), which routes contributor conventions to the matching repository rules.

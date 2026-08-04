@@ -36,8 +36,8 @@ if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const groundTruth = A.groundTruth || '(none provided)'
 const maxViolations = A.maxViolations || 10
-// There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
-// registers (AGENTS.md + predeploy policies), which the PRELUDE already makes every agent read.
+// There is no cross-run adjudication carry: durable dispositions follow the committed authority order,
+// which the PRELUDE already makes every agent read.
 
 // Map units = subsystem clusters. Each map agent builds the responsibility-map entries for its modules.
 const MAP_UNITS = [
@@ -73,9 +73,9 @@ if (wantUnits && !UNITS.length) {
 }
 
 const PRELUDE = `You are an agent in the Predict OWNERSHIP WALK — a recursive conformance audit of the ownership/boundary/policy rules. FIRST read these and follow them exactly:
-  1. ${SKILL}/primer.md           (protocol, current module map, scope, prior-awareness, report format)
+  1. ${SKILL}/primer.md           (shared scope, authority, execution, evidence, and report contract)
   2. ${SKILL}/references/ownership-rules.md  (R1-R7 — the rule-set you enforce, with intentional exceptions)
-Be prior-aware: AGENTS.md settled list + packages/predict/predeploy/response-policies.md (Rounding policy R1-R3) + packages/predict/predeploy/response-policies.md + packages/predict/predeploy/open-items.md are the committed sources of truth. Do not use local ignored design scratch as authority for audit triage. A candidate matching a settled/accepted decision or committed policy is NOT a violation (tag settled_ref). Read-only on packages/*/sources/**; do NOT run sui build/test or localnet (watchdog); reason from source + grep + git. The .claude/predict-review module map is STALE — trust primer.md + the current tree.`
+Follow the primer's scope, prior-awareness, source, scratch, and main-loop boundaries. A candidate matching a settled decision or policy is not a violation; tag its owning reference.`
 
 const MODULE_ENTRY = {
   type: 'object',
@@ -176,7 +176,7 @@ function checkPrompt(cu) {
     + `Walk ${cu.fnFocus ? `these functions: ${cu.fnFocus.join(', ')}` : 'EVERY function in the module'} and check R1-R7 (see ownership-rules.md) at each. A violation is a MISPLACED responsibility — a leaf owning app policy (R3), a producer returning a lossy-transformed value a consumer does math on (R1), a derivation re-implemented/threaded (R2), mutate-before-validate (R4), a leaf trusting its caller or a redundant caller guard (R5), a field mutated outside its declarer / raw fields threaded (R6), or a state/policy/fact with no clear owner — incl. write-only fields (R7). Check the intentional-exceptions list in ownership-rules.md and the settled decisions BEFORE flagging. Keep each violation CONCISE — claim ≤2 sentences, recommendation ≤1 sentence, data_flow ≤1 line (the VERIFIER reconstructs the full proof). A verbose multi-paragraph response risks truncating the structured output and losing the whole unit. Cap at your ${maxViolations} highest-confidence violations.`
 }
 function verifyPromptV(v) {
-  return `${PRELUDE}\n\nYou are the ADVERSARIAL VERIFIER for one ownership-walk violation. TEST it; do not agree by default — R1-R7 false-positive heavily on intentional architecture (the strike_payout_tree::payout_terms_from_order single evaluator, D033 deferred-carry, saturating_sub-as-deliberate-policy, documented post-mutation calcs). Read the cited code + the data_flow + the responsibility map. Verdict: confirmed (real misplaced responsibility) / refuted (the responsibility IS correctly placed, or the claim is wrong) / settled (matches AGENTS or committed predeploy policy/open item — cite the D-id or committed-doc reference) / uncertain. Also classify: fix-code / update-rule (defensible → narrowest rule exception) / design-decision / false-positive.\n\nVIOLATION (module ${v.module}):\n${JSON.stringify(v, null, 2)}`
+  return `${PRELUDE}\n\nYou are the ADVERSARIAL VERIFIER for one ownership-walk violation. TEST it; do not agree by default — R1-R7 false-positive heavily on intentional architecture (the strike_payout_tree::payout_terms_from_order single evaluator, D033 deferred-carry, saturating_sub-as-deliberate-policy, documented post-mutation calcs). Read the cited code + the data_flow + the responsibility map. Verdict: confirmed (real misplaced responsibility) / refuted (the responsibility IS correctly placed, or the claim is wrong) / settled (matches a committed design decision or predeploy policy/open item — cite the D-id or committed-doc reference) / uncertain. Also classify: fix-code / update-rule (defensible → narrowest rule exception) / design-decision / false-positive.\n\nVIOLATION (module ${v.module}):\n${JSON.stringify(v, null, 2)}`
 }
 
 const seen = new Set()
