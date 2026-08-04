@@ -10,8 +10,9 @@ import {
   providerPublicKeyFromRegistryObject,
   serializableSnapshot,
 } from "./marketSource.js";
-import { gridExpiries } from "./runnerConfig.js";
+import { budgetLadder, gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
+import { createLiqBudgetStrategy } from "./strategies/liqBudget.js";
 import { abortInfo } from "./trace.js";
 
 test("cadence scheduling treats window size as a time horizon and reserves higher-rank boundaries", () => {
@@ -122,4 +123,112 @@ test("provider registry parsing observes signer rotation and pause", () => {
     () => providerPublicKeyFromRegistryObject(registry(encodedKey(2, 1), true)),
     /registry is paused/,
   );
+});
+
+test("budget ladder parses, orders by time, and rejects malformed rungs", () => {
+  assert.deepEqual(budgetLadder(""), []);
+  assert.deepEqual(
+    budgetLadder("1800:1500,0:24,2700:3000,900:512").map((rung) => [rung.atMs, rung.budget]),
+    [
+      [0, 24n],
+      [900_000, 512n],
+      [1_800_000, 1500n],
+      [2_700_000, 3000n],
+    ],
+  );
+  // A typo must fail at load, not as a BigInt TypeError an hour into the campaign it configures.
+  assert.throws(() => budgetLadder("900:"), /invalid TRADE_LIQ_BUDGET_STAGES entry/);
+  assert.throws(() => budgetLadder("abc"), /invalid TRADE_LIQ_BUDGET_STAGES entry/);
+});
+
+test("liq-budget probe keeps emitting single mints once the fill target is reached", async () => {
+  // The failure this pins made the instrument useless without looking broken: batching all the way
+  // to the index cap saturates the book long before a ladder steps, after which nothing is minted
+  // and the run collects no single-mint samples at all while still reporting cleanly.
+  const strategy = createLiqBudgetStrategy("healthy");
+  const submitted: number[] = [];
+  const ctx = {
+    markets: () => [{ id: "0xm", expiryMs: Date.now() + 8 * 3_600_000 }],
+    snapshot: () => ({}),
+    rand: (lo: number, hi: number) => (lo + hi) / 2,
+    pick: <T,>(items: T[]) => items[0],
+    leverageCap: () => 5,
+    resolve: () => ({
+      feasible: true, lowerTick: 1, higherTick: 2, strikeUsd: 100, predictedProbability: 0.5,
+      quantity: 1n, leverage1e9: 1_100_000_000n, maxProbability1e9: 1n, maxCost: 1n,
+    }),
+    trace: () => {},
+    submitMintBatch: async (_market: unknown, legs: unknown[]) => {
+      submitted.push(legs.length);
+      return { events: [] };
+    },
+  } as unknown as Parameters<typeof strategy.tick>[0];
+
+  // Mirror traderService: it evaluates failure() after EVERY tick and throws on a non-null result.
+  // Checking only at the end hides a predicate that is briefly true mid-run — which is exactly how
+  // a version that killed every run 75 seconds in passed its test.
+  for (let i = 0; i < 400; i++) {
+    await strategy.tick(ctx);
+    const semanticFailure = strategy.failure?.();
+    assert.equal(semanticFailure, null, `failure() fired at tick ${i}: ${semanticFailure}`);
+  }
+
+  const singles = submitted.filter((n) => n === 1).length;
+  const minted = submitted.reduce((total, n) => total + n, 0);
+  assert.ok(minted >= 2_000, `expected the fill to pass FILL_TARGET, minted ${minted}`);
+  assert.ok(singles > 100, `expected sustained single-mint probes, got ${singles}`);
+});
+
+test("liq-budget cannot hold the book when the ambient pass outpaces minting, and says so", async () => {
+  // On the adverse arm every mint's pass can knock out more orders than the mint adds, and batching
+  // makes it WORSE — an N-mint PTB runs N passes, so it knocks out ~N times as many. There is no
+  // refill rate that wins that race. The guarantee is therefore not "the book is held" but "a run
+  // whose book collapsed does not go on to report a ceiling": the surviving samples cover a narrow
+  // candidate range, and the analysis refuses to fit one (see the Python span-guard tests).
+  const strategy = createLiqBudgetStrategy("adverse");
+  let book = 0;
+  const candidateCounts: number[] = [];
+  const ctx = {
+    markets: () => [{ id: "0xm", expiryMs: Date.now() + 8 * 3_600_000 }],
+    snapshot: () => ({}),
+    rand: (lo: number, hi: number) => (lo + hi) / 2,
+    pick: <T,>(items: T[]) => items[0],
+    leverageCap: () => 5,
+    resolve: () => ({
+      feasible: true, lowerTick: 1, higherTick: 2, strikeUsd: 100, predictedProbability: 0.5,
+      quantity: 1n, leverage1e9: 1_100_000_000n, maxProbability1e9: 1n, maxCost: 1n,
+    }),
+    trace: () => {},
+    submitMintBatch: async (_market: unknown, legs: unknown[]) => {
+      candidateCounts.push(book);
+      book += legs.length;
+      const knocked = Math.min(book, legs.length * 20); // pathological drain
+      book -= knocked;
+      return { events: Array.from({ length: knocked }, () => ({ type: "…::OrderLiquidated" })) };
+    },
+  } as unknown as Parameters<typeof strategy.tick>[0];
+
+  for (let i = 0; i < 600; i++) await strategy.tick(ctx);
+
+  // It keeps trying rather than wedging, and it never claims a book it does not have.
+  assert.ok(candidateCounts.length > 100, "strategy stopped submitting under drain");
+  const settled = candidateCounts.slice(-100);
+  assert.ok(Math.max(...settled) < 500, "fixture did not actually reproduce the drain");
+  // The run still produced probes, so `failure()` stays null — the analysis, not the strategy, is
+  // what refuses to turn a collapsed range into a ceiling.
+  assert.equal(strategy.failure?.(), null);
+});
+
+test("liq-budget encodes neither outcome as pass/fail", () => {
+  // "The budget max fits" and "it does not" are equally valid answers, so neither arm may declare
+  // the computation cap (a declared wall never reached fails the run VACUOUS) and neither may
+  // declare `done` (which opts out of the runner's bounded-stop branch, so a --timeout stop reports
+  // `incomplete` and exits non-zero on a good sweep).
+  for (const profile of ["healthy", "adverse"] as const) {
+    const strategy = createLiqBudgetStrategy(profile);
+    assert.equal(strategy.expect, undefined, `${profile} must not declare a terminal wall`);
+    assert.equal(strategy.done, undefined, `${profile} must not declare semantic completion`);
+    assert.equal(strategy.maxOps, 0);
+    assert.equal(strategy.gasBudget, 50_000_000_000);
+  }
 });

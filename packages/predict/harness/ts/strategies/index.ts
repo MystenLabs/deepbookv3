@@ -3,6 +3,7 @@
 import { type Strategy } from "../strategy.js";
 import { createCapacityStrategy } from "./capacity.js";
 import { createCleanupStrategy } from "./cleanupEconomics.js";
+import { createLiqBudgetStrategy } from "./liqBudget.js";
 import fuzz from "./fuzz.js";
 import liqChurn from "./liqChurn.js";
 import mintOnly from "./mintOnly.js";
@@ -13,6 +14,7 @@ const capacity = [
   createCapacityStrategy("pool"),
   createCapacityStrategy("tree"),
 ];
+const liqBudget = [createLiqBudgetStrategy("healthy"), createLiqBudgetStrategy("adverse")];
 const cleanup = [
   createCleanupStrategy("survivor"),
   createCleanupStrategy("liquidated"),
@@ -26,6 +28,7 @@ export const STRATEGIES: Record<string, Strategy> = {
   [liqChurn.name]: liqChurn,
   ...Object.fromEntries(capacity.map((strategy) => [strategy.name, strategy])),
   ...Object.fromEntries(cleanup.map((strategy) => [strategy.name, strategy])),
+  ...Object.fromEntries(liqBudget.map((strategy) => [strategy.name, strategy])),
 };
 
 export function getStrategy(name: string): Strategy {
