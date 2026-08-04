@@ -30,35 +30,45 @@ report_failure() {
     if [ "$exit_code" -eq 0 ]; then return; fi
     LOGS=$(tail -100 "$LOG_FILE" 2>/dev/null | json_escape)
     callback "failure" -d "{\"error\": \"sim exited with code ${exit_code}\", \"logs\": ${LOGS}}"
+    return "$exit_code"
 }
 trap report_failure EXIT
 
 set -euo pipefail
 
-# Tee all output to log file.
+# Tee all output to log file, including input-contract failures.
 exec > >(tee -a "$LOG_FILE") 2>&1
+
+if [ -z "${SCENARIO_PATH:-}" ]; then
+    echo "ERROR: SCENARIO_PATH is required" >&2
+    exit 2
+fi
+if [ ! -f "${SCENARIO_PATH}" ]; then
+    echo "ERROR: scenario source does not exist: ${SCENARIO_PATH}" >&2
+    exit 1
+fi
 
 callback "started"
 
-SIM_DIR="/workspace/repo/packages/predict/simulations"
+PREDICT_DIR="/workspace/repo/packages/predict"
+RESULTS="/tmp/predict-benchmark-results.json"
 
-# Install simulation dependencies.
-cd "${SIM_DIR}"
+# Install the shared Predict development-system dependencies.
+cd "${PREDICT_DIR}"
 npm install
 cd /workspace/repo
 
-# Run the localnet benchmark flow. The benchmark service passes SIM_MAX_ROWS
-# and optionally SCENARIO_PATH through the job environment.
-bash "${SIM_DIR}/run.sh" --skip-analysis
+# Run the localnet benchmark flow. The benchmark service owns the downloaded
+# source path and passes it with SIM_MAX_ROWS in the job environment.
+PYTHONPATH="${PREDICT_DIR}" python3 -m harness benchmark \
+    --source "${SCENARIO_PATH}" \
+    --results-output "${RESULTS}"
 
-# Find results.
-LATEST_RUN=$(ls -td "${SIM_DIR}"/runs/*/ 2>/dev/null | head -1)
-if [ -z "${LATEST_RUN}" ] || [ ! -f "${LATEST_RUN}/artifacts/results.json" ]; then
+if [ ! -f "${RESULTS}" ]; then
     echo "ERROR: results.json not found after localnet run" >&2
     exit 1
 fi
 
-RESULTS="${LATEST_RUN}/artifacts/results.json"
 echo "Results at ${RESULTS}"
 
 # Post results to callback URL if provided.

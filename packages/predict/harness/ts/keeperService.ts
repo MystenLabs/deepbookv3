@@ -11,9 +11,11 @@
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
 import { CADENCES } from "./predictConfig.js";
+import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
+import { bigintEnv, budgetLadder, definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
@@ -27,27 +29,37 @@ import {
   readActiveMarketIds,
   readMarketExpiry,
   rebalanceExpiryCashTx,
-} from "./runtime.js";
+  setTradeLiquidationBudgetTx,
+} from "../../devtools/ts/runtime.js";
 
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
-// keeper enables and rolls all three; each keeps its own CADENCES[c].windowSize markets ahead.
-const CADENCE_IDS = [0, 1, 2];
+// keeper enables and rolls all three; each windowSize is a count of periods in
+// the future deployment horizon, not a target number of live markets.
+const CADENCE_IDS = Object.keys(CADENCES)
+  .map(Number)
+  .sort((a, b) => a - b);
 const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
-const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = until killed
-const MARKETS_PATH = `${process.env.INSTANCE_DIR}/markets.json`;
-const TRADER_ADDRESSES = (process.env.TRADER_ADDRESSES ?? "").split(",").filter(Boolean);
-const TRADER_DUSDC = BigInt(process.env.TRADER_DUSDC ?? "1000000000000"); // $1M default; campaign overrides per strategy
-const LIQ_BUDGET = 24n; // trade_liquidation_budget
-// Flush gas budget. The SINGLE dense market (nav-stress) OOGs at the per-tx COMPUTATION cap
-// (5e9 MIST), not the budget; the pool total binds earlier on the object-runtime cached-objects
-// limit (C-1) at ~16-50% of that cap. Either way the budget only needs headroom above the 5e9 cap.
-// Set to 15e9 (3x): still lets the single-market flush reach the 5e9 wall, but far below the old
-// 50e9 — because
-// signExecThreaded pins ONE gas coin per sender and Sui requires that coin >= the budget, a 50e9
-// floor starved the keeper's shrinking pinned coin (batch run 2026-07-06: 219 gas-starved flushes).
-// 15e9 ~triples the coin's runway. Mitigation, not a full fix — a long enough run still drains the
-// pinned coin; the real fix is topping it up (deferred).
-const FLUSH_GAS_BUDGET = 15_000_000_000n;
+const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
+const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
+const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
+const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
+// Budget the KEEPER spends on its own permissionless `liquidate()` lane. Distinct from the on-chain
+// `trade_liquidation_budget` the TRADE path spends, which the ladder below drives. Parsed through
+// `bigintEnv` so a typo names the variable rather than throwing a bare SyntaxError at module load —
+// which would kill the keeper before it wrote any trace, surfacing as `no-keeper-trace`. Set 0
+// deliberately for the liq-budget adverse probe, which needs liquidatable orders to survive long
+// enough for a mint's ambient pass to meet them.
+const LIQ_BUDGET = bigintEnv("KEEPER_LIQ_BUDGET", 24n);
+// Ladder for the on-chain ambient-pass budget, measured from keeper start. Unset (the default)
+// never touches the config, so every existing run keeps the contract default.
+const TRADE_LIQ_BUDGET_STAGES = budgetLadder(process.env.TRADE_LIQ_BUDGET_STAGES || "");
+let nextBudgetStage = 0;
+let budgetStageFailures = 0;
+// A rung that cannot be applied is retried, but not forever: an out-of-range value aborts every
+// tick, and `protocol_config` is a GUARD module, so the repeated failures classify as expected
+// preconditions and the run would exit 0 having swept nothing. Give up after a few attempts rather
+// than mirror the contract's bounds here (they are the contract's to own).
+const MAX_BUDGET_STAGE_FAILURES = 3;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -72,15 +84,6 @@ async function expiryOf(marketId: string): Promise<number> {
 interface Mkt {
   id: string;
   expiryMs: number;
-}
-
-// Recover a market's cadence from its expiry. Cadence isn't stored on-chain, but the contract's
-// rank partition (1h owns :00:00, 5m owns 5-min marks off-the-hour, 1m owns the rest) makes this
-// exact for the enabled {1m,5m,1h} set — so it holds for chain-reconciled + post-restart markets.
-function cadenceOf(expiryMs: number): number {
-  if (expiryMs % 3_600_000 === 0) return 2; // 1h
-  if (expiryMs % 300_000 === 0) return 1; // 5m
-  return 0; // 1m
 }
 
 // The durable settlement lane: settle every currently-past-expiry active market, each in its own PTB
@@ -139,7 +142,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //     the flush inserts its exact-expiry observation and calls try_settle before value_expiry,
   //     instead of tripping dynamic_field on a missing obs. These commands are the
   //     race-avoidance ONLY; the durable settlement is 1a (a BS outage reverts the flush's inserts but
-  //     can't block 1a, so no brick). A flush OOG here is the nav-stress BREAKPOINT (analyze.py
+  //     can't block 1a, so no brick). A flush OOG here is a capacity BREAKPOINT (analyze.py
   //     excludes it), NOT a stall — logged as a plain flush fail.
   if (didSettle && settledOk) {
     try {
@@ -153,7 +156,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       const fr = await executeAndWait(
         keeperFlushTx({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush",
-        FLUSH_GAS_BUDGET,
       );
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
@@ -172,13 +174,16 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //    during step 1 isn't passed to load_live_pricer (pricing:9). Isolated.
   const liveClock = Number(await clockTimestampMs());
   const live = active.filter((m) => m.expiryMs > liveClock);
-  if (live.length) {
+  if (live.length && LIQ_BUDGET > 0n) {
     try {
       const lr = await executeAndWait(
         keeperLiquidateTx({ feeds, markets: live.map((m) => m.id), protocolConfigId: PROTOCOL_CONFIG_ID, budget: LIQ_BUDGET }),
         "liquidate",
       );
-      appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr) });
+      // `budget` is traced so the analysis can tell whether this lane was competing with a
+      // liq-budget probe: the probe nets only its OWN transactions' knockouts, so a keeper sweeping
+      // alongside it leaves the probe's book over-counted — and that overstates the ceiling.
+      appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr), budget: Number(LIQ_BUDGET) });
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
       console.warn(`[keeper] liquidate skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
@@ -207,10 +212,13 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   //    markets would grow the active set past the single-PTB flush gas wall and brick it.
   if (settledOk) {
     for (const c of CADENCE_IDS) {
-      const windowC = Number(CADENCES[c].windowSize);
-      if (live.filter((m) => cadenceOf(m.expiryMs) === c).length >= windowC) continue;
+      const expectedExpiry = nextDeployableExpiry(live, c, liveClock, CADENCE_IDS);
+      if (expectedExpiry === null) continue;
       try {
         const { marketId, expiryMs } = await createMarket(lifecycleCapId, c);
+        if (Number(expiryMs) !== expectedExpiry) {
+          throw new Error(`keeper cadence schedule drift c${c}: expected ${expectedExpiry}, created ${expiryMs}`);
+        }
         await executeAndWait(
           rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId: marketId }),
           "rebalance",
@@ -220,7 +228,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
         live.push({ id: marketId, expiryMs: Number(expiryMs) });
         console.log(`[keeper] rolled c${c}: market ${marketId.slice(0, 10)} expiry=${isoSec(Number(expiryMs))}`);
       } catch (e) {
-        // ECadenceWindowExceeded (market_manager:5) = window full (skip-edge / post-restart): expected.
         appendTrace("keeper", { type: "fail", tag: errorTag(e) });
         console.warn(`[keeper] roll c${c} skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
       }
@@ -229,6 +236,54 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
 
   // Publish only the FUNDED live markets for the trade generator (never advertise unfunded).
   atomicWriteFile(MARKETS_PATH, JSON.stringify(live.filter((m) => funded.has(m.id)).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
+}
+
+// Apply every due rung of the trade-liquidation-budget ladder. Isolated like the other lanes: a
+// failed set defers to the next tick, and the stage is consumed only on success so the sweep cannot
+// skip a rung it never applied.
+//
+// This runs BEFORE tick() inside the same try, so it must never throw: doing so would skip
+// settlement, flush, rebalance and roll on every subsequent iteration — one bad rung bricking every
+// other keeper lane, against the per-step isolation invariant. On give-up it abandons the ladder
+// and marks the trace fatal, which fails the run in `analyze` while leaving the other lanes alone.
+//
+// The ladder is in-memory, so a keeper restart replays it from the first rung and walks the budget
+// back DOWN before climbing again. That costs run time, not correctness: every rung is traced, and
+// the analysis joins each probe to the rung in force at its own timestamp.
+async function applyBudgetStages(startedAt: number) {
+  const elapsed = Date.now() - startedAt;
+  while (nextBudgetStage < TRADE_LIQ_BUDGET_STAGES.length && TRADE_LIQ_BUDGET_STAGES[nextBudgetStage].atMs <= elapsed) {
+    const { budget } = TRADE_LIQ_BUDGET_STAGES[nextBudgetStage];
+    // Stamped BEFORE the tx. A probe between the request and the trace record ran under an unknown
+    // budget — the set may already have landed — so the analysis discards that window rather than
+    // attribute it to either rung; crediting it to the older, lower rung understates the slope and
+    // overstates the ceiling, which is the unsafe direction.
+    const requestedAtMs = Date.now();
+    try {
+      await executeAndWait(setTradeLiquidationBudgetTx(PROTOCOL_CONFIG_ID, budget), "trade-liq-budget");
+      appendTrace("keeper", { type: "liqBudget", budget: Number(budget), elapsedMs: elapsed, requestedAtMs });
+      console.log(`[keeper] trade_liquidation_budget -> ${budget} (t+${Math.round(elapsed / 1000)}s)`);
+      nextBudgetStage++;
+      budgetStageFailures = 0;
+    } catch (e) {
+      appendTrace("keeper", { type: "fail", lane: "liqBudget", tag: errorTag(e) });
+      budgetStageFailures++;
+      if (budgetStageFailures >= MAX_BUDGET_STAGE_FAILURES) {
+        nextBudgetStage = TRADE_LIQ_BUDGET_STAGES.length;
+        appendTrace("keeper", {
+          type: "fail", lane: "liqBudget", fatal: true,
+          tag: `budget-ladder-abandoned:rung=${budget}:${errorTag(e)}`,
+        });
+        console.error(
+          `[keeper] TRADE_LIQ_BUDGET_STAGES: rung ${budget} failed ${budgetStageFailures}x — abandoning the ladder; ` +
+            `the sweep will collect nothing further (last: ${e instanceof Error ? e.message.slice(0, 160) : e})`,
+        );
+        return;
+      }
+      console.warn(`[keeper] trade_liquidation_budget deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      return; // retry this rung next tick; do not run ahead to a later one
+    }
+  }
 }
 
 async function main() {
@@ -240,9 +295,11 @@ async function main() {
   }
   console.log(`[keeper] bootstrapped (PLP minted, feeds.json published); funded ${TRADER_ADDRESSES.length} trader(s); rolling markets...`);
 
-  const deadline = DURATION_MS > 0 ? Date.now() + DURATION_MS : 0;
+  const startedAt = Date.now();
+  const deadline = DURATION_MS > 0 ? startedAt + DURATION_MS : 0;
   for (;;) {
     try {
+      await applyBudgetStages(startedAt);
       await tick(feeds, lifecycleCapId);
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });

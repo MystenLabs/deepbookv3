@@ -1,7 +1,7 @@
 // BCS decoders for the return values of on-chain reads. Hand-written (not via the
 // `bcs` codec) so the read layer carries no runtime coupling to a schema per read —
 // these shapes (u64 LE, vector<ID>, Option) are stable Move ABI. Ported from the
-// harness's devInspect parsers (`packages/predict/harness/ts/runtime.ts:394-415`).
+// shared localnet parsers in `packages/predict/devtools/ts/runtime.ts`.
 // Round-tripped against `@mysten/sui/bcs` in tests/reads.test.ts.
 
 // Read a ULEB128-encoded length prefix, returning [value, nextOffset].

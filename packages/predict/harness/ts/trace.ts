@@ -4,17 +4,22 @@
 // trend, and the bug oracle (aborts not from our packages).
 import { appendFileSync, mkdirSync } from "node:fs";
 
-const TRACE_DIR = `${process.env.INSTANCE_DIR ?? "."}/trace`;
 let dirReady = false;
 let warnedTraceFail = false;
 
 export function appendTrace(actor: string, record: Record<string, unknown>): void {
+  const instanceDir = process.env.INSTANCE_DIR;
+  if (!instanceDir) throw new Error("INSTANCE_DIR is required");
+  const traceDir = `${instanceDir}/trace`;
   if (!dirReady) {
-    try { mkdirSync(TRACE_DIR, { recursive: true }); } catch { /* exists */ }
+    try { mkdirSync(traceDir, { recursive: true }); } catch { /* exists */ }
     dirReady = true;
   }
   try {
-    appendFileSync(`${TRACE_DIR}/${actor}.jsonl`, `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
+    appendFileSync(
+      `${traceDir}/${actor}.jsonl`,
+      `${JSON.stringify({ ...record, schema: 1, ts: Date.now() })}\n`,
+    );
   } catch (e) {
     // Best-effort (never fail the op), but warn ONCE so dropped fail/crash records aren't silent.
     if (!warnedTraceFail) {
@@ -32,7 +37,7 @@ export function gasOf(result: any): number {
 }
 
 // Just the computation cost (MIST). The Sui per-tx COMPUTATION cap (max_gas_computation_bucket =
-// 5M units x RGP) is on THIS, not net gas — nav-stress measures the flush against it (analyze.py).
+// 5M units x RGP) is on THIS, not net gas — capacity runs measure the flush against it (analyze.py).
 export function computationOf(result: any): number {
   return Number(result?.effects?.gasUsed?.computationCost ?? 0);
 }
@@ -62,6 +67,12 @@ export function gasBreakdownOf(result: any): {
 // (e.g. an arithmetic/VM error or an RPC failure — which the bug oracle flags hardest).
 export function abortInfo(err: unknown): { module: string; code: number } | null {
   const s = err instanceof Error ? err.message : String(err);
+  // Sui gRPC transaction resolution:
+  // `MoveAbort ... abort code: 5, in '0x...::expiry_market::mint...'`.
+  const grpc = s.match(
+    /MoveAbort[\s\S]*?abort code:\s*(\d+),\s*in\s*'[^']*::([A-Za-z0-9_]+)::/,
+  );
+  if (grpc) return { module: grpc[2], code: Number(grpc[1]) };
   // Handle both raw (`Identifier("x")`) and JSON-escaped (`Identifier(\"x\")`) forms.
   const m = s.match(/Identifier\(\\?"([A-Za-z0-9_]+)\\?"\)[\s\S]*?\}, (\d+)\)/);
   return m ? { module: m[1], code: Number(m[2]) } : null;

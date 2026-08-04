@@ -147,9 +147,12 @@ public struct SupplyFilled has copy, drop, store {
     recipient: address,
     index: u64,
     /// DUSDC actually taken into the pool, which is less than the request's escrow
-    /// when the supply cap left only part of it room.
+    /// when the supply cap left only part of it room. Shares were priced on
+    /// `dusdc_amount - fee_dusdc`.
     dusdc_amount: u64,
     shares_minted: u64,
+    /// Supply fee withheld from `dusdc_amount` and retained by the pool.
+    fee_dusdc: u64,
     /// Escrow still queued at the head after a partial fill; `0` on a full fill, in
     /// which case the request is gone. `dusdc_amount + dusdc_remaining` is the amount
     /// the request carried into this flush.
@@ -166,7 +169,11 @@ public struct WithdrawFilled has copy, drop, store {
     recipient: address,
     index: u64,
     shares_burned: u64,
+    /// Net DUSDC delivered to `recipient`. The gross marked value of
+    /// `shares_burned` was `dusdc_amount + fee_dusdc`.
     dusdc_amount: u64,
+    /// Withdraw fee withheld from the payout and retained by the pool.
+    fee_dusdc: u64,
     /// Escrowed PLP still queued at the head after a partial fill; `0` on a full fill,
     /// in which case the request is gone. `shares_burned + shares_remaining` is the
     /// amount the request carried into this flush.
@@ -184,6 +191,11 @@ public struct FlushExecuted has copy, drop, store {
     pool_value: u64,
     /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
+    /// Supply-leg fee rate in FLOAT_SCALING, frozen with the mark and charged on
+    /// every supply fill in this flush.
+    supply_fee_rate: u64,
+    /// Withdraw-leg fee rate in FLOAT_SCALING, frozen alongside it.
+    withdraw_fee_rate: u64,
     /// Sum of the marked NAV contributed by each active market; settled markets add zero.
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
@@ -427,6 +439,7 @@ public(package) fun emit_supply_filled(
     index: u64,
     dusdc_amount: u64,
     shares_minted: u64,
+    fee_dusdc: u64,
     dusdc_remaining: u64,
     requests_pending_after: u64,
 ) {
@@ -437,6 +450,7 @@ public(package) fun emit_supply_filled(
         index,
         dusdc_amount,
         shares_minted,
+        fee_dusdc,
         dusdc_remaining,
         requests_pending_after,
     });
@@ -449,6 +463,7 @@ public(package) fun emit_withdraw_filled(
     index: u64,
     shares_burned: u64,
     dusdc_amount: u64,
+    fee_dusdc: u64,
     shares_remaining: u64,
     requests_pending_after: u64,
 ) {
@@ -459,6 +474,7 @@ public(package) fun emit_withdraw_filled(
         index,
         shares_burned,
         dusdc_amount,
+        fee_dusdc,
         shares_remaining,
         requests_pending_after,
     });
@@ -469,6 +485,8 @@ public(package) fun emit_flush_executed(
     epoch: u64,
     pool_value: u64,
     total_supply: u64,
+    supply_fee_rate: u64,
+    withdraw_fee_rate: u64,
     active_market_nav: u64,
     market_count: u64,
     idle_balance_before: u64,
@@ -483,6 +501,8 @@ public(package) fun emit_flush_executed(
         epoch,
         pool_value,
         total_supply,
+        supply_fee_rate,
+        withdraw_fee_rate,
         active_market_nav,
         market_count,
         idle_balance_before,
@@ -542,4 +562,32 @@ public(package) fun emit_fee_incentives_returned(
         amount,
         pool_reserve_after,
     });
+}
+
+// === Test-Only Functions ===
+
+/// The frozen rate pair a flush actually charged. Exists because the withdraw leg's
+/// config wiring cannot be reached behaviourally from a Move test — a unit-test
+/// accumulator root carries no settlement funds, so a fill's PLP never reaches
+/// account custody to be withdrawn (`lp_flow_tests` module doc) — and because with
+/// two independent rates a swapped pair is otherwise invisible: each leg would still
+/// charge a plausible rate.
+#[test_only]
+public fun flush_executed_fee_rates(event: &FlushExecuted): (u64, u64) {
+    (event.supply_fee_rate, event.withdraw_fee_rate)
+}
+
+/// The fill events' fields exist for off-chain consumers, which decode them rather
+/// than calling Move. These readers exist only so tests can assert the fee reported
+/// to those consumers is the fee actually charged: `fee_dusdc` is where pool revenue
+/// is attributed from, and a wrong value there is invisible to every balance
+/// assertion, since the shares and cash moved are computed separately.
+#[test_only]
+public fun supply_filled_fee(event: &SupplyFilled): u64 {
+    event.fee_dusdc
+}
+
+#[test_only]
+public fun withdraw_filled_fee(event: &WithdrawFilled): u64 {
+    event.fee_dusdc
 }

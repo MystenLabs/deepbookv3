@@ -36,7 +36,7 @@ const mixedChurn: Strategy = {
       return ctx.redeem(h, close);
     }
     // else: a leveraged mint into a random expiry.
-    const market = ctx.randomExpiry();
+    const market = ctx.randomLeveragedExpiry();
     if (!market) return null;
     const p = ctx.rand(0.1, 0.9);
     const inst: Instruction = {

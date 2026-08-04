@@ -1,28 +1,39 @@
-// Continuous oracle updater (substrate component of `harness up`).
+// Continuous oracle updater (substrate component of `harness live`).
 //
 // Streams real Pyth Pro + Block Scholes data onto the propbook feeds at high frequency,
 // stamping each update with the provider's REAL publish time (clamped to <= Clock,
 // monotonic). The feed ids come from the keeper (feeds.json); the data comes from a
-// `MarketSource` chosen by env: a shared hub snapshot (parallel runs), a recorded replay,
-// or this localnet's own provider WS pair. Each push also writes snapshot.json for the
+// `MarketSource` chosen by env: a shared hub snapshot (parallel runs) or this localnet's
+// own provider WS pair. Each push also writes snapshot.json for the
 // trade generator (the keeper settles independently via the Pyth Lazer history endpoint).
 import { existsSync, readFileSync } from "node:fs";
 
-import { getSigner, getSignerForAddress } from "./env.js";
+import { getSignerForAddress } from "../../devtools/ts/env.js";
 import { atomicWriteFile } from "./io.js";
-import { type MarketSource, DirectWsSource, HubSource, ReplaySource } from "./marketSource.js";
+import {
+  type MarketSource,
+  DirectWsSource,
+  HubSource,
+  serializableSnapshot,
+} from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
-import { buildOracleRefreshGridTx, clampedPythTimestampMs, clampedSourceTimestampMs, signExecThreaded } from "./runtime.js";
+import { gridExpiries, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
+import {
+  buildOracleRefreshGridTx,
+  clampedPythTimestampMs,
+  clampedSourceTimestampMs,
+  executeWithSignerAndWait,
+} from "../../devtools/ts/runtime.js";
 
-const DURATION_MS = Number(process.env.DURATION_MS ?? 0); // 0 = run until SIGTERM
+const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = run until SIGTERM
 const LOOP_MS = Number(process.env.LOOP_MS ?? 1000);
 const GAS_BUDGET = 1_000_000_000;
 const SCALE_1E9 = 1_000_000_000;
-const DEFAULT_GRID_SPEC = "60000:3,300000:3,3600000:3";
 
-const to1e9 = (x: number) => BigInt(Math.round(x * SCALE_1E9));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const INSTANCE_DIR = process.env.INSTANCE_DIR ?? ".";
+const INSTANCE_DIR = requiredEnv("INSTANCE_DIR");
+const GRID_SPEC = requiredEnv("GRID_SPEC");
+const UPDATER_ADDRESS = requiredEnv("UPDATER_ADDRESS");
 
 // The keeper (single setup owner) publishes the feed ids; wait for them, then stream.
 async function waitForFeeds(): Promise<Feeds> {
@@ -37,18 +48,19 @@ async function waitForFeeds(): Promise<Feeds> {
 }
 
 async function submit(tx: any, signer: any): Promise<string> {
-  tx.setSender(signer.getPublicKey().toSuiAddress());
-  tx.setGasBudget(GAS_BUDGET);
-  const r = await signExecThreaded(tx, signer, { showEffects: true });
-  const status = (r as any).effects?.status?.status;
-  if (status !== "success") throw new Error(`status=${JSON.stringify((r as any).effects?.status)}`);
+  const r = await executeWithSignerAndWait(
+    tx,
+    signer,
+    "oracle-refresh",
+    GAS_BUDGET,
+    { effects: true },
+  );
   return r.digest;
 }
 
-// A shared hub snapshot (parallel runs), a recorded replay, or our own provider WS pair.
+// A shared hub snapshot (parallel runs) or our own provider WS pair.
 function makeSource(): { source: MarketSource; mode: string } {
   if (process.env.HUB_SNAPSHOT) return { source: new HubSource(process.env.HUB_SNAPSHOT), mode: "hub" };
-  if (process.env.REPLAY_FILE) return { source: new ReplaySource(process.env.REPLAY_FILE), mode: "replay" };
   return { source: new DirectWsSource(), mode: "direct-ws" };
 }
 
@@ -61,22 +73,13 @@ async function main() {
   // now, re-evaluated each loop so the grid rolls forward as boundaries pass and the keeper's new
   // markets stay warm. Deduped: with multiple cadences periods share boundaries (e.g. the top of the
   // hour is in all three) — a duplicate expiry would mean duplicate sids in the BS batch.
-  const gridNow = () => [
-    ...new Set(
-      (process.env.GRID_SPEC ?? DEFAULT_GRID_SPEC).split(",").flatMap((part) => {
-        const [period, count] = part.split(":").map(Number);
-        const base = Math.floor(Date.now() / period) * period;
-        return Array.from({ length: count }, (_, i) => base + (i + 1) * period);
-      }),
-    ),
-  ];
+  const gridNow = () => gridExpiries(GRID_SPEC);
   const { source, mode } = makeSource();
   await source.start(gridNow());
-  console.log(`[updater] source=${mode}; streaming a rolling grid (GRID_SPEC=${process.env.GRID_SPEC ?? DEFAULT_GRID_SPEC})...`);
+  console.log(`[updater] source=${mode}; streaming a rolling grid (GRID_SPEC=${GRID_SPEC})...`);
 
-  const updaterAddress = process.env.UPDATER_ADDRESS;
-  const signer = updaterAddress ? getSignerForAddress(updaterAddress) : getSigner();
-  console.log(`[updater] submitting as ${signer.getPublicKey().toSuiAddress().slice(0, 12)} (${updaterAddress ? "dedicated" : "publisher"})`);
+  const signer = getSignerForAddress(UPDATER_ADDRESS);
+  console.log(`[updater] submitting as ${signer.getPublicKey().toSuiAddress().slice(0, 12)} (dedicated)`);
 
   let shutdown = false;
   process.on("SIGTERM", () => { shutdown = true; });
@@ -127,13 +130,17 @@ async function main() {
       lastSviTs.set(expiry, e.sviTsMs);
       return {
         expiry: BigInt(expiry),
-        forward: to1e9(e.forward),
+        forward: e.forward1e9,
         forwardTsMs: BigInt(e.forwardTsMs),
         svi: {
-          a: to1e9(Math.abs(e.svi.alpha)), aNegative: e.svi.alpha < 0,
-          b: to1e9(e.svi.beta), sigma: to1e9(e.svi.sigma),
-          rho: to1e9(Math.abs(e.svi.rho)), rhoNegative: e.svi.rho < 0,
-          m: to1e9(Math.abs(e.svi.m)), mNegative: e.svi.m < 0,
+          a: e.svi1e9.a,
+          aNegative: e.svi1e9.aNegative,
+          b: e.svi1e9.b,
+          sigma: e.svi1e9.sigma,
+          rho: e.svi1e9.rho,
+          rhoNegative: e.svi1e9.rhoNegative,
+          m: e.svi1e9.m,
+          mNegative: e.svi1e9.mNegative,
         },
         sviTsMs: BigInt(e.sviTsMs),
       };
@@ -156,13 +163,10 @@ async function main() {
       // Publish the snapshot for the trade generator ONLY after the on-chain refresh landed —
       // otherwise traders price/guard off oracle data that never made it on-chain, producing
       // spurious guard aborts that look like harness failures.
-      atomicWriteFile(`${INSTANCE_DIR}/snapshot.json`, JSON.stringify({
-        spot1e9: snap.spot1e9.toString(),
-        bsSpot1e9: snap.bsSpot1e9.toString(),
-        bsSpotTsMs: snap.bsSpotTsMs,
-        publishedAtMs: ts.toString(),
-        expiries: Object.fromEntries([...snap.expiries.entries()]),
-      }));
+      atomicWriteFile(
+        `${INSTANCE_DIR}/snapshot.json`,
+        JSON.stringify(serializableSnapshot({ ...snap, publishedAtMs: ts })),
+      );
       pushes++;
       if (pushes <= 3 || pushes % 5 === 0)
         console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} ts=${ts} digest=${digest.slice(0, 8)}`);
@@ -177,7 +181,7 @@ async function main() {
     `[updater] dual-clock: ${pinnedSpot} pinned spot + ${pinnedFwd} pinned fwd + ${pinnedSvi} pinned svi retransmissions observed` +
     (missingTs > 0 ? ` (${missingTs} entries lacked a provider timestamp — signed at the envelope)` : ""),
   );
-  if (pushes === 0 && mode !== "replay") throw new Error("no successful pushes");
+  if (pushes === 0) throw new Error("no successful pushes");
   console.log("=== UPDATER OK: real-data oracle stream landed on-chain ===");
 }
 

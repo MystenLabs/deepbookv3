@@ -20,8 +20,9 @@ export interface MarketFeeds {
 
 // Load a fresh `Pricer` from the four live oracle feeds. Every live-flow trade call
 // (`mint_*`, `redeem_live`) borrows this `&Pricer` and it must be loaded first in the
-// PTB. Ports harness `runtime.ts:804` (`load_live_pricer`, 8 args) against the deployed
-// surface (`git show ec99cfae:.../expiry_market.move:167`). `ctx` is not a param here.
+// PTB. Ports the shared localnet builder in `packages/predict/devtools/ts/runtime.ts`
+// (`load_live_pricer`, 8 args) against the deployed surface
+// (`git show ec99cfae:.../expiry_market.move:167`). `ctx` is not a param here.
 export function loadLivePricer(
 	cfg: PredictConfig,
 	tx: Transaction,
@@ -44,8 +45,9 @@ export function loadLivePricer(
 
 // Mint a position of an exact `quantityRaw` at a fixed cost/probability ceiling, returning
 // the new order id (u256). Command order is pricer → auth → mint (auth is a hot potato
-// consumed by this call). Ports harness `runtime.ts:863` (`mint_exact_quantity`, 13 args,
-// deployed sig `expiry_market.move:242`). `maxCostRaw`/`maxProbabilityRaw` default to
+// consumed by this call). Ports the shared localnet builder in
+// `packages/predict/devtools/ts/runtime.ts` (`mint_exact_quantity`, 13 args; deployed sig
+// `expiry_market.move:242`). `maxCostRaw`/`maxProbabilityRaw` default to
 // `U64_MAX` (no slippage cap), matching the harness.
 export function mintExactQuantity(
 	cfg: PredictConfig,
@@ -128,8 +130,9 @@ export function mintExactAmount(
 //
 // DEPLOYED SURFACE (drift guard): the live testnet contract's `redeem_live` takes NO
 // `min_probability`/`min_proceeds` close-side slippage floors — 9 moveCall args, not the
-// 11 the main-shaped harness `runtime.ts:891` passes. Authored from the deployed
-// signature `git show ec99cfae:.../expiry_market.move:350`, NOT from runtime.ts.
+// 11 the main-shaped shared localnet builder in `packages/predict/devtools/ts/runtime.ts`
+// passes. Authored from the deployed signature
+// `git show ec99cfae:.../expiry_market.move:350`, not from the shared runtime.
 export function redeemLive(
 	cfg: PredictConfig,
 	tx: Transaction,

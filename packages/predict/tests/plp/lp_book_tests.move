@@ -22,12 +22,13 @@ module deepbook_predict::lp_book_tests;
 
 use deepbook_predict::{
     constants::{min_supply_request as min_supply, min_withdraw_request as min_withdraw},
-    lp_book::{Self, DrainSummary, LpBook},
-    pool_accounting::{Self, Ledger}
+    lp_book::{Self, DrainSummary, FeeRates, LpBook},
+    pool_accounting::{Self, Ledger},
+    vault_events
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{balance, coin, coin_registry, test_scenario::{Self as test, Scenario}};
+use sui::{balance, coin, coin_registry, event, test_scenario::{Self as test, Scenario}};
 
 public struct LP_BOOK_TESTS has drop {}
 
@@ -50,6 +51,14 @@ const NEAR_MAX_SUPPLY_HEADROOM: u64 = 5_000_000;
 const NO_SUPPLIES_FILLED: u64 = 0;
 const NO_WITHDRAWALS_FILLED: u64 = 0;
 const NO_MIN_OUTPUT: u64 = 0;
+/// Fee-free mark. The drain tests below pin the mark arithmetic, the cap, and the
+/// prefix rules, so they price at zero fee; the fee has its own section.
+const NO_FEE: u64 = 0;
+/// 1% in FLOAT_SCALING. The fee tests charge an explicit rate rather than the
+/// shipped default, which is pinned where it is meant to be pinned.
+const ONE_PERCENT_FEE: u64 = 10_000_000;
+/// 5% in FLOAT_SCALING — the `max_plp_fee_rate` ceiling.
+const MAX_FEE: u64 = 50_000_000;
 const LIMIT_MISS_SUPPLY_AMOUNT: u64 = 20_000_000;
 const LIMIT_MISS_SUPPLY_QUOTE: u64 = 10_000_000;
 const LIMIT_MISS_SUPPLY_MIN_OUT: u64 = LIMIT_MISS_SUPPLY_QUOTE + 1_000_000;
@@ -93,6 +102,7 @@ fun supply_drain_mints_at_mark_and_joins_idle() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -121,6 +131,7 @@ fun priced_supply_mints_proportional_shares() {
     book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -150,6 +161,7 @@ fun priced_withdraw_burns_and_pays_from_idle() {
     book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -183,6 +195,7 @@ fun two_withdrawals_share_one_frozen_mark() {
     book.drain(
         &mut ledger,
         lp_book::new_flush_mark(50_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -194,6 +207,453 @@ fun two_withdrawals_share_one_frozen_mark() {
     assert_eq!(ledger.idle_balance(), 16_666_668); // 50e6 - 2 * 16_666_666 (frozen); repriced would leave 16_666_667
     assert_eq!(book.total_supply(), 10_000_000); // 30e6 - 2 * 10e6 burned, back to the locked floor
     assert_eq!(book.withdraw_requests_pending(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+// === Supply / withdraw fee ===
+//
+// Every expected value below is hand-derived from the frozen mark and the rate,
+// independently of the contract. At mark 2.0 (pool_value 60e6 over total_supply
+// 30e6) a 20e6 supply is worth 10e6 shares gross and a 10e6 withdrawal is worth
+// 20e6 DUSDC gross; 1% of the 20e6 DUSDC leg is 200_000 in both directions.
+
+#[test]
+fun supply_fee_is_withheld_before_shares_are_priced() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // fee = 1% of 20e6 = 200_000; shares = 19_800_000 * 30e6 / 60e6 = 9_900_000
+    // (the unfeed quote is 10e6, so the fee costs exactly 100_000 shares).
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_eq!(book.total_supply(), 39_900_000); // 30e6 + 9_900_000 minted
+    // The whole escrow still joins idle — the fee is DUSDC no shares were issued
+    // against, which is how it accrues to existing holders.
+    assert_eq!(ledger.idle_balance(), 20_000_000);
+    assert_eq!(book.supply_requests_pending(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun withdraw_fee_is_withheld_from_the_payout() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    // gross = 10e6 * 60e6 / 30e6 = 20e6; fee = 200_000; net paid = 19_800_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_eq!(book.total_supply(), 20_000_000); // full 10e6 escrow burned
+    assert_eq!(ledger.idle_balance(), 40_200_000); // 60e6 - 19_800_000
+    // Mark per share went 60e6/30e6 = 2.0 -> 40_200_000/20e6 = 2.01: the retained
+    // fee is the accrual to the holders who stayed.
+    assert_eq!(book.withdraw_requests_pending(), 0);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun supply_limit_measured_against_post_fee_shares_fills() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    // A limit set exactly at the post-fee quote (9_900_000) must fill.
+    book.request_supply(payment, alice_id(), ALICE, 9_900_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.total_supply(), 39_900_000);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun supply_limit_above_post_fee_shares_is_refunded_at_one_attempt() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    // One unit above the post-fee quote must miss, even though the PRE-fee quote
+    // (10e6) clears it — this is what makes the limit net-of-fee.
+    book.request_supply(payment, alice_id(), ALICE, 9_900_001);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    // At one attempt the miss refunds rather than resting.
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.supply_requests_pending(), 0);
+    assert_eq!(book.total_supply(), 30_000_000);
+    assert_eq!(ledger.idle_balance(), 0); // escrow refunded, not banked
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun withdraw_limit_measured_against_post_fee_payout_fills() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    // A limit set exactly at the post-fee payout (19_800_000) must fill.
+    enqueue_withdraw_with_limit(&mut scenario, &mut book, 10_000_000, 19_800_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
+    assert_eq!(ledger.idle_balance(), 40_200_000);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun withdraw_limit_above_post_fee_payout_is_refunded_at_one_attempt() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    // One unit above the post-fee payout misses, though the PRE-fee 20e6 clears it.
+    enqueue_withdraw_with_limit(&mut scenario, &mut book, 10_000_000, 19_800_001);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.withdraw_requests_pending(), 0);
+    assert_eq!(ledger.idle_balance(), 60_000_000); // untouched
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun supply_fee_rounds_up_to_the_pool() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    // Mark 1.0, so shares equal the post-fee DUSDC and the rounding is visible
+    // directly in `total_supply`.
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(10_000_001, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // 1% of 10_000_001 = 100_000.01, which must round UP to 100_001 (R2: dust
+    // biases to the protocol). Rounding down would leave net 9_900_001.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(30_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_eq!(book.total_supply(), 39_900_000); // 30e6 + 9_900_000
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun max_fee_rate_withholds_five_percent() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // fee = 5% of 20e6 = 1e6; shares = 19e6 * 30e6 / 60e6 = 9_500_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(MAX_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_eq!(book.total_supply(), 39_500_000);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun capped_partial_supply_charges_the_fee_on_the_filled_slice_only() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap leaves 10e6 of headroom above the 60e6 frozen mark, so only half the
+    // request fills. The fee is charged on that 10e6 slice, not on the 20e6
+    // request: fee = 100_000, shares = 9_900_000 * 30e6 / 60e6 = 4_950_000.
+    // Charging the whole request would have withheld 200_000 and minted 4_900_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        70_000_000,
+        scenario.ctx(),
+    );
+
+    assert_eq!(book.total_supply(), 34_950_000); // 30e6 + 4_950_000
+    assert_eq!(ledger.idle_balance(), 10_000_000); // only the filled slice banked
+    assert_eq!(book.supply_requests_pending(), 1); // 10e6 still queued
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun withdraw_fills_when_idle_covers_only_the_post_fee_payout() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    // Idle is exactly the net payout — short of the 20e6 gross, so this fills whole
+    // only because the idle-sufficiency check is against the net.
+    seed_idle(&mut ledger, 9_800_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
+    assert_eq!(ledger.idle_balance(), 0);
+    assert_eq!(book.total_supply(), 20_000_000); // full escrow burned, not a slice
+
+    finish(scenario, book, ledger);
+}
+
+/// The balance assertions above cannot see a wrong `fee_dusdc`: shares and cash are
+/// computed from the quote's `output`, so an event reporting the wrong fee leaves
+/// every one of them green while misattributing pool revenue off-chain. These pin the
+/// reported figure itself, on a partial fill — where the slice fee and the whole
+/// request's fee differ.
+#[test]
+fun supply_fill_reports_the_fee_charged_on_the_slice() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, NO_MIN_OUTPUT);
+
+    // Cap leaves 10e6 of the 20e6 request room; 1% of that slice is 100_000. The
+    // whole request's fee would be 200_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        70_000_000,
+        scenario.ctx(),
+    );
+
+    let events = event::events_by_type<vault_events::SupplyFilled>();
+    assert_eq!(events.length(), 1);
+    assert_eq!(vault_events::supply_filled_fee(&events[0]), 100_000);
+
+    finish(scenario, book, ledger);
+}
+
+#[test]
+fun withdraw_fill_reports_the_fee_withheld_from_the_payout() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    // gross 20e6 at the 2.0 mark, 1% of which is 200_000.
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    let events = event::events_by_type<vault_events::WithdrawFilled>();
+    assert_eq!(events.length(), 1);
+    assert_eq!(vault_events::withdraw_filled_fee(&events[0]), 200_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// M4: the idle-short partial branch, with a fee. This is the one place the fee
+/// meets the gross inversion, and every other test that reaches it prices at zero
+/// fee. Idle 10e6 against a 20e6 gross payout, mark 2.0, 1% fee:
+///   affordable   = floor(10e6 * 30e6 / 60e6) = 5_000_000 shares
+///   gross(slice) = floor(5e6 * 60e6 / 30e6)  = 10_000_000
+///   fee          = ceil(10e6 * 1%)           =     100_000
+///   net paid     = 9_900_000
+/// so idle keeps exactly the fee — the conservatism the drain comment claims.
+#[test]
+fun withdraw_partial_fill_charges_the_slice_fee_and_leaves_it_in_idle() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, NO_SUPPLIES_FILLED, 1, 1);
+    assert_eq!(ledger.idle_balance(), 100_000); // exactly the slice's fee, never negative
+    assert_eq!(book.total_supply(), 25_000_000); // 30e6 - 5e6 burned, a partial burn
+    assert_eq!(book.withdraw_requests_pending(), 1); // remainder carried
+    let events = event::events_by_type<vault_events::WithdrawFilled>();
+    assert_eq!(vault_events::withdraw_filled_fee(&events[0]), 100_000);
+
+    finish(scenario, book, ledger);
+}
+
+/// M5: a partial supply slice carrying BOTH a limit and a fee. The slice is quoted
+/// on its own and the limit is pro-rated to it, and this pins the `<` boundary where
+/// the two land on the same number (every quantity divides evenly here, so neither
+/// rounding fires — the exact-equality case must fill, not carry).
+/// 10e6 slice of a 20e6 request at 1%: fee 100_000, shares 4_950_000.
+/// The request's own price is 9_900_000 shares per 20e6, so the pro-rated floor for
+/// this slice is ceil(9_900_000 * 10e6 / 20e6) = 4_950_000 — it clears by exactly
+/// zero, which is the boundary that must fill rather than carry.
+#[test]
+fun capped_partial_supply_at_its_own_price_fills_with_the_fee() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    book.mint_locked_liquidity(30_000_000);
+    let payment = coin::mint_for_testing<DUSDC>(20_000_000, scenario.ctx());
+    book.request_supply(payment, alice_id(), ALICE, 9_900_000);
+
+    let summary = book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        supply_fee(ONE_PERCENT_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        70_000_000,
+        scenario.ctx(),
+    );
+
+    assert_drain_summary(&summary, 1, NO_WITHDRAWALS_FILLED, 1);
+    assert_eq!(book.total_supply(), 34_950_000); // 30e6 + 4_950_000
+    assert_eq!(book.supply_requests_pending(), 1); // 10e6 remainder carried
+
+    finish(scenario, book, ledger);
+}
+
+/// The envelope ceiling on the leg that actually charges. `max_fee_rate_withholds_five_percent`
+/// covers it on the supply side; both legs share `fee_on`, but only this one is live
+/// at the shipped defaults, so the boundary is worth driving here too.
+/// gross 20e6 at the 2.0 mark, 5% of which is 1e6, so the payout is 19e6.
+#[test]
+fun max_withdraw_fee_rate_withholds_five_percent() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 20_000_000, 10_000_000);
+    seed_idle(&mut ledger, 50_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(60_000_000, 30_000_000),
+        withdraw_fee(MAX_FEE),
+        vault_id(),
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    assert_eq!(ledger.idle_balance(), 41_000_000); // 60e6 - 19e6 paid out
+    assert_eq!(book.total_supply(), 20_000_000);
+    let events = event::events_by_type<vault_events::WithdrawFilled>();
+    assert_eq!(vault_events::withdraw_filled_fee(&events[0]), 1_000_000);
 
     finish(scenario, book, ledger);
 }
@@ -216,6 +676,7 @@ fun withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(40_000_000, 40_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -426,6 +887,7 @@ fun capped_flush_fills_withdraws_and_leaves_headroom_for_the_next_flush() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(1_200_000_000, 1_000_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -555,6 +1017,7 @@ fun supply_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -588,6 +1051,7 @@ fun supply_limit_miss_does_not_block_later_requests() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -620,6 +1084,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() 
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -636,6 +1101,7 @@ fun supply_limit_miss_carries_then_fills_when_mark_improves_at_three_attempts() 
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(30_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -805,6 +1271,7 @@ fun withdraw_limit_miss_refunds_at_the_flush_that_reaches_it() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -844,6 +1311,7 @@ fun withdraw_limit_miss_does_not_block_later_requests() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -880,6 +1348,7 @@ fun unbounded_flush_drains_every_queued_supply() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -925,6 +1394,7 @@ fun cancel_tail_page_request_unlinks_page_and_keeps_queue_drainable() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -973,6 +1443,7 @@ fun cancel_middle_page_forward_relinks_predecessor_to_successor() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1022,6 +1493,7 @@ fun cancel_middle_page_backward_relinks_successor_to_predecessor() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1050,6 +1522,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::some(2),
         option::none(),
@@ -1066,6 +1539,7 @@ fun bounded_supply_budget_fills_up_to_budget_and_carries() {
     book.drain(
         &mut ledger,
         lp_book::new_flush_mark(2 * min_supply!(), 3 * min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1099,6 +1573,7 @@ fun independent_budgets_let_withdrawals_drain_under_supply_pressure() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(30_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::some(1),
         option::some(1),
@@ -1179,6 +1654,7 @@ fun cancelled_supply_requests_do_not_spend_drain_budget() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(min_supply!(), min_supply!()),
+        no_fees(),
         vault_id(),
         option::some(1),
         option::none(),
@@ -1230,6 +1706,7 @@ fun priced_supply_with_zero_pool_value_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(0, min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1257,6 +1734,7 @@ fun priced_supply_that_rounds_to_zero_shares_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(ZERO_SHARE_SUPPLY_POOL_VALUE, min_supply!()),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1283,6 +1761,7 @@ fun priced_withdraw_that_rounds_to_zero_payout_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1310,6 +1789,7 @@ fun supply_at_min_executable_plp_price_fills() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1335,6 +1815,7 @@ fun supply_below_min_executable_plp_price_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1362,6 +1843,7 @@ fun supply_at_max_executable_plp_price_fills() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1387,6 +1869,7 @@ fun supply_above_max_executable_plp_price_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MAX_EXECUTABLE_PLP_PRICE + 1, ONE_PLP),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1415,6 +1898,7 @@ fun oversized_supply_that_exceeds_u64_shares_refunds() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE, ONE_PLP),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1445,6 +1929,7 @@ fun supply_that_exceeds_remaining_plp_headroom_fills_the_representable_prefix() 
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(near_max_total_supply, near_max_total_supply),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1475,6 +1960,7 @@ fun non_executable_supply_refunds_spend_supply_budget() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(MIN_EXECUTABLE_PLP_PRICE - 1, ONE_PLP),
+        no_fees(),
         vault_id(),
         option::some(2),
         option::none(),
@@ -1501,6 +1987,7 @@ fun non_executable_withdraw_refunds_spend_withdraw_budget() {
     let summary = book.drain(
         &mut ledger,
         lp_book::new_flush_mark(1, ZERO_PAYOUT_WITHDRAW_TOTAL_SUPPLY),
+        no_fees(),
         vault_id(),
         option::none(),
         option::some(1),
@@ -1537,6 +2024,17 @@ fun request_withdraw_below_min_aborts() {
 
 // === Helpers ===
 
+/// Fee-free rates. Most drain tests pin the mark arithmetic, the cap, and the prefix
+/// rules, so they price at zero on both legs.
+fun no_fees(): FeeRates { lp_book::new_fee_rates(NO_FEE, NO_FEE) }
+
+/// Rates that charge the supply leg only, so a quote reading the withdraw rate here
+/// is a detectable bug rather than an invisible one.
+fun supply_fee(rate: u64): FeeRates { lp_book::new_fee_rates(rate, NO_FEE) }
+
+/// Rates that charge the withdraw leg only; the mirror of `supply_fee`.
+fun withdraw_fee(rate: u64): FeeRates { lp_book::new_fee_rates(NO_FEE, rate) }
+
 fun setup(): (Scenario, LpBook<LP_BOOK_TESTS>, Ledger) {
     let mut scenario = test::begin(ALICE);
     let (book, ledger) = new_book(scenario.ctx());
@@ -1562,6 +2060,7 @@ fun drain_at_par_with_cap(
     book.drain(
         ledger,
         lp_book::new_flush_mark(30_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1582,6 +2081,7 @@ fun drain_at_par_with_budgets(
     book.drain(
         ledger,
         lp_book::new_flush_mark(30_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         supply_budget,
         withdraw_budget,
@@ -1602,6 +2102,7 @@ fun drain_at_two_x(
     book.drain(
         ledger,
         lp_book::new_flush_mark(60_000_000, 30_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1655,6 +2156,7 @@ fun lock_and_fill_supply(
     book.drain(
         ledger,
         lp_book::new_flush_mark(locked, locked),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),
@@ -1816,6 +2318,7 @@ fun drain_at_two_thirds(
     book.drain(
         ledger,
         lp_book::new_flush_mark(30_000_000, 20_000_000),
+        no_fees(),
         vault_id(),
         option::none(),
         option::none(),

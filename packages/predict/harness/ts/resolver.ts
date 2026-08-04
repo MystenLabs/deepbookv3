@@ -13,7 +13,6 @@ const PROB_SLACK = 1.1; // max_probability = quoted p + 10% (per-contract slippa
 const COST_SLACK = 1.2; // max_cost = spend + 20% (covers net_premium + fees + slippage)
 const DUSDC_DECIMALS = 1_000_000; // DUSDC raw — quantity/payout/cash are DUSDC-scaled, not 1e9
 const POS_INF_TICK = 2 ** 30 - 1; // range_codec pos-inf sentinel
-const NEG_INF_TICK = 0;
 const ADMISSION_K = 0.2; // admission_leverage_curve_k (200_000_000 / 1e9)
 
 export interface MarketParams {
@@ -43,8 +42,6 @@ export interface Instruction {
 export interface Resolved {
   feasible: boolean;
   reason?: string;
-  lowerTick: number;
-  higherTick: number;
   strikeUsd: number;
   predictedProbability: number;
   quantity: bigint; // DUSDC-scaled (1e6), lot-rounded
@@ -107,8 +104,6 @@ export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams
   return {
     feasible: reasons.length === 0,
     reason: reasons.join("; ") || undefined,
-    lowerTick: isUp ? strikeTick : NEG_INF_TICK,
-    higherTick: isUp ? POS_INF_TICK : strikeTick,
     strikeUsd,
     predictedProbability: p,
     quantity: BigInt(Math.max(qtyRaw, 0)),

@@ -1,10 +1,9 @@
 // Testnet-aligned Predict config (from an on-chain audit of testnet, 2026-06-29:
 // deployment.testnet.json @ predict-testnet-6-24 + live ProtocolConfig/Registry RPC).
 //
-// Everything the harness mints matches the contract DEFAULT *except* oracle freshness
-// (testnet loosened pyth/bs price 2s/3s -> 10s) — so those are the only protocol values
-// we override. Cadence configs have NO default (register_underlying seeds them disabled)
-// and MUST be set per id. All money values are DUSDC-raw (1e6); ticks are raw price units.
+// The harness uses contract defaults. Cadence configs have NO default
+// (register_underlying seeds them disabled) and MUST be set per id. All money
+// values are DUSDC-raw (1e6); ticks are raw price units.
 import type { MarketParams } from "./resolver.js";
 
 export interface CadenceConfig {
@@ -12,8 +11,19 @@ export interface CadenceConfig {
   admissionTickSize: bigint; // raw price unit ($1 = 1_000_000_000); admission/tick = 100
   maxExpiryAllocation: bigint; // DUSDC
   initialExpiryCash: bigint; // DUSDC (>= expiry_cash_floor 10k, <= maxExpiryAllocation)
-  windowSize: bigint; // fill depth ahead
+  windowSize: bigint; // number of cadence periods in the rolling future horizon
 }
+
+// Fixed protocol cadence periods. The keeper mirrors these when deciding
+// whether the contract can admit another market inside a cadence horizon.
+export const CADENCE_PERIOD_MS: Record<number, number> = {
+  0: 60_000,
+  1: 300_000,
+  2: 3_600_000,
+  3: 86_400_000,
+  4: 604_800_000,
+  5: 2_592_000_000,
+};
 
 // Per cadence id: 0=1m, 1=5m, 2=1h. 3/4/5 (1d/7d/30d) are disabled on testnet.
 // Allocation caps are raised ~10x above the testnet values (50k/10k, 250k/50k) so capacity stress
@@ -27,8 +37,7 @@ export const CADENCES: Record<number, CadenceConfig> = {
   2: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 1_000_000_000_000n, initialExpiryCash: 200_000_000_000n, windowSize: 3n },
 };
 
-// Oracle read freshness (ms) — the one place testnet diverges from contract defaults.
-export const FRESHNESS = { pythSpotMs: 10_000n, blockScholesPriceMs: 10_000n, blockScholesSviMs: 60_000n };
+export const NO_LEVERAGE_WINDOW_MS = 3_600_000;
 
 // Genesis bootstrap supply: 10M DUSDC (lock_capital mints min_bootstrap_liquidity itself).
 export const BOOTSTRAP_SUPPLY = 10_000_000_000_000n;

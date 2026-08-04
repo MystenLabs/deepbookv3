@@ -13,10 +13,9 @@ new adversarial scenarios and property/fuzz tests.**
 
 **The toolbox (and where each runs):**
 - `python_indexes/strike_payout_tree.py`, `python_indexes/liquidation_book.py` — Move index mirrors.
-- `python_replay.py` — mint-admission / pricing / NAV mirror. `summarize_economics.py`, `charts/` — outputs.
-- `bash run.sh` — full **localnet** parity (MAIN-LOOP ONLY; trips the subagent watchdog). If you need a
-  localnet PoC, write the scenario + the exact command and hand it back to the main loop.
-- `bash run.sh --python-only` and any ad-hoc Python you write to the scratchpad — **subagent-safe**.
+- `python_replay.py` — mint-admission / pricing / NAV mirror.
+- `cd packages/predict && python3 -m harness parity --source <dataset> --max-rows N` — full **localnet** parity (main-loop only). If you need a localnet PoC, write the scenario and exact command and hand it back to the main loop.
+- Ad-hoc Python written to the scratchpad is subagent-safe when it does not start a localnet.
 
 **Required campaigns (write new scenarios; assert invariants after every step):**
 1. **Solvency / conservation fuzz.** Randomized sequences of mint / redeem / liquidate / supply / withdraw over

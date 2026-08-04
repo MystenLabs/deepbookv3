@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Sequence
 
-from . import config
+from . import cancellation, config
 
 
 class SuiError(RuntimeError):
@@ -20,14 +21,16 @@ def run(
     check: bool = True,
     cwd: Path | None = None,
     timeout: float | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> subprocess.CompletedProcess:
     """Run `sui <args>` capturing text stdout/stderr."""
     cmd = [config.sui_binary()] + [str(a) for a in args]
-    cp = subprocess.run(
+    cp = cancellation.run(
         cmd,
+        cancel_event=cancel_event,
         capture_output=True,
         text=True,
-        cwd=str(cwd) if cwd else None,
+        cwd=cwd,
         timeout=timeout,
     )
     if check and cp.returncode != 0:

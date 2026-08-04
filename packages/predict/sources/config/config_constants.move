@@ -33,6 +33,8 @@ const EMarketTickSizeTooLarge: u64 = 22;
 const EInvalidNoLeverageWindowMs: u64 = 23;
 const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
+const EInvalidPlpSupplyFeeRate: u64 = 26;
+const EInvalidPlpWithdrawFeeRate: u64 = 27;
 
 // === Fees ===
 
@@ -51,6 +53,38 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
         value >= min_protocol_reserve_profit_share!()
             && value <= max_protocol_reserve_profit_share!(),
         EInvalidProtocolReserveProfitShare,
+    );
+}
+
+/// Fee charged on an executed PLP *supply* fill, in FLOAT_SCALING. Ships at zero:
+/// an exit concentrates the pool's outstanding risk on whoever stays, while a
+/// deposit dilutes it, so the charge that prices that externality belongs on the
+/// exit alone and adding equity is not taxed. The knob exists so the decision stays
+/// reversible without a package upgrade, not because a supply charge is intended.
+public(package) macro fun default_plp_supply_fee_rate(): u64 { 0 }
+
+/// Fee charged on an executed PLP *withdraw* fill, in FLOAT_SCALING — 20 bps by
+/// default. Retained by the pool, so it accrues to the holders who stay rather than
+/// to the protocol reserve.
+public(package) macro fun default_plp_withdraw_fee_rate(): u64 { 2_000_000 }
+
+/// Shared envelope for both legs. The 5% ceiling bounds how punitive an `AdminCap`
+/// alone can make LP entry or exit, and keeping it far below `float_scaling` is what
+/// makes `amount - fee` structurally non-underflowing on the mandatory flush path
+/// (pinned by `plp_supply_fee_rate_at_full_scale_is_rejected` and
+/// `plp_withdraw_fee_rate_at_full_scale_is_rejected`).
+public(package) macro fun min_plp_fee_rate(): u64 { 0 }
+
+public(package) macro fun max_plp_fee_rate(): u64 { 50_000_000 }
+
+public(package) fun assert_plp_supply_fee_rate(value: u64) {
+    assert!(value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(), EInvalidPlpSupplyFeeRate);
+}
+
+public(package) fun assert_plp_withdraw_fee_rate(value: u64) {
+    assert!(
+        value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(),
+        EInvalidPlpWithdrawFeeRate,
     );
 }
 
