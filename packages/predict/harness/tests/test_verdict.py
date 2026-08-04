@@ -234,6 +234,54 @@ class VerdictTests(unittest.TestCase):
                 signals,
             )
 
+    def test_declared_wall_accepts_the_raw_tag_the_producer_actually_emits(self) -> None:
+        # `capacity-tree` declares "cached objects limit". Under the gRPC executor that wall
+        # surfaces as a bare MovePrimitiveRuntimeError with no module in the message, so the trace
+        # tag is a raw string — NOT `dynamic_field:0`, which no producer emits. Keying the
+        # allowance on an exact tag therefore flags the strategy's own success as a bug and fails
+        # the campaign whenever `capacity-tree` works. The allowance has to rest on the failed-tx
+        # artifact corroborating the declared wall.
+        raw_tag = (
+            "flush failed: MovePrimitiveRuntimeError "
+            "failed_tx=/tmp/inst/artifacts/failed_transactions/flush-0.json"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            instance = Path(directory)
+            trace = instance / "trace"
+            trace.mkdir(parents=True)
+            (trace / "keeper.jsonl").write_text(
+                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+            )
+            (trace / "trader.jsonl").write_text(
+                '{"schema":1,"type":"expect","strategy":"capacity-tree",'
+                '"terminal":["cached objects limit"],"ts":2}\n'
+                + json.dumps({
+                    "schema": 1, "type": "fail", "strategy": "capacity-tree",
+                    "tag": raw_tag, "ts": 3,
+                })
+                + "\n"
+            )
+            artifacts = instance / "artifacts" / "failed_transactions"
+            artifacts.mkdir(parents=True)
+            (artifacts / "flush-0.json").write_text(
+                json.dumps({
+                    "dry_run": {
+                        "executionErrorSource": (
+                            "ExecutionError status MEMORY_LIMIT_EXCEEDED at module 0xabc "
+                            "and message Object runtime cached objects limit (1000 entries) "
+                            "reached at code offset 42"
+                        ),
+                        "effects": {"status": {"status": "failure", "error": (
+                            "MovePrimitiveRuntimeError in dynamic_field::borrow_child_object"
+                        )}},
+                    }
+                })
+            )
+
+            signals = analyze._analyze_one(instance)
+
+        self.assertEqual(signals, [], f"capacity-tree reaching its declared wall must pass: {signals}")
+
     def test_semantic_declared_terminal_accepts_matching_framework_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             instance = Path(directory)
