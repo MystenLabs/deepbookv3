@@ -326,6 +326,10 @@ fun assert_current_oracles(
     let block_scholes_binding = propbook_registry.propbook_block_scholes_store_pair_for_underlying(
         propbook_underlying_id,
     );
+    // Unreachable for a live market: creation requires the binding
+    // (`market_manager::next_deployable_market`) and Propbook never removes one.
+    // The unwrap needs a code regardless, so it shares the store-mismatch one
+    // rather than spending a second on a branch nothing reaches.
     assert!(block_scholes_binding.is_some(), EWrongBlockScholesValueStore);
     let block_scholes_binding = block_scholes_binding.destroy_some();
     assert!(
