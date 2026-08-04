@@ -1,12 +1,12 @@
 # Code Review Patterns
 
-Read this manual-trigger file when the user asks for a code review. It is routed by `AGENTS.md` and `CLAUDE.md`, not by path frontmatter. These patterns are accumulated from real PR review feedback; update this file when reviewers catch new patterns.
+Read this manual-trigger file when the user asks for a code review. It is routed by [CLAUDE.md](../../CLAUDE.md), not by path frontmatter. These patterns are accumulated from real PR review feedback; update this file when reviewers catch new patterns.
 
 ## Review Scope
 
 - When the user asks to "review uncommitted changes" or "review uncomitted changes", review the full working-tree diff.
 - For Move reviews, also read `.claude/rules/move.md` and `.claude/rules/unit-tests.md`; for Predict-touching Move reviews additionally `.claude/rules/predict-contracts.md`.
-- **Deep Predict smart-contract audit.** This flat checklist is the quick pass. For a deep audit of the Predict contracts (predict + propbook + block_scholes_oracle + account), invoke the **`predict-audit`** skill (`.claude/skills/predict-audit/`): read its `primer.md` (orientation + current module map + finding format) and the relevant `lenses/NN-*.md` (`01-invariants`, `02-adversarial-audit`, `03-oracle-pricing-numerical`, `04-access-control`, `05-surface-area`, `06-assertions`, `07-lifecycle`, `08-cross-package-trust`, `09-economic-simulation`, `10-architecture-maintainability`), or launch its `orchestrator.workflow.js` (lens fan-out), `ownership-walk.workflow.js` (per-module ownership/boundary/policy conformance, R1–R7), or `rule-sweep.workflow.js` (per-rule mechanical sweep). Emit findings in the primer's Severity / Location / Claim / Scenario / Impact / Confidence / Recommendation format.
+- **Deep Predict smart-contract audit.** For an explicitly approved deep audit of the Predict contracts, use the [Predict audit skill](../skills/predict-audit/SKILL.md). It owns the fixed three-package source scope (`predict`, `propbook`, and `account`), the external `bs_oracle` trust-boundary treatment, lens selection, workflows, and finding format.
 - Treat design/research docs (`packages/predict/predeploy/`, `.redesign/`, `.claude/predict-design/`) as **leads to verify against current HEAD**, not ground truth — verify every load-bearing claim against Move source + git + `sui move test`.
 - Findings should focus on correctness, regressions, missing coverage, and brittle assumptions.
 - Say whether the diff is safe as a standalone PR or only as an intermediate step that requires follow-up work in the same branch.

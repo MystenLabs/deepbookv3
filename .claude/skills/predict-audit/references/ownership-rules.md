@@ -16,8 +16,7 @@ lean into Move's grain: fields are module-private (only the declarer mutates cor
 ## How to apply (per function)
 For each function, ask its node's questions below against the module's **responsibility-map entry** (what it
 SHOULD own) and the entries of modules it composes. A violation is a **misplaced responsibility**, not a
-style nit. Before flagging, check the **known intentional exceptions** in `AGENTS.md` and committed
-predeploy policy/open items — these rules false-positive heavily on deliberate architecture.
+style nit. Before flagging, check the **known intentional exceptions** in `packages/predict/docs/design/decisions.md` and committed predeploy policy/open items — these rules false-positive heavily on deliberate architecture.
 
 ---
 
@@ -143,7 +142,7 @@ consumer removed) and a read-only mirror are ownership-clarity failures.
 
 ## Classification (every confirmed violation)
 Tag each: `fix-code` (smallest change + tests), `update-rule` (the violation is defensible → draft the
-narrowest `move.md`/`AGENTS.md` exception + rationale), `design-decision` (intentional, needs a human call),
+narrowest matching `.claude/rules/` exception + rationale), `design-decision` (intentional, needs a human call),
 or `false-positive`. **Calibration:** a rule tripped repeatedly by intentional architecture is a candidate
 rule-exception, not N repeat findings — rules stay strict enough to catch real risk, precise enough not to
 flag deliberate design.

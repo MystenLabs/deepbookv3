@@ -114,7 +114,7 @@ The whole-codebase last-line-of-defense run is the exception, not the default. F
   | `predict/sources/events/**` | `predict-events` |
   | `propbook/**` / `account/**` | `propbook` / `account` |
 
-- **Cross-run memory lives in the committed registers, not in run artifacts.** There is no adjudication carry between runs: a disposition worth remembering is promoted into AGENTS.md "Settled design decisions" / `response-policies.md` / `open-items.md` (one home, no staleness filter), and finders/verifiers are prior-aware via those registers. A disposition not worth committing is not worth carrying.
+- **Cross-run memory lives in the committed registers, not in run artifacts.** There is no adjudication carry between runs: a disposition worth remembering is promoted into `packages/predict/docs/design/decisions.md`, `packages/predict/predeploy/response-policies.md`, or `packages/predict/predeploy/open-items.md` (one home, no staleness filter), and finders/verifiers are prior-aware via those registers. A disposition not worth committing is not worth carrying.
 - **Watermark**: record the audited SHA (in `reports/<run>/` or an `open-items.md` note) so the next incremental run scopes `files`/`units` to `git diff` since it and refreshes the watermark.
 
 ### Which harness, in what order
@@ -124,10 +124,10 @@ The whole-codebase last-line-of-defense run is the exception, not the default. F
 
 ## Hard rules (non-negotiable)
 - **Read-only on source.** Never modify `packages/*/sources/**`. Audit-run writes are reports (to `.claude/predict-review/reports/<date>/`, gitignored), temp sims/scripts (to the session scratchpad), and the reasoned curation update to `packages/predict/predeploy/open-items.md`.
-- **Compiler/localnet run in the MAIN LOOP, never in a subagent.** `sui build`, `sui test`, and localnet `bash run.sh` trip the 600s subagent watchdog and the run is lost (the CLAUDE.md "Predict Build & Verify" guardrail). The orchestrator runs these itself and passes results in as `args`; subagents reason from source, grep, git, and **Python** sims (fast, watchdog-safe).
+- **Compiler/localnet run in the MAIN LOOP, never in a subagent.** `sui build`, `sui test`, and localnet `bash run.sh` trip the 600s subagent watchdog and the run is lost (the `CLAUDE.md` "Common verification commands" guardrail). The orchestrator runs these itself and passes results in as `args`; subagents reason from source, grep, git, and **Python** sims (fast, watchdog-safe).
 - **After editing `consolidate.py`, run `python3 .claude/skills/predict-audit/evals/test_consolidate.py`** (main loop). It locks the no-slip and id/dedup invariants found across skill reviews. It exits non-zero on regression; treat a red as a blocker.
 - **Check the REAL exit code.** Never pipe `sui build`/`test` through `tail` (it masks failures). Grep the captured log for `error`/`Test result`, or read `${PIPESTATUS[0]}`.
-- **Be prior-aware. Do not re-litigate settled decisions.** Before raising anything, check the committed sources: `AGENTS.md` "Settled design decisions", `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)`, and `packages/predict/predeploy/open-items.md`. Do not use local ignored design scratch as authority for audit triage. A finding that matches an accepted/rejected decision is tagged with its D-id or committed-policy reference and downranked to Info, not raised as new.
+- **Be prior-aware. Do not re-litigate settled decisions.** Before raising anything, check the committed sources: `packages/predict/docs/design/decisions.md`, `packages/predict/predeploy/response-policies.md` (including Rounding policy R1–R3), and `packages/predict/predeploy/open-items.md`. Do not use local ignored design scratch as authority for audit triage. A finding that matches an accepted/rejected decision is tagged with its D-id or committed-policy reference and downranked to Info, not raised as new.
 - **Verify each claim against the function body, not its name.** Trace call sites with grep before judging. Prefer a few verified findings over many speculative ones; rank uncertain items low-confidence rather than overstating.
 
 ## The 10 lenses (`lenses/`)

@@ -97,7 +97,7 @@ absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` 
 
 ## Prior-awareness (mandatory)
 Before raising anything, consult the settled-decision ledger and respect it:
-- `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions" + "Rejected directions" (don't re-litigate a rejected direction unless its stated condition is met).
+- `packages/predict/docs/design/decisions.md` — settled mechanism decisions, rejected directions, and their revisit conditions.
 - `packages/predict/predeploy/response-policies.md` — the register of settled tail-state response decisions (RP-*): chosen behavior, reasoning, pinning tests.
 - `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)` — R1 liveness (dust never aborts; reserve >= payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
 - `packages/predict/predeploy/open-items.md` — committed deploy gates and active findings; do not duplicate an item already represented there.
