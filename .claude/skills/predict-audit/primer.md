@@ -20,14 +20,9 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 `propbook` package, which `predict` consumes but does not own.
 
 ## Scope (read-only)
-- Audit the Move **source** of three packages: `packages/{predict,propbook,account}/sources/**`. Scope is FIXED to these three — do NOT broaden to deepbook core or other repo packages. Upgrade / object-layout migration correctness is out of scope (pre-deploy).
-- IGNORE every `packages/*/build/**` (generated copies). Treat `tests/**` as reference (and as coverage
-  evidence) unless your lens says otherwise.
-- Never modify source. You may read dependency source (`deepbook`, `dusdc`, `pyth_lazer`, `bs_oracle`,
-  `fixed_math`) to understand cross-package trust, but every finding must be about the three in-scope
-  packages. `bs_oracle` is Block Scholes' externally owned signature verifier (git-pinned; linked on
-  testnet via `dep-replacements`, never republished): read it to reason about the trust boundary — its
-  internals are the provider's to audit.
+- Follow the fixed package scope and external trust-boundary treatment in [SKILL.md](./SKILL.md#packages-in-scope-all-move-source-read-only).
+- Ignore every `packages/*/build/**` generated copy. Treat `tests/**` as reference and coverage evidence unless the lens says otherwise.
+- Never modify source. Read dependency source only to understand an in-scope trust boundary, and report findings only against the skill's owned scope.
 
 ## Actors / roles
 - **Trader** — acts through `predict_account` (wraps an `account::Account` for DUSDC custody); authorizes
@@ -96,12 +91,8 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` = open-ended-range sentinels. floor_shares = the **static** deterministic floor `F` of a leveraged position (the LP-funded leverage portion); winner payout = `Q − F`. terminal vs live (backing) payout: under the static floor the winner's `Q - F` is exact at settlement, and the only pre-settlement conservatism is the aggregate disjoint-backing λ buffer (D030). payout_liability / settled_payout_liability = cash the market must back. rebate_reserve = reserve from collected-but-unresolved trading fees for loss rebates. EWMA penalty = gas-congestion fee surcharge. basis = forward/spot from BS pushes. SVI = volatility-surface parameterization for the binary tail. NAV = pool value pricing PLP shares; the flush mark is the **exact** `current_nav` (tree `walk_linear` − leveraged `correction_value`, floored), no conservative band. float_scaling = 1e9 fixed-point.
 
 ## Prior-awareness (mandatory)
-Before raising anything, consult the settled-decision ledger and respect it:
-- `AGENTS.md` "Predict Rework — LANDED" + "Settled design decisions" + "Rejected directions" (don't re-litigate a rejected direction unless its stated condition is met).
-- `packages/predict/predeploy/response-policies.md` — the register of settled tail-state response decisions (RP-*): chosen behavior, reasoning, pinning tests.
-- `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)` — R1 liveness (dust never aborts; reserve >= payout by construction), R2 dust-to-protocol (user outflows round DOWN, reserves round UP/equal), R3 document direction.
-- `packages/predict/predeploy/open-items.md` — committed deploy gates and active findings; do not duplicate an item already represented there.
-A candidate matching a settled decision (e.g. D025 redeem-bound asymmetry, D026 u64 strike_quantity overflow ACCEPT, D030 backing floor+lambda, D031 oracle guards REMOVED by design, D033 deferred-carry protocol reserve, exact `current_nav` no-band, privileged cron flush) is tagged with its D-id / RP-id / committed-policy reference and downranked to Info — not raised as new.
+Before raising anything, read and apply the [Predict development-system authority order](../../../packages/predict/predeploy/README.md#authority-order). Do not duplicate an existing open item or re-litigate a rejected direction unless its recorded revisit condition is met.
+A candidate matching a settled decision or policy is tagged with its owning D-id, RP-id, or committed-policy reference and downranked to Info rather than raised as new.
 Prior-awareness cuts BOTH ways: a register or ledger entry that no longer matches HEAD (the pinning test is gone, the code stopped implementing the recorded response, `docs/risks.md` claims behavior the code doesn't have) is NOT protection — that drift is itself a reportable finding, at the severity of the underlying gap.
 
 ## Empirical toolbox (lens 09 owns it; any lens may use Python)
