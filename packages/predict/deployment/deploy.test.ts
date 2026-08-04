@@ -88,7 +88,7 @@ const FIXTURE = {
             "0x6d9de17954f4c1a2f01fdd97c0bb8a2e682c1fea0f8f048dcd127d543a6ac051",
         blockScholesSviStore: "0x83c2d6307fd3591228052fc0d24c4f00a698b0eb4fef5e6083a213ca0d54bd35",
     },
-    lifecycleCap: "0x563a800b050ca3a6786681914d8f9e90c6ea51ba5639ad84fda6dbfc3a8018ec",
+    lifecycleCap: "0x7384f57268f0e94a20cfe7f7ea4b0d3e7160812b4330b4be713a06fcc45030eb",
     protocolConfig: {
         usePythSpotForForward: true,
         pythSpotFreshnessMs: "10000",

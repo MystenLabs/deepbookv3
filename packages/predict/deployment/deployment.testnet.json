@@ -38,7 +38,7 @@
     },
     "writers": {
         "keeper": {
-            "lifecycleCap": "0x563a800b050ca3a6786681914d8f9e90c6ea51ba5639ad84fda6dbfc3a8018ec"
+            "lifecycleCap": "0x7384f57268f0e94a20cfe7f7ea4b0d3e7160812b4330b4be713a06fcc45030eb"
         },
         "priceUpdater": {
             "pythLazerPackage": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
