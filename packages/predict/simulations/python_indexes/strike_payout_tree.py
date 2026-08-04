@@ -164,6 +164,18 @@ class StrikePayoutTree:
                     best = prefix
         return best
 
+    def complement_max_net_payout(self, lower: int, higher: int) -> int:
+        """Max net-payout profile outside `(lower, higher]`.
+
+        Complement is `(-inf, lower] ∪ (higher, +inf]`: `lower` is uncovered and
+        belongs to the left arm; `higher` is covered and is excluded from the right.
+        """
+        if lower >= higher:
+            raise ValueError("invalid payout range")
+        left = 0 if lower == self.neg_inf else self.range_max_net_payout(self.neg_inf, lower)
+        right = 0 if higher == self.pos_inf else self.range_max_net_payout(higher, self.pos_inf)
+        return max(left, right)
+
     def _apply_range(self, lower: int, higher: int, terms: PayoutTerms, add: bool) -> None:
         self._assert_range_boundaries(lower, higher)
         if terms.quantity == 0 and terms.floor_shares == 0:

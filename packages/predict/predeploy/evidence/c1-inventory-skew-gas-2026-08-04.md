@@ -93,3 +93,29 @@ instrument:
 
 Until (1)–(3) run, `gamma` and `skew_capital_basis` stay at their inert `0`
 defaults, so nothing here gates the deploy.
+
+## Amendment — complement-max on the close path (2026-08-04)
+
+The removal branch of `marginal_reserve_consumption` now queries
+`complement_max_net_payout` (two `range_max_net_payout` arms over
+`(-inf, lower]` and `(higher, +inf]`) so the max-point drop is
+`M − max(R − N, C)` rather than a blind `N`. **Open path unchanged.**
+
+Added close-path cost when rebates are armed:
+
+| walk | bound |
+| --- | --- |
+| in-range `range_max_net_payout` (already counted above) | ≤ 6h loads |
+| complement left arm (skipped when `lower == 0`) | ≤ 6h |
+| complement right arm (skipped when `higher == pos_inf`) | ≤ 6h |
+
+At the 1,000-node cap (`h ≤ 14`): worst-case close ≈ **252** read-only
+dynamic-field loads (3× the single-range walk), typical ≈ **60–100** at a
+20–100-boundary book. Still no `exp`/`ln`/oracle, and still dominated by the
+close's existing write-side `remove_range` work. **Revised per-close estimate
+when armed: low-to-mid single-digit percent** vs the prior low single-digit
+figure that assumed one range walk; mint estimate unchanged.
+
+The round-trip invariant in `decisions.md` depends on this complement read —
+falling back to `g_removal = 0` would be cheaper but was rejected here because
+the extra two `O(log n)` descents stay inside the same capacity band.

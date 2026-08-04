@@ -310,11 +310,21 @@ public(package) fun trading_fee(
 ///
 /// The reserve is `L = M + λ(T − M)` for book max-point `M` and total `T`, so a
 /// candidate's marginal cost splits into the `λ` it always adds to the total and
-/// the part that also lifts the max point: with `R` the existing peak inside the
-/// range, the max-point gain is `g = max(M, R + N) − M` and
-/// `delta = λN + (1 − λ)g`. A range whose peak already carries the whole book
-/// (`R == M`) pays `g == N` — the full dollar — while a cold range far below the
-/// peak pays only `λN`.
+/// the part that also lifts the max point. With `R` the existing peak inside the
+/// range and `C` the peak outside it (`M = max(R, C)`):
+///
+/// - add:    `g = max(M, R + N) − M`
+/// - remove: `g = M − max(R − N, C)`
+///
+/// and `delta = λN + (1 − λ)g`. A cold add (`R + N ≤ M`) or a cold remove
+/// (`R < M`, so `C = M`) pays only `λN`; a sole-exposure remove (`C = 0`)
+/// releases the full dollar.
+///
+/// Immediate open-then-close of the same range and size has `g_add = g_removal`
+/// exactly: after the add, `M₁ = max(C, R + N)` and `R₁ = R + N`, so
+/// `g_removal = M₁ − max(R, C) = max(C, R + N) − M = g_add`. The rebate is then
+/// priced at the strictly lower post-removal utilization, so rebate < charge
+/// with no reliance on fees.
 public(package) fun marginal_reserve_consumption(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -330,11 +340,12 @@ public(package) fun marginal_reserve_consumption(
         // the max point by nothing, which is the `max(M, R + N)` in the formula.
         (range_max + net_payout).saturating_sub(max_net_payout)
     } else {
-        // A removal is the add formula evaluated at the POST-removal book, which
-        // collapses to the same two cases: the peak only drops when it sits inside
-        // this range (`R == M`, since `R <= M` always), and then both `M` and `R`
-        // fall by `N`, leaving `g == N`.
-        if (range_max < max_net_payout) 0 else net_payout
+        // Peak can only fall to the highest point still standing outside the
+        // closed range — never by a blind full `N`.
+        let complement_max = exposure
+            .payout
+            .complement_max_net_payout(lower_tick, higher_tick);
+        max_net_payout - range_max.saturating_sub(net_payout).max(complement_max)
     };
     // = λN + (1 − λ)g, and `g <= N` in both branches, so the subtraction is exact.
     math::mul_down(exposure.config.backing_buffer_lambda(), net_payout - max_point_gain)
@@ -880,9 +891,10 @@ fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
 /// dollar lands on the book's peak rather than spread across it (`delta /
 /// net_payout`, the crowding term), and how uncertain the contract is (`p(1-p)`,
 /// which vanishes at both ends where the range is nearly settled either way).
-/// A round trip in one book state always loses: the close is priced at the LOWER
-/// post-removal utilization, so its rebate cannot exceed the charge the open paid,
-/// and both legs still pay the trade fee.
+/// A same-range same-size round trip always loses: `g_add == g_removal` (see
+/// `marginal_reserve_consumption`), so the crowding factors match, and the close
+/// is priced at the strictly lower post-removal utilization — before either leg's
+/// trade fee.
 ///
 /// Bernoulli variance is used directly rather than its square root: the fee curve
 /// wants the mild `sqrt` shape, but the skew charge should fall off fast away from

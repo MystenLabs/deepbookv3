@@ -136,3 +136,48 @@ fun removed_range_leaves_the_remaining_profile_peak() {
     assert_eq!(tree.range_max_net_payout(HIGH_LOWER_TICK, HIGH_HIGHER_TICK), 100);
     destroy(tree);
 }
+
+/// Sole other exposure ends exactly at `lower_tick`. An order covers
+/// `(lower, higher]`, so that exposure belongs to the complement — a left arm
+/// that stopped before `lower_tick` would report `C = 0`.
+#[test]
+fun complement_includes_exposure_sitting_exactly_at_lower_tick() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = strike_payout_tree::new(ctx);
+    // Subject `(10, 20]` at 100; neighbor `(5, 10]` at 50 ends on the subject's
+    // lower tick and is the book's only other inventory.
+    tree.insert_range(10, 20, 100, NO_FLOOR);
+    tree.insert_range(5, 10, 50, NO_FLOOR);
+    assert_eq!(tree.complement_max_net_payout(10, 20), 50);
+    // Sanity: the in-range peak is the subject itself.
+    assert_eq!(tree.range_max_net_payout(10, 20), 100);
+    destroy(tree);
+}
+
+/// Sole other exposure starts at `higher_tick` — i.e. lives on `(higher, …]`,
+/// the first tick the subject does not cover. A right arm that started at
+/// `higher + 1` as a *start boundary* key would still see this step function,
+/// but a right arm that incorrectly treated `higher` as still inside the subject
+/// (and so began after the neighbor's start) is what this pins against via the
+/// neighbor being the unique complement peak.
+#[test]
+fun complement_includes_exposure_starting_just_after_higher_tick() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = strike_payout_tree::new(ctx);
+    // Subject `(10, 20]` at 100; neighbor `(20, 30]` at 50 opens exactly where
+    // the subject closes.
+    tree.insert_range(10, 20, 100, NO_FLOOR);
+    tree.insert_range(20, 30, 50, NO_FLOOR);
+    assert_eq!(tree.complement_max_net_payout(10, 20), 50);
+    assert_eq!(tree.range_max_net_payout(10, 20), 100);
+    destroy(tree);
+}
+
+/// Open-ended arms contribute nothing rather than aborting on a degenerate window.
+#[test]
+fun complement_of_whole_line_is_empty() {
+    let ctx = &mut tx_context::dummy();
+    let tree = new_book(ctx);
+    assert_eq!(tree.complement_max_net_payout(0, constants::pos_inf_tick!()), 0);
+    destroy(tree);
+}

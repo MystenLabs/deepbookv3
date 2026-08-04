@@ -116,11 +116,11 @@ fun partial_overlap_charge_prices_a_fractional_crowding_term() {
     cleanup(fx, oracle, harness);
 }
 
-/// Removal reads the add formula at the post-removal book. Taking out the range
-/// that IS the max point drops `M` and `R` together, so the whole dollar comes
-/// back.
+/// Closing the peak while a colder side still stands: the max point can only
+/// fall to `C`, not by a blind full `N`. Here `M = 3e9`, `C = 1e9`, `N = 3e9`,
+/// so `g = 3e9 − max(0, 1e9) = 2e9` and `delta = 0.25 × 1e9 + 2e9`.
 #[test]
-fun removing_the_peak_range_releases_the_whole_dollar() {
+fun removing_the_peak_range_stops_at_the_complement() {
     let (fx, oracle, harness, _pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
 
     assert_eq!(
@@ -132,7 +132,36 @@ fun removing_the_peak_range_releases_the_whole_dollar() {
                 UP_QUANTITY,
                 false,
             ),
-        UP_QUANTITY,
+        2_250_000_000,
+    );
+
+    cleanup(fx, oracle, harness);
+}
+
+/// Two near-equal peaks: the bug the `R == M ⇒ g = N` shortcut shipped with.
+/// ATM complements at 200e6 / 190e6; close `N = 100e6` of the higher peak →
+/// true `g = 10e6`, not 100e6. `delta = 0.25 × 90e6 + 10e6 = 32_500_000`.
+#[test]
+fun two_near_peaks_close_releases_min_n_and_m_minus_c() {
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let high_q = 200_000_000;
+    let near_q = 190_000_000;
+    let close_n = 100_000_000;
+    let lower = test_constants::default_strike_tick();
+    let higher = constants::pos_inf_tick!();
+
+    harness.mint(&pricer, lower, higher, high_q, fx.clock());
+    harness.mint(
+        &pricer,
+        constants::neg_inf!(),
+        test_constants::default_strike_tick(),
+        near_q,
+        fx.clock(),
+    );
+    // M = 200e6 on UP, C = 190e6 on DOWN. g = 200e6 − max(100e6, 190e6) = 10e6.
+    assert_eq!(
+        harness.exposure.marginal_reserve_consumption(lower, higher, close_n, false),
+        32_500_000,
     );
 
     cleanup(fx, oracle, harness);
@@ -157,6 +186,45 @@ fun removing_a_cold_range_releases_only_its_lambda_share() {
             ),
         250_000_000,
     );
+
+    cleanup(fx, oracle, harness);
+}
+
+/// Sole exposure in the book: `C = 0`, so closing it drops the peak by the full
+/// `N` and releases the whole dollar.
+#[test]
+fun closing_the_only_exposure_releases_the_whole_dollar() {
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let lower = test_constants::default_strike_tick();
+    let higher = constants::pos_inf_tick!();
+    harness.mint(&pricer, lower, higher, UP_QUANTITY, fx.clock());
+
+    assert_eq!(
+        harness.exposure.marginal_reserve_consumption(lower, higher, UP_QUANTITY, false),
+        UP_QUANTITY,
+    );
+
+    cleanup(fx, oracle, harness);
+}
+
+/// Immediate open-then-close of the same range and size: `g_add == g_removal`
+/// (hence equal deltas), which is what makes the rebate/charge invariant tight.
+#[test]
+fun open_then_close_same_range_has_equal_max_point_gains() {
+    let (fx, oracle, mut harness, pricer) = skew_book(GAMMA_ONE, CAP_NON_BINDING, CAPITAL_BASIS);
+    let lower = constants::neg_inf!();
+    let higher = test_constants::default_strike_tick();
+    // Candidate that partially overtakes the peak — the interesting middle branch.
+    let g_add_delta = harness
+        .exposure
+        .marginal_reserve_consumption(lower, higher, OVERSHOOTING_NET_PAYOUT, true);
+    harness.mint(&pricer, lower, higher, OVERSHOOTING_NET_PAYOUT, fx.clock());
+    let g_removal_delta = harness
+        .exposure
+        .marginal_reserve_consumption(lower, higher, OVERSHOOTING_NET_PAYOUT, false);
+    assert_eq!(g_add_delta, g_removal_delta);
+    // Hand-pinned earlier: partial-overlap add delta is 1e9.
+    assert_eq!(g_add_delta, 1_000_000_000);
 
     cleanup(fx, oracle, harness);
 }
@@ -197,9 +265,8 @@ fun zero_net_payout_consumes_nothing_and_is_never_charged() {
 
 // === Fixtures ===
 
-/// Build the two-sided book through the real quote/allocate mint path, with the
-/// skew knobs armed as requested.
-fun skew_book(
+/// Empty armed exposure — callers mint the profile they need.
+fun empty_skew_book(
     gamma: u64,
     cap: u64,
     capital_basis: u64,
@@ -222,10 +289,21 @@ fun skew_book(
     );
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
+    let harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
+    (fx, oracle, harness, pricer)
+}
+
+/// Build the two-sided book through the real quote/allocate mint path, with the
+/// skew knobs armed as requested.
+fun skew_book(
+    gamma: u64,
+    cap: u64,
+    capital_basis: u64,
+): (OracleFixture, OracleBundle, ExposureHarness, Pricer) {
+    let (fx, oracle, mut harness, pricer) = empty_skew_book(gamma, cap, capital_basis);
 
     harness.mint(
         &pricer,

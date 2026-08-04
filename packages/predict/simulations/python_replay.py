@@ -1505,10 +1505,11 @@ def marginal_reserve_consumption(
 ) -> int:
     """Reserve delta for adding or removing `net_payout` over `(lower, higher]`.
 
-    With L = M + λ(T − M):
-      add:    g = max(M, R + N) − M ; delta = λN + (1 − λ)g
-      remove: evaluate the add formula at the post-removal (M, R), which yields
-              g ∈ {0, N} when the peak is outside / inside the range.
+    With L = M + λ(T − M), R = max inside the range, C = max outside it:
+      add:    g = max(M, R + N) − M
+      remove: g = M − max(R − N, C)
+    and delta = λN + (1 − λ)g. Immediate open-then-close of the same range/size
+    has g_add == g_removal exactly.
     """
     if net_payout == 0:
         return 0
@@ -1518,14 +1519,10 @@ def marginal_reserve_consumption(
         raised = range_max + net_payout
         g = raised - max_net_payout if raised > max_net_payout else 0
     else:
-        if range_max < net_payout:
-            raise ValueError("range max below removed net payout")
-        # Post-removal peak: unchanged when the book max is strictly outside the
-        # range; otherwise drop the in-range peak by N.
-        m_post = max_net_payout if range_max < max_net_payout else range_max - net_payout
-        r_post = range_max - net_payout
-        raised = r_post + net_payout  # == range_max
-        g = raised - m_post if raised > m_post else 0
+        complement_max = model["payout"].complement_max_net_payout(lower, higher)
+        post_range = range_max - net_payout if range_max > net_payout else 0
+        m_post = post_range if post_range > complement_max else complement_max
+        g = max_net_payout - m_post
     # delta = λN + (1−λ)g = λ(N − g) + g
     return deepbook_mul(BACKING_BUFFER_LAMBDA, net_payout - g) + g
 

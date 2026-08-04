@@ -237,9 +237,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   by depositing or withdrawing around a trade. Skew sits outside the trading-fee cap
   (it is a separate line item, like the penalty fee) and outside
   `entry_probability`, the floors, the NAV mark, and `exact_live_liability`.
-  *Invariant:* a mint-then-close round trip never profits — the rebate is priced at
-  the post-removal utilization, which is strictly below the utilization the charge was
-  priced at, before fees.
+  *Invariant:* a mint-then-close round trip of the same range and size never profits.
+  With `R` the in-range peak and `C` the complement peak (`M = max(R, C)`), the
+  max-point moves are `g_add = max(M, R + N) − M` and
+  `g_removal = M₁ − max(R₁ − N, C)` at the post-add book
+  (`M₁ = max(C, R + N)`, `R₁ = R + N`), which collapse to the same value:
+  `g_removal = max(C, R + N) − M = g_add`. The crowding factors therefore match, and
+  the rebate is priced at the strictly lower post-removal utilization, so
+  rebate < charge with no reliance on fees. (An earlier removal shortcut that
+  returned bare `N` whenever `R = M` overstated relief whenever `C > M − N` and
+  invalidated this proof; the complement-max form is what makes it tight.)
   *Ships inert:* `inventory_skew_gamma = 0`, `skew_capital_basis = 0`, and
   `inventory_skew_rebate_enabled = false`, so the rate short-circuits before any tree
   read until an admin arms it.

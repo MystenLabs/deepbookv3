@@ -136,6 +136,35 @@ public(package) fun range_max_net_payout(
     prefix_at_lower + window.max_net_payout_prefix_gain
 }
 
+/// Return the highest net-payout prefix reachable *outside* `(lower_tick, higher_tick]`.
+///
+/// An order covers the half-open tick range `(lower, higher]`, so the complement
+/// is `(-inf, lower] ∪ (higher, +inf]`: `lower_tick` itself is not covered and
+/// belongs to the left arm, while `higher_tick` is covered and is excluded from
+/// the right arm. Empty arms (open `-inf` lower or `+inf` higher) contribute 0
+/// rather than calling `range_max_net_payout` on a degenerate window.
+public(package) fun complement_max_net_payout(
+    tree: &StrikePayoutTree,
+    lower_tick: u64,
+    higher_tick: u64,
+): u64 {
+    // Left arm `(0, lower_tick]`. Tick 0 is the `-inf` sentinel; a range that
+    // already opens there has no left complement.
+    let left = if (lower_tick == 0) {
+        0
+    } else {
+        tree.range_max_net_payout(0, lower_tick)
+    };
+    // Right arm `(higher_tick, +inf]`. `pos_inf_tick` is the open upper sentinel;
+    // a range that already closes there has no right complement.
+    let right = if (higher_tick == constants::pos_inf_tick!()) {
+        0
+    } else {
+        tree.range_max_net_payout(higher_tick, constants::pos_inf_tick!())
+    };
+    left.max(right)
+}
+
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
