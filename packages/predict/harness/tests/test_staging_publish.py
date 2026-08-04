@@ -19,6 +19,7 @@ from harness import (
     cli,
     config,
     live,
+    localnet,
     oracle_setup,
     publish,
     run_manifest,
@@ -318,6 +319,53 @@ class PublicationPlanTests(unittest.TestCase):
             self.assertNotIn("--skip-dependency-verification", args)
             self.assertNotIn("--with-unpublished-dependencies", args)
             self.assertNotIn("--publish-unpublished-deps", args)
+
+class LocalnetQueryTests(unittest.TestCase):
+    def test_balance_unwraps_the_cli_coin_list(self) -> None:
+        # `sui client balance --json` returns [coin_entries, has_more] — the coin list is the FIRST
+        # element, not the response. Reading the response as the entry list makes every lookup raise
+        # and return -1, which `_refill_gas`'s `0 <= balance` gate reads as "nothing to do", so no
+        # address is ever refilled and nothing is logged. Payload recorded from sui 1.76.0.
+        payload = [
+            [
+                {
+                    "metadata": {"decimals": 9, "symbol": "SUI"},
+                    "balance": {"balance": "2557200000", "addressBalance": "2557200000"},
+                    "coins": [],
+                }
+            ],
+            False,
+        ]
+        with mock.patch.object(localnet, "_client_json", return_value=payload):
+            self.assertEqual(localnet.balance(Path("/tmp/cfg"), "0xabc"), 2557200000)
+
+    def test_balance_reports_failure_rather_than_zero(self) -> None:
+        # -1 and 0 mean different things to `_refill_gas`: 0 is a genuinely empty address that must
+        # be topped up, -1 is "the query failed". An unreadable response must not look empty.
+        with mock.patch.object(localnet, "_client_json", return_value={"unexpected": "shape"}):
+            self.assertEqual(localnet.balance(Path("/tmp/cfg"), "0xabc"), -1)
+        with mock.patch.object(localnet, "_client_json", return_value=[[], False]):
+            self.assertEqual(localnet.balance(Path("/tmp/cfg"), "0xabc"), 0)
+
+    def test_chain_id_reads_every_shape_the_cli_emits(self) -> None:
+        # The pinned CLI emits a bare string; sui 1.76 emits {"base58", "hex"}. Reading only the
+        # older key names raises ValueError, and `wait_for_rpc` did not catch it — so localnet
+        # bring-up died on the first successful poll for anyone on a newer CLI.
+        for payload, expected in [
+            ("4c78adac", "4c78adac"),
+            ({"chainIdentifier": "4c78adac"}, "4c78adac"),
+            ({"base58": "69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD", "hex": "4c78adac"}, "4c78adac"),
+        ]:
+            with mock.patch.object(localnet, "_client_json", return_value=payload):
+                self.assertEqual(localnet.chain_id(Path("/tmp/cfg")), expected)
+
+    def test_wait_for_rpc_treats_an_unreadable_identifier_as_not_ready(self) -> None:
+        # A shape nobody anticipated must degrade to a bring-up timeout, not an unhandled crash out
+        # of the poll loop.
+        with mock.patch.object(localnet, "_client_json", return_value={"nothing": "recognisable"}):
+            with self.assertRaises(TimeoutError):
+                localnet.wait_for_rpc(Path("/tmp/cfg"), 9000, timeout=0.2)
+
 
 class LifecycleTests(unittest.TestCase):
     @staticmethod

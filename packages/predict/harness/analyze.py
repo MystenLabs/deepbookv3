@@ -455,7 +455,6 @@ def _analyze_one(inst: Path) -> list[str]:
     # the section is skipped rather than assuming the contract default.
     no_data = False           # the section ran but collected no single-mint samples at all
     insufficient_fit = False  # samples too clustered (or unphysical) to support a ceiling
-    wall_tags: set[str] = set()  # OOG tags from the probe, used as declared-wall evidence
     rungs = sorted([r for r in recs if r.get("type") == "liqBudget" and r.get("ts")], key=lambda r: r["ts"])
     if rungs:
         def _budget_at(ts: int) -> int:
@@ -567,8 +566,6 @@ def _analyze_one(inst: Path) -> list[str]:
             # through `signExecThreaded`, which — unlike the keeper's `executeAndWait` — writes no
             # failed-tx artifact, and the OOG is traced as a `mintBatch` rather than a `fail`, so it
             # reaches the bug oracle by neither route. That is deliberate here.
-            wall_tags = {str(r.get("err", "")) for r in recs
-                         if r.get("type") == "mintBatch" and r.get("oog") and r.get("err")}
         elif not probes:
             # No successful single-mint samples AND no wall: the run measured nothing. Claiming
             # "affordable" here would be an affirmative safety claim drawn from zero evidence.
@@ -611,8 +608,7 @@ def _analyze_one(inst: Path) -> list[str]:
 
         reached = {d for d in declared
                    if any(d in m for m in vm_msgs)
-                   or any(_declared_package_abort(t) and d in t for t in flagged + list(expected))
-                   or any(d in t for t in wall_tags)}
+                   or any(_declared_package_abort(t) and d in t for t in flagged + list(expected))}
         kept: list[str] = []
         for t in flagged:
             if _declared_package_abort(t):
