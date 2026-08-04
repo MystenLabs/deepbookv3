@@ -4,7 +4,7 @@ This directory records and reproduces the independent `predict-testnet-7-29` con
 
 ## Files
 
--   `deploy.ts` publishes the four local packages, wires their shared objects and external oracle dependencies, writes the cadence policy on-chain, bootstraps the pool, creates the initial market windows, transfers the lifecycle capability, and audits the result from Testnet.
+-   `deploy.ts` publishes the four local packages, wires their shared objects and external oracle dependencies, writes the cadence policy on-chain, bootstraps the pool, creates the initial market windows, party-transfers the lifecycle capability to its keeper owner, and audits the result from Testnet.
 -   `deployment.testnet.state.json` is the resumable operator journal. It contains in-flight state, transaction receipts, temporary objects, bootstrap accounts, and administrative capabilities. The script creates it with mode `0600`; it is gitignored and must not be committed or used as an integration API.
 -   `deployment.testnet.json` is the committed integration manifest. The script writes it only after the deployment reaches `complete` and its final Testnet audit succeeds.
 -   `deploy.test.ts` pins the state/manifest boundary and validates the committed manifest schema.
@@ -22,9 +22,11 @@ SUI_BINARY=/path/to/sui node --import tsx packages/predict/deployment/deploy.ts 
 
 The first command performs the build, dependency-identity, chain, signer, external-object, and funding preflight without submitting transactions. The second command broadcasts.
 
+The broadcast publishes `fixed_math`, `account`, `propbook`, and `predict` in dependency order; authorizes the Predict app; creates the BTC Pyth and Block Scholes objects; registers cadence policy; bootstraps and funds the initial market windows; then transfers `MarketLifecycleCap` with `sui::transfer::public_party_transfer` to a `sui::party::single_owner` party. The final audit requires the cap to have `ConsensusAddressOwner` custody for the configured keeper address.
+
 If a run is interrupted, keep the same source commit, signer, client environment, `Published.toml` files, and state file, then rerun the execute command. The script reconciles a known transaction digest and otherwise fails closed rather than constructing a replacement transaction.
 
-After success, run the focused checks and commit the script, `Published.toml` files, and integration manifest together. Never add the state file.
+Commit the reviewed deployment workflow before the first execute run; that commit is the immutable source anchor for every resume. After success, commit the generated `Published.toml` files and integration manifest without changing the source anchor. Never add the state file.
 
 ```sh
 ./node_modules/.bin/tsc -p packages/predict/deployment/tsconfig.json

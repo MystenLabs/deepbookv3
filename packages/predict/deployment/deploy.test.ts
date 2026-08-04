@@ -10,6 +10,7 @@ import {
     assertIntegrationManifest,
     buildIntegrationManifest,
     createDeploymentState,
+    parseOptionBlockScholesStorePair,
     type DeploymentResult,
     type IntegrationManifest,
 } from "./deploy.ts";
@@ -268,6 +269,43 @@ test("operator state and integration manifest are separate artifacts", () => {
     assert.match(gitignore, new RegExp(`^${STATE_RELATIVE}$`, "m"));
 });
 
+test("a fresh deployment targets the official Block Scholes package pair", () => {
+    const state = createDeploymentState();
+    assert.equal(
+        state.linked.bs_oracle,
+        "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+    );
+    assert.equal(
+        state.linked.bs_sid,
+        "0x6a54299d593fca24edf6b17bf8c3aff0b7ba8bc8f4276e9c1065689c50223bba",
+    );
+    assert.equal(
+        state.linkedObjects.blockScholesSignerRegistry,
+        "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
+    );
+    assert.equal(
+        state.wiring.lifecycleCap.recipient,
+        "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82",
+    );
+});
+
+test("Block Scholes store-pair inspection decodes both canonical IDs", () => {
+    const idBytes = (id: string) => Array.from(Buffer.from(id.replace(/^0x/, ""), "hex"));
+    assert.deepEqual(
+        parseOptionBlockScholesStorePair([
+            1,
+            ...idBytes(FIXTURE.oracleObjects.blockScholesValueStore),
+            ...idBytes(FIXTURE.oracleObjects.blockScholesSviStore),
+        ]),
+        {
+            valueStoreId: FIXTURE.oracleObjects.blockScholesValueStore,
+            sviStoreId: FIXTURE.oracleObjects.blockScholesSviStore,
+        },
+    );
+    assert.equal(parseOptionBlockScholesStorePair([0]), null);
+    assert.throws(() => parseOptionBlockScholesStorePair([1]), /invalid Option/);
+});
+
 test("the committed integration manifest has the stable public schema", () => {
     assertIntegrationManifest(manifest);
     const value = manifest as IntegrationManifest;
@@ -341,6 +379,15 @@ test("the manifest validator rejects operator-only fields", () => {
         () => assertIntegrationManifest({ ...manifest, transactions: {} }),
         /integration manifest keys/,
     );
+});
+
+test("the manifest validator rejects a mismatched Block Scholes package and registry", () => {
+    const invalid = JSON.parse(JSON.stringify(manifest)) as {
+        writers: { priceUpdater: { blockScholesSignerRegistry: string } };
+    };
+    invalid.writers.priceUpdater.blockScholesSignerRegistry =
+        "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414";
+    assert.throws(() => assertIntegrationManifest(invalid), /verified dependencies/);
 });
 
 test("configuration provenance requires exact shared-object anchors", () => {

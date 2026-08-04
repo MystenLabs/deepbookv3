@@ -7,7 +7,7 @@
  * A run publishes fixed_math, account, propbook, and predict; authorizes the
  * Predict app; creates and binds the oracle objects; stores the cadence policy
  * on-chain; bootstraps the pool; creates and funds the initial market windows;
- * and transfers the lifecycle capability to the keeper operator. Resumable,
+ * and party-transfers the lifecycle capability to the keeper operator. Resumable,
  * operator-only progress is written to deployment.testnet.state.json. After a
  * successful Testnet audit, the script derives the committed
  * deployment.testnet.json integration manifest from that verified state.
@@ -82,7 +82,13 @@ const LINKED = {
     deep: "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
     pyth_lazer: "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
     wormhole: "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2",
-    bs_oracle: "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6",
+    bs_oracle: "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+    bs_sid: "0x6a54299d593fca24edf6b17bf8c3aff0b7ba8bc8f4276e9c1065689c50223bba",
+} as const;
+
+const PREVIOUS_BLOCK_SCHOLES = {
+    oraclePackage: "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6",
+    signerRegistry: "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
 } as const;
 
 const LINKED_OBJECTS = {
@@ -91,7 +97,7 @@ const LINKED_OBJECTS = {
     pythLazerState: "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
     wormholeState: "0x3c89c52e413edb9b0d9a145e02258c96916c79b1e57a12861bb61791ee5c5f81",
     blockScholesSignerRegistry:
-        "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
+        "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
 } as const;
 
 const EXPECTED_SHARED: Record<PackageName, readonly string[]> = {
@@ -109,6 +115,7 @@ const ASSET = {
     propbookUnderlyingId: 1,
     pythLazerFeedId: 1,
     blockScholesSourceId: 1,
+    blockScholesBaseAsset: "BTC",
 } as const;
 
 interface CadenceSpec {
@@ -917,8 +924,17 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
     if (
         priceUpdater.pythLazerPackage !== LINKED.pyth_lazer ||
         priceUpdater.pythLazerState !== LINKED_OBJECTS.pythLazerState ||
-        priceUpdater.blockScholesOraclePackage !== LINKED.bs_oracle ||
-        priceUpdater.blockScholesSignerRegistry !== LINKED_OBJECTS.blockScholesSignerRegistry
+        ![
+            {
+                oraclePackage: LINKED.bs_oracle,
+                signerRegistry: LINKED_OBJECTS.blockScholesSignerRegistry,
+            },
+            PREVIOUS_BLOCK_SCHOLES,
+        ].some(
+            ({ oraclePackage, signerRegistry }) =>
+                priceUpdater.blockScholesOraclePackage === oraclePackage &&
+                priceUpdater.blockScholesSignerRegistry === signerRegistry,
+        )
     ) {
         throw new Error("writers.priceUpdater does not match the verified dependencies");
     }
@@ -1262,8 +1278,18 @@ function addressOwner(owner: unknown): string | null {
     return normalizeOptionalId(asRecord(owner).AddressOwner);
 }
 
+function consensusAddressOwner(owner: unknown): string | null {
+    return normalizeOptionalId(asRecord(asRecord(owner).ConsensusAddressOwner).owner);
+}
+
+function partyOwnerLabel(owner: string): string {
+    return `party:${normalizeId(owner)}`;
+}
+
 function ownerLabel(owner: unknown): string {
     if (isShared(owner)) return "shared";
+    const partyOwner = consensusAddressOwner(owner);
+    if (partyOwner) return partyOwnerLabel(partyOwner);
     const address = addressOwner(owner);
     if (address) return address;
     const ownerRecord = asRecord(owner);
@@ -1584,6 +1610,7 @@ function assertResolvedLinkedPackages(): void {
         pyth_lazer: debugPackageId(resolve(debug, "pyth_lazer", "channel.json")),
         wormhole: debugPackageId(resolve(debug, "wormhole", "external_address.json")),
         bs_oracle: debugPackageId(resolve(debug, "bs_oracle", "verify.json")),
+        bs_sid: debugPackageId(resolve(debug, "bs_sid", "sid.json")),
     };
     for (const [name, expectedId] of Object.entries(LINKED)) {
         if (resolved[name as keyof typeof LINKED] !== expectedId) {
@@ -2018,6 +2045,22 @@ function parseOptionId(bytes: number[]): string | null {
     return parseAddress(bytes.slice(1));
 }
 
+interface BlockScholesStorePair {
+    valueStoreId: string;
+    sviStoreId: string;
+}
+
+export function parseOptionBlockScholesStorePair(bytes: number[]): BlockScholesStorePair | null {
+    if (bytes.length === 1 && bytes[0] === 0) return null;
+    if (bytes[0] !== 1 || bytes.length !== 65) {
+        throw new Error(`invalid Option<BlockScholesStorePair> return (${bytes.length} bytes)`);
+    }
+    return {
+        valueStoreId: parseAddress(bytes.slice(1, 33)),
+        sviStoreId: parseAddress(bytes.slice(33, 65)),
+    };
+}
+
 function readUleb(bytes: number[], start: number): { value: number; next: number } {
     let value = 0;
     let shift = 0;
@@ -2043,6 +2086,15 @@ function parseIdVector(bytes: number[]): string[] {
     return ids;
 }
 
+function parseString(bytes: number[]): string {
+    const length = readUleb(bytes, 0);
+    const end = length.next + length.value;
+    if (end !== bytes.length) throw new Error("invalid Move String return");
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+        Uint8Array.from(bytes.slice(length.next, end)),
+    );
+}
+
 async function inspectOptionId(
     runtime: Runtime,
     label: string,
@@ -2052,6 +2104,62 @@ async function inspectOptionId(
     const tx = new Transaction();
     call(tx, moveTarget, args(tx));
     return parseOptionId(returnBytes(await devInspect(runtime, label, tx)));
+}
+
+async function inspectBlockScholesStorePair(
+    runtime: Runtime,
+    label: string,
+    oracleRegistry: string,
+): Promise<BlockScholesStorePair | null> {
+    const tx = new Transaction();
+    call(
+        tx,
+        target(
+            runtime.result,
+            "propbook",
+            "registry",
+            "propbook_block_scholes_store_pair_for_underlying",
+        ),
+        [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
+    );
+    return parseOptionBlockScholesStorePair(returnBytes(await devInspect(runtime, label, tx)));
+}
+
+async function inspectString(
+    runtime: Runtime,
+    label: string,
+    moveTarget: string,
+    args: (tx: Transaction) => TransactionArgument[],
+): Promise<string> {
+    const tx = new Transaction();
+    call(tx, moveTarget, args(tx));
+    return parseString(returnBytes(await devInspect(runtime, label, tx)));
+}
+
+async function assertBlockScholesStoreBaseAssets(
+    runtime: Runtime,
+    pair: BlockScholesStorePair,
+): Promise<void> {
+    const valueStoreBaseAsset = await inspectString(
+        runtime,
+        "block_scholes_value_store_base_asset",
+        target(runtime.result, "propbook", "block_scholes_store", "value_store_base_asset"),
+        (tx) => [tx.object(pair.valueStoreId)],
+    );
+    const sviStoreBaseAsset = await inspectString(
+        runtime,
+        "block_scholes_svi_store_base_asset",
+        target(runtime.result, "propbook", "block_scholes_store", "svi_store_base_asset"),
+        (tx) => [tx.object(pair.sviStoreId)],
+    );
+    if (
+        valueStoreBaseAsset !== ASSET.blockScholesBaseAsset ||
+        sviStoreBaseAsset !== ASSET.blockScholesBaseAsset
+    ) {
+        throw new Error(
+            `Block Scholes store base assets are ${valueStoreBaseAsset}/${sviStoreBaseAsset}, expected ${ASSET.blockScholesBaseAsset}`,
+        );
+    }
 }
 
 async function inspectBool(
@@ -2097,13 +2205,21 @@ async function objectEvidence(
         throw new Error(`${objectId} has type ${actualType}, expected ${expectedType}`);
     }
     const actualOwner = ownerLabel(object.owner);
+    const normalizedExpectedOwner =
+        expectedOwner === "shared" || expectedOwner === null
+            ? expectedOwner
+            : expectedOwner.startsWith("party:")
+              ? partyOwnerLabel(expectedOwner.slice("party:".length))
+              : normalizeId(expectedOwner);
     if (
-        expectedOwner &&
-        (expectedOwner === "shared"
+        normalizedExpectedOwner &&
+        (normalizedExpectedOwner === "shared"
             ? actualOwner !== "shared"
-            : actualOwner !== normalizeId(expectedOwner))
+            : actualOwner !== normalizedExpectedOwner)
     ) {
-        throw new Error(`${objectId} is owned by ${actualOwner}, expected ${expectedOwner}`);
+        throw new Error(
+            `${objectId} is owned by ${actualOwner}, expected ${normalizedExpectedOwner}`,
+        );
     }
     return {
         objectId,
@@ -2236,7 +2352,7 @@ async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
             null,
         );
         if (evidence.owner === DEPLOYER) result.wiring.lifecycleCap.owner = "deployer";
-        else if (evidence.owner === LIFECYCLE_CAP_RECIPIENT) {
+        else if (evidence.owner === partyOwnerLabel(LIFECYCLE_CAP_RECIPIENT)) {
             result.wiring.lifecycleCap.owner = "recipient";
         } else {
             throw new Error(`lifecycle cap ${recorded} has unexpected owner ${evidence.owner}`);
@@ -2288,47 +2404,41 @@ async function ensureOracleObjects(runtime: Runtime): Promise<void> {
     result.wiring.asset.pythFeedId = pythFeedId;
     result.wiring.asset.pythFeedCreateTx ??= result.transactions.create_pyth_feed ?? null;
 
-    let valueStoreId = await inspectOptionId(
+    let storePair = await inspectBlockScholesStorePair(
         runtime,
-        "block_scholes_value_store_for_underlying",
-        target(
-            result,
-            "propbook",
-            "registry",
-            "propbook_block_scholes_value_store_id_for_underlying",
-        ),
-        (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
+        "block_scholes_store_pair_for_underlying",
+        oracleRegistry,
     );
-    let sviStoreId = await inspectOptionId(
-        runtime,
-        "block_scholes_svi_store_for_underlying",
-        target(
-            result,
-            "propbook",
-            "registry",
-            "propbook_block_scholes_svi_store_id_for_underlying",
-        ),
-        (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
-    );
-    if ((valueStoreId && !sviStoreId) || (!valueStoreId && sviStoreId)) {
-        throw new Error(
-            `partial Block Scholes store pair: value=${valueStoreId} svi=${sviStoreId}`,
-        );
-    }
-    if (!valueStoreId && !sviStoreId) {
+    if (!storePair) {
         const tx = new Transaction();
         call(tx, target(result, "propbook", "registry", "create_and_share_block_scholes_stores"), [
             tx.object(oracleRegistry),
             tx.object(registryAdmin),
             tx.pure.u32(ASSET.propbookUnderlyingId),
+            tx.pure.string(ASSET.blockScholesBaseAsset),
         ]);
         const receipt = await executeTransaction(runtime, "create_block_scholes_stores", tx);
-        valueStoreId = createdObjectId(receipt, "::block_scholes_store::BlockScholesValueStore");
-        sviStoreId = createdObjectId(receipt, "::block_scholes_store::BlockScholesSVIStore");
+        const createdPair = {
+            valueStoreId: createdObjectId(receipt, "::block_scholes_store::BlockScholesValueStore"),
+            sviStoreId: createdObjectId(receipt, "::block_scholes_store::BlockScholesSVIStore"),
+        };
+        storePair = await inspectBlockScholesStorePair(
+            runtime,
+            "created_block_scholes_store_pair",
+            oracleRegistry,
+        );
+        if (
+            !storePair ||
+            storePair.valueStoreId !== createdPair.valueStoreId ||
+            storePair.sviStoreId !== createdPair.sviStoreId
+        ) {
+            throw new Error("created Block Scholes stores do not match the canonical pair");
+        }
         result.wiring.asset.blockScholesStoresCreateTx = receipt.digest ?? null;
     }
-    result.wiring.asset.blockScholesValueStoreId = valueStoreId;
-    result.wiring.asset.blockScholesSviStoreId = sviStoreId;
+    await assertBlockScholesStoreBaseAssets(runtime, storePair);
+    result.wiring.asset.blockScholesValueStoreId = storePair.valueStoreId;
+    result.wiring.asset.blockScholesSviStoreId = storePair.sviStoreId;
     result.wiring.asset.blockScholesStoresCreateTx ??=
         result.transactions.create_block_scholes_stores ?? null;
 
@@ -2570,6 +2680,7 @@ function validateBootstrapReceipt(
         integerEventField(filled, "index") !== requestIndex ||
         integerEventField(filled, "dusdc_amount") !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
         sharesMinted !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+        integerEventField(filled, "dusdc_remaining") !== "0" ||
         integerEventField(filled, "requests_pending_after") !== "0"
     ) {
         throw new Error(`bootstrap transaction ${receipt.digest} has unexpected supply events`);
@@ -3047,7 +3158,7 @@ async function transferLifecycleCap(runtime: Runtime, lifecycleCapId: string): P
         `${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
         null,
     );
-    if (evidence.owner === LIFECYCLE_CAP_RECIPIENT) {
+    if (evidence.owner === partyOwnerLabel(LIFECYCLE_CAP_RECIPIENT)) {
         result.wiring.lifecycleCap.owner = "recipient";
         result.wiring.lifecycleCap.transferTx ??=
             result.transactions.transfer_lifecycle_cap_to_keeper ?? null;
@@ -3058,8 +3169,20 @@ async function transferLifecycleCap(runtime: Runtime, lifecycleCapId: string): P
         throw new Error(`lifecycle cap is owned by ${evidence.owner}, expected ${DEPLOYER}`);
     }
     const tx = new Transaction();
-    tx.transferObjects([tx.object(lifecycleCapId)], tx.pure.address(LIFECYCLE_CAP_RECIPIENT));
+    const party = call(tx, "0x2::party::single_owner", [tx.pure.address(LIFECYCLE_CAP_RECIPIENT)]);
+    call(
+        tx,
+        "0x2::transfer::public_party_transfer",
+        [tx.object(lifecycleCapId), party],
+        [`${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`],
+    );
     const receipt = await executeTransaction(runtime, "transfer_lifecycle_cap_to_keeper", tx);
+    await objectEvidence(
+        runtime,
+        lifecycleCapId,
+        `${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
+        partyOwnerLabel(LIFECYCLE_CAP_RECIPIENT),
+    );
     result.wiring.lifecycleCap.owner = "recipient";
     result.wiring.lifecycleCap.transferTx = receipt.digest ?? null;
     writeState(result);
@@ -3161,35 +3284,20 @@ async function verifyDeployment(
         target(result, "propbook", "registry", "propbook_pyth_id_for_underlying"),
         (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
     );
-    const valueStore = await inspectOptionId(
+    const storePair = await inspectBlockScholesStorePair(
         runtime,
-        "verify_value_store_binding",
-        target(
-            result,
-            "propbook",
-            "registry",
-            "propbook_block_scholes_value_store_id_for_underlying",
-        ),
-        (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
-    );
-    const sviStore = await inspectOptionId(
-        runtime,
-        "verify_svi_store_binding",
-        target(
-            result,
-            "propbook",
-            "registry",
-            "propbook_block_scholes_svi_store_id_for_underlying",
-        ),
-        (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
+        "verify_block_scholes_store_pair",
+        oracleRegistry,
     );
     if (
+        !storePair ||
         pythFeed !== result.wiring.asset.pythFeedId ||
-        valueStore !== result.wiring.asset.blockScholesValueStoreId ||
-        sviStore !== result.wiring.asset.blockScholesSviStoreId
+        storePair.valueStoreId !== result.wiring.asset.blockScholesValueStoreId ||
+        storePair.sviStoreId !== result.wiring.asset.blockScholesSviStoreId
     ) {
         throw new Error(`Propbook canonical bindings do not match ${STATE_RELATIVE}`);
     }
+    await assertBlockScholesStoreBaseAssets(runtime, storePair);
     const oracleObjects = {
         pythFeed: await objectEvidence(
             runtime,
@@ -3199,13 +3307,13 @@ async function verifyDeployment(
         ),
         blockScholesValueStore: await objectEvidence(
             runtime,
-            valueStore!,
+            storePair.valueStoreId,
             `${packageId(result, "propbook")}::block_scholes_store::BlockScholesValueStore`,
             "shared",
         ),
         blockScholesSviStore: await objectEvidence(
             runtime,
-            sviStore!,
+            storePair.sviStoreId,
             `${packageId(result, "propbook")}::block_scholes_store::BlockScholesSVIStore`,
             "shared",
         ),
@@ -3250,7 +3358,7 @@ async function verifyDeployment(
         runtime,
         result.wiring.lifecycleCap.id,
         `${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
-        LIFECYCLE_CAP_RECIPIENT,
+        partyOwnerLabel(LIFECYCLE_CAP_RECIPIENT),
     );
 
     const cadences = await readCadences(runtime);
@@ -3432,6 +3540,8 @@ async function run(execute: boolean): Promise<void> {
         console.log(`[deploy] deployer: ${DEPLOYER}`);
         console.log(`[deploy] source: ${sourceCommit}`);
         console.log(`[deploy] Sui CLI: ${suiVersion}`);
+        console.log(`[deploy] package plan: ${PACKAGES.join(" -> ")}`);
+        console.log(`[deploy] lifecycle cap party owner: ${LIFECYCLE_CAP_RECIPIENT}`);
         console.log(
             `[deploy] DUSDC bootstrap: lock=${LOCK_CAPITAL_AMOUNT} supply=${BOOTSTRAP_SUPPLY_AMOUNT}`,
         );
