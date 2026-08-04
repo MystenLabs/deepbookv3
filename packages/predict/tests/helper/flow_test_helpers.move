@@ -117,6 +117,9 @@ public struct Fixture {
     propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
+    /// Captured so helpers retrieve the shared config by id rather than relying on
+    /// there being exactly one `ProtocolConfig` in scope (unit-tests Rule 13).
+    config_id: ID,
     vault_id: ID,
     pyth_id: ID,
     bs_values_id: ID,
@@ -178,6 +181,7 @@ public fun setup_market(tick: u64): Fixture {
     return_shared(account_registry);
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
+    let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
@@ -241,6 +245,7 @@ public fun setup_market(tick: u64): Fixture {
         propbook_admin_cap,
         lifecycle_cap,
         clock,
+        config_id,
         vault_id,
         pyth_id,
         bs_values_id,
@@ -2382,6 +2387,8 @@ public fun insert_exact_settlement_spot_bundle(
     self.insert_exact_settlement_spot(&mut market.pyth, market.market.expiry(), spot);
 }
 
+public fun config_id(self: &Fixture): ID { self.config_id }
+
 public fun vault_id(self: &Fixture): ID { self.vault_id }
 
 public fun pyth_id(self: &Fixture): ID { self.pyth_id }
@@ -2418,6 +2425,7 @@ public fun finish(self: Fixture) {
         propbook_admin_cap,
         lifecycle_cap,
         clock,
+        config_id: _,
         vault_id: _,
         pyth_id: _,
         bs_values_id: _,

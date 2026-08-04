@@ -79,11 +79,18 @@ public struct FlushMark has drop {
     pool_value: u64,
     total_supply: u64,
     executable: bool,
-    /// Supply-leg fee in FLOAT_SCALING, frozen with the mark so every request
-    /// drained in this flush is charged the same rate. Ships at zero.
-    supply_fee_rate: u64,
-    /// Withdraw-leg fee in FLOAT_SCALING, frozen with the mark alongside it.
-    withdraw_fee_rate: u64,
+}
+
+/// The per-leg fee rates one flush froze, in FLOAT_SCALING. A separate type from
+/// `FlushMark` because the charge is applied *after* the mark and never enters it —
+/// keeping them apart makes that structural rather than documented, and stops the
+/// two pairs forming one run of four same-typed arguments where a rate could be
+/// passed into the wrong slot and still compile.
+public struct FeeRates has copy, drop {
+    /// Supply-leg rate. Ships at zero: a deposit dilutes the pool's risk per dollar.
+    supply: u64,
+    /// Withdraw-leg rate, frozen with it so one flush charges one pair.
+    withdraw: u64,
 }
 
 /// Executable fill amounts for one queued request (or one partial slice of it) at
@@ -173,37 +180,32 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
-/// Freeze one flush's pricing inputs: the `pool_value / total_supply` mark plus the
-/// per-leg fee rates, in that order — supply before withdraw, matching every other
-/// signature in this flow. Four same-typed arguments, so the order is stated here
-/// rather than left to the call site; a transposition of the two rates is caught by
-/// `flush_freezes_both_configured_fee_rates`.
-public(package) fun new_flush_mark(
-    pool_value: u64,
-    total_supply: u64,
-    supply_fee_rate: u64,
-    withdraw_fee_rate: u64,
-): FlushMark {
+public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
     FlushMark {
         pool_value,
         total_supply,
         executable: is_executable_mark(pool_value, total_supply),
-        supply_fee_rate,
-        withdraw_fee_rate,
     }
 }
 
-/// The supply-leg rate this mark froze. Read off the mark rather than re-read from
-/// config so the flush event reports what the drain was actually handed: a mark
-/// built with the wrong rate is otherwise invisible to every observer, since the
-/// withdraw leg cannot be driven behaviourally from a Move test.
-public(package) fun supply_fee_rate(mark: &FlushMark): u64 {
-    mark.supply_fee_rate
+/// Freeze the flush's fee rates, supply leg first. Built from the two named config
+/// getters at the one call site, so a transposition is visible there; a swap is also
+/// caught by `flush_freezes_both_configured_fee_rates`.
+public(package) fun new_fee_rates(supply: u64, withdraw: u64): FeeRates {
+    FeeRates { supply, withdraw }
 }
 
-/// The withdraw-leg rate this mark froze; same reasoning as `supply_fee_rate`.
-public(package) fun withdraw_fee_rate(mark: &FlushMark): u64 {
-    mark.withdraw_fee_rate
+/// The supply-leg rate this flush froze. Read off the frozen `FeeRates` rather than
+/// re-read from config so the flush event reports what the drain was actually
+/// handed: a wrong rate is otherwise invisible to every observer, since the withdraw
+/// leg cannot be driven behaviourally from a Move test.
+public(package) fun supply_fee_rate(fees: &FeeRates): u64 {
+    fees.supply
+}
+
+/// The withdraw-leg rate this flush froze; same reasoning as `supply_fee_rate`.
+public(package) fun withdraw_fee_rate(fees: &FeeRates): u64 {
+    fees.withdraw
 }
 
 public(package) fun supplies_filled(summary: &DrainSummary): u64 {
@@ -248,6 +250,7 @@ public(package) fun drain<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
     mark: FlushMark,
+    fees: FeeRates,
     pool_vault_id: ID,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
@@ -259,6 +262,7 @@ public(package) fun drain<LP>(
         book,
         ledger,
         &mark,
+        &fees,
         pool_vault_id,
         &supply_budget,
         max_limit_misses,
@@ -268,6 +272,7 @@ public(package) fun drain<LP>(
         book,
         ledger,
         &mark,
+        &fees,
         pool_vault_id,
         &withdraw_budget,
         max_limit_misses,
@@ -285,6 +290,7 @@ fun drain_supply_queue<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
     mark: &FlushMark,
+    fees: &FeeRates,
     pool_vault_id: ID,
     budget: &Option<u64>,
     max_limit_misses: u64,
@@ -300,7 +306,7 @@ fun drain_supply_queue<LP>(
 
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
-        let quote = mark.quote_supply_shares(request.amount);
+        let quote = mark.quote_supply_shares(fees, request.amount);
         if (quote.is_none()) {
             processed = processed + 1;
             quote.destroy_none();
@@ -348,7 +354,7 @@ fun drain_supply_queue<LP>(
                 let headroom = max_pool_value.saturating_sub(pool_value);
                 let fill_amount = request.amount.min(headroom);
                 let partial = fill_amount < request.amount;
-                let fill_quote = mark.quote_supply_shares(fill_amount);
+                let fill_quote = mark.quote_supply_shares(fees, fill_amount);
                 if (fill_quote.is_none()) {
                     // No room, or a prefix so small it prices to zero shares. Stop the
                     // pass: with the cap reached, nothing behind this head could fill
@@ -420,6 +426,7 @@ fun drain_withdraw_queue<LP>(
     book: &mut LpBook<LP>,
     ledger: &mut Ledger,
     mark: &FlushMark,
+    fees: &FeeRates,
     pool_vault_id: ID,
     budget: &Option<u64>,
     max_limit_misses: u64,
@@ -430,7 +437,7 @@ fun drain_withdraw_queue<LP>(
 
     while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
-        let quote = mark.quote_withdraw_dusdc(request.amount);
+        let quote = mark.quote_withdraw_dusdc(fees, request.amount);
         if (quote.is_none()) {
             quote.destroy_none();
             let (request, escrowed_lp) = book.withdraw_queue.pop_front();
@@ -505,7 +512,7 @@ fun drain_withdraw_queue<LP>(
                         affordable,
                         request.amount,
                     );
-                    let partial_quote = mark.quote_withdraw_dusdc(affordable);
+                    let partial_quote = mark.quote_withdraw_dusdc(fees, affordable);
                     if (partial_quote.is_none() || partial_quote.borrow().output < min_for_prefix) {
                         // Idle buys no whole share, or those shares price to nothing.
                         // Carry the head and stop, as the dry queue always has.
@@ -796,9 +803,9 @@ fun entry_offset(entries: &vector<RequestEntry>, index: u64): u64 {
 /// as DUSDC no shares were issued against, which is how it accrues to existing
 /// holders. `None` means the mark/request pair is not executable and the queued
 /// request must be refunded.
-fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<FillQuote> {
+fun quote_supply_shares(mark: &FlushMark, fees: &FeeRates, amount: u64): Option<FillQuote> {
     if (!mark.executable) return option::none();
-    let fee = fee_on(amount, mark.supply_fee_rate);
+    let fee = fee_on(amount, fees.supply);
     // = net * total_supply / pool_value, round down (supplier mints ≤1 ulp
     // fewer shares; the pool keeps the dust).
     math::try_mul_div_down(amount - fee, mark.total_supply, mark.pool_value).and!(|shares| {
@@ -811,12 +818,12 @@ fun quote_supply_shares(mark: &FlushMark, amount: u64): Option<FillQuote> {
 /// full `shares` are burned, which is how it accrues to remaining holders. `None`
 /// means the mark/request pair is not executable and the queued request must be
 /// refunded.
-fun quote_withdraw_dusdc(mark: &FlushMark, shares: u64): Option<FillQuote> {
+fun quote_withdraw_dusdc(mark: &FlushMark, fees: &FeeRates, shares: u64): Option<FillQuote> {
     if (!mark.executable) return option::none();
     // = shares * pool_value / total_supply, round down (withdrawer is paid ≤1 ulp
     // less; the pool keeps the dust).
     math::try_mul_div_down(shares, mark.pool_value, mark.total_supply).and!(|gross| {
-        let fee = fee_on(gross, mark.withdraw_fee_rate);
+        let fee = fee_on(gross, fees.withdraw);
         let payout = gross - fee;
         if (payout == 0) option::none() else option::some(FillQuote { output: payout, fee })
     })
