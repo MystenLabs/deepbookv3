@@ -247,8 +247,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `fresh_pyth_remains_selected_when_block_scholes_is_newer`, and
   `live_forward_switches_source_exactly_at_pyth_staleness_boundary`;
   `pricing_guard_tests.move` —
-  `block_scholes_price_above_u64_aborts_with_named_width_error` and
-  `block_scholes_svi_above_u64_aborts_with_named_width_error`.
+  `block_scholes_price_above_u64_aborts_with_named_width_error`,
+  `block_scholes_forward_at_u64_max_reaches_semantic_validation`,
+  `block_scholes_forward_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_a_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_b_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_rho_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`, and
+  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`;
+  `pool_valuation_flow_tests.move` —
+  `overwide_block_scholes_spot_aborts_pool_valuation_flush` and
+  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
