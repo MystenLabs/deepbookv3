@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-03. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -83,7 +83,7 @@ written down.
 
 ### P-26: An underlying's Block Scholes store pair can never be repointed
 
-**Severity:** Low pre-deploy; one-way door after.
+**Severity:** Medium; one-way door with no recovery, on an unvalidatable input.
 
 `registry::create_and_share_block_scholes_stores` is create-once per underlying
 (`EBlockScholesStoresAlreadyExist`) with no admin replacement path, while the
@@ -91,15 +91,39 @@ Pyth lane carries `replace_pyth_binding_for_underlying` for exactly this
 purpose. The stated reason — that a second pair would leave two stores each able
 to claim the underlying with nothing to choose between them — does not hold: the
 registry binding *is* what chooses, which is why the Pyth replacement is safe.
-If a pair is ever created against the wrong underlying, or becomes unusable
-under a future store shape, that underlying has no on-chain route to a working
-pair and every market on it is stranded behind a package upgrade. Adding the
-setter is free while pre-deploy and impossible to add compatibly later only in
-the sense that the absence has to be lived with.
 
-**Action:** Add an admin-gated replacement for an underlying's store pair
-mirroring `replace_pyth_binding_for_underlying`, or record the decision that the
-pair is deliberately permanent and what the recovery path is if one is wrong.
+Provider-defined series ids widened what a wrong creation costs. The accepted
+series now derive from an admin-supplied `block_scholes_base_asset`, carried
+into the id exactly as spelled, where they previously derived from the `u32`
+underlying id — so the set of unrecoverable mistakes grew from "wrong
+underlying" to "any spelling the provider does not serve." Worse, a spelling
+that is wrong but names a *different real* asset is not a halt: genuinely
+signed observations for that asset land, the basis and SVI pass the pricing
+envelope, and the underlying is priced off the wrong asset with every on-chain
+check passing. Nothing on chain can distinguish that from a correct binding.
+
+There is no recovery by re-registration either. Allocating a fresh
+`propbook_underlying_id` and binding the correct spelling is admissible on the
+Block Scholes side, but the Pyth lane refuses to follow: `source_bindings` is
+append-only, so `assert_source_assignable` permanently rejects binding the same
+Pyth source key to a second underlying (`ESourceAlreadyBound`), and the source
+key is the real Lazer feed id, so no substitute names the same asset. The two
+lanes' recovery mechanisms are mutually exclusive.
+
+Adding the replacement *function* stays possible after deploy (new functions are
+upgrade-legal). What does not is the registry row's shape: a replacement can
+only be made safe by requiring it to carry the identical base asset — the
+analogue of the Pyth lane's sticky-source guard, which is what stops a replace
+from silently changing *which asset* an underlying tracks — and that guard is
+unwritable unless the row carries the spelling. The spelling is now on
+`BlockScholesStorePair` for that reason, and bounded to 32 bytes so a malformed
+input cannot be permanently baked into a value re-hashed on every read.
+
+**Action:** Add the admin-gated replacement mirroring
+`replace_pyth_binding_for_underlying`, gated on base-asset equality against the
+existing row. Independently, and because no on-chain check can substitute for
+it, confirm the bound spelling against the provider's acknowledged subscription
+before the pair is treated as canonical, and record that confirmation.
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
 

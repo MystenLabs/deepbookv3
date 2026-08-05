@@ -20,6 +20,13 @@ const EBindingNotFound: u64 = 5;
 const EBlockScholesStoresAlreadyExist: u64 = 6;
 const EInvalidBlockScholesBaseAsset: u64 = 7;
 
+/// Longest accepted provider base-asset spelling. Provider tickers are short; the ceiling exists
+/// because the spelling is permanent, is BCS-encoded and hashed on every read to derive a series
+/// id, and so a malformed long input would be an unbounded per-read cost with no way to shrink it.
+macro fun max_block_scholes_base_asset_len(): u64 {
+    32
+}
+
 // Stable discriminators stored in source keys, binding keys, metadata, and events.
 public(package) macro fun kind_pyth(): u8 {
     0
@@ -49,10 +56,18 @@ public struct OracleRegistry has key {
     block_scholes_stores: Table<u32, BlockScholesStorePair>,
 }
 
-/// The two canonical shared Block Scholes objects of one Propbook underlying.
+/// The two canonical shared Block Scholes objects of one Propbook underlying, and the provider
+/// base asset both of them derive their accepted series ids from.
+///
+/// The base asset is duplicated here rather than only living on the stores because it is the one
+/// fact that says which real-world asset this underlying tracks, and a repoint can only be made
+/// safe by comparing a replacement against it — a guard the registry cannot express while the
+/// spelling is reachable only by fetching both store objects. Carrying it also lets a caller read
+/// the whole binding from one row.
 public struct BlockScholesStorePair has copy, drop, store {
     value_store_id: ID,
     svi_store_id: ID,
+    block_scholes_base_asset: String,
 }
 
 /// Unique identity of a provider source within one oracle kind.
@@ -164,6 +179,12 @@ public fun block_scholes_value_store_id(pair: &BlockScholesStorePair): ID {
     pair.value_store_id
 }
 
+/// Returns the bound provider base asset for external composition, discovery, or devInspect
+/// confirmation that the binding names the asset the subscription resolves to.
+public fun block_scholes_base_asset(pair: &BlockScholesStorePair): String {
+    pair.block_scholes_base_asset
+}
+
 /// Returns the canonical SVI-store identity for external composition or discovery.
 public fun block_scholes_svi_store_id(pair: &BlockScholesStorePair): ID {
     pair.svi_store_id
@@ -220,6 +241,14 @@ public fun create_and_share_pyth_feed(
 
 /// Create and share this underlying's Block Scholes store partition and bind its source identity.
 /// Admin-gated and once per underlying so consumers have one immutable descriptor and store pair.
+///
+/// `block_scholes_base_asset` is carried into every derived series id exactly as spelled, and no
+/// on-chain fact can say whether it is the asset this underlying is meant to track: a spelling the
+/// provider does not serve makes the underlying permanently unfeedable, and a spelling naming a
+/// *different* real asset prices this underlying off that asset with every check passing. Confirm
+/// it against the provider's acknowledged subscription before this call — the emitted
+/// `BlockScholesStoresRegistered` and `block_scholes_base_asset` reader exist so that confirmation
+/// can be made against the chain rather than against the intent.
 public fun create_and_share_block_scholes_stores(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,
@@ -232,6 +261,10 @@ public fun create_and_share_block_scholes_stores(
         EBlockScholesStoresAlreadyExist,
     );
     assert!(!block_scholes_base_asset.is_empty(), EInvalidBlockScholesBaseAsset);
+    assert!(
+        block_scholes_base_asset.as_bytes().length() <= max_block_scholes_base_asset_len!(),
+        EInvalidBlockScholesBaseAsset,
+    );
     let value_store_id = block_scholes_store::create_and_share_value_store(
         copy block_scholes_base_asset,
         ctx,
@@ -243,13 +276,14 @@ public fun create_and_share_block_scholes_stores(
     let pair = BlockScholesStorePair {
         value_store_id,
         svi_store_id,
+        block_scholes_base_asset,
     };
     registry.block_scholes_stores.add(propbook_underlying_id, copy pair);
     event::emit(BlockScholesStoresRegistered {
         propbook_underlying_id,
         value_store_id,
         svi_store_id,
-        block_scholes_base_asset,
+        block_scholes_base_asset: pair.block_scholes_base_asset,
     });
     pair
 }
