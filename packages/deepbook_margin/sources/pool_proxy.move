@@ -766,10 +766,7 @@ public(package) fun place_market_order_and_repay_loan_core<BaseAsset, QuoteAsset
 
     // Capture the pre-trade ratio for the monotonic gate, but only while the
     // manager has debt — `risk_ratio` is only meaningful against a debt.
-    let risk_ratio_before = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let risk_ratio_before = if (margin_manager.has_debt()) {
         margin_manager.risk_ratio_core(
             registry,
             *base_reading.borrow(),
@@ -1165,10 +1162,7 @@ fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
         margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
     };
 
-    if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    if (margin_manager.has_debt()) {
         assert_reduce_only_monotonic(
             margin_manager,
             registry,
@@ -1207,10 +1201,7 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     // A debt-free manager needs no price: every consumer below is debt-gated, so
     // reading eagerly would let a stale feed block an order that used to succeed.
-    let (base_reading, quote_reading) = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
             option::some(oracle::read_price<BaseAsset>(base_oracle, registry, clock)),
             option::some(oracle::read_price<QuoteAsset>(quote_oracle, registry, clock)),
@@ -1258,10 +1249,7 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     // A debt-free manager needs no price: every consumer below is debt-gated, so
     // reading eagerly would let a stale feed block an order that used to succeed.
-    let (base_reading, quote_reading) = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
             option::some(oracle::read_price<BaseAsset>(base_oracle, registry, clock)),
             option::some(oracle::read_price<QuoteAsset>(quote_oracle, registry, clock)),
@@ -1454,10 +1442,7 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     // A debt-free manager needs no price: every consumer below is debt-gated, so
     // reading eagerly would let a stale feed block an order that used to succeed.
-    let (base_reading, quote_reading) = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
             option::some(oracle::read_price<BaseAsset>(base_oracle, registry, clock)),
             option::some(oracle::read_price<QuoteAsset>(quote_oracle, registry, clock)),

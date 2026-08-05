@@ -258,7 +258,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
     // ratio is MAX regardless of price. Returning here keeps a stale feed from
     // breaking a read-only query, as it did before Pyth Pro.
-    if (self.has_no_margin_pool()) return margin_constants::max_risk_ratio();
+    if (self.margin_pool_id().is_none()) return margin_constants::max_risk_ratio();
 
     self.risk_ratio_core(
         registry,
@@ -284,7 +284,7 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
     // ratio is MAX regardless of price. Returning here keeps a stale feed from
     // breaking a read-only query, as it did before Pyth Pro.
-    if (self.has_no_margin_pool()) return margin_constants::max_risk_ratio();
+    if (self.margin_pool_id().is_none()) return margin_constants::max_risk_ratio();
 
     self.risk_ratio_core(
         registry,

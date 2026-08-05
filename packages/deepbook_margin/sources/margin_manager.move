@@ -1771,10 +1771,13 @@ fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
 
 /// True when the manager holds no borrow position, so `risk_ratio` is MAX without
 /// consulting the oracle.
-public(package) fun has_no_margin_pool<BaseAsset, QuoteAsset>(
+/// True when the manager owes anything on either leg. The entrypoints that read the
+/// oracle lazily are all gated on exactly this, so it lives here rather than being
+/// spelled out at each call site.
+public(package) fun has_debt<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): bool {
-    self.margin_pool_id.is_none()
+    self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0
 }
 
 /// True when `withdraw` runs a risk check - the manager has debt in one of the two

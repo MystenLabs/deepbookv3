@@ -65,10 +65,7 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     // A debt-free manager needs no price: every consumer below is debt-gated, so
     // reading eagerly would let a stale feed block an order that used to succeed.
-    let (base_reading, quote_reading) = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
             option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
             option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
@@ -116,10 +113,7 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     // A debt-free manager needs no price: every consumer below is debt-gated, so
     // reading eagerly would let a stale feed block an order that used to succeed.
-    let (base_reading, quote_reading) = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
             option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
             option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
@@ -312,10 +306,7 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
 ): OrderInfo {
     // A debt-free manager needs no price: every consumer below is debt-gated, so
     // reading eagerly would let a stale feed block an order that used to succeed.
-    let (base_reading, quote_reading) = if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
+    let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
             option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
             option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
