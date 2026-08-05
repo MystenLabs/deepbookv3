@@ -88,6 +88,12 @@ use_environment = "testnet"
 manifest_digest = "EE442EEB0E1F71B244DBB1E016B1D0D8F67061BDAFA606B6C86F093D15CA0755"
 deps = { Sui = "Sui_1", Wormhole = "Wormhole" }
 
+[pinned.testnet.PythProCompatible]
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "6c78a4d882daf4d91457ad5142cb58fc7e376f98" }
+use_environment = "testnet"
+manifest_digest = "AEAC3FAD5DCF925755E55B4498F4CED3B564F87B638049EF0A7C4E9F2EA7E9EC"
+deps = { Sui = "Sui_1", WormholeSimpleMajority = "WormholeSimpleMajority" }
+
 [pinned.testnet.Sui]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
 use_environment = "testnet"
@@ -106,6 +112,12 @@ use_environment = "testnet"
 manifest_digest = "6996F1AB8CD448FFBA142C085C488FE8A46B485E61E38A1891EFA52B30D9C12E"
 deps = { Sui = "Sui_1" }
 
+[pinned.testnet.WormholeSimpleMajority]
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/vendor/wormhole_simple_majority/wormhole", rev = "6c78a4d882daf4d91457ad5142cb58fc7e376f98" }
+use_environment = "testnet"
+manifest_digest = "6996F1AB8CD448FFBA142C085C488FE8A46B485E61E38A1891EFA52B30D9C12E"
+deps = { Sui = "Sui_1" }
+
 [pinned.testnet.deepbook]
 source = { local = "../deepbook" }
 use_environment = "testnet"
@@ -115,11 +127,11 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.testnet.deepbook_margin]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "2B11F937CAB0205DF499B09DD0EC9FCC6EC7B178DF3DDC4861AE35E4F18D2AF3"
-deps = { deepbook = "deepbook", pyth = "Pyth", std = "MoveStdlib", sui = "Sui", token = "token" }
+manifest_digest = "55032D0F8CAAAF41FE80CB3AB9E13122BDE117CDAB8D2EF91114C583232A3058"
+deps = { deepbook = "deepbook", pyth = "Pyth", pyth_pro = "PythProCompatible", std = "MoveStdlib", sui = "Sui", token = "token" }
 
 [pinned.testnet.token]
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "0b6d9cca8975f38cf55c3e9bf5dcca2563b148cb" }
+source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "2e0a88f860f1ae64f709b3978f1e206a91771169" }
 use_environment = "testnet"
 manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
 deps = { std = "MoveStdlib", sui = "Sui" }

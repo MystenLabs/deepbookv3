@@ -7,9 +7,8 @@ use deepbook::{constants, pool::Pool};
 use deepbook_margin::{
     margin_constants,
     margin_registry::MarginRegistry,
-    oracle::{calculate_price, read_price}
+    oracle::{PythReading, calculate_price}
 };
-use pyth::price_info::PriceInfoObject;
 use sui::{clock::Clock, event};
 
 // === Errors ===
@@ -260,8 +259,8 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut TakeProfitStopLoss,
     pool: &Pool<BaseAsset, QuoteAsset>,
     manager_id: ID,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     registry: &MarginRegistry,
     conditional_order_id: u64,
     condition: Condition,
@@ -282,8 +281,8 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
 
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
-        read_price<BaseAsset>(base_price_info_object, registry, clock),
-        read_price<QuoteAsset>(quote_price_info_object, registry, clock),
+        base_reading,
+        quote_reading,
     );
 
     let trigger_below_price = condition.trigger_below_price;

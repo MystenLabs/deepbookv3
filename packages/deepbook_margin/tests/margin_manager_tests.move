@@ -4688,3 +4688,83 @@ fun test_liquidate_repay_just_below_max_does_not_clear_all() {
     return_shared(mm);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+/// `risk_ratio_unsafe` is the view the off-chain risk and liquidation paths read, and
+/// nothing exercised it with debt: readings only reach `price_config` once the manager
+/// owes something, so with a debt-free manager the whole pricing path is skipped and a
+/// transposed base/quote pair is invisible. Asserting the exact ratio pins the pairing.
+#[test]
+fun risk_ratio_unsafe_with_debt_prices_both_legs() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        test_constants::btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // $100k USDC plus the 0.5 BTC drawn at $100k is $150k of assets against $50k of
+    // debt: exactly 3.0. Transposed, BTC would price at $1 and USDC at $100k.
+    let ratio = margin_manager::risk_ratio_unsafe<BTC, USDC>(
+        &mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        &btc_pool,
+        &usdc_pool,
+        &clock,
+    );
+    assert!(ratio == 3_000_000_000);
+
+    return_shared(btc_pool);
+    return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
