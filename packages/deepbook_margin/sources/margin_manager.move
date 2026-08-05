@@ -197,8 +197,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    add_conditional_order_core<BaseAsset, QuoteAsset>(
-        self,
+    self.add_conditional_order_core(
         pool,
         read_price<BaseAsset>(base_price_info_object, registry, clock),
         read_price<QuoteAsset>(quote_price_info_object, registry, clock),
@@ -273,8 +272,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): vector<OrderInfo> {
-    execute_conditional_orders_v2_core<BaseAsset, QuoteAsset>(
-        self,
+    self.execute_conditional_orders_v2_core(
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -310,8 +308,7 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): vector<OrderInfo> {
-    execute_conditional_orders_v3_core<BaseAsset, QuoteAsset>(
-        self,
+    self.execute_conditional_orders_v3_core(
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -456,8 +453,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
         option::some(read_price<QuoteAsset>(quote_oracle, registry, clock))
     };
 
-    deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
-        self,
+    self.deposit_core(
         registry,
         event_reading,
         coin,
@@ -501,8 +497,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         (option::none(), option::none())
     };
 
-    withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
-        self,
+    self.withdraw_core(
         registry,
         base_margin_pool,
         quote_margin_pool,
@@ -529,8 +524,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    borrow_base_core<BaseAsset, QuoteAsset>(
-        self,
+    self.borrow_base_core(
         registry,
         base_margin_pool,
         read_price<BaseAsset>(base_oracle, registry, clock),
@@ -554,8 +548,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    borrow_quote_core<BaseAsset, QuoteAsset>(
-        self,
+    self.borrow_quote_core(
         registry,
         quote_margin_pool,
         read_price<BaseAsset>(base_oracle, registry, clock),
@@ -623,8 +616,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
-    liquidate_core<BaseAsset, QuoteAsset, DebtAsset>(
-        self,
+    self.liquidate_core(
         registry,
         read_price<BaseAsset>(base_oracle, registry, clock),
         read_price<QuoteAsset>(quote_oracle, registry, clock),
@@ -652,8 +644,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     // breaking a read-only query, as it did before Pyth Pro.
     if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
 
-    risk_ratio_core<BaseAsset, QuoteAsset>(
-        self,
+    self.risk_ratio_core(
         registry,
         read_price<BaseAsset>(base_oracle, registry, clock),
         read_price<QuoteAsset>(quote_oracle, registry, clock),
@@ -681,8 +672,7 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     // breaking a read-only query, as it did before Pyth Pro.
     if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
 
-    risk_ratio_core<BaseAsset, QuoteAsset>(
-        self,
+    self.risk_ratio_core(
         registry,
         read_price_unsafe<BaseAsset>(base_oracle, registry),
         read_price_unsafe<QuoteAsset>(quote_oracle, registry),
@@ -777,8 +767,7 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8, u64, u64, u64) {
-    manager_state_core<BaseAsset, QuoteAsset>(
-        self,
+    self.manager_state_core(
         registry,
         read_price_unsafe<BaseAsset>(base_oracle, registry),
         read_price_unsafe<QuoteAsset>(quote_oracle, registry),

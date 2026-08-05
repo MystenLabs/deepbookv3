@@ -35,8 +35,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    margin_manager::add_conditional_order_core<BaseAsset, QuoteAsset>(
-        self,
+    self.add_conditional_order_core(
         pool,
         oracle::read_price_pro<BaseAsset>(base_price_info_object, registry, clock),
         oracle::read_price_pro<QuoteAsset>(quote_price_info_object, registry, clock),
@@ -61,8 +60,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): vector<OrderInfo> {
-    margin_manager::execute_conditional_orders_v2_core<BaseAsset, QuoteAsset>(
-        self,
+    self.execute_conditional_orders_v2_core(
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -87,8 +85,7 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): vector<OrderInfo> {
-    margin_manager::execute_conditional_orders_v3_core<BaseAsset, QuoteAsset>(
-        self,
+    self.execute_conditional_orders_v3_core(
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -122,8 +119,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
         option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock))
     };
 
-    margin_manager::deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
-        self,
+    self.deposit_core(
         registry,
         event_reading,
         coin,
@@ -165,8 +161,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         (option::none(), option::none())
     };
 
-    margin_manager::withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
-        self,
+    self.withdraw_core(
         registry,
         base_margin_pool,
         quote_margin_pool,
@@ -192,8 +187,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    margin_manager::borrow_base_core<BaseAsset, QuoteAsset>(
-        self,
+    self.borrow_base_core(
         registry,
         base_margin_pool,
         oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
@@ -216,8 +210,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    margin_manager::borrow_quote_core<BaseAsset, QuoteAsset>(
-        self,
+    self.borrow_quote_core(
         registry,
         quote_margin_pool,
         oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
@@ -240,8 +233,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
-    margin_manager::liquidate_core<BaseAsset, QuoteAsset, DebtAsset>(
-        self,
+    self.liquidate_core(
         registry,
         oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
         oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
@@ -268,8 +260,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     // breaking a read-only query, as it did before Pyth Pro.
     if (self.has_no_margin_pool()) return margin_constants::max_risk_ratio();
 
-    margin_manager::risk_ratio_core<BaseAsset, QuoteAsset>(
-        self,
+    self.risk_ratio_core(
         registry,
         oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
         oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
@@ -295,8 +286,7 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     // breaking a read-only query, as it did before Pyth Pro.
     if (self.has_no_margin_pool()) return margin_constants::max_risk_ratio();
 
-    margin_manager::risk_ratio_core<BaseAsset, QuoteAsset>(
-        self,
+    self.risk_ratio_core(
         registry,
         oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry),
         oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry),
@@ -317,8 +307,7 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
 ): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8, u64, u64, u64) {
-    margin_manager::manager_state_core<BaseAsset, QuoteAsset>(
-        self,
+    self.manager_state_core(
         registry,
         oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry),
         oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry),
