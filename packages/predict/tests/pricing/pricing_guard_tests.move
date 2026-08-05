@@ -58,6 +58,8 @@ use std::unit_test::assert_eq;
 
 const EUnexpectedSuccess: u64 = 999;
 const FOREIGN_UNDERLYING_ID: u32 = 2;
+/// The largest provider-native magnitude that Predict can represent without narrowing loss.
+const MAX_REPRESENTABLE_U64: u128 = 18_446_744_073_709_551_615;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
@@ -221,14 +223,143 @@ fun block_scholes_price_above_u64_aborts_with_named_width_error() {
     abort EUnexpectedSuccess
 }
 
-/// The same named representation boundary applies to every provider-native SVI magnitude.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
-fun block_scholes_svi_above_u64_aborts_with_named_width_error() {
+/// The inclusive u64 maximum crosses the width gate and reaches Predict's tighter semantic bounds.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
     let (mut fx, mut oracle) = setup_live();
-    fx.set_bs_svi_a_raw_for_testing_bundle(
+    fx.set_bs_forward_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        MAX_REPRESENTABLE_U64,
+    );
+
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_forward_above_u64_aborts_with_named_width_error() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_forward_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
         FIRST_UNREPRESENTABLE_U64,
+    );
+
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// The same named representation boundary applies to the signed SVI `a` magnitude.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_svi_a_above_u64_aborts_with_named_width_error() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        FIRST_UNREPRESENTABLE_U64,
+        test_constants::default_svi_b() as u128,
+        test_constants::default_svi_sigma() as u128,
+        test_constants::default_svi_rho_magnitude() as u128,
+        test_constants::default_svi_m() as u128,
+    );
+
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_svi_b_above_u64_aborts_with_named_width_error() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_svi_a() as u128,
+        FIRST_UNREPRESENTABLE_U64,
+        test_constants::default_svi_sigma() as u128,
+        test_constants::default_svi_rho_magnitude() as u128,
+        test_constants::default_svi_m() as u128,
+    );
+
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_svi_rho_above_u64_aborts_with_named_width_error() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_svi_a() as u128,
+        test_constants::default_svi_b() as u128,
+        test_constants::default_svi_sigma() as u128,
+        FIRST_UNREPRESENTABLE_U64,
+        test_constants::default_svi_m() as u128,
+    );
+
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_svi_m_above_u64_aborts_with_named_width_error() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_svi_a() as u128,
+        test_constants::default_svi_b() as u128,
+        test_constants::default_svi_sigma() as u128,
+        test_constants::default_svi_rho_magnitude() as u128,
+        FIRST_UNREPRESENTABLE_U64,
+    );
+
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun block_scholes_svi_sigma_above_u64_aborts_with_named_width_error() {
+    let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_svi_raw_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_svi_a() as u128,
+        test_constants::default_svi_b() as u128,
+        FIRST_UNREPRESENTABLE_U64,
+        test_constants::default_svi_rho_magnitude() as u128,
+        test_constants::default_svi_m() as u128,
     );
 
     live_quote(

@@ -805,6 +805,24 @@ public fun prepare_live_oracle_bundle_at(
     );
 }
 
+/// Overwrite a bundled Block Scholes spot with its provider-native width. This is a test-only seam
+/// for exercising Predict's pricing-width failure through mandatory market flows.
+public fun set_bs_spot_raw_for_testing_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    source_timestamp_ms: u64,
+    spot: u128,
+) {
+    let sid = market.bs.values().spot_sid();
+    let batch = verify::new_value_batch_for_testing(
+        source_timestamp_ms,
+        vector[verify::new_value_update_for_testing(sid, source_timestamp_ms, spot)],
+    );
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    market.bs.values_mut().apply_spot_batch(batch, &self.clock, &ctx);
+    end_seed_tx(restore);
+}
+
 /// Write the live Pyth + BS surface stamped with this scenario transaction's
 /// digest. Used by same-tx oracle-guard tests; routine seeding uses a dummy
 /// digest so prepare-then-trade helpers do not false-positive.

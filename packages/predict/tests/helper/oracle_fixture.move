@@ -521,6 +521,24 @@ public fun set_bs_spot_raw_for_testing_bundle(
     end_seed_tx(restore);
 }
 
+/// Overwrite only the BS forward row with its provider-native width. Used to pin the same named
+/// width boundary independently from the spot row.
+public fun set_bs_forward_raw_for_testing_bundle(
+    self: &mut OracleFixture,
+    oracle: &mut OracleBundle,
+    source_timestamp_ms: u64,
+    forward: u128,
+) {
+    let sid = oracle.bs.values().forward_sid(self.expiry);
+    let batch = verify::new_value_batch_for_testing(
+        source_timestamp_ms,
+        vector[verify::new_value_update_for_testing(sid, source_timestamp_ms, forward)],
+    );
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    oracle.bs.values_mut().apply_forward_batch(batch, vector[self.expiry], &self.clock, &ctx);
+    end_seed_tx(restore);
+}
+
 /// Overwrite only the BS forward row for this fixture's expiry through the real
 /// ingest path. Used by stale-surface guard tests that need fresh prices but a
 /// stale SVI row.
@@ -619,13 +637,17 @@ public fun set_bs_svi_for_testing_bundle(
     );
 }
 
-/// Overwrite the BS SVI row with a provider-native `a` magnitude while keeping the other fields at
-/// their production-valid defaults. Used to pin Predict's named width boundary.
-public fun set_bs_svi_a_raw_for_testing_bundle(
+/// Overwrite the BS SVI row with provider-native widths. Callers vary one field at a time while
+/// keeping the others at production-valid defaults to pin every Predict narrowing boundary.
+public fun set_bs_svi_raw_for_testing_bundle(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     source_timestamp_ms: u64,
     svi_a_magnitude: u128,
+    svi_b: u128,
+    svi_sigma: u128,
+    svi_rho_magnitude: u128,
+    svi_m_magnitude: u128,
 ) {
     let sid = oracle.bs.svi().svi_sid(self.expiry);
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
@@ -641,11 +663,11 @@ public fun set_bs_svi_a_raw_for_testing_bundle(
                         source_timestamp_ms,
                         svi_a_magnitude,
                         false,
-                        test_constants::default_svi_b() as u128,
-                        test_constants::default_svi_sigma() as u128,
-                        test_constants::default_svi_rho_magnitude() as u128,
+                        svi_b,
+                        svi_sigma,
+                        svi_rho_magnitude,
                         false,
-                        test_constants::default_svi_m() as u128,
+                        svi_m_magnitude,
                         false,
                     ),
                 ],
