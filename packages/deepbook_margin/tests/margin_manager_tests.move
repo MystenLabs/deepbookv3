@@ -4768,3 +4768,66 @@ fun risk_ratio_unsafe_with_debt_prices_both_legs() {
     destroy_2!(btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+// `unregister_margin_manager` refuses to detach a manager that still holds collateral,
+// so the registry's per-owner list never loses track of a funded object. Only the debt
+// guards are covered today (and those are shadowed by the `margin_pool_id` check that
+// fires with the same code), so dropping both balance asserts left all 424 tests green.
+// This manager never borrows: debt-free, but funded.
+#[test, expected_failure(abort_code = margin_manager::EOutstandingAsset)]
+fun test_unregister_margin_manager_fails_with_leftover_collateral() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _usdt_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_usdc_usdt_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<USDT, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDT, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDT, USDC>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<USDT, USDC, USDT>(
+        &registry,
+        &usdt_price,
+        &usdc_price,
+        mint_coin<USDT>(1_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // No borrow ever happened, so every debt guard passes; the collateral is the only
+    // thing left to catch.
+    assert!(mm.borrowed_base_shares() == 0);
+    assert!(mm.borrowed_quote_shares() == 0);
+    assert!(mm.margin_pool_id().is_none());
+    assert!(mm.base_balance() == 1_000 * test_constants::usdt_multiplier());
+
+    margin_manager::unregister_margin_manager<USDT, USDC>(
+        &mut mm,
+        &mut registry,
+        scenario.ctx(),
+    );
+
+    destroy_2!(usdc_price, usdt_price);
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}

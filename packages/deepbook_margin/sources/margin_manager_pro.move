@@ -229,7 +229,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     quote_oracle: &PriceInfoObjectPro,
     margin_pool: &mut MarginPool<DebtAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    mut repay_coin: Coin<DebtAsset>,
+    repay_coin: Coin<DebtAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {

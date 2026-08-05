@@ -11,6 +11,7 @@ use deepbook_margin::{
         read_price,
         read_price_pro,
         read_price_pro_unsafe,
+        calculate_price,
         calculate_usd_currency_amount,
         calculate_target_currency_amount,
         calculate_usd_price,
@@ -95,6 +96,33 @@ fun test_calculate_usd_currency_2() {
     assert!(target_currency_amount == 380 * 1_000_000_000); // 380 USDC
 }
 
+// Every other `calculate_usd_currency_amount` case above divides evenly, so the
+// rounding direction of the first divide (by `10^pyth_decimals`) is invisible to them:
+// swapping its `divide_and_round_up` for a plain `/` left all 424 tests green. This
+// pins the direction on an input that does not divide evenly — 1 unit at a price of
+// 3.80000001 is 3.80000001 USD-units, which must round UP to 4, not down to 3.
+#[test]
+fun test_calculate_usd_currency_rounds_up_on_a_partial_unit() {
+    let target_decimals: u8 = 9;
+    let base_decimals: u8 = 9;
+    let pyth_price = 380000001; // 3.80000001, chosen so amount * price is not a
+    let pyth_decimals: u8 = 8; // multiple of 10^pyth_decimals
+    let base_currency_amount = 1; // the smallest representable amount
+
+    let config = test_conversion_config(
+        target_decimals,
+        base_decimals,
+        pyth_price,
+        pyth_decimals,
+    );
+    let target_currency_amount = calculate_usd_currency_amount(
+        config,
+        base_currency_amount,
+    );
+
+    assert!(target_currency_amount == 4);
+}
+
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
 fun test_calculate_usd_currency_invalid_pyth_price() {
     let target_decimals: u8 = 9;
@@ -158,6 +186,34 @@ fun test_calculate_target_currency_2() {
     );
 
     assert!(target_currency_amount == 27); // 27 TOKEN
+}
+
+// `calculate_target_currency_amount` rounds up twice — once by `pyth_price`, once by
+// `10^BUFFER`. The cases above only pin the second: the first divide's remainder is
+// almost always absorbed by the second, so swapping its `divide_and_round_up` for a
+// plain `/` left all 424 tests green. The inputs here are the minimal ones that make the
+// first divide's rounding survive into the result — the first divide lands exactly on a
+// `10^BUFFER` multiple, so rounding it down instead of up drops the answer from 2 to 1.
+#[test]
+fun test_calculate_target_currency_rounds_up_on_the_price_divide() {
+    let target_decimals: u8 = 9;
+    let base_decimals: u8 = 9;
+    let pyth_price = 99999999999; // 999.99999999
+    let pyth_decimals: u8 = 8;
+    let base_currency_amount = 1000; // 0.000001 USD
+
+    let config = test_conversion_config(
+        target_decimals,
+        base_decimals,
+        pyth_price,
+        pyth_decimals,
+    );
+    let target_currency_amount = calculate_target_currency_amount(
+        config,
+        base_currency_amount,
+    );
+
+    assert!(target_currency_amount == 2);
 }
 
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
@@ -1026,6 +1082,59 @@ fun test_reading_consumed_as_its_own_asset_prices_normally() {
 
     destroy(admin_cap);
     destroy(price_info);
+    test_scenario::return_shared(registry);
+    test_scenario::return_shared(clock);
+    scenario.end();
+}
+
+// `calculate_price` closes with a `<= max_price` ceiling on both decimal-difference
+// branches. It is the only thing stopping a `u128` price from being silently truncated
+// by the `as u64` cast on the next line — and the truncated value would flow straight
+// into `registry.update_current_price` and every tpsl trigger comparison. Loosening the
+// ceiling a millionfold left all 424 tests green. USDC (6 decimals) over a SUI (9
+// decimals) feed reporting 1e-8 lands the ratio at 1e20, past the 2^63-1 ceiling.
+#[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPrice)]
+fun test_calculate_price_rejects_a_ratio_past_the_max_price_ceiling() {
+    let mut scenario = test_scenario::begin(test_constants::admin());
+
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = margin_registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(1000000);
+    clock.share_for_testing();
+
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let clock = scenario.take_shared<Clock>();
+    registry.add_config(&admin_cap, create_test_pyth_config());
+
+    let usdc_price_info = build_pyth_price_info_object(
+        &mut scenario,
+        test_constants::usdc_price_feed_id(),
+        100000000, // $1.00
+        50000,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+    // SUI at the smallest representable price, 1e-8. Confidence must be 0 to stay
+    // inside the 10% bound at this magnitude.
+    let sui_price_info = build_pyth_price_info_object(
+        &mut scenario,
+        test_constants::sui_price_feed_id(),
+        1,
+        0,
+        8,
+        clock.timestamp_ms() / 1000,
+    );
+
+    let usdc_reading = read_price<USDC>(&usdc_price_info, &registry, &clock);
+    let sui_reading = read_price<SUI>(&sui_price_info, &registry, &clock);
+
+    let _ = calculate_price<USDC, SUI>(&registry, usdc_reading, sui_reading);
+
+    destroy(admin_cap);
+    destroy(usdc_price_info);
+    destroy(sui_price_info);
     test_scenario::return_shared(registry);
     test_scenario::return_shared(clock);
     scenario.end();

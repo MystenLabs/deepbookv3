@@ -854,3 +854,194 @@ fun test_btc_sui_liquidation(error_code: u64) {
     destroy(btc_pool);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_liquidate_base_debt_partial_payout_capped_ok() {
+    test_liquidate_base_debt_partial_payout_capped();
+}
+
+#[test, expected_failure(abort_code = margin_manager::ERepaySharesTooLow)]
+fun test_liquidate_dust_repay_burning_no_shares_aborts() {
+    test_liquidate_dust_repay_burning_no_shares();
+}
+
+// Every existing base-debt liquidation drains the manager's entire base leg, so
+// `out_amount.min(base_asset)` is always pinned by `base_asset` and replacing it with a
+// bare `base_asset` left all 424 tests green — while handing the liquidator the WHOLE
+// base collateral for a token repayment. This is the other side of that `min`: a
+// liquidator repaying 0.01 BTC against a 0.4 BTC debt is entitled to 0.01 * 1.05 BTC and
+// must receive exactly that, not the 0.4 BTC the manager holds.
+fun test_liquidate_base_debt_partial_payout_capped() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 500, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+
+    // Deposit 60 USDC, borrow 0.4 BTC ($200 at BTC=$500): risk ratio = 260 / 200 = 1.30.
+    // The borrowed BTC is never withdrawn, so the manager holds the full 0.4 BTC.
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(60 * usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<BTC, USDC>(
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40000000, // 0.4 BTC
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(mm.base_balance() == 40000000);
+
+    // BTC to $2200: assets = 0.4 BTC + 60 USDC = 0.4272727 BTC, debt = 0.4 BTC,
+    // risk ratio = 1.0681818 < 1.10 -> liquidatable, and assets still exceed
+    // debt * 1.05, so the proportional (partial) branch runs.
+    scenario.next_tx(test_constants::liquidator());
+    let btc_price_2200 = build_btc_price_info_object(&mut scenario, 2200, &clock);
+
+    // The liquidator brings only 0.01 BTC. After the 3% pool cut that funds
+    // repay_amount = 0.00970873 BTC, so the payout is 0.00970873 * 1.05 BTC — three
+    // orders of magnitude below the 0.4 BTC the manager holds.
+    let repay_coin = mint_coin<BTC>(1_000_000, scenario.ctx()); // 0.01 BTC
+    let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, USDC, BTC>(
+        &registry,
+        &btc_price_2200,
+        &usdc_price,
+        &mut btc_pool,
+        &mut pool,
+        repay_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Payout is bounded by the entitlement, not by the collateral on hand.
+    assert!(base_coin.value() == 1_019_416);
+    // The entitlement was fully covered in base, so nothing spills into quote.
+    assert!(quote_coin.value() == 0);
+    assert!(remaining_repay_coin.value() == 1);
+    // The manager keeps the rest of its base collateral and its residual debt.
+    assert!(mm.base_balance() == 40000000 - 1_019_416);
+    assert!(mm.borrowed_base_shares() > 0);
+
+    destroy_3!(remaining_repay_coin, base_coin, quote_coin);
+    return_shared_3!(mm, usdc_pool, pool);
+    destroy_3!(btc_price, usdc_price, btc_price_2200);
+    destroy(btc_pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// `ERepaySharesTooLow` is the floor that stops a liquidator from collecting the 5%
+// liquidation bonus while burning zero borrow shares. Relaxing it to `>= 0` left all 424
+// tests green: no test drives `repay_shares` to zero. It rounds to zero whenever
+// `repay_amount * 1e9 < debt`, which the `min_liquidation_repay` floor of 1000 raw units
+// permits on any debt above ~970 whole tokens — here a 2000 SUI debt against a 1e-6 SUI
+// repayment. Without the assert that call pays ~999 raw units and draws ~1019 raw units
+// of collateral out, repeatably, with the debt untouched.
+fun test_liquidate_dust_repay_burning_no_shares() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_sui_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let sui_price = build_sui_price_info_object(&mut scenario, 20, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, SUI>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, SUI>(&pool, &deepbook_registry, &mut registry, &clock, scenario.ctx());
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, SUI>>();
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+
+    // Deposit 1 BTC ($50,000), borrow 2000 SUI ($40,000 at SUI=$20):
+    // risk ratio = (50000 + 40000) / 40000 = 2.25.
+    mm.deposit<BTC, SUI, BTC>(
+        &registry,
+        &btc_price,
+        &sui_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<BTC, SUI>(
+        &registry,
+        &mut sui_pool,
+        &btc_price,
+        &sui_price,
+        &pool,
+        2000 * sui_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // BTC to $15,000 and SUI to $100: assets = 1500 + 200,000 = $201,500,
+    // debt = $200,000, risk ratio = 1.0075 < 1.10 -> liquidatable.
+    scenario.next_tx(test_constants::liquidator());
+    let btc_price_crash = build_btc_price_info_object(&mut scenario, 15000, &clock);
+    let sui_price_spike = build_sui_price_info_object(&mut scenario, 100, &clock);
+
+    // Exactly `min_liquidation_repay` — the smallest coin the entry accepts. Against a
+    // 2e12-raw-unit debt, `div(repay_amount, debt)` floors to 0 and so does repay_shares.
+    let repay_coin = mint_coin<SUI>(1000, scenario.ctx());
+    let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, SUI, SUI>(
+        &registry,
+        &btc_price_crash,
+        &sui_price_spike,
+        &mut sui_pool,
+        &mut pool,
+        repay_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_3!(remaining_repay_coin, base_coin, quote_coin);
+    return_shared_3!(mm, sui_pool, pool);
+    destroy_3!(btc_price, sui_price, btc_price_crash);
+    destroy(sui_price_spike);
+    destroy(btc_pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
