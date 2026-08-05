@@ -503,7 +503,7 @@ public fun set_bs_spot_for_testing_bundle(
     self.set_bs_spot_for_testing(&mut oracle.bs, source_timestamp_ms, spot);
 }
 
-/// Overwrite only the BS spot row with its provider-native width. Used to pin the named width
+/// Overwrite only the BS spot row with its provider-native width. Used to pin the checked-cast
 /// boundary that production pricing applies after the verified store read.
 public fun set_bs_spot_raw_for_testing_bundle(
     self: &mut OracleFixture,
@@ -620,7 +620,7 @@ public fun set_bs_svi_for_testing_bundle(
 }
 
 /// Overwrite the BS SVI row with a provider-native `a` magnitude while keeping the other fields at
-/// their production-valid defaults. Used to pin Predict's named width boundary.
+/// their production-valid defaults. Used to pin Predict's checked-cast boundary.
 public fun set_bs_svi_a_raw_for_testing_bundle(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,

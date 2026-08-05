@@ -205,19 +205,23 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `use_pyth_spot_for_forward` is set, an independently fresh Pyth spot whose
   source timestamp is older than the Block Scholes spot model time.
 - **Controller:** external (oracle operator).
-- **Blast radius:** every live price — entry prices, NAV marks, liquidation.
-- **Response:** accept + disclose (commit `057f9565`). The cross-feed
-  deviation guards are gone; the static pricing-safe envelope remains
-  (positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`,
-  sigma band, positive minimum total variance). A correct-but-adversarial
-  source can steer prices anywhere inside that envelope. The source switch is
-  absolute rather than relative: while `use_pyth_spot_for_forward` is set,
-  every independently fresh usable Pyth spot reanchors the Block Scholes basis,
-  even when the Block Scholes spot is newer; only Pyth's own freshness boundary
-  selects the Block Scholes-forward fallback. A signed Block Scholes magnitude
-  above `u64::MAX` aborts with the named `EBlockScholesInputTooWide` error before
-  narrowing; it is not relabelled as unavailable and cannot reach the narrower
-  semantic envelope.
+- **Blast radius:** every live price — entry prices, NAV marks, and liquidation.
+  The same load sits inside mandatory `plp::value_expiry`, so one over-wide
+  observation for any active market also aborts the pool-wide flush and blocks
+  queued LP fills until the observation is replaced.
+- **Response:** accept provider quality inside the static pricing-safe envelope
+  and disclose it (commit `057f9565`); select Pyth by its own freshness rather
+  than relative source time; fail closed on provider-width overflow. The
+  cross-feed deviation guards are gone. Representable inputs still must satisfy
+  positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`, the
+  sigma band, and positive minimum total variance. A correct-but-adversarial
+  source can steer prices anywhere inside that envelope. While
+  `use_pyth_spot_for_forward` is set, every independently fresh usable Pyth spot
+  reanchors the Block Scholes basis even when the Block Scholes spot is newer;
+  only Pyth's own freshness boundary selects the Block Scholes-forward fallback.
+  A signed Block Scholes magnitude above `u64::MAX` aborts on Move's checked
+  `u128`-to-`u64` cast before the semantic envelope. Recovery is a newer signed,
+  representable observation followed by retrying the affected action or flush.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity
@@ -227,26 +231,27 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `use_pyth_spot_for_forward` is a source-preference setting, not a
   newest-observation chooser: adding a relative-time gate would make the chosen
   source depend on cross-provider clock ordering and introduce another
-  observable switching boundary. Provider-width failure keeps the same
-  fail-closed response as a checked cast, but names the provider-controlled
-  condition so mandatory-path aborts are diagnosable separately from the
-  semantic pricing envelope.
-- **Risk profile:** `BEST-GUESS`; bounded only by the envelope and the
-  provider's signing integrity. The timestamp skew between independently fresh
-  Pyth and Block Scholes observations is bounded by their configured absolute
-  freshness windows, not by relative ordering.
+  observable switching boundary. Provider-width failure stays at the primitive
+  cast rung: repository policy does not wrap atomic VM arithmetic failures with
+  named assertions when no different semantic bound is being enforced.
+- **Risk profile:** `BEST-GUESS`; representable source quality is bounded only
+  by the envelope and the provider's signing integrity. The timestamp skew
+  between independently fresh Pyth and Block Scholes observations is bounded by
+  their configured absolute freshness windows, not by relative ordering. An
+  over-wide signed observation is not bounded by the semantic envelope and can
+  stop the pool-wide flush until the provider publishes a representable value.
 - **Pinning tests:** `pricing_tests.move` —
   `use_pyth_spot_for_forward_selects_the_live_forward_source`,
   `fresh_pyth_remains_selected_when_block_scholes_is_newer`, and
   `live_forward_switches_source_exactly_at_pyth_staleness_boundary`;
   `pricing_guard_tests.move` —
-  `block_scholes_price_above_u64_aborts_with_named_width_error` and
-  `block_scholes_svi_above_u64_aborts_with_named_width_error`.
+  `block_scholes_price_above_u64_aborts_on_checked_cast` and
+  `block_scholes_svi_above_u64_aborts_on_checked_cast`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
   a bounded-skew source rule, or explicit unavailable classification rather than
-  an undifferentiated mandatory-path abort.
+  the primitive mandatory-path abort.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -1260,6 +1265,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `creating_a_second_store_pair_for_an_underlying_aborts`;
   `block_scholes_store_tests.move` —
   `a_new_store_reports_its_base_asset_and_running_version`,
+  `migrating_older_stores_advances_them_to_the_running_version`,
   `migrating_a_value_store_already_at_the_running_version_aborts`, and
   `migrating_an_svi_store_already_at_the_running_version_aborts`.
 - **Reopen when:** a concrete failure cannot be corrected by a newer signed

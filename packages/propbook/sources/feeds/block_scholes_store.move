@@ -526,6 +526,17 @@ public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u8, u6
     )
 }
 
+/// Build an older-version fixture without exposing a production mutation surface.
+#[test_only]
+public fun set_store_versions_for_testing(
+    value_store: &mut BlockScholesValueStore,
+    svi_store: &mut BlockScholesSVIStore,
+    version: u64,
+) {
+    value_store.version = version;
+    svi_store.version = version;
+}
+
 /// Ordering is lexicographic on (model time, envelope time) — the provider names the per-series
 /// model time as the replay key and the envelope only as transport, and never promises that a
 /// later flush carries later model times. Keying on the pair makes the stored observation the same

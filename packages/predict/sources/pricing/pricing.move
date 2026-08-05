@@ -43,9 +43,9 @@ public struct Pricer has copy, drop {
 ///
 /// The provider carries every parameter at 128 bits; Predict prices `rho`, `m`, and `sigma` at 64,
 /// so the narrowing happens once where the `Pricer` is built and every bound below reads these
-/// widths. A provider value too large for them aborts with `EBlockScholesInputTooWide` before the
-/// cast, and everything representable is then bounded semantically by `assert_inputs_pricing_safe`,
-/// whose limits are far tighter than the widths.
+/// widths. A provider value too large for them aborts on the narrowing itself — Move's own overflow
+/// guard — and everything representable is then bounded semantically by
+/// `assert_inputs_pricing_safe`, whose limits are far tighter than the widths.
 public struct RawSVI has copy, drop {
     a: I64,
     b: u64,
@@ -120,7 +120,6 @@ const ENonMonotonePriceMemo: u64 = 16;
 /// `tx_context::digest()`), not sender identity — not every read of a same-tx
 /// write is prohibited (Pyth is checked only on the re-anchor branch).
 const EOracleWrittenInThisTransaction: u64 = 17;
-const EBlockScholesInputTooWide: u64 = 18;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -472,27 +471,22 @@ fun assert_oracle_not_written_this_tx(writer_digest: &vector<u8>, ctx: &TxContex
     assert!(writer_digest != ctx.digest(), EOracleWrittenInThisTransaction);
 }
 
-/// Narrow one Block Scholes price to Predict's pricing width with the provider-width error shared
-/// by every Block Scholes input.
+/// Narrow one Block Scholes price to Predict's pricing width. See `RawSVI` on why the narrowing is
+/// unguarded.
 fun narrow_price(value: u128): u64 {
-    narrow_input(value)
+    value as u64
 }
 
 /// Narrow a stored Block Scholes tuple to Predict's pricing widths, keeping the provider's
 /// magnitude-and-sign form for the signed parameters.
 fun narrow_svi(svi: &SVIParams): RawSVI {
     RawSVI {
-        a: i64::from_parts(narrow_input(svi.svi_a_magnitude()), svi.svi_a_is_negative()),
-        b: narrow_input(svi.svi_b()),
-        rho: i64::from_parts(narrow_input(svi.svi_rho_magnitude()), svi.svi_rho_is_negative()),
-        m: i64::from_parts(narrow_input(svi.svi_m_magnitude()), svi.svi_m_is_negative()),
-        sigma: narrow_input(svi.svi_sigma()),
+        a: i64::from_parts(svi.svi_a_magnitude() as u64, svi.svi_a_is_negative()),
+        b: svi.svi_b() as u64,
+        rho: i64::from_parts(svi.svi_rho_magnitude() as u64, svi.svi_rho_is_negative()),
+        m: i64::from_parts(svi.svi_m_magnitude() as u64, svi.svi_m_is_negative()),
+        sigma: svi.svi_sigma() as u64,
     }
-}
-
-fun narrow_input(value: u128): u64 {
-    assert!(value <= (std::u64::max_value!() as u128), EBlockScholesInputTooWide);
-    value as u64
 }
 
 fun a(svi: &RawSVI): I64 {
