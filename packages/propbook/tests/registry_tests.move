@@ -229,6 +229,7 @@ fun create_block_scholes_stores_records_the_pair_lookup() {
         .destroy_some();
     assert_eq!(pair.block_scholes_value_store_id(), value_store_id);
     assert_eq!(pair.block_scholes_svi_store_id(), svi_store_id);
+    assert_eq!(pair.block_scholes_base_asset(), btc());
     assert!(value_store_id != svi_store_id);
 
     let events = event::events_by_type<registry::BlockScholesStoresRegistered>();
@@ -362,8 +363,57 @@ fun creating_store_pair_with_empty_base_asset_aborts() {
     abort 999
 }
 
+/// 32 bytes is the longest accepted spelling; the boundary lands on the accepting side.
+#[test]
+fun creating_store_pair_with_a_maximum_length_base_asset_succeeds() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let pair = registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        thirty_two_byte_asset(),
+        scenario.ctx(),
+    );
+    assert_eq!(pair.block_scholes_base_asset(), thirty_two_byte_asset());
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EInvalidBlockScholesBaseAsset)]
+fun creating_store_pair_with_an_over_length_base_asset_aborts() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut over_length = thirty_two_byte_asset();
+    over_length.append(b"X".to_string());
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        over_length,
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
 fun btc(): String {
     b"BTC".to_string()
+}
+
+/// Exactly 32 ASCII bytes, counted by hand: eight groups of four.
+fun thirty_two_byte_asset(): String {
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ012345".to_string()
 }
 
 fun eth(): String {

@@ -180,7 +180,7 @@ unbound intermediate state:
 - `replace_pyth_binding_for_underlying` replaces the active Pyth feed for one
   Propbook underlying.
 
-Block Scholes stores sit outside the source catalog: `create_and_share_block_scholes_stores` binds the exact provider base-asset spelling, creates the pair, and records it as canonical for one underlying in a single admin-gated step. The value and SVI stores independently retain the same immutable spelling, and an underlying keeps that pair for its lifetime — there is no store rebinding. Predict market creation requires Pyth bound plus both stores present.
+Block Scholes stores sit outside the source catalog: `create_and_share_block_scholes_stores` binds the exact provider base-asset spelling, creates the pair, and records it as canonical for one underlying in a single admin-gated step. The registry row carries that spelling alongside the two object IDs, so `propbook_block_scholes_store_pair_for_underlying` answers the whole binding — including `block_scholes_base_asset` — in one lookup, and the value and SVI stores independently retain the same spelling. The spelling is bounded to 32 bytes and is otherwise unconstrained: it is carried into every derived series id exactly as given, and no on-chain fact can say whether it names the asset the underlying is meant to track. An underlying keeps that pair for its lifetime — there is no store rebinding — so a spelling the provider does not serve leaves the underlying permanently unfeedable, and one naming a different real asset prices the underlying off that asset with every check passing. Confirm the spelling against the provider's acknowledged subscription before binding; the emitted `BlockScholesStoresRegistered` and the registry reader exist so that confirmation can be made against the chain. Predict market creation requires Pyth bound plus both stores present.
 
 Source assignment remains sticky: once a source key has been assigned to an
 underlying, that source key can only be reused for the same underlying. Replacing
@@ -198,7 +198,7 @@ Typical discovery question:
 
 > What is the Propbook Pyth oracle object for BTC?
 
-Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The Block Scholes lookup is `propbook_block_scholes_store_pair_for_underlying(registry, propbook_underlying_id)`. Use `block_scholes_value_store_id(&pair)` and `block_scholes_svi_store_id(&pair)` to read the two shared-object IDs from the returned pair.
+Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The Block Scholes lookup is `propbook_block_scholes_store_pair_for_underlying(registry, propbook_underlying_id)`. Use `block_scholes_value_store_id(&pair)` and `block_scholes_svi_store_id(&pair)` to read the two shared-object IDs from the returned pair, and `block_scholes_base_asset(&pair)` to read the provider spelling those stores derive their accepted series ids from.
 
 ## Events
 
