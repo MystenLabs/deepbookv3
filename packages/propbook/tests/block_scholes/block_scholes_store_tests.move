@@ -810,6 +810,25 @@ fun a_new_store_reports_its_base_asset_and_running_version() {
     scenario.end();
 }
 
+#[test]
+fun migrating_older_stores_advances_them_to_the_running_version() {
+    let (scenario, value_id, svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    store::set_store_versions_for_testing(&mut value_store, &mut svi_store, 0);
+    assert_eq!(value_store.value_store_version(), 0);
+    assert_eq!(svi_store.svi_store_version(), 0);
+
+    store::migrate_value_store(&mut value_store);
+    store::migrate_svi_store(&mut svi_store);
+
+    assert_eq!(value_store.value_store_version(), constants::current_version!());
+    assert_eq!(svi_store.svi_store_version(), constants::current_version!());
+    return_shared(value_store);
+    return_shared(svi_store);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = store::ENotNewerVersion)]
 fun migrating_a_value_store_already_at_the_running_version_aborts() {
     let (scenario, value_id, _svi_id) = setup_stores();

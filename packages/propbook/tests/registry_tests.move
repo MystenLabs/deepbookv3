@@ -275,8 +275,8 @@ fun store_lookups_are_none_for_an_underlying_without_a_pair() {
     scenario.end();
 }
 
-/// One pair per underlying for life: a second pair would leave two stores each able to claim the
-/// underlying with nothing to choose between them.
+/// One canonical storage pair per underlying for life: observations advance it in place, and any
+/// future structural recovery belongs to the package upgrade that defines the migration.
 #[test, expected_failure(abort_code = registry::EBlockScholesStoresAlreadyExist)]
 fun creating_a_second_store_pair_for_an_underlying_aborts() {
     let mut scenario = test::begin(ADMIN);

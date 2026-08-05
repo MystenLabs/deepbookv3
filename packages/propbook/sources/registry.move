@@ -52,7 +52,9 @@ public struct OracleRegistry has key {
     /// Provider/source pair to the sole underlying it may serve.
     source_bindings: Table<OracleSourceKey, u32>,
     /// Underlying to its canonical Block Scholes store pair. Each store owns the immutable
-    /// Block Scholes base asset that gates its reads and writes.
+    /// Block Scholes base asset that gates its reads and writes. The pair is permanent storage:
+    /// newer signed observations and in-place version migrations recover it without an admin
+    /// source switch.
     block_scholes_stores: Table<u32, BlockScholesStorePair>,
 }
 
@@ -249,6 +251,9 @@ public fun create_and_share_pyth_feed(
 /// it against the provider's acknowledged subscription before this call — the emitted
 /// `BlockScholesStoresRegistered` and `block_scholes_base_asset` reader exist so that confirmation
 /// can be made against the chain rather than against the intent.
+/// Bad observations are corrected by newer signed rows, and version changes migrate in place. A
+/// structural replacement — including recovery from a wrong permanent base-asset binding — belongs
+/// in the package upgrade that defines its migration rather than in a generic pre-deployed rebind.
 public fun create_and_share_block_scholes_stores(
     registry: &mut OracleRegistry,
     _admin_cap: &RegistryAdminCap,
