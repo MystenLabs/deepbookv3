@@ -340,7 +340,19 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   *Rationale:* moving valuation off the trading hot path lets the flush afford an
   exact brute-force NAV, which deletes the entire approximate-NAV mitigation stack;
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
-  a trustless on-chain crank), a multi-tx crank, and a flush that pauses trading.
+  a trustless on-chain crank) and a flush that pauses trading.
+- **Valuation is resumable across transactions; the mark is frozen atomically
+  (overturns the rejected multi-tx crank; RP-25 resolves C-1).** The flush splits
+  into an atomic snapshot stage that freezes one `Pricer` per active market, and a
+  valuation stage that may span any number of transactions and reads no oracle and
+  no clock. *Rationale:* the single-PTB flush was bounded by Sui's 1,000
+  dynamic-field children per transaction, summed across every active market, and
+  exact NAV needs one child per distinct strike tick — so the ceiling could not be
+  budgeted away without the rejected approximate-NAV band. The original rejection
+  assumed a multi-tx crank forfeits the single exact mark; freezing the pricers in
+  the atomic stage keeps it, which is what changed. *Rejected (still):* re-reading
+  the oracle per valuation transaction, which would mix instants and break the
+  one-mark-in-both-directions invariant (audit L10).
 - **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
   `current_nav = free_cash − exact_per_order_liability`, floored at zero, where the
   liability is the payout-tree linear walk minus the leveraged-book floor correction;
@@ -363,10 +375,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (bounded blast radius, better key hygiene than the root cap). NAV manipulation is
   closed by privileging the start; dilution by the fair FIFO drain at the frozen mark.
   *Rejected:* a permissionless flush.
-- **Cash maintenance is decoupled from the flush potato.** Cash rebalance, the
+- **Cash maintenance is decoupled from the flush.** Cash rebalance, the
   settled-market sweep, and liquidation are standalone, permissionless, per-market
-  entrypoints; the hot potato exists only for the flush, the one flow that needs the
-  exactly-once-per-market completeness proof. *Rationale:* each maintenance op is
+  entrypoints; the flush's completeness proof and its `SnapshotStage` potato exist only
+  for the one flow that needs exactly-once-per-market valuation. *Rationale:* each maintenance op is
   per-market local and invariant-preserving, so it needs neither the completeness
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.

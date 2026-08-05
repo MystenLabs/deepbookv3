@@ -68,9 +68,29 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   those fill-site degeneracies by classifying non-executable queue heads before
   mutating pool state.
 - **Pinning tests:** `pool_valuation_flow_tests.move` —
-  `finish_flush_with_zero_pool_nav_and_empty_queues_succeeds`,
-  `finish_flush_with_low_plp_price_and_empty_queues_succeeds`,
-  `finish_flush_with_high_plp_price_and_empty_queues_succeeds`.
+  `valuation_split_across_transactions_marks_at_the_snapshot_instant` (moves the
+  Pyth spot between two `value_expiry` transactions and asserts the pool mark is
+  unchanged, with a guard assertion proving a live re-read would have marked it
+  differently, so the test cannot pass vacuously),
+  `seal_aborts_when_an_active_market_has_no_frozen_pricer`,
+  `value_expiry_before_seal_aborts`,
+  `finish_aborts_when_a_snapshotted_market_is_unvalued`,
+  `snapshotting_one_market_twice_aborts`,
+  `snapshotting_an_expired_unsettled_market_aborts`,
+  `settling_during_a_flush_aborts` (the gate that closes lifecycle drift),
+  `privileged_abort_releases_the_lock_and_a_later_flush_succeeds`,
+  `permissionless_abort_before_the_deadline_aborts` and
+  `permissionless_abort_at_the_deadline_releases_the_lock` (the deadline pinned from
+  both sides, so it cannot be widened or dropped silently). The window's bounds and
+  its in-flight immutability are pinned in `protocol_config_tests.move`
+  (`max_valuation_window_ships_at_one_hour_and_is_tunable`,
+  `max_valuation_window_below_the_floor_aborts`,
+  `max_valuation_window_above_the_ceiling_aborts`,
+  `set_max_valuation_window_during_valuation_aborts`). The flush's inherited
+  same-transaction oracle refusal is pinned by
+  `oracle_same_tx_guard_tests::write_feed_then_snapshot_flush_same_tx_aborts` — the
+  guard's coverage had to follow the oracle read from `value_expiry` to the snapshot
+  stage.
 - **Reopen when:** the fill-site policy (RP-2) turns out not to cover a
   mark-level degeneracy.
 
@@ -1172,6 +1192,246 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Layout note:** adding `writer_digest` to `OracleRead` / `BsRead` changes
   Propbook struct layouts — requires a fresh publish of propbook and predict,
   not a compatible upgrade.
+
+---
+
+## RP-25: Full-pool valuation is resumable across transactions (resolves C-1)
+
+- **Trigger state:** the sum of dynamic-field children the flush must load —
+  dominated by distinct strike ticks, one `Table<tick,PayoutNode>` child each —
+  approaches Sui's `object_runtime_max_num_cached_objects` (1,000 per
+  transaction, cumulative across every command in the PTB). The old flush valued
+  every active market in one atomic PTB, so this was a joint sum across markets:
+  two markets at 586 nodes each aborted at 1,172 combined
+  (`evidence/c1-object-cache-flush-2026-07-07.md`).
+
+  **Correction to that record's capacity law, which RP-25 inherited:** it writes the
+  liquidation-book term as `ceil(leveraged_orders / 64)`. That is the best case, not the
+  bound. `insert_active_order_id` splits an over-full page at its midpoint (32 and 33,
+  never 64) and `merge_page_if_small` declines exactly when the neighbour is full, so
+  ascending order ids — a bot minting a monotone strike ladder — leave every page at the
+  split floor. The correct term is `ceil(leveraged_orders / 32)`: **157 pages at the
+  5,000-order cap, not 79**.
+- **Controller:** external — a Sui protocol constant. Verified network-invariant
+  on 2026-07-29: set once in `sui-protocol-config/src/lib.rs` with no
+  version-gated override, alongside `object_runtime_max_num_store_entries` at the
+  same 1,000. Only system transactions get 16×.
+- **Blast radius:** on overflow the flush aborts `MEMORY_LIMIT_EXCEEDED` inside
+  `dynamic_field::borrow_child_object`, so no market is valued and the LP
+  supply/withdraw queues stay frozen pool-wide until the books shrink. Reachable
+  adversarially, not only by organic growth: reusing one lower boundary and
+  varying the upper mints one new node per order, and at the compiled floors
+  (`min_net_premium` 1 DUSDC, entry band [1%, 99%], `min_fee` 0.5% on quantity)
+  ~999 orders cost ~1,000 DUSDC of premium that is ~99% likely to pay back plus
+  ~5 DUSDC of fees. Reported as issue 45 in the external audit engagement's own
+  tracker (not this repo's issue #45).
+- **Response:** rung 3 — restructure so the joint budget cannot exist. The flush
+  splits into an atomic snapshot stage (`start_pool_valuation` →
+  `snapshot_expiry_pricer` × N → `seal_valuation_snapshot`, which reads oracles
+  and walks no trees) and a resumable valuation stage (`value_expiry` × N, any
+  number of transactions), then `finish_flush`. Each transaction now carries one
+  market's children instead of the pool's.
+- **Reasoning:** exact NAV requires pricing every distinct boundary off the live
+  oracle, so the child count is `>=` distinct boundaries by construction and
+  cannot be cached away without reintroducing the rejected approximate-NAV band
+  (audit L10). Bounding the joint sum on-chain instead would either serialize
+  every boundary-creating mint through the vault or split 1,000 across 24 markets
+  into an unusable ~41 each. Making valuation resumable removes the joint
+  constraint rather than budgeting it. Freezing one `Pricer` per market during
+  the atomic snapshot stage is what preserves the single exact mark: the
+  valuation stage reads no oracle and no clock, so the pool is marked at the
+  snapshot instant regardless of how many transactions it spans. This overturns
+  the `*Rejected:* a multi-tx crank` clause of the async-LP decision
+  (`docs/design/decisions.md`); the overturn is recorded there.
+- **Risk profile:** `MEASURED` for the failure this removes
+  (`evidence/c1-object-cache-flush-2026-07-07.md`); `UNMEASURED` for the new
+  per-transaction ceiling — see C-4, which owns sizing `max_payout_tree_nodes`
+  against a single-market `value_expiry` budget. The joint bound is gone; the
+  per-market one is now well-posed and open.
+- **Superseded measurement trail (retained as C-1's provenance):** the model that
+  called the flush computation-bound came from `evidence/c1-nav-stress-2026-06-30.md`
+  (pre-memo single-market OOG at ~4,580 orders) and
+  `evidence/c1-price-memo-2026-07-01.md` (post-memo, a full 5,000-order book at
+  ~47–54% of the compute wall), re-measured under skew-adjusted pricing in
+  `evidence/c1-skew-gas-2026-07-09.md` (~2.2% steeper per-order slope, 51% of the
+  wall). Those compute figures still stand for a SINGLE market and feed C-4's
+  per-transaction sizing; they were superseded only as a model of the pool total,
+  which the object-cache finding showed binds first.
+- **Duty inventory (state the potato used to guarantee, and what carries it now):**
+  The hot potato guaranteed three things. (1) *The snapshot stage is one transaction.*
+  Kept, not replaced: `start_pool_valuation` still returns a `SnapshotStage` potato that
+  every `snapshot_expiry_pricer` borrows and `seal_valuation_snapshot` consumes, so the
+  stage whose atomicity is load-bearing is still enforced by Move's linearity rather
+  than by keeper convention — and, since the potato is only mintable by starting a
+  flush, that also scopes the otherwise-permissionless snapshot calls to the starter.
+  Only the *valuation* stage gave the potato up, which is the stage that had to span
+  transactions. (2) *The lock releases in-transaction.* This is the one genuinely
+  surrendered: the lock now gates the whole mutation surface across transactions, so an
+  abandoned flush would freeze the protocol. Carried by `abort_valuation`
+  (permissionless once `max_valuation_window_ms` has elapsed) and
+  `abort_valuation_privileged` (immediate, on the lifecycle authority); partial NAV is
+  discarded because frozen marks are sound only as a simultaneous set. Note the
+  abandoned state is only reachable *after* a committed seal — a snapshot stage that
+  fails part-way reverts whole, lock included. (3) *A valuation is bound to its vault*
+  (`EWrongPoolVault`); the valuation is now a field of that vault, so the mismatch is
+  unrepresentable. Lifecycle drift across transactions is closed by gating `try_settle`
+  on the lock — deadlock-free because `snapshot_expiry_pricer` refuses an
+  expired-unsettled market and that abort reverts the atomic snapshot transaction.
+- **Window is admin-tunable, not compiled.** `max_valuation_window_ms` decides the
+  maximum protocol pause a stalled keeper can cause, so it is a `ProtocolConfig` field
+  with an `AdminCap` setter (bounds 5 min – 4 h, default 1 h) rather than an
+  upgrade-required constant: it is tuned against flush cadence, which is an operator
+  decision, and the same reasoning as RP-12's attempt count. The floor stops a window
+  so short that anyone can discard a flush the keeper is still working through; the
+  ceiling bounds the pause even if an operator sets it carelessly. The setter carries
+  `assert_not_valuation_in_progress` so a started flush cannot have its escape hatch
+  moved after the fact.
+- **Pinning tests:** `pool_valuation_flow_tests.move` —
+  `valuation_split_across_transactions_marks_at_the_snapshot_instant` (moves the
+  Pyth spot between two `value_expiry` transactions and asserts the pool mark is
+  unchanged, with a guard assertion proving a live re-read would have marked it
+  differently, so the test cannot pass vacuously),
+  `seal_aborts_when_an_active_market_has_no_frozen_pricer`,
+  `value_expiry_before_seal_aborts`,
+  `finish_aborts_when_a_snapshotted_market_is_unvalued`.
+- **Reopen when:** Sui raises or removes the cached-objects limit (the split
+  stays correct but stops being load-bearing), or a market's own
+  `value_expiry` is measured to exceed one transaction's budget at the caps —
+  which is C-4, not a reopen of this entry.
+
+---
+
+## RP-26: The payout-tree cap is derived from the per-transaction object budget
+
+- **Trigger state:** one market's `plp::value_expiry` loads more distinct
+  dynamic-field children than a transaction may hold. The worst case is
+  `max_payout_tree_nodes` (the full `walk_linear`) + `ceil(max_active_leveraged_orders
+  / 64)` liquidation pages (the `correction_value` scan) + the market's base children.
+- **Controller:** partly external (the Sui constant), partly ours (the caps). Reaching
+  it is market-controlled: any actor may mint boundaries up to the node cap, and at
+  the compiled floors ~999 near-certain orders cost ~1,000 DUSDC of recoverable
+  premium plus ~5 DUSDC of fees.
+- **Blast radius:** the market becomes permanently un-valuable, and `finish_flush`
+  requires every snapshotted market valued, so LP supply and withdraw freeze
+  **pool-wide** until that market expires and is swept. This is strictly worse than a
+  degraded fill, which is why the response is a hard bound rather than a tuned one.
+- **Response:** rung 2 — a derived cap plus a written operational bound.
+  `max_payout_tree_nodes` is no longer a chosen number; it is
+  `object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
+  (1,000 − 157 − 40 = **803**). Raising `max_active_leveraged_orders` now shrinks the
+  node cap automatically instead of silently pushing the flush over the ceiling.
+  Not rung 3: the derivation bounds ONE market's valuation, and nothing on-chain stops a
+  caller batching two `value_expiry` commands — or `value_expiry` and `finish_flush` —
+  into one PTB, which re-creates the joint budget. **One `value_expiry` per transaction,
+  never batched with `finish_flush`,** is an operator convention, and the failure if it
+  is broken is a recoverable abort rather than a freeze.
+- **Reasoning:** RP-25 removed the *joint* budget across markets but left the
+  *per-market* one at a number that could not fit — 1,000 nodes alone equalled the
+  whole budget, before pages and base children. Picking a smaller literal would have
+  fixed today's arithmetic and left the two caps free to drift apart again; deriving
+  it means the invariant is the definition. The cost is accepted and real: ~20% fewer
+  distinct strike boundaries per market (1,000 → 803, a ~20% cut), which tightens wide-strike
+  books. Correctness wins because the failure mode is a pool-wide LP freeze, not a
+  narrower grid, and no item here records a strike-count floor the new cap crosses —
+  the tracker's standing complaint about this cap is P-17's, that it is too generous.
+- **Risk profile:** `MEASURED` only for the 1,000-child budget itself
+  (`evidence/c1-object-cache-flush-2026-07-07.md`). `UNMEASURED` for both other terms.
+  The page bound is structural, read from `liquidation_book`'s split and merge
+  conditions and pinned by `worst_case_page_occupancy_stays_within_the_bound`, not
+  measured on a node. `valuation_base_children_reserve` is an estimate: the evidence's
+  two data points (708 success, 982 abort) bound the *fuller-PTB* overhead only to the
+  interval **[19, 292]** — a one-sided read of the abort as landing exactly on the
+  boundary is what produced the "~18" figure, and that run carried
+  `start_pool_valuation`, `finish_flush`, the LP-queue drain and several other markets,
+  so it is not a per-market base at all. Source inspection of a lone `value_expiry`
+  puts the real per-market base at **1-2** children: Predict uses `sui::table` only, so
+  each row is one child, and a `Table` stored inline in its parent is not itself a
+  cached child. The reserve is 40 because the cost of being wrong is asymmetric —
+  over-reserving spends strike capacity, under-reserving freezes the pool. C-4 tightens
+  it against a measured single-market `value_expiry`.
+- **Rejected: leaving the cap and deferring to measurement.** That was C-4's original
+  plan, and it leaves the pool-wide freeze reachable on `main` in the meantime for the
+  price of the fees. Rejected: **excluding an un-valuable market from the flush** —
+  the pool NAV would then understate true value, reintroducing exactly the
+  approximate-NAV error the exact mark exists to avoid (audit L10). Rejected:
+  **chunking the tree walk across transactions** — `PriceMemo` has no `store` and the
+  walk's in-order contract is what `cached_up_price` binary-searches, so a resumable
+  walk is a redesign of the NAV primitive, not a cap change.
+- **Pinning tests:** `valuation_capacity_tests.move` —
+  `worst_case_page_occupancy_stays_within_the_bound` (builds a real book in ascending-id
+  order and counts real pages against the derivation's own occupancy assumption; this is
+  the one that fails if the divisor reverts to the full page capacity),
+  `one_market_valuation_fits_the_object_budget`, and `the_node_cap_stays_usable` (a
+  floor, because a derived cap can be driven to a positive but economically dead value
+  without ever underflowing). Mutation-checked: reverting the divisor to the full page
+  capacity fails the occupancy test. Note `sui move test` does not enforce the
+  object-runtime limit, which is precisely why the budget is asserted as arithmetic
+  rather than left to a localnet run nobody repeats.
+- **Reopen when:** C-4 measures the base children and the reserve can be tightened; or
+  Sui changes `object_runtime_max_num_cached_objects`; or P-17 lands and honest books
+  need fewer nodes, which changes what the cap costs rather than what it must be.
+
+---
+
+## RP-27: The flush skips a market outside its active set instead of aborting
+
+- **Trigger state:** a caller passes `snapshot_expiry_pricer` or `value_expiry` a market
+  that is not in `expected_expiry_markets` — the active set `start_pool_valuation` read
+  on-chain at execution.
+- **Controller:** the caller's own staleness, plus anyone who sweeps. The flush's market
+  list is built off-chain before submitting, and `rebalance_expiry_cash` is
+  permissionless, so any settle-and-sweep between that read and execution invalidates the
+  list. The operator's own settlement lane does exactly this on every roll.
+- **Blast radius (before):** `EExpiryMarketNotActive` failed the entire flush. Observed on
+  testnet `predict-6-24` as repeated `plp::assert_expiry_ready_to_value` abort 0 — about
+  13 failures in 3 hours on one keeper. No LP request fills while it persists, so it is an
+  LP-queue liveness failure driven by a routine race rather than by any pool state.
+  Severity is intermittent, not standing: at a ten-minute interval those ~13 failures
+  still leave ~5 successful flushes in the window, and an earlier occurrence ran nearer
+  1-in-8. LP fills are delayed by tens of minutes, escrow stays cancellable, and no
+  capital is trapped.
+- **Response:** rung 3 for the failure mode — make the divergence harmless instead of
+  fatal. Both stages return early for a market outside the set. Nothing is valued, no cash
+  moves, and the market contributes 0.
+- **Reasoning:** `expected_expiry_markets` is read **on-chain**, not supplied by the
+  caller, so it is authoritative and the caller's list is only a hint about which commands
+  to emit. A hint being stale in the "market already left" direction should not be an
+  error. The alternative — fixing only the keeper — leaves the race live for every other
+  caller and depends on an off-chain read staying coherent with execution, which it cannot
+  be in general.
+- **Duty inventory (the abort's job, and what carries it now):** the abort enforced that a
+  valued market belongs to the flush. That is still enforced, at the set level rather than
+  per call: `seal_valuation_snapshot` requires a frozen pricer for **every** expected
+  market, and `finish_flush` requires **every** expected market valued. So a market that
+  genuinely belongs to the flush cannot be skipped by either stage without one of those
+  aborting — the exactly-once completeness proof is untouched. What is given up is the
+  per-call diagnostic: a caller passing a market the flush never wanted now gets silence
+  rather than an abort. Accepted, because the on-chain set is authoritative and the
+  keeper's own signal is that flushes stop failing. `EExpiryMarketAlreadyValued` is
+  unchanged and still guards double-counting.
+- **Risk profile:** `MEASURED` for the failure removed
+  (`evidence/rp27-flush-active-set-race-2026-07-30.md`): an on-chain testnet abort with a
+  transaction digest, ~13 failures in 3 hours on one operator. The skip itself is a
+  structural argument, not a measurement.
+- **Rejected: fixing only the caller.** A caller can narrow the window — re-read the
+  active set as late as possible, and wait for the preceding settlement to be visible
+  before reading, since a read issued immediately after a submit can still see pre-tx
+  shared-object state. That is worth doing and is tracked off this repo. But it narrows
+  the window rather than closing it: the read and the execution are separate points in
+  time by construction, and any third-party sweep reopens it for every caller. **Rejected: tolerating the opposite
+  direction** (a market that entered the set after the caller's read). That one still
+  aborts at the seal, and should: the flush would otherwise mark a pool it had not fully
+  valued. Market creation is lock-gated and operator-driven, so the window is small and
+  the retry is cheap.
+- **Pinning tests:** `pool_valuation_flow_tests.move` —
+  `a_swept_market_left_in_the_keepers_list_is_skipped_not_fatal` (settles and sweeps a
+  market, then flushes with it still in hand, and asserts the flush completes at an exact
+  mark). Mutation-checked: restoring the abort fails it. The duty carriers are pinned by
+  `seal_aborts_when_an_active_market_has_no_frozen_pricer` and
+  `finish_aborts_when_a_snapshotted_market_is_unvalued`.
+- **Reopen when:** a caller needs to distinguish "skipped because stale" from "valued",
+  which would need an event rather than a return; or the flush's market list stops being
+  caller-supplied, which would make the divergence unrepresentable and the skip dead code.
 
 ---
 

@@ -83,12 +83,18 @@ and contributors. For *how* each mechanism works, follow the links into
   world. Any liveness clamp inside `current_nav` (the degenerate-underwater cash
   floor) only ever *maximizes* NAV when it fires, preserving the supply-mark
   direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
-- **Exactly-once full-pool valuation.** The flush hot potato (`PoolValuation`)
-  snapshots the active-expiry set at `start_pool_valuation`; each `value_expiry`
-  proves its market is in the snapshot and not already valued, and `finish_flush`
-  proves the valued set equals the snapshot. A missed or double-counted market would
-  mis-price the pool, so the completeness proof is mandatory; the potato has no
-  abilities, so it must be consumed by `finish_flush`.
+- **Exactly-once full-pool valuation.** Vault-held `PoolValuation` snapshots the
+  active-expiry set at `start_pool_valuation`; each `value_expiry` proves its market
+  is in the snapshot and not already valued, and `finish_flush` proves the valued set
+  equals the snapshot. A missed or double-counted market would mis-price the pool, so
+  the completeness proof is mandatory. Because the valuation is vault state rather
+  than a hot potato, the lock it holds is released by `finish_flush`,
+  `abort_valuation_privileged`, or a permissionless `abort_valuation` past
+  `max_valuation_window_ms`.
+- **One instant per flush.** Every market's `Pricer` is frozen inside the atomic
+  snapshot stage, which the `SnapshotStage` potato confines to one transaction; the
+  valuation stage reads no oracle and no clock, so no later transaction can move a
+  market's mark or its sweep-vs-value branch.
 
 ## Settlement
 

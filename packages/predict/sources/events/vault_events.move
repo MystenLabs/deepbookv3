@@ -181,6 +181,15 @@ public struct WithdrawFilled has copy, drop, store {
     requests_pending_after: u64,
 }
 
+/// A started full-pool valuation was discarded without draining the LP queues.
+/// Distinguishes an abandoned flush from one that never started; the market counts
+/// say how far it got before being dropped.
+public struct FlushAborted has copy, drop, store {
+    pool_vault_id: ID,
+    expected_market_count: u64,
+    valued_market_count: u64,
+}
+
 /// Emitted once after a flush drains both queues. `pool_value / total_supply` is
 /// the frozen pre-drain mark used by every fill in the flush.
 public struct FlushExecuted has copy, drop, store {
@@ -512,6 +521,14 @@ public(package) fun emit_flush_executed(
         idle_balance_after,
         total_supply_after,
     });
+}
+
+public(package) fun emit_flush_aborted(
+    pool_vault_id: ID,
+    expected_market_count: u64,
+    valued_market_count: u64,
+) {
+    event::emit(FlushAborted { pool_vault_id, expected_market_count, valued_market_count });
 }
 
 public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {

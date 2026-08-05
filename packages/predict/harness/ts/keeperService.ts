@@ -23,10 +23,13 @@ import {
   clockTimestampMs,
   executeAndWait,
   fundAddressDusdcTx,
-  keeperFlushTx,
+  keeperFlushTxs,
+  execute,
+  abortValuationTx,
   keeperLiquidateTx,
   keeperSettleTx,
   readActiveMarketIds,
+  readValuationInProgress,
   readMarketExpiry,
   rebalanceExpiryCashTx,
   setTradeLiquidationBudgetTx,
@@ -119,6 +122,28 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string) {
+  // 0. Clear a stranded valuation lock BEFORE anything else. The lock outlives its
+  //    transaction now, so a flush that died part-way blocks settlement, liquidation and
+  //    every LP lane — including the flush lane's own recovery, which would otherwise
+  //    never run again because it sits behind `settledOk`. Recovering here instead keeps
+  //    the tick steps individually isolated, which is the harness invariant.
+  try {
+    if (await readValuationInProgress()) {
+      console.warn("[keeper] valuation lock engaged at tick start — discarding the stranded flush");
+      await executeAndWait(
+        abortValuationTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
+        "abort-stranded-valuation",
+      );
+      appendTrace("keeper", { type: "valuation-aborted", lane: "recovery" });
+    }
+  } catch (e) {
+    // Leave it engaged and retry next tick rather than proceeding into lanes that will
+    // all abort; surface the real tag so the bug oracle can see a repeating failure.
+    appendTrace("keeper", { type: "fail", lane: "lock-recovery", tag: errorTag(e) });
+    console.error(`[keeper] *** could not clear the valuation lock: ${errorTag(e)} — protocol stays frozen ***`);
+    return;
+  }
+
   // Reconcile the active set from CHAIN — never an in-memory list. Used by liquidate / rebalance /
   // roll below; settlement (step 1) re-reads a fresh set of its own each pass.
   const active: Mkt[] = [];
@@ -153,8 +178,11 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       for (const m of flush) {
         if (m.expiryMs <= nowClock) settlements.push({ marketId: m.id, expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
       }
-      const fr = await executeAndWait(
-        keeperFlushTx({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
+      // The flush is a sequence now: settle+snapshot (atomic), one value_expiry per
+      // market, then finish. A failure part-way leaves the valuation lock held, so the
+      // catch below discards it rather than letting the whole protocol sit frozen.
+      const fr = await execute(
+        keeperFlushTxs({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush",
       );
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
@@ -167,6 +195,29 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     } catch (e) {
       appendTrace("keeper", { type: "fail", lane: "flush", tag: errorTag(e) });
       console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      // A flush that fails after the snapshot transaction committed leaves the valuation
+      // lock engaged, which freezes mint, redeem, liquidation, settlement and every LP
+      // request until it is discarded. The single-PTB flush could not reach that state.
+      // Discard on the same lifecycle authority that started it rather than waiting out
+      // `max_valuation_window_ms`; a failure here is logged and the next tick retries.
+      try {
+        await executeAndWait(
+          abortValuationTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
+          "abort-valuation",
+        );
+        appendTrace("keeper", { type: "valuation-aborted" });
+        console.warn("[keeper] discarded the in-flight valuation, lock released");
+      } catch (abortErr) {
+        // `EValuationNotInProgress` is the benign case: the flush failed before
+        // `start_pool_valuation` committed, so there is nothing to discard. Anything else
+        // left the lock engaged — step 0 of the next tick retries it, so this is logged
+        // rather than swallowed.
+        const tag = errorTag(abortErr);
+        appendTrace("keeper", { type: "abort-noop", tag });
+        if (!tag.includes("EValuationNotInProgress")) {
+          console.warn(`[keeper] abort after failed flush did not land (${tag}); next tick retries`);
+        }
+      }
     }
   }
 

@@ -7,6 +7,7 @@ module deepbook_predict::protocol_config_tests;
 
 use deepbook_predict::{
     config_constants,
+    constants,
     flow_test_helpers as helpers,
     protocol_config,
     test_constants,
@@ -204,6 +205,62 @@ fun set_protocol_reserve_profit_share_during_valuation_aborts() {
     config.set_protocol_reserve_profit_share(
         &admin_cap,
         config_constants::min_protocol_reserve_profit_share!(),
+    );
+    abort 999
+}
+
+/// The window that bounds a stalled keeper's protocol pause ships at one hour and is
+/// admin-tunable, so cadence and pause tolerance can be retuned without an upgrade.
+#[test]
+fun max_valuation_window_ships_at_one_hour_and_is_tunable() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    assert_eq!(config.max_valuation_window_ms(), constants::one_hour_ms!());
+
+    config.set_max_valuation_window_ms(
+        &admin_cap,
+        config_constants::min_max_valuation_window_ms!(),
+    );
+    assert_eq!(config.max_valuation_window_ms(), config_constants::min_max_valuation_window_ms!());
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxValuationWindowMs)]
+fun max_valuation_window_below_the_floor_aborts() {
+    // A window under the floor lets anyone discard a flush the keeper is still working
+    // through, converting a liveness knob into a griefing lever.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_max_valuation_window_ms(
+        &admin_cap,
+        config_constants::min_max_valuation_window_ms!() - 1,
+    );
+    abort 998
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxValuationWindowMs)]
+fun max_valuation_window_above_the_ceiling_aborts() {
+    // The ceiling bounds how long an abandoned flush can freeze the protocol even if an
+    // operator sets this carelessly.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_max_valuation_window_ms(
+        &admin_cap,
+        config_constants::max_max_valuation_window_ms!() + 1,
+    );
+    abort 998
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun set_max_valuation_window_during_valuation_aborts() {
+    // `abort_valuation` measures the deadline against a flush already in flight; moving
+    // the window under one would shift its escape hatch after the fact.
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.begin_valuation();
+    config.set_max_valuation_window_ms(
+        &admin_cap,
+        config_constants::min_max_valuation_window_ms!(),
     );
     abort 999
 }
