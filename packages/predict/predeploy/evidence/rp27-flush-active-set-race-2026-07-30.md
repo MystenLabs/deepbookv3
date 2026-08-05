@@ -19,7 +19,12 @@ abort    MoveAbort(plp::assert_expiry_ready_to_value, 0) in command 9
 ```
 
 Abort code `0` in `plp` is `EExpiryMarketNotActive`, and it is the first assertion in
-`assert_expiry_ready_to_value`:
+`assert_expiry_ready_to_value`. Note it does not uniquely identify the sweep race: on
+the deployed build the set-membership check runs *before* the registration check, so an
+unregistered or wrong-vault market id lands on the same code. A double-value would raise
+`EExpiryMarketAlreadyValued` (1), so that alternative is excluded, but attributing this
+specifically to a sweep rests on the surrounding operational sequence rather than on the
+code alone.
 
 ```move
 assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
@@ -31,8 +36,16 @@ The transaction shape is the deployed single-PTB flush — `generate_lifecycle_p
 `start_pool_valuation` had snapshotted three commands earlier in the same transaction.
 
 Rate: roughly **13 failures over 3 hours** on one operator, reported alongside this
-digest. That is far above a rare-race rate, which points at a systematically stale read
-rather than an occasional interleaving.
+digest. At a ten-minute flush interval with no fast retry on this abort, that is ~18
+attempts, so **~5 flushes still landed in the window** — the LP queues drained roughly
+every 35 minutes rather than not at all.
+
+The rate is not stable, and that matters for diagnosis. An earlier occurrence on
+2026-07-07 ran at roughly 1-in-8 attempts, with flushes demonstrably landing between
+aborts. A fixed race probability does not move ~6x on its own, so something
+environmental — active-market count, transaction latency, fullnode read lag — drives the
+rate. Treat this as an intermittent liveness degradation whose severity varies, not a
+standing outage.
 
 ## Mechanism
 
@@ -50,6 +63,15 @@ A sweep is `deactivate_expiry_if_present`, reachable from:
 So the ordinary market roll produces the race: settle an expired market, sweep it, and
 any flush already built against the pre-sweep list aborts. Nothing adversarial is
 required, and no participant is misbehaving.
+
+The window is not merely stumbled into, which is why the rate can be so high. A caller
+that defers its flush while a market is expired-unsettled, and resumes as soon as that
+clears, is *scheduling itself* into the seconds immediately after the settle-and-sweep
+transaction — precisely when a read can still return pre-transaction shared-object
+state. Caller-side scheduling therefore amplifies the race well above its floor; the
+contract change removes the failure regardless of scheduling, but a caller that reads
+its market set immediately after sweeping will still be reading a stale set for other
+purposes.
 
 Note the registered-expiry row survives a sweep (`deactivate_expiry_if_present` only
 removes from `active_expiry_markets`), so `assert_registered_expiry` still passes and

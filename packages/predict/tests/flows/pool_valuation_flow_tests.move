@@ -1063,3 +1063,92 @@ fun aborting_after_a_partial_valuation_keeps_moved_cash_and_lets_a_later_flush_f
     helpers::return_bs(bs);
     fx.finish();
 }
+
+/// The mixed case, which is what actually happens in production: the pool still has a
+/// LIVE market to value, and the caller's list additionally carries one that was swept
+/// out from under it. The degenerate single-market version above leaves `expected`
+/// empty, so it never proves the live market is still valued correctly alongside the
+/// skip — this does.
+#[test]
+fun a_stale_market_alongside_a_live_one_is_skipped_and_the_live_one_still_values() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    // `doomed` expires first so the clock can pass it while `live` is still live.
+    let doomed = fx.create_expiry(test_constants::default_expiry_ms());
+    let live = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    fund_market_with_order(&mut fx, &trader, live);
+    // `doomed` is deliberately left unfunded, so sweeping it moves no cash and the pool
+    // arithmetic below is exactly the single-live-market case.
+
+    // Settle and sweep `doomed` only. `live` stays in the active set.
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut doomed_bundle = fx.take_market_bundle(doomed);
+    fx.insert_exact_settlement_spot_bundle(
+        &mut doomed_bundle,
+        test_constants::default_live_price(),
+    );
+    assert!(fx.try_settle_bundle(&mut doomed_bundle));
+    fx.rebalance_expiry_cash_bundle(&mut doomed_bundle);
+    helpers::return_market_bundle(doomed_bundle);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let mut bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m_live = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(live);
+    let mut m_doomed = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(doomed);
+
+    // The clock moved to reach `doomed`'s expiry, which staled the seeded surface; the
+    // live market still has to price, so refresh it at the current instant. In an
+    // EARLIER transaction than the snapshot, which RP-24 requires.
+    let now_ms = fx.clock().timestamp_ms();
+    fx.seed_bs_surface(
+        &m_live,
+        &mut bs,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        now_ms,
+    );
+    fx.scenario_mut().next_tx(test_constants::admin());
+
+    // Drive BOTH through both stages, exactly as a caller holding a stale list would.
+    // `expected` is {live}; `doomed` is skipped by each stage without failing the flush.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &m_live, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &m_doomed, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m_live, &config);
+    fx.value_expiry(&mut vault, &mut m_doomed, &config);
+    let pool_nav = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+
+    // That the flush COMPLETED is already the proof the live market was valued:
+    // `expected` is {live}, and `finish_flush` asserts every expected market was valued,
+    // so a skip of `live` would have aborted `EMissingExpiryValuation` rather than
+    // returning. The skip is therefore precise — it dropped the stale market and only
+    // the stale market.
+    //
+    // Pin it on state the flush itself moved, so this cannot pass on a no-op: only
+    // `value_expiry` rebalances a live market, and only for a market inside `expected`,
+    // so the live market sitting exactly at its cash target proves it was processed
+    // rather than skipped alongside the stale one.
+    assert_eq!(m_live.cash_balance(), MARKET_CASH_TARGET);
+    assert!(pool_nav > vault.idle_balance());
+
+    return_shared(config);
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m_live);
+    return_shared(m_doomed);
+    helpers::return_bs(bs);
+    fx.finish();
+}

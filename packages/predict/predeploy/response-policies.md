@@ -1587,6 +1587,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   testnet `predict-6-24` as repeated `plp::assert_expiry_ready_to_value` abort 0 — about
   13 failures in 3 hours on one keeper. No LP request fills while it persists, so it is an
   LP-queue liveness failure driven by a routine race rather than by any pool state.
+  Severity is intermittent, not standing: at a ten-minute interval those ~13 failures
+  still leave ~5 successful flushes in the window, and an earlier occurrence ran nearer
+  1-in-8. LP fills are delayed by tens of minutes, escrow stays cancellable, and no
+  capital is trapped.
 - **Response:** rung 3 for the failure mode — make the divergence harmless instead of
   fatal. Both stages return early for a market outside the set. Nothing is valued, no cash
   moves, and the market contributes 0.
