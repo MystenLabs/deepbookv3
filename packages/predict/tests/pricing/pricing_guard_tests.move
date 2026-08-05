@@ -413,9 +413,10 @@ fun live_quote_with_a_freshly_retransmitted_but_aged_svi_model_aborts() {
 fun live_pricer_with_another_underlyings_value_store_aborts() {
     let (mut fx, oracle) = setup_live();
     oracle_fixture::return_oracle_bundle(oracle);
-    let (foreign_values_id, _foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+    let foreign_pair = fx.create_foreign_block_scholes_stores(
         FOREIGN_UNDERLYING_ID,
     );
+    let foreign_values_id = foreign_pair.block_scholes_value_store_id();
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();
@@ -433,9 +434,10 @@ fun live_pricer_with_another_underlyings_value_store_aborts() {
 fun live_pricer_with_another_underlyings_svi_store_aborts() {
     let (mut fx, oracle) = setup_live();
     oracle_fixture::return_oracle_bundle(oracle);
-    let (_foreign_values_id, foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+    let foreign_pair = fx.create_foreign_block_scholes_stores(
         FOREIGN_UNDERLYING_ID,
     );
+    let foreign_svi_id = foreign_pair.block_scholes_svi_store_id();
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let oracle = fx.take_oracle_bundle();

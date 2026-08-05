@@ -1228,8 +1228,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-25: Block Scholes stores are permanent per underlying (resolves P-26)
 
 - **Trigger state / threat:** an operator attempts to create a second Block
-  Scholes store pair for an underlying, or the current pair needs recovery from
-  bad observations or a future store-version change.
+  Scholes store pair for an underlying, the pair was created with the wrong
+  provider base asset, or the current pair needs recovery from bad observations
+  or a future store-version change.
 - **Controller:** protocol administration creates the pair once; the signed
   provider advances observations in that pair; package upgrades own structural
   recovery.
@@ -1239,24 +1240,26 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Response:** reject replacement with
   `EBlockScholesStoresAlreadyExist`. Correct provider data by writing a newer
   signed observation into the existing pair; migrate its stored version in
-  place with `migrate_value_store` / `migrate_svi_store`; if a future shape
-  cannot be migrated in place, add the concrete structural recovery in a
-  package upgrade. There is deliberately no pre-deployed admin rebind.
+  place with `migrate_value_store` / `migrate_svi_store`; if the immutable
+  base-asset binding is wrong or a future shape cannot be migrated in place,
+  add the concrete structural recovery in a package upgrade. There is
+  deliberately no pre-deployed admin rebind.
 - **Reasoning:** a Pyth wrapper represents one replaceable provider source, but
-  a Block Scholes store is source-agnostic storage keyed directly by the
-  underlying: signed spot, forward, and SVI series for that underlying all
-  advance the same pair. Creation derives the store's internal underlying from
-  the same registry key, so it cannot accidentally create a pair that claims a
-  different underlying. A generic rebind would instead let an admin switch all
-  markets to fresh empty state without a concrete migration requirement; an
-  additive upgrade can introduce a narrower recovery if one becomes necessary.
+  a Block Scholes pair permanently binds one Propbook underlying to an immutable
+  provider base asset and the descriptor-derived spot, forward, and SVI series
+  for that asset. A bad observation can advance in place; a wrong base-asset
+  spelling cannot, so it must be prevented by confirming the provider's
+  acknowledged subscription before creation. A generic rebind would instead let
+  an admin switch all markets to fresh empty state without a concrete migration
+  requirement; an additive upgrade can introduce a narrower recovery if one
+  becomes necessary.
 - **Risk profile:** `BEST-GUESS` — correction by newer observations and the
   current version gate are deterministic; no structural failure requiring
   replacement has been observed.
 - **Pinning tests:** `registry_tests.move` —
   `creating_a_second_store_pair_for_an_underlying_aborts`;
   `block_scholes_store_tests.move` —
-  `a_new_store_reports_its_underlying_and_running_version`,
+  `a_new_store_reports_its_base_asset_and_running_version`,
   `migrating_a_value_store_already_at_the_running_version_aborts`, and
   `migrating_an_svi_store_already_at_the_running_version_aborts`.
 - **Reopen when:** a concrete failure cannot be corrected by a newer signed

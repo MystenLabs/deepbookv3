@@ -847,10 +847,10 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, and
-/// per-market config and starts with zero expiry cash; it needs no live spot at
-/// creation (strikes are absolute ticks, so there is no grid to center). Current
-/// oracle object IDs stay in Propbook and are resolved on every priced flow.
+/// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
+/// starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
+/// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
+/// priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     propbook_underlying_id: u32,

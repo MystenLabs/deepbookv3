@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 
-import { PREDICT_ORACLE_ID, spotSid } from "./blockScholesSid.js";
+import { forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
 import { netGasCharge, selectGasPaymentRefs } from "./grpcGas.js";
 import { transactionClockTimestampMs } from "./grpcClock.js";
 import {
@@ -16,11 +16,34 @@ import {
 import { signedValueBatchBytes } from "./localBlockScholes.js";
 import { bytesToHex, hexToBytes } from "./localPyth.js";
 
-test("Predict oracle identity matches the contract spot-series vector", () => {
+const ORACLE_PACKAGE_ID = `0x${"11".repeat(32)}`;
+const EXPIRY_MS = 1_785_250_800_000n;
+
+function sidHex(value: bigint): string {
+  return `0x${value.toString(16).padStart(64, "0")}`;
+}
+
+test("derives the provider's pinned spot, forward, and SVI vectors", () => {
+  // The upstream `bs_sid::sid::index_px` implementation at the Move.toml-pinned revision,
+  // using its vector scope and default `blockscholes` exchange.
   assert.equal(
-    spotSid(PREDICT_ORACLE_ID).toString(16).padStart(64, "0"),
-    "0100000000010900000000000000000000000000000000000000000000000000",
+    sidHex(spotSid(ORACLE_PACKAGE_ID, "HYPE")),
+    "0x215ab77d29adef1066cb6a229a7e74e083bee79b5aff973a36d2ba2aa8f560f3",
   );
+  assert.equal(
+    sidHex(forwardSid(ORACLE_PACKAGE_ID, "HYPE", EXPIRY_MS)),
+    "0x767852094662e0763fdfb8cc02f08969892b2d083159df16cb91ccb6505e3cd6",
+  );
+  assert.equal(
+    sidHex(sviSid(ORACLE_PACKAGE_ID, "HYPE", EXPIRY_MS)),
+    "0x29f876378481972bf272eddcbb987579ec3a75a634533295c3c8c2cbfe548a6a",
+  );
+});
+
+test("scopes spot SIDs by oracle package and base asset", () => {
+  const btc = spotSid(ORACLE_PACKAGE_ID, "BTC");
+  assert.notEqual(btc, spotSid(ORACLE_PACKAGE_ID, "ETH"));
+  assert.notEqual(btc, spotSid(`0x${"22".repeat(32)}`, "BTC"));
 });
 
 test("provider value wire round-trips and remains verifier-domain-bound", () => {

@@ -1,22 +1,30 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stores the latest Block Scholes observation for each series of one underlying, keyed by the
-/// series id the provider signed. Nothing here decides where a value belongs: the id names its own
-/// slot, so a valid observation for one series can only ever land in that series' slot, and reads
-/// derive the id they want rather than trusting one supplied by a caller.
+/// Stores the latest verifier-authenticated Block Scholes observations for one immutable base
+/// asset. Propbook derives every accepted series id from that identity through the upstream SID
+/// package, so a valid observation for another asset cannot enter this store.
 /// Values are held exactly as the verifier produced them; scaling and signed-value interpretation
 /// belong to the reading package.
-/// Spot and forward share the value store because they ride one signed batch and are separated by
-/// their ids; SVI has its own store because it arrives as an independently signed batch.
+/// Value and SVI observations use separate stores because the verifier exposes distinct batch and
+/// value types. The registry creates and binds both stores atomically from one base-asset input.
 module propbook::block_scholes_store;
 
 use bs_oracle::verify::{ValueBatch, SviBatch};
 use propbook::{block_scholes_sid, constants};
+use std::string::String;
 use sui::{clock::Clock, event, table::{Self, Table}};
 
 const EWrongVersion: u64 = 0;
 const ENotNewerVersion: u64 = 1;
+const EUnexpectedBatchLength: u64 = 2;
+const ESeriesIdMismatch: u64 = 3;
+
+macro fun series_kind_spot(): u8 { 0 }
+
+macro fun series_kind_forward(): u8 { 1 }
+
+macro fun series_kind_svi(): u8 { 2 }
 
 /// One accepted observation and the three clocks that describe it.
 /// The clocks answer different questions and are not interchangeable: a series that has not moved
@@ -52,21 +60,20 @@ public struct SVIParams has copy, drop, store {
     m_is_negative: bool,
 }
 
-/// Latest spot and forward observations for one underlying, keyed by series id.
+/// Latest spot and forward observations for one Block Scholes base asset.
 public struct BlockScholesValueStore has key {
     id: UID,
-    /// The sole underlying this store holds series for; observations for any other are skipped.
-    propbook_underlying_id: u32,
+    block_scholes_base_asset: String,
     /// Package version this store runs at; writes require an exact match and `migrate` advances it
     /// forward-only after a package upgrade.
     version: u64,
     values: Table<u256, BsRead<u128>>,
 }
 
-/// Latest SVI observations for one underlying, keyed by series id.
+/// Latest SVI observations for one Block Scholes base asset.
 public struct BlockScholesSVIStore has key {
     id: UID,
-    propbook_underlying_id: u32,
+    block_scholes_base_asset: String,
     version: u64,
     svis: Table<u256, BsRead<SVIParams>>,
 }
@@ -75,6 +82,10 @@ public struct BlockScholesSVIStore has key {
 public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy, drop {
     propbook_oracle_id: ID,
     sid: u256,
+    /// `0` = spot, `1` = forward, and `2` = SVI.
+    series_kind: u8,
+    /// Absolute unix-millisecond expiry; zero for the non-expiring spot series.
+    expiry_ms: u64,
     observation: Observation,
 }
 
@@ -83,11 +94,11 @@ public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy
 /// during a stretch where no series moved and no observation event is emitted.
 public struct BlockScholesBatchIngested has copy, drop {
     propbook_oracle_id: ID,
+    /// `0` = spot, `1` = forward, and `2` = SVI.
+    series_kind: u8,
     published_at_ms: u64,
-    /// Observations carried by the batch, including those for other underlyings.
+    /// Verified observations carried by the batch.
     update_count: u64,
-    /// Observations naming a series this store holds.
-    matched: u64,
     /// Observations that became their series' latest.
     applied: u64,
 }
@@ -102,12 +113,14 @@ public fun svi_store_id(store: &BlockScholesSVIStore): ID {
     store.id.to_inner()
 }
 
-public fun value_store_underlying_id(store: &BlockScholesValueStore): u32 {
-    store.propbook_underlying_id
+/// Returns the immutable provider base-asset spelling for external composition or devInspect.
+public fun value_store_base_asset(store: &BlockScholesValueStore): String {
+    store.block_scholes_base_asset
 }
 
-public fun svi_store_underlying_id(store: &BlockScholesSVIStore): u32 {
-    store.propbook_underlying_id
+/// Returns the immutable provider base-asset spelling for external composition or devInspect.
+public fun svi_store_base_asset(store: &BlockScholesSVIStore): String {
+    store.block_scholes_base_asset
 }
 
 public fun value_store_version(store: &BlockScholesValueStore): u64 {
@@ -118,19 +131,34 @@ public fun svi_store_version(store: &BlockScholesSVIStore): u64 {
     store.version
 }
 
-/// Returns the latest spot observation for this store's underlying, or `none` if none has landed.
+/// Returns the canonical spot series id for external subscription construction.
+public fun spot_sid(store: &BlockScholesValueStore): u256 {
+    block_scholes_sid::spot(&store.block_scholes_base_asset)
+}
+
+/// Returns one canonical forward series id for external subscription construction.
+public fun forward_sid(store: &BlockScholesValueStore, expiry_ms: u64): u256 {
+    block_scholes_sid::forward(&store.block_scholes_base_asset, expiry_ms)
+}
+
+/// Returns one canonical SVI series id for external subscription construction.
+public fun svi_sid(store: &BlockScholesSVIStore, expiry_ms: u64): u256 {
+    block_scholes_sid::svi(&store.block_scholes_base_asset, expiry_ms)
+}
+
+/// Returns the latest canonical spot observation, or `none` if none has landed.
 public fun spot(store: &BlockScholesValueStore): Option<BsRead<u128>> {
-    read(&store.values, block_scholes_sid::spot(store.propbook_underlying_id))
+    read(&store.values, store.spot_sid())
 }
 
-/// Returns the latest forward observation at `expiry_ms`, or `none` if none has landed.
+/// Returns the latest canonical forward observation at `expiry_ms`.
 public fun forward(store: &BlockScholesValueStore, expiry_ms: u64): Option<BsRead<u128>> {
-    read(&store.values, block_scholes_sid::forward(store.propbook_underlying_id, expiry_ms))
+    read(&store.values, store.forward_sid(expiry_ms))
 }
 
-/// Returns the latest SVI observation at `expiry_ms`, or `none` if none has landed.
+/// Returns the latest canonical SVI observation at `expiry_ms`.
 public fun svi(store: &BlockScholesSVIStore, expiry_ms: u64): Option<BsRead<SVIParams>> {
-    read(&store.svis, block_scholes_sid::svi(store.propbook_underlying_id, expiry_ms))
+    read(&store.svis, store.svi_sid(expiry_ms))
 }
 
 public fun read_model_timestamp_ms<Value: copy + drop + store>(read: &BsRead<Value>): u64 {
@@ -187,117 +215,65 @@ public fun svi_m_is_negative(params: &SVIParams): bool {
 
 // === Write Functions ===
 
-/// Ingest a verified batch of spot and forward observations.
-/// The batch is taken by value rather than as its unpacked updates so the envelope time comes from
-/// inside the signature: it breaks ties between retransmissions of the same model data and feeds
-/// the batch events, so a caller must not be able to fabricate it. Holding a `ValueBatch` at all is
-/// proof of a valid Block Scholes signature, so this never sees keys, bytes, or the signer
-/// registry.
-public fun apply_value_batch(
+/// Ingest the canonical spot batch for this store's base asset.
+public fun apply_spot_batch(
     store: &mut BlockScholesValueStore,
     batch: ValueBatch,
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = batch.value_batch_timestamp();
-    let recorded_at_ms = clock.timestamp_ms();
-    let writer_digest = *ctx.digest();
-    let updates = batch.into_value_updates();
-
-    let update_count = updates.length();
-    let mut matched = 0;
-    let mut applied = 0;
-    let mut i = 0;
-    while (i < update_count) {
-        let update = &updates[i];
-        let sid = update.value_sid();
-        if (store.holds_series(sid)) {
-            matched = matched + 1;
-            let stored = store.apply_value(
-                sid,
-                update.value_timestamp(),
-                published_at_ms,
-                recorded_at_ms,
-                copy writer_digest,
-                update.value_v(),
-            );
-            if (stored) applied = applied + 1;
-        };
-        i = i + 1;
-    };
-
-    event::emit(BlockScholesBatchIngested {
-        propbook_oracle_id: store.value_store_id(),
-        published_at_ms,
-        update_count,
-        matched,
-        applied,
-    });
+    let expected_sid = store.spot_sid();
+    store.apply_checked_value_batch(
+        batch,
+        vector[expected_sid],
+        vector[0],
+        series_kind_spot!(),
+        clock,
+        ctx,
+    )
 }
 
-/// Ingest a verified batch of SVI observations. Same batch-by-value reasoning as
-/// `apply_value_batch`.
-public fun apply_svi_batch(
-    store: &mut BlockScholesSVIStore,
-    batch: SviBatch,
+/// Ingest canonical forwards for this store's base asset.
+/// `expiries_ms[i]` is an untrusted descriptor witness for signed update `i`; equality with the
+/// upstream-derived SID proves the association before any observation is stored.
+public fun apply_forward_batch(
+    store: &mut BlockScholesValueStore,
+    batch: ValueBatch,
+    expiries_ms: vector<u64>,
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = batch.svi_batch_timestamp();
-    let recorded_at_ms = clock.timestamp_ms();
-    let writer_digest = *ctx.digest();
-    let updates = batch.into_svi_updates();
-
-    let update_count = updates.length();
-    let mut matched = 0;
-    let mut applied = 0;
+    let mut expected_sids = vector[];
     let mut i = 0;
-    while (i < update_count) {
-        let update = &updates[i];
-        let sid = update.svi_sid();
-        if (store.svi_holds_series(sid)) {
-            matched = matched + 1;
-            let (
-                a_magnitude,
-                a_is_negative,
-                b,
-                sigma,
-                rho_magnitude,
-                rho_is_negative,
-                m_magnitude,
-                m_is_negative,
-            ) = update.svi_fields();
-            let stored = store.apply_svi(
-                sid,
-                update.svi_timestamp(),
-                published_at_ms,
-                recorded_at_ms,
-                copy writer_digest,
-                SVIParams {
-                    a_magnitude,
-                    a_is_negative,
-                    b,
-                    sigma,
-                    rho_magnitude,
-                    rho_is_negative,
-                    m_magnitude,
-                    m_is_negative,
-                },
-            );
-            if (stored) applied = applied + 1;
-        };
+    while (i < expiries_ms.length()) {
+        expected_sids.push_back(store.forward_sid(expiries_ms[i]));
         i = i + 1;
     };
+    store.apply_checked_value_batch(
+        batch,
+        expected_sids,
+        expiries_ms,
+        series_kind_forward!(),
+        clock,
+        ctx,
+    )
+}
 
-    event::emit(BlockScholesBatchIngested {
-        propbook_oracle_id: store.svi_store_id(),
-        published_at_ms,
-        update_count,
-        matched,
-        applied,
-    });
+/// Ingest canonical SVI observations for this store's base asset.
+public fun apply_svi_batch(
+    store: &mut BlockScholesSVIStore,
+    batch: SviBatch,
+    expiries_ms: vector<u64>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let mut expected_sids = vector[];
+    let mut i = 0;
+    while (i < expiries_ms.length()) {
+        expected_sids.push_back(store.svi_sid(expiries_ms[i]));
+        i = i + 1;
+    };
+    store.apply_checked_svi_batch(batch, expected_sids, expiries_ms, clock, ctx)
 }
 
 /// Migrate this store to the running package version. Forward-only:
@@ -314,14 +290,14 @@ public fun migrate_svi_store(store: &mut BlockScholesSVIStore) {
 
 // === Public-Package Functions ===
 
-/// Create and share the value store for `propbook_underlying_id`.
+/// Create and share a value store for one immutable Block Scholes base asset.
 public(package) fun create_and_share_value_store(
-    propbook_underlying_id: u32,
+    block_scholes_base_asset: String,
     ctx: &mut TxContext,
 ): ID {
     let store = BlockScholesValueStore {
         id: object::new(ctx),
-        propbook_underlying_id,
+        block_scholes_base_asset,
         version: constants::current_version!(),
         values: table::new(ctx),
     };
@@ -330,14 +306,14 @@ public(package) fun create_and_share_value_store(
     id
 }
 
-/// Create and share the SVI store for `propbook_underlying_id`.
+/// Create and share an SVI store for one immutable Block Scholes base asset.
 public(package) fun create_and_share_svi_store(
-    propbook_underlying_id: u32,
+    block_scholes_base_asset: String,
     ctx: &mut TxContext,
 ): ID {
     let store = BlockScholesSVIStore {
         id: object::new(ctx),
-        propbook_underlying_id,
+        block_scholes_base_asset,
         version: constants::current_version!(),
         svis: table::new(ctx),
     };
@@ -348,37 +324,147 @@ public(package) fun create_and_share_svi_store(
 
 // === Private Functions ===
 
-/// Whether `sid` names a series this store holds.
-/// One definition of "belongs here", used both to refuse a foreign observation and to decide
-/// whether a batch carried this underlying's feed at all.
-fun holds_series(store: &BlockScholesValueStore, sid: u256): bool {
-    belongs(store.propbook_underlying_id, sid)
+fun apply_checked_value_batch(
+    store: &mut BlockScholesValueStore,
+    batch: ValueBatch,
+    expected_sids: vector<u256>,
+    expiries_ms: vector<u64>,
+    series_kind: u8,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    let published_at_ms = batch.value_batch_timestamp();
+    let updates = batch.into_value_updates();
+    let update_count = updates.length();
+    assert!(update_count == expected_sids.length(), EUnexpectedBatchLength);
+    assert!(update_count == expiries_ms.length(), EUnexpectedBatchLength);
+
+    let mut i = 0;
+    while (i < update_count) {
+        assert!(updates[i].value_sid() == expected_sids[i], ESeriesIdMismatch);
+        i = i + 1;
+    };
+
+    let recorded_at_ms = clock.timestamp_ms();
+    let writer_digest = *ctx.digest();
+    let mut applied = 0;
+    i = 0;
+    while (i < update_count) {
+        let update = &updates[i];
+        let stored = store.apply_value(
+            update.value_sid(),
+            series_kind,
+            expiries_ms[i],
+            update.value_timestamp(),
+            published_at_ms,
+            recorded_at_ms,
+            copy writer_digest,
+            update.value_v(),
+        );
+        if (stored) applied = applied + 1;
+        i = i + 1;
+    };
+
+    event::emit(BlockScholesBatchIngested {
+        propbook_oracle_id: store.value_store_id(),
+        series_kind,
+        published_at_ms,
+        update_count,
+        applied,
+    });
 }
 
-fun svi_holds_series(store: &BlockScholesSVIStore, sid: u256): bool {
-    belongs(store.propbook_underlying_id, sid)
+fun apply_checked_svi_batch(
+    store: &mut BlockScholesSVIStore,
+    batch: SviBatch,
+    expected_sids: vector<u256>,
+    expiries_ms: vector<u64>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    let published_at_ms = batch.svi_batch_timestamp();
+    let updates = batch.into_svi_updates();
+    let update_count = updates.length();
+    assert!(update_count == expected_sids.length(), EUnexpectedBatchLength);
+    assert!(update_count == expiries_ms.length(), EUnexpectedBatchLength);
+
+    let mut i = 0;
+    while (i < update_count) {
+        assert!(updates[i].svi_sid() == expected_sids[i], ESeriesIdMismatch);
+        i = i + 1;
+    };
+
+    let recorded_at_ms = clock.timestamp_ms();
+    let writer_digest = *ctx.digest();
+    let mut applied = 0;
+    i = 0;
+    while (i < update_count) {
+        let update = &updates[i];
+        let (
+            a_magnitude,
+            a_is_negative,
+            b,
+            sigma,
+            rho_magnitude,
+            rho_is_negative,
+            m_magnitude,
+            m_is_negative,
+        ) = update.svi_fields();
+        let stored = store.apply_svi(
+            update.svi_sid(),
+            expiries_ms[i],
+            update.svi_timestamp(),
+            published_at_ms,
+            recorded_at_ms,
+            copy writer_digest,
+            SVIParams {
+                a_magnitude,
+                a_is_negative,
+                b,
+                sigma,
+                rho_magnitude,
+                rho_is_negative,
+                m_magnitude,
+                m_is_negative,
+            },
+        );
+        if (stored) applied = applied + 1;
+        i = i + 1;
+    };
+
+    event::emit(BlockScholesBatchIngested {
+        propbook_oracle_id: store.svi_store_id(),
+        series_kind: series_kind_svi!(),
+        published_at_ms,
+        update_count,
+        applied,
+    });
 }
 
-/// Store one verified spot or forward observation, returning whether it was kept.
-/// Returns `false` rather than aborting when the series belongs to another underlying, when the
-/// clocks are unusable, or when the observation does not advance the series: one batch carries many
-/// series, and a single unusable entry must not discard the rest of them.
+/// Store one verified value observation, returning whether it was kept.
+/// Returns `false` rather than aborting when the clocks are unusable or the observation does not
+/// advance the series, so one unusable entry cannot discard the rest of its verified batch.
 fun apply_value(
     store: &mut BlockScholesValueStore,
     sid: u256,
+    series_kind: u8,
+    expiry_ms: u64,
     model_timestamp_ms: u64,
     published_at_ms: u64,
     recorded_at_ms: u64,
     writer_digest: vector<u8>,
     value: u128,
 ): bool {
-    assert!(store.version == constants::current_version!(), EWrongVersion);
+    // `apply_checked_value_batch` validates the store version before entering the batch loop.
     let id = store.value_store_id();
     apply(
         &mut store.values,
         id,
-        store.propbook_underlying_id,
         sid,
+        series_kind,
+        expiry_ms,
         BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, writer_digest, value },
     )
 }
@@ -388,19 +474,21 @@ fun apply_value(
 fun apply_svi(
     store: &mut BlockScholesSVIStore,
     sid: u256,
+    expiry_ms: u64,
     model_timestamp_ms: u64,
     published_at_ms: u64,
     recorded_at_ms: u64,
     writer_digest: vector<u8>,
     value: SVIParams,
 ): bool {
-    assert!(store.version == constants::current_version!(), EWrongVersion);
+    // `apply_checked_svi_batch` validates the store version before entering the batch loop.
     let id = store.svi_store_id();
     apply(
         &mut store.svis,
         id,
-        store.propbook_underlying_id,
         sid,
+        series_kind_svi!(),
+        expiry_ms,
         BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, writer_digest, value },
     )
 }
@@ -416,31 +504,24 @@ fun read<Value: copy + drop + store>(
     }
 }
 
-/// Keeps `read` as the series' latest observation when it belongs here and advances the series.
-/// The series id is the slot key, so this decides only whether to keep an observation, never where
-/// it goes.
-fun belongs(propbook_underlying_id: u32, sid: u256): bool {
-    block_scholes_sid::underlying(sid) == propbook_underlying_id
-}
-
 /// Same off-chain-consumer reasoning as `batch_ingested_fields`: this reader exists only so tests
 /// can assert the emitted observation is the one that was stored.
 #[test_only]
 public fun observation_recorded_fields<Observation: copy + drop>(
     event: &BlockScholesObservationRecorded<Observation>,
-): (ID, u256, Observation) {
-    (event.propbook_oracle_id, event.sid, event.observation)
+): (ID, u256, u8, u64, Observation) {
+    (event.propbook_oracle_id, event.sid, event.series_kind, event.expiry_ms, event.observation)
 }
 
 /// The batch event's fields exist for off-chain consumers, which decode them rather than calling
-/// Move, so this reader exists only so tests can assert the counts are right.
+/// Move, so this reader exists only so tests can assert the decoded fields are right.
 #[test_only]
-public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u64, u64, u64, u64) {
+public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u8, u64, u64, u64) {
     (
         event.propbook_oracle_id,
+        event.series_kind,
         event.published_at_ms,
         event.update_count,
-        event.matched,
         event.applied,
     )
 }
@@ -458,11 +539,11 @@ public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u64, u
 fun apply<Value: copy + drop + store>(
     reads: &mut Table<u256, BsRead<Value>>,
     propbook_oracle_id: ID,
-    propbook_underlying_id: u32,
     sid: u256,
+    series_kind: u8,
+    expiry_ms: u64,
     read: BsRead<Value>,
 ): bool {
-    if (!belongs(propbook_underlying_id, sid)) return false;
     if (read.published_at_ms == 0 || read.published_at_ms > read.recorded_at_ms) return false;
     if (read.model_timestamp_ms > read.published_at_ms) return false;
 
@@ -481,6 +562,8 @@ fun apply<Value: copy + drop + store>(
     event::emit(BlockScholesObservationRecorded<BsRead<Value>> {
         propbook_oracle_id,
         sid,
+        series_kind,
+        expiry_ms,
         observation: read,
     });
     true

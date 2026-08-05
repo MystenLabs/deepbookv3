@@ -46,7 +46,6 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
-    block_scholes_sid,
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
@@ -836,27 +835,42 @@ public fun write_live_oracle_in_current_tx_bundle(
         false,
         self.scenario.ctx(),
     );
-    let underlying = test_constants::propbook_underlying_id();
     let expiry = market.market.expiry();
+    let spot_sid = market.bs.values().spot_sid();
+    let forward_sid = market.bs.values().forward_sid(expiry);
+    let svi_sid = market.bs.svi().svi_sid(expiry);
     market
         .bs
         .values_mut()
-        .apply_value_batch(
+        .apply_spot_batch(
             verify::new_value_batch_for_testing(
                 ts,
                 vector[
                     verify::new_value_update_for_testing(
-                        block_scholes_sid::spot(underlying),
-                        ts,
-                        live_price as u128,
-                    ),
-                    verify::new_value_update_for_testing(
-                        block_scholes_sid::forward(underlying, expiry),
+                        spot_sid,
                         ts,
                         live_price as u128,
                     ),
                 ],
             ),
+            &write_clock,
+            self.scenario.ctx(),
+        );
+    market
+        .bs
+        .values_mut()
+        .apply_forward_batch(
+            verify::new_value_batch_for_testing(
+                ts,
+                vector[
+                    verify::new_value_update_for_testing(
+                        forward_sid,
+                        ts,
+                        live_price as u128,
+                    ),
+                ],
+            ),
+            vector[expiry],
             &write_clock,
             self.scenario.ctx(),
         );
@@ -868,7 +882,7 @@ public fun write_live_oracle_in_current_tx_bundle(
                 ts,
                 vector[
                     verify::new_svi_for_testing(
-                        block_scholes_sid::svi(underlying, expiry),
+                        svi_sid,
                         ts,
                         test_constants::default_svi_a() as u128,
                         false,
@@ -881,6 +895,7 @@ public fun write_live_oracle_in_current_tx_bundle(
                     ),
                 ],
             ),
+            vector[expiry],
             &write_clock,
             self.scenario.ctx(),
         );
@@ -918,7 +933,6 @@ public fun write_bs_forward_in_current_tx_bundle(
     forward: u64,
     source_timestamp_ms: u64,
 ) {
-    let underlying = test_constants::propbook_underlying_id();
     let expiry = market.market.expiry();
     let latest = market.bs.values().forward(expiry);
     let ts = if (latest.is_some()) {
@@ -928,20 +942,22 @@ public fun write_bs_forward_in_current_tx_bundle(
     };
     let mut write_clock = clock::create_for_testing(self.scenario.ctx());
     write_clock.set_for_testing(self.clock.timestamp_ms());
+    let sid = market.bs.values().forward_sid(expiry);
     market
         .bs
         .values_mut()
-        .apply_value_batch(
+        .apply_forward_batch(
             verify::new_value_batch_for_testing(
                 ts,
                 vector[
                     verify::new_value_update_for_testing(
-                        block_scholes_sid::forward(underlying, expiry),
+                        sid,
                         ts,
                         forward as u128,
                     ),
                 ],
             ),
+            vector[expiry],
             &write_clock,
             self.scenario.ctx(),
         );
@@ -956,7 +972,6 @@ public fun write_bs_svi_in_current_tx_bundle(
     market: &mut MarketBundle,
     source_timestamp_ms: u64,
 ) {
-    let underlying = test_constants::propbook_underlying_id();
     let expiry = market.market.expiry();
     let latest = market.bs.svi().svi(expiry);
     let ts = if (latest.is_some()) {
@@ -966,6 +981,7 @@ public fun write_bs_svi_in_current_tx_bundle(
     };
     let mut write_clock = clock::create_for_testing(self.scenario.ctx());
     write_clock.set_for_testing(self.clock.timestamp_ms());
+    let sid = market.bs.svi().svi_sid(expiry);
     market
         .bs
         .svi_mut()
@@ -974,7 +990,7 @@ public fun write_bs_svi_in_current_tx_bundle(
                 ts,
                 vector[
                     verify::new_svi_for_testing(
-                        block_scholes_sid::svi(underlying, expiry),
+                        sid,
                         ts,
                         test_constants::default_svi_a() as u128,
                         false,
@@ -987,6 +1003,7 @@ public fun write_bs_svi_in_current_tx_bundle(
                     ),
                 ],
             ),
+            vector[expiry],
             &write_clock,
             self.scenario.ctx(),
         );
@@ -1161,27 +1178,41 @@ fun seed_bs_surface_with_svi_source(
     source_timestamp_ms: u64,
     svi_source_timestamp_ms: u64,
 ) {
-    let underlying = test_constants::propbook_underlying_id();
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
-    // Spot and forward ride one value batch, as they do on the wire.
+    let expiry = market.expiry();
+    let spot_sid = bs.values().spot_sid();
+    let forward_sid = bs.values().forward_sid(expiry);
+    let svi_sid = bs.svi().svi_sid(expiry);
     bs
         .values_mut()
-        .apply_value_batch(
+        .apply_spot_batch(
             verify::new_value_batch_for_testing(
                 source_timestamp_ms,
                 vector[
                     verify::new_value_update_for_testing(
-                        block_scholes_sid::spot(underlying),
+                        spot_sid,
                         source_timestamp_ms,
                         spot as u128,
                     ),
+                ],
+            ),
+            &self.clock,
+            &ctx,
+        );
+    bs
+        .values_mut()
+        .apply_forward_batch(
+            verify::new_value_batch_for_testing(
+                source_timestamp_ms,
+                vector[
                     verify::new_value_update_for_testing(
-                        block_scholes_sid::forward(underlying, market.expiry()),
+                        forward_sid,
                         source_timestamp_ms,
                         forward as u128,
                     ),
                 ],
             ),
+            vector[expiry],
             &self.clock,
             &ctx,
         );
@@ -1192,7 +1223,7 @@ fun seed_bs_surface_with_svi_source(
                 svi_source_timestamp_ms,
                 vector[
                     verify::new_svi_for_testing(
-                        block_scholes_sid::svi(underlying, market.expiry()),
+                        svi_sid,
                         svi_source_timestamp_ms,
                         svi_a_magnitude as u128,
                         svi_a_is_negative,
@@ -1205,6 +1236,7 @@ fun seed_bs_surface_with_svi_source(
                     ),
                 ],
             ),
+            vector[expiry],
             &self.clock,
             &ctx,
         );
@@ -2398,17 +2430,18 @@ public fun pyth_id(self: &Fixture): ID { self.pyth_id }
 public fun create_foreign_block_scholes_stores(
     self: &mut Fixture,
     propbook_underlying_id: u32,
-): (ID, ID) {
+): propbook_registry::BlockScholesStorePair {
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let (value_store_id, svi_store_id) = propbook_registry::create_and_share_block_scholes_stores(
+    let pair = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         &self.propbook_admin_cap,
         propbook_underlying_id,
+        test_constants::foreign_block_scholes_base_asset(),
         self.scenario.ctx(),
     );
     return_shared(oracle_registry);
-    (value_store_id, svi_store_id)
+    pair
 }
 
 public fun propbook_admin_cap(self: &Fixture): &RegistryAdminCap { &self.propbook_admin_cap }

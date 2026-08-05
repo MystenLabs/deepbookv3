@@ -198,13 +198,11 @@ public(package) fun next_deployable_market(
                 propbook_registry.propbook_pyth_id_for_underlying(propbook_underlying_id).is_some(),
                 EPythFeedNotBoundToUnderlying,
             );
-            // Spot and forward share the value store; SVI has its own. Propbook creates and
-            // registers the pair atomically (one registry row), so one existence check covers
-            // both stores — a market cannot be created for an underlying that has nowhere to
-            // price from.
+            // Propbook creates both stores and their source identity atomically in one registry
+            // row, so this one check proves the complete Block Scholes binding exists.
             assert!(
                 propbook_registry
-                    .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
+                    .propbook_block_scholes_store_pair_for_underlying(propbook_underlying_id)
                     .is_some(),
                 EBlockScholesStoresNotBoundToUnderlying,
             );

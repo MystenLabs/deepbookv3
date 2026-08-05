@@ -59,7 +59,7 @@ LOCAL_CLOSURE = [
 # Upstream packages that localnet must publish independently. Their repository,
 # subdirectory, and exact revision are read from the canonical Predict/Propbook
 # manifests by staging.py; the harness keeps no duplicate dependency pins.
-GIT_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle")
+GIT_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle", "bs_sid")
 
 # Directory names never worth copying into the scratch workspace.
 STAGE_IGNORE = (

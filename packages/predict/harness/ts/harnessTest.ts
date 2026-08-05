@@ -7,8 +7,12 @@ import test from "node:test";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import {
   HubSource,
+  blockScholesForwardSubscription,
+  blockScholesSpotSubscription,
+  blockScholesSubscribeRequest,
   providerPublicKeyFromRegistryObject,
   serializableSnapshot,
+  subscriptionItemMatches,
 } from "./marketSource.js";
 import { budgetLadder, gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
@@ -123,6 +127,44 @@ test("provider registry parsing observes signer rotation and pause", () => {
     () => providerPublicKeyFromRegistryObject(registry(encodedKey(2, 1), true)),
     /registry is paused/,
   );
+});
+
+test("Block Scholes subscriptions keep expected SIDs local and send complete descriptors", () => {
+  const spot = blockScholesSpotSubscription();
+  const forward = blockScholesForwardSubscription(1_785_250_800_000);
+  assert.deepEqual(forward, {
+    expectedSid: "0x1da97230ccd81eb5cfc2c4253f9088d83c71309dca38a68973814b7e8e253de0",
+    request: {
+      feed: "mark.px",
+      asset: "future",
+      exchange: "composite",
+      base_asset: "BTC",
+      quote_asset: "USD",
+      expiry: "2026-07-28T15:00:00Z",
+    },
+  });
+  const frame = JSON.parse(JSON.stringify(
+    blockScholesSubscribeRequest(7, "forwards", [spot.request, forward.request]),
+  ));
+  assert.deepEqual(frame.params[0].batch, [spot.request, forward.request]);
+  assert.equal("sid" in frame.params[0].batch[0], false);
+  assert.equal("sid" in frame.params[0].batch[1], false);
+  assert.equal(frame.params[0].batch[0].quote_asset, "USD");
+  assert.equal(frame.params[0].batch[1].quote_asset, "USD");
+  assert.deepEqual(frame.params[0].options.signature, {
+    type: "SUI",
+    pkg_ver: 1,
+    signature_schema: "ecdsa",
+    domain: { network: "testnet" },
+  });
+  const acknowledged = { sid: forward.expectedSid, ...forward.request };
+  assert.equal(subscriptionItemMatches(forward.request, acknowledged), true);
+  assert.equal(
+    subscriptionItemMatches(forward.request, { ...acknowledged, exchange: "deribit" }),
+    false,
+  );
+  const { exchange: _exchange, ...missingExchange } = acknowledged;
+  assert.equal(subscriptionItemMatches(forward.request, missingExchange), false);
 });
 
 test("budget ladder parses, orders by time, and rejects malformed rungs", () => {

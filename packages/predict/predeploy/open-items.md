@@ -1,44 +1,8 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-04. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
-
-### S-5: A client-supplied series id commits to no Block Scholes instrument
-
-**Severity:** Deploy gate.
-
-`block_scholes_sid::encode` packs layout version, kind, Propbook underlying,
-value scale, and expiry. It carries nothing about the instrument Block Scholes
-resolved — exchange, asset, base/quote, model. The provider signs whatever
-series the subscription names, under the id the client supplies, so a valid
-signature proves "signed for Propbook underlying N", not "this is the asset
-Propbook means by N". Sid-keyed storage closes misrouting of already-signed
-data; it does not bind which instrument was signed in the first place.
-
-Consequence: the claim that the relayer is untrusted holds for replay,
-reordering, and cross-slot routing, but not for subscription configuration. If a
-party able to obtain Block Scholes signatures can request an arbitrary
-client-supplied sid, it can have the provider sign one asset's data under
-another's slot id and land it as canonical — a path no on-chain check can see,
-because the signature and the sid are both exactly what the store expects. The
-sid's scale field makes a provider-side rescale a halt; there is no equivalent
-for a provider-side instrument mismatch.
-
-This is the accepted cost of client-supplied sids over provider-generated ones
-(the alternative was rejected because it needs an on-chain sid→slot table and a
-registration transaction per expiry on the market-roll path). It is recorded as
-a gate rather than a design change because it is closed by a provider answer,
-not by contract code.
-
-**Action:** Before a value-bearing deployment, confirm with Block Scholes that
-client-supplied sids are scoped per signing account — that no other subscriber
-can request a sid this deployment derives — and record the answer. If they are
-globally addressable, close it provider-side (have the signer re-derive the
-expected sid from the resolved instrument config and refuse a mismatch) rather
-than on-chain. Until answered, the residual trust set in `docs/risks.md` and the
-`predict-audit` lens 08 trust boundary must name subscription configuration
-alongside data quality, key custody, and pause discretion.
 
 ## Contract Findings
 
@@ -350,20 +314,10 @@ correctness today.
 
 ### H-3: Smaller cleanup items
 
-- `block_scholes_store::belongs` matches only the sid's underlying field, so an
-  observation whose layout version, kind, or value scale differs from this
-  package's is accepted into the table and then never read — reads derive whole
-  ids. A provider-side layout or scale change therefore accumulates unreadable
-  rows the writer pays for instead of failing visibly. Matching version and
-  scale as well would make it a clean ingestion refusal, which is the halt the
-  sid design already intends for a rescale.
 - The store tables have no pruning path: every expiry ever quoted leaves a
   permanent row in `values`/`svis`, and neither store can be unwrapped (`key`
   only). Reads stay O(1), so this is unreclaimable storage rather than a
   liveness risk, but it grows monotonically for the life of the deployment.
-- `apply_value_batch`/`apply_svi_batch` assert the store version, then
-  `apply_value`/`apply_svi` assert it again once per update inside the loop —
-  a defensive duplicate and a per-iteration re-check of a loop invariant.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.

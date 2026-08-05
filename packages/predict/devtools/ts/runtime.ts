@@ -36,7 +36,13 @@ import {
     WORMHOLE_STATE_ID,
     getSigner,
 } from "./env.js";
-import { PREDICT_ORACLE_ID, forwardSid, spotSid, sviSid } from "./blockScholesSid.js";
+import {
+    PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+    PREDICT_ORACLE_ID,
+    forwardSid,
+    spotSid,
+    sviSid,
+} from "./blockScholesSid.js";
 import {
     signedSviBatchBytes,
     signedValueBatchBytes,
@@ -786,11 +792,10 @@ export async function nextOneMonthExpiryMs(): Promise<bigint> {
     return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
 }
 
-// One oracle refresh writes all propbook slots: a permissionless Pyth Lazer spot
-// update, one BS value batch carrying spot + forward (they share a batch on the
-// real wire), and one BS SVI batch for the market's expiry. Routing is by the
-// signed sid inside each update; the two per-underlying stores are the only BS
-// objects the refresh touches.
+// One oracle refresh writes all Propbook slots: a permissionless Pyth Lazer spot
+// update, then separate Block Scholes spot, forward, and SVI batches. The expiry
+// batches carry descriptor witnesses, and the two per-underlying stores are the
+// only Block Scholes objects the refresh touches.
 export interface OracleFeedIds {
     pythFeedId: string;
     bsValueStoreId: string;
@@ -918,11 +923,11 @@ export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | n
     return ts;
 }
 
-// Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then a
-// single BS value batch (spot + every forward) and a single BS SVI batch (every
-// SVI set). Pre-warms the whole boundary grid in a single transaction under one
-// (clamped) envelope timestamp, while each series keeps its own provider model
-// time — the clock the on-chain stores order and age series by.
+// Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then
+// separate BS spot, forward, and SVI batches. Pre-warms the whole boundary grid
+// in a single transaction under one (clamped) envelope timestamp, while each
+// series keeps its own provider model time — the clock the on-chain stores order
+// and age series by.
 export interface GridExpiry {
     expiry: bigint;
     forward: bigint;
@@ -946,7 +951,7 @@ export function buildOracleRefreshGridTx(
     return tx;
 }
 
-// Add a grid refresh (one value batch + one SVI batch) to an existing PTB. This
+// Add a grid refresh (spot, forward, and SVI batches) to an existing PTB. This
 // must remain a refresh-only PTB: a priced operation appended after it would abort
 // `EOracleWrittenInThisTransaction`. Each
 // series carries its own provider model time; a series whose model time is
@@ -975,32 +980,45 @@ function addOracleRefreshGrid(
     if (pythTsMs !== null) addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, pythTsMs);
     // The BS spot slot carries Block Scholes' own signed spot series at its own model
     // time — a separate observation from the Pyth spot above.
-    const valueUpdates = [];
+    let spotUpdate: BsValueUpdate | null = null;
     const spotTs = seriesTs(bsSpot.tsMs);
     if (spotTs !== null) {
-        valueUpdates.push({
-            sid: spotSid(PREDICT_ORACLE_ID),
+        spotUpdate = {
+            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
             timestampMs: spotTs,
             value: bsSpot.value1e9,
-        });
+        };
     }
+    const forwardUpdates: ExpiringValueUpdate[] = [];
     for (const g of grid) {
         const ts = seriesTs(g.forwardTsMs);
         if (ts !== null) {
-            valueUpdates.push({
-                sid: forwardSid(PREDICT_ORACLE_ID, g.expiry),
-                timestampMs: ts,
-                value: g.forward,
+            forwardUpdates.push({
+                expiryMs: g.expiry,
+                update: {
+                    sid: forwardSid(
+                        BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+                        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+                        g.expiry,
+                    ),
+                    timestampMs: ts,
+                    value: g.forward,
+                },
             });
         }
     }
-    const sviUpdates = [];
+    const sviUpdates: ExpiringSviUpdate[] = [];
     for (const g of grid) {
         const ts = seriesTs(g.sviTsMs);
-        if (ts !== null) sviUpdates.push(sviBatchUpdate(g.expiry, g.svi, ts));
+        if (ts !== null) {
+            sviUpdates.push({
+                expiryMs: g.expiry,
+                update: sviBatchUpdate(g.expiry, g.svi, ts),
+            });
+        }
     }
-    if (valueUpdates.length > 0 || sviUpdates.length > 0) {
-        addBsBatches(tx, feeds, sourceTimestampMs, valueUpdates, sviUpdates);
+    if (spotUpdate !== null || forwardUpdates.length > 0 || sviUpdates.length > 0) {
+        addBsBatches(tx, feeds, sourceTimestampMs, spotUpdate, forwardUpdates, sviUpdates);
     }
 }
 
@@ -1065,35 +1083,66 @@ function addTrySettle(
 // Block Scholes updates: sign real batches with the local signer key (registered
 // on the localnet `SignerRegistry`), mint the hot-potato batches through the
 // verifier, and ingest them through the production
-// `block_scholes_store::apply_*_batch` path. One value batch carries the spot and
-// every forward; one SVI batch carries every SVI set — the same batching as the
-// real wire. Each update's own timestamp is the model "as of" time; the envelope
-// (batch) timestamp is the publish time.
+// `block_scholes_store::apply_*_batch` path. Spot, forwards, and SVI each carry
+// their typed descriptor witnesses, matching the production writer. Each update's
+// own timestamp is the model "as of" time; the envelope is the publish time.
+type ExpiringValueUpdate = { expiryMs: bigint; update: BsValueUpdate };
+type ExpiringSviUpdate = { expiryMs: bigint; update: BsSviUpdate };
+
 function addBsBatches(
     tx: Transaction,
     stores: { bsValueStoreId: string; bsSviStoreId: string },
     publishedAtMs: bigint,
-    valueUpdates: BsValueUpdate[],
-    sviUpdates: BsSviUpdate[],
+    spotUpdate: BsValueUpdate | null,
+    forwardUpdates: ExpiringValueUpdate[],
+    sviUpdates: ExpiringSviUpdate[],
 ): void {
-    // The verifier rejects an empty batch, so each side is only built when it has entries.
-    if (valueUpdates.length > 0) {
-        const valueMessage = signedValueBatchBytes({
+    // The verifier rejects an empty batch, so each lane is only built when it has entries.
+    if (spotUpdate !== null) {
+        const spotMessage = signedValueBatchBytes({
             signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
             verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
             batchTimestampMs: publishedAtMs,
-            updates: valueUpdates,
+            updates: [spotUpdate],
         });
-        const valueBatch = tx.moveCall({
+        const spotBatch = tx.moveCall({
             target: bsOracleTarget("verify", "verify_and_create_value_batch"),
             arguments: [
                 tx.object(BS_SIGNER_REGISTRY_ID),
-                tx.pure.vector("u8", Array.from(valueMessage)),
+                tx.pure.vector("u8", Array.from(spotMessage)),
             ],
         });
         tx.moveCall({
-            target: propbookTarget("block_scholes_store", "apply_value_batch"),
-            arguments: [tx.object(stores.bsValueStoreId), valueBatch, tx.object(CLOCK_ID)],
+            target: propbookTarget("block_scholes_store", "apply_spot_batch"),
+            arguments: [tx.object(stores.bsValueStoreId), spotBatch, tx.object(CLOCK_ID)],
+        });
+    }
+
+    if (forwardUpdates.length > 0) {
+        const forwardMessage = signedValueBatchBytes({
+            signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
+            verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+            batchTimestampMs: publishedAtMs,
+            updates: forwardUpdates.map(({ update }) => update),
+        });
+        const forwardBatch = tx.moveCall({
+            target: bsOracleTarget("verify", "verify_and_create_value_batch"),
+            arguments: [
+                tx.object(BS_SIGNER_REGISTRY_ID),
+                tx.pure.vector("u8", Array.from(forwardMessage)),
+            ],
+        });
+        tx.moveCall({
+            target: propbookTarget("block_scholes_store", "apply_forward_batch"),
+            arguments: [
+                tx.object(stores.bsValueStoreId),
+                forwardBatch,
+                tx.pure.vector(
+                    "u64",
+                    forwardUpdates.map(({ expiryMs }) => expiryMs),
+                ),
+                tx.object(CLOCK_ID),
+            ],
         });
     }
 
@@ -1102,7 +1151,7 @@ function addBsBatches(
         signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
         verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
         batchTimestampMs: publishedAtMs,
-        updates: sviUpdates,
+        updates: sviUpdates.map(({ update }) => update),
     });
     const sviBatch = tx.moveCall({
         target: bsOracleTarget("verify", "verify_and_create_svi_batch"),
@@ -1110,7 +1159,15 @@ function addBsBatches(
     });
     tx.moveCall({
         target: propbookTarget("block_scholes_store", "apply_svi_batch"),
-        arguments: [tx.object(stores.bsSviStoreId), sviBatch, tx.object(CLOCK_ID)],
+        arguments: [
+            tx.object(stores.bsSviStoreId),
+            sviBatch,
+            tx.pure.vector(
+                "u64",
+                sviUpdates.map(({ expiryMs }) => expiryMs),
+            ),
+            tx.object(CLOCK_ID),
+        ],
     });
 }
 
@@ -1120,7 +1177,7 @@ function sviBatchUpdate(
     timestampMs: bigint,
 ): BsSviUpdate {
     return {
-        sid: sviSid(PREDICT_ORACLE_ID, expiry),
+        sid: sviSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET, expiry),
         timestampMs,
         aMagnitude: svi.a,
         aNegative: svi.aNegative,
@@ -1142,15 +1199,31 @@ function addBlockScholesUpdates(
         tx,
         params,
         publishedAtMs,
+        {
+            sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
+            timestampMs: publishedAtMs,
+            value: params.spot,
+        },
         [
-            { sid: spotSid(PREDICT_ORACLE_ID), timestampMs: publishedAtMs, value: params.spot },
             {
-                sid: forwardSid(PREDICT_ORACLE_ID, params.expiry),
-                timestampMs: publishedAtMs,
-                value: params.forward,
+                expiryMs: params.expiry,
+                update: {
+                    sid: forwardSid(
+                        BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
+                        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+                        params.expiry,
+                    ),
+                    timestampMs: publishedAtMs,
+                    value: params.forward,
+                },
             },
         ],
-        [sviBatchUpdate(params.expiry, params.svi, publishedAtMs)],
+        [
+            {
+                expiryMs: params.expiry,
+                update: sviBatchUpdate(params.expiry, params.svi, publishedAtMs),
+            },
+        ],
     );
 }
 
@@ -1436,6 +1509,7 @@ export function registerUnderlyingAndCreateFeedsTx(): Transaction {
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(ORACLE_REGISTRY_ADMIN_CAP_ID),
             tx.pure.u32(PREDICT_ORACLE_ID),
+            tx.pure.string(PREDICT_BLOCK_SCHOLES_BASE_ASSET),
         ],
     });
     return tx;

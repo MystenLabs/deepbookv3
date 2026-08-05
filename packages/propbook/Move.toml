@@ -14,12 +14,13 @@ fixed_math = { local = "../fixed_math" }
 # package-scoped, so the Move type system enforces "this value came from Pyth's
 # verifier." Pinned to the exact source used by the testnet deployment.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
-# Block Scholes signed-oracle verifier. `bs_oracle::verify` mints the batch types
-# that propbook's Block Scholes feeds consume, so the Move type system enforces
-# "this value carries a valid Block Scholes signature" — the same gating shape as
-# `pyth_lazer`. Pinned to a commit rather than a branch; upstream
-# `Published.toml` owns its testnet package identity.
-bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "11d952488bc50f3a2526549a8cd6d4817ae20cc7" }
+# Block Scholes signed-oracle verifier and canonical SID derivation.
+# `bs_oracle::verify` mints the authenticated batch types; `bs_sid` derives the
+# exact feed identities each asset-bound store accepts. Both dependencies share
+# one pinned upstream revision whose `Published.toml` files own their testnet
+# package identities.
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
+bs_sid = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_sid", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
 
 # `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
 # for typechecking only; `dep-replacements` tells `sui client publish` to link
