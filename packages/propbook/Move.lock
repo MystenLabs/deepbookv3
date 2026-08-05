@@ -29,7 +29,13 @@ manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D
 deps = { MoveStdlib = "MoveStdlib_1" }
 
 [pinned.testnet.bs_oracle]
-source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "11d952488bc50f3a2526549a8cd6d4817ae20cc7" }
+source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
+use_environment = "testnet"
+manifest_digest = "DEA31E1A46DEA12556D3F73C993DD95B71A42720CD2A5FAA7BA794DE8BD6F7AC"
+deps = { MoveStdlib = "MoveStdlib_1", Sui = "Sui_1" }
+
+[pinned.testnet.bs_sid]
+source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_sid", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
 use_environment = "testnet"
 manifest_digest = "DEA31E1A46DEA12556D3F73C993DD95B71A42720CD2A5FAA7BA794DE8BD6F7AC"
 deps = { MoveStdlib = "MoveStdlib_1", Sui = "Sui_1" }
@@ -43,8 +49,8 @@ deps = { std = "MoveStdlib", sui = "Sui" }
 [pinned.testnet.propbook]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "DE2D58FF856C814BF6A594EE92884C306824072A3CED9EF02808E3029BFF4F4A"
-deps = { bs_oracle = "bs_oracle", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
+manifest_digest = "B7500D178DEDFD12B51F96B38331833FD5D9E07FC0D96660CC173838F243DC20"
+deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
 
 [pinned.testnet.pyth_lazer]
 source = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }

@@ -31,7 +31,6 @@ use deepbook_predict::{
     test_helpers
 };
 use propbook::{
-    block_scholes_sid,
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::{Self, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
@@ -239,18 +238,19 @@ public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): O
 public fun create_foreign_block_scholes_stores(
     self: &mut OracleFixture,
     propbook_underlying_id: u32,
-): (ID, ID) {
+): propbook_registry::BlockScholesStorePair {
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let (value_store_id, svi_store_id) = propbook_registry::create_and_share_block_scholes_stores(
+    let pair = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         &self.propbook_admin_cap,
         propbook_underlying_id,
+        test_constants::foreign_block_scholes_base_asset(),
         self.scenario.ctx(),
     );
     return_shared(oracle_registry);
     self.scenario.next_tx(test_constants::admin());
-    (value_store_id, svi_store_id)
+    pair
 }
 
 /// Return the shared objects taken by `take_oracle_bundle`.
@@ -410,24 +410,21 @@ fun prepare_real_oracle_with_svi_source(
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
     store_pyth_spot(&mut self.scenario, pyth, spot, live_ts, live_ts);
-    let underlying = test_constants::propbook_underlying_id();
-    // Spot and forward ride one value batch, as they do on the wire.
-    apply_value_batch_updates(
+    apply_spot_batch(
         &mut self.scenario,
         bs,
-        vector[
-            verify::new_value_update_for_testing(
-                block_scholes_sid::spot(underlying),
-                live_ts,
-                spot as u128,
-            ),
-            verify::new_value_update_for_testing(
-                block_scholes_sid::forward(underlying, self.expiry),
-                live_ts,
-                forward as u128,
-            ),
-        ],
         live_ts,
+        live_ts,
+        spot,
+        &self.clock,
+    );
+    apply_forward_batch(
+        &mut self.scenario,
+        bs,
+        self.expiry,
+        live_ts,
+        live_ts,
+        forward,
         &self.clock,
     );
     self.apply_svi_batch(
@@ -486,11 +483,9 @@ public fun set_bs_spot_for_testing(
     source_timestamp_ms: u64,
     spot: u64,
 ) {
-    let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
-    apply_value_batch(
+    apply_spot_batch(
         &mut self.scenario,
         bs,
-        sid,
         source_timestamp_ms,
         source_timestamp_ms,
         spot,
@@ -517,11 +512,10 @@ public fun set_bs_forward_for_testing(
     source_timestamp_ms: u64,
     forward: u64,
 ) {
-    let sid = block_scholes_sid::forward(test_constants::propbook_underlying_id(), self.expiry);
-    apply_value_batch(
+    apply_forward_batch(
         &mut self.scenario,
         bs,
-        sid,
+        self.expiry,
         source_timestamp_ms,
         source_timestamp_ms,
         forward,
@@ -547,11 +541,9 @@ public fun retransmit_bs_spot_for_testing(
     published_at_ms: u64,
     spot: u64,
 ) {
-    let sid = block_scholes_sid::spot(test_constants::propbook_underlying_id());
-    apply_value_batch(
+    apply_spot_batch(
         &mut self.scenario,
         &mut oracle.bs,
-        sid,
         model_timestamp_ms,
         published_at_ms,
         spot,
@@ -568,11 +560,10 @@ public fun retransmit_bs_forward_for_testing(
     published_at_ms: u64,
     forward: u64,
 ) {
-    let sid = block_scholes_sid::forward(test_constants::propbook_underlying_id(), self.expiry);
-    apply_value_batch(
+    apply_forward_batch(
         &mut self.scenario,
         &mut oracle.bs,
-        sid,
+        self.expiry,
         model_timestamp_ms,
         published_at_ms,
         forward,
@@ -810,41 +801,42 @@ public fun finish(self: OracleFixture) {
     scenario.end();
 }
 
-/// Land one value observation through the real verified-batch path.
-fun apply_value_batch(
+/// Land one spot observation through the real verified-batch path.
+fun apply_spot_batch(
     scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
-    sid: u256,
     model_timestamp_ms: u64,
     published_at_ms: u64,
     value: u64,
     clock: &Clock,
 ) {
-    apply_value_batch_updates(
-        scenario,
-        bs,
-        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
+    let sid = bs.values().spot_sid();
+    let batch = verify::new_value_batch_for_testing(
         published_at_ms,
-        clock,
+        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
     );
+    let (ctx, restore) = begin_seed_tx(scenario);
+    bs.values_mut().apply_spot_batch(batch, clock, &ctx);
+    end_seed_tx(restore);
 }
 
-/// Land a whole value batch, for callers seeding more than one series at once.
-fun apply_value_batch_updates(
+/// Land one forward observation through the real verified-batch path.
+fun apply_forward_batch(
     scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
-    updates: vector<verify::ValueUpdate>,
+    expiry_ms: u64,
+    model_timestamp_ms: u64,
     published_at_ms: u64,
+    value: u64,
     clock: &Clock,
 ) {
+    let sid = bs.values().forward_sid(expiry_ms);
+    let batch = verify::new_value_batch_for_testing(
+        published_at_ms,
+        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
+    );
     let (ctx, restore) = begin_seed_tx(scenario);
-    bs
-        .values_mut()
-        .apply_value_batch(
-            verify::new_value_batch_for_testing(published_at_ms, updates),
-            clock,
-            &ctx,
-        );
+    bs.values_mut().apply_forward_batch(batch, vector[expiry_ms], clock, &ctx);
     end_seed_tx(restore);
 }
 
@@ -863,7 +855,7 @@ fun apply_svi_batch(
     svi_m_magnitude: u64,
     svi_m_is_negative: bool,
 ) {
-    let sid = block_scholes_sid::svi(test_constants::propbook_underlying_id(), self.expiry);
+    let sid = bs.svi().svi_sid(self.expiry);
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     bs
         .svi_mut()
@@ -885,6 +877,7 @@ fun apply_svi_batch(
                     ),
                 ],
             ),
+            vector[self.expiry],
             &self.clock,
             &ctx,
         );

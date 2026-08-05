@@ -138,12 +138,15 @@ public fun bind_feeds_to_underlying(
         &pyth,
         test_constants::propbook_underlying_id(),
     );
-    let (bs_values_id, bs_svi_id) = propbook_registry::create_and_share_block_scholes_stores(
+    let bs_pair = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         propbook_admin_cap,
         test_constants::propbook_underlying_id(),
+        test_constants::block_scholes_base_asset(),
         scenario.ctx(),
     );
+    let bs_values_id = bs_pair.block_scholes_value_store_id();
+    let bs_svi_id = bs_pair.block_scholes_svi_store_id();
     return_shared(pyth);
     return_shared(oracle_registry);
     (bs_values_id, bs_svi_id)

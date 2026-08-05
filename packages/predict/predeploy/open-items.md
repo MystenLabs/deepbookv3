@@ -1,44 +1,8 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-29. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
-
-### S-5: A client-supplied series id commits to no Block Scholes instrument
-
-**Severity:** Deploy gate.
-
-`block_scholes_sid::encode` packs layout version, kind, Propbook underlying,
-value scale, and expiry. It carries nothing about the instrument Block Scholes
-resolved — exchange, asset, base/quote, model. The provider signs whatever
-series the subscription names, under the id the client supplies, so a valid
-signature proves "signed for Propbook underlying N", not "this is the asset
-Propbook means by N". Sid-keyed storage closes misrouting of already-signed
-data; it does not bind which instrument was signed in the first place.
-
-Consequence: the claim that the relayer is untrusted holds for replay,
-reordering, and cross-slot routing, but not for subscription configuration. If a
-party able to obtain Block Scholes signatures can request an arbitrary
-client-supplied sid, it can have the provider sign one asset's data under
-another's slot id and land it as canonical — a path no on-chain check can see,
-because the signature and the sid are both exactly what the store expects. The
-sid's scale field makes a provider-side rescale a halt; there is no equivalent
-for a provider-side instrument mismatch.
-
-This is the accepted cost of client-supplied sids over provider-generated ones
-(the alternative was rejected because it needs an on-chain sid→slot table and a
-registration transaction per expiry on the market-roll path). It is recorded as
-a gate rather than a design change because it is closed by a provider answer,
-not by contract code.
-
-**Action:** Before a value-bearing deployment, confirm with Block Scholes that
-client-supplied sids are scoped per signing account — that no other subscriber
-can request a sid this deployment derives — and record the answer. If they are
-globally addressable, close it provider-side (have the signer re-derive the
-expected sid from the resolved instrument config and refuse a mismatch) rather
-than on-chain. Until answered, the residual trust set in `docs/risks.md` and the
-`predict-audit` lens 08 trust boundary must name subscription configuration
-alongside data quality, key custody, and pause discretion.
 
 ## Contract Findings
 
@@ -119,7 +83,7 @@ written down.
 
 ### P-26: An underlying's Block Scholes store pair can never be repointed
 
-**Severity:** Low pre-deploy; one-way door after.
+**Severity:** Medium; one-way door with no recovery, on an unvalidatable input.
 
 `registry::create_and_share_block_scholes_stores` is create-once per underlying
 (`EBlockScholesStoresAlreadyExist`) with no admin replacement path, while the
@@ -127,15 +91,39 @@ Pyth lane carries `replace_pyth_binding_for_underlying` for exactly this
 purpose. The stated reason — that a second pair would leave two stores each able
 to claim the underlying with nothing to choose between them — does not hold: the
 registry binding *is* what chooses, which is why the Pyth replacement is safe.
-If a pair is ever created against the wrong underlying, or becomes unusable
-under a future store shape, that underlying has no on-chain route to a working
-pair and every market on it is stranded behind a package upgrade. Adding the
-setter is free while pre-deploy and impossible to add compatibly later only in
-the sense that the absence has to be lived with.
 
-**Action:** Add an admin-gated replacement for an underlying's store pair
-mirroring `replace_pyth_binding_for_underlying`, or record the decision that the
-pair is deliberately permanent and what the recovery path is if one is wrong.
+Provider-defined series ids widened what a wrong creation costs. The accepted
+series now derive from an admin-supplied `block_scholes_base_asset`, carried
+into the id exactly as spelled, where they previously derived from the `u32`
+underlying id — so the set of unrecoverable mistakes grew from "wrong
+underlying" to "any spelling the provider does not serve." Worse, a spelling
+that is wrong but names a *different real* asset is not a halt: genuinely
+signed observations for that asset land, the basis and SVI pass the pricing
+envelope, and the underlying is priced off the wrong asset with every on-chain
+check passing. Nothing on chain can distinguish that from a correct binding.
+
+There is no recovery by re-registration either. Allocating a fresh
+`propbook_underlying_id` and binding the correct spelling is admissible on the
+Block Scholes side, but the Pyth lane refuses to follow: `source_bindings` is
+append-only, so `assert_source_assignable` permanently rejects binding the same
+Pyth source key to a second underlying (`ESourceAlreadyBound`), and the source
+key is the real Lazer feed id, so no substitute names the same asset. The two
+lanes' recovery mechanisms are mutually exclusive.
+
+Adding the replacement *function* stays possible after deploy (new functions are
+upgrade-legal). What does not is the registry row's shape: a replacement can
+only be made safe by requiring it to carry the identical base asset — the
+analogue of the Pyth lane's sticky-source guard, which is what stops a replace
+from silently changing *which asset* an underlying tracks — and that guard is
+unwritable unless the row carries the spelling. The spelling is now on
+`BlockScholesStorePair` for that reason, and bounded to 32 bytes so a malformed
+input cannot be permanently baked into a value re-hashed on every read.
+
+**Action:** Add the admin-gated replacement mirroring
+`replace_pyth_binding_for_underlying`, gated on base-asset equality against the
+existing row. Independently, and because no on-chain check can substitute for
+it, confirm the bound spelling against the provider's acknowledged subscription
+before the pair is treated as canonical, and record that confirmation.
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
 
@@ -496,20 +484,10 @@ correctness today.
 
 ### H-3: Smaller cleanup items
 
-- `block_scholes_store::belongs` matches only the sid's underlying field, so an
-  observation whose layout version, kind, or value scale differs from this
-  package's is accepted into the table and then never read — reads derive whole
-  ids. A provider-side layout or scale change therefore accumulates unreadable
-  rows the writer pays for instead of failing visibly. Matching version and
-  scale as well would make it a clean ingestion refusal, which is the halt the
-  sid design already intends for a rescale.
 - The store tables have no pruning path: every expiry ever quoted leaves a
   permanent row in `values`/`svis`, and neither store can be unwrapped (`key`
   only). Reads stay O(1), so this is unreclaimable storage rather than a
   liveness risk, but it grows monotonically for the life of the deployment.
-- `apply_value_batch`/`apply_svi_batch` assert the store version, then
-  `apply_value`/`apply_svi` assert it again once per update inside the loop —
-  a defensive duplicate and a per-iteration re-check of a loop invariant.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.

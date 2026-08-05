@@ -1,46 +1,107 @@
-// Block Scholes series-id encoding, mirroring propbook::block_scholes_sid.
-//
-// A signed update carries its own series id; the propbook stores derive the id
-// they expect from their own identity, so the sim must stamp updates with the
-// exact same layout or every write is skipped as a foreign series. The layout is
-// the shared client/package contract (see `block_scholes_sid.move` and the
-// vectors in `packages/propbook/tests/block_scholes/block_scholes_sid_tests.move`,
-// e.g. spot(1) = 0x0100000000010900000000000000000000000000000000000000000000000000).
+import { bcs } from "@mysten/sui/bcs";
+import { fromHex, normalizeSuiAddress } from "@mysten/sui/utils";
+import { keccak_256 } from "@noble/hashes/sha3.js";
 
-const VERSION = 1n;
-const KIND_SPOT = 0n;
-const KIND_FORWARD = 1n;
-const KIND_SVI = 2n;
-// constants::float_scaling_decimals!() — the 1e9 fixed-point scale of every value.
-const DECIMALS = 9n;
+// These descriptors mirror propbook::block_scholes_sid, which delegates the
+// canonical BCS layout and hashing contract to the provider-owned bs_sid package.
+const DECIMALS = 9;
+const TIMESTAMP_PRECISION = "ms";
 
 // The local Predict development system uses one numeric identity for its Pyth
-// feed, Propbook underlying, and Block Scholes series family.
+// feed and Propbook underlying.
 export const PREDICT_ORACLE_ID = 1;
+// Canonical provider spelling used for store binding and every SID/subscription descriptor.
+export const PREDICT_BLOCK_SCHOLES_BASE_ASSET = "BTC";
+export const PREDICT_BLOCK_SCHOLES_QUOTE_ASSET = "USD";
 
-const VERSION_SHIFT = 248n;
-const KIND_SHIFT = 240n;
-const UNDERLYING_SHIFT = 208n;
-const DECIMALS_SHIFT = 200n;
+const encodedString = (value: string): Uint8Array => bcs.string().serialize(value).toBytes();
+const encodedU8 = (value: number): Uint8Array => bcs.u8().serialize(value).toBytes();
+const encodedU64 = (value: bigint): Uint8Array => bcs.u64().serialize(value).toBytes();
+const encodedBool = (value: boolean): Uint8Array => bcs.bool().serialize(value).toBytes();
 
-function encode(kind: bigint, underlyingId: number, expiryMs: bigint): bigint {
-    return (
-        (VERSION << VERSION_SHIFT) |
-        (kind << KIND_SHIFT) |
-        (BigInt(underlyingId) << UNDERLYING_SHIFT) |
-        (DECIMALS << DECIMALS_SHIFT) |
-        expiryMs
+function concat(...parts: Uint8Array[]): Uint8Array {
+    const length = parts.reduce((sum, part) => sum + part.length, 0);
+    const result = new Uint8Array(length);
+    let offset = 0;
+    for (const part of parts) {
+        result.set(part, offset);
+        offset += part.length;
+    }
+    return result;
+}
+
+function some(value: Uint8Array): Uint8Array {
+    return concat(Uint8Array.of(1), value);
+}
+
+function none(): Uint8Array {
+    return Uint8Array.of(0);
+}
+
+function expiryAt(expiryMs: bigint): Uint8Array {
+    // bs_sid::Expiry { kind: absolute (0), value: unix milliseconds }.
+    return concat(encodedU8(0), encodedU64(expiryMs));
+}
+
+function digest(oraclePackageId: string, feed: string, body: Uint8Array): bigint {
+    const scope = fromHex(normalizeSuiAddress(oraclePackageId));
+    const bytes = keccak_256(concat(scope, encodedString(feed), body));
+    let result = 0n;
+    for (const byte of bytes) result = (result << 8n) | BigInt(byte);
+    return result;
+}
+
+export function spotSid(oraclePackageId: string, baseAsset: string): bigint {
+    return digest(
+        oraclePackageId,
+        "index.px",
+        concat(
+            encodedString("spot"),
+            encodedString("blockscholes"),
+            encodedString(baseAsset),
+            encodedString(PREDICT_BLOCK_SCHOLES_QUOTE_ASSET),
+            none(),
+            encodedBool(false),
+            none(),
+            encodedU8(DECIMALS),
+            encodedString(TIMESTAMP_PRECISION),
+        ),
     );
 }
 
-export function spotSid(underlyingId: number): bigint {
-    return encode(KIND_SPOT, underlyingId, 0n);
+export function forwardSid(oraclePackageId: string, baseAsset: string, expiryMs: bigint): bigint {
+    return digest(
+        oraclePackageId,
+        "mark.px",
+        concat(
+            encodedString("future"),
+            encodedString("composite"),
+            encodedString(baseAsset),
+            encodedString(PREDICT_BLOCK_SCHOLES_QUOTE_ASSET),
+            some(expiryAt(expiryMs)),
+            none(),
+            none(),
+            none(),
+            none(),
+            none(),
+            encodedU8(DECIMALS),
+            encodedString(TIMESTAMP_PRECISION),
+        ),
+    );
 }
 
-export function forwardSid(underlyingId: number, expiryMs: bigint): bigint {
-    return encode(KIND_FORWARD, underlyingId, expiryMs);
-}
-
-export function sviSid(underlyingId: number, expiryMs: bigint): bigint {
-    return encode(KIND_SVI, underlyingId, expiryMs);
+export function sviSid(oraclePackageId: string, baseAsset: string, expiryMs: bigint): bigint {
+    return digest(
+        oraclePackageId,
+        "model.params",
+        concat(
+            encodedString("option"),
+            encodedString("composite"),
+            encodedString(baseAsset),
+            encodedString("SVI"),
+            expiryAt(expiryMs),
+            encodedU8(DECIMALS),
+            encodedString(TIMESTAMP_PRECISION),
+        ),
+    );
 }

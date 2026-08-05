@@ -54,7 +54,7 @@ ignored oracle snapshot CSV
   → parity projection and first-difference check
 ```
 
-The Block Scholes local fixture signs the canonical BCS batch, binds it to the published verifier package, normalizes the recoverable signature, calls the actual `bs_oracle` verifier, and passes the gated batch into Propbook ingest in the same transaction. It tests the trust boundary without claiming to consume the provider’s official stream.
+The Block Scholes local fixture derives series identities through the published upstream `bs_sid` package, signs the canonical BCS batch, binds it to the published verifier package, normalizes the recoverable signature, calls the actual `bs_oracle` verifier, and passes the gated batch into Propbook ingest in the same transaction. It tests the trust boundary without claiming to consume the provider’s official stream.
 
 ## Configuration
 

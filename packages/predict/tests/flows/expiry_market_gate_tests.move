@@ -143,9 +143,11 @@ fun mint_with_another_underlyings_block_scholes_stores_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let (foreign_values_id, foreign_svi_id) = fx.create_foreign_block_scholes_stores(
+    let foreign_pair = fx.create_foreign_block_scholes_stores(
         FOREIGN_UNDERLYING_ID,
     );
+    let foreign_values_id = foreign_pair.block_scholes_value_store_id();
+    let foreign_svi_id = foreign_pair.block_scholes_svi_store_id();
 
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);

@@ -10,7 +10,13 @@ import { PythLazerClient } from "@pythnetwork/pyth-lazer-sdk";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import WebSocket from "ws";
 
-import { PREDICT_ORACLE_ID, forwardSid, spotSid, sviSid } from "../../devtools/ts/blockScholesSid.js";
+import {
+  PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+  PREDICT_BLOCK_SCHOLES_QUOTE_ASSET,
+  forwardSid,
+  spotSid,
+  sviSid,
+} from "../../devtools/ts/blockScholesSid.js";
 import { harnessKey } from "./io.js";
 import {
   type BsSviUpdate,
@@ -23,7 +29,8 @@ import {
 export const isoSec = (ms: number): string => new Date(ms).toISOString().slice(0, 19) + "Z";
 const SCALE_1E9 = 1_000_000_000;
 
-// Public, versioned Block Scholes testnet trust triple. The subscription's
+// Public, versioned Block Scholes testnet trust triple. The IDs are the deployment recorded by
+// the exact upstream source revision pinned in Predict's Move.toml. The subscription's
 // `{network, pkg_ver}` selects this verifier deployment on the provider side;
 // startup fail-fast reads the shared registry over Sui gRPC, and every signed
 // batch re-reads it so pause and signer rotation take effect without a restart.
@@ -31,8 +38,8 @@ const BS_PROVIDER_PROFILE = {
   name: "testnet-v1",
   network: "testnet" as const,
   pkgVer: 1,
-  packageId: "0x87cc43db9b6c1e8b174841221e8e4bde5ab8fc8aaffacc58699c77e9e6340ff6",
-  registryId: "0xe1198f0add6ba5286d23f2790818937e4a629b95a86e98b1ece93c0ef3c2c440",
+  packageId: "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+  registryId: "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
   grpcUrl: "https://fullnode.testnet.sui.io:443",
 };
 
@@ -304,7 +311,86 @@ type PendingAck = {
   sentAtMs: number;
 };
 
+type BlockScholesSubscription = {
+  expectedSid: string;
+  request: Record<string, unknown>;
+};
+
 const sidHex = (sid: bigint): string => `0x${sid.toString(16).padStart(64, "0")}`;
+
+export function blockScholesSpotSubscription(): BlockScholesSubscription {
+  return {
+    expectedSid: sidHex(
+      spotSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
+    ),
+    request: {
+      feed: "index.px",
+      asset: "spot",
+      exchange: "blockscholes",
+      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+      quote_asset: PREDICT_BLOCK_SCHOLES_QUOTE_ASSET,
+    },
+  };
+}
+
+export function blockScholesForwardSubscription(expiryMs: number): BlockScholesSubscription {
+  return {
+    expectedSid: sidHex(
+      forwardSid(
+        BS_PROVIDER_PROFILE.packageId,
+        PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+        BigInt(expiryMs),
+      ),
+    ),
+    request: {
+      feed: "mark.px",
+      asset: "future",
+      exchange: "composite",
+      base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+      quote_asset: PREDICT_BLOCK_SCHOLES_QUOTE_ASSET,
+      expiry: isoSec(expiryMs),
+    },
+  };
+}
+
+export function blockScholesSubscribeRequest(
+  id: number,
+  clientId: string,
+  batch: Record<string, unknown>[],
+) {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "subscribe",
+    params: [{
+      frequency: "1000ms",
+      retransmit_frequency: "1000ms",
+      client_id: clientId,
+      batch,
+      options: {
+        format: { timestamp: "ms", hexify: false, decimals: 9 },
+        signature: {
+          type: "SUI",
+          pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
+          signature_schema: "ecdsa",
+          domain: {
+            network: BS_PROVIDER_PROFILE.network,
+          },
+        },
+      },
+    }],
+  };
+}
+
+export function subscriptionItemMatches(
+  expected: Record<string, unknown>,
+  actual: unknown,
+): boolean {
+  return Object.entries(expected).every(
+    ([key, value]) => (actual as Record<string, unknown> | null)?.[key] === value,
+  );
+}
+
 const fixedNumber = (value: bigint): number => Number(value) / SCALE_1E9;
 const sviView = (raw: FixedSvi): Svi => ({
   alpha: fixedNumber(raw.a) * (raw.aNegative ? -1 : 1),
@@ -466,16 +552,16 @@ export class DirectWsSource implements MarketSource {
         format?.hexify === false &&
         Number(format?.decimals) === 9 &&
         signature?.type === "SUI" &&
+        Number(signature?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer &&
         (signature?.signature_schema ?? "ecdsa") === "ecdsa" &&
-        domain?.network === BS_PROVIDER_PROFILE.network &&
-        Number(domain?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer
+        domain?.network === BS_PROVIDER_PROFILE.network
       );
     });
     const itemsOk = items.every((item: any) => {
       const expectedItem = pending.expectedItems.get(String(item.sid));
       return (
         expectedItem !== undefined &&
-        Object.entries(expectedItem).every(([key, value]) => item?.[key] === value)
+        subscriptionItemMatches(expectedItem, item)
       );
     });
     if (
@@ -617,41 +703,33 @@ export class DirectWsSource implements MarketSource {
     return false;
   }
 
-  // Subscribe the full current grid under stable client_ids. The client supplies
-  // Propbook's packed u256 ids because today's stores derive those exact ids at
-  // read time; each acknowledgement is checked before the stream is trusted.
+  // Subscribe the full current grid under stable client_ids. Each id is derived
+  // from the provider package and complete subscription descriptor; each
+  // acknowledgement is checked before the stream is trusted.
   #subscribeBsGrid(): void {
     const ws = this.#bs;
     if (!ws) return;
     const active = this.#expiries.filter((ms) => ms > Date.now());
-    const spot = {
-      sid: sidHex(spotSid(PREDICT_ORACLE_ID)),
-      feed: "index.px",
-      asset: "spot",
-      base_asset: "BTC",
-      exchange: "blockscholes",
-    };
-    const forwards = active.map((ms) => ({
-      sid: sidHex(forwardSid(PREDICT_ORACLE_ID, BigInt(ms))),
-      feed: "mark.px",
-      asset: "future",
-      base_asset: "BTC",
-      expiry: isoSec(ms),
-    }));
-    const svis = active.map((ms) => ({
-      sid: sidHex(sviSid(PREDICT_ORACLE_ID, BigInt(ms))),
-      feed: "model.params",
-      exchange: "composite",
-      asset: "option",
-      base_asset: "BTC",
-      model: "SVI",
-      expiry: isoSec(ms),
+    const spot = blockScholesSpotSubscription();
+    const forwards = active.map(blockScholesForwardSubscription);
+    const svis: BlockScholesSubscription[] = active.map((ms) => ({
+      expectedSid: sidHex(
+        sviSid(BS_PROVIDER_PROFILE.packageId, PREDICT_BLOCK_SCHOLES_BASE_ASSET, BigInt(ms)),
+      ),
+      request: {
+        feed: "model.params",
+        exchange: "composite",
+        asset: "option",
+        base_asset: PREDICT_BLOCK_SCHOLES_BASE_ASSET,
+        model: "SVI",
+        expiry: isoSec(ms),
+      },
     }));
     const nextRoutes = new Map<string, BsRoute>();
-    nextRoutes.set(spot.sid, { kind: "spot" });
+    nextRoutes.set(spot.expectedSid, { kind: "spot" });
     active.forEach((expiryMs, index) => {
-      nextRoutes.set(forwards[index].sid, { kind: "forward", expiryMs });
-      nextRoutes.set(svis[index].sid, { kind: "svi", expiryMs });
+      nextRoutes.set(forwards[index].expectedSid, { kind: "forward", expiryMs });
+      nextRoutes.set(svis[index].expectedSid, { kind: "svi", expiryMs });
     });
     const retiredUntilMs = Date.now() + 10_000;
     for (const sid of this.#routes.keys()) {
@@ -667,12 +745,12 @@ export class DirectWsSource implements MarketSource {
     this.#sendSubscription(firstId + 2, "svi", svis);
   }
 
-  #sendSubscription(id: number, clientId: string, batch: Record<string, unknown>[]): void {
+  #sendSubscription(id: number, clientId: string, batch: BlockScholesSubscription[]): void {
     const ws = this.#bs;
     if (!ws) return;
-    const expectedSids = new Set(batch.map((item) => String(item.sid)));
+    const expectedSids = new Set(batch.map((item) => item.expectedSid));
     const expectedItems = new Map(
-      batch.map((item) => [String(item.sid), item]),
+      batch.map((item) => [item.expectedSid, item.request]),
     );
     this.#pendingAcks.set(id, {
       clientId,
@@ -680,28 +758,9 @@ export class DirectWsSource implements MarketSource {
       expectedItems,
       sentAtMs: Date.now(),
     });
-    ws.send(JSON.stringify({
-      jsonrpc: "2.0",
-      id,
-      method: "subscribe",
-      params: [{
-        frequency: "1000ms",
-        retransmit_frequency: "1000ms",
-        client_id: clientId,
-        batch,
-        options: {
-          format: { timestamp: "ms", hexify: false, decimals: 9 },
-          signature: {
-            type: "SUI",
-            signature_schema: "ecdsa",
-            domain: {
-              network: BS_PROVIDER_PROFILE.network,
-              pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
-            },
-          },
-        },
-      }],
-    }));
+    ws.send(JSON.stringify(
+      blockScholesSubscribeRequest(id, clientId, batch.map((item) => item.request)),
+    ));
   }
 
   // Roll the warmed grid forward by replacing the provider batches wholesale;
