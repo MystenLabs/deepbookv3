@@ -33,6 +33,8 @@ packages/predict/parallel_pool_implementation_plan.md
 packages/predict/deployment/deployment.testnet.state.json
 packages/predict/deployment/deployment.testnet.state.json.tmp
 packages/predict/deployment/deployment.testnet.json.tmp
+packages/predict/deployment/deployment.sessions.testnet.state.json
+packages/predict/deployment/deployment.sessions.testnet.state.json.tmp
 
 # Research
 predict_research/

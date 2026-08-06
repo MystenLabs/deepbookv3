@@ -32,6 +32,7 @@ import {
     existsSync,
     mkdtempSync,
     openSync,
+    readdirSync,
     readFileSync,
     renameSync,
     rmSync,
@@ -56,10 +57,14 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..", "..");
 export const STATE_RELATIVE = "packages/predict/deployment/deployment.testnet.state.json";
 export const MANIFEST_RELATIVE = "packages/predict/deployment/deployment.testnet.json";
+export const SESSIONS_STATE_RELATIVE =
+    "packages/predict/deployment/deployment.sessions.testnet.state.json";
 const STATE = resolve(REPO_ROOT, STATE_RELATIVE);
 const STATE_TEMP = `${STATE}.tmp`;
 const MANIFEST = resolve(REPO_ROOT, MANIFEST_RELATIVE);
 const MANIFEST_TEMP = `${MANIFEST}.tmp`;
+const SESSIONS_STATE = resolve(REPO_ROOT, SESSIONS_STATE_RELATIVE);
+const SESSIONS_STATE_TEMP = `${SESSIONS_STATE}.tmp`;
 const SUI = process.env.SUI_BINARY ?? "sui";
 const PACKAGE_GAS_BUDGET = process.env.PACKAGE_GAS_BUDGET ?? "5000000000";
 const TRANSACTION_GAS_BUDGET = BigInt(process.env.TRANSACTION_GAS_BUDGET ?? "1000000000");
@@ -67,6 +72,14 @@ const NETWORK = "testnet";
 const CHAIN_ID = "4c78adac";
 const DEPLOYMENT = "predict-testnet-7-29";
 const DEPLOYER = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
+const DEPLOYED_ACCOUNT = "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c203";
+const DEPLOYED_ACCOUNT_REGISTRY =
+    "0x21a7ed28397363b5550853c1f08795731257de81028cd1bf87f20c0752c8ca2f";
+const DEPLOYED_ACCOUNT_ADMIN_CAP =
+    "0xb60110c92b80b64433b627bc141e68f5bbe1a404b06bcadd02b4073e98a3a6ae";
+const DEPLOYED_PREDICT = "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb";
+const DEPLOYED_PROPBOOK = "0xed1295ff3c9a9415766afff20a74cdf2e362647be09aaf13b809302c0109e912";
+const DEPLOYED_FIXED_MATH = "0xdf0bd2a0d201562f2bdecb1b77d7998c7af316f6fd7d1eab9b9035064f21bfd4";
 const LIFECYCLE_CAP_RECIPIENT =
     "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82";
 const SUI_VERSION = /^sui 1\.74\.1(?:-|$)/;
@@ -76,6 +89,79 @@ const ACCUMULATOR_ROOT_ID = "0x0000000000000000000000000000000000000000000000000
 
 const PACKAGES = ["fixed_math", "account", "propbook", "predict"] as const;
 type PackageName = (typeof PACKAGES)[number];
+
+export interface DeploymentMode {
+    execute: boolean;
+    sessions: boolean;
+    smoke: boolean;
+}
+
+interface SessionsInFlight {
+    kind: "publish" | "transaction";
+    label: string;
+    startedAt: string;
+    digest: string | null;
+}
+
+interface SessionsSmokeState {
+    status: "not_started" | "running" | "complete" | "failed";
+    sessionAddress: string | null;
+    accountWrapperId: string | null;
+    marketId: string | null;
+    orderId: string | null;
+    transactions: Record<string, string>;
+    authorizationTx: string | null;
+    mintTx: string | null;
+    redeemTx: string | null;
+    revokeTx: string | null;
+    returnGasTx: string | null;
+    lastError: string | null;
+}
+
+export interface SessionsDeploymentState {
+    schemaVersion: 1;
+    status:
+        | "pending"
+        | "publishing"
+        | "authorizing"
+        | "verifying"
+        | "partial"
+        | "failed"
+        | "ambiguous"
+        | "complete";
+    network: string;
+    chainId: string;
+    buildEnvironment: string;
+    suiVersion: string | null;
+    sourceCommit: string | null;
+    deployer: string;
+    packageGasBudget: string | null;
+    transactionGasBudget: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    lastError: string | null;
+    inFlight: SessionsInFlight | null;
+    sessions: {
+        packageId: string | null;
+        publishTx: string | null;
+        upgradeCapId: string | null;
+    };
+    authorization: {
+        authorized: boolean;
+        authorizeTx: string | null;
+        verifiedAt: string | null;
+    };
+    transactions: Record<string, string>;
+    verification: {
+        verifiedAt: string;
+        package: ObjectEvidence;
+        upgradeCap: ObjectEvidence;
+        accountRegistry: ObjectEvidence;
+        accountAdminCap: ObjectEvidence;
+        appAuthorized: true;
+    } | null;
+    smoke: SessionsSmokeState;
+}
 
 const LINKED = {
     dusdc: "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a",
@@ -442,7 +528,7 @@ export interface DeploymentResult {
 }
 
 export interface IntegrationManifest {
-    schemaVersion: 3;
+    schemaVersion: 3 | 4;
     deployment: string;
     network: string;
     chainId: string;
@@ -452,6 +538,7 @@ export interface IntegrationManifest {
         account: string;
         propbook: string;
         predict: string;
+        sessions?: string;
     };
     coinTypes: {
         dusdc: string;
@@ -572,6 +659,15 @@ interface ClientSnapshot {
 
 interface Runtime {
     result: DeploymentResult;
+    snapshot: ClientSnapshot;
+    client: SuiGrpcClient;
+    signer: Ed25519Keypair;
+    sourceCommit: string;
+}
+
+interface SessionsRuntime {
+    state: SessionsDeploymentState;
+    manifest: IntegrationManifest;
     snapshot: ClientSnapshot;
     client: SuiGrpcClient;
     signer: Ed25519Keypair;
@@ -815,6 +911,77 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
     return manifest;
 }
 
+export function createSessionsDeploymentState(): SessionsDeploymentState {
+    return {
+        schemaVersion: 1,
+        status: "pending",
+        network: NETWORK,
+        chainId: CHAIN_ID,
+        buildEnvironment: NETWORK,
+        suiVersion: null,
+        sourceCommit: null,
+        deployer: DEPLOYER,
+        packageGasBudget: null,
+        transactionGasBudget: null,
+        startedAt: null,
+        completedAt: null,
+        lastError: null,
+        inFlight: null,
+        sessions: { packageId: null, publishTx: null, upgradeCapId: null },
+        authorization: { authorized: false, authorizeTx: null, verifiedAt: null },
+        transactions: {},
+        verification: null,
+        smoke: {
+            status: "not_started",
+            sessionAddress: null,
+            accountWrapperId: null,
+            marketId: null,
+            orderId: null,
+            transactions: {},
+            authorizationTx: null,
+            mintTx: null,
+            redeemTx: null,
+            revokeTx: null,
+            returnGasTx: null,
+            lastError: null,
+        },
+    };
+}
+
+export function buildSessionsIntegrationManifest(
+    baseValue: unknown,
+    state: SessionsDeploymentState,
+): IntegrationManifest {
+    assertIntegrationManifest(baseValue);
+    if (baseValue.schemaVersion !== 3) {
+        throw new Error("Sessions manifest extension requires the committed schema-3 manifest");
+    }
+    if (
+        state.status !== "complete" ||
+        state.inFlight !== null ||
+        !state.completedAt ||
+        !state.sourceCommit ||
+        !state.sessions.packageId ||
+        !state.sessions.publishTx ||
+        !state.sessions.upgradeCapId ||
+        !state.authorization.authorized ||
+        !state.verification?.appAuthorized
+    ) {
+        throw new Error(
+            "Sessions manifest requires a complete, verified Sessions deployment state",
+        );
+    }
+    const manifest = JSON.parse(JSON.stringify(baseValue)) as IntegrationManifest;
+    manifest.schemaVersion = 4;
+    manifest.sourceCommit = state.sourceCommit;
+    manifest.packages.sessions = requiredObjectId(
+        state.verification.package.objectId,
+        "verified Sessions package",
+    );
+    assertIntegrationManifest(manifest);
+    return manifest;
+}
+
 export function assertIntegrationManifest(value: unknown): asserts value is IntegrationManifest {
     const manifest = asRecord(value);
     exactKeys(
@@ -836,7 +1003,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "integration manifest",
     );
     if (
-        manifest.schemaVersion !== 3 ||
+        (manifest.schemaVersion !== 3 && manifest.schemaVersion !== 4) ||
         manifest.deployment !== DEPLOYMENT ||
         manifest.network !== NETWORK ||
         manifest.chainId !== CHAIN_ID ||
@@ -846,7 +1013,13 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         throw new Error(`${MANIFEST_RELATIVE} has invalid deployment identity`);
     }
     const packages = asRecord(manifest.packages);
-    exactKeys(packages, ["fixedMath", "account", "propbook", "predict"], "packages");
+    exactKeys(
+        packages,
+        manifest.schemaVersion === 4
+            ? ["fixedMath", "account", "propbook", "predict", "sessions"]
+            : ["fixedMath", "account", "propbook", "predict"],
+        "packages",
+    );
     for (const [name, id] of Object.entries(packages)) requiredObjectId(id, `packages.${name}`);
 
     const coinTypes = asRecord(manifest.coinTypes);
@@ -1256,6 +1429,52 @@ function writeIntegrationManifest(manifest: IntegrationManifest): void {
     renameSync(MANIFEST_TEMP, MANIFEST);
 }
 
+function loadSessionsState(): SessionsDeploymentState {
+    if (!existsSync(SESSIONS_STATE)) return createSessionsDeploymentState();
+    return JSON.parse(readFileSync(SESSIONS_STATE, "utf8")) as SessionsDeploymentState;
+}
+
+function writeSessionsState(state: SessionsDeploymentState): void {
+    writeFileSync(SESSIONS_STATE_TEMP, `${JSON.stringify(state, null, 4)}\n`, { mode: 0o600 });
+    chmodSync(SESSIONS_STATE_TEMP, 0o600);
+    renameSync(SESSIONS_STATE_TEMP, SESSIONS_STATE);
+    chmodSync(SESSIONS_STATE, 0o600);
+}
+
+function assertSessionsState(state: SessionsDeploymentState): void {
+    if (
+        state.schemaVersion !== 1 ||
+        state.network !== NETWORK ||
+        state.chainId !== CHAIN_ID ||
+        state.buildEnvironment !== NETWORK ||
+        normalizeId(state.deployer) !== DEPLOYER
+    ) {
+        throw new Error(`${SESSIONS_STATE_RELATIVE} is not the expected schema-1 Testnet journal`);
+    }
+    if (state.sessions.packageId && !state.sessions.publishTx) {
+        throw new Error("Sessions package checkpoint is missing its publish transaction");
+    }
+    if (state.authorization.authorized && !state.sessions.packageId) {
+        throw new Error("Sessions authorization is recorded without a published package");
+    }
+    if (state.status === "complete" && (!state.verification || !state.authorization.authorized)) {
+        throw new Error("complete Sessions journal is missing verification or authorization");
+    }
+}
+
+export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
+    const unknown = args.filter((arg) => !["--execute", "--sessions", "--smoke"].includes(arg));
+    if (unknown.length > 0) throw new Error(`unknown deployment arguments: ${unknown.join(", ")}`);
+    const mode = {
+        execute: args.includes("--execute"),
+        sessions: args.includes("--sessions"),
+        smoke: args.includes("--smoke"),
+    };
+    if (mode.smoke && !mode.sessions) throw new Error("--smoke requires --sessions");
+    if (mode.smoke && !mode.execute) throw new Error("--smoke requires --execute");
+    return mode;
+}
+
 function normalizeId(id: string): string {
     const hex = id.toLowerCase().replace(/^0x/, "");
     return `0x${hex.padStart(64, "0")}`;
@@ -1400,6 +1619,42 @@ function assertExpectedWorktree(result: DeploymentResult): void {
             `deployment source is dirty outside generated artifacts: ${unexpected.join(", ")}`,
         );
     }
+}
+
+function assertSessionsExpectedWorktree(state?: SessionsDeploymentState): void {
+    const allowed = new Set([
+        SESSIONS_STATE_RELATIVE,
+        `${SESSIONS_STATE_RELATIVE}.tmp`,
+        "packages/sessions/Published.toml",
+        `${MANIFEST_RELATIVE}.tmp`,
+    ]);
+    if (state?.status === "complete" && state.verification) allowed.add(MANIFEST_RELATIVE);
+    const unexpected = changedPaths().filter((path) => !allowed.has(path));
+    if (unexpected.length > 0) {
+        throw new Error(
+            `Sessions deployment source is dirty outside generated artifacts: ${unexpected.join(", ")}`,
+        );
+    }
+}
+
+function committedManifest(): IntegrationManifest {
+    const value = JSON.parse(readFileSync(MANIFEST, "utf8")) as unknown;
+    assertIntegrationManifest(value);
+    const expected = {
+        fixedMath: DEPLOYED_FIXED_MATH,
+        account: DEPLOYED_ACCOUNT,
+        propbook: DEPLOYED_PROPBOOK,
+        predict: DEPLOYED_PREDICT,
+    };
+    if (
+        Object.entries(expected).some(
+            ([name, id]) => value.packages[name as keyof typeof expected] !== id,
+        ) ||
+        value.objects.accountRegistry !== DEPLOYED_ACCOUNT_REGISTRY
+    ) {
+        throw new Error(`${MANIFEST_RELATIVE} does not identify the pinned Testnet deployment`);
+    }
+    return value;
 }
 
 function assertSourceCommit(expectedCommit: string): void {
@@ -1771,7 +2026,11 @@ function call(
     });
 }
 
-async function dryRun(runtime: Runtime, label: string, bytes: Uint8Array): Promise<void> {
+async function dryRun(
+    runtime: Pick<Runtime, "client">,
+    label: string,
+    bytes: Uint8Array,
+): Promise<void> {
     const response = await runtime.client.simulateTransaction({
         transaction: bytes,
         checksEnabled: true,
@@ -1980,7 +2239,11 @@ function plpType(result: DeploymentResult): string {
     return `${packageId(result, "predict")}::plp::PLP`;
 }
 
-async function devInspect(runtime: Runtime, label: string, tx: Transaction): Promise<unknown> {
+async function devInspect(
+    runtime: Pick<Runtime, "client">,
+    label: string,
+    tx: Transaction,
+): Promise<unknown> {
     tx.setSender(DEPLOYER);
     const response = await runtime.client.simulateTransaction({
         transaction: tx,
@@ -2043,6 +2306,12 @@ function parseOptionId(bytes: number[]): string | null {
         throw new Error(`invalid Option<ID> return (${bytes.length} bytes)`);
     }
     return parseAddress(bytes.slice(1));
+}
+
+function parseOptionU64(bytes: number[]): bigint | null {
+    if (bytes[0] === 0 && bytes.length === 1) return null;
+    if (bytes[0] !== 1 || bytes.length !== 9) throw new Error("invalid Option<u64> BCS bytes");
+    return parseU64(bytes.slice(1));
 }
 
 interface BlockScholesStorePair {
@@ -2163,7 +2432,7 @@ async function assertBlockScholesStoreBaseAssets(
 }
 
 async function inspectBool(
-    runtime: Runtime,
+    runtime: Pick<Runtime, "client">,
     label: string,
     moveTarget: string,
     args: (tx: Transaction) => TransactionArgument[],
@@ -2175,7 +2444,7 @@ async function inspectBool(
 }
 
 async function inspectU64(
-    runtime: Runtime,
+    runtime: Pick<Runtime, "client">,
     label: string,
     moveTarget: string,
     args: (tx: Transaction) => TransactionArgument[],
@@ -2186,7 +2455,7 @@ async function inspectU64(
 }
 
 async function objectEvidence(
-    runtime: Runtime,
+    runtime: Pick<Runtime, "client">,
     id: string,
     expectedType: string | "package",
     expectedOwner: "shared" | string | null,
@@ -3474,6 +3743,716 @@ async function verifyDeployment(
     return verification;
 }
 
+function sessionsPublishedPath(): string {
+    return resolve(REPO_ROOT, "packages", "sessions", "Published.toml");
+}
+
+function collectResolvedPackageIds(directory: string): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const path = resolve(directory, entry.name);
+        if (entry.isDirectory()) {
+            for (const id of collectResolvedPackageIds(path)) ids.add(id);
+        } else if (entry.name.endsWith(".json")) {
+            const value = JSON.parse(readFileSync(path, "utf8")) as { module_name?: unknown[] };
+            const id = value.module_name?.[0];
+            if (typeof id === "string") ids.add(normalizeId(id));
+        }
+    }
+    return ids;
+}
+
+function assertResolvedSessionsPackages(manifest: IntegrationManifest): void {
+    command(SUI, [
+        "move",
+        "build",
+        "--path",
+        resolve(REPO_ROOT, "packages", "sessions"),
+        "--build-env",
+        NETWORK,
+        "--warnings-are-errors",
+        "--force",
+    ]);
+    const dependencies = resolve(
+        REPO_ROOT,
+        "packages",
+        "sessions",
+        "build",
+        "deepbook_sessions",
+        "debug_info",
+        "dependencies",
+    );
+    const resolved = collectResolvedPackageIds(dependencies);
+    const allowed = new Set([
+        normalizeId("0x1"),
+        normalizeId("0x2"),
+        manifest.packages.fixedMath,
+        manifest.packages.account,
+        manifest.packages.propbook,
+        manifest.packages.predict,
+        ...Object.values(LINKED),
+    ]);
+    for (const id of resolved) {
+        if (!allowed.has(id)) throw new Error(`Sessions resolves unexpected package ${id}`);
+    }
+    if (!resolved.has(manifest.packages.account) || !resolved.has(manifest.packages.predict)) {
+        throw new Error("Sessions does not resolve the committed account and Predict packages");
+    }
+}
+
+function packageMetadata(
+    snapshot: ClientSnapshot,
+    packageId: string,
+): { modules: string[]; dependencies: string[] } {
+    const raw = JSON.parse(suiClient(snapshot, ["object", packageId, "--json"])) as unknown;
+    const root = asRecord(raw);
+    const data = asRecord(root.data ?? root);
+    const content = asRecord(data.content ?? data);
+    const disassembled = asRecord(content.disassembled ?? content.moduleMap ?? content.modules);
+    const linkage = asRecord(content.linkageTable ?? content.linkage_table);
+    const dependencies = Object.values(linkage)
+        .map((value) => {
+            const record = asRecord(value);
+            return normalizeOptionalId(
+                record.upgradedId ?? record.upgraded_id ?? record.originalId ?? record.original_id,
+            );
+        })
+        .filter((id): id is string => id !== null);
+    return { modules: Object.keys(disassembled).sort(), dependencies: [...new Set(dependencies)] };
+}
+
+async function assertSessionsSdkTarget(runtime: SessionsRuntime): Promise<void> {
+    assertSourceCommit(runtime.sourceCommit);
+    assertSessionsExpectedWorktree(runtime.state);
+    const chainId = await shortChainId(runtime.client);
+    if (chainId !== CHAIN_ID) {
+        throw new Error(`RPC ${runtime.snapshot.rpcUrl} is chain ${chainId}, expected ${CHAIN_ID}`);
+    }
+    if (normalizeId(runtime.signer.getPublicKey().toSuiAddress()) !== DEPLOYER) {
+        throw new Error("Sessions deployment signer changed during the run");
+    }
+}
+
+async function executeSessionsTransaction(
+    runtime: SessionsRuntime,
+    label: string,
+    tx: Transaction,
+    signer = runtime.signer,
+    gasBudget = TRANSACTION_GAS_BUDGET,
+): Promise<Receipt> {
+    if (runtime.state.inFlight) {
+        throw new Error(`cannot start ${label}; ${runtime.state.inFlight.label} is in flight`);
+    }
+    await assertSessionsSdkTarget(runtime);
+    const sender = normalizeId(signer.getPublicKey().toSuiAddress());
+    tx.setSender(sender);
+    tx.setGasBudget(gasBudget);
+    const bytes = await tx.build({ client: runtime.client });
+    await dryRun(runtime, label, bytes);
+    const digest = TransactionDataBuilder.getDigestFromBytes(bytes);
+    runtime.state.inFlight = {
+        kind: "transaction",
+        label,
+        startedAt: new Date().toISOString(),
+        digest,
+    };
+    writeSessionsState(runtime.state);
+    let receipt: Receipt;
+    try {
+        const { signature } = await signer.signTransaction(bytes);
+        receipt = coreReceipt(
+            await runtime.client.executeTransaction({
+                transaction: bytes,
+                signatures: [signature],
+                include: { effects: true, events: true, objectTypes: true },
+            }),
+        );
+    } catch (submitError) {
+        try {
+            receipt = await settledReceipt(runtime.client, digest, 8);
+        } catch {
+            throw new Error(
+                `${label} submission is ambiguous at ${digest}: ${String(submitError)}`,
+            );
+        }
+    }
+    if (receipt.digest !== digest) {
+        throw new Error(`${label} returned digest ${receipt.digest}, expected ${digest}`);
+    }
+    const failure = effectsError(receipt.effects);
+    if (failure) throw new Error(`${label} failed at ${digest}: ${failure}`);
+    receipt = await settledReceipt(runtime.client, digest);
+    runtime.state.transactions[label] = digest;
+    if (label.startsWith("smoke_")) runtime.state.smoke.transactions[label] = digest;
+    runtime.state.inFlight = null;
+    writeSessionsState(runtime.state);
+    return receipt;
+}
+
+function recordSessionsPublish(state: SessionsDeploymentState, receipt: Receipt): void {
+    const packageId = normalizeOptionalId(
+        (receipt.objectChanges ?? []).find((change) => change.type === "published")?.packageId,
+    );
+    const upgradeCapId = normalizeOptionalId(
+        (receipt.objectChanges ?? []).find(
+            (change) =>
+                change.type === "created" &&
+                change.objectType?.endsWith("::package::UpgradeCap") &&
+                addressOwner(change.owner) === DEPLOYER,
+        )?.objectId,
+    );
+    if (!packageId || !upgradeCapId || !receipt.digest) {
+        throw new Error(
+            "Sessions publish receipt is missing package, digest, or deployer UpgradeCap",
+        );
+    }
+    state.sessions = { packageId, publishTx: receipt.digest, upgradeCapId };
+}
+
+function assertSessionsPackageMetadata(runtime: SessionsRuntime): void {
+    const packageId = requiredObjectId(runtime.state.sessions.packageId, "Sessions package");
+    const metadata = packageMetadata(runtime.snapshot, packageId);
+    if (JSON.stringify(metadata.modules) !== JSON.stringify(["sessions"])) {
+        throw new Error(
+            `Sessions package modules are ${metadata.modules.join(", ")}, expected sessions`,
+        );
+    }
+    const allowed = new Set([
+        normalizeId("0x1"),
+        normalizeId("0x2"),
+        runtime.manifest.packages.fixedMath,
+        runtime.manifest.packages.account,
+        runtime.manifest.packages.propbook,
+        runtime.manifest.packages.predict,
+        ...Object.values(LINKED),
+    ]);
+    for (const id of metadata.dependencies) {
+        if (!allowed.has(id)) throw new Error(`published Sessions links unexpected package ${id}`);
+    }
+    if (
+        !metadata.dependencies.includes(runtime.manifest.packages.account) ||
+        !metadata.dependencies.includes(runtime.manifest.packages.predict)
+    ) {
+        throw new Error("published Sessions does not link the pinned account and Predict packages");
+    }
+}
+
+async function publishSessions(runtime: SessionsRuntime): Promise<void> {
+    const state = runtime.state;
+    if (state.inFlight) throw new Error(`${state.inFlight.label} is in flight`);
+    state.inFlight = {
+        kind: "publish",
+        label: "publish_sessions",
+        startedAt: new Date().toISOString(),
+        digest: null,
+    };
+    writeSessionsState(state);
+    const output = suiClient(runtime.snapshot, [
+        "publish",
+        resolve(REPO_ROOT, "packages", "sessions"),
+        "--build-env",
+        NETWORK,
+        "--warnings-are-errors",
+        "--force",
+        "--sender",
+        DEPLOYER,
+        "--skip-dependency-verification",
+        "--gas-budget",
+        PACKAGE_GAS_BUDGET,
+        "--json",
+    ]);
+    const receipt = JSON.parse(output) as Receipt;
+    const failure = effectsError(receipt.effects);
+    if (failure || !receipt.digest) throw new Error(`publish Sessions failed: ${failure}`);
+    state.inFlight.digest = receipt.digest;
+    writeSessionsState(state);
+    recordSessionsPublish(state, receipt);
+    assertPublishedIdentity(sessionsPublishedPath(), state.sessions.packageId!, "Sessions");
+    assertSessionsPackageMetadata(runtime);
+    await objectEvidence(runtime, state.sessions.packageId!, "package", null);
+    await objectEvidence(runtime, state.sessions.upgradeCapId!, "package::UpgradeCap", DEPLOYER);
+    state.inFlight = null;
+    writeSessionsState(state);
+}
+
+async function reconcileSessionsInFlight(runtime: SessionsRuntime): Promise<void> {
+    const inFlight = runtime.state.inFlight;
+    if (!inFlight) return;
+    if (!inFlight.digest) {
+        throw new Error(
+            `${inFlight.label} has no known digest. Fail closed: reconcile deployer history and Sessions Published.toml before retrying`,
+        );
+    }
+    let receipt: Receipt;
+    try {
+        receipt = await settledReceipt(runtime.client, inFlight.digest, 4);
+    } catch {
+        throw new Error(
+            `${inFlight.label}/${inFlight.digest} is not visible on Testnet. Fail closed; do not retry`,
+        );
+    }
+    const failure = effectsError(receipt.effects);
+    if (failure) throw new Error(`${inFlight.label}/${inFlight.digest} failed: ${failure}`);
+    if (inFlight.kind === "publish") {
+        recordSessionsPublish(runtime.state, receipt);
+        assertPublishedIdentity(
+            sessionsPublishedPath(),
+            runtime.state.sessions.packageId!,
+            "Sessions",
+        );
+        assertSessionsPackageMetadata(runtime);
+    } else {
+        runtime.state.transactions[inFlight.label] = inFlight.digest;
+        if (inFlight.label.startsWith("smoke_")) {
+            runtime.state.smoke.transactions[inFlight.label] = inFlight.digest;
+        }
+    }
+    runtime.state.inFlight = null;
+    writeSessionsState(runtime.state);
+}
+
+async function verifySessionsBase(runtime: SessionsRuntime): Promise<void> {
+    for (const id of new Set([
+        DEPLOYED_FIXED_MATH,
+        DEPLOYED_ACCOUNT,
+        DEPLOYED_PROPBOOK,
+        DEPLOYED_PREDICT,
+        ...Object.values(LINKED),
+    ])) {
+        await objectEvidence(runtime, id, "package", null);
+    }
+    await objectEvidence(
+        runtime,
+        DEPLOYED_ACCOUNT_REGISTRY,
+        `${DEPLOYED_ACCOUNT}::account_registry::AccountRegistry`,
+        "shared",
+    );
+    await objectEvidence(
+        runtime,
+        DEPLOYED_ACCOUNT_ADMIN_CAP,
+        `${DEPLOYED_ACCOUNT}::account_registry::AccountAdminCap`,
+        DEPLOYER,
+    );
+    const balance = await runtime.client.getBalance({ owner: DEPLOYER });
+    const available = BigInt(balance.balance.balance);
+    const required = BigInt(PACKAGE_GAS_BUDGET) + TRANSACTION_GAS_BUDGET;
+    if (available < required) {
+        throw new Error(
+            `insufficient deployer SUI gas: have ${available}, need at least ${required}`,
+        );
+    }
+}
+
+async function sessionsAppAuthorized(runtime: SessionsRuntime): Promise<boolean> {
+    return inspectBool(
+        runtime,
+        "is_sessions_app_authorized",
+        `${DEPLOYED_ACCOUNT}::account_registry::is_app_authorized`,
+        (tx) => [tx.object(DEPLOYED_ACCOUNT_REGISTRY)],
+        [
+            `${requiredObjectId(runtime.state.sessions.packageId, "Sessions package")}::sessions::SessionsApp`,
+        ],
+    );
+}
+
+async function ensureSessionsAuthorized(runtime: SessionsRuntime): Promise<void> {
+    if (!(await sessionsAppAuthorized(runtime))) {
+        const tx = new Transaction();
+        call(
+            tx,
+            `${DEPLOYED_ACCOUNT}::account_registry::authorize_app`,
+            [tx.object(DEPLOYED_ACCOUNT_REGISTRY), tx.object(DEPLOYED_ACCOUNT_ADMIN_CAP)],
+            [`${runtime.state.sessions.packageId}::sessions::SessionsApp`],
+        );
+        const receipt = await executeSessionsTransaction(runtime, "authorize_sessions_app", tx);
+        runtime.state.authorization.authorizeTx = receipt.digest ?? null;
+    }
+    if (!(await sessionsAppAuthorized(runtime))) {
+        throw new Error("SessionsApp authorization did not read back true");
+    }
+    await objectEvidence(
+        runtime,
+        DEPLOYED_ACCOUNT_REGISTRY,
+        "account_registry::AccountRegistry",
+        "shared",
+    );
+    await objectEvidence(
+        runtime,
+        DEPLOYED_ACCOUNT_ADMIN_CAP,
+        "account_registry::AccountAdminCap",
+        DEPLOYER,
+    );
+    runtime.state.authorization = {
+        authorized: true,
+        authorizeTx:
+            runtime.state.authorization.authorizeTx ??
+            runtime.state.transactions.authorize_sessions_app ??
+            null,
+        verifiedAt: new Date().toISOString(),
+    };
+    writeSessionsState(runtime.state);
+}
+
+async function verifySessionsDeployment(runtime: SessionsRuntime): Promise<void> {
+    const packageEvidence = await objectEvidence(
+        runtime,
+        requiredObjectId(runtime.state.sessions.packageId, "Sessions package"),
+        "package",
+        null,
+    );
+    if (packageEvidence.previousTransaction !== runtime.state.sessions.publishTx) {
+        throw new Error("Sessions package provenance does not match its publish transaction");
+    }
+    assertSessionsPackageMetadata(runtime);
+    const upgradeCap = await objectEvidence(
+        runtime,
+        requiredObjectId(runtime.state.sessions.upgradeCapId, "Sessions UpgradeCap"),
+        "package::UpgradeCap",
+        DEPLOYER,
+    );
+    const accountRegistry = await objectEvidence(
+        runtime,
+        DEPLOYED_ACCOUNT_REGISTRY,
+        `${DEPLOYED_ACCOUNT}::account_registry::AccountRegistry`,
+        "shared",
+    );
+    const accountAdminCap = await objectEvidence(
+        runtime,
+        DEPLOYED_ACCOUNT_ADMIN_CAP,
+        `${DEPLOYED_ACCOUNT}::account_registry::AccountAdminCap`,
+        DEPLOYER,
+    );
+    if (!(await sessionsAppAuthorized(runtime))) throw new Error("SessionsApp is not authorized");
+    runtime.state.verification = {
+        verifiedAt: new Date().toISOString(),
+        package: packageEvidence,
+        upgradeCap,
+        accountRegistry,
+        accountAdminCap,
+        appAuthorized: true,
+    };
+}
+
+const SMOKE_SESSION_DURATION_MS = 5n * 60n * 1_000n;
+const SMOKE_SESSION_GAS = 200_000_000n;
+const SMOKE_TRANSACTION_GAS_BUDGET = 50_000_000n;
+const SMOKE_PREMIUM_BUDGET = 2_000_000n;
+const SMOKE_ACCOUNT_BUFFER = 1_000_000n;
+const SMOKE_MIN_QUANTITY = 10_000n;
+const POS_INF_TICK = (1n << 30n) - 1n;
+const U64_MAX = (1n << 64n) - 1n;
+
+async function sessionsAccountWrapper(runtime: SessionsRuntime): Promise<string> {
+    const exists = await inspectBool(
+        runtime,
+        "sessions_smoke_wrapper_exists",
+        `${DEPLOYED_ACCOUNT}::account_registry::derived_wrapper_exists`,
+        (tx) => [tx.object(DEPLOYED_ACCOUNT_REGISTRY), tx.pure.address(DEPLOYER)],
+    );
+    if (!exists)
+        throw new Error("deployer has no derived AccountWrapper for the committed registry");
+    const tx = new Transaction();
+    call(tx, `${DEPLOYED_ACCOUNT}::account_registry::derived_wrapper_address`, [
+        tx.object(DEPLOYED_ACCOUNT_REGISTRY),
+        tx.pure.address(DEPLOYER),
+    ]);
+    return parseAddress(returnBytes(await devInspect(runtime, "sessions_smoke_wrapper", tx)));
+}
+
+async function sessionsAccountDusdcBalance(
+    runtime: SessionsRuntime,
+    wrapperId: string,
+): Promise<bigint> {
+    const tx = new Transaction();
+    const account = call(tx, `${DEPLOYED_ACCOUNT}::account::load_account`, [tx.object(wrapperId)]);
+    call(
+        tx,
+        `${DEPLOYED_ACCOUNT}::account::balance`,
+        [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
+        [dusdcType()],
+    );
+    return parseU64(returnBytes(await devInspect(runtime, "sessions_smoke_dusdc_balance", tx), 1));
+}
+
+interface SmokeMarket {
+    id: string;
+    referenceTick: bigint;
+    quantity: bigint;
+    allInCost: bigint;
+}
+
+async function discoverSmokeMarket(runtime: SessionsRuntime): Promise<SmokeMarket> {
+    const manifest = runtime.manifest;
+    const tx = new Transaction();
+    call(tx, `${DEPLOYED_PREDICT}::plp::active_expiry_markets`, [
+        tx.object(manifest.objects.poolVault),
+    ]);
+    const ids = parseIdVector(returnBytes(await devInspect(runtime, "sessions_smoke_markets", tx)));
+    const now = await inspectU64(
+        runtime,
+        "sessions_smoke_clock",
+        "0x2::clock::timestamp_ms",
+        (read) => [read.object(CLOCK_ID)],
+    );
+    for (const id of ids) {
+        const stateTx = new Transaction();
+        call(stateTx, `${DEPLOYED_PREDICT}::expiry_market::propbook_underlying_id`, [
+            stateTx.object(id),
+        ]);
+        call(stateTx, `${DEPLOYED_PREDICT}::expiry_market::expiry`, [stateTx.object(id)]);
+        call(stateTx, `${DEPLOYED_PREDICT}::expiry_market::mint_paused`, [stateTx.object(id)]);
+        call(stateTx, `${DEPLOYED_PREDICT}::expiry_market::reference_tick`, [stateTx.object(id)]);
+        const response = await devInspect(runtime, `sessions_smoke_market_${id}`, stateTx);
+        const underlying = parseU32(returnBytes(response, 0));
+        const expiry = parseU64(returnBytes(response, 1));
+        const paused = parseBool(returnBytes(response, 2));
+        const referenceTick = parseOptionU64(returnBytes(response, 3));
+        if (
+            underlying !== ASSET.propbookUnderlyingId ||
+            expiry <= now ||
+            paused ||
+            referenceTick === null
+        ) {
+            continue;
+        }
+        try {
+            const quoteTx = new Transaction();
+            const pricer = call(quoteTx, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
+                quoteTx.object(id),
+                quoteTx.object(manifest.objects.protocolConfig),
+                quoteTx.object(manifest.objects.oracleRegistry),
+                quoteTx.object(manifest.underlyings.BTC.pythFeed),
+                quoteTx.object(manifest.underlyings.BTC.blockScholesValueStore),
+                quoteTx.object(manifest.underlyings.BTC.blockScholesSviStore),
+                quoteTx.object(CLOCK_ID),
+            ]);
+            const quote = call(quoteTx, `${DEPLOYED_PREDICT}::expiry_market::quote_mint`, [
+                quoteTx.object(id),
+                quoteTx.object(manifest.objects.protocolConfig),
+                pricer,
+                quoteTx.pure.u64(referenceTick),
+                quoteTx.pure.u64(POS_INF_TICK),
+                quoteTx.pure.u64(SMOKE_PREMIUM_BUDGET),
+                quoteTx.pure.u64(SMOKE_MIN_QUANTITY),
+                quoteTx.pure.bool(false),
+                quoteTx.pure.u64(1_000_000_000n),
+                quoteTx.object(CLOCK_ID),
+            ]);
+            call(quoteTx, `${DEPLOYED_PREDICT}::expiry_market::quantity`, [quote]);
+            call(quoteTx, `${DEPLOYED_PREDICT}::expiry_market::all_in_cost`, [quote]);
+            const quoteResponse = await devInspect(runtime, `sessions_smoke_quote_${id}`, quoteTx);
+            return {
+                id,
+                referenceTick,
+                quantity: parseU64(returnBytes(quoteResponse, 2)),
+                allInCost: parseU64(returnBytes(quoteResponse, 3)),
+            };
+        } catch {
+            continue;
+        }
+    }
+    throw new Error("no unpaused future BTC market with a reference tick and fresh live oracles");
+}
+
+function orderIdFromEvent(receipt: Receipt, eventName: string): string {
+    const event = eventNamed(receipt, eventName);
+    if (!event) throw new Error(`${receipt.digest} did not emit ${eventName}`);
+    const fields = asRecord(event.parsedJson);
+    const raw = fields.order_id ?? fields.closed_order_id;
+    const value = typeof raw === "string" || typeof raw === "number" ? String(raw) : "";
+    if (!/^[0-9]+$/.test(value)) throw new Error(`${eventName} has no order ID`);
+    return value;
+}
+
+async function revokeSmokeSession(
+    runtime: SessionsRuntime,
+    wrapperId: string,
+    sessionAddress: string,
+): Promise<void> {
+    const tx = new Transaction();
+    call(tx, `${runtime.state.sessions.packageId}::sessions::revoke_session`, [
+        tx.object(wrapperId),
+        tx.pure.address(sessionAddress),
+    ]);
+    const receipt = await executeSessionsTransaction(runtime, "smoke_revoke_session", tx);
+    runtime.state.smoke.revokeTx = receipt.digest ?? null;
+    writeSessionsState(runtime.state);
+}
+
+async function runSessionsSmoke(runtime: SessionsRuntime): Promise<void> {
+    const state = runtime.state;
+    const wrapperId = await sessionsAccountWrapper(runtime);
+    if (state.smoke.sessionAddress && !state.smoke.revokeTx) {
+        await revokeSmokeSession(runtime, wrapperId, state.smoke.sessionAddress);
+    }
+    const market = await discoverSmokeMarket(runtime);
+    const sessionSigner = Ed25519Keypair.generate();
+    const sessionAddress = normalizeId(sessionSigner.getPublicKey().toSuiAddress());
+    state.smoke = {
+        ...createSessionsDeploymentState().smoke,
+        status: "running",
+        sessionAddress,
+        accountWrapperId: wrapperId,
+        marketId: market.id,
+    };
+    writeSessionsState(state);
+
+    let authorized = false;
+    let coreError: unknown;
+    try {
+        const balance = await sessionsAccountDusdcBalance(runtime, wrapperId);
+        const targetBalance = market.allInCost + SMOKE_ACCOUNT_BUFFER;
+        const authorize = new Transaction();
+        if (balance < targetBalance) {
+            const payment = coinWithBalance({
+                type: dusdcType(),
+                balance: targetBalance - balance,
+                useGasCoin: false,
+            })(authorize);
+            const auth = call(authorize, `${DEPLOYED_ACCOUNT}::account::generate_auth`, []);
+            call(
+                authorize,
+                `${DEPLOYED_ACCOUNT}::account::deposit_funds`,
+                [
+                    authorize.object(wrapperId),
+                    auth,
+                    payment,
+                    authorize.object(ACCUMULATOR_ROOT_ID),
+                    authorize.object(CLOCK_ID),
+                ],
+                [dusdcType()],
+            );
+        }
+        const [sessionGas] = authorize.splitCoins(authorize.gas, [
+            authorize.pure.u64(SMOKE_SESSION_GAS),
+        ]);
+        authorize.transferObjects([sessionGas], authorize.pure.address(sessionAddress));
+        call(authorize, `${state.sessions.packageId}::sessions::authorize_session`, [
+            authorize.object(wrapperId),
+            authorize.pure.address(sessionAddress),
+            authorize.pure.u64(SMOKE_SESSION_DURATION_MS),
+            authorize.object(CLOCK_ID),
+        ]);
+        const authorizeReceipt = await executeSessionsTransaction(
+            runtime,
+            "smoke_authorize_session",
+            authorize,
+        );
+        state.smoke.authorizationTx = authorizeReceipt.digest ?? null;
+        authorized = true;
+        writeSessionsState(state);
+
+        const manifest = runtime.manifest;
+        const mint = new Transaction();
+        const pricer = call(mint, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
+            mint.object(market.id),
+            mint.object(manifest.objects.protocolConfig),
+            mint.object(manifest.objects.oracleRegistry),
+            mint.object(manifest.underlyings.BTC.pythFeed),
+            mint.object(manifest.underlyings.BTC.blockScholesValueStore),
+            mint.object(manifest.underlyings.BTC.blockScholesSviStore),
+            mint.object(CLOCK_ID),
+        ]);
+        call(mint, `${state.sessions.packageId}::sessions::mint_exact_quantity`, [
+            mint.object(market.id),
+            mint.object(DEPLOYED_ACCOUNT_REGISTRY),
+            mint.object(wrapperId),
+            mint.object(manifest.objects.protocolConfig),
+            pricer,
+            mint.pure.u64(market.referenceTick),
+            mint.pure.u64(POS_INF_TICK),
+            mint.pure.u64(market.quantity),
+            mint.pure.u64(1_000_000_000n),
+            mint.pure.u64(U64_MAX),
+            mint.pure.u64(U64_MAX),
+            mint.object(ACCUMULATOR_ROOT_ID),
+            mint.object(CLOCK_ID),
+        ]);
+        const mintReceipt = await executeSessionsTransaction(
+            runtime,
+            "smoke_sessions_mint",
+            mint,
+            sessionSigner,
+            SMOKE_TRANSACTION_GAS_BUDGET,
+        );
+        const orderId = orderIdFromEvent(mintReceipt, "OrderMinted");
+        state.smoke.orderId = orderId;
+        state.smoke.mintTx = mintReceipt.digest ?? null;
+        writeSessionsState(state);
+
+        const redeem = new Transaction();
+        const redeemPricer = call(redeem, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
+            redeem.object(market.id),
+            redeem.object(manifest.objects.protocolConfig),
+            redeem.object(manifest.objects.oracleRegistry),
+            redeem.object(manifest.underlyings.BTC.pythFeed),
+            redeem.object(manifest.underlyings.BTC.blockScholesValueStore),
+            redeem.object(manifest.underlyings.BTC.blockScholesSviStore),
+            redeem.object(CLOCK_ID),
+        ]);
+        call(redeem, `${state.sessions.packageId}::sessions::redeem_live`, [
+            redeem.object(market.id),
+            redeem.object(DEPLOYED_ACCOUNT_REGISTRY),
+            redeem.object(wrapperId),
+            redeem.object(manifest.objects.protocolConfig),
+            redeemPricer,
+            redeem.pure.u256(BigInt(orderId)),
+            redeem.pure.u64(market.quantity),
+            redeem.pure.u64(0n),
+            redeem.pure.u64(0n),
+            redeem.object(ACCUMULATOR_ROOT_ID),
+            redeem.object(CLOCK_ID),
+        ]);
+        const redeemReceipt = await executeSessionsTransaction(
+            runtime,
+            "smoke_sessions_redeem",
+            redeem,
+            sessionSigner,
+            SMOKE_TRANSACTION_GAS_BUDGET,
+        );
+        if (orderIdFromEvent(redeemReceipt, "LiveOrderRedeemed") !== orderId) {
+            throw new Error("LiveOrderRedeemed order ID does not match OrderMinted");
+        }
+        state.smoke.redeemTx = redeemReceipt.digest ?? null;
+        state.smoke.status = "complete";
+        writeSessionsState(state);
+    } catch (error) {
+        coreError = error;
+        state.smoke.status = "failed";
+        state.smoke.lastError = error instanceof Error ? error.message : String(error);
+        writeSessionsState(state);
+    } finally {
+        if (authorized) {
+            try {
+                const returnGas = new Transaction();
+                returnGas.transferObjects([returnGas.gas], returnGas.pure.address(DEPLOYER));
+                const receipt = await executeSessionsTransaction(
+                    runtime,
+                    "smoke_return_session_gas",
+                    returnGas,
+                    sessionSigner,
+                    20_000_000n,
+                );
+                state.smoke.returnGasTx = receipt.digest ?? null;
+            } catch (error) {
+                if (!coreError) coreError = error;
+            }
+            try {
+                await revokeSmokeSession(runtime, wrapperId, sessionAddress);
+            } catch (error) {
+                if (!coreError) coreError = error;
+            }
+        }
+        writeSessionsState(state);
+    }
+    if (coreError) {
+        state.smoke.status = "failed";
+        state.smoke.lastError = coreError instanceof Error ? coreError.message : String(coreError);
+        writeSessionsState(state);
+        throw coreError;
+    }
+}
+
 async function assertFunding(runtime: Runtime): Promise<void> {
     const totalSupply =
         runtime.result.packages.predict && runtime.result.sharedObjects.predict
@@ -3493,6 +4472,138 @@ async function assertFunding(runtime: Runtime): Promise<void> {
         throw new Error(
             `insufficient deployer DUSDC: have ${available}, need ${required} (short ${required - available})`,
         );
+    }
+}
+
+async function runSessions(execute: boolean, smoke: boolean): Promise<void> {
+    if (!/^[1-9][0-9]*$/.test(PACKAGE_GAS_BUDGET) || TRANSACTION_GAS_BUDGET <= 0n) {
+        throw new Error("gas budgets must be positive integers");
+    }
+    const state = loadSessionsState();
+    assertSessionsState(state);
+    assertSessionsExpectedWorktree(state);
+    const manifest = committedManifest();
+    if (
+        manifest.schemaVersion === 4 &&
+        (!state.sessions.packageId || manifest.packages.sessions !== state.sessions.packageId)
+    ) {
+        throw new Error("schema-4 manifest does not match the Sessions operator journal");
+    }
+    if (!state.sessions.packageId && existsSync(sessionsPublishedPath())) {
+        throw new Error(
+            "Sessions Published.toml exists without a journal checkpoint; reconcile it before continuing",
+        );
+    }
+    const sourceCommit = git(["rev-parse", "HEAD"]);
+    if (state.sourceCommit && state.sourceCommit !== sourceCommit) {
+        throw new Error(
+            `Sessions deployment started from ${state.sourceCommit}, HEAD is ${sourceCommit}`,
+        );
+    }
+    const suiVersion = sui(["--version"]);
+    if (!SUI_VERSION.test(suiVersion))
+        throw new Error(`Sui CLI must be 1.74.1, got '${suiVersion}'`);
+    if (state.suiVersion && state.suiVersion !== suiVersion) {
+        throw new Error(`Sessions journal Sui version ${state.suiVersion} != ${suiVersion}`);
+    }
+    if (state.packageGasBudget && state.packageGasBudget !== PACKAGE_GAS_BUDGET) {
+        throw new Error("Sessions package gas budget changed during resume");
+    }
+    if (
+        state.transactionGasBudget &&
+        state.transactionGasBudget !== TRANSACTION_GAS_BUDGET.toString()
+    ) {
+        throw new Error("Sessions transaction gas budget changed during resume");
+    }
+
+    const snapshot = snapshotClientConfig();
+    try {
+        assertCliTarget(snapshot);
+        const runtime: SessionsRuntime = {
+            state,
+            manifest,
+            snapshot,
+            client: new SuiGrpcClient({ baseUrl: snapshot.rpcUrl, network: NETWORK }),
+            signer: getSigner(snapshot.keystorePath),
+            sourceCommit,
+        };
+        await assertSessionsSdkTarget(runtime);
+        if (state.inFlight) await reconcileSessionsInFlight(runtime);
+        console.log("[deploy:sessions] compiling Sessions and proving the pinned dependency graph");
+        assertResolvedSessionsPackages(manifest);
+        assertSessionsExpectedWorktree(state);
+        await verifySessionsBase(runtime);
+        console.log(`[deploy:sessions] network: ${NETWORK} (${CHAIN_ID})`);
+        console.log(`[deploy:sessions] deployer: ${DEPLOYER}`);
+        console.log(`[deploy:sessions] source: ${sourceCommit}`);
+        console.log(`[deploy:sessions] Sui CLI: ${suiVersion}`);
+        console.log("[deploy:sessions] package plan: sessions only");
+        console.log(`[deploy:sessions] UpgradeCap owner: ${DEPLOYER}`);
+        if (!execute) {
+            console.log(
+                "[deploy:sessions] preflight complete; no transactions submitted (pass --sessions --execute)",
+            );
+            return;
+        }
+
+        state.suiVersion = suiVersion;
+        state.sourceCommit ??= sourceCommit;
+        state.packageGasBudget = PACKAGE_GAS_BUDGET;
+        state.transactionGasBudget = TRANSACTION_GAS_BUDGET.toString();
+        state.startedAt ??= new Date().toISOString();
+        state.lastError = null;
+        writeSessionsState(state);
+        try {
+            if (state.sessions.packageId) {
+                assertPublishedIdentity(
+                    sessionsPublishedPath(),
+                    state.sessions.packageId,
+                    "Sessions",
+                );
+                assertSessionsPackageMetadata(runtime);
+                await objectEvidence(runtime, state.sessions.packageId, "package", null);
+                await objectEvidence(
+                    runtime,
+                    requiredObjectId(state.sessions.upgradeCapId, "Sessions UpgradeCap"),
+                    "package::UpgradeCap",
+                    DEPLOYER,
+                );
+            } else {
+                state.status = "publishing";
+                writeSessionsState(state);
+                await publishSessions(runtime);
+            }
+            state.status = "authorizing";
+            writeSessionsState(state);
+            await ensureSessionsAuthorized(runtime);
+            state.status = "verifying";
+            writeSessionsState(state);
+            await verifySessionsDeployment(runtime);
+            state.status = "complete";
+            state.completedAt ??= new Date().toISOString();
+            state.lastError = null;
+            writeSessionsState(state);
+            if (manifest.schemaVersion === 3) {
+                runtime.manifest = buildSessionsIntegrationManifest(manifest, state);
+                writeIntegrationManifest(runtime.manifest);
+            }
+            if (smoke) await runSessionsSmoke(runtime);
+            console.log(`[deploy:sessions] complete state: ${SESSIONS_STATE}`);
+            console.log(`[deploy:sessions] integration manifest: ${MANIFEST}`);
+        } catch (error) {
+            if (state.status !== "complete") {
+                state.status = state.inFlight
+                    ? "ambiguous"
+                    : state.sessions.packageId || Object.keys(state.transactions).length > 0
+                      ? "partial"
+                      : "failed";
+            }
+            state.lastError = error instanceof Error ? error.message : String(error);
+            writeSessionsState(state);
+            throw error;
+        }
+    } finally {
+        rmSync(snapshot.directory, { recursive: true, force: true });
     }
 }
 
@@ -3610,14 +4721,11 @@ async function run(execute: boolean): Promise<void> {
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
-    const execute = args.includes("--execute");
-    const unknownArgs = args.filter((arg) => arg !== "--execute");
-    if (unknownArgs.length > 0) {
-        throw new Error(`unknown deployment arguments: ${unknownArgs.join(", ")}`);
-    }
+    const mode = parseDeploymentArgs(args);
     const lock = acquireLock();
     try {
-        await run(execute);
+        if (mode.sessions) await runSessions(mode.execute, mode.smoke);
+        else await run(mode.execute);
     } finally {
         releaseLock(lock);
     }
