@@ -228,7 +228,11 @@ fun confidence_fee_loading_uses_both_finite_range_boundaries() {
 fun confidence_fee_reference_stays_live_at_short_high_variance_boundary() {
     // One millisecond remaining maximizes the 8-hour extrapolation. The largest
     // accepted SVI input ensures the rounded normalizer cannot halt pricing.
-    flat_atm_confidence_fee_loading(1, test_constants::pricing_max_svi_input());
+    // Sensitivity is at most 1.0 and the normalizer is floored at one raw unit,
+    // so loading is bounded by 1e18 in the protocol's 1e9 scale.
+    let loading = flat_atm_confidence_fee_loading(1, test_constants::pricing_max_svi_input());
+    assert!(loading > 0);
+    assert!(loading <= float!() * float!());
 }
 
 /// A retransmission carries the tuple's original model time in a newer envelope. The envelope is

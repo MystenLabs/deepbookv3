@@ -1145,6 +1145,9 @@ fun redeem(
         // Close-side slippage floor: reject if the quoted per-contract probability
         // has slipped below the caller's bound. `0` disables.
         assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
+        let confidence_fee_loading = market
+            .strike_exposure
+            .order_confidence_fee_loading(pricer.borrow(), &order, range_probability);
         // Clamp before discount: the raw fee is capped at the redeem first, so
         // the stake discount always leaves a discounted staker a positive net
         // even when the raw fee exceeds the payout (discount-then-clamp could
@@ -1154,7 +1157,7 @@ fun redeem(
             .trading_fee(
                 range_probability,
                 close_quantity,
-                terms.close_confidence_fee_loading(),
+                confidence_fee_loading,
             )
             .min(redeem_amount);
         let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);

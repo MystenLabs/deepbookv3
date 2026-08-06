@@ -1319,13 +1319,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     100-bps base to the 300-bps cap.
 - **Pinning tests:** `pricing_tests.move` —
     `confidence_fee_loading_is_unit_normalized_at_eight_hour_atm` and
-  `confidence_fee_loading_uses_the_finite_short_end_bump`,
-  `confidence_fee_loading_uses_both_finite_range_boundaries`, and
-  `confidence_fee_reference_stays_live_at_short_high_variance_boundary`;
+    `confidence_fee_loading_uses_the_finite_short_end_bump`,
+    `confidence_fee_loading_uses_both_finite_range_boundaries`, and
+    `confidence_fee_reference_stays_live_at_short_high_variance_boundary`;
     `strike_exposure_config_tests.move` —
     `confidence_fee_matches_published_surface_cells`,
     `confidence_fee_caps_the_assembled_product`, and
     `confidence_fee_deep_wing_keeps_the_minimum_floor`;
+    `confidence_fee_flow_tests.move` —
+    `confidence_loading_is_charged_and_settled_on_mint_and_redeem`;
     `mint_terms_binding_tests.move` —
     `mint_and_live_close_use_the_same_loading_for_one_pricer`.
 - **Reopen when:** live calibration shows the synthesized reference materially

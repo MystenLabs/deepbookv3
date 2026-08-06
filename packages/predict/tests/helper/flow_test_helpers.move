@@ -30,6 +30,7 @@ use deepbook_predict::{
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
     builder_code::BuilderCode,
+    config_constants,
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
@@ -267,6 +268,25 @@ public fun setup_market_default(): Fixture {
 /// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
+}
+
+/// A short-dated live market with the production confidence-fee slope enabled.
+/// General flow fixtures keep that slope at zero so unrelated fee assertions
+/// remain isolated.
+public fun setup_confidence_fee_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+): (Fixture, ID, Trader) {
+    let mut fx = setup_market_default();
+    fx.set_template_fee_slope(config_constants::default_fee_slope!());
+    let expiry_id = fx.create_expiry(expiry_ms);
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, live_price);
+    fx.seed_market_cash(&mut market.market, test_constants::default_seeded_expiry_cash());
+    return_market_bundle(market);
+    fx.scenario.next_tx(test_constants::admin());
+    (fx, expiry_id, trader)
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large

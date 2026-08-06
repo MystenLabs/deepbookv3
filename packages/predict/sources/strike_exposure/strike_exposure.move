@@ -119,7 +119,6 @@ public struct LiveCloseTerms has drop {
     remove_floor_shares: u64,
     redeem_amount: u64,
     range_probability: u64,
-    confidence_fee_loading: u64,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -180,10 +179,6 @@ public(package) fun redeem_amount(terms: &CloseTerms): u64 {
 
 public(package) fun range_probability(terms: &CloseTerms): u64 {
     terms.live_terms().range_probability
-}
-
-public(package) fun close_confidence_fee_loading(terms: &CloseTerms): u64 {
-    terms.live_terms().confidence_fee_loading
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -449,22 +444,26 @@ public(package) fun quote_close(
     ) {
         return exposure.close_terms(order, CloseOutcome::Liquidatable { gross_value })
     };
-    let confidence_fee_loading = exposure.confidence_fee_loading(
-        pricer.borrow(),
-        order.lower_tick(),
-        order.higher_tick(),
-        range_probability,
-    );
     exposure.close_terms(
         order,
-        CloseOutcome::Live(
-            quote_live_close(
-                order,
-                close_quantity,
-                range_probability,
-                confidence_fee_loading,
-            ),
-        ),
+        CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
+    )
+}
+
+/// Compute the confidence-fee loading for one already-priced order. Live redeem
+/// calls this only after close classification, keeping fee-only repricing out of
+/// gross-value reads and liquidation probes.
+public(package) fun order_confidence_fee_loading(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+    probability: u64,
+): u64 {
+    exposure.confidence_fee_loading(
+        pricer,
+        order.lower_tick(),
+        order.higher_tick(),
+        probability,
     )
 }
 
@@ -644,12 +643,7 @@ fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
 /// range probability: the floor-share split and the redeem facts, touching
 /// neither the book nor the oracle. The trade fee is recovered via
 /// `trading_fee` from the returned `range_probability`.
-fun quote_live_close(
-    order: &Order,
-    close_quantity: u64,
-    range_probability: u64,
-    confidence_fee_loading: u64,
-): LiveCloseTerms {
+fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
@@ -680,7 +674,6 @@ fun quote_live_close(
         remove_floor_shares,
         redeem_amount,
         range_probability,
-        confidence_fee_loading,
     }
 }
 

@@ -93,7 +93,16 @@ fun mint_and_live_close_use_the_same_loading_for_one_pricer() {
     let mint_loading = mint_terms.mint_confidence_fee_loading();
     let order = harness.exposure.allocate_mint_order(mint_terms);
     let close_terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
-    assert_eq!(close_terms.close_confidence_fee_loading(), mint_loading);
+    assert_eq!(
+        harness
+            .exposure
+            .order_confidence_fee_loading(
+                &pricer,
+                &order,
+                close_terms.range_probability(),
+            ),
+        mint_loading,
+    );
 
     return_shared(harness);
     oracle_fixture::return_oracle_bundle(oracle);
