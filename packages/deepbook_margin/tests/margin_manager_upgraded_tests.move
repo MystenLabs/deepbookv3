@@ -37,7 +37,7 @@ use sui::test_scenario::{Self as test, return_shared};
 
 /// Deposits USDC collateral through the Pro entrypoint and asserts it landed.
 #[test]
-fun deposit_pro_credits_collateral() {
+fun deposit_upgraded_credits_collateral() {
     let (
         mut scenario,
         clock,
@@ -88,7 +88,7 @@ fun deposit_pro_credits_collateral() {
 /// Borrows base through the Pro entrypoint, then reads the position back through the
 /// Pro `risk_ratio`, `manager_state` and `manager_states` views.
 #[test]
-fun borrow_base_pro_and_pro_views_agree() {
+fun borrow_base_upgraded_and_upgraded_views_agree() {
     let (
         mut scenario,
         clock,
@@ -228,7 +228,7 @@ fun borrow_base_pro_and_pro_views_agree() {
 /// A debt-free manager must be able to withdraw with a stale Pro feed: the risk check
 /// does not run, so no price is needed. Pins the lazy-read fix on the Pro path.
 #[test]
-fun withdraw_pro_no_debt_tolerates_stale_feed() {
+fun withdraw_upgraded_no_debt_tolerates_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -301,7 +301,7 @@ fun withdraw_pro_no_debt_tolerates_stale_feed() {
 
 /// A debt-free manager's Pro `risk_ratio` view returns MAX without touching the feed.
 #[test]
-fun risk_ratio_pro_no_debt_returns_max_with_stale_feed() {
+fun risk_ratio_upgraded_no_debt_returns_max_with_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -368,7 +368,7 @@ fun risk_ratio_pro_no_debt_returns_max_with_stale_feed() {
 /// Borrows quote through the Pro entrypoint. Mirrors `borrow_base_upgraded`, on the other
 /// side of the pair, so a base/quote transposition in either wrapper is caught.
 #[test]
-fun borrow_quote_pro_takes_a_loan() {
+fun borrow_quote_upgraded_takes_a_loan() {
     let (
         mut scenario,
         clock,
@@ -432,7 +432,7 @@ fun borrow_quote_pro_takes_a_loan() {
 /// A healthy manager cannot be liquidated. Asserts the Pro `liquidate` reaches the
 /// shared core's solvency gate rather than some other path.
 #[test, expected_failure(abort_code = deepbook_margin::margin_manager::ECannotLiquidate)]
-fun liquidate_pro_rejects_a_healthy_manager() {
+fun liquidate_upgraded_rejects_a_healthy_manager() {
     let (
         mut scenario,
         clock,
@@ -509,7 +509,7 @@ fun liquidate_pro_rejects_a_healthy_manager() {
 /// With no conditional orders registered, both Pro executors return an empty batch.
 /// Exercises the delegation into the shared cores for v2 and v3.
 #[test]
-fun execute_conditional_orders_pro_with_no_orders_returns_empty() {
+fun execute_conditional_orders_upgraded_with_no_orders_returns_empty() {
     let (
         mut scenario,
         clock,
@@ -579,7 +579,7 @@ fun execute_conditional_orders_pro_with_no_orders_returns_empty() {
 
 /// Registers a conditional order through the Pro entrypoint and reads it back.
 #[test]
-fun add_conditional_order_pro_registers_the_order() {
+fun add_conditional_order_upgraded_registers_the_order() {
     let (
         mut scenario,
         clock,
@@ -649,7 +649,7 @@ fun add_conditional_order_pro_registers_the_order() {
 /// for `read_price_upgraded_unsafe` silently drops staleness, feed-id and EWMA enforcement
 /// from every deposit, and without this test nothing in the suite notices.
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun deposit_pro_rejects_stale_feed() {
+fun deposit_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -703,7 +703,7 @@ fun deposit_pro_rejects_stale_feed() {
 /// event is telemetry. Routing this through the validated reader would break
 /// withdrawals whenever a feed widened.
 #[test]
-fun withdraw_pro_with_wide_confidence_still_emits() {
+fun withdraw_upgraded_with_wide_confidence_still_emits() {
     let (
         mut scenario,
         clock,
@@ -783,7 +783,7 @@ fun withdraw_pro_with_wide_confidence_still_emits() {
 // leveraged manager - never executes. These three run it, either side of the floor.
 
 #[test]
-fun withdraw_pro_with_debt_succeeds_within_the_ratio() {
+fun withdraw_upgraded_with_debt_succeeds_within_the_ratio() {
     let (
         mut scenario,
         clock,
@@ -877,7 +877,7 @@ fun withdraw_pro_with_debt_succeeds_within_the_ratio() {
 }
 
 #[test, expected_failure(abort_code = deepbook_margin::margin_manager::EWithdrawRiskRatioExceeded)]
-fun withdraw_pro_with_debt_rejects_an_unsafe_withdrawal() {
+fun withdraw_upgraded_with_debt_rejects_an_unsafe_withdrawal() {
     let (
         mut scenario,
         clock,
@@ -958,7 +958,7 @@ fun withdraw_pro_with_debt_rejects_an_unsafe_withdrawal() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun withdraw_pro_with_debt_rejects_stale_feed() {
+fun withdraw_upgraded_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1047,7 +1047,7 @@ fun withdraw_pro_with_debt_rejects_stale_feed() {
 // stale-feed rejection per entrypoint closes it.
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun risk_ratio_pro_with_debt_rejects_stale_feed() {
+fun risk_ratio_upgraded_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1123,7 +1123,7 @@ fun risk_ratio_pro_with_debt_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun borrow_base_pro_rejects_stale_feed() {
+fun borrow_base_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1200,7 +1200,7 @@ fun borrow_base_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun borrow_quote_pro_rejects_stale_feed() {
+fun borrow_quote_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1277,7 +1277,7 @@ fun borrow_quote_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun liquidate_pro_rejects_stale_feed() {
+fun liquidate_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1517,7 +1517,7 @@ fun execute_conditional_orders_v3_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun add_conditional_order_pro_rejects_stale_feed() {
+fun add_conditional_order_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,

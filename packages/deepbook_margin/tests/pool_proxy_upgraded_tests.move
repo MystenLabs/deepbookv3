@@ -39,7 +39,7 @@ use sui::test_scenario::return_shared;
 /// `update_current_price` is the permissionless refresh the order-validation path
 /// depends on. Without a Pro twin, price updates would stop at the cutover.
 #[test]
-fun update_current_price_pro_refreshes_the_registry() {
+fun update_current_price_upgraded_refreshes_the_registry() {
     let (
         mut scenario,
         clock,
@@ -84,7 +84,7 @@ fun update_current_price_pro_refreshes_the_registry() {
 /// into the shared core is undetectable. At BTC/USDC the transposition is a factor of
 /// 1e10, so this is the test that actually holds the argument order.
 #[test]
-fun update_current_price_pro_holds_base_quote_order() {
+fun update_current_price_upgraded_holds_base_quote_order() {
     let (
         mut scenario,
         clock,
@@ -471,7 +471,7 @@ fun place_reduce_only_market_order_v2_pro_aborts_on_worsened_ratio() {
 /// Reduce-only limit close + repay through the Pro entrypoint. A bid requires base
 /// debt, which the setup establishes.
 #[test]
-fun place_reduce_only_limit_order_and_repay_loan_pro_places_an_order() {
+fun place_reduce_only_limit_order_and_repay_loan_upgraded_places_an_order() {
     let (
         mut scenario,
         clock,
@@ -568,7 +568,7 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_places_an_order() {
 /// spread - including the repay lifts the ratio, so this succeeds. That contrast is
 /// the behaviour `move.md` documents, and it holds on the Pro path too.
 #[test]
-fun place_reduce_only_market_order_and_repay_loan_pro_closes_and_repays() {
+fun place_reduce_only_market_order_and_repay_loan_upgraded_closes_and_repays() {
     let (
         mut scenario,
         clock,
@@ -657,7 +657,7 @@ fun place_reduce_only_market_order_and_repay_loan_pro_closes_and_repays() {
 /// Non-reduce-only market close + repay through the Pro entrypoint. Shares the
 /// monotonic gate with the reduce-only entries; the repay carries it.
 #[test]
-fun place_market_order_and_repay_loan_pro_closes_and_repays() {
+fun place_market_order_and_repay_loan_upgraded_closes_and_repays() {
     let (
         mut scenario,
         clock,
@@ -917,7 +917,7 @@ fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_market_order_and_repay_loan_pro_with_debt_rejects_stale_feed() {
+fun place_market_order_and_repay_loan_upgraded_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1174,7 +1174,7 @@ fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
+fun place_reduce_only_limit_order_and_repay_loan_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1260,7 +1260,7 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
+fun place_reduce_only_market_order_and_repay_loan_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1343,7 +1343,7 @@ fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun update_current_price_pro_rejects_stale_feed() {
+fun update_current_price_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
