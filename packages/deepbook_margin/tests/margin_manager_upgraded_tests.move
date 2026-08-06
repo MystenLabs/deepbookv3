@@ -199,9 +199,11 @@ fun borrow_base_upgraded_and_upgraded_views_agree() {
     );
     assert!(state_ratio == ratio);
 
-    // `MarginManager` has no `drop`, so the batch input is built and destroyed
-    // explicitly. An empty batch still exercises the delegation into the shared core.
-    let managers = vector<MarginManager<BTC, USDC>>[];
+    // The batch must carry a real manager: over an empty vector every assertion is
+    // true of any implementation, including one that returns nothing. `MarginManager`
+    // has no `drop`, so it is moved in and taken back out explicitly.
+    let mut managers = vector<MarginManager<BTC, USDC>>[];
+    managers.push_back(mm);
     let (ids, _, ratios, _, _, _, _, _, _, _, _, _, _, _) = margin_manager_upgraded::manager_states<
         BTC,
         USDC,
@@ -215,7 +217,11 @@ fun borrow_base_upgraded_and_upgraded_views_agree() {
         &usdc_pool,
         &clock,
     );
-    assert!(ids.is_empty() && ratios.is_empty());
+    assert!(ids.length() == 1);
+    assert!(ratios.length() == 1);
+    // The batch view must agree with the single-manager view on the same inputs.
+    assert!(ratios[0] == ratio);
+    let mm = managers.pop_back();
     managers.destroy_empty();
 
     test::return_shared(btc_pool);

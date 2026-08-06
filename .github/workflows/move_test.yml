@@ -29,7 +29,7 @@ jobs:
       # compiler ties them, so a parameter added to one side only ships a surface that
       # silently disagrees with itself.
       - name: Check upgraded-twin parity
-        run: python3 scripts/check_upgraded_parity.py
+        run: python3 .github/scripts/check_upgraded_parity.py
 
   test-linux:
     runs-on: ubuntu-latest
