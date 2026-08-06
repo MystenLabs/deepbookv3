@@ -9,8 +9,8 @@ use deepbook_margin::{
     oracle::{
         Self,
         read_price,
-        read_price_pro,
-        read_price_pro_unsafe,
+        read_price_upgraded,
+        read_price_upgraded_unsafe,
         calculate_price,
         calculate_usd_currency_amount,
         calculate_target_currency_amount,
@@ -21,8 +21,8 @@ use deepbook_margin::{
     test_constants::{Self, SUI, USDC},
     test_helpers::{
         build_pyth_price_info_object,
-        build_pyth_pro_price_info_object,
-        build_pyth_pro_price_info_with_ewma,
+        build_pyth_upgraded_price_info_object,
+        build_pyth_upgraded_price_info_with_ewma,
         create_test_pyth_config,
     }
 };
@@ -682,12 +682,12 @@ fun test_ewma_check_with_high_price_no_overflow() {
     scenario.end();
 }
 
-// === Pyth Pro reader parity ===
-// Pyth Pro is a separate published package, so its feed is a distinct Move type.
-// These pin that `read_price_pro` enforces exactly the policy `read_price` does.
+// === Pyth's upgraded Core reader parity ===
+// Pyth's upgraded Core is a separate published package, so its feed is a distinct Move type.
+// These pin that `read_price_upgraded` enforces exactly the policy `read_price` does.
 
 #[test]
-fun test_read_price_pro_matches_legacy_reader() {
+fun test_read_price_upgraded_matches_legacy_reader() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -713,7 +713,7 @@ fun test_read_price_pro_matches_legacy_reader() {
         8,
         clock.timestamp_ms() / 1000,
     );
-    let pro_info = build_pyth_pro_price_info_object(
+    let pro_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000,
@@ -723,7 +723,7 @@ fun test_read_price_pro_matches_legacy_reader() {
     );
 
     let legacy_reading = read_price<USDC>(&legacy_info, &registry, &clock);
-    let pro_reading = read_price_pro<USDC>(&pro_info, &registry, &clock);
+    let pro_reading = read_price_upgraded<USDC>(&pro_info, &registry, &clock);
     assert!(pro_reading.price() == legacy_reading.price());
     assert!(pro_reading.decimals() == legacy_reading.decimals());
 
@@ -740,8 +740,8 @@ fun test_read_price_pro_matches_legacy_reader() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
-fun test_read_price_pro_rejects_stale_price() {
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun test_read_price_upgraded_rejects_stale_price() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -756,7 +756,7 @@ fun test_read_price_pro_rejects_stale_price() {
     let pyth_config = create_test_pyth_config(); // max_conf_bps = 1000 (10%)
     registry.add_config(&admin_cap, pyth_config);
 
-    let price_info = build_pyth_pro_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000,
@@ -765,7 +765,7 @@ fun test_read_price_pro_rejects_stale_price() {
         (clock.timestamp_ms() / 1000) - 65, // beyond max_age_secs
     );
 
-    let _ = read_price_pro<USDC>(&price_info, &registry, &clock);
+    let _ = read_price_upgraded<USDC>(&price_info, &registry, &clock);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -775,7 +775,7 @@ fun test_read_price_pro_rejects_stale_price() {
 }
 
 #[test, expected_failure(abort_code = oracle::EPriceFeedIdMismatch)]
-fun test_read_price_pro_rejects_wrong_feed_id() {
+fun test_read_price_upgraded_rejects_wrong_feed_id() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -790,7 +790,7 @@ fun test_read_price_pro_rejects_wrong_feed_id() {
     let pyth_config = create_test_pyth_config(); // max_conf_bps = 1000 (10%)
     registry.add_config(&admin_cap, pyth_config);
 
-    let price_info = build_pyth_pro_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::sui_price_feed_id(), // not USDC's feed
         10000000000,
@@ -799,7 +799,7 @@ fun test_read_price_pro_rejects_wrong_feed_id() {
         clock.timestamp_ms() / 1000,
     );
 
-    let _ = read_price_pro<USDC>(&price_info, &registry, &clock);
+    let _ = read_price_upgraded<USDC>(&price_info, &registry, &clock);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -809,7 +809,7 @@ fun test_read_price_pro_rejects_wrong_feed_id() {
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidPythPriceConf)]
-fun test_read_price_pro_confidence_enforced_when_pricing() {
+fun test_read_price_upgraded_confidence_enforced_when_pricing() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -824,7 +824,7 @@ fun test_read_price_pro_confidence_enforced_when_pricing() {
     let pyth_config = create_test_pyth_config(); // max_conf_bps = 1000 (10%)
     registry.add_config(&admin_cap, pyth_config);
 
-    let price_info = build_pyth_pro_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000,
@@ -834,7 +834,7 @@ fun test_read_price_pro_confidence_enforced_when_pricing() {
     );
 
     let _ = calculate_usd_price<USDC>(
-        read_price_pro<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000,
     );
@@ -864,7 +864,7 @@ fun test_unvalidated_reading_skips_confidence_bound() {
 
     // A telemetry read (deposit event) must not be blocked by a wide confidence
     // interval - the bound is a pricing guard, and unvalidated readings carry none.
-    let price_info = build_pyth_pro_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000,
@@ -875,9 +875,9 @@ fun test_unvalidated_reading_skips_confidence_bound() {
 
     // Reaching `price_config` is the whole point: the identical conf through the
     // validated reader aborts `EInvalidPythPriceConf`
-    // (`test_read_price_pro_confidence_enforced_when_pricing`). Asserting only on
+    // (`test_read_price_upgraded_confidence_enforced_when_pricing`). Asserting only on
     // `reading.price()` would never execute the bound at all.
-    let reading = read_price_pro_unsafe<USDC>(&price_info, &registry);
+    let reading = read_price_upgraded_unsafe<USDC>(&price_info, &registry);
     assert!(reading.price() == 10000000000);
 
     let usd_price = calculate_usd_price<USDC>(reading, &registry, 1000000);
@@ -890,14 +890,14 @@ fun test_unvalidated_reading_skips_confidence_bound() {
     scenario.end();
 }
 
-// === Pyth Pro EWMA divergence ===
-// `build_pyth_pro_price_info_object` sets `ema == spot`, so every other Pro test
+// === Pyth's upgraded Core EWMA divergence ===
+// `build_pyth_upgraded_price_info_object` sets `ema == spot`, so every other Pro test
 // leaves the divergence guard a tautology. These are the only tests that execute it,
-// and the only thing standing between a mutated `read_price_pro` ewma argument and a
+// and the only thing standing between a mutated `read_price_upgraded` ewma argument and a
 // green CI run.
 
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
-fun test_read_price_pro_rejects_ewma_divergence_high() {
+fun test_read_price_upgraded_rejects_ewma_divergence_high() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -913,7 +913,7 @@ fun test_read_price_pro_rejects_ewma_divergence_high() {
     registry.add_config(&admin_cap, pyth_config);
 
     // Spot $120 against a $100 EWMA: 20% above, past the 15% bound.
-    let price_info = build_pyth_pro_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         12000000000,
@@ -923,7 +923,7 @@ fun test_read_price_pro_rejects_ewma_divergence_high() {
         clock.timestamp_ms() / 1000,
     );
 
-    let _ = read_price_pro<USDC>(&price_info, &registry, &clock);
+    let _ = read_price_upgraded<USDC>(&price_info, &registry, &clock);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -933,7 +933,7 @@ fun test_read_price_pro_rejects_ewma_divergence_high() {
 }
 
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
-fun test_read_price_pro_rejects_ewma_divergence_low() {
+fun test_read_price_upgraded_rejects_ewma_divergence_low() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -949,7 +949,7 @@ fun test_read_price_pro_rejects_ewma_divergence_low() {
     registry.add_config(&admin_cap, pyth_config);
 
     // Spot $80 against a $100 EWMA: 20% below the bound in the other direction.
-    let price_info = build_pyth_pro_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         8000000000,
@@ -959,7 +959,7 @@ fun test_read_price_pro_rejects_ewma_divergence_low() {
         clock.timestamp_ms() / 1000,
     );
 
-    let _ = read_price_pro<USDC>(&price_info, &registry, &clock);
+    let _ = read_price_upgraded<USDC>(&price_info, &registry, &clock);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -971,7 +971,7 @@ fun test_read_price_pro_rejects_ewma_divergence_low() {
 /// The guard must not be an unconditional abort: a divergence inside the bound reads
 /// normally, and the reading carries the spot price rather than the EWMA.
 #[test]
-fun test_read_price_pro_accepts_ewma_divergence_within_bound() {
+fun test_read_price_upgraded_accepts_ewma_divergence_within_bound() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -987,7 +987,7 @@ fun test_read_price_pro_accepts_ewma_divergence_within_bound() {
     registry.add_config(&admin_cap, pyth_config);
 
     // Spot $110 against a $100 EWMA: 10% divergence, inside the 15% bound.
-    let price_info = build_pyth_pro_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         11000000000,
@@ -997,7 +997,7 @@ fun test_read_price_pro_accepts_ewma_divergence_within_bound() {
         clock.timestamp_ms() / 1000,
     );
 
-    let reading = read_price_pro<USDC>(&price_info, &registry, &clock);
+    let reading = read_price_upgraded<USDC>(&price_info, &registry, &clock);
     assert!(reading.price() == 11000000000);
 
     destroy(admin_cap);

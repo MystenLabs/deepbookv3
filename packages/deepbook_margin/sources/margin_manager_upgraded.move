@@ -1,14 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pyth Pro entrypoints for `margin_manager`.
+/// Pyth's upgraded Core entrypoints for `margin_manager`.
 ///
 /// Pyth Core is being replaced by a separately published package, so its
 /// `PriceInfoObject` is a distinct Move type from the legacy one and the frozen
-/// signatures in `margin_manager` can never accept it. The Pyth Pro surface therefore lives
+/// signatures in `margin_manager` can never accept it. The Pyth's upgraded Core surface therefore lives
 /// here, under the same function names. Each entry reads the Pro feed and delegates
 /// to the shared core in `margin_manager`, so both feeds run identical logic.
-module deepbook_margin::margin_manager_pro;
+module deepbook_margin::margin_manager_upgraded;
 
 use deepbook::{order_info::OrderInfo, pool::Pool};
 use deepbook_margin::{
@@ -19,15 +19,15 @@ use deepbook_margin::{
     oracle,
     tpsl::{Condition, PendingOrder}
 };
-use pyth_pro::price_info::PriceInfoObject as PriceInfoObjectPro;
+use pyth_upgraded::price_info::PriceInfoObject as PriceInfoObjectUpgraded;
 use std::type_name;
 use sui::{clock::Clock, coin::Coin};
 
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObjectPro,
-    quote_price_info_object: &PriceInfoObjectPro,
+    base_price_info_object: &PriceInfoObjectUpgraded,
+    quote_price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
     conditional_order_id: u64,
     condition: Condition,
@@ -37,8 +37,8 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
 ) {
     self.add_conditional_order_core(
         pool,
-        oracle::read_price_pro<BaseAsset>(base_price_info_object, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_price_info_object, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_price_info_object, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_price_info_object, registry, clock),
         registry,
         conditional_order_id,
         condition,
@@ -53,8 +53,8 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_price_info_object: &PriceInfoObjectPro,
-    quote_price_info_object: &PriceInfoObjectPro,
+    base_price_info_object: &PriceInfoObjectUpgraded,
+    quote_price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
     max_orders_to_execute: u64,
     clock: &Clock,
@@ -64,8 +64,8 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_price_info_object, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_price_info_object, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_price_info_object, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_price_info_object, registry, clock),
         registry,
         max_orders_to_execute,
         clock,
@@ -78,8 +78,8 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_price_info_object: &PriceInfoObjectPro,
-    quote_price_info_object: &PriceInfoObjectPro,
+    base_price_info_object: &PriceInfoObjectUpgraded,
+    quote_price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
     max_orders_to_execute: u64,
     clock: &Clock,
@@ -89,8 +89,8 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_price_info_object, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_price_info_object, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_price_info_object, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_price_info_object, registry, clock),
         registry,
         max_orders_to_execute,
         clock,
@@ -101,8 +101,8 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     coin: Coin<DepositAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -114,9 +114,9 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     } else if (
         type_name::with_defining_ids<DepositAsset>() == type_name::with_defining_ids<BaseAsset>()
     ) {
-        option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock))
+        option::some(oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock))
     } else {
-        option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock))
+        option::some(oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock))
     };
 
     self.deposit_core(
@@ -133,8 +133,8 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     registry: &MarginRegistry,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
     clock: &Clock,
@@ -144,8 +144,8 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         self.withdraw_needs_risk_check(base_margin_pool, quote_margin_pool)
     ) {
         (
-            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
-            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock)),
         )
     } else {
         (option::none(), option::none())
@@ -154,8 +154,8 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         margin_manager::emits_collateral_event<BaseAsset, QuoteAsset, WithdrawAsset>()
     ) {
         (
-            option::some(oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry)),
-            option::some(oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry)),
+            option::some(oracle::read_price_upgraded_unsafe<BaseAsset>(base_oracle, registry)),
+            option::some(oracle::read_price_upgraded_unsafe<QuoteAsset>(quote_oracle, registry)),
         )
     } else {
         (option::none(), option::none())
@@ -180,8 +180,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     base_margin_pool: &mut MarginPool<BaseAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
@@ -190,8 +190,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     self.borrow_base_core(
         registry,
         base_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         pool,
         loan_amount,
         clock,
@@ -203,8 +203,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     loan_amount: u64,
     clock: &Clock,
@@ -213,8 +213,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     self.borrow_quote_core(
         registry,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         pool,
         loan_amount,
         clock,
@@ -225,8 +225,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
 public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     margin_pool: &mut MarginPool<DebtAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     repay_coin: Coin<DebtAsset>,
@@ -235,8 +235,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
     self.liquidate_core(
         registry,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         margin_pool,
         pool,
         repay_coin,
@@ -248,8 +248,8 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
 public fun risk_ratio<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
@@ -257,13 +257,13 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 ): u64 {
     // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
     // ratio is MAX regardless of price. Returning here keeps a stale feed from
-    // breaking a read-only query, as it did before Pyth Pro.
+    // breaking a read-only query, as it did before Pyth's upgraded Core.
     if (self.margin_pool_id().is_none()) return margin_constants::max_risk_ratio();
 
     self.risk_ratio_core(
         registry,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -274,8 +274,8 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
@@ -283,13 +283,13 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
 ): u64 {
     // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
     // ratio is MAX regardless of price. Returning here keeps a stale feed from
-    // breaking a read-only query, as it did before Pyth Pro.
+    // breaking a read-only query, as it did before Pyth's upgraded Core.
     if (self.margin_pool_id().is_none()) return margin_constants::max_risk_ratio();
 
     self.risk_ratio_core(
         registry,
-        oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry),
-        oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry),
+        oracle::read_price_upgraded_unsafe<BaseAsset>(base_oracle, registry),
+        oracle::read_price_upgraded_unsafe<QuoteAsset>(quote_oracle, registry),
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -300,8 +300,8 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
 public fun manager_state<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
@@ -309,8 +309,8 @@ public fun manager_state<BaseAsset, QuoteAsset>(
 ): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8, u64, u64, u64) {
     self.manager_state_core(
         registry,
-        oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry),
-        oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry),
+        oracle::read_price_upgraded_unsafe<BaseAsset>(base_oracle, registry),
+        oracle::read_price_upgraded_unsafe<QuoteAsset>(quote_oracle, registry),
         pool,
         base_margin_pool,
         quote_margin_pool,
@@ -321,8 +321,8 @@ public fun manager_state<BaseAsset, QuoteAsset>(
 public fun manager_states<BaseAsset, QuoteAsset>(
     margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
     registry: &MarginRegistry,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     pool: &Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
@@ -346,8 +346,8 @@ public fun manager_states<BaseAsset, QuoteAsset>(
     margin_manager::manager_states_core<BaseAsset, QuoteAsset>(
         margin_managers,
         registry,
-        oracle::read_price_pro_unsafe<BaseAsset>(base_oracle, registry),
-        oracle::read_price_pro_unsafe<QuoteAsset>(quote_oracle, registry),
+        oracle::read_price_upgraded_unsafe<BaseAsset>(base_oracle, registry),
+        oracle::read_price_upgraded_unsafe<QuoteAsset>(quote_oracle, registry),
         pool,
         base_margin_pool,
         quote_margin_pool,

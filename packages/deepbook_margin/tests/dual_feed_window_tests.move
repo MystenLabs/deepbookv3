@@ -3,7 +3,7 @@
 
 /// Behaviour of the window in which BOTH Pyth feeds are live and authoritative.
 ///
-/// Between this upgrade and Pyth's Core cutover, `read_price*` and `read_price_pro*`
+/// Between this upgrade and Pyth's Core cutover, `read_price*` and `read_price_upgraded*`
 /// each validate against the same feed id, staleness window, confidence and EWMA
 /// bounds - but independently, with no cross-feed comparison. `PythReading` erases
 /// which feed produced it and both entrypoint families share one `_core`, so a caller
@@ -31,7 +31,7 @@ module deepbook_margin::dual_feed_window_tests;
 use deepbook::{constants, order_info::OrderInfo, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
-    margin_manager_pro,
+    margin_manager_upgraded,
     margin_pool::MarginPool,
     margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
     test_constants::{Self, USDC, BTC, btc_multiplier},
@@ -40,9 +40,9 @@ use deepbook_margin::{
         mint_coin,
         build_btc_price_info_object,
         build_demo_usdc_price_info_object,
-        build_btc_price_info_object_pro,
-        build_demo_usdc_price_info_object_pro,
-        build_stale_btc_price_info_object_pro,
+        build_btc_price_info_object_upgraded,
+        build_demo_usdc_price_info_object_upgraded,
+        build_stale_btc_price_info_object_upgraded,
         setup_btc_usd_deepbook_margin,
         destroy_2,
         destroy_3,
@@ -119,7 +119,7 @@ fun open_1btc_40k_usdc(): (test::Scenario, Clock, MarginAdminCap, MaintainerCap,
 /// EXPLOIT ATTEMPT — dual-feed liquidation.
 /// The same manager is priced through two live feeds in the same block: the
 /// legacy Core feed puts BTC at $4100 (risk 1.1025, NOT liquidatable) while the
-/// Pyth Pro feed puts BTC at $3900 (risk 1.0975, liquidatable). If the Pro feed
+/// Pyth's upgraded Core feed puts BTC at $3900 (risk 1.0975, liquidatable). If the Pro feed
 /// alone suffices to liquidate a manager the Core feed calls healthy, the
 /// liquidation goes through and the liquidator walks away with collateral.
 #[test]
@@ -158,11 +158,11 @@ fun dual_feed_window_permits_liquidating_on_the_lower_feed() {
     assert!(!registry.can_liquidate(pool.id(), core_risk), 101);
 
     // Pro feed: BTC $3900. Liquidate through the Pro entrypoint in the same block.
-    let pro_btc = build_btc_price_info_object_pro(&mut scenario, 3900, &clock);
-    let pro_usdc = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+    let pro_btc = build_btc_price_info_object_upgraded(&mut scenario, 3900, &clock);
+    let pro_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let repay = mint_coin<USDC>(100_000_000_000, scenario.ctx());
 
-    let (base_coin, quote_coin, remaining) = margin_manager_pro::liquidate<BTC, USDC, USDC>(
+    let (base_coin, quote_coin, remaining) = margin_manager_upgraded::liquidate<BTC, USDC, USDC>(
         &mut mm,
         &registry,
         &pro_btc,
@@ -192,7 +192,7 @@ fun dual_feed_window_permits_liquidating_on_the_lower_feed() {
 /// GUARD — a debt-carrying position cannot be evaluated on a stale Pro feed.
 /// Liquidation through the Pro entrypoint with a stale BTC feed must abort in the
 /// Pro reader's staleness check (get_price_no_older_than).
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun dual_feed_window_still_enforces_staleness_on_each_feed() {
     let (
         mut scenario,
@@ -211,11 +211,11 @@ fun dual_feed_window_still_enforces_staleness_on_each_feed() {
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
 
     // Stale by 10 minutes; max age is 60s.
-    let pro_btc = build_stale_btc_price_info_object_pro(&mut scenario, 3900, 600, &clock);
-    let pro_usdc = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+    let pro_btc = build_stale_btc_price_info_object_upgraded(&mut scenario, 3900, 600, &clock);
+    let pro_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let repay = mint_coin<USDC>(100_000_000_000, scenario.ctx());
 
-    let (base_coin, quote_coin, remaining) = margin_manager_pro::liquidate<BTC, USDC, USDC>(
+    let (base_coin, quote_coin, remaining) = margin_manager_upgraded::liquidate<BTC, USDC, USDC>(
         &mut mm,
         &registry,
         &pro_btc,
@@ -317,16 +317,16 @@ fun dual_feed_window_fires_a_stop_on_the_lower_feed_alone() {
 
     // Pro feed at $44k, same block, same manager. Re-anchoring the order-validation
     // band is itself permissionless, so the same caller does it with the same feed.
-    let pro_44k = build_btc_price_info_object_pro(&mut scenario, 44000, &clock);
-    let pro_usdc = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    deepbook_margin::pool_proxy_pro::update_current_price<BTC, USDC>(
+    let pro_44k = build_btc_price_info_object_upgraded(&mut scenario, 44000, &clock);
+    let pro_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    deepbook_margin::pool_proxy_upgraded::update_current_price<BTC, USDC>(
         &mut registry,
         &pool,
         &pro_44k,
         &pro_usdc,
         &clock,
     );
-    let pro_filled: vector<OrderInfo> = margin_manager_pro::execute_conditional_orders_v2<
+    let pro_filled: vector<OrderInfo> = margin_manager_upgraded::execute_conditional_orders_v2<
         BTC,
         USDC,
     >(

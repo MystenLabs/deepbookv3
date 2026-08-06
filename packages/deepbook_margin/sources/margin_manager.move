@@ -641,7 +641,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 ): u64 {
     // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
     // ratio is MAX regardless of price. Returning here keeps a stale feed from
-    // breaking a read-only query, as it did before Pyth Pro.
+    // breaking a read-only query, as it did before Pyth's upgraded Core.
     if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
 
     self.risk_ratio_core(
@@ -669,7 +669,7 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
 ): u64 {
     // No debt means no oracle is needed: `assets_in_debt_unit` short-circuits and the
     // ratio is MAX regardless of price. Returning here keeps a stale feed from
-    // breaking a read-only query, as it did before Pyth Pro.
+    // breaking a read-only query, as it did before Pyth's upgraded Core.
     if (self.margin_pool_id.is_none()) return margin_constants::max_risk_ratio();
 
     self.risk_ratio_core(
@@ -1799,7 +1799,7 @@ public(package) fun emits_collateral_event<BaseAsset, QuoteAsset, Asset>(): bool
 }
 
 // === Shared cores ===
-// Bodies factored out so the legacy and Pyth Pro entrypoints run identical logic;
+// Bodies factored out so the legacy and Pyth's upgraded Core entrypoints run identical logic;
 // only the reader that produced the `PythReading` differs.
 
 public(package) fun add_conditional_order_core<BaseAsset, QuoteAsset>(
@@ -1962,7 +1962,7 @@ public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
     // `none` for a DEEP deposit, which emits no event. Only the deposited side is
     // read, so the other feed being stale cannot block a collateral top-up, and the
     // confidence bound does not apply to a read that never reaches `price_config` -
-    // both matching the behaviour before Pyth Pro.
+    // both matching the behaviour before Pyth's upgraded Core.
     event_reading: Option<PythReading>,
     coin: Coin<DepositAsset>,
     clock: &Clock,

@@ -7,7 +7,10 @@ module deepbook_margin::oracle;
 use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
-use pyth_pro::{price_info::PriceInfoObject as PriceInfoObjectPro, pyth as pyth_pro_api};
+use pyth_upgraded::{
+    price_info::PriceInfoObject as PriceInfoObjectUpgraded,
+    pyth as pyth_upgraded_api
+};
 use std::type_name::{Self, TypeName};
 use sui::{clock::Clock, coin::CoinMetadata, coin_registry::Currency, vec_map::{Self, VecMap}};
 
@@ -48,7 +51,7 @@ public struct ConversionConfig has copy, drop {
 
 /// A price already read out of a Pyth `PriceInfoObject` and validated against this
 /// package's config. Carrying the value rather than the object is what lets the
-/// legacy feed and Pyth Pro share one pricing path: the two feeds are distinct Move
+/// legacy feed and Pyth's upgraded Core share one pricing path: the two feeds are distinct Move
 /// types, but a reading taken from either is the same value. Every guard lives in the
 /// reader that produces it, so anything downstream of here is pure arithmetic.
 public struct PythReading has copy, drop {
@@ -357,17 +360,17 @@ public(package) fun read_price_unsafe<T>(
     }
 }
 
-/// `read_price` against Pyth Pro. Pyth Pro is a separate published package, so its
+/// `read_price` against Pyth's upgraded Core. Pyth's upgraded Core is a separate published package, so its
 /// `PriceInfoObject` is a distinct Move type; the validation is identical.
-public(package) fun read_price_pro<T>(
-    price_info_object: &PriceInfoObjectPro,
+public(package) fun read_price_upgraded<T>(
+    price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
     clock: &Clock,
 ): PythReading {
     let config = registry.get_config<PythConfig>();
     let type_config = registry.get_config_for_type<T>();
 
-    let price = pyth_pro_api::get_price_no_older_than(
+    let price = pyth_upgraded_api::get_price_no_older_than(
         price_info_object,
         clock,
         config.max_age_secs,
@@ -385,13 +388,13 @@ public(package) fun read_price_pro<T>(
     )
 }
 
-/// `read_price_unsafe` against Pyth Pro.
-public(package) fun read_price_pro_unsafe<T>(
-    price_info_object: &PriceInfoObjectPro,
+/// `read_price_unsafe` against Pyth's upgraded Core.
+public(package) fun read_price_upgraded_unsafe<T>(
+    price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
 ): PythReading {
     let type_config = registry.get_config_for_type<T>();
-    let price = pyth_pro_api::get_price_unsafe(price_info_object);
+    let price = pyth_upgraded_api::get_price_unsafe(price_info_object);
     let price_info = price_info_object.get_price_info_from_price_info_object();
 
     validate_feed_id(price_info.get_price_identifier().get_bytes(), type_config);

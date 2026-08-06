@@ -1,14 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pyth Pro entrypoints for `pool_proxy`.
+/// Pyth's upgraded Core entrypoints for `pool_proxy`.
 ///
 /// Pyth Core is being replaced by a separately published package, so its
 /// `PriceInfoObject` is a distinct Move type from the legacy one and the frozen
-/// signatures in `pool_proxy` can never accept it. The Pyth Pro surface therefore lives
+/// signatures in `pool_proxy` can never accept it. The Pyth's upgraded Core surface therefore lives
 /// here, under the same function names. Each entry reads the Pro feed and delegates
 /// to the shared core in `pool_proxy`, so both feeds run identical logic.
-module deepbook_margin::pool_proxy_pro;
+module deepbook_margin::pool_proxy_upgraded;
 
 use deepbook::{order_info::OrderInfo, pool::Pool};
 use deepbook_margin::{
@@ -18,19 +18,23 @@ use deepbook_margin::{
     oracle,
     pool_proxy
 };
-use pyth_pro::price_info::PriceInfoObject as PriceInfoObjectPro;
+use pyth_upgraded::price_info::PriceInfoObject as PriceInfoObjectUpgraded;
 use sui::clock::Clock;
 
 public fun update_current_price<BaseAsset, QuoteAsset>(
     registry: &mut MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
-    base_price_info_object: &PriceInfoObjectPro,
-    quote_price_info_object: &PriceInfoObjectPro,
+    base_price_info_object: &PriceInfoObjectUpgraded,
+    quote_price_info_object: &PriceInfoObjectUpgraded,
     clock: &Clock,
 ) {
     // Safe reads: staleness, feed id, confidence and EWMA are all enforced here.
-    let base_reading = oracle::read_price_pro<BaseAsset>(base_price_info_object, registry, clock);
-    let quote_reading = oracle::read_price_pro<QuoteAsset>(
+    let base_reading = oracle::read_price_upgraded<BaseAsset>(
+        base_price_info_object,
+        registry,
+        clock,
+    );
+    let quote_reading = oracle::read_price_upgraded<QuoteAsset>(
         quote_price_info_object,
         registry,
         clock,
@@ -51,8 +55,8 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -68,8 +72,8 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     // reading eagerly would let a stale feed block an order that used to succeed.
     let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
-            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
-            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock)),
         )
     } else {
         (option::none(), option::none())
@@ -102,8 +106,8 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -116,8 +120,8 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     // reading eagerly would let a stale feed block an order that used to succeed.
     let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
-            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
-            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock)),
         )
     } else {
         (option::none(), option::none())
@@ -147,8 +151,8 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -166,8 +170,8 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         client_order_id,
         order_type,
         self_matching_option,
@@ -187,8 +191,8 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -203,8 +207,8 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         client_order_id,
         self_matching_option,
         quantity,
@@ -221,8 +225,8 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -237,8 +241,8 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         client_order_id,
         self_matching_option,
         quantity,
@@ -255,8 +259,8 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -274,8 +278,8 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
         pool,
         base_margin_pool,
         quote_margin_pool,
-        oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock),
-        oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock),
+        oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock),
+        oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock),
         client_order_id,
         order_type,
         self_matching_option,
@@ -295,8 +299,8 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObjectPro,
-    quote_oracle: &PriceInfoObjectPro,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -309,8 +313,8 @@ public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     // reading eagerly would let a stale feed block an order that used to succeed.
     let (base_reading, quote_reading) = if (margin_manager.has_debt()) {
         (
-            option::some(oracle::read_price_pro<BaseAsset>(base_oracle, registry, clock)),
-            option::some(oracle::read_price_pro<QuoteAsset>(quote_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<BaseAsset>(base_oracle, registry, clock)),
+            option::some(oracle::read_price_upgraded<QuoteAsset>(quote_oracle, registry, clock)),
         )
     } else {
         (option::none(), option::none())

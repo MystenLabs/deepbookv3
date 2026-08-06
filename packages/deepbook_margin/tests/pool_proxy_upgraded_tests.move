@@ -1,22 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Behavioural coverage for `pool_proxy_pro`.
+/// Behavioural coverage for `pool_proxy_upgraded`.
 ///
-/// Mirrors the legacy `pool_proxy_tests` happy paths through the Pyth Pro feed. The
+/// Mirrors the legacy `pool_proxy_tests` happy paths through the Pyth's upgraded Core feed. The
 /// Pro entrypoints are a distinct Move type surface, so nothing in the legacy suite
 /// reaches them; without these, a wrong `_core` target or a downgraded reader would
 /// still compile and still pass CI.
 #[test_only]
-module deepbook_margin::pool_proxy_pro_tests;
+module deepbook_margin::pool_proxy_upgraded_tests;
 
 use deepbook::{constants, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
-    margin_manager_pro,
+    margin_manager_upgraded,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    pool_proxy_pro,
+    pool_proxy_upgraded,
     test_constants::{Self, BTC, USDC, USDT},
     test_helpers::{
         setup_pool_proxy_test_env,
@@ -25,11 +25,11 @@ use deepbook_margin::{
         mint_coin,
         destroy_2,
         return_shared_2,
-        build_btc_price_info_object_pro,
-        build_demo_usdc_price_info_object_pro,
-        build_demo_usdt_price_info_object_pro,
-        build_stale_usdc_price_info_object_pro,
-        build_stale_usdt_price_info_object_pro,
+        build_btc_price_info_object_upgraded,
+        build_demo_usdc_price_info_object_upgraded,
+        build_demo_usdt_price_info_object_upgraded,
+        build_stale_usdc_price_info_object_upgraded,
+        build_stale_usdt_price_info_object_upgraded,
         setup_orderbook_liquidity_stablecoin,
     }
 };
@@ -55,10 +55,10 @@ fun update_current_price_pro_refreshes_the_registry() {
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    pool_proxy_pro::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &usdc_price,
@@ -100,10 +100,10 @@ fun update_current_price_pro_holds_base_quote_order() {
     let pool = scenario.take_shared_by_id<Pool<BTC, USDC>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    let btc_price = build_btc_price_info_object_pro(&mut scenario, 100000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    pool_proxy_pro::update_current_price<BTC, USDC>(
+    pool_proxy_upgraded::update_current_price<BTC, USDC>(
         &mut registry,
         &pool,
         &btc_price,
@@ -154,10 +154,10 @@ fun place_limit_order_v2_pro_no_debt_tolerates_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    margin_manager_pro::deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -173,10 +173,10 @@ fun place_limit_order_v2_pro_no_debt_tolerates_stale_feed() {
     // BOTH legs stale: with no debt the solvency gate short-circuits, so neither is
     // read. Staling only one leg would leave the other's read free to be hoisted back
     // out of the conditional unnoticed.
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
-    let stale_usdt = build_stale_usdt_price_info_object_pro(&mut scenario, 600, &clock);
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let stale_usdt = build_stale_usdt_price_info_object_upgraded(&mut scenario, 600, &clock);
 
-    let order_info = pool_proxy_pro::place_limit_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -244,10 +244,10 @@ fun place_market_order_v2_pro_places_an_order() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    margin_manager_pro::deposit<USDC, USDT, USDC>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDC>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -260,7 +260,7 @@ fun place_market_order_v2_pro_places_an_order() {
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    let order_info = pool_proxy_pro::place_market_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -321,13 +321,13 @@ fun place_reduce_only_limit_order_v2_pro_places_an_order() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Collateral in quote, debt in base: the shape every reduce-only bid needs.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -336,7 +336,7 @@ fun place_reduce_only_limit_order_v2_pro_places_an_order() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -348,7 +348,7 @@ fun place_reduce_only_limit_order_v2_pro_places_an_order() {
         scenario.ctx(),
     );
 
-    let order_info = pool_proxy_pro::place_reduce_only_limit_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -416,13 +416,13 @@ fun place_reduce_only_market_order_v2_pro_aborts_on_worsened_ratio() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Collateral in quote, debt in base: the shape every reduce-only bid needs.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -431,7 +431,7 @@ fun place_reduce_only_market_order_v2_pro_aborts_on_worsened_ratio() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -443,7 +443,7 @@ fun place_reduce_only_market_order_v2_pro_aborts_on_worsened_ratio() {
         scenario.ctx(),
     );
 
-    let order_info = pool_proxy_pro::place_reduce_only_market_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -500,12 +500,12 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_places_an_order() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -514,7 +514,7 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_places_an_order() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -527,7 +527,7 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_places_an_order() {
     );
 
     let shares_before = mm.borrowed_base_shares();
-    let order_info = pool_proxy_pro::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -597,12 +597,12 @@ fun place_reduce_only_market_order_and_repay_loan_pro_closes_and_repays() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -611,7 +611,7 @@ fun place_reduce_only_market_order_and_repay_loan_pro_closes_and_repays() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -624,7 +624,7 @@ fun place_reduce_only_market_order_and_repay_loan_pro_closes_and_repays() {
     );
 
     let shares_before = mm.borrowed_base_shares();
-    let order_info = pool_proxy_pro::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -686,12 +686,12 @@ fun place_market_order_and_repay_loan_pro_closes_and_repays() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -700,7 +700,7 @@ fun place_market_order_and_repay_loan_pro_closes_and_repays() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -713,7 +713,7 @@ fun place_market_order_and_repay_loan_pro_closes_and_repays() {
     );
 
     let shares_before = mm.borrowed_base_shares();
-    let order_info = pool_proxy_pro::place_market_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -748,7 +748,7 @@ fun place_market_order_and_repay_loan_pro_closes_and_repays() {
 // the read is mandatory, so a stale feed must abort. Without them, a mutation that
 // drops the read entirely and always passes `none` would still be green.
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
@@ -776,13 +776,13 @@ fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Establish debt on fresh feeds, so only the entry under test sees a stale one.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -791,7 +791,7 @@ fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -803,8 +803,8 @@ fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
-    let order_info = pool_proxy_pro::place_limit_order_v2<USDC, USDT>(
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let order_info = pool_proxy_upgraded::place_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -833,7 +833,7 @@ fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
@@ -863,12 +863,12 @@ fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -877,7 +877,7 @@ fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -889,8 +889,8 @@ fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
-    let order_info = pool_proxy_pro::place_market_order_v2<USDC, USDT>(
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let order_info = pool_proxy_upgraded::place_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -916,7 +916,7 @@ fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_market_order_and_repay_loan_pro_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
@@ -946,12 +946,12 @@ fun place_market_order_and_repay_loan_pro_with_debt_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -960,7 +960,7 @@ fun place_market_order_and_repay_loan_pro_with_debt_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -972,8 +972,8 @@ fun place_market_order_and_repay_loan_pro_with_debt_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
-    let order_info = pool_proxy_pro::place_market_order_and_repay_loan<USDC, USDT>(
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let order_info = pool_proxy_upgraded::place_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -999,12 +999,12 @@ fun place_market_order_and_repay_loan_pro_with_debt_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// === Reader-choice pins for the always-reading `pool_proxy_pro` entries ===
+// === Reader-choice pins for the always-reading `pool_proxy_upgraded` entries ===
 // The four reduce-only entries read unconditionally - a reduce-only bid needs base
 // debt, so there is no debt-free short circuit to take. Nothing stood on their choice
-// of the validated reader, so a downgrade to `read_price_pro_unsafe` passed CI.
+// of the validated reader, so a downgrade to `read_price_upgraded_unsafe` passed CI.
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
     let (
         mut scenario,
@@ -1032,13 +1032,13 @@ fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Collateral in quote, debt in base: the shape every reduce-only bid needs.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -1047,7 +1047,7 @@ fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -1059,9 +1059,9 @@ fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
 
-    let order_info = pool_proxy_pro::place_reduce_only_limit_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -1090,7 +1090,7 @@ fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
     let (
         mut scenario,
@@ -1118,13 +1118,13 @@ fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Collateral in quote, debt in base: the shape every reduce-only bid needs.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -1133,7 +1133,7 @@ fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -1145,9 +1145,9 @@ fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
 
-    let order_info = pool_proxy_pro::place_reduce_only_market_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -1173,7 +1173,7 @@ fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
     let (
         mut scenario,
@@ -1201,13 +1201,13 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Collateral in quote, debt in base: the shape every reduce-only bid needs.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -1216,7 +1216,7 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -1228,9 +1228,9 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
 
-    let order_info = pool_proxy_pro::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_limit_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -1259,7 +1259,7 @@ fun place_reduce_only_limit_order_and_repay_loan_pro_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
     let (
         mut scenario,
@@ -1287,13 +1287,13 @@ fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
     // Collateral in quote, debt in base: the shape every reduce-only bid needs.
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -1302,7 +1302,7 @@ fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -1314,9 +1314,9 @@ fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
         scenario.ctx(),
     );
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
 
-    let order_info = pool_proxy_pro::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -1342,7 +1342,7 @@ fun place_reduce_only_market_order_and_repay_loan_pro_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun update_current_price_pro_rejects_stale_feed() {
     let (
         mut scenario,
@@ -1359,10 +1359,10 @@ fun update_current_price_pro_rejects_stale_feed() {
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
 
-    let stale_usdc = build_stale_usdc_price_info_object_pro(&mut scenario, 600, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
 
-    pool_proxy_pro::update_current_price<USDC, USDT>(
+    pool_proxy_upgraded::update_current_price<USDC, USDT>(
         &mut registry,
         &pool,
         &stale_usdc,
@@ -1411,12 +1411,12 @@ fun place_limit_order_v2_pro_with_debt_places_an_order() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -1425,7 +1425,7 @@ fun place_limit_order_v2_pro_with_debt_places_an_order() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -1438,7 +1438,7 @@ fun place_limit_order_v2_pro_with_debt_places_an_order() {
     );
     assert!(mm.borrowed_base_shares() > 0);
 
-    let order_info = pool_proxy_pro::place_limit_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_limit_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
@@ -1501,12 +1501,12 @@ fun place_market_order_v2_pro_with_debt_places_an_order() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
-    let usdc_price = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
-    let usdt_price = build_demo_usdt_price_info_object_pro(&mut scenario, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
 
-    margin_manager_pro::deposit<USDC, USDT, USDT>(
+    margin_manager_upgraded::deposit<USDC, USDT, USDT>(
         &mut mm,
         &registry,
         &usdc_price,
@@ -1515,7 +1515,7 @@ fun place_market_order_v2_pro_with_debt_places_an_order() {
         &clock,
         scenario.ctx(),
     );
-    margin_manager_pro::borrow_base<USDC, USDT>(
+    margin_manager_upgraded::borrow_base<USDC, USDT>(
         &mut mm,
         &registry,
         &mut base_pool,
@@ -1528,7 +1528,7 @@ fun place_market_order_v2_pro_with_debt_places_an_order() {
     );
     assert!(mm.borrowed_base_shares() > 0);
 
-    let order_info = pool_proxy_pro::place_market_order_v2<USDC, USDT>(
+    let order_info = pool_proxy_upgraded::place_market_order_v2<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,

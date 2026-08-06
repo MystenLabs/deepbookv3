@@ -61,8 +61,8 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.mainnet.deepbook_margin]
 source = { root = true }
 use_environment = "mainnet"
-manifest_digest = "E968042AE197611B52E36277EC7F179E2D242F5AC9C381BC26476601EF5001D4"
-deps = { deepbook = "deepbook", pyth = "Pyth", pyth_pro = "PythProCompatible", std = "MoveStdlib", sui = "Sui", token = "token" }
+manifest_digest = "8ED26F045E5709DA6928A6E0EF280725AC17A66AC8038CF26139B0AF9DD41FED"
+deps = { deepbook = "deepbook", pyth = "Pyth", pyth_upgraded = "PythProCompatible", std = "MoveStdlib", sui = "Sui", token = "token" }
 
 [pinned.mainnet.token]
 source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "8a482d8c2a267cb52cfe98f777f4f0de6f20c09a" }
@@ -127,8 +127,8 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.testnet.deepbook_margin]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "55032D0F8CAAAF41FE80CB3AB9E13122BDE117CDAB8D2EF91114C583232A3058"
-deps = { deepbook = "deepbook", pyth = "Pyth", pyth_pro = "PythProCompatible", std = "MoveStdlib", sui = "Sui", token = "token" }
+manifest_digest = "D1FD2D0E573C612107F40F03436452E2C7077C9135DCB2A0B86AF5056835DF79"
+deps = { deepbook = "deepbook", pyth = "Pyth", pyth_upgraded = "PythProCompatible", std = "MoveStdlib", sui = "Sui", token = "token" }
 
 [pinned.testnet.token]
 source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "2e0a88f860f1ae64f709b3978f1e206a91771169" }
