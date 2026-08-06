@@ -49,11 +49,11 @@ public struct ConversionConfig has copy, drop {
     pyth_decimals: u8,
 }
 
-/// A price already read out of a Pyth `PriceInfoObject` and validated against this
-/// package's config. Carrying the value rather than the object is what lets the
-/// legacy feed and Pyth's upgraded Core share one pricing path: the two feeds are distinct Move
-/// types, but a reading taken from either is the same value. Every guard lives in the
-/// reader that produces it, so anything downstream of here is pure arithmetic.
+/// A normalized price read from a Pyth `PriceInfoObject`. Carrying the value rather
+/// than the object lets the legacy feed and Pyth's upgraded Core share one pricing
+/// path even though their `PriceInfoObject`s are distinct Move types. Safe readers
+/// enforce staleness, feed id, and EWMA deviation; pricing later enforces the asset
+/// binding and confidence interval before performing arithmetic.
 public struct PythReading has copy, drop {
     price: u64,
     decimals: u8,
@@ -312,8 +312,8 @@ fun price_config<T>(
     }
 }
 
-/// Reads a fully validated price from the legacy Pyth feed: staleness, feed id,
-/// confidence interval, and EWMA deviation.
+/// Reads the legacy Pyth feed with staleness, feed-id, and EWMA checks, carrying its
+/// confidence interval for validation when the reading is converted to a price.
 public(package) fun read_price<T>(
     price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,

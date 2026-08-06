@@ -1675,9 +1675,9 @@ public fun build_pyth_upgraded_price_info_object(
     price_info_upgraded::new_price_info_object_for_test(price_info, scenario.ctx())
 }
 
-/// Pro object whose EWMA price differs from the spot price. The builder above sets
+/// Upgraded-Core object whose EWMA price differs from the spot price. The builder above sets
 /// `ema == spot`, which makes the divergence guard a tautology; every test that means
-/// to exercise `max_ewma_difference_bps` on a Pro feed must come through here.
+/// to exercise `max_ewma_difference_bps` on the upgraded feed must come through here.
 public fun build_pyth_upgraded_price_info_with_ewma(
     scenario: &mut Scenario,
     id: vector<u8>,
@@ -1711,7 +1711,7 @@ public fun build_pyth_upgraded_price_info_with_ewma(
 
 // === Pyth's upgraded Core price object builders ===
 // Twins of the legacy builders above. Pyth's upgraded Core is a separately published package, so
-// its `PriceInfoObject` is a distinct Move type and the Pro entrypoints cannot be
+// its `PriceInfoObject` is a distinct Move type and the upgraded entrypoints cannot be
 // exercised with the legacy objects.
 
 public fun build_demo_usdc_price_info_object_upgraded(
@@ -1757,7 +1757,7 @@ public fun build_btc_price_info_object_upgraded(
     )
 }
 
-/// Stale by `stale_seconds`, for asserting that the Pro readers still enforce
+/// Stale by `stale_seconds`, for asserting that the upgraded readers still enforce
 /// staleness on the paths that validated it before the migration.
 public fun build_stale_btc_price_info_object_upgraded(
     scenario: &mut Scenario,

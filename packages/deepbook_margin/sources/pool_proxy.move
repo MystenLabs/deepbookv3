@@ -49,7 +49,7 @@ public fun update_current_price<BaseAsset, QuoteAsset>(
     quote_price_info_object: &PriceInfoObject,
     clock: &Clock,
 ) {
-    // Safe reads: staleness, feed id, confidence and EWMA are all enforced here.
+    // Safe reads enforce staleness, feed id, and EWMA. Price conversion enforces confidence.
     let base_reading = oracle::read_price<BaseAsset>(base_price_info_object, registry, clock);
     let quote_reading = oracle::read_price<QuoteAsset>(quote_price_info_object, registry, clock);
 

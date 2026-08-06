@@ -4,7 +4,7 @@
 /// Behavioural coverage for `pool_proxy_upgraded`.
 ///
 /// Mirrors the legacy `pool_proxy_tests` happy paths through the Pyth's upgraded Core feed. The
-/// Pro entrypoints are a distinct Move type surface, so nothing in the legacy suite
+/// Upgraded entrypoints are a distinct Move type surface, so nothing in the legacy suite
 /// reaches them; without these, a wrong `_core` target or a downgraded reader would
 /// still compile and still pass CI.
 #[test_only]
@@ -37,7 +37,7 @@ use std::unit_test::destroy;
 use sui::test_scenario::return_shared;
 
 /// `update_current_price` is the permissionless refresh the order-validation path
-/// depends on. Without a Pro twin, price updates would stop at the cutover.
+/// depends on. Without an upgraded twin, price updates would stop at the cutover.
 #[test]
 fun update_current_price_upgraded_refreshes_the_registry() {
     let (
@@ -123,11 +123,11 @@ fun update_current_price_upgraded_holds_base_quote_order() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// A debt-free manager places a limit order through the Pro entrypoint. Also pins the
+/// A debt-free manager places a limit order through the upgraded entrypoint. Also pins the
 /// lazy-read fix: the feeds here are stale, and a debt-free manager must not need
 /// them, exactly as before the migration.
 #[test]
-fun place_limit_order_v2_pro_no_debt_tolerates_stale_feed() {
+fun place_limit_order_v2_upgraded_no_debt_tolerates_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -212,9 +212,9 @@ fun place_limit_order_v2_pro_no_debt_tolerates_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Market order through the Pro entrypoint, debt-free, with a fresh feed.
+/// Market order through the upgraded entrypoint, debt-free, with a fresh feed.
 #[test]
-fun place_market_order_v2_pro_places_an_order() {
+fun place_market_order_v2_upgraded_places_an_order() {
     let (
         mut scenario,
         clock,
@@ -291,10 +291,10 @@ fun place_market_order_v2_pro_places_an_order() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Reduce-only limit order through the Pro entrypoint. A bid requires base debt, so
+/// Reduce-only limit order through the upgraded entrypoint. A bid requires base debt, so
 /// these entries always read the oracle - unlike the plain v2 entries.
 #[test]
-fun place_reduce_only_limit_order_v2_pro_places_an_order() {
+fun place_reduce_only_limit_order_v2_upgraded_places_an_order() {
     let (
         mut scenario,
         clock,
@@ -382,12 +382,12 @@ fun place_reduce_only_limit_order_v2_pro_places_an_order() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Reduce-only market order through the Pro entrypoint. Like its legacy twin
+/// Reduce-only market order through the upgraded entrypoint. Like its legacy twin
 /// (`pool_proxy_tests::test_place_reduce_only_market_order_ok`), this is an
 /// `expected_failure`: a market close pays the spread, and the monotonic gate fires on
 /// the swap-only intermediate state before any repay. Documented in `move.md`.
 #[test, expected_failure(abort_code = deepbook_margin::pool_proxy::ERiskRatioMustNotWorsen)]
-fun place_reduce_only_market_order_v2_pro_aborts_on_worsened_ratio() {
+fun place_reduce_only_market_order_v2_upgraded_aborts_on_worsened_ratio() {
     let (
         mut scenario,
         clock,
@@ -468,7 +468,7 @@ fun place_reduce_only_market_order_v2_pro_aborts_on_worsened_ratio() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Reduce-only limit close + repay through the Pro entrypoint. A bid requires base
+/// Reduce-only limit close + repay through the upgraded entrypoint. A bid requires base
 /// debt, which the setup establishes.
 #[test]
 fun place_reduce_only_limit_order_and_repay_loan_upgraded_places_an_order() {
@@ -566,7 +566,7 @@ fun place_reduce_only_limit_order_and_repay_loan_upgraded_places_an_order() {
 /// Reduce-only market close *with* the repay included. Unlike the swap-only
 /// `place_reduce_only_market_order_v2` above - which trips the monotonic gate on the
 /// spread - including the repay lifts the ratio, so this succeeds. That contrast is
-/// the behaviour `move.md` documents, and it holds on the Pro path too.
+/// the behaviour `move.md` documents, and it holds on the upgraded path too.
 #[test]
 fun place_reduce_only_market_order_and_repay_loan_upgraded_closes_and_repays() {
     let (
@@ -654,7 +654,7 @@ fun place_reduce_only_market_order_and_repay_loan_upgraded_closes_and_repays() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Non-reduce-only market close + repay through the Pro entrypoint. Shares the
+/// Non-reduce-only market close + repay through the upgraded entrypoint. Shares the
 /// monotonic gate with the reduce-only entries; the repay carries it.
 #[test]
 fun place_market_order_and_repay_loan_upgraded_closes_and_repays() {
@@ -749,7 +749,7 @@ fun place_market_order_and_repay_loan_upgraded_closes_and_repays() {
 // drops the read entirely and always passes `none` would still be green.
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
+fun place_limit_order_v2_upgraded_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -834,7 +834,7 @@ fun place_limit_order_v2_pro_with_debt_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_market_order_v2_pro_with_debt_rejects_stale_feed() {
+fun place_market_order_v2_upgraded_with_debt_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1005,7 +1005,7 @@ fun place_market_order_and_repay_loan_upgraded_with_debt_rejects_stale_feed() {
 // of the validated reader, so a downgrade to `read_price_upgraded_unsafe` passed CI.
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
+fun place_reduce_only_limit_order_v2_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1091,7 +1091,7 @@ fun place_reduce_only_limit_order_v2_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun place_reduce_only_market_order_v2_pro_rejects_stale_feed() {
+fun place_reduce_only_market_order_v2_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1382,7 +1382,7 @@ fun update_current_price_upgraded_rejects_stale_feed() {
 // readings are used - which is exactly where transposing them would show up.
 
 #[test]
-fun place_limit_order_v2_pro_with_debt_places_an_order() {
+fun place_limit_order_v2_upgraded_with_debt_places_an_order() {
     let (
         mut scenario,
         clock,
@@ -1472,7 +1472,7 @@ fun place_limit_order_v2_pro_with_debt_places_an_order() {
 }
 
 #[test]
-fun place_market_order_v2_pro_with_debt_places_an_order() {
+fun place_market_order_v2_upgraded_with_debt_places_an_order() {
     let (
         mut scenario,
         clock,
