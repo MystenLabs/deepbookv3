@@ -562,7 +562,6 @@ fun test_oracle_max_age_within_limit() {
     );
 
     // This should succeed because price is within 60 second limit
-    // Staleness is enforced by the reader now, so the read is the failing step.
     let usd_value = oracle::calculate_usd_price<USDC>(
         oracle::read_price<USDC>(&recent_price_info, &registry, &clock),
         &registry,

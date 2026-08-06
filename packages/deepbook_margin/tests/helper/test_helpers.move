@@ -561,7 +561,7 @@ public fun build_stale_btc_price_info_object(
     )
 }
 
-/// Build a stale USDC price info object (timestamp is stale_seconds before clock time)
+/// Build a stale USDT price info object (timestamp is stale_seconds before clock time)
 public fun build_stale_usdt_price_info_object(
     scenario: &mut Scenario,
     clock: &Clock,
@@ -1752,21 +1752,6 @@ public fun build_btc_price_info_object_pro(
         test_constants::btc_price_feed_id(),
         price_usd * test_constants::pyth_multiplier(),
         1000000,
-        test_constants::pyth_decimals(),
-        clock.timestamp_ms() / 1000,
-    )
-}
-
-public fun build_sui_price_info_object_pro(
-    scenario: &mut Scenario,
-    price_usd: u64,
-    clock: &Clock,
-): PriceInfoObjectPro {
-    build_pyth_pro_price_info_object(
-        scenario,
-        test_constants::sui_price_feed_id(),
-        price_usd * test_constants::pyth_multiplier(),
-        100000,
         test_constants::pyth_decimals(),
         clock.timestamp_ms() / 1000,
     )

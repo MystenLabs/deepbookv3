@@ -612,7 +612,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     quote_oracle: &PriceInfoObject,
     margin_pool: &mut MarginPool<DebtAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    mut repay_coin: Coin<DebtAsset>,
+    repay_coin: Coin<DebtAsset>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DebtAsset>) {
@@ -1354,9 +1354,9 @@ fun place_market_order_conditional_v2<BaseAsset, QuoteAsset>(
 }
 
 /// Collects the conditional orders whose trigger condition is met at
-/// `current_price`. `trigger_below` orders fire when price falls to/below their
-/// trigger (stored high→low, so stop at the first that doesn't fire);
-/// `trigger_above` orders fire when price rises to/above their trigger (stored
+/// `current_price`. `trigger_below` orders fire when price falls strictly below
+/// their trigger (stored high→low, so stop at the first that doesn't fire);
+/// `trigger_above` orders fire when price rises strictly above their trigger (stored
 /// low→high).
 fun collect_triggered_orders<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
@@ -1769,8 +1769,6 @@ fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
-/// True when the manager holds no borrow position, so `risk_ratio` is MAX without
-/// consulting the oracle.
 /// True when the manager owes anything on either leg. The entrypoints that read the
 /// oracle lazily are all gated on exactly this, so it lives here rather than being
 /// spelled out at each call site.

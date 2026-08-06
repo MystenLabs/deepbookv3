@@ -44,7 +44,7 @@ fun deposit_pro_credits_collateral() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        _usdc_pool_id,
+        usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -95,7 +95,7 @@ fun borrow_base_pro_and_pro_views_agree() {
         admin_cap,
         maintainer_cap,
         btc_pool_id,
-        _usdc_pool_id,
+        usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -119,7 +119,7 @@ fun borrow_base_pro_and_pro_views_agree() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
-    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(_usdc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
 
     margin_manager_pro::deposit<BTC, USDC, USDC>(
         &mut mm,
@@ -565,7 +565,7 @@ fun add_conditional_order_pro_registers_the_order() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        _usdc_pool_id,
+        usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -635,7 +635,7 @@ fun deposit_pro_rejects_stale_feed() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        _usdc_pool_id,
+        usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -1503,7 +1503,7 @@ fun add_conditional_order_pro_rejects_stale_feed() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        _usdc_pool_id,
+        usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();

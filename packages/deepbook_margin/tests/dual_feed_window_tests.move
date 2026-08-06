@@ -10,8 +10,9 @@
 /// chooses per call. These tests pin what that does and does not permit.
 ///
 /// The divergence is not attacker-manufactured: neither feed can be forged. It is
-/// bounded by the two feeds' independent staleness, so with `max_age_secs` at 70 the
-/// two prices can be up to 69s apart in age.
+/// bounded by the two feeds' independent staleness: each may be up to
+/// `max_age_secs - 1` old, so the two prices can differ by nearly twice that in age.
+/// This suite runs the test config's 60s; live mainnet is configured at 70s.
 ///
 /// If a mitigation lands (an admin switch making exactly one reader family
 /// authoritative, say) `dual_feed_window_permits_liquidating_on_the_lower_feed` is the
@@ -182,7 +183,7 @@ fun dual_feed_window_permits_liquidating_on_the_lower_feed() {
 /// GUARD — a debt-carrying position cannot be evaluated on a stale Pro feed.
 /// Liquidation through the Pro entrypoint with a stale BTC feed must abort in the
 /// Pro reader's staleness check (get_price_no_older_than).
-#[test, expected_failure]
+#[test, expected_failure(abort_code = pyth_pro::pyth::E_STALE_PRICE_UPDATE)]
 fun dual_feed_window_still_enforces_staleness_on_each_feed() {
     let (
         mut scenario,
