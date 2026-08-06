@@ -6,7 +6,7 @@
 /// app auth inside the four Predict wrappers exposed here.
 module deepbook_sessions::sessions;
 
-use account::{account::{Self, Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::{account::{Self, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
     expiry_market::{Self as expiry_market, ExpiryMarket},
     pricing::Pricer,
@@ -37,7 +37,8 @@ public struct SessionsData has store {
 // === Public Functions ===
 
 /// Return a known session's expiration timestamp for SDK and devInspect reads.
-public fun session_expiration_ms(account: &Account, session: address): Option<u64> {
+public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Option<u64> {
+    let account = wrapper.load_account();
     if (!account.has_data<SessionsApp>()) return option::none();
     let data = account.borrow_data<SessionsApp, SessionsData>();
     if (!data.sessions.contains(session)) {
@@ -218,7 +219,7 @@ fun generate_auth_as_session(
     clock: &Clock,
     ctx: &TxContext,
 ): Auth {
-    let expiration = session_expiration_ms(wrapper.load_account(), ctx.sender());
+    let expiration = session_expiration_ms(wrapper, ctx.sender());
     assert!(expiration.is_some(), ESessionNotAuthorized);
     assert!(clock.timestamp_ms() < *expiration.borrow(), ESessionNotAuthorized);
     account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
