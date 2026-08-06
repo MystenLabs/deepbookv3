@@ -185,6 +185,7 @@ public struct WithdrawCollateralEvent has copy, drop {
 /// it triggers, the resting order it places is clamped to `max_order_ttl_ms`
 /// (default 3 days) by `clamp_expire_timestamp`, the same stale-price guard as
 /// any margin limit order. For a permanent stop, use a market pending order.
+/// Twin: `margin_manager_upgraded::add_conditional_order`. Edit both.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -260,6 +261,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
 /// a post-fill `risk_ratio >= min_borrow_risk_ratio` invariant inside the
 /// inner loop. If any single triggered fill would breach that floor, the
 /// entire txn aborts — no partial-state landing.
+/// Twin: `margin_manager_upgraded::execute_conditional_orders_v2`. Edit both.
 public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -296,6 +298,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
 /// gate rejects it), while repaying actually improves it. If a single triggered
 /// fill would worsen net solvency the whole txn aborts — no partial-state
 /// landing.
+/// Twin: `margin_manager_upgraded::execute_conditional_orders_v3`. Edit both.
 public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -436,6 +439,7 @@ public fun unset_referral<BaseAsset, QuoteAsset>(
 
 // === Public Functions - Margin Manager ===
 /// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
+/// Twin: `margin_manager_upgraded::deposit`. Edit both.
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -464,6 +468,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
 
 /// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
 /// The withdrawal is subject to the risk ratio limit.
+/// Twin: `margin_manager_upgraded::withdraw`. Edit both.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -513,6 +518,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 }
 
 /// Borrow the base asset using the margin manager.
+/// Twin: `margin_manager_upgraded::borrow_base`. Edit both.
 public fun borrow_base<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -537,6 +543,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
 }
 
 /// Borrow the quote asset using the margin manager.
+/// Twin: `margin_manager_upgraded::borrow_quote`. Edit both.
 public fun borrow_quote<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -605,6 +612,7 @@ public fun repay_quote<BaseAsset, QuoteAsset>(
 }
 
 // === Public Functions - Liquidation - Receive Assets After Liquidation ===
+/// Twin: `margin_manager_upgraded::liquidate`. Edit both.
 public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -629,6 +637,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 // Returns the risk ratio of the margin manager given the corresponding margin pools.
+/// Twin: `margin_manager_upgraded::risk_ratio`. Edit both.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -657,6 +666,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
 
 /// Returns the risk ratio without validating oracle price staleness or confidence.
 /// Use for read-only queries where stale prices are acceptable.
+/// Twin: `margin_manager_upgraded::risk_ratio_unsafe`. Edit both.
 public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -757,6 +767,7 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
 ///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
 ///          quote_pyth_price, quote_pyth_decimals, current_price,
 ///          lowest_trigger_above_price, highest_trigger_below_price)
+/// Twin: `margin_manager_upgraded::manager_state`. Edit both.
 public fun manager_state<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -781,6 +792,7 @@ public fun manager_state<BaseAsset, QuoteAsset>(
 /// Returns comprehensive state information for multiple margin managers.
 /// Same as manager_state but takes a vector and returns vectors of all values.
 /// All managers must be of the same type.
+/// Twin: `margin_manager_upgraded::manager_states`. Edit both.
 public fun manager_states<BaseAsset, QuoteAsset>(
     margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
     registry: &MarginRegistry,
@@ -1998,7 +2010,7 @@ public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
 /// `risk_*_reading` are validated reads, needed only when the manager carries debt.
 /// `event_*_reading` are unvalidated reads used solely for the telemetry event, and
 /// only when a base/quote asset is withdrawn. Both are `none` otherwise, so a
-/// debt-free withdrawal never touches the oracle - matching the pre-Pyth-Pro
+/// debt-free withdrawal never touches the oracle - matching the pre-upgrade
 /// behaviour, where a stale feed could not block a user reclaiming collateral.
 public(package) fun withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,

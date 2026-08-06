@@ -5,8 +5,8 @@
 ///
 /// Pyth Core is being replaced by a separately published package, so its
 /// `PriceInfoObject` is a distinct Move type from the legacy one and the frozen
-/// signatures in `pool_proxy` can never accept it. The Pyth's upgraded Core surface therefore lives
-/// here, under the same function names. Each entry reads the Pro feed and delegates
+/// signatures in `pool_proxy` can never accept it. The upgraded surface therefore lives
+/// here, under the same function names. Each entry reads the upgraded feed and delegates
 /// to the shared core in `pool_proxy`, so both feeds run identical logic.
 module deepbook_margin::pool_proxy_upgraded;
 

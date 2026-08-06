@@ -41,6 +41,7 @@ const EReduceOnlyBelowLiquidation: u64 = 9;
 // === Public Functions - Price Protection ===
 /// Updates the current price for a pool using safe oracle price calculation.
 /// Anyone can call this to update the price oracle used for order validation.
+/// Twin: `pool_proxy_upgraded::update_current_price`. Edit both.
 public fun update_current_price<BaseAsset, QuoteAsset>(
     registry: &mut MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -1180,6 +1181,7 @@ fun repay_debt_then_assert_monotonic<BaseAsset, QuoteAsset>(
 // === Legacy Pyth entrypoints ===
 // Frozen signatures. Bodies delegate to the shared cores above.
 
+/// Twin: `pool_proxy_upgraded::place_limit_order_v2`. Edit both.
 public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1231,6 +1233,7 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy_upgraded::place_market_order_v2`. Edit both.
 public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1276,6 +1279,7 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy_upgraded::place_reduce_only_limit_order_v2`. Edit both.
 public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1316,6 +1320,7 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy_upgraded::place_reduce_only_market_order_v2`. Edit both.
 public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1350,6 +1355,7 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy_upgraded::place_reduce_only_market_order_and_repay_loan`. Edit both.
 public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1384,6 +1390,7 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy_upgraded::place_reduce_only_limit_order_and_repay_loan`. Edit both.
 public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -1424,6 +1431,7 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy_upgraded::place_market_order_and_repay_loan`. Edit both.
 public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
