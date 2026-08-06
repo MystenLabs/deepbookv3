@@ -238,3 +238,15 @@ fun generate_auth_as_session(
     assert!(clock.timestamp_ms() < *expiration.borrow(), ESessionNotAuthorized);
     account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
 }
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun session_authorized_fields(event: &SessionAuthorized): (ID, address, u64) {
+    (event.account_id, event.session, event.expires_at_ms)
+}
+
+#[test_only]
+public fun session_revoked_fields(event: &SessionRevoked): (ID, address, u64) {
+    (event.account_id, event.session, event.expires_at_ms)
+}

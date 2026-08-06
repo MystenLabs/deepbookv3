@@ -6,3 +6,4 @@ version = "0.0.1"
 [dependencies]
 account = { local = "../account" }
 deepbook_predict = { local = "../predict" }
+propbook = { local = "../propbook" }
