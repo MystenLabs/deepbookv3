@@ -38,24 +38,6 @@ bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", sub
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
 wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
 
-# Mainnet linking is deliberately incomplete: `bs_oracle` and `dusdc` have no
-# mainnet publication, so a mainnet publish stays blocked and the two entries
-# below are only the resolvable half. Deploy gate S-7 in
-# `predeploy/open-items.md` owns the remainder.
-#
-# Unlike testnet, mainnet `pyth_lazer` is an upgraded lineage, so its two ids
-# differ: `original-id` is the first publish (version 1), `published-at` the
-# current version (version 2). Mainnet wormhole core is still version 1, so its
-# ids coincide as they do on testnet. These addresses are NOT in the pinned
-# revision's `SuiLazerContracts.json`, which lists testnet only; they are Pyth's
-# published mainnet contract addresses, cross-checked against the mainnet state
-# object that file carries on `main` and confirmed on chain 2026-08-06.
-#
-# The pinned source revision predates deployed mainnet `pyth_lazer` version 2,
-# which adds a `channel_v2` module this revision does not carry. Linking stays
-# sound because a Sui upgrade preserves the public surface this package
-# typechecks against, but the pin must be advanced — and the bytecode
-# reproduced — before a mainnet publish can be verified.
 [dep-replacements.mainnet]
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0xefbfd064480777699fd9c557a5804d72ace7bc82661fdc8d1f1a44ea6d92ee10", original-id = "0x7b502c8a7bcb3915892347f11086745570e759fe9708d03c03accf4c90bbf580" }
 wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0x5306f64e312b581766351c07af79c72fcb1cd25147157fdc2f8ad76de9a3fb6a", original-id = "0x5306f64e312b581766351c07af79c72fcb1cd25147157fdc2f8ad76de9a3fb6a" }
