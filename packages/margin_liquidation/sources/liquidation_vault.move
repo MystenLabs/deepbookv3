@@ -6,10 +6,12 @@ module margin_liquidation::liquidation_vault;
 use deepbook::pool::Pool;
 use deepbook_margin::{
     margin_manager::{MarginManager, liquidate},
+    margin_manager_upgraded,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry
 };
 use pyth::price_info::PriceInfoObject;
+use pyth_upgraded::price_info::PriceInfoObject as PriceInfoObjectUpgraded;
 use sui::{
     bag::{Self, Bag},
     balance::{Self, Balance},
@@ -194,13 +196,10 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    let base_balance = self.balance<BaseAsset>();
-    if (!registry.can_liquidate(pool.id(), risk_ratio) || base_balance < 1000) {
-        return
-    };
-    let amount = repay_amount.destroy_with_default(base_balance);
+    if (!self.should_liquidate<BaseAsset>(registry, pool.id(), risk_ratio)) return;
+    let amount = repay_amount.destroy_with_default(self.balance<BaseAsset>());
     let balance = self.withdraw_int<BaseAsset>(amount);
-    let (mut base_coin, quote_coin, base_repay_coin) = margin_manager.liquidate<
+    let (base_coin, quote_coin, base_repay_coin) = margin_manager.liquidate<
         BaseAsset,
         QuoteAsset,
         BaseAsset,
@@ -214,24 +213,14 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
-    let repay_balance_remaining = base_repay_coin.value();
-    let base_out = base_coin.value();
-    let quote_out = quote_coin.value();
-    event::emit(LiquidationByVault {
-        vault_id: self.id(),
-        margin_manager_id: margin_manager.id(),
-        margin_pool_id: base_margin_pool.id(),
-        base_in: amount,
-        quote_in: 0,
-        base_out,
-        quote_out,
-        repay_balance_remaining,
-        base_liquidation: true,
-    });
-
-    base_coin.join(base_repay_coin);
-    self.deposit_int(base_coin.into_balance());
-    self.deposit_int(quote_coin.into_balance());
+    self.settle_base_liquidation(
+        margin_manager.id(),
+        base_margin_pool.id(),
+        amount,
+        base_coin,
+        quote_coin,
+        base_repay_coin,
+    );
 }
 
 public fun liquidate_quote<BaseAsset, QuoteAsset>(
@@ -256,13 +245,10 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    let quote_balance = self.balance<QuoteAsset>();
-    if (!registry.can_liquidate(pool.id(), risk_ratio) || quote_balance < 1000) {
-        return
-    };
-    let amount = repay_amount.destroy_with_default(quote_balance);
+    if (!self.should_liquidate<QuoteAsset>(registry, pool.id(), risk_ratio)) return;
+    let amount = repay_amount.destroy_with_default(self.balance<QuoteAsset>());
     let balance = self.withdraw_int<QuoteAsset>(amount);
-    let (base_coin, mut quote_coin, quote_repay_coin) = margin_manager.liquidate<
+    let (base_coin, quote_coin, quote_repay_coin) = margin_manager.liquidate<
         BaseAsset,
         QuoteAsset,
         QuoteAsset,
@@ -276,24 +262,14 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
-    let repay_balance_remaining = quote_repay_coin.value();
-    let base_out = base_coin.value();
-    let quote_out = quote_coin.value();
-    event::emit(LiquidationByVault {
-        vault_id: self.id(),
-        margin_manager_id: margin_manager.id(),
-        margin_pool_id: quote_margin_pool.id(),
-        base_in: 0,
-        quote_in: amount,
-        base_out,
-        quote_out,
-        repay_balance_remaining,
-        base_liquidation: false,
-    });
-
-    quote_coin.join(quote_repay_coin);
-    self.deposit_int(base_coin.into_balance());
-    self.deposit_int(quote_coin.into_balance());
+    self.settle_quote_liquidation(
+        margin_manager.id(),
+        quote_margin_pool.id(),
+        amount,
+        base_coin,
+        quote_coin,
+        quote_repay_coin,
+    );
 }
 
 public fun balance<T>(self: &LiquidationVault): u64 {
@@ -308,7 +284,187 @@ public fun balance<T>(self: &LiquidationVault): u64 {
     }
 }
 
+/// `liquidate_base` against Pyth's upgraded Core.
+///
+/// Pyth is replacing Core with a separately published package, so its `PriceInfoObject`
+/// is a distinct Move type and `liquidate_base`'s frozen signature can never accept it.
+/// Once Pyth stops publishing legacy Core the legacy entry aborts on staleness by
+/// itself, and this becomes the only way the vault can liquidate. Everything but the
+/// two oracle reads is shared with the legacy entry.
+public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    repay_amount: Option<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let risk_ratio = margin_manager_upgraded::risk_ratio(
+        margin_manager,
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    if (!self.should_liquidate<BaseAsset>(registry, pool.id(), risk_ratio)) return;
+    let amount = repay_amount.destroy_with_default(self.balance<BaseAsset>());
+    let balance = self.withdraw_int<BaseAsset>(amount);
+    let (base_coin, quote_coin, base_repay_coin) = margin_manager_upgraded::liquidate<
+        BaseAsset,
+        QuoteAsset,
+        BaseAsset,
+    >(
+        margin_manager,
+        registry,
+        base_oracle,
+        quote_oracle,
+        base_margin_pool,
+        pool,
+        balance.into_coin(ctx),
+        clock,
+        ctx,
+    );
+
+    self.settle_base_liquidation(
+        margin_manager.id(),
+        base_margin_pool.id(),
+        amount,
+        base_coin,
+        quote_coin,
+        base_repay_coin,
+    );
+}
+
+/// `liquidate_quote` against Pyth's upgraded Core. See `liquidate_base_upgraded`.
+public fun liquidate_quote_upgraded<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObjectUpgraded,
+    quote_oracle: &PriceInfoObjectUpgraded,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    repay_amount: Option<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let risk_ratio = margin_manager_upgraded::risk_ratio(
+        margin_manager,
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    if (!self.should_liquidate<QuoteAsset>(registry, pool.id(), risk_ratio)) return;
+    let amount = repay_amount.destroy_with_default(self.balance<QuoteAsset>());
+    let balance = self.withdraw_int<QuoteAsset>(amount);
+    let (base_coin, quote_coin, quote_repay_coin) = margin_manager_upgraded::liquidate<
+        BaseAsset,
+        QuoteAsset,
+        QuoteAsset,
+    >(
+        margin_manager,
+        registry,
+        base_oracle,
+        quote_oracle,
+        quote_margin_pool,
+        pool,
+        balance.into_coin(ctx),
+        clock,
+        ctx,
+    );
+
+    self.settle_quote_liquidation(
+        margin_manager.id(),
+        quote_margin_pool.id(),
+        amount,
+        base_coin,
+        quote_coin,
+        quote_repay_coin,
+    );
+}
+
 // === Private Functions ===
+
+/// Whether this vault should act on `risk_ratio`, and has enough of `Asset` to be
+/// worth acting with. Shared so the legacy and upgraded entries cannot drift apart on
+/// the gate; the only thing that differs between them is which feed produced the ratio.
+fun should_liquidate<Asset>(
+    self: &LiquidationVault,
+    registry: &MarginRegistry,
+    deepbook_pool_id: ID,
+    risk_ratio: u64,
+): bool {
+    registry.can_liquidate(deepbook_pool_id, risk_ratio) && self.balance<Asset>() >= 1000
+}
+
+/// Emits the vault's liquidation event and returns every coin to the vault. Shared by
+/// the legacy and upgraded base entries.
+fun settle_base_liquidation<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    margin_manager_id: ID,
+    margin_pool_id: ID,
+    base_in: u64,
+    mut base_coin: Coin<BaseAsset>,
+    quote_coin: Coin<QuoteAsset>,
+    base_repay_coin: Coin<BaseAsset>,
+) {
+    event::emit(LiquidationByVault {
+        vault_id: self.id(),
+        margin_manager_id,
+        margin_pool_id,
+        base_in,
+        quote_in: 0,
+        base_out: base_coin.value(),
+        quote_out: quote_coin.value(),
+        repay_balance_remaining: base_repay_coin.value(),
+        base_liquidation: true,
+    });
+
+    base_coin.join(base_repay_coin);
+    self.deposit_int(base_coin.into_balance());
+    self.deposit_int(quote_coin.into_balance());
+}
+
+/// Quote-side twin of `settle_base_liquidation`.
+fun settle_quote_liquidation<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    margin_manager_id: ID,
+    margin_pool_id: ID,
+    quote_in: u64,
+    base_coin: Coin<BaseAsset>,
+    mut quote_coin: Coin<QuoteAsset>,
+    quote_repay_coin: Coin<QuoteAsset>,
+) {
+    event::emit(LiquidationByVault {
+        vault_id: self.id(),
+        margin_manager_id,
+        margin_pool_id,
+        base_in: 0,
+        quote_in,
+        base_out: base_coin.value(),
+        quote_out: quote_coin.value(),
+        repay_balance_remaining: quote_repay_coin.value(),
+        base_liquidation: false,
+    });
+
+    quote_coin.join(quote_repay_coin);
+    self.deposit_int(base_coin.into_balance());
+    self.deposit_int(quote_coin.into_balance());
+}
+
 fun deposit_int<T>(self: &mut LiquidationVault, balance: Balance<T>) {
     let key = BalanceKey<T> {};
 
