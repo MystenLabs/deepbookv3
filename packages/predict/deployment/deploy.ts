@@ -3838,15 +3838,17 @@ function assertResolvedSessionsPackages(manifest: IntegrationManifest): void {
     }
 }
 
-function packageMetadata(
-    snapshot: ClientSnapshot,
-    packageId: string,
-): { modules: string[]; dependencies: string[] } {
-    const raw = JSON.parse(suiClient(snapshot, ["object", packageId, "--json"])) as unknown;
+export function parsePackageMetadata(raw: unknown): {
+    modules: string[];
+    dependencies: string[];
+} {
     const root = asRecord(raw);
     const data = asRecord(root.data ?? root);
-    const content = asRecord(data.content ?? data);
-    const disassembled = asRecord(content.disassembled ?? content.moduleMap ?? content.modules);
+    const contentRoot = asRecord(data.content ?? data);
+    const content = asRecord(contentRoot.Package ?? contentRoot.package ?? contentRoot);
+    const disassembled = asRecord(
+        content.disassembled ?? content.moduleMap ?? content.module_map ?? content.modules,
+    );
     const linkage = asRecord(content.linkageTable ?? content.linkage_table);
     const dependencies = Object.values(linkage)
         .map((value) => {
@@ -3857,6 +3859,15 @@ function packageMetadata(
         })
         .filter((id): id is string => id !== null);
     return { modules: Object.keys(disassembled).sort(), dependencies: [...new Set(dependencies)] };
+}
+
+function packageMetadata(
+    snapshot: ClientSnapshot,
+    packageId: string,
+): { modules: string[]; dependencies: string[] } {
+    return parsePackageMetadata(
+        JSON.parse(suiClient(snapshot, ["object", packageId, "--json"])) as unknown,
+    );
 }
 
 async function assertSessionsSdkTarget(runtime: SessionsRuntime): Promise<void> {

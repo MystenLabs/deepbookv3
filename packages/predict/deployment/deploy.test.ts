@@ -15,6 +15,7 @@ import {
     createSessionsDeploymentState,
     parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
+    parsePackageMetadata,
     recordSessionsTransactionFailure,
     recordSessionsTransactionCheckpoint,
     type DeploymentResult,
@@ -372,6 +373,35 @@ test("a known failed smoke digest clears in-flight state for cleanup", () => {
     assert.equal(failure.digest, "failed-smoke-digest");
     assert.equal(failure.error, "MoveAbort at redeem_live");
     assert.match(failure.recordedAt, /^2026-/);
+});
+
+test("package metadata decodes the Sui 1.74 client object response", () => {
+    assert.deepEqual(
+        parsePackageMetadata({
+            content: {
+                Package: {
+                    module_map: { sessions: [1, 2, 3] },
+                    linkage_table: {
+                        account: {
+                            upgraded_id:
+                                "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c203",
+                        },
+                        predict: {
+                            upgraded_id:
+                                "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb",
+                        },
+                    },
+                },
+            },
+        }),
+        {
+            modules: ["sessions"],
+            dependencies: [
+                "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c203",
+                "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb",
+            ],
+        },
+    );
 });
 
 test("a fresh deployment targets the official Block Scholes package pair", () => {
