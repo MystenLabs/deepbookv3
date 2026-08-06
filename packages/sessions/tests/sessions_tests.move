@@ -8,18 +8,23 @@ use account::{
     account::{Self as account, AccountWrapper},
     account_registry::{Self as account_registry, AccountAdminCap, AccountRegistry}
 };
+use bs_oracle::verify;
 use deepbook_predict::{
     admin::AdminCap,
     expiry_market::{Self as expiry_market, ExpiryMarket},
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
+    order,
     plp::{Self as plp, PoolVault},
+    pricing::Pricer,
     protocol_config::ProtocolConfig,
     registry::{Self as predict_registry, Registry as PredictRegistry}
 };
 use deepbook_sessions::sessions::{Self as sessions, SessionAuthorized, SessionRevoked, SessionsApp};
+use fixed_math::math;
 use propbook::{
-    pyth_feed::PythFeed,
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
+    pyth_feed::{Self as pyth_feed, PythFeed},
     registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
 };
 use std::unit_test::{assert_eq, destroy};
@@ -57,8 +62,26 @@ const MARKET_INITIAL_EXPIRY_CASH: u64 = 20_000_000_000;
 const MARKET_CADENCE_WINDOW_SIZE: u64 = 1;
 const GATE_NOW_MS: u64 = 120_000;
 const GATE_SESSION_EXPIRES_AT_MS: u64 = 180_000; // 120_000 + 60_000.
+const MARKET_EXPIRY_MS: u64 = 180_000;
+const LIVE_SOURCE_TIMESTAMP_MS: u64 = 119_000;
+const LIVE_PRICE: u64 = 100_000_000_000;
+const PYTH_EXPONENT_NEG_9: u16 = 9;
+const SVI_A_MAGNITUDE: u128 = 1;
+const SVI_B: u128 = 10_000;
+const SVI_SIGMA: u128 = 1_000_000;
+const SVI_RHO_MAGNITUDE: u128 = 1_000_000_000;
+const SVI_M_MAGNITUDE: u128 = 10_000_000_000;
+const MINT_LOWER_TICK: u64 = 0;
+const MINT_HIGHER_TICK: u64 = 100;
+// Ten contracts at an approximately 50% range price stays above Predict's one-DUSDC minimum net premium and is an exact position-lot multiple.
+const MINT_QUANTITY: u64 = 10_000_000;
+const MINT_MAX_PREMIUM: u64 = 1_000;
+const ZERO_COST: u64 = 0;
+const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
+
+macro fun mint_leverage(): u64 { math::float_scaling!() }
 
 public struct GateFixture {
     scenario: Scenario,
@@ -66,6 +89,19 @@ public struct GateFixture {
     market_id: ID,
     wrapper_id: ID,
     config_id: ID,
+    oracle_registry_id: ID,
+    pyth_id: ID,
+    bs_values_id: ID,
+    bs_svi_id: ID,
+}
+
+public struct LiveGateInputs {
+    market: ExpiryMarket,
+    account_registry: AccountRegistry,
+    wrapper: AccountWrapper,
+    config: ProtocolConfig,
+    pricer: Pricer,
+    root: AccumulatorRoot,
 }
 
 #[test]
@@ -248,6 +284,7 @@ fun unapproved_session_cannot_use_predict_wrapper() {
         market_id,
         wrapper_id,
         config_id,
+        ..,
     } = setup_gate_fixture();
     scenario.next_tx(SESSION);
     let mut market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
@@ -281,6 +318,7 @@ fun session_at_exact_expiration_cannot_use_predict_wrapper() {
         market_id,
         wrapper_id,
         config_id,
+        ..,
     } = setup_gate_fixture();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -326,6 +364,7 @@ fun active_session_passes_session_gate_and_reaches_predict() {
         market_id,
         wrapper_id,
         config_id,
+        ..,
     } = setup_gate_fixture();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -362,6 +401,211 @@ fun active_session_passes_session_gate_and_reaches_predict() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun revoked_session_cannot_use_predict_wrapper() {
+    let GateFixture {
+        mut scenario,
+        clock,
+        market_id,
+        wrapper_id,
+        config_id,
+        ..,
+    } = setup_gate_fixture();
+    authorize_gate_session(&mut scenario, &clock, wrapper_id);
+
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
+    return_shared(wrapper);
+
+    scenario.next_tx(SESSION);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
+    let account_registry = scenario.take_shared<AccountRegistry>();
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    let root = scenario.take_shared<AccumulatorRoot>();
+
+    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        MISSING_ORDER_ID,
+        CLOSE_QUANTITY,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(closed_order_id);
+    destroy(replacement_order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintProbabilityAboveMax)]
+fun active_session_reaches_predict_mint_exact_quantity() {
+    let GateFixture {
+        mut scenario,
+        clock,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+    } = setup_gate_fixture();
+    authorize_gate_session(&mut scenario, &clock, wrapper_id);
+    scenario.next_tx(SESSION);
+    let LiveGateInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = take_live_gate_inputs(
+        &mut scenario,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+        &clock,
+    );
+
+    let order_id = sessions::mint_exact_quantity(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        MINT_LOWER_TICK,
+        MINT_HIGHER_TICK,
+        MINT_QUANTITY,
+        mint_leverage!(),
+        std::u64::max_value!(),
+        ZERO_PROBABILITY,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostCapRequired)]
+fun active_session_reaches_predict_mint_exact_amount() {
+    let GateFixture {
+        mut scenario,
+        clock,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+    } = setup_gate_fixture();
+    authorize_gate_session(&mut scenario, &clock, wrapper_id);
+    scenario.next_tx(SESSION);
+    let LiveGateInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = take_live_gate_inputs(
+        &mut scenario,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+        &clock,
+    );
+
+    let order_id = sessions::mint_exact_amount(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        MINT_LOWER_TICK,
+        MINT_HIGHER_TICK,
+        MINT_MAX_PREMIUM,
+        MINT_QUANTITY,
+        mint_leverage!(),
+        ZERO_COST,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = order::EInvalidFloorShares)]
+fun active_session_reaches_predict_redeem_live() {
+    let GateFixture {
+        mut scenario,
+        clock,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+    } = setup_gate_fixture();
+    authorize_gate_session(&mut scenario, &clock, wrapper_id);
+    scenario.next_tx(SESSION);
+    let LiveGateInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = take_live_gate_inputs(
+        &mut scenario,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+        &clock,
+    );
+
+    let (closed_order_id, replacement_order_id) = sessions::redeem_live(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        MISSING_ORDER_ID,
+        CLOSE_QUANTITY,
+        ZERO_PROBABILITY,
+        ZERO_COST,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(closed_order_id);
+    destroy(replacement_order_id);
+
+    abort EUnexpectedSuccess
+}
+
 fun setup_account(): (Scenario, Clock, ID) {
     let mut scenario = test::begin(ADMIN);
     account_registry::init_for_testing(scenario.ctx());
@@ -377,6 +621,60 @@ fun setup_account(): (Scenario, Clock, ID) {
     scenario.next_tx(ADMIN);
 
     (scenario, clock, wrapper_id)
+}
+
+fun authorize_gate_session(scenario: &mut Scenario, clock: &Clock, wrapper_id: ID) {
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    sessions::authorize_session(
+        &mut wrapper,
+        SESSION,
+        SESSION_DURATION_MS,
+        clock,
+        scenario.ctx(),
+    );
+    return_shared(wrapper);
+}
+
+fun take_live_gate_inputs(
+    scenario: &mut Scenario,
+    market_id: ID,
+    wrapper_id: ID,
+    config_id: ID,
+    oracle_registry_id: ID,
+    pyth_id: ID,
+    bs_values_id: ID,
+    bs_svi_id: ID,
+    clock: &Clock,
+): LiveGateInputs {
+    let market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
+    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    let oracle_registry = scenario.take_shared_by_id<OracleRegistry>(oracle_registry_id);
+    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(bs_values_id);
+    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(bs_svi_id);
+    let pricer = market.load_live_pricer(
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs_values,
+        &bs_svi,
+        clock,
+        scenario.ctx(),
+    );
+    return_shared(oracle_registry);
+    return_shared(pyth);
+    return_shared(bs_values);
+    return_shared(bs_svi);
+
+    LiveGateInputs {
+        market,
+        account_registry: scenario.take_shared<AccountRegistry>(),
+        wrapper: scenario.take_shared_by_id<AccountWrapper>(wrapper_id),
+        config,
+        pricer,
+        root: scenario.take_shared<AccumulatorRoot>(),
+    }
 }
 
 fun setup_gate_fixture(): GateFixture {
@@ -423,18 +721,20 @@ fun setup_gate_fixture(): GateFixture {
         PYTH_SOURCE_ID,
         scenario.ctx(),
     );
-    propbook_registry::create_and_share_block_scholes_stores(
+    let bs_pair = propbook_registry::create_and_share_block_scholes_stores(
         &mut oracle_registry,
         &propbook_admin_cap,
         PROPBOOK_UNDERLYING_ID,
         b"BTC".to_string(),
         scenario.ctx(),
     );
+    let bs_values_id = bs_pair.block_scholes_value_store_id();
+    let bs_svi_id = bs_pair.block_scholes_svi_store_id();
     return_shared(oracle_registry);
 
     scenario.next_tx(ADMIN);
     let mut oracle_registry = scenario.take_shared_by_id<OracleRegistry>(oracle_registry_id);
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         &propbook_admin_cap,
@@ -456,7 +756,77 @@ fun setup_gate_fixture(): GateFixture {
         &clock,
         scenario.ctx(),
     );
+    pyth_feed::record_raw_for_testing(
+        &mut pyth,
+        LIVE_PRICE,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        LIVE_SOURCE_TIMESTAMP_MS * 1000,
+        LIVE_SOURCE_TIMESTAMP_MS * 1000,
+        GATE_NOW_MS,
+        false,
+        scenario.ctx(),
+    );
+    let mut bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(bs_values_id);
+    let spot_sid = bs_values.spot_sid();
+    bs_values.apply_spot_batch(
+        verify::new_value_batch_for_testing(
+            LIVE_SOURCE_TIMESTAMP_MS,
+            vector[
+                verify::new_value_update_for_testing(
+                    spot_sid,
+                    LIVE_SOURCE_TIMESTAMP_MS,
+                    LIVE_PRICE as u128,
+                ),
+            ],
+        ),
+        &clock,
+        scenario.ctx(),
+    );
+    let forward_sid = bs_values.forward_sid(MARKET_EXPIRY_MS);
+    bs_values.apply_forward_batch(
+        verify::new_value_batch_for_testing(
+            LIVE_SOURCE_TIMESTAMP_MS,
+            vector[
+                verify::new_value_update_for_testing(
+                    forward_sid,
+                    LIVE_SOURCE_TIMESTAMP_MS,
+                    LIVE_PRICE as u128,
+                ),
+            ],
+        ),
+        vector[MARKET_EXPIRY_MS],
+        &clock,
+        scenario.ctx(),
+    );
+    let mut bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(bs_svi_id);
+    let svi_sid = bs_svi.svi_sid(MARKET_EXPIRY_MS);
+    bs_svi.apply_svi_batch(
+        verify::new_svi_batch_for_testing(
+            GATE_NOW_MS,
+            vector[
+                verify::new_svi_for_testing(
+                    svi_sid,
+                    GATE_NOW_MS,
+                    SVI_A_MAGNITUDE,
+                    false,
+                    SVI_B,
+                    SVI_SIGMA,
+                    SVI_RHO_MAGNITUDE,
+                    false,
+                    SVI_M_MAGNITUDE,
+                    false,
+                ),
+            ],
+        ),
+        vector[MARKET_EXPIRY_MS],
+        &clock,
+        scenario.ctx(),
+    );
     return_shared(pyth);
+    return_shared(bs_values);
+    return_shared(bs_svi);
     return_shared(oracle_registry);
     return_shared(registry);
     return_shared(vault);
@@ -474,5 +844,15 @@ fun setup_gate_fixture(): GateFixture {
     return_shared(account_registry);
     scenario.next_tx(ADMIN);
 
-    GateFixture { scenario, clock, market_id, wrapper_id, config_id }
+    GateFixture {
+        scenario,
+        clock,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+    }
 }
