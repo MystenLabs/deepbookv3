@@ -334,7 +334,10 @@ fun liquidate_quote_upgraded_seizes_collateral_and_settles() {
     ) = liquidation_vault::liquidation_event_fields(&events[0]);
     assert!(!base_liquidation);
     assert!(base_in == 0);
-    assert!(quote_in > 0);
+    // `quote_in` is what left the vault: the whole funded balance, since `repay_amount`
+    // was `none`. An exact value here is what distinguishes it from `quote_out`.
+    assert!(quote_in == 50_000_000_000);
+    assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == usdc_pool_id);
 
     destroy(btc);
     destroy(usdc);
@@ -394,6 +397,216 @@ fun liquidate_quote_settles_the_same_numbers_on_the_legacy_generation() {
     assert!(mm.borrowed_quote_shares() == 5_000_000_000);
     assert!(vault.balance<BTC>() == 0);
     assert!(vault.balance<USDC>() == 50_700_000_000);
+
+    destroy(btc);
+    destroy(usdc);
+    destroy(vault);
+    destroy(cap);
+    return_shared(btc_pool);
+    return_shared(usdc_pool);
+    return_shared(registry);
+    return_shared(pool);
+    return_shared(mm);
+    destroy(clock);
+    scenario.end();
+}
+
+/// A base-debt manager: 50k USDC of collateral against a 0.8 BTC loan opened at $50k.
+fun manager_with_base_debt(): (test::Scenario, Clock, ID, ID) {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<deepbook::registry::Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+    return_shared(registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let btc = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    margin_manager::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc,
+        &usdc,
+        mint_coin<USDC>(50_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc,
+        &usdc,
+        &pool,
+        btc_multiplier() / 10 * 8,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy(btc);
+    destroy(usdc);
+    destroy(admin_cap);
+    destroy(maintainer_cap);
+    return_shared(btc_pool);
+    return_shared(registry);
+    return_shared(pool);
+    return_shared(mm);
+    (scenario, clock, btc_pool_id, usdc_pool_id)
+}
+
+/// The base side of the payout path, which nothing else reaches. Until this existed,
+/// `liquidate_base_upgraded` had no execution of any kind, and `settle_base_liquidation`
+/// could transfer the repay coin to `@0x0` — silently losing the liquidated funds — with
+/// the whole suite still green.
+#[test]
+fun liquidate_base_upgraded_pays_out_and_returns_every_coin() {
+    let (mut scenario, clock, btc_pool_id, usdc_pool_id) = manager_with_base_debt();
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
+    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
+    vault.deposit(&cap, mint_coin<BTC>(btc_multiplier(), scenario.ctx()));
+
+    scenario.next_tx(test_constants::admin());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let shares_before = mm.borrowed_base_shares();
+
+    // BTC to $700k: the 0.8 BTC debt is now $560k against $610k of assets, a ratio of
+    // 1.089 - under the 1.10 floor. A base-debt manager is liquidated by BTC rising.
+    let btc = build_btc_price_info_object_upgraded(&mut scenario, 700000, &clock);
+    let usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    vault.liquidate_base_upgraded<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &btc,
+        &usdc,
+        &mut btc_pool,
+        &mut usdc_pool,
+        &mut pool,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(shares_before == 80_000_000);
+    assert!(mm.borrowed_base_shares() == 15_714_292);
+    assert!(vault.balance<BTC>() == 101_285_714);
+
+    let events = sui::event::events_by_type<LiquidationByVault>();
+    assert!(events.length() == 1);
+    let (
+        base_in,
+        quote_in,
+        _base_out,
+        _quote_out,
+        _remaining,
+        base_liquidation,
+    ) = liquidation_vault::liquidation_event_fields(&events[0]);
+    assert!(base_liquidation);
+    assert!(quote_in == 0);
+    assert!(base_in == 100_000_000);
+    assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == btc_pool_id);
+
+    destroy(btc);
+    destroy(usdc);
+    destroy(vault);
+    destroy(cap);
+    return_shared(btc_pool);
+    return_shared(usdc_pool);
+    return_shared(registry);
+    return_shared(pool);
+    return_shared(mm);
+    destroy(clock);
+    scenario.end();
+}
+
+/// The legacy base entry, same fixture and prices, must settle to the same numbers as
+/// its upgraded twin above — the base-side counterpart of
+/// `liquidate_quote_settles_the_same_numbers_on_the_legacy_generation`. It is also the
+/// only coverage of `liquidate_base`'s event, whose `margin_pool_id` would otherwise be
+/// free to report the quote pool.
+#[test]
+fun liquidate_base_settles_the_same_numbers_on_the_legacy_generation() {
+    let (mut scenario, clock, btc_pool_id, usdc_pool_id) = manager_with_base_debt();
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
+    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
+    vault.deposit(&cap, mint_coin<BTC>(btc_multiplier(), scenario.ctx()));
+
+    scenario.next_tx(test_constants::admin());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let shares_before = mm.borrowed_base_shares();
+
+    let btc = build_btc_price_info_object(&mut scenario, 700000, &clock);
+    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    vault.liquidate_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &btc,
+        &usdc,
+        &mut btc_pool,
+        &mut usdc_pool,
+        &mut pool,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Identical to `liquidate_base_upgraded_pays_out_and_returns_every_coin`.
+    assert!(shares_before == 80_000_000);
+    assert!(mm.borrowed_base_shares() == 15_714_292);
+    assert!(vault.balance<BTC>() == 101_285_714);
+
+    let events = sui::event::events_by_type<LiquidationByVault>();
+    assert!(events.length() == 1);
+    let (
+        base_in,
+        quote_in,
+        _base_out,
+        _quote_out,
+        _remaining,
+        base_liquidation,
+    ) = liquidation_vault::liquidation_event_fields(&events[0]);
+    assert!(base_liquidation);
+    assert!(quote_in == 0);
+    assert!(base_in == 100_000_000);
+    assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == btc_pool_id);
 
     destroy(btc);
     destroy(usdc);
