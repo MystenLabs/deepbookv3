@@ -35,6 +35,7 @@ const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
 const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
+const EInvalidMaxBenefitRatio: u64 = 28;
 
 // === Fees ===
 
@@ -479,6 +480,26 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
 }
 
 // === Staking ===
+
+/// Ceiling on the DEEP-stake benefit ratio, in FLOAT_SCALING. The stake curve is
+/// scaled by this, so it sets how much of the programme runs: `0` pays nothing at
+/// any stake, `float_scaling` runs it at full strength, and values between phase
+/// it in. Ships at **0**, so a market created from the shipped template charges
+/// every trader the undiscounted fee and pays no stake-scaled loss rebate.
+public(package) macro fun default_max_benefit_ratio(): u64 { 0 }
+
+public(package) macro fun min_max_benefit_ratio(): u64 { 0 }
+
+public(package) macro fun max_max_benefit_ratio(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_max_benefit_ratio(value: u64) {
+    assert!(
+        value >= min_max_benefit_ratio!() && value <= max_max_benefit_ratio!(),
+        EInvalidMaxBenefitRatio,
+    );
+}
 
 /// Active stake at the benefit-curve kink: half of max benefits. Default 100k
 /// DEEP, admin-tunable 10k..1M.

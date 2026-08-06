@@ -263,7 +263,17 @@ public fun setup_market_default(): Fixture {
 /// line. The market objects are returned to the shared pool; the caller
 /// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
-    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), false)
+}
+
+/// `setup_live_market` whose market snapshots the DEEP-stake benefit programme at
+/// FULL strength. Needed by any flow test asserting a staking discount or rebate,
+/// because the policy is frozen at market creation and cannot be raised afterwards.
+public fun setup_live_market_with_stake_benefits(
+    expiry_ms: u64,
+    live_price: u64,
+): (Fixture, ID, Trader) {
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), true)
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
@@ -273,11 +283,19 @@ public fun setup_everything(): (Fixture, ID, Trader) {
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
         test_constants::default_manager_deposit(),
+        false,
     )
 }
 
-fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+fun setup_funded_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+    stake_benefits: bool,
+): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
+    // Must precede `create_expiry`: the market snapshots the switch at creation.
+    if (stake_benefits) fx.set_template_max_benefit_ratio(fixed_math::math::float_scaling!());
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -420,6 +438,29 @@ public fun set_pyth_spot_freshness_bundle(
     freshness_ms: u64,
 ) {
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
+}
+
+/// Set how much of the DEEP-stake benefit programme markets created from here on
+/// will run, through the real admin path. Markets snapshot this at creation, so a
+/// test asserting a staking fee discount or a stake-scaled loss rebate must call
+/// this BEFORE `create_expiry`; changing it afterwards cannot reach an existing
+/// market.
+public fun set_template_max_benefit_ratio(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_max_benefit_ratio(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Retune the benefit-curve thresholds on the template, through the real admin
+/// path. Like the ratio above, this only reaches markets created afterwards.
+public fun set_template_benefit_powers(self: &mut Fixture, lower: u64, upper: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_benefit_powers(&self.admin_cap, lower, upper);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
 }
 
 /// Enable the EWMA congestion penalty with explicit parameters through the

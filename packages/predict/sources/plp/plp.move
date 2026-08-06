@@ -720,7 +720,6 @@ fun claim_trading_loss_rebate_internal(
     let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(
         account,
         &summary,
-        config,
         ctx,
     );
     let returned_cash_amount = vault

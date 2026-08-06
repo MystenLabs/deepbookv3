@@ -284,6 +284,7 @@ public fun create_and_share_expiry_market(
         initial_expiry_cash,
         config.strike_exposure_template_config(),
         config.expiry_cash_template_config(),
+        config.stake_template_config(),
     );
 
     expiry_market_id
