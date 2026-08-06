@@ -119,7 +119,7 @@ fun open_1btc_40k_usdc(): (test::Scenario, Clock, MarginAdminCap, MaintainerCap,
 /// EXPLOIT ATTEMPT — dual-feed liquidation.
 /// The same manager is priced through two live feeds in the same block: the
 /// legacy Core feed puts BTC at $4100 (risk 1.1025, NOT liquidatable) while the
-/// Pyth's upgraded Core feed puts BTC at $3900 (risk 1.0975, liquidatable). If the Pro feed
+/// Pyth's upgraded Core feed puts BTC at $3900 (risk 1.0975, liquidatable). If the upgraded feed
 /// alone suffices to liquidate a manager the Core feed calls healthy, the
 /// liquidation goes through and the liquidator walks away with collateral.
 #[test]
@@ -157,16 +157,16 @@ fun dual_feed_window_permits_liquidating_on_the_lower_feed() {
     assert!(core_risk >= liq_threshold, 100); // Core: NOT liquidatable
     assert!(!registry.can_liquidate(pool.id(), core_risk), 101);
 
-    // Pro feed: BTC $3900. Liquidate through the Pro entrypoint in the same block.
-    let pro_btc = build_btc_price_info_object_upgraded(&mut scenario, 3900, &clock);
-    let pro_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    // Upgraded feed: BTC $3900. Liquidate through the upgraded entrypoint in the same block.
+    let upgraded_btc = build_btc_price_info_object_upgraded(&mut scenario, 3900, &clock);
+    let upgraded_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let repay = mint_coin<USDC>(100_000_000_000, scenario.ctx());
 
     let (base_coin, quote_coin, remaining) = margin_manager_upgraded::liquidate<BTC, USDC, USDC>(
         &mut mm,
         &registry,
-        &pro_btc,
-        &pro_usdc,
+        &upgraded_btc,
+        &upgraded_usdc,
         &mut usdc_pool,
         &mut pool,
         repay,
@@ -181,7 +181,7 @@ fun dual_feed_window_permits_liquidating_on_the_lower_feed() {
 
     destroy_3!(base_coin, quote_coin, remaining);
     destroy_2!(core_btc, core_usdc);
-    destroy_2!(pro_btc, pro_usdc);
+    destroy_2!(upgraded_btc, upgraded_usdc);
     return_shared(btc_pool);
     return_shared(usdc_pool);
     return_shared(pool);
@@ -189,9 +189,9 @@ fun dual_feed_window_permits_liquidating_on_the_lower_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// GUARD — a debt-carrying position cannot be evaluated on a stale Pro feed.
-/// Liquidation through the Pro entrypoint with a stale BTC feed must abort in the
-/// Pro reader's staleness check (get_price_no_older_than).
+/// GUARD — a debt-carrying position cannot be evaluated on a stale upgraded feed.
+/// Liquidation through the upgraded entrypoint with a stale BTC feed must abort in the
+/// upgraded reader's staleness check (get_price_no_older_than).
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
 fun dual_feed_window_still_enforces_staleness_on_each_feed() {
     let (
@@ -211,15 +211,15 @@ fun dual_feed_window_still_enforces_staleness_on_each_feed() {
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
 
     // Stale by 10 minutes; max age is 60s.
-    let pro_btc = build_stale_btc_price_info_object_upgraded(&mut scenario, 3900, 600, &clock);
-    let pro_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let upgraded_btc = build_stale_btc_price_info_object_upgraded(&mut scenario, 3900, 600, &clock);
+    let upgraded_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let repay = mint_coin<USDC>(100_000_000_000, scenario.ctx());
 
     let (base_coin, quote_coin, remaining) = margin_manager_upgraded::liquidate<BTC, USDC, USDC>(
         &mut mm,
         &registry,
-        &pro_btc,
-        &pro_usdc,
+        &upgraded_btc,
+        &upgraded_usdc,
         &mut usdc_pool,
         &mut pool,
         repay,
@@ -228,7 +228,7 @@ fun dual_feed_window_still_enforces_staleness_on_each_feed() {
     );
 
     destroy_3!(base_coin, quote_coin, remaining);
-    destroy_2!(pro_btc, pro_usdc);
+    destroy_2!(upgraded_btc, upgraded_usdc);
     return_shared(usdc_pool);
     return_shared(pool);
     return_shared(mm);
@@ -315,18 +315,18 @@ fun dual_feed_window_fires_a_stop_on_the_lower_feed_alone() {
     assert!(legacy_filled.is_empty());
     assert!(mm.conditional_order_ids().length() == 1);
 
-    // Pro feed at $44k, same block, same manager. Re-anchoring the order-validation
+    // Upgraded feed at $44k, same block, same manager. Re-anchoring the order-validation
     // band is itself permissionless, so the same caller does it with the same feed.
-    let pro_44k = build_btc_price_info_object_upgraded(&mut scenario, 44000, &clock);
-    let pro_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+    let upgraded_44k = build_btc_price_info_object_upgraded(&mut scenario, 44000, &clock);
+    let upgraded_usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     deepbook_margin::pool_proxy_upgraded::update_current_price<BTC, USDC>(
         &mut registry,
         &pool,
-        &pro_44k,
-        &pro_usdc,
+        &upgraded_44k,
+        &upgraded_usdc,
         &clock,
     );
-    let pro_filled: vector<OrderInfo> = margin_manager_upgraded::execute_conditional_orders_v2<
+    let upgraded_filled: vector<OrderInfo> = margin_manager_upgraded::execute_conditional_orders_v2<
         BTC,
         USDC,
     >(
@@ -334,20 +334,20 @@ fun dual_feed_window_fires_a_stop_on_the_lower_feed_alone() {
         &mut pool,
         &btc_pool,
         &usdc_pool,
-        &pro_44k,
-        &pro_usdc,
+        &upgraded_44k,
+        &upgraded_usdc,
         &registry,
         10,
         &clock,
         scenario.ctx(),
     );
-    assert!(pro_filled.length() == 1);
+    assert!(upgraded_filled.length() == 1);
     assert!(mm.conditional_order_ids().is_empty());
 
     std::unit_test::destroy(legacy_filled);
-    std::unit_test::destroy(pro_filled);
+    std::unit_test::destroy(upgraded_filled);
     destroy_2!(legacy_48k, legacy_usdc);
-    destroy_2!(pro_44k, pro_usdc);
+    destroy_2!(upgraded_44k, upgraded_usdc);
     destroy_2!(btc_50k, usdc);
     return_shared(btc_pool);
     return_shared(usdc_pool);

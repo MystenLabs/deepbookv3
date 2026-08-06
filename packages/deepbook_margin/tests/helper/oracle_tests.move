@@ -703,7 +703,7 @@ fun test_read_price_upgraded_matches_legacy_reader() {
     registry.add_config(&admin_cap, pyth_config);
 
     // Same feed id, price, conf, exponent and timestamp through both packages. The
-    // two readers must produce an identical `PythReading`, or the Pro entrypoints
+    // two readers must produce an identical `PythReading`, or the upgraded entrypoints
     // price differently from the legacy ones they shadow.
     let legacy_info = build_pyth_price_info_object(
         &mut scenario,
@@ -713,7 +713,7 @@ fun test_read_price_upgraded_matches_legacy_reader() {
         8,
         clock.timestamp_ms() / 1000,
     );
-    let pro_info = build_pyth_upgraded_price_info_object(
+    let upgraded_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000,
@@ -723,18 +723,18 @@ fun test_read_price_upgraded_matches_legacy_reader() {
     );
 
     let legacy_reading = read_price<USDC>(&legacy_info, &registry, &clock);
-    let pro_reading = read_price_upgraded<USDC>(&pro_info, &registry, &clock);
-    assert!(pro_reading.price() == legacy_reading.price());
-    assert!(pro_reading.decimals() == legacy_reading.decimals());
+    let upgraded_reading = read_price_upgraded<USDC>(&upgraded_info, &registry, &clock);
+    assert!(upgraded_reading.price() == legacy_reading.price());
+    assert!(upgraded_reading.decimals() == legacy_reading.decimals());
 
     let legacy_usd = calculate_usd_price<USDC>(legacy_reading, &registry, 1000000);
-    let pro_usd = calculate_usd_price<USDC>(pro_reading, &registry, 1000000); // 1 USDC
-    assert!(pro_usd == legacy_usd);
-    assert!(pro_usd == 100_000_000_000);
+    let upgraded_usd = calculate_usd_price<USDC>(upgraded_reading, &registry, 1000000); // 1 USDC
+    assert!(upgraded_usd == legacy_usd);
+    assert!(upgraded_usd == 100_000_000_000);
 
     destroy(admin_cap);
     destroy(legacy_info);
-    destroy(pro_info);
+    destroy(upgraded_info);
     test_scenario::return_shared(registry);
     test_scenario::return_shared(clock);
     scenario.end();
@@ -891,7 +891,7 @@ fun test_unvalidated_reading_skips_confidence_bound() {
 }
 
 // === Pyth's upgraded Core EWMA divergence ===
-// `build_pyth_upgraded_price_info_object` sets `ema == spot`, so every other Pro test
+// `build_pyth_upgraded_price_info_object` sets `ema == spot`, so every other upgraded test
 // leaves the divergence guard a tautology. These are the only tests that execute it,
 // and the only thing standing between a mutated `read_price_upgraded` ewma argument and a
 // green CI run.

@@ -5,7 +5,7 @@
 ///
 /// Pyth's upgraded Core is a separately published package, so its `PriceInfoObject` is a distinct
 /// Move type and no legacy test reaches these entrypoints. Each test drives the same
-/// flow as its legacy twin through the Pro feed, so a wrong `_core` target, a swapped
+/// flow as its legacy twin through the upgraded feed, so a wrong `_core` target, a swapped
 /// base/quote argument, or a downgraded reader fails here rather than merely
 /// compiling.
 #[test_only]
@@ -35,7 +35,7 @@ use deepbook_margin::{
 };
 use sui::test_scenario::{Self as test, return_shared};
 
-/// Deposits USDC collateral through the Pro entrypoint and asserts it landed.
+/// Deposits USDC collateral through the upgraded entrypoint and asserts it landed.
 #[test]
 fun deposit_upgraded_credits_collateral() {
     let (
@@ -85,8 +85,8 @@ fun deposit_upgraded_credits_collateral() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Borrows base through the Pro entrypoint, then reads the position back through the
-/// Pro `risk_ratio`, `manager_state` and `manager_states` views.
+/// Borrows base through the upgraded entrypoint, then reads the position back through the
+/// upgraded `risk_ratio`, `manager_state` and `manager_states` views.
 #[test]
 fun borrow_base_upgraded_and_upgraded_views_agree() {
     let (
@@ -144,7 +144,7 @@ fun borrow_base_upgraded_and_upgraded_views_agree() {
     );
     assert!(mm.borrowed_base_shares() > 0);
 
-    // Pro views must return a real ratio, not the debt-free MAX short-circuit, and it
+    // Upgraded views must return a real ratio, not the debt-free MAX short-circuit, and it
     // must be the *right* ratio: $100k USDC collateral plus the 1 BTC drawn at $100k
     // is $200k of assets against $100k of debt, exactly 2.0. A range assertion would
     // sit still while the two feeds were transposed; this does not.
@@ -225,8 +225,8 @@ fun borrow_base_upgraded_and_upgraded_views_agree() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// A debt-free manager must be able to withdraw with a stale Pro feed: the risk check
-/// does not run, so no price is needed. Pins the lazy-read fix on the Pro path.
+/// A debt-free manager must be able to withdraw with a stale upgraded feed: the risk check
+/// does not run, so no price is needed. Pins the lazy-read fix on the upgraded path.
 #[test]
 fun withdraw_upgraded_no_debt_tolerates_stale_feed() {
     let (
@@ -299,7 +299,7 @@ fun withdraw_upgraded_no_debt_tolerates_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// A debt-free manager's Pro `risk_ratio` view returns MAX without touching the feed.
+/// A debt-free manager's upgraded `risk_ratio` view returns MAX without touching the feed.
 #[test]
 fun risk_ratio_upgraded_no_debt_returns_max_with_stale_feed() {
     let (
@@ -365,7 +365,7 @@ fun risk_ratio_upgraded_no_debt_returns_max_with_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Borrows quote through the Pro entrypoint. Mirrors `borrow_base_upgraded`, on the other
+/// Borrows quote through the upgraded entrypoint. Mirrors `borrow_base_upgraded`, on the other
 /// side of the pair, so a base/quote transposition in either wrapper is caught.
 #[test]
 fun borrow_quote_upgraded_takes_a_loan() {
@@ -429,7 +429,7 @@ fun borrow_quote_upgraded_takes_a_loan() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// A healthy manager cannot be liquidated. Asserts the Pro `liquidate` reaches the
+/// A healthy manager cannot be liquidated. Asserts the upgraded `liquidate` reaches the
 /// shared core's solvency gate rather than some other path.
 #[test, expected_failure(abort_code = deepbook_margin::margin_manager::ECannotLiquidate)]
 fun liquidate_upgraded_rejects_a_healthy_manager() {
@@ -506,7 +506,7 @@ fun liquidate_upgraded_rejects_a_healthy_manager() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// With no conditional orders registered, both Pro executors return an empty batch.
+/// With no conditional orders registered, both upgraded executors return an empty batch.
 /// Exercises the delegation into the shared cores for v2 and v3.
 #[test]
 fun execute_conditional_orders_upgraded_with_no_orders_returns_empty() {
@@ -577,7 +577,7 @@ fun execute_conditional_orders_upgraded_with_no_orders_returns_empty() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-/// Registers a conditional order through the Pro entrypoint and reads it back.
+/// Registers a conditional order through the upgraded entrypoint and reads it back.
 #[test]
 fun add_conditional_order_upgraded_registers_the_order() {
     let (
@@ -777,8 +777,8 @@ fun withdraw_upgraded_with_wide_confidence_still_emits() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// === `withdraw` with debt: the solvency gate on the Pro path ===
-// Both shipped Pro withdraw tests deposit and never borrow, so `withdraw_needs_risk_check`
+// === `withdraw` with debt: the solvency gate on the upgraded path ===
+// Both shipped upgraded withdraw tests deposit and never borrow, so `withdraw_needs_risk_check`
 // is false and the entire risk branch - the gate deciding whether value may leave a
 // leveraged manager - never executes. These three run it, either side of the floor.
 
@@ -1039,7 +1039,7 @@ fun withdraw_upgraded_with_debt_rejects_stale_feed() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// === Reader-choice pins for the remaining Pro entrypoints ===
+// === Reader-choice pins for the remaining upgraded entrypoints ===
 // Each of these reads the oracle unconditionally through the *validated* reader. With
 // no test standing on that choice, swapping in `read_price_upgraded_unsafe` silently drops
 // staleness, EWMA-divergence and confidence enforcement and leaves CI green - on
@@ -1359,7 +1359,7 @@ fun liquidate_upgraded_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun execute_conditional_orders_v2_pro_rejects_stale_feed() {
+fun execute_conditional_orders_v2_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
@@ -1438,7 +1438,7 @@ fun execute_conditional_orders_v2_pro_rejects_stale_feed() {
 }
 
 #[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
-fun execute_conditional_orders_v3_pro_rejects_stale_feed() {
+fun execute_conditional_orders_v3_upgraded_rejects_stale_feed() {
     let (
         mut scenario,
         clock,
