@@ -50,6 +50,8 @@ const GC_SURVIVOR_C_LOWER: u64 = 102;
 const GC_SURVIVOR_A_HIGHER: u64 = 104;
 const GC_REMOVED_HIGHER: u64 = 106;
 const GC_SURVIVOR_C_HIGHER: u64 = 108;
+/// Survivors left after the middle range is removed; bounds the aggregation dust.
+const GC_SURVIVOR_COUNT: u64 = 2;
 const GC_SURVIVOR_A_QUANTITY: u64 = 1_000_000_000;
 const GC_REMOVED_QUANTITY: u64 = 500_000_000;
 const GC_SURVIVOR_C_QUANTITY: u64 = 300_000_000;
@@ -202,7 +204,16 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
         vector[GC_SURVIVOR_A_QUANTITY, GC_SURVIVOR_C_QUANTITY],
     );
     assert_eq!(mutated_walk, rebuilt_walk);
-    assert_eq!(mutated_walk, reference);
+    // The GC claim is the assertion above — the mutated tree and a tree that never
+    // held the removed range walk identically. Against the per-order reference the
+    // two survivors share no boundary, so the walk truncates once in total where
+    // the reference truncates once per order: `Σ floor(p·qᵢ) <= floor(p·Σqᵢ)`,
+    // bounded by one raw unit per extra order. The gap is protocol-favoured (R2 —
+    // the walk is a liability and never understates the per-order sum), which is
+    // what is asserted here; the previous bit-equality held only for the particular
+    // price low bits the old log-moneyness path happened to produce.
+    assert!(mutated_walk >= reference);
+    assert!(mutated_walk - reference <= GC_SURVIVOR_COUNT - 1);
 
     destroy(tree);
     destroy(rebuilt);

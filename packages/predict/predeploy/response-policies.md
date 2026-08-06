@@ -1285,6 +1285,72 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-26: Log-moneyness is a difference of logarithms, so the digital tails follow the surface
+
+- **Trigger state / threat:** a strike far enough from the forward that forming the
+  fixed-point ratio `strike * 1e9 / forward` destroys it — the quotient floors to
+  zero below a ratio of 1e-9 and leaves `u64` above 1.8e10, and just inside those
+  limits it survives as a handful of raw units carrying tens of percent of
+  truncation error. `compute_nd2` previously short-circuited there, returning the
+  exact digital limits `1e9` and `0` **without reading the surface**.
+- **Controller:** nobody, which is what made it dangerous. The branch fired on
+  `strike/forward` alone, so neither the Block Scholes publisher nor a trader had to
+  do anything unusual; the surface determined whether the returned limit was true.
+- **Blast radius:** every consumer of `range_price` on the affected market, all
+  reading the same wrong number — the mint's entry probability, the liquidation
+  threshold `gross_value <= floor_amount / liquidation_ltv`, and the NAV mark the
+  pool-wide flush consumes. Both directions existed: two saturating boundaries
+  collapse a range to zero, one saturating boundary against a finite one inflates it
+  toward 1.0. Nothing downstream caught either — a constant `1e9` across ticks is
+  monotone non-increasing, so `ENonMonotonePriceMemo` did not fire.
+- **Response:** compute `k = ln(strike) - ln(forward)` instead of `ln` of the ratio,
+  and delete both short-circuits. `ln` is defined across the whole positive `u64`
+  domain, so the difference is well-conditioned over every representable pair:
+  `|k| <= 44.4` against the 20.7 the ratio form could reach, at 1e-7 relative error
+  per term rather than an error that grows without bound as the tail deepens. The
+  tails still reach their limits, now through `d2`'s existing normal-CDF clamp
+  (RP-20) — computed rather than asserted.
+- **Reasoning:** the saturations were a repair for a self-inflicted precision loss,
+  and they repaired it with a claim that is only conditionally true. The exactness
+  of the digital limits at `|k| = 20.7` is not a property of the market — it is a
+  property of total variance, and the admissible envelope permits variance where the
+  limits are wrong by 100%. Constraining the surface to keep the shortcut honest was
+  considered and rejected: the binding quantity is the wing slope `b(1 + |rho|)` at
+  the saturation boundary, Lee's moment formula makes `b(1 + |rho|) <= 2` a
+  *necessary no-arbitrage condition*, and a surface sitting at that bound — perfectly
+  arbitrage-free — gives `w = 41.4`, `d2 = 0` and a true deep-ITM digital of exactly
+  0.5 against a returned 1.0. No envelope that admits arbitrage-free surfaces can
+  make the shortcut sound, so the shortcut is the thing that had to go. Removing the
+  precision loss removes the need for both.
+- **Risk profile:** `MEASURED`. The identity is exact in reals and the fixed-point
+  error is bounded by two `ln` evaluations instead of one `ln` of a truncated
+  quotient, which is strictly better everywhere and unboundedly better in the tails.
+  Existing exact-value coverage is unchanged: the four real-scenario reference tests
+  and the flat-surface at-the-forward digital all still hold to their derived
+  budgets. One differential test moved off a bit-equality that held only for the old
+  path's price low bits (see below).
+- **Envelope unchanged:** `max_svi_input` stays at 100. It was tightened in an
+  earlier draft of this policy and reverted after checking calibrated raw-SVI
+  parameters for real BTC surfaces — `b` reaches 0.21 across maturities and 0.10
+  within the cadence ladder Predict trades, and `sigma` reaches 1.00, so caps sized
+  to make the saturations exact would have rejected real surfaces and converted a
+  latent correctness bug into a fail-closed pricing halt.
+- **Pinning tests:** `pricing_guard_tests.move` —
+  `deep_itm_up_price_follows_the_surface_not_the_strike_ratio` (the same deep-ITM
+  strike as the ordinary-surface test, on a surface with `w = 481` at that strike,
+  asserting 0 where the ratio path returned `1e9`; mutation-checked by restoring the
+  ratio path), alongside the unchanged `deep_itm_up_price_saturates_to_one` and
+  `deep_otm_up_price_saturates_to_zero`, which now reach their limits through the
+  computed path. `payout_tree_walk_tests.move` —
+  `gc_mutated_tree_walk_matches_rebuilt_survivor_tree` asserts the walk is within
+  one raw unit of, and never below, the per-order reference (`Σ floor(p·qᵢ) <=
+  floor(p·Σqᵢ)`, protocol-favoured per R2) rather than bit-equal.
+- **Reopen when:** `math::ln` changes its domain or error budget, the digital's 1e9
+  output scale changes, or a strike/forward pair is admitted whose `|k|` exceeds
+  44.4 (impossible while both are `u64` at 1e9).
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,

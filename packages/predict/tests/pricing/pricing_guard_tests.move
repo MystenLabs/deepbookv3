@@ -9,9 +9,13 @@
 ///     passes;
 ///   - `EBlockScholesPriceStale`: a hard staleness abort when one of the split
 ///     Block Scholes price feeds is past its configured freshness window.
-/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone: the price
-/// tail now SATURATES instead of aborting, so those are pinned here as exact-value
-/// tests (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0). A stale Pyth spot no
+/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone, and so is the
+/// ratio short-circuit that replaced them: log-moneyness is now a difference of
+/// logarithms, so both tails are COMPUTED and their limits are reached through
+/// `d2`'s normal-CDF clamp rather than asserted by a branch. They stay pinned here
+/// as exact-value tests (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0) on an
+/// ordinary surface, alongside the high-variance case where the deep-ITM tail is 0
+/// instead — the pair that shows the tail follows the surface. A stale Pyth spot no
 /// longer aborts either — it falls back to the stored Block Scholes forward; that
 /// fallback is pinned with exact values in
 /// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
@@ -63,15 +67,23 @@ const MAX_REPRESENTABLE_U64: u128 = 18_446_744_073_709_551_615;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
-/// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
-/// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
-/// forward (100e9) the threshold is `forward / 1e9 == 100`, so strike 1 saturates.
+/// A strike far below the forward. On an ordinary low-variance surface the digital
+/// reaches its neg_inf limit here through `d2`'s normal-CDF clamp; on a
+/// high-variance surface it does not, which is what
+/// `deep_itm_up_price_follows_the_surface_not_the_strike_ratio` pins. Both tests
+/// use the default forward (100e9), where `k = ln(1e-9) - ln(100) = -25.33`.
 const DEEP_ITM_STRIKE: u64 = 1;
 
-/// A finite (non-`pos_inf`) strike so far above a tiny forward that
-/// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
-/// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
+/// A finite (non-`pos_inf`) strike far above a tiny forward. The up tail is 0 for
+/// every admissible surface here: `d2 <= -sqrt(2k)` bounds the true digital below
+/// 1e-11 at this moneyness regardless of variance, unlike the ITM side.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
+
+/// Surface whose total variance at `DEEP_ITM_STRIKE` is 481.2, far enough that the
+/// deep-ITM digital is 4.9e-23 rather than 1. Well inside the pricing-safe envelope.
+const HIGH_VARIANCE_SVI_B: u64 = 10_000_000_000;
+const HIGH_VARIANCE_SIGMA: u64 = 100_000_000;
+const HIGH_VARIANCE_RHO_MAGNITUDE: u64 = 900_000_000;
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
@@ -636,6 +648,47 @@ fun deep_itm_up_price_saturates_to_one() {
     let pricer = fx.load_pricer_bundle(&oracle);
 
     assert_eq!(pricer.up_price(strike(DEEP_ITM_STRIKE)), float!());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+/// The same deep-ITM strike as the test above, repriced on a high-variance surface:
+/// the digital limit is a property of the SURFACE, not of the strike alone, and this
+/// is the case that separates them.
+///
+/// `b = 10`, `sigma = 0.1`, `rho = -0.9`, `m = 0` at `k = ln(1e-9) - ln(100) =
+/// -25.3285` gives total variance `w = 481.2`, hence
+/// `d2 = -(k + w/2)/sqrt(w) = -9.81` and a true digital of `4.9e-23` — zero at the
+/// 1e9 scale the price is returned in. Reference computed from Python stdlib `erf`,
+/// independent of the contract.
+///
+/// This inverts under the previous implementation, which formed `strike * 1e9 /
+/// forward` first: that quotient floors to zero here, and the deep-ITM branch
+/// returned the exact digital limit `1e9` — certainty, against a true probability
+/// of ~0 — for every admissible surface, because the branch never read the surface
+/// at all. Every consumer of `range_price` inherited it: the mint's entry
+/// probability, the liquidation threshold, and the NAV mark.
+#[test]
+fun deep_itm_up_price_follows_the_surface_not_the_strike_ratio() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        test_constants::default_svi_a(),
+        false,
+        HIGH_VARIANCE_SVI_B,
+        HIGH_VARIANCE_SIGMA,
+        HIGH_VARIANCE_RHO_MAGNITUDE,
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(pricer.up_price(strike(DEEP_ITM_STRIKE)), 0);
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

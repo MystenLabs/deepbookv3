@@ -606,15 +606,23 @@ fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
 fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // Saturate ratios outside the fixed-point domain to their digital-probability
-    // limits instead of aborting live valuation and position flows.
-    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
-    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
-    let strike_ratio = strike_ratio_opt.destroy_some();
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
-    let k = math::ln(strike_ratio);
+    // Log-moneyness as a DIFFERENCE of logarithms, never as `ln` of a fixed-point
+    // ratio. Forming `strike * 1e9 / forward` first destroys exactly the tails it
+    // is asked about: the quotient floors to zero once `strike` is a billionth of
+    // `forward` and leaves `u64` once it is 1.8e10 times it, and just inside those
+    // limits it survives as a handful of raw units carrying tens of percent of
+    // truncation error. That is why this used to short-circuit to the digital
+    // limits 1 and 0 there — a saturation that is only true when total variance is
+    // small, and silently wrong when it is not, on a value the mint's entry
+    // probability, the liquidation threshold and the NAV mark all consume.
+    //
+    // `ln` is defined across the whole positive `u64` domain, so the difference is
+    // well-conditioned over every representable pair: `|k| <= 44.4` against the
+    // 20.7 the ratio form could reach, at a relative error of 1e-7 per term rather
+    // than a relative error that grows without bound as the tail deepens. No
+    // strike needs a special case, and no surface has to be restricted to keep a
+    // shortcut honest.
+    let k = math::ln(strike).sub(&math::ln(forward));
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
