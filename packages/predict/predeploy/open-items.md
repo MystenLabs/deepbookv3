@@ -239,6 +239,28 @@ unsettled — the keeper default and this repo's design record disagree, and
 every per-day figure in the discussion moves with it. Settle the cadence before
 running, or the result is not interpretable.
 
+### P-28: The pricing reference's tolerances predate the difference-of-logs change
+
+**Severity:** Low. Not a correctness bug — every committed reference point still
+passes and worst-case budget usage is unchanged at 61%. The defect is that the
+tolerances are now conservative by luck rather than derived.
+
+`generate_pricing_reference.py` derives every tolerance analytically from
+`math.move`'s documented per-primitive budgets, and its `d_k` term has been
+corrected to the difference-of-logs form (`1e-7·(|ln strike| + |ln forward|) +
+2/F`) that RP-26 shipped. The committed `pricing_reference_data.move` was
+generated under the previous ratio model (`1/F/ratio + 1e-7·|k| + 1/F`), which
+understates the current implementation by roughly 6x near the money — the old
+model's `1e-7·|k|` term vanishes at the money, while two `ln` evaluations do not.
+
+Regeneration needs `simulations/data/scenario_dataset.csv`, which is gitignored
+and absent from a fresh worktree, so it could not be done in the same change.
+
+**Action:** regenerate the reference data with the dataset present and confirm
+the budgets still bound the observed deviations. Until then the file's stated
+contract — "propagated from `math.move`'s documented per-primitive budgets" — is
+true of the generator but not of the committed data.
+
 ### P-29: Settlement has no fallback when no admissible print exists at a boundary
 
 **Severity:** High for any non-24/7 underlying; otherwise an unmeasured tail
@@ -333,6 +355,26 @@ exact key holds a normalizable read; layer 1 settling across an empty key;
 layer 1 settling across a poisoned key without mutating it; layer 1 refusing
 beyond `fallback_reach_ms`; and, if layer 2 ships, no effect before the window
 elapses.
+
+
+### P-30: The C-1 capacity model is one measurement behind the pricing path
+
+**Severity:** Low, but it compounds. Not a defect; a stale measurement.
+
+RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
+`walk_linear` pays that per payout-tree node and the pool-wide flush prices every
+active market in one PTB, so the increment lands directly on the C-1 computation
+budget — last measured at ~51% of the wall.
+
+Precedent for sizing it: `evidence/c1-skew-gas-2026-07-09.md` records that the
+previous comparable addition (one `normal_pdf`, i.e. one `exp`) cost +2.2%
+per-order flush slope and +3.3% at a full book. An `ln` is of similar cost, so a
+comparable increment is expected — not near a cliff, but unmeasured. Move
+unit-test metering put the difference under 0.01% of a test's gas; that is not
+on-chain compute and should not be cited as the answer.
+
+**Action:** fold a re-measurement into the next localnet capacity campaign rather
+than running one for this alone, and refresh the C-1 figures.
 
 ## Access and Governance
 
