@@ -4,6 +4,59 @@ Updated 2026-08-05. This is the live work register governed by the [predeploy li
 
 ## Deploy Gates
 
+### S-7: Predict cannot resolve a mainnet publication graph
+
+**Severity:** Deploy gate.
+
+Neither `packages/predict/Move.toml` nor `packages/propbook/Move.toml` could
+link a mainnet publish: several of the external dependency identities a mainnet
+publish needs do not exist. `[dep-replacements.mainnet]` now carries the
+resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06 —
+and `packages/token/Published.toml` already records a mainnet entry. The rest
+is open, and none of it is a manifest fix:
+
+- **`bs_oracle` and `bs_sid` are unpublished on mainnet.** The pinned upstream
+  revision's publication metadata records testnet only. Closed by the provider
+  publishing to mainnet and handing over the package identity, the same
+  handover the signer-custody confirmation waits on.
+- **`dusdc` has no mainnet counterpart, and the intended mainnet collateral is
+  a differently-named type.** `packages/dusdc/Published.toml` is testnet-only
+  and records that its `UpgradeCap` is not held here, so it cannot be
+  republished to make a mainnet graph resolve. The intended mainnet collateral
+  is native USDC —
+  `0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC`.
+  A `dep-replacements.mainnet` entry cannot express that: a replacement
+  substitutes the address only, while Predict names the collateral nominally
+  (`use dusdc::dusdc::DUSDC`, ~140 references), and the USDC package publishes a
+  single module `usdc` containing no `dusdc::DUSDC`. Closing this means renaming
+  the collateral type in source so one module path resolves on both networks —
+  which also changes the coin type of the live testnet deployment, and so is its
+  own change with its own republish — not a manifest edit.
+
+**Recorded, not blocking: mainnet `pyth_lazer` links version 1 on purpose.**
+The lineage has been upgraded — version 2 adds `channel_v2` and `update_v2`,
+purely additively — so `published-at` had a choice to make. It links version 1,
+because that is the version the pinned source revision describes exactly (its
+module set matches, and matches the testnet package already linked) and it is
+also the single package id Pyth documents for Sui mainnet. Linking the version
+2 head would point the linkage table at bytecode this repo's pinned source does
+not describe, for modules Predict does not use. Advancing to version 2 would
+mean advancing the source pin — which also serves live testnet — and is only
+worth doing if Predict ever needs the `_v2` surface.
+
+**Action:** Do not attempt a mainnet publish while either bullet above is open,
+and never resolve one with `--with-unpublished-dependencies`: that
+republishes packages this repo does not own and changes their type identity.
+Close this gate by recording each identity as it lands, then re-resolving both
+manifests against a mainnet environment.
+
+**Adjacent testnet observation, not part of this gate.** The linked testnet
+`pyth_lazer` and the deployment Pyth currently documents are both version 1 of
+*separate* lineages — Pyth republished rather than upgraded — so the linked
+package is superseded though still live. Whether the relayer and the live
+testnet deployment should move to the current lineage is an open question for
+whoever owns the next testnet republish.
+
 ## Contract Findings
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
