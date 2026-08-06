@@ -498,6 +498,14 @@ fun id(self: &LiquidationVault): ID {
 }
 
 // === Test Only ===
+/// Reads back a `LiquidationByVault` for assertions. The event is what the off-chain
+/// liquidation engine accounts from, and its fields are module-private, so without
+/// this a flipped `base_liquidation` discriminator or a transposed `base_in`/`quote_in`
+/// is unobservable from a test.
+public fun liquidation_event_fields(e: &LiquidationByVault): (u64, u64, u64, u64, u64, bool) {
+    (e.base_in, e.quote_in, e.base_out, e.quote_out, e.repay_balance_remaining, e.base_liquidation)
+}
+
 #[test_only]
 public fun create_liquidation_vault_for_testing(ctx: &mut TxContext): LiquidationVault {
     LiquidationVault {
