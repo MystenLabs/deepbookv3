@@ -53,7 +53,7 @@ import {
     seedOracleTx,
     setBlockScholesSignerTx,
     setCadenceConfigTx,
-    setTemplateExpiryFeeConfigTx,
+    setTemplateConfidenceFeeConfigTx,
     setTemplateMaxAdmissionLeverageTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
@@ -1075,14 +1075,8 @@ async function setupSimulation(
     seed: OracleSeedData,
 ): Promise<SimState> {
     console.log(`[${ts()}] --- Setup ---`);
-    const expiryFeeMaxMultiplier = protocolConfigValue(
-        scenarioConfig,
-        "expiry_fee_max_multiplier",
-    );
-    const expiryFeeWindowMs = protocolConfigValue(
-        scenarioConfig,
-        "expiry_fee_window_ms",
-    );
+    const feeSlope = protocolConfigValue(scenarioConfig, "fee_slope");
+    const feeCap = protocolConfigValue(scenarioConfig, "fee_cap");
     const maxAdmissionLeverage = protocolConfigValue(
         scenarioConfig,
         "max_admission_leverage",
@@ -1157,12 +1151,10 @@ async function setupSimulation(
     console.log(`[${ts()}]   Global feeds bound to underlying`);
 
     await executeAndWait(
-        setTemplateExpiryFeeConfigTx(protocolConfigId, expiryFeeWindowMs, expiryFeeMaxMultiplier),
-        "set_template_expiry_fee_config",
+        setTemplateConfidenceFeeConfigTx(protocolConfigId, feeSlope, feeCap),
+        "set_template_confidence_fee_config",
     );
-    console.log(
-        `[${ts()}]   Expiry fee ramp: window_ms=${expiryFeeWindowMs} max_multiplier=${expiryFeeMaxMultiplier}`,
-    );
+    console.log(`[${ts()}]   Confidence fee: slope=${feeSlope} cap=${feeCap}`);
 
     await executeAndWait(
         setTemplateMaxAdmissionLeverageTx(protocolConfigId, maxAdmissionLeverage),

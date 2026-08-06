@@ -19,6 +19,7 @@ const EInvalidFeeProbability: u64 = 3;
 const ENetPremiumBelowMinimum: u64 = 4;
 const EInvalidLeverage: u64 = 5;
 const ELeverageAboveAdmissionCap: u64 = 6;
+const EFeeCapBelowMinimum: u64 = 7;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -39,13 +40,17 @@ public struct StrikeExposureConfig has store {
     base_fee: u64,
     /// Minimum per-unit fee floor; live trade fees never go below this value.
     min_fee: u64,
+    /// Confidence-fee increase per unit of normalized digital sensitivity.
+    fee_slope: u64,
+    /// Absolute cap on the assembled base-times-loading fee.
+    fee_cap: u64,
     /// Minimum raw entry probability allowed for mint admission.
     min_entry_probability: u64,
     /// Maximum raw entry probability allowed for mint admission.
     max_entry_probability: u64,
-    /// Window before expiry over which trade fees ramp up.
+    /// Deprecated inert time-ramp window, retained for config-layout compatibility.
     expiry_fee_window_ms: u64,
-    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables the ramp.
+    /// Deprecated inert time-ramp multiplier, retained for config-layout compatibility.
     expiry_fee_max_multiplier: u64,
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
@@ -81,6 +86,14 @@ public(package) fun min_fee(config: &StrikeExposureConfig): u64 {
     config.min_fee
 }
 
+public(package) fun fee_slope(config: &StrikeExposureConfig): u64 {
+    config.fee_slope
+}
+
+public(package) fun fee_cap(config: &StrikeExposureConfig): u64 {
+    config.fee_cap
+}
+
 public(package) fun min_entry_probability(config: &StrikeExposureConfig): u64 {
     config.min_entry_probability
 }
@@ -103,17 +116,13 @@ public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
 ///
-/// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
-/// before passing timestamps because the fee-rate helper derives time-to-expiry
-/// with exact subtraction.
 public(package) fun trading_fee(
     config: &StrikeExposureConfig,
-    expiry_ms: u64,
     probability: u64,
     quantity: u64,
-    timestamp_ms: u64,
+    loading: u64,
 ): u64 {
-    math::mul_down(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
+    math::mul_down(config.fee_rate(probability, loading), quantity)
 }
 
 /// Assert entry probability and leverage policy without deriving quantity-dependent
@@ -191,6 +200,8 @@ public(package) fun new(): StrikeExposureConfig {
         backing_buffer_lambda: config_constants::default_backing_buffer_lambda!(),
         base_fee: config_constants::default_base_fee!(),
         min_fee: config_constants::default_min_fee!(),
+        fee_slope: config_constants::default_fee_slope!(),
+        fee_cap: config_constants::default_fee_cap!(),
         min_entry_probability: config_constants::default_min_entry_probability!(),
         max_entry_probability: config_constants::default_max_entry_probability!(),
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
@@ -207,6 +218,8 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         backing_buffer_lambda: config.backing_buffer_lambda,
         base_fee: config.base_fee,
         min_fee: config.min_fee,
+        fee_slope: config.fee_slope,
+        fee_cap: config.fee_cap,
         min_entry_probability: config.min_entry_probability,
         max_entry_probability: config.max_entry_probability,
         expiry_fee_window_ms: config.expiry_fee_window_ms,
@@ -237,7 +250,19 @@ public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) 
 
 public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_min_fee(value);
+    assert!(value <= config.fee_cap, EFeeCapBelowMinimum);
     config.min_fee = value;
+}
+
+public(package) fun set_fee_slope(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_fee_slope(value);
+    config.fee_slope = value;
+}
+
+public(package) fun set_fee_cap(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_fee_cap(value);
+    assert!(value >= config.min_fee, EFeeCapBelowMinimum);
+    config.fee_cap = value;
 }
 
 public(package) fun set_min_entry_probability(config: &mut StrikeExposureConfig, value: u64) {
@@ -267,20 +292,12 @@ public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig,
     config.no_leverage_window_ms = window_ms;
 }
 
-/// Return the 1e9-scaled per-unit trade fee.
-///
-/// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
-/// liveness before this helper derives `expiry_ms - timestamp_ms`.
-fun fee_rate(
-    config: &StrikeExposureConfig,
-    expiry_ms: u64,
-    probability: u64,
-    timestamp_ms: u64,
-): u64 {
+/// Return the 1e9-scaled per-unit confidence fee.
+fun fee_rate(config: &StrikeExposureConfig, probability: u64, loading: u64): u64 {
     let raw_fee = config.raw_bernoulli_fee_rate(probability);
     let base = raw_fee.max(config.min_fee);
-    let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
-    math::mul_down(base, multiplier)
+    let multiplier = math::float_scaling!() + math::mul_down(config.fee_slope, loading);
+    math::mul_down(base, multiplier).min(config.fee_cap)
 }
 
 fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {
@@ -303,7 +320,7 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
 /// time-to-expiry is below zero, so the comparison never fires.
 ///
 /// Precondition: `time_to_expiry_ms` is derived under caller-enforced pre-expiry
-/// liveness, mirroring `expiry_fee_multiplier`.
+/// liveness.
 fun admitted_leverage_cap(
     config: &StrikeExposureConfig,
     entry_probability: u64,
@@ -319,17 +336,4 @@ fun admitted_leverage_cap(
     );
     math::float_scaling!()
         + math::mul_down(config.max_admission_leverage - math::float_scaling!(), risk_curve)
-}
-
-/// Linear ramp that scales the trade fee up as expiry approaches.
-fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
-    if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
-
-    // = (max_multiplier - 1) * elapsed / window, round down; the trader keeps the ramp dust.
-    let ramp = math::mul_div_down(
-        config.expiry_fee_max_multiplier - math::float_scaling!(),
-        config.expiry_fee_window_ms - time_to_expiry_ms,
-        config.expiry_fee_window_ms,
-    );
-    math::float_scaling!() + ramp
 }

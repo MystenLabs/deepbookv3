@@ -109,7 +109,19 @@ public fun set_template_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminC
     config.strike_exposure_template_config.set_min_fee(fee);
 }
 
-/// Set the expiry-fee ramp window snapshotted by newly created expiry markets.
+/// Set the confidence-fee loading slope snapshotted by newly created expiry markets.
+public fun set_template_fee_slope(config: &mut ProtocolConfig, _admin_cap: &AdminCap, slope: u64) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_fee_slope(slope);
+}
+
+/// Set the absolute confidence-fee cap snapshotted by newly created expiry markets.
+public fun set_template_fee_cap(config: &mut ProtocolConfig, _admin_cap: &AdminCap, cap: u64) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_fee_cap(cap);
+}
+
+/// Set the deprecated inert expiry-fee ramp window.
 public fun set_template_expiry_fee_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -119,7 +131,7 @@ public fun set_template_expiry_fee_window_ms(
     config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
 }
 
-/// Set the expiry-fee max multiplier snapshotted by newly created expiry markets.
+/// Set the deprecated inert expiry-fee max multiplier.
 public fun set_template_expiry_fee_max_multiplier(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

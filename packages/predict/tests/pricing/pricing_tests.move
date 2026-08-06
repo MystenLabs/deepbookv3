@@ -98,6 +98,29 @@ const UNIT_INNER: u64 = 1_000_000_000;
 const RETRANSMITTED_SVI_A: u64 = 2;
 const RETRANSMITTED_SVI_B: u64 = 0;
 const ZERO_SVI_SHAPE_PARAM: u64 = 0;
+const EIGHT_HOURS_MS: u64 = 28_800_000;
+const ONE_MINUTE_MS: u64 = 60_000;
+/// Flat 50%-annual-vol total variance at an 8h horizon. The fixture's model
+/// timestamp is one second before `now`, so roll-down produces
+/// `228_311e-9 * 28_800 / 28_801`.
+const FLAT_EIGHT_HOUR_SVI_A: u64 = 228_311;
+/// Raw 61-second total variance that rolls to the same 50%-annual-vol scale
+/// over the fixture's 60 seconds remaining.
+const FLAT_ONE_MINUTE_SVI_A: u64 = 484;
+const FLAT_SVI_B: u64 = 0;
+/// Independent Python `math.erf` reference for the finite +/-5bp loading on
+/// the flat surfaces above. Generator expression:
+/// `g / (phi(0) * 5e-4 / sqrt(w * 8h / T))`.
+const EIGHT_HOUR_ATM_LOADING: u64 = 999_789_023;
+const ONE_MINUTE_ATM_LOADING: u64 = 20_133_434_044;
+/// Independent `math.erf` reference for the finite range `(100, 101]` on the
+/// same 8-hour flat surface. Both digital boundaries move under each forward
+/// bump, so this pins range loading rather than only a one-sided UP digital.
+const EIGHT_HOUR_FINITE_RANGE_LOADING: u64 = 198_831_697;
+/// The pricing primitives are documented to tens of raw probability units;
+/// one million loading units leaves headroom for the three digital evaluations
+/// and integer reference normalization without weakening the surface signal.
+const LOADING_FIXED_POINT_BUDGET: u64 = 1_000_000;
 
 #[test]
 fun roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution() {
@@ -167,6 +190,45 @@ fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
         &i64::from_u64(0),
     );
     assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
+}
+
+#[test]
+fun confidence_fee_loading_is_unit_normalized_at_eight_hour_atm() {
+    test_helpers::assert_within(
+        flat_atm_confidence_fee_loading(EIGHT_HOURS_MS, FLAT_EIGHT_HOUR_SVI_A),
+        EIGHT_HOUR_ATM_LOADING,
+        LOADING_FIXED_POINT_BUDGET,
+    );
+}
+
+#[test]
+fun confidence_fee_loading_uses_the_finite_short_end_bump() {
+    test_helpers::assert_within(
+        flat_atm_confidence_fee_loading(ONE_MINUTE_MS, FLAT_ONE_MINUTE_SVI_A),
+        ONE_MINUTE_ATM_LOADING,
+        LOADING_FIXED_POINT_BUDGET,
+    );
+}
+
+#[test]
+fun confidence_fee_loading_uses_both_finite_range_boundaries() {
+    test_helpers::assert_within(
+        flat_confidence_fee_loading(
+            EIGHT_HOURS_MS,
+            FLAT_EIGHT_HOUR_SVI_A,
+            test_constants::default_live_price(),
+            test_constants::default_live_price() + test_constants::default_tick_size(),
+        ),
+        EIGHT_HOUR_FINITE_RANGE_LOADING,
+        LOADING_FIXED_POINT_BUDGET,
+    );
+}
+
+#[test]
+fun confidence_fee_reference_stays_live_at_short_high_variance_boundary() {
+    // One millisecond remaining maximizes the 8-hour extrapolation. The largest
+    // accepted SVI input ensures the rounded normalizer cannot halt pricing.
+    flat_atm_confidence_fee_loading(1, test_constants::pricing_max_svi_input());
 }
 
 /// A retransmission carries the tuple's original model time in a newer envelope. The envelope is
@@ -266,6 +328,52 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+fun flat_atm_confidence_fee_loading(remaining_ms: u64, svi_a: u64): u64 {
+    flat_confidence_fee_loading(
+        remaining_ms,
+        svi_a,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
+    )
+}
+
+fun flat_confidence_fee_loading(
+    remaining_ms: u64,
+    svi_a: u64,
+    lower_strike: u64,
+    higher_strike: u64,
+): u64 {
+    let expiry_ms = test_constants::now_ms() + remaining_ms;
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        expiry_ms,
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        svi_a,
+        false,
+        FLAT_SVI_B,
+        test_constants::default_svi_sigma(),
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+        ZERO_SVI_SHAPE_PARAM,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let lower = strike(lower_strike);
+    let higher = strike(higher_strike);
+    let probability = pricer.range_price(lower, higher);
+    let loading = pricing::loading(&pricer, lower, higher, probability);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+    loading
 }
 
 #[test]

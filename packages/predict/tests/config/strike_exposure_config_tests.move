@@ -50,6 +50,24 @@ const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
 /// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares the 33_333_334 remainder.
 const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_666;
 const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_334;
+const PROBABILITY_TWENTY_CENTS: u64 = 200_000_000;
+const LOADING_ONE_HOUR_TWENTY_CENTS: u64 = 1_680_000_000;
+const LOADING_EIGHT_HOURS_ATM: u64 = 1_000_000_000;
+const LOADING_THIRTY_DAYS_ATM: u64 = 85_714_286;
+const LOADING_ONE_MINUTE_ATM: u64 = 15_400_000_000;
+const LOADING_FIVE_MINUTES_ATM: u64 = 8_000_000_000;
+const LOADING_ONE_MINUTE_TWENTY_CENTS: u64 = 6_857_142_858;
+const LOADING_LARGE: u64 = 10_000_000_000;
+const ONE_BASIS_POINT: u64 = 100_000;
+const FEE_ONE_HOUR_TWENTY_CENTS_BPS: u64 = 127;
+const FEE_EIGHT_HOURS_ATM_BPS: u64 = 135;
+const FEE_THIRTY_DAYS_ATM_BPS: u64 = 103;
+const FEE_CAP_BPS: u64 = 300;
+const MIN_FEE_BPS: u64 = 50;
+const FEE_ONE_MINUTE_TWENTY_CENTS_BPS: u64 = 272;
+const PROBABILITY_TWO_CENTS: u64 = 20_000_000;
+const PROBABILITY_NINETY_EIGHT_CENTS: u64 = 980_000_000;
+const SYMMETRY_LOADING: u64 = 500_000_000;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -150,10 +168,9 @@ fun template_no_leverage_window_defaults_to_one_hour_and_is_tunable() {
 fun trading_fee_probability_above_one_aborts() {
     let config = strike_exposure_config::new();
     config.trading_fee(
-        test_constants::default_expiry_ms(),
         float!() + 1,
         test_constants::mint_quantity(),
-        test_constants::now_ms(),
+        0,
     );
     abort 999
 }
@@ -167,13 +184,116 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
     // (1e9) makes the total fee equal the per-unit floor exactly.
     assert_eq!(
         config.trading_fee(
-            test_constants::default_expiry_ms(),
             float!(),
             float!(),
-            test_constants::now_ms(),
+            0,
         ),
         config_constants::default_min_fee!(),
     );
+    destroy(config);
+}
+
+// === Confidence-fee assembly ===
+
+#[test]
+fun confidence_fee_matches_published_surface_cells() {
+    let config = strike_exposure_config::new();
+
+    // Published calibration inputs, independent of the arithmetic under test:
+    // 1h/20c has loading 1.68; 8h/50c is the unit reference; 30d/50c
+    // implies loading 0.085714286 from its 103 bps table cell.
+    assert_eq!(
+        config.trading_fee(
+            PROBABILITY_TWENTY_CENTS,
+            float!(),
+            LOADING_ONE_HOUR_TWENTY_CENTS,
+        ) / ONE_BASIS_POINT,
+        FEE_ONE_HOUR_TWENTY_CENTS_BPS,
+    );
+    assert_eq!(
+        config.trading_fee(ENTRY_PROBABILITY_HALF, float!(), LOADING_EIGHT_HOURS_ATM)
+            / ONE_BASIS_POINT,
+        FEE_EIGHT_HOURS_ATM_BPS,
+    );
+    assert_eq!(
+        config.trading_fee(ENTRY_PROBABILITY_HALF, float!(), LOADING_THIRTY_DAYS_ATM)
+            / ONE_BASIS_POINT,
+        FEE_THIRTY_DAYS_ATM_BPS,
+    );
+    assert_eq!(
+        config.trading_fee(ENTRY_PROBABILITY_HALF, float!(), LOADING_ONE_MINUTE_ATM)
+            / ONE_BASIS_POINT,
+        FEE_CAP_BPS,
+    );
+    assert_eq!(
+        config.trading_fee(ENTRY_PROBABILITY_HALF, float!(), LOADING_FIVE_MINUTES_ATM)
+            / ONE_BASIS_POINT,
+        FEE_CAP_BPS,
+    );
+    // The 1m 20c shoulder remains below the absolute cap; capping the
+    // multiplier itself would incorrectly clip this published 272 bps cell.
+    assert_eq!(
+        config.trading_fee(
+            PROBABILITY_TWENTY_CENTS,
+            float!(),
+            LOADING_ONE_MINUTE_TWENTY_CENTS,
+        ) / ONE_BASIS_POINT,
+        FEE_ONE_MINUTE_TWENTY_CENTS_BPS,
+    );
+    destroy(config);
+}
+
+#[test]
+fun confidence_fee_caps_the_assembled_product() {
+    let config = strike_exposure_config::new();
+
+    // At 20c the base is 80 bps. A loading of 10 gives a 4.5x multiplier,
+    // so the assembled 360 bps fee binds at the absolute 300 bps cap. A
+    // mistaken cap on the multiplier would produce 240 bps instead.
+    assert_eq!(
+        config.trading_fee(PROBABILITY_TWENTY_CENTS, float!(), LOADING_LARGE)
+            / ONE_BASIS_POINT,
+        FEE_CAP_BPS,
+    );
+    destroy(config);
+}
+
+#[test]
+fun confidence_fee_deep_wing_keeps_the_minimum_floor() {
+    let config = strike_exposure_config::new();
+    assert_eq!(config.trading_fee(0, float!(), 0) / ONE_BASIS_POINT, MIN_FEE_BPS);
+    destroy(config);
+}
+
+#[test]
+fun confidence_fee_is_symmetric_for_equal_tail_loading() {
+    let config = strike_exposure_config::new();
+    assert_eq!(
+        config.trading_fee(PROBABILITY_TWO_CENTS, float!(), SYMMETRY_LOADING),
+        config.trading_fee(PROBABILITY_NINETY_EIGHT_CENTS, float!(), SYMMETRY_LOADING),
+    );
+    destroy(config);
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EFeeCapBelowMinimum)]
+fun confidence_fee_cap_below_minimum_aborts() {
+    let mut config = strike_exposure_config::new();
+    config.set_fee_cap(config_constants::default_min_fee!() - 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EFeeCapBelowMinimum)]
+fun confidence_fee_minimum_above_cap_aborts() {
+    let mut config = strike_exposure_config::new();
+    config.set_min_fee(config_constants::default_fee_cap!() + 1);
+    abort 999
+}
+
+#[test]
+fun confidence_fee_cap_may_equal_minimum() {
+    let mut config = strike_exposure_config::new();
+    config.set_min_fee(config_constants::default_fee_cap!());
+    assert_eq!(config.min_fee(), config.fee_cap());
     destroy(config);
 }
 
