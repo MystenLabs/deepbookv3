@@ -1,14 +1,15 @@
 {
-    "schemaVersion": 3,
+    "schemaVersion": 4,
     "deployment": "predict-testnet-7-29",
     "network": "testnet",
     "chainId": "4c78adac",
-    "sourceCommit": "a92ceb017fb95e78db32825811c0c695965097c4",
+    "sourceCommit": "3072a37078c99cab91483cc7f93b4dc1a8338eab",
     "packages": {
         "fixedMath": "0xdf0bd2a0d201562f2bdecb1b77d7998c7af316f6fd7d1eab9b9035064f21bfd4",
         "account": "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c203",
         "propbook": "0xed1295ff3c9a9415766afff20a74cdf2e362647be09aaf13b809302c0109e912",
-        "predict": "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb"
+        "predict": "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb",
+        "sessions": "0x78887ffbb5e449776152c612fe05af03f729c02dbb7218c270e645c241ad527b"
     },
     "coinTypes": {
         "dusdc": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a::dusdc::DUSDC",
