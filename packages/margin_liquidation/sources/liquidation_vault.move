@@ -174,6 +174,7 @@ public fun swap_quote_to_base<BaseAsset, QuoteAsset>(
 }
 
 // === Public Functions * LIQUIDATION * ===
+/// Twin: `liquidate_base_upgraded`. Edit both.
 public fun liquidate_base<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -223,6 +224,7 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
     );
 }
 
+/// Twin: `liquidate_quote_upgraded`. Edit both.
 public fun liquidate_quote<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -293,6 +295,7 @@ public fun balance<T>(self: &LiquidationVault): u64 {
 /// (`should_liquidate`) and the settlement (`settle_base_liquidation`) are shared with
 /// the legacy entry; the body between them is duplicated, because the two
 /// `PriceInfoObject` types cannot be unified.
+/// Twin: `liquidate_base`. Edit both.
 public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -334,7 +337,6 @@ public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
-
     self.settle_base_liquidation(
         margin_manager.id(),
         base_margin_pool.id(),
@@ -346,6 +348,7 @@ public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
 }
 
 /// `liquidate_quote` against Pyth's upgraded Core. See `liquidate_base_upgraded`.
+/// Twin: `liquidate_quote`. Edit both.
 public fun liquidate_quote_upgraded<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -387,7 +390,6 @@ public fun liquidate_quote_upgraded<BaseAsset, QuoteAsset>(
         clock,
         ctx,
     );
-
     self.settle_quote_liquidation(
         margin_manager.id(),
         quote_margin_pool.id(),
