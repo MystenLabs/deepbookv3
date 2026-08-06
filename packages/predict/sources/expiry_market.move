@@ -67,6 +67,13 @@ public struct ExpiryMarket has key {
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
+    /// Whether DEEP-stake benefits apply to this market, snapshotted at creation
+    /// from the protocol template and immutable thereafter. Frozen because both
+    /// benefits resolve after the trade that earned them — the fee discount at
+    /// mint, the loss rebate at a post-settlement claim — so reading a live switch
+    /// would let a toggle reprice contracts already written, and in the disabling
+    /// direction destroy an earned rebate outright (the claim is one-shot).
+    stake_benefits_enabled: bool,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -800,7 +807,9 @@ public(package) fun claim_trading_loss_rebate(
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let rebate_amount = config.stake_config().rebate_amount(eligible_rebate, active_stake);
+    let rebate_amount = config
+        .stake_config()
+        .rebate_amount(eligible_rebate, active_stake, market.stake_benefits_enabled);
 
     if (rebate_amount > 0) {
         let payout = market.cash.pay_authorized(rebate_amount);
@@ -881,6 +890,7 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
+        stake_benefits_enabled: config.stake_benefits_enabled_snapshot(),
     };
     transfer::share_object(market);
     expiry_market_id
@@ -990,7 +1000,9 @@ fun compute_mint_quote(
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
-    let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+    let trading_fee = config
+        .stake_config()
+        .fee_amount_after_discount(raw_fee_amount, active_stake, market.stake_benefits_enabled);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let net_premium = terms.net_premium();
@@ -1144,7 +1156,9 @@ fun redeem(
                 clock,
             )
             .min(redeem_amount);
-        let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
+        let fee_amount = config
+            .stake_config()
+            .fee_amount_after_discount(fee_amount, active_stake, market.stake_benefits_enabled);
 
         // The redeem payment decomposition, computed in full before any cash moves:
         // builder fee and penalty are each clamped at the payout remaining after the

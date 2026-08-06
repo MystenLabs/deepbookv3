@@ -187,20 +187,33 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Fees, staking, and rebates (recent)
 
-- **The staking programme ships disabled, behind one master switch.** `StakeConfig.enabled`
-  defaults false, so a freshly created protocol charges every trader the undiscounted fee
-  and pays no stake-scaled loss rebate; an `AdminCap` holder activates it later with
-  `set_stake_benefits_enabled`, with no package upgrade. *Why a switch and not tuned
-  thresholds:* the `*_benefit_power` validation envelope has no setting that yields a zero
-  benefit — the lowest admissible `lower_benefit_power` still pays a proportional discount —
-  so "off" was previously unreachable for an admin. The switch gates `benefit_ratio` itself
-  rather than either consumer, so both benefits move together by construction (see the
-  applied-twice entry below); thresholds survive a toggle, so activation needs no re-tuning.
-  *Rejected:* making `max_fee_discount` admin-tunable at zero, which would disable the fee
-  discount while leaving the rebate — the rebate has no staking-side cap — and would move an
-  upgrade-required constant into tunable config for no gain. *Consequence:* while off, the
-  rebate reserve still accrues at `trading_loss_rebate_rate` and returns to the pool in full
-  at settlement; zeroing that rate is a separate operator action, not a code change.
+- **The staking programme ships disabled, behind one switch each market freezes at creation.**
+  `StakeConfig.template_benefits_enabled` defaults false; every `ExpiryMarket` snapshots it
+  into an immutable `stake_benefits_enabled`, and both benefits read that snapshot. So a
+  freshly created protocol charges every trader the undiscounted fee and pays no stake-scaled
+  loss rebate, and `set_template_stake_benefits_enabled` activates the programme for markets
+  created from then on, with no package upgrade. *Why a switch and not tuned thresholds:* the
+  `*_benefit_power` validation envelope has no setting that yields a zero benefit — the lowest
+  admissible `lower_benefit_power` still pays a proportional discount — so "off" was otherwise
+  unreachable for an admin. *Why snapshotted rather than read live:* both benefits resolve
+  after the trade that earned them (the discount at mint, the rebate at a post-settlement
+  claim), so a live switch would reprice contracts already written, and disabling would
+  destroy an already-earned rebate outright — the claim removes the account's expiry summary,
+  so re-enabling could not recover it. Freezing makes that unrepresentable in both directions
+  rather than leaving it an operator-ordering hazard. The cost is accepted: enabling likewise
+  does not reach live markets, so the programme phases in over about one cadence period.
+  Pinned by `settlement_flow_tests::disabling_the_stake_benefit_template_cannot_zero_an_earned_rebate`.
+  *Deliberate split:* the benefit thresholds stay live, so a curve retune still reaches markets
+  already trading; only whether the programme applies is a contract term. The switch gates
+  `benefit_ratio` itself rather than either consumer, so both benefits move together by
+  construction (see the applied-twice entry below). *Rejected:* making `max_fee_discount`
+  admin-tunable at zero, which would disable the fee discount while leaving the rebate — the
+  rebate has no staking-side cap — and would move an upgrade-required constant into tunable
+  config for no gain. *Consequence:* while a market's snapshot is off, its rebate reserve still
+  accrues at that market's `trading_loss_rebate_rate` and is released to the pool as the
+  permissionless cleanout resolves each account after settlement, not at settlement itself (the
+  settled sweep holds the reserve back). Zeroing that rate is an operator action on a template,
+  so it too binds only markets created after the change.
 - **Staking is a gaming-resistance gate for the loss rebate, not a reward per se.**
   The trading-loss rebate exists to move value from winners toward net losers; it
   must target *aggregate* net losers (per trader), else a balanced (50/50) book

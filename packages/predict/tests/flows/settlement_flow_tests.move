@@ -538,6 +538,42 @@ fun owner_auth_rebate_claim_survives_predict_app_deauth() {
 }
 
 #[test]
+fun disabling_the_stake_benefit_template_cannot_zero_an_earned_rebate() {
+    // A market snapshots the benefit switch at creation, so an admin turning the
+    // template off afterwards must not reach it. Were the switch read live, the
+    // one-shot claim below would resolve at zero and destroy the rebate: the
+    // summary row is removed on claim, so re-enabling could never recover it.
+    let (mut fx, expiry_id, trader, premium) = prepare_settled_loss_with_inactive_rebate_stake();
+
+    fx.set_template_stake_benefits_enabled(false);
+    fx.scenario_mut().next_epoch(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.claim_trading_loss_rebate_bundle(&mut market, &mut account);
+    // Full rebate, identical to the template-untouched claim.
+    fx.check_manager_bundle(
+        &account,
+        expiry_id,
+        helpers::expected_manager_state(
+            post_mint_balance(premium) + REBATE_AFTER_MINT,
+            0,
+            0,
+            config_constants::default_upper_benefit_power!(),
+            0,
+        ),
+    );
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(cash_after_rebate_claim(premium), 0, 0),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
 fun try_settle_is_idempotent_and_keeps_settlement_price() {
     let settlement_price = settlement_inside_default_finite_range();
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
@@ -844,7 +880,9 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (
     helpers::Trader,
     u64,
 ) {
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+    // The rebate this fixture stages is only payable by a market that snapshotted
+    // the benefit programme at creation; the switch cannot be flipped afterwards.
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market_with_stake_benefits(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
     );
@@ -883,10 +921,6 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (
         helpers::expected_market_cash(cash_after_losing_redeem(premium), 0, REBATE_AFTER_MINT),
     );
 
-    // Benefits ship disabled, so the rebate this fixture stages is only payable
-    // once they are on. The mint above already priced at zero stake, so enabling
-    // here leaves its fee untouched.
-    fx.set_stake_benefits_enabled_bundle(&mut market, true);
     fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
     fx.stake_deep_bundle(
         &mut market,

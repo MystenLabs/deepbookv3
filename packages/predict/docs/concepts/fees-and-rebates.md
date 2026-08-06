@@ -2,7 +2,7 @@
 
 Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. The trading fee itself is shaped by an expiry ramp and, when the DEEP staking programme is enabled, reduced by a staking discount. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
-The staking programme is **disabled by default**: as shipped, no trader receives a fee discount and no trader receives a loss rebate, until an admin turns it on. See [the staking fee discount](#5-staking-fee-discount) below.
+The staking programme is **disabled by default**: as shipped, no trader receives a fee discount and no trader receives a loss rebate. An admin turns it on for markets created from that point on — each market freezes the switch at creation, so the change never reaches a market already trading. See [the staking fee discount](#5-staking-fee-discount) below.
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
@@ -117,11 +117,18 @@ fee_after_discount = trading_fee - trading_fee * discount_fraction
 
 `max_fee_discount` is an upgrade-required constant (a fixed cap on how much of the fee can be discounted); the two `*_benefit_power` thresholds are admin-tunable. At full stake the discount reaches the cap; below `upper_benefit_power` it is proportionally smaller. The discount applies to the **trading fee** (already including the expiry ramp), and because the builder fee is computed from the post-discount fee, staking also shrinks the builder fee. The congestion surcharge is not discounted.
 
-### The programme ships disabled
+### The programme ships disabled, and each market freezes its own state
 
-`StakeConfig` carries an `enabled` master switch that ships **false**, so on a freshly created protocol `benefit_ratio` is zero at every stake and the whole curve above is inert: every trader pays the undiscounted fee and no account earns a stake-scaled loss rebate. An `AdminCap` holder activates the programme with `set_stake_benefits_enabled`, and the benefit thresholds keep their configured values across a toggle, so turning it on needs no re-tuning first. Both benefits move together — there is no setting that discounts fees while withholding the rebate, or the reverse.
+`StakeConfig` carries a `template_benefits_enabled` seed that ships **false**. Every `ExpiryMarket` snapshots it at creation into an immutable `stake_benefits_enabled`, and both benefits read that snapshot — so on a freshly created protocol `benefit_ratio` is zero at every stake and the whole curve above is inert: every trader pays the undiscounted fee and no account earns a stake-scaled loss rebate. An `AdminCap` holder changes the seed with `set_template_stake_benefits_enabled`. Both benefits move together — there is no setting that discounts fees while withholding the rebate, or the reverse.
 
-While the programme is off the rebate reserve still accrues at `trading_loss_rebate_rate` and is held out of NAV for each expiry's life, and then returns to the pool in full at settlement because no account is owed anything. An operator who does not want that reserve running can set `trading_loss_rebate_rate` to zero, which is a separate admin-tunable knob.
+The switch is snapshotted rather than read live because both benefits resolve *after* the trade that earned them: the fee discount at mint, the loss rebate at a post-settlement claim. A live switch would let an admin reprice contracts already written, and in the disabling direction destroy a rebate a trader had already earned — the claim is one-shot, so re-enabling could not recover it. Freezing at creation makes that unrepresentable in both directions:
+
+- Turning the seed **on** does not reach markets already created; benefits begin with the next market created, so at the 1m/5m/1h cadences the live book turns over within about one cadence period.
+- Turning it **off** does not reach markets already created either; a market that was written under the programme honours it through settlement and rebate claim.
+
+The benefit *thresholds* remain live, so retuning the curve's shape still applies to markets already trading. Only whether the programme applies at all is frozen per market.
+
+While a market's snapshot is off, its rebate reserve still accrues at that market's `trading_loss_rebate_rate` and is held out of NAV for the market's life. Because no account is owed anything, each account's share returns to the pool as the permissionless cleanout resolves it after settlement — not in one release at settlement, since the settled sweep holds the reserve back (`required_cash = payout_liability + rebate_reserve`). An operator who does not want that reserve running can set the rate to zero with `set_template_trading_loss_rebate_rate`, but that too is a template: it applies only to **markets created after the change**, never to markets already trading.
 
 ### Lazy epoch rollover
 
@@ -152,7 +159,7 @@ eligible_rebate  = max(0, resolved_reserve − gross_profit)
 rebate_amount    = eligible_rebate * benefit_ratio(active_stake)
 ```
 
-The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Because the rebate rides that one curve, it is zero for every account while the staking programme is disabled, which is how the protocol ships. Resolution can happen once **all** of an account's positions in the expiry are closed. Liquidated orders clear with zero order payout, but they are not excluded from this expiry-level rebate calculation; their trader-paid fees and gross cash paid remain part of the account's normal settled PnL and fee basis.
+The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Because the rebate rides that one curve, it is zero for every account in a market whose benefit snapshot is off, which is how the protocol ships. Resolution can happen once **all** of an account's positions in the expiry are closed. Liquidated orders clear with zero order payout, but they are not excluded from this expiry-level rebate calculation; their trader-paid fees and gross cash paid remain part of the account's normal settled PnL and fee basis.
 
 If `rebate_amount` is less than `resolved_reserve`, the residual reserve is returned to PLP idle and may materialize as terminal expiry profit, split between the protocol reserve and LPs by the configured protocol profit share. Zero-owed claims are allowed so a keeper can sweep accounts without reverting a batch just because one account has nothing to claim.
 

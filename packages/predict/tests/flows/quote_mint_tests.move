@@ -278,7 +278,9 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
 
 #[test]
 fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+    // Benefits ship disabled and freeze at market creation; this test is about the
+    // discount, so the market must snapshot them on.
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market_with_stake_benefits(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );
@@ -286,8 +288,6 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    // Benefits ship disabled; this test is about the discount, so turn them on.
-    fx.set_stake_benefits_enabled_bundle(&mut market, true);
     fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
     fx.stake_deep_bundle(
         &mut market,

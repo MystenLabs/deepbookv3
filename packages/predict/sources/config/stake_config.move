@@ -9,9 +9,11 @@
 /// above. That ratio scales the fixed `constants::max_fee_discount` for fees.
 /// The same benefit ratio scales settled trading-loss rebates.
 ///
-/// The whole programme sits behind an `enabled` master switch that ships off, so
-/// a freshly created protocol charges undiscounted fees and pays no stake-scaled
-/// rebate until an admin turns it on.
+/// Whether the programme applies at all is NOT decided here: every entry takes a
+/// `benefits_enabled` flag that each `ExpiryMarket` snapshots at creation from
+/// `template_benefits_enabled`. This module owns the curve; the market owns
+/// whether its contracts were written under the programme. The thresholds stay
+/// live, so retuning the curve still reaches markets already trading.
 module deepbook_predict::stake_config;
 
 use deepbook_predict::{config_constants, constants};
@@ -26,47 +28,57 @@ public struct StakeConfig has store {
     lower_benefit_power: u64,
     /// Active stake for full (max) benefits, in raw DEEP units.
     upper_benefit_power: u64,
-    /// Master switch; every staking benefit is zero while false. The thresholds
-    /// above keep their values across a toggle, so the curve resumes unchanged.
-    enabled: bool,
+    /// Seed for the per-market benefit switch, snapshotted by each new
+    /// `ExpiryMarket`. Ships false. Changing it never reaches an existing market:
+    /// a market's contracts keep the programme state they were written under, so
+    /// no toggle can retroactively zero a rebate already earned.
+    template_benefits_enabled: bool,
 }
 
 // === Public-Package Functions ===
 
 /// Fee remaining after the active-stake discount, with the discount rounded down.
+/// `benefits_enabled` is the trading market's snapshot, not the current template.
 public(package) fun fee_amount_after_discount(
     config: &StakeConfig,
     amount: u64,
     active_stake: u64,
+    benefits_enabled: bool,
 ): u64 {
     let discount_fraction = math::mul_down(
-        config.benefit_ratio(active_stake),
+        config.benefit_ratio(active_stake, benefits_enabled),
         constants::max_fee_discount!(),
     );
     amount - math::mul_down(amount, discount_fraction)
 }
 
 /// Trading-loss rebate earned for an active stake, rounded down.
+/// `benefits_enabled` is the settling market's snapshot, not the current template.
 public(package) fun rebate_amount(
     config: &StakeConfig,
     eligible_rebate: u64,
     active_stake: u64,
+    benefits_enabled: bool,
 ): u64 {
-    math::mul_down(eligible_rebate, config.benefit_ratio(active_stake))
+    math::mul_down(eligible_rebate, config.benefit_ratio(active_stake, benefits_enabled))
+}
+
+public(package) fun template_benefits_enabled(config: &StakeConfig): bool {
+    config.template_benefits_enabled
 }
 
 public(package) fun new(): StakeConfig {
     StakeConfig {
         lower_benefit_power: config_constants::default_lower_benefit_power!(),
         upper_benefit_power: config_constants::default_upper_benefit_power!(),
-        enabled: config_constants::default_stake_benefits_enabled!(),
+        template_benefits_enabled: config_constants::default_stake_benefits_enabled!(),
     }
 }
 
-/// Turn the whole benefit programme on or off. Thresholds are untouched, so
-/// re-enabling restores the curve that was configured before.
-public(package) fun set_benefits_enabled(config: &mut StakeConfig, enabled: bool) {
-    config.enabled = enabled;
+/// Set the benefit-switch seed for markets created from here on. Existing markets
+/// keep the value they snapshotted.
+public(package) fun set_template_benefits_enabled(config: &mut StakeConfig, enabled: bool) {
+    config.template_benefits_enabled = enabled;
 }
 
 /// Set both benefit thresholds together (validated as a pair: each in range and
@@ -83,10 +95,10 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 // === Private Functions ===
 
 /// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING.
-/// Zero while the programme is disabled, whatever the stake. Each segment rounds
-/// down, so the returned benefit never exceeds the curve.
-fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
-    if (!config.enabled) return 0;
+/// Zero for a market that did not snapshot the programme, whatever the stake. Each
+/// segment rounds down, so the returned benefit never exceeds the curve.
+fun benefit_ratio(config: &StakeConfig, active_stake: u64, benefits_enabled: bool): u64 {
+    if (!benefits_enabled) return 0;
     let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;

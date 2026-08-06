@@ -263,7 +263,17 @@ public fun setup_market_default(): Fixture {
 /// line. The market objects are returned to the shared pool; the caller
 /// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
-    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), false)
+}
+
+/// `setup_live_market` whose market snapshots the DEEP-stake benefit programme as
+/// ENABLED. Needed by any flow test asserting a staking discount or rebate, because
+/// the switch is frozen at market creation and cannot be turned on afterwards.
+public fun setup_live_market_with_stake_benefits(
+    expiry_ms: u64,
+    live_price: u64,
+): (Fixture, ID, Trader) {
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), true)
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
@@ -273,11 +283,19 @@ public fun setup_everything(): (Fixture, ID, Trader) {
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
         test_constants::default_manager_deposit(),
+        false,
     )
 }
 
-fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+fun setup_funded_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+    stake_benefits: bool,
+): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
+    // Must precede `create_expiry`: the market snapshots the switch at creation.
+    if (stake_benefits) fx.set_template_stake_benefits_enabled(true);
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -422,20 +440,16 @@ public fun set_pyth_spot_freshness_bundle(
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
 }
 
-/// Turn the DEEP-stake benefit programme on or off through the real admin path.
-/// Benefits ship disabled, so any test asserting a staking fee discount or a
-/// stake-scaled loss rebate has to enable them first.
-public fun set_stake_benefits_enabled(self: &Fixture, config: &mut ProtocolConfig, enabled: bool) {
-    config.set_stake_benefits_enabled(&self.admin_cap, enabled);
-}
-
-/// Turn the DEEP-stake benefit programme on or off through a market bundle.
-public fun set_stake_benefits_enabled_bundle(
-    self: &Fixture,
-    market: &mut MarketBundle,
-    enabled: bool,
-) {
-    self.set_stake_benefits_enabled(&mut market.config, enabled);
+/// Set the DEEP-stake benefit seed for markets created from here on, through the
+/// real admin path. Markets snapshot this at creation, so a test asserting a
+/// staking fee discount or a stake-scaled loss rebate must call this BEFORE
+/// `create_expiry`; flipping it afterwards cannot reach an existing market.
+public fun set_template_stake_benefits_enabled(self: &mut Fixture, enabled: bool) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_stake_benefits_enabled(&self.admin_cap, enabled);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
 }
 
 /// Enable the EWMA congestion penalty with explicit parameters through the

@@ -169,16 +169,17 @@ public fun set_template_backing_buffer_lambda(
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
 }
 
-/// Enable or disable every DEEP-stake benefit. Ships disabled, so the protocol
-/// charges undiscounted fees and pays no stake-scaled loss rebate until this is
-/// turned on. Thresholds survive a toggle.
-public fun set_stake_benefits_enabled(
+/// Set the DEEP-stake benefit switch snapshotted by newly created expiry markets.
+/// Ships disabled, so markets charge undiscounted fees and pay no stake-scaled
+/// loss rebate until this is turned on. Existing markets keep the value they
+/// snapshotted, in either direction.
+public fun set_template_stake_benefits_enabled(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     enabled: bool,
 ) {
     config.assert_version();
-    config.stake_config.set_benefits_enabled(enabled);
+    config.stake_config.set_template_benefits_enabled(enabled);
 }
 
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
@@ -440,6 +441,11 @@ public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): Expiry
 
 public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
+}
+
+/// Benefit-switch value a newly created expiry market snapshots.
+public(package) fun stake_benefits_enabled_snapshot(config: &ProtocolConfig): bool {
+    config.stake_config.template_benefits_enabled()
 }
 
 public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
