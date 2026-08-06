@@ -92,10 +92,18 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     if (!account.has_data<SessionsApp>()) return;
     let account_id = account.account_id();
-    let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
-    if (data.sessions.contains(session)) {
+    let remove_data = {
+        let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
+        if (!data.sessions.contains(session)) return;
         let expires_at_ms = data.sessions.remove(session);
         event::emit(SessionRevoked { account_id, session, expires_at_ms });
+        data.sessions.is_empty()
+    };
+    if (remove_data) {
+        let SessionsData { sessions } = account.detach<SessionsApp, SessionsData>(
+            permit<SessionsApp>(),
+        );
+        sessions.destroy_empty();
     };
 }
 

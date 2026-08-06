@@ -46,7 +46,7 @@ public fun revoke_session(
 
 The shared `AccountWrapper` can be supplied as an object input in a programmable transaction block and borrowed immutably for `session_expiration_ms`. SDKs may also use the function through dev-inspect reads.
 
-Revoking a known session removes it immediately, whether it is active or already expired. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; an owner may revoke them or replace them through reauthorization.
+Revoking a known session removes it immediately, whether it is active or already expired. When the final grant is revoked, the package destroys the empty session table and detaches its app-data slot from the Account. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; an owner may revoke them or replace them through reauthorization.
 
 ## Predict wrappers
 

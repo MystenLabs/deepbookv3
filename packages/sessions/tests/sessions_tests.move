@@ -160,6 +160,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
+    assert!(!wrapper.load_account().has_data<SessionsApp>());
     let revoked = event::events_by_type<SessionRevoked>();
     assert_eq!(revoked.length(), ONE_EVENT);
     let (event_account_id, event_session, event_expiration) = sessions::session_revoked_fields(
@@ -300,6 +301,104 @@ fun unapproved_session_cannot_use_predict_wrapper() {
         &config,
         MISSING_ORDER_ID,
         CLOSE_QUANTITY,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(closed_order_id);
+    destroy(replacement_order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun unapproved_session_cannot_mint_exact_quantity() {
+    let (mut scenario, clock, inputs) = setup_unapproved_live_gate();
+    let LiveGateInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = inputs;
+
+    let order_id = sessions::mint_exact_quantity(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        MINT_LOWER_TICK,
+        MINT_HIGHER_TICK,
+        MINT_QUANTITY,
+        mint_leverage!(),
+        std::u64::max_value!(),
+        ZERO_PROBABILITY,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun unapproved_session_cannot_mint_exact_amount() {
+    let (mut scenario, clock, inputs) = setup_unapproved_live_gate();
+    let LiveGateInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = inputs;
+
+    let order_id = sessions::mint_exact_amount(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        MINT_LOWER_TICK,
+        MINT_HIGHER_TICK,
+        MINT_MAX_PREMIUM,
+        MINT_QUANTITY,
+        mint_leverage!(),
+        ZERO_COST,
+        &root,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun unapproved_session_cannot_redeem_live() {
+    let (mut scenario, clock, inputs) = setup_unapproved_live_gate();
+    let LiveGateInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = inputs;
+
+    let (closed_order_id, replacement_order_id) = sessions::redeem_live(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        MISSING_ORDER_ID,
+        CLOSE_QUANTITY,
+        ZERO_PROBABILITY,
+        ZERO_COST,
         &root,
         &clock,
         scenario.ctx(),
@@ -634,6 +733,33 @@ fun authorize_gate_session(scenario: &mut Scenario, clock: &Clock, wrapper_id: I
         scenario.ctx(),
     );
     return_shared(wrapper);
+}
+
+fun setup_unapproved_live_gate(): (Scenario, Clock, LiveGateInputs) {
+    let GateFixture {
+        mut scenario,
+        clock,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+    } = setup_gate_fixture();
+    scenario.next_tx(SESSION);
+    let inputs = take_live_gate_inputs(
+        &mut scenario,
+        market_id,
+        wrapper_id,
+        config_id,
+        oracle_registry_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+        &clock,
+    );
+    (scenario, clock, inputs)
 }
 
 fun take_live_gate_inputs(
