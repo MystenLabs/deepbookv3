@@ -39,6 +39,17 @@ const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 const SESSION: address = @0x5E5510;
+const SESSION_ONE: address = @0x51;
+const SESSION_TWO: address = @0x52;
+const SESSION_THREE: address = @0x53;
+const SESSION_FOUR: address = @0x54;
+const SESSION_FIVE: address = @0x55;
+const SESSION_SIX: address = @0x56;
+const SESSION_SEVEN: address = @0x57;
+const SESSION_EIGHT: address = @0x58;
+const SESSION_NINE: address = @0x59;
+const SESSION_TEN: address = @0x510;
+const SESSION_ELEVEN: address = @0x511;
 
 const NOW_MS: u64 = 1_000;
 const SESSION_DURATION_MS: u64 = 60_000;
@@ -50,6 +61,11 @@ const MAX_SESSION_DURATION_MS: u64 = 2_592_000_000; // 30 days.
 const MAX_SESSION_EXPIRES_AT_MS: u64 = 2_592_001_000; // 1_000 + 30 days.
 const ABOVE_MAX_SESSION_DURATION_MS: u64 = 2_592_000_001;
 const ZERO_DURATION_MS: u64 = 0;
+const MAX_SESSIONS: u64 = 10;
+const FIRST_SESSION_INDEX: u64 = 0;
+const LAST_SESSION_INDEX: u64 = 9;
+const EXCESS_SESSION_INDEX: u64 = 10;
+const POST_REVOKE_EXPIRES_AT_MS: u64 = 62_000; // 2_000 + 60_000.
 const ONE_EVENT: u64 = 1;
 const EUnexpectedSuccess: u64 = 999;
 
@@ -203,6 +219,107 @@ fun maximum_session_duration_is_accepted() {
     return_shared(wrapper);
     clock.destroy_for_testing();
     scenario.end();
+}
+
+#[test]
+fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
+    let (mut scenario, mut clock, wrapper_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let session_addresses = session_addresses();
+    let mut index = FIRST_SESSION_INDEX;
+    while (index < MAX_SESSIONS) {
+        sessions::authorize_session(
+            &mut wrapper,
+            session_addresses[index],
+            SESSION_DURATION_MS,
+            &clock,
+            scenario.ctx(),
+        );
+        index = index + 1;
+    };
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[FIRST_SESSION_INDEX]),
+        option::some(SESSION_EXPIRES_AT_MS),
+    );
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[LAST_SESSION_INDEX]),
+        option::some(SESSION_EXPIRES_AT_MS),
+    );
+
+    clock.set_for_testing(REAUTH_NOW_MS);
+    sessions::authorize_session(
+        &mut wrapper,
+        session_addresses[LAST_SESSION_INDEX],
+        REAUTH_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[LAST_SESSION_INDEX]),
+        option::some(REAUTH_EXPIRES_AT_MS),
+    );
+
+    sessions::revoke_session(
+        &mut wrapper,
+        session_addresses[FIRST_SESSION_INDEX],
+        scenario.ctx(),
+    );
+    assert!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[FIRST_SESSION_INDEX]).is_none(),
+    );
+    sessions::authorize_session(
+        &mut wrapper,
+        session_addresses[EXCESS_SESSION_INDEX],
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[EXCESS_SESSION_INDEX]),
+        option::some(POST_REVOKE_EXPIRES_AT_MS),
+    );
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[LAST_SESSION_INDEX]),
+        option::some(REAUTH_EXPIRES_AT_MS),
+    );
+
+    return_shared(wrapper);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = sessions::ESessionLimitExceeded)]
+fun eleventh_distinct_session_aborts() {
+    let (mut scenario, clock, wrapper_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let session_addresses = session_addresses();
+    let mut index = FIRST_SESSION_INDEX;
+    while (index < MAX_SESSIONS) {
+        sessions::authorize_session(
+            &mut wrapper,
+            session_addresses[index],
+            SESSION_DURATION_MS,
+            &clock,
+            scenario.ctx(),
+        );
+        index = index + 1;
+    };
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, session_addresses[LAST_SESSION_INDEX]),
+        option::some(SESSION_EXPIRES_AT_MS),
+    );
+
+    sessions::authorize_session(
+        &mut wrapper,
+        session_addresses[EXCESS_SESSION_INDEX],
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = sessions::EInvalidSessionDuration)]
@@ -703,6 +820,22 @@ fun active_session_reaches_predict_redeem_live() {
     destroy(replacement_order_id);
 
     abort EUnexpectedSuccess
+}
+
+fun session_addresses(): vector<address> {
+    vector[
+        SESSION_ONE,
+        SESSION_TWO,
+        SESSION_THREE,
+        SESSION_FOUR,
+        SESSION_FIVE,
+        SESSION_SIX,
+        SESSION_SEVEN,
+        SESSION_EIGHT,
+        SESSION_NINE,
+        SESSION_TEN,
+        SESSION_ELEVEN,
+    ]
 }
 
 fun setup_account(): (Scenario, Clock, ID) {

@@ -13,16 +13,19 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig
 };
 use std::internal::permit;
-use sui::{accumulator::AccumulatorRoot, clock::Clock, event, table::{Self, Table}};
+use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, VecMap}};
 
 // === Errors ===
 
 const EInvalidSessionDuration: u64 = 0;
 const ESessionNotAuthorized: u64 = 1;
+const ESessionLimitExceeded: u64 = 2;
 
 // === Constants ===
 
 macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
+
+macro fun max_sessions(): u64 { 10 }
 
 // === Structs ===
 
@@ -31,7 +34,7 @@ public struct SessionsApp has drop {}
 
 /// Session expiration timestamps keyed by transaction signer address.
 public struct SessionsData has store {
-    sessions: Table<address, u64>,
+    sessions: VecMap<address, u64>,
 }
 
 /// A session was authorized or reauthorized through `expires_at_ms`.
@@ -55,15 +58,11 @@ public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Op
     let account = wrapper.load_account();
     if (!account.has_data<SessionsApp>()) return option::none();
     let data = account.borrow_data<SessionsApp, SessionsData>();
-    if (!data.sessions.contains(session)) {
-        option::none()
-    } else {
-        option::some(*data.sessions.borrow(session))
-    }
+    data.sessions.try_get(&session)
 }
 
 /// Authorize `session` from execution time for at most 30 days.
-/// Reauthorizing an existing address replaces its expiration timestamp.
+/// Accounts may store at most 10 addresses; reauthorization replaces in place.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     session: address,
@@ -76,13 +75,14 @@ public fun authorize_session(
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     let account_id = account.account_id();
     if (!account.has_data<SessionsApp>()) {
-        account.attach(permit<SessionsApp>(), SessionsData { sessions: table::new(ctx) });
+        account.attach(permit<SessionsApp>(), SessionsData { sessions: vec_map::empty() });
     };
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
-    if (data.sessions.contains(session)) {
-        *data.sessions.borrow_mut(session) = expires_at_ms;
+    if (data.sessions.contains(&session)) {
+        *data.sessions.get_mut(&session) = expires_at_ms;
     } else {
-        data.sessions.add(session, expires_at_ms);
+        assert!(data.sessions.length() < max_sessions!(), ESessionLimitExceeded);
+        data.sessions.insert(session, expires_at_ms);
     };
     event::emit(SessionAuthorized { account_id, session, expires_at_ms });
 }
@@ -94,8 +94,8 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
     let account_id = account.account_id();
     let remove_data = {
         let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
-        if (!data.sessions.contains(session)) return;
-        let expires_at_ms = data.sessions.remove(session);
+        if (!data.sessions.contains(&session)) return;
+        let (_, expires_at_ms) = data.sessions.remove(&session);
         event::emit(SessionRevoked { account_id, session, expires_at_ms });
         data.sessions.is_empty()
     };
