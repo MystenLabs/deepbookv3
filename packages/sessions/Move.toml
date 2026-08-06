@@ -1,0 +1,8 @@
+[package]
+name = "deepbook_sessions"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+account = { local = "../account" }
+deepbook_predict = { local = "../predict" }
