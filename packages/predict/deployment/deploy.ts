@@ -3992,8 +3992,6 @@ async function publishSessions(runtime: SessionsRuntime): Promise<void> {
         suiClient(runtime.snapshot, [
             "publish",
             resolve(REPO_ROOT, "packages", "sessions"),
-            "--build-env",
-            NETWORK,
             "--warnings-are-errors",
             "--force",
             "--sender",
