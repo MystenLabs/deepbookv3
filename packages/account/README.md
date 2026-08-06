@@ -54,7 +54,7 @@ The registry creates canonical accounts:
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper
 public fun new_with_referrer(
     registry: &mut AccountRegistry,
-    referrer: &Account,
+    referrer: &AccountWrapper,
     ctx: &mut TxContext,
 ): AccountWrapper
 public fun new_self_owned(
@@ -66,9 +66,9 @@ public fun new_self_owned(
 
 The returned wrapper must be shared with `account::share`.
 
-`new_with_referrer` records the supplied account's canonical ID on the created
+`new_with_referrer` records the supplied wrapper's canonical account ID on the created
 account and in its `AccountCreated` event. This is caller-selected attribution:
-passing an account proves that it exists, not that its owner authorized or endorsed
+passing a wrapper proves that it exists, not that its owner authorized or endorsed
 the referral. The package does not provide a setter or removal path.
 
 The registry exposes both derived addresses:
@@ -275,8 +275,7 @@ some_app::do_something(account, ...);
 Referred EOA-owned account:
 
 ```move
-let referrer = referrer_wrapper.load_account();
-let wrapper = registry.new_with_referrer(referrer, ctx);
+let wrapper = registry.new_with_referrer(&referrer_wrapper, ctx);
 wrapper.share();
 ```
 

@@ -6,7 +6,7 @@
 /// `account::account` owns wrapper construction, custody, accumulator settlement, and app-data invariants.
 module account::account_registry;
 
-use account::{account::{Self, Account, AccountWrapper, Auth}, account_events};
+use account::{account::{Self, AccountWrapper, Auth}, account_events};
 use std::{internal::Permit, type_name};
 use sui::{derived_object, dynamic_field as df};
 
@@ -76,14 +76,19 @@ public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrap
     registry.new_for_owner(owner, false, option::none(), ctx)
 }
 
-/// Creates the sender's canonical account and permanently records the supplied account as its referrer.
+/// Creates the sender's canonical account and permanently records the supplied wrapper's account as its referrer.
 public fun new_with_referrer(
     registry: &mut AccountRegistry,
-    referrer: &Account,
+    referrer: &AccountWrapper,
     ctx: &mut TxContext,
 ): AccountWrapper {
     let owner = ctx.sender();
-    registry.new_for_owner(owner, false, option::some(referrer.account_id()), ctx)
+    registry.new_for_owner(
+        owner,
+        false,
+        option::some(referrer.load_account().account_id()),
+        ctx,
+    )
 }
 
 /// Creates the canonical account owned by `owner_uid`'s object address, aborting if either derived ID is already claimed.
