@@ -1585,3 +1585,668 @@ fun add_conditional_order_upgraded_rejects_stale_feed() {
     destroy_2!(btc_price, usdc_price);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun deposit_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        _usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &stale_usdc,
+        mint_coin<USDC>(1_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun withdraw_upgraded_with_debt_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // $100k USDC collateral, then draw 0.5 BTC ($50k): $150k of assets against $50k of
+    // debt, a ratio of 3.0. `min_withdraw_risk_ratio` is 2.0, so there is real room
+    // both above and below it - drawing a full 1 BTC would sit exactly on the floor and
+    // every withdrawal, however small, would abort.
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    let coin = margin_manager_upgraded::withdraw<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_pool,
+        &usdc_pool,
+        &btc_price,
+        &stale_usdc,
+        &pool,
+        10_000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    sui::coin::burn_for_testing(coin);
+    std::unit_test::destroy(stale_usdc);
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun risk_ratio_upgraded_with_debt_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+
+    let _ = margin_manager_upgraded::risk_ratio<BTC, USDC>(
+        &mm,
+        &registry,
+        &btc_price,
+        &stale_usdc,
+        &pool,
+        &btc_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun borrow_base_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &stale_usdc,
+        &pool,
+        btc_multiplier() / 10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun borrow_quote_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &stale_usdc,
+        &pool,
+        1_000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun liquidate_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+
+    // The read happens before the health check, so a healthy manager still aborts on
+    // staleness rather than on `ECannotLiquidate`.
+    let (b, q, r) = margin_manager_upgraded::liquidate<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &stale_usdc,
+        &mut usdc_pool,
+        &mut pool,
+        mint_coin<USDC>(1_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    sui::coin::burn_for_testing(b);
+    sui::coin::burn_for_testing(q);
+    sui::coin::burn_for_testing(r);
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun execute_conditional_orders_v2_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+
+    let v2: vector<OrderInfo> = margin_manager_upgraded::execute_conditional_orders_v2<BTC, USDC>(
+        &mut mm,
+        &mut pool,
+        &btc_pool,
+        &usdc_pool,
+        &btc_price,
+        &stale_usdc,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(v2.is_empty());
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun execute_conditional_orders_v3_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<USDC>(100_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_multiplier() / 2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+
+    let v3: vector<OrderInfo> = margin_manager_upgraded::execute_conditional_orders_v3<BTC, USDC>(
+        &mut mm,
+        &mut pool,
+        &mut btc_pool,
+        &mut usdc_pool,
+        &btc_price,
+        &stale_usdc,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(v3.is_empty());
+
+    test::return_shared(btc_pool);
+    test::return_shared(usdc_pool);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    std::unit_test::destroy(stale_usdc);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun add_conditional_order_upgraded_rejects_a_stale_quote_feed() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        _usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 100000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+
+    let condition = tpsl::new_condition(true, 90_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        100_000_000_000,
+        1 * btc_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    let stale_usdc = build_stale_usdc_price_info_object_upgraded(&mut scenario, 600, &clock);
+    margin_manager_upgraded::add_conditional_order<BTC, USDC>(
+        &mut mm,
+        &pool,
+        &btc_price,
+        &stale_usdc,
+        &registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    std::unit_test::destroy(stale_usdc);
+    return_shared_2!(mm, pool);
+    destroy_2!(btc_price, usdc_price);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}

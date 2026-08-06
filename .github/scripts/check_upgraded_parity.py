@@ -144,6 +144,35 @@ def main() -> int:
                     f"{pkg}::{stem}::{fn} takes a Pyth feed but has no upgraded twin "
                     f"(expected {fn} in {upg_path.name}, or {fn}_upgraded beside it)")
 
+    # The parameter comparison normalises `PriceInfoObjectUpgraded` to
+    # `PriceInfoObject`, which is what lets a twin be compared at all — but it also
+    # means the guard cannot see WHICH package that alias points at. Repointing one
+    # `use` line in an upgraded module at `pyth::price_info` silently routes every
+    # entrypoint in it back to the legacy feed and still compares clean. So check the
+    # import itself: upgraded modules must alias from `pyth_upgraded`, legacy ones
+    # must not.
+    for path in sorted(root.glob('*/sources/**/*.move')):
+        pkg = path.parts[path.parts.index('packages') + 1]
+        if pkg not in migrated:
+            continue
+        src = path.read_text()
+        if 'PriceInfoObjectUpgraded' not in src:
+            continue
+        # Two forms in use: `use pyth_upgraded::price_info::PriceInfoObject as X;` and the
+        # grouped `use pyth_upgraded::{price_info::PriceInfoObject as X, ...};`.
+        alias = (re.search(r'^use\s+(\w+)::price_info::PriceInfoObject as PriceInfoObjectUpgraded',
+                           src, re.M)
+                 or re.search(r'^use\s+(\w+)::\{[^}]*price_info::PriceInfoObject as '
+                              r'PriceInfoObjectUpgraded', src, re.M | re.S))
+        if alias is None:
+            problems.append(
+                f"{pkg}::{path.stem} uses PriceInfoObjectUpgraded but never aliases it from a "
+                f"price_info module — the guard cannot tell which Pyth generation it points at")
+        elif alias.group(1) != UPGRADED_DEP:
+            problems.append(
+                f"{pkg}::{path.stem} aliases PriceInfoObjectUpgraded from `{alias.group(1)}`, "
+                f"not `{UPGRADED_DEP}` — the upgraded surface would read the legacy feed")
+
     # Reverse direction: an upgraded entry with no legacy counterpart.
     for upg_path in sorted(root.glob('*/sources/**/*_upgraded.move')):
         pkg = upg_path.parts[upg_path.parts.index('packages') + 1]
