@@ -23,6 +23,7 @@ use pyth_upgraded::price_info::PriceInfoObject as PriceInfoObjectUpgraded;
 use std::type_name;
 use sui::{clock::Clock, coin::Coin};
 
+/// Twin: `margin_manager::add_conditional_order`. Edit both.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -48,6 +49,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::execute_conditional_orders_v2`. Edit both.
 public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -73,6 +75,7 @@ public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::execute_conditional_orders_v3`. Edit both.
 public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -98,6 +101,7 @@ public fun execute_conditional_orders_v3<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::deposit`. Edit both.
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -128,6 +132,7 @@ public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     )
 }
 
+/// Twin: `margin_manager::withdraw`. Edit both.
 public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -176,6 +181,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     )
 }
 
+/// Twin: `margin_manager::borrow_base`. Edit both.
 public fun borrow_base<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -199,6 +205,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::borrow_quote`. Edit both.
 public fun borrow_quote<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -222,6 +229,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::liquidate`. Edit both.
 public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -245,6 +253,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     )
 }
 
+/// Twin: `margin_manager::risk_ratio`. Edit both.
 public fun risk_ratio<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -271,6 +280,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::risk_ratio_unsafe`. Edit both.
 public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -297,6 +307,7 @@ public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::manager_state`. Edit both.
 public fun manager_state<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -318,6 +329,7 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `margin_manager::manager_states`. Edit both.
 public fun manager_states<BaseAsset, QuoteAsset>(
     margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
     registry: &MarginRegistry,

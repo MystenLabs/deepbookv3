@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      # the parity guard's own source, so a PR that only edits the check still runs it
+      - ".github/scripts/**"
       - "packages/**"
   push:
     branches:

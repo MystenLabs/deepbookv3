@@ -21,6 +21,7 @@ use deepbook_margin::{
 use pyth_upgraded::price_info::PriceInfoObject as PriceInfoObjectUpgraded;
 use sui::clock::Clock;
 
+/// Twin: `pool_proxy::update_current_price`. Edit both.
 public fun update_current_price<BaseAsset, QuoteAsset>(
     registry: &mut MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
@@ -49,6 +50,7 @@ public fun update_current_price<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_limit_order_v2`. Edit both.
 public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -100,6 +102,7 @@ public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_market_order_v2`. Edit both.
 public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -145,6 +148,7 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_reduce_only_limit_order_v2`. Edit both.
 public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -185,6 +189,7 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_reduce_only_market_order_v2`. Edit both.
 public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -219,6 +224,7 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_reduce_only_market_order_and_repay_loan`. Edit both.
 public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -253,6 +259,7 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_reduce_only_limit_order_and_repay_loan`. Edit both.
 public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -293,6 +300,7 @@ public fun place_reduce_only_limit_order_and_repay_loan<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Twin: `pool_proxy::place_market_order_and_repay_loan`. Edit both.
 public fun place_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
