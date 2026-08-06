@@ -169,22 +169,23 @@ public fun set_template_backing_buffer_lambda(
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
 }
 
-/// Set the DEEP-stake benefit switch snapshotted by newly created expiry markets.
-/// Ships disabled, so markets charge undiscounted fees and pay no stake-scaled
-/// loss rebate until this is turned on. Existing markets keep the value they
-/// snapshotted, in either direction.
-public fun set_template_stake_benefits_enabled(
+/// Set how much of the DEEP-stake benefit programme newly created expiry markets
+/// run, from `0` (nothing) to `float_scaling` (full strength). Ships at 0, so
+/// markets charge undiscounted fees and pay no stake-scaled loss rebate until this
+/// is raised. Existing markets keep the value they snapshotted.
+public fun set_template_max_benefit_ratio(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    enabled: bool,
+    value: u64,
 ) {
     config.assert_version();
-    config.stake_config.set_template_benefits_enabled(enabled);
+    config.stake_config.set_max_benefit_ratio(value);
 }
 
-/// Set the staking benefit thresholds: `lower` (half of max benefits) and
-/// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
-public fun set_benefit_powers(
+/// Set the staking benefit thresholds snapshotted by newly created expiry markets:
+/// `lower` (half of max benefits) and `upper` (full benefits). Validated as a pair
+/// (`upper > 2 * lower`). Existing markets keep the curve they snapshotted.
+public fun set_template_benefit_powers(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     lower: u64,
@@ -443,13 +444,9 @@ public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): St
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
-/// Benefit-switch value a newly created expiry market snapshots.
-public(package) fun stake_benefits_enabled_snapshot(config: &ProtocolConfig): bool {
-    config.stake_config.template_benefits_enabled()
-}
-
-public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
-    &config.stake_config
+/// Benefit policy a newly created expiry market snapshots as its own.
+public(package) fun stake_config_snapshot(config: &ProtocolConfig): StakeConfig {
+    stake_config::snapshot(&config.stake_config)
 }
 
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {

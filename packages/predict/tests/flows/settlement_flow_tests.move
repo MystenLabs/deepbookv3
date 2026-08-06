@@ -538,14 +538,21 @@ fun owner_auth_rebate_claim_survives_predict_app_deauth() {
 }
 
 #[test]
-fun disabling_the_stake_benefit_template_cannot_zero_an_earned_rebate() {
-    // A market snapshots the benefit switch at creation, so an admin turning the
-    // template off afterwards must not reach it. Were the switch read live, the
-    // one-shot claim below would resolve at zero and destroy the rebate: the
-    // summary row is removed on claim, so re-enabling could never recover it.
+fun retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate() {
+    // A market snapshots its whole benefit policy at creation, so admin retunes
+    // afterwards must not reach it. Were either value read live, this one-shot
+    // claim would resolve against the new policy and permanently shrink a rebate
+    // the trader had already earned: dropping the ratio to zero would erase it,
+    // and widening the thresholds would roughly halve it (measured 2_500_000 ->
+    // 1_252_551 before the snapshot landed). The claim removes the account's
+    // expiry summary, so nothing could recover it afterwards.
     let (mut fx, expiry_id, trader, premium) = prepare_settled_loss_with_inactive_rebate_stake();
 
-    fx.set_template_stake_benefits_enabled(false);
+    fx.set_template_max_benefit_ratio(0);
+    fx.set_template_benefit_powers(
+        config_constants::max_lower_benefit_power!(),
+        config_constants::max_upper_benefit_power!(),
+    );
     fx.scenario_mut().next_epoch(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);

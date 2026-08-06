@@ -266,9 +266,9 @@ public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Tra
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), false)
 }
 
-/// `setup_live_market` whose market snapshots the DEEP-stake benefit programme as
-/// ENABLED. Needed by any flow test asserting a staking discount or rebate, because
-/// the switch is frozen at market creation and cannot be turned on afterwards.
+/// `setup_live_market` whose market snapshots the DEEP-stake benefit programme at
+/// FULL strength. Needed by any flow test asserting a staking discount or rebate,
+/// because the policy is frozen at market creation and cannot be raised afterwards.
 public fun setup_live_market_with_stake_benefits(
     expiry_ms: u64,
     live_price: u64,
@@ -295,7 +295,7 @@ fun setup_funded_live_market(
 ): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
     // Must precede `create_expiry`: the market snapshots the switch at creation.
-    if (stake_benefits) fx.set_template_stake_benefits_enabled(true);
+    if (stake_benefits) fx.set_template_max_benefit_ratio(fixed_math::math::float_scaling!());
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -440,14 +440,25 @@ public fun set_pyth_spot_freshness_bundle(
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
 }
 
-/// Set the DEEP-stake benefit seed for markets created from here on, through the
-/// real admin path. Markets snapshot this at creation, so a test asserting a
-/// staking fee discount or a stake-scaled loss rebate must call this BEFORE
-/// `create_expiry`; flipping it afterwards cannot reach an existing market.
-public fun set_template_stake_benefits_enabled(self: &mut Fixture, enabled: bool) {
+/// Set how much of the DEEP-stake benefit programme markets created from here on
+/// will run, through the real admin path. Markets snapshot this at creation, so a
+/// test asserting a staking fee discount or a stake-scaled loss rebate must call
+/// this BEFORE `create_expiry`; changing it afterwards cannot reach an existing
+/// market.
+public fun set_template_max_benefit_ratio(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_stake_benefits_enabled(&self.admin_cap, enabled);
+    config.set_template_max_benefit_ratio(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Retune the benefit-curve thresholds on the template, through the real admin
+/// path. Like the ratio above, this only reaches markets created afterwards.
+public fun set_template_benefit_powers(self: &mut Fixture, lower: u64, upper: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_benefit_powers(&self.admin_cap, lower, upper);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }

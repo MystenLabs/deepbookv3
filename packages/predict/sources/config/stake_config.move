@@ -1,19 +1,23 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Admin-tunable DEEP staking parameters and the benefit curve they drive.
+/// DEEP staking benefit policy: the stake curve and how much of it pays out.
 ///
-/// Benefits scale with active stake along a two-segment curve: the benefit ratio
-/// rises linearly from 0 to half of max over `0..lower_benefit_power`, then from
-/// half to full over `lower_benefit_power..upper_benefit_power`, capped at full
-/// above. That ratio scales the fixed `constants::max_fee_discount` for fees.
-/// The same benefit ratio scales settled trading-loss rebates.
+/// Benefits scale with active stake along a two-segment curve: the curve rises
+/// linearly from 0 to half of max over `0..lower_benefit_power`, then from half to
+/// full over `lower_benefit_power..upper_benefit_power`, capped at full above.
+/// `max_benefit_ratio` then scales that curve, so it sets how much of the
+/// programme runs — `0` pays nothing at any stake, `float_scaling` runs it at full
+/// strength. The resulting benefit ratio scales the fixed
+/// `constants::max_fee_discount` for fees, and applies directly to settled
+/// trading-loss rebates.
 ///
-/// Whether the programme applies at all is NOT decided here: every entry takes a
-/// `benefits_enabled` flag that each `ExpiryMarket` snapshots at creation from
-/// `template_benefits_enabled`. This module owns the curve; the market owns
-/// whether its contracts were written under the programme. The thresholds stay
-/// live, so retuning the curve still reaches markets already trading.
+/// Each `ExpiryMarket` snapshots this whole config at creation and prices both
+/// benefits against its own copy; the one on `ProtocolConfig` is only the template
+/// future markets will snapshot. Nothing here is read live, because both benefits
+/// resolve after the trade that earned them — the fee discount at mint, the rebate
+/// at a post-settlement claim — so a live value would let an admin reprice
+/// contracts already written and shrink a rebate already earned.
 module deepbook_predict::stake_config;
 
 use deepbook_predict::{config_constants, constants};
@@ -21,64 +25,68 @@ use fixed_math::math;
 
 const EInvalidBenefitPowers: u64 = 0;
 
-/// Admin-tunable DEEP-stake benefit curve thresholds; see the module doc for
-/// the curve shape.
+/// Admin-tunable DEEP-stake benefit policy; see the module doc for the curve.
 public struct StakeConfig has store {
     /// Active stake at the curve kink (half of max benefits), in raw DEEP units.
     lower_benefit_power: u64,
     /// Active stake for full (max) benefits, in raw DEEP units.
     upper_benefit_power: u64,
-    /// Seed for the per-market benefit switch, snapshotted by each new
-    /// `ExpiryMarket`. Ships false. Changing it never reaches an existing market:
-    /// a market's contracts keep the programme state they were written under, so
-    /// no toggle can retroactively zero a rebate already earned.
-    template_benefits_enabled: bool,
+    /// Ceiling on the benefit ratio, in FLOAT_SCALING. Scales the whole curve, so
+    /// `0` disables every staking benefit and `float_scaling` runs the programme
+    /// at full strength. Ships at 0.
+    max_benefit_ratio: u64,
 }
 
 // === Public-Package Functions ===
 
 /// Fee remaining after the active-stake discount, with the discount rounded down.
-/// `benefits_enabled` is the trading market's snapshot, not the current template.
 public(package) fun fee_amount_after_discount(
     config: &StakeConfig,
     amount: u64,
     active_stake: u64,
-    benefits_enabled: bool,
 ): u64 {
     let discount_fraction = math::mul_down(
-        config.benefit_ratio(active_stake, benefits_enabled),
+        config.benefit_ratio(active_stake),
         constants::max_fee_discount!(),
     );
     amount - math::mul_down(amount, discount_fraction)
 }
 
 /// Trading-loss rebate earned for an active stake, rounded down.
-/// `benefits_enabled` is the settling market's snapshot, not the current template.
 public(package) fun rebate_amount(
     config: &StakeConfig,
     eligible_rebate: u64,
     active_stake: u64,
-    benefits_enabled: bool,
 ): u64 {
-    math::mul_down(eligible_rebate, config.benefit_ratio(active_stake, benefits_enabled))
+    math::mul_down(eligible_rebate, config.benefit_ratio(active_stake))
 }
 
-public(package) fun template_benefits_enabled(config: &StakeConfig): bool {
-    config.template_benefits_enabled
+/// Copy the template into a new market's own immutable benefit policy.
+public(package) fun snapshot(config: &StakeConfig): StakeConfig {
+    StakeConfig {
+        lower_benefit_power: config.lower_benefit_power,
+        upper_benefit_power: config.upper_benefit_power,
+        max_benefit_ratio: config.max_benefit_ratio,
+    }
+}
+
+public(package) fun max_benefit_ratio(config: &StakeConfig): u64 {
+    config.max_benefit_ratio
 }
 
 public(package) fun new(): StakeConfig {
     StakeConfig {
         lower_benefit_power: config_constants::default_lower_benefit_power!(),
         upper_benefit_power: config_constants::default_upper_benefit_power!(),
-        template_benefits_enabled: config_constants::default_stake_benefits_enabled!(),
+        max_benefit_ratio: config_constants::default_max_benefit_ratio!(),
     }
 }
 
-/// Set the benefit-switch seed for markets created from here on. Existing markets
-/// keep the value they snapshotted.
-public(package) fun set_template_benefits_enabled(config: &mut StakeConfig, enabled: bool) {
-    config.template_benefits_enabled = enabled;
+/// Set how much of the benefit programme pays out, from `0` (nothing) to
+/// `float_scaling` (full strength).
+public(package) fun set_max_benefit_ratio(config: &mut StakeConfig, value: u64) {
+    config_constants::assert_max_benefit_ratio(value);
+    config.max_benefit_ratio = value;
 }
 
 /// Set both benefit thresholds together (validated as a pair: each in range and
@@ -94,11 +102,17 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 
 // === Private Functions ===
 
-/// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING.
-/// Zero for a market that did not snapshot the programme, whatever the stake. Each
-/// segment rounds down, so the returned benefit never exceeds the curve.
-fun benefit_ratio(config: &StakeConfig, active_stake: u64, benefits_enabled: bool): u64 {
-    if (!benefits_enabled) return 0;
+/// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING:
+/// the two-segment stake curve scaled by `max_benefit_ratio`. Zero at any stake
+/// while that ratio is zero. Each step rounds down, so the returned benefit never
+/// exceeds the curve.
+fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
+    math::mul_down(config.stake_curve(active_stake), config.max_benefit_ratio)
+}
+
+/// Position on the two-segment stake curve, in FLOAT_SCALING, before the
+/// `max_benefit_ratio` scaling is applied.
+fun stake_curve(config: &StakeConfig, active_stake: u64): u64 {
     let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;
