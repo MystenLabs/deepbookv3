@@ -18,10 +18,12 @@
 /// 60s; live mainnet is configured at 70s.
 ///
 /// The exposed set is wider than liquidation. Liquidating on the lower feed needs the
-/// manager in the danger band and the caller to post a repay coin. Firing a
-/// conditional order needs neither: `execute_conditional_orders_v2`/`v3` are
-/// permissionless, take no capital, and act on a manager that is healthy — in or out
-/// of the danger band — see
+/// manager in the danger band, and calling `margin_manager::liquidate` directly needs
+/// the caller to post a repay coin — though `margin_liquidation`'s vault entries are
+/// permissionless and fund the repay themselves, so the capital half of that has never
+/// really bound. Firing a conditional order needs neither: `execute_conditional_orders_v2`/`v3`
+/// are permissionless, take no capital, and act on a manager that is healthy — in or
+/// out of the danger band — see
 /// `dual_feed_window_fires_a_stop_on_the_lower_feed_alone`.
 ///
 /// If a mitigation lands (an admin switch making exactly one reader family
@@ -239,9 +241,9 @@ fun dual_feed_window_still_enforces_staleness_on_each_feed() {
 
 /// The window's exposed set is wider than liquidation.
 ///
-/// Liquidating on the lower feed needs the manager in the danger band and the caller
-/// to post a repay coin. Firing a conditional order needs neither: the v2 executor is
-/// permissionless, takes no capital, and acts on a healthy debt-free manager. The
+/// Liquidating on the lower feed needs the manager in the danger band. Firing a
+/// conditional order does not need even that: the v2 executor is permissionless, takes
+/// no capital, and acts on a manager that is merely healthy. The
 /// trigger is evaluated against whichever feed the caller supplies, and nothing on
 /// chain compares the two — so a stop the true price never reached can be realised by
 /// an arbitrary third party.
