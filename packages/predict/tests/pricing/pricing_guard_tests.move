@@ -78,6 +78,12 @@ const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
 const PRICE_MEMO_MISSING_TICK: u64 = 100;
 const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
+/// SVI corner that made the deep-ITM digital limit wrong under the old caps:
+/// `b = 10`, `sigma = 0.1`, `rho = -0.9`. See
+/// `surface_whose_variance_breaks_the_digital_limits_is_rejected_at_load`.
+const SATURATION_BREAKING_SVI_B: u64 = 10_000_000_000;
+const SATURATION_BREAKING_SIGMA: u64 = 100_000_000;
+const SATURATION_BREAKING_RHO_MAGNITUDE: u64 = 900_000_000;
 const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
 const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
 const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
@@ -149,7 +155,7 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
         test_constants::default_live_price(),
         1,
         false,
-        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_max_svi_b(),
         test_constants::pricing_min_svi_sigma(),
         test_constants::float(),
         true,
@@ -799,8 +805,34 @@ fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
 fun surface_with_svi_b_above_max_aborts() {
     load_pricer_with_invalid_svi(
         default_svi_a(),
-        test_constants::pricing_max_svi_input() + 1,
+        test_constants::pricing_max_svi_b() + 1,
         default_svi_sigma(),
+    );
+    abort EUnexpectedSuccess
+}
+
+/// The surface class the `b` cap exists to exclude, pinned by its own numbers so
+/// the cap cannot be loosened back without this failing.
+///
+/// `b = 10` with `sigma = 0.1`, `rho = -0.9`, `m = 0` puts total variance at
+/// `w ~ 394` at the deepest non-saturating log-moneyness (`k = ln(1e-9) =
+/// -20.72`, the boundary at which `strike * 1e9 / forward` truncates to zero).
+/// There `d2 = -(k + w/2)/sqrt(w) = -9.87`, so the true digital is ~2.6e-23 —
+/// while `compute_nd2`'s deep-ITM branch returns the exact limit 1.0. That is a
+/// 100% absolute error on a value the liquidation threshold and the NAV mark both
+/// consume. Reference values are true-math (Python stdlib `erf`), independent of
+/// the contract. The surface is otherwise production-shaped and was admitted
+/// before this cap existed.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun surface_whose_variance_breaks_the_digital_limits_is_rejected_at_load() {
+    load_pricer_with_full_svi(
+        default_svi_a(),
+        SATURATION_BREAKING_SVI_B,
+        SATURATION_BREAKING_SIGMA,
+        SATURATION_BREAKING_RHO_MAGNITUDE,
+        true,
+        0,
+        false,
     );
     abort EUnexpectedSuccess
 }
@@ -828,7 +860,7 @@ fun surface_with_svi_m_above_max_aborts() {
         default_svi_sigma(),
         test_constants::float(),
         false,
-        test_constants::pricing_max_svi_input() + 1,
+        test_constants::pricing_max_svi_m() + 1,
         false,
     );
     abort EUnexpectedSuccess

@@ -136,9 +136,17 @@ public fun default_svi_sigma(): u64 { 1_000_000 }
 /// seed envelope-edge surfaces.
 public fun pricing_min_svi_sigma(): u64 { default_svi_sigma() }
 
-/// Mirrors `pricing.move`'s private SVI input ceiling for tests that intentionally
-/// seed envelope-edge surfaces.
-public fun pricing_max_svi_input(): u64 { 100 * math::float_scaling!() }
+/// Mirrors `pricing.move`'s private SVI input ceiling for `|a|` and `sigma`, for
+/// tests that intentionally seed envelope-edge surfaces.
+public fun pricing_max_svi_input(): u64 { math::float_scaling!() }
+
+/// Mirrors `pricing.move`'s private ceiling on SVI `b`, tighter than the shared
+/// input ceiling.
+public fun pricing_max_svi_b(): u64 { math::float_scaling!() / 10 }
+
+/// Mirrors `pricing.move`'s private ceiling on SVI `|m|`, looser than the shared
+/// input ceiling.
+public fun pricing_max_svi_m(): u64 { 10 * math::float_scaling!() }
 
 /// Default trader-manager deposit in the composite bring-up; large enough to fund
 /// several leveraged mints plus fees.

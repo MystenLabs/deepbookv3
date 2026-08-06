@@ -348,7 +348,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         test_constants::default_live_price(),
         NON_MONOTONE_A_MAGNITUDE,
         false,
-        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_max_svi_b(),
         test_constants::pricing_min_svi_sigma(),
         float!(),
         true,

@@ -1285,6 +1285,77 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
+## RP-26: The SVI envelope is sized so the digital-limit saturations are exact
+
+- **Trigger state / threat:** a signed SVI surface whose total variance is large
+  enough that `compute_nd2`'s deep-ITM and deep-OTM ratio saturations stop being
+  true. Those branches fire on `strike * 1e9 / forward` alone — truncating to
+  zero, or exceeding `u64` — and return the exact digital limits `1e9` and `0`
+  without reading the surface. The limits hold only while variance is small:
+  `d2 = -(k + w/2)/sqrt(w)` tends to `-sqrt(w)/2` for any fixed `k`, so as `w`
+  grows the true deep-ITM digital falls away from 1 while the branch keeps
+  returning 1.
+- **Controller:** external — the Block Scholes publisher chooses the surface
+  inside Predict's pricing-safe envelope; traders cannot choose SVI parameters.
+  Which strikes reach a saturating ratio is set by market configuration
+  (`admission_tick_size` against the forward), not by any caller.
+- **Blast radius:** every consumer of `range_price` on the affected market, all
+  reading the same wrong number: the mint's entry probability, the liquidation
+  threshold `gross_value <= floor_amount / liquidation_ltv`, and the NAV mark the
+  pool-wide flush consumes. Both error directions exist — two saturating
+  boundaries collapse a range to zero, and one saturating boundary against a
+  finite one inflates it toward 1.0. Nothing downstream catches either: a
+  constant `1e9` across ticks is monotone non-increasing, so the `PriceMemo`
+  guard (`ENonMonotonePriceMemo`) does not fire.
+- **Response:** size the envelope so the saturations are arithmetically exact
+  rather than usually-exact. `|a| <= 1` and `sigma <= 1` (`max_svi_input`),
+  `b <= 0.1` (`max_svi_b`), `|m| <= 10` (`max_svi_m`); `rho` and the
+  minimum-total-variance gate are unchanged. Rejection is the existing
+  fail-closed `EBlockScholesInputsInvalid` at pricer load.
+- **Reasoning:** the previous shared cap of 100 on `|a|`, `b`, `|m|`, and `sigma`
+  was a representability sanity bound, not a variance bound — it admitted total
+  variance above 36,000, at which a deep-ITM strike's true digital is 0.0 against
+  a returned 1.0, a 100% absolute error. The caps differ per parameter because
+  the parameters do not enter variance equally: `a` enters directly, `b` scales
+  the entire moneyness-dependent term, and `m` and `sigma` reach variance only
+  through `b`, so `m` tolerates a looser bound than `a` at the same error budget.
+  The budget is the contract's own output resolution: over the admissible box
+  this set holds the worst deep-ITM saturation error to ~5.3e-11, i.e. 0.05 of
+  one raw unit at the 1e9 scale the digital is returned in, so the limits are
+  exact at the resolution the contract can express. The deep-OTM saturation was
+  already sound (worst error ~1.4e-11 under the old caps, because
+  `d2 <= -sqrt(2k)` bounds the true price below 1e-11 for every saturating `k`);
+  it is tightened only as a consequence.
+- **Relation to RP-15:** RP-15 declines a tighter synthetic-parameter envelope as
+  a substitute for the provider's butterfly-freedom guarantee, and that stands —
+  this policy does not police surface quality and adds no `g(k) >= 0` check. It
+  bounds the domain over which *Predict's own* arithmetic shortcut claims to be
+  exact, which is a property of this implementation rather than of the surface.
+  A publisher honoring RP-15's guarantee is unaffected.
+- **Risk profile:** `MEASURED` for the arithmetic, `BEST-GUESS` for the liveness
+  cost. The error bound is a dense sweep of the admissible box against a
+  true-math reference. Headroom over observed data is large — the committed real
+  surfaces in `pricing_reference_data` run `|a| <= 1.8e-4`, `b <= 7.5e-3`,
+  `|m| <= 3.7e-3`, `sigma <= 1.6e-2`, i.e. 13x to 5,600x inside these caps — but
+  no campaign has measured the distribution's tail, and a rejection halts mint,
+  `redeem_live`, `liquidate`, `liquidate_order`, and `plp::value_expiry` for that
+  underlying behind the single `Pricer` constructor, exactly as the staleness
+  lane does.
+- **Pinning tests:** `pricing_guard_tests.move` —
+  `surface_whose_variance_breaks_the_digital_limits_is_rejected_at_load` (the
+  `b = 10`, `sigma = 0.1`, `rho = -0.9` corner whose true deep-ITM digital is
+  ~2.6e-23 against a returned 1.0), plus the per-parameter boundary rejects
+  `surface_with_svi_a_above_max_aborts`, `surface_with_svi_b_above_max_aborts`,
+  `surface_with_svi_m_above_max_aborts`, and
+  `surface_with_svi_sigma_above_max_aborts`. The saturation branches keep their
+  existing exact-value tests, which now assert a value the envelope makes true.
+- **Reopen when:** an observed Block Scholes surface approaches any cap, a
+  rejection is seen in production, the ratio-saturation branches are replaced by
+  a computed tail, or the digital's output scale changes (the error budget is
+  stated against 1e9).
+
+---
+
 ## Rounding policy (R1–R3)
 
 Ratified 2026-06-07. At 1e-9 fixed-point with the protocol's token decimals,
