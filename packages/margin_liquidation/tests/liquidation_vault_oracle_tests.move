@@ -327,9 +327,9 @@ fun liquidate_quote_upgraded_seizes_collateral_and_settles() {
     let (
         base_in,
         quote_in,
-        _base_out,
-        _quote_out,
-        _remaining,
+        base_out,
+        quote_out,
+        remaining,
         base_liquidation,
     ) = liquidation_vault::liquidation_event_fields(&events[0]);
     assert!(!base_liquidation);
@@ -337,6 +337,13 @@ fun liquidate_quote_upgraded_seizes_collateral_and_settles() {
     // `quote_in` is what left the vault: the whole funded balance, since `repay_amount`
     // was `none`. An exact value here is what distinguishes it from `quote_out`.
     assert!(quote_in == 50_000_000_000);
+    // The `*_out` pair and the leftover repay were destructured and never asserted, so
+    // transposing them inside `settle_quote_liquidation` was invisible.
+    // The seized quote plus the unspent repay is the whole 50.7e9 the vault ends with;
+    // asserting only the balance could not tell the two apart.
+    assert!(base_out == 0);
+    assert!(quote_out == 36_750_000_000);
+    assert!(remaining == 13_950_000_000);
     assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == usdc_pool_id);
 
     destroy(btc);
@@ -527,14 +534,17 @@ fun liquidate_base_upgraded_pays_out_and_returns_every_coin() {
     let (
         base_in,
         quote_in,
-        _base_out,
-        _quote_out,
-        _remaining,
+        base_out,
+        quote_out,
+        remaining,
         base_liquidation,
     ) = liquidation_vault::liquidation_event_fields(&events[0]);
     assert!(base_liquidation);
     assert!(quote_in == 0);
     assert!(base_in == 100_000_000);
+    assert!(base_out == 67_499_994);
+    assert!(quote_out == 0);
+    assert!(remaining == 33_785_720);
     assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == btc_pool_id);
 
     destroy(btc);
@@ -598,14 +608,17 @@ fun liquidate_base_settles_the_same_numbers_on_the_legacy_generation() {
     let (
         base_in,
         quote_in,
-        _base_out,
-        _quote_out,
-        _remaining,
+        base_out,
+        quote_out,
+        remaining,
         base_liquidation,
     ) = liquidation_vault::liquidation_event_fields(&events[0]);
     assert!(base_liquidation);
     assert!(quote_in == 0);
     assert!(base_in == 100_000_000);
+    assert!(base_out == 67_499_994);
+    assert!(quote_out == 0);
+    assert!(remaining == 33_785_720);
     assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == btc_pool_id);
 
     destroy(btc);
