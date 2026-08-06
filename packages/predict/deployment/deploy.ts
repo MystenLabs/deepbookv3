@@ -155,6 +155,7 @@ export interface SessionsDeploymentState {
         verifiedAt: string | null;
     };
     transactions: Record<string, string>;
+    failedTransactions: Record<string, { digest: string; error: string; recordedAt: string }>;
     verification: {
         verifiedAt: string;
         package: ObjectEvidence;
@@ -933,6 +934,7 @@ export function createSessionsDeploymentState(): SessionsDeploymentState {
         sessions: { packageId: null, publishTx: null, upgradeCapId: null },
         authorization: { authorized: false, authorizeTx: null, verifiedAt: null },
         transactions: {},
+        failedTransactions: {},
         verification: null,
         smoke: {
             status: "not_started",
@@ -1466,6 +1468,24 @@ function assertSessionsState(state: SessionsDeploymentState): void {
     if (state.status === "complete" && (!state.verification || !state.authorization.authorized)) {
         throw new Error("complete Sessions journal is missing verification or authorization");
     }
+}
+
+export function recordSessionsTransactionFailure(
+    state: SessionsDeploymentState,
+    label: string,
+    digest: string,
+    error: string,
+): void {
+    state.failedTransactions[label] = {
+        digest: requiredString(digest, `${label} failed transaction digest`),
+        error: requiredString(error, `${label} failed transaction error`),
+        recordedAt: new Date().toISOString(),
+    };
+    if (label.startsWith("smoke_")) {
+        state.smoke.status = "failed";
+        state.smoke.lastError = error;
+    }
+    state.inFlight = null;
 }
 
 export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
@@ -3898,7 +3918,11 @@ async function executeSessionsTransaction(
         throw new Error(`${label} returned digest ${receipt.digest}, expected ${digest}`);
     }
     const failure = effectsError(receipt.effects);
-    if (failure) throw new Error(`${label} failed at ${digest}: ${failure}`);
+    if (failure) {
+        recordSessionsTransactionFailure(runtime.state, label, digest, failure);
+        writeSessionsState(runtime.state);
+        throw new Error(`${label} failed at ${digest}: ${failure}`);
+    }
     receipt = await settledReceipt(runtime.client, digest);
     recordSessionsTransactionCheckpoint(runtime.state, label, receipt);
     runtime.state.inFlight = null;
@@ -3982,6 +4006,11 @@ async function publishSessions(runtime: SessionsRuntime): Promise<void> {
     );
     const receipt = JSON.parse(output) as Receipt;
     const failure = effectsError(receipt.effects);
+    if (failure && receipt.digest) {
+        recordSessionsTransactionFailure(state, "publish_sessions", receipt.digest, failure);
+        writeSessionsState(state);
+        throw new Error(`publish Sessions failed at ${receipt.digest}: ${failure}`);
+    }
     if (failure || !receipt.digest) throw new Error(`publish Sessions failed: ${failure}`);
     state.inFlight.digest = receipt.digest;
     writeSessionsState(state);
@@ -4011,7 +4040,12 @@ async function reconcileSessionsInFlight(runtime: SessionsRuntime): Promise<void
         );
     }
     const failure = effectsError(receipt.effects);
-    if (failure) throw new Error(`${inFlight.label}/${inFlight.digest} failed: ${failure}`);
+    if (failure) {
+        recordSessionsTransactionFailure(runtime.state, inFlight.label, inFlight.digest, failure);
+        writeSessionsState(runtime.state);
+        if (inFlight.label.startsWith("smoke_")) return;
+        throw new Error(`${inFlight.label}/${inFlight.digest} failed: ${failure}`);
+    }
     if (inFlight.kind === "publish") {
         recordSessionsPublish(runtime.state, receipt);
         assertPublishedIdentity(

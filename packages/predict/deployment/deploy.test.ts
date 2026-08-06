@@ -15,6 +15,7 @@ import {
     createSessionsDeploymentState,
     parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
+    recordSessionsTransactionFailure,
     recordSessionsTransactionCheckpoint,
     type DeploymentResult,
     type IntegrationManifest,
@@ -348,6 +349,29 @@ test("smoke checkpoints a mint before recording its later full redemption", () =
     assert.equal(state.smoke.redeemTx, "smoke-redeem-digest");
     assert.equal(state.smoke.transactions.smoke_sessions_mint, "smoke-mint-digest");
     assert.equal(state.transactions.smoke_sessions_redeem, "smoke-redeem-digest");
+});
+
+test("a known failed smoke digest clears in-flight state for cleanup", () => {
+    const state = createSessionsDeploymentState();
+    state.inFlight = {
+        kind: "transaction",
+        label: "smoke_sessions_redeem",
+        startedAt: "2026-08-06T12:00:00.000Z",
+        digest: "failed-smoke-digest",
+    };
+    recordSessionsTransactionFailure(
+        state,
+        "smoke_sessions_redeem",
+        "failed-smoke-digest",
+        "MoveAbort at redeem_live",
+    );
+    assert.equal(state.inFlight, null);
+    assert.equal(state.smoke.status, "failed");
+    assert.equal(state.smoke.lastError, "MoveAbort at redeem_live");
+    const failure = state.failedTransactions.smoke_sessions_redeem;
+    assert.equal(failure.digest, "failed-smoke-digest");
+    assert.equal(failure.error, "MoveAbort at redeem_live");
+    assert.match(failure.recordedAt, /^2026-/);
 });
 
 test("a fresh deployment targets the official Block Scholes package pair", () => {
