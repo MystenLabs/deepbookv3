@@ -444,6 +444,10 @@ public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): St
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
+public(package) fun stake_template_config(config: &ProtocolConfig): &StakeConfig {
+    &config.stake_config
+}
+
 /// Benefit policy a newly created expiry market snapshots as its own.
 public(package) fun stake_config_snapshot(config: &ProtocolConfig): StakeConfig {
     stake_config::snapshot(&config.stake_config)

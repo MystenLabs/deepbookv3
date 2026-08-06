@@ -74,6 +74,14 @@ public(package) fun max_benefit_ratio(config: &StakeConfig): u64 {
     config.max_benefit_ratio
 }
 
+public(package) fun lower_benefit_power(config: &StakeConfig): u64 {
+    config.lower_benefit_power
+}
+
+public(package) fun upper_benefit_power(config: &StakeConfig): u64 {
+    config.upper_benefit_power
+}
+
 public(package) fun new(): StakeConfig {
     StakeConfig {
         lower_benefit_power: config_constants::default_lower_benefit_power!(),
