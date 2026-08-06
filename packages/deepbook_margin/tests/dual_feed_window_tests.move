@@ -9,10 +9,18 @@
 /// which feed produced it and both entrypoint families share one `_core`, so a caller
 /// chooses per call. These tests pin what that does and does not permit.
 ///
-/// The divergence is not attacker-manufactured: neither feed can be forged. It is
-/// bounded by the two feeds' independent staleness: each may be up to
-/// `max_age_secs - 1` old, so the two prices can differ by nearly twice that in age.
-/// This suite runs the test config's 60s; live mainnet is configured at 70s.
+/// Prices cannot be forged, but the divergence is still *selectable*: an attacker
+/// chooses which signed update lands on which object and when, so they pick a moment
+/// inside the window rather than merely finding one. The bound is each feed's own
+/// staleness allowance — one leg may be fresh while the other is `max_age_secs` old,
+/// so the two prices can sit a full window apart. This suite runs the test config's
+/// 60s; live mainnet is configured at 70s.
+///
+/// The exposed set is wider than liquidation. Liquidating on the lower feed needs the
+/// manager in the danger band and the caller to post a repay coin. Firing a
+/// conditional order needs neither: `execute_conditional_orders_v2`/`v3` are
+/// permissionless, take no capital, and act on healthy debt-free managers — see
+/// `dual_feed_window_fires_a_stop_on_the_lower_feed_alone`.
 ///
 /// If a mitigation lands (an admin switch making exactly one reader family
 /// authoritative, say) `dual_feed_window_permits_liquidating_on_the_lower_feed` is the
@@ -20,7 +28,7 @@
 #[test_only]
 module deepbook_margin::dual_feed_window_tests;
 
-use deepbook::{pool::Pool, registry::Registry};
+use deepbook::{constants, order_info::OrderInfo, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
     margin_manager_pro,
@@ -38,7 +46,8 @@ use deepbook_margin::{
         setup_btc_usd_deepbook_margin,
         destroy_2,
         destroy_3,
-    }
+    },
+    tpsl
 };
 use sui::{clock::Clock, test_scenario::{Self as test, return_shared}};
 
@@ -220,6 +229,127 @@ fun dual_feed_window_still_enforces_staleness_on_each_feed() {
 
     destroy_3!(base_coin, quote_coin, remaining);
     destroy_2!(pro_btc, pro_usdc);
+    return_shared(usdc_pool);
+    return_shared(pool);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+/// The window's exposed set is wider than liquidation.
+///
+/// Liquidating on the lower feed needs the manager in the danger band and the caller
+/// to post a repay coin. Firing a conditional order needs neither: the v2 executor is
+/// permissionless, takes no capital, and acts on a healthy debt-free manager. The
+/// trigger is evaluated against whichever feed the caller supplies, and nothing on
+/// chain compares the two — so a stop the true price never reached can be realised by
+/// an arbitrary third party.
+#[test]
+fun dual_feed_window_fires_a_stop_on_the_lower_feed_alone() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        _registry_id,
+    ) = open_1btc_40k_usdc();
+
+    // A stop-loss at $45k while BTC trades at $50k.
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let btc_50k = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    margin_manager::add_conditional_order<BTC, USDC>(
+        &mut mm,
+        &pool,
+        &btc_50k,
+        &usdc,
+        &registry,
+        1,
+        tpsl::new_condition(true, 450_000_000_000),
+        tpsl::new_pending_limit_order(
+            1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            440_000_000_000,
+            btc_multiplier() / 10,
+            false,
+            false,
+            constants::max_u64(),
+        ),
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(mm.conditional_order_ids().length() == 1);
+    return_shared(registry);
+    return_shared(pool);
+    return_shared(mm);
+
+    // An arbitrary caller — not the owner — runs the executor twice in the same block.
+    scenario.next_tx(test_constants::liquidator());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // Legacy feed at $48k is above the stop: the order must stay queued.
+    let legacy_48k = build_btc_price_info_object(&mut scenario, 48000, &clock);
+    let legacy_usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let legacy_filled: vector<OrderInfo> = margin_manager::execute_conditional_orders_v2<BTC, USDC>(
+        &mut mm,
+        &mut pool,
+        &btc_pool,
+        &usdc_pool,
+        &legacy_48k,
+        &legacy_usdc,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(legacy_filled.is_empty());
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    // Pro feed at $44k, same block, same manager. Re-anchoring the order-validation
+    // band is itself permissionless, so the same caller does it with the same feed.
+    let pro_44k = build_btc_price_info_object_pro(&mut scenario, 44000, &clock);
+    let pro_usdc = build_demo_usdc_price_info_object_pro(&mut scenario, &clock);
+    deepbook_margin::pool_proxy_pro::update_current_price<BTC, USDC>(
+        &mut registry,
+        &pool,
+        &pro_44k,
+        &pro_usdc,
+        &clock,
+    );
+    let pro_filled: vector<OrderInfo> = margin_manager_pro::execute_conditional_orders_v2<
+        BTC,
+        USDC,
+    >(
+        &mut mm,
+        &mut pool,
+        &btc_pool,
+        &usdc_pool,
+        &pro_44k,
+        &pro_usdc,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(pro_filled.length() == 1);
+    assert!(mm.conditional_order_ids().is_empty());
+
+    std::unit_test::destroy(legacy_filled);
+    std::unit_test::destroy(pro_filled);
+    destroy_2!(legacy_48k, legacy_usdc);
+    destroy_2!(pro_44k, pro_usdc);
+    destroy_2!(btc_50k, usdc);
+    return_shared(btc_pool);
     return_shared(usdc_pool);
     return_shared(pool);
     return_shared(mm);

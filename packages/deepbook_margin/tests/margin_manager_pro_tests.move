@@ -44,7 +44,7 @@ fun deposit_pro_credits_collateral() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        usdc_pool_id,
+        _usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -565,7 +565,7 @@ fun add_conditional_order_pro_registers_the_order() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        usdc_pool_id,
+        _usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -635,7 +635,7 @@ fun deposit_pro_rejects_stale_feed() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        usdc_pool_id,
+        _usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();
@@ -1503,7 +1503,7 @@ fun add_conditional_order_pro_rejects_stale_feed() {
         admin_cap,
         maintainer_cap,
         _btc_pool_id,
-        usdc_pool_id,
+        _usdc_pool_id,
         _pool_id,
         registry_id,
     ) = setup_btc_usd_deepbook_margin();

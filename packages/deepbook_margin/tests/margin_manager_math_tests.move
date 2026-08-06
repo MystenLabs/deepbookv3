@@ -1018,8 +1018,8 @@ fun test_liquidate_dust_repay_burning_no_shares() {
         scenario.ctx(),
     );
 
-    // BTC to $15,000 and SUI to $100: assets = 1500 + 200,000 = $201,500,
-    // debt = $200,000, risk ratio = 1.0075 < 1.10 -> liquidatable.
+    // BTC to $15,000 and SUI to $100: assets = 15,000 + 200,000 = $215,000,
+    // debt = $200,000, risk ratio = 1.075 < 1.10 -> liquidatable.
     scenario.next_tx(test_constants::liquidator());
     let btc_price_crash = build_btc_price_info_object(&mut scenario, 15000, &clock);
     let sui_price_spike = build_sui_price_info_object(&mut scenario, 100, &clock);

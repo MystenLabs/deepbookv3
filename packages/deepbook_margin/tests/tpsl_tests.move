@@ -3491,8 +3491,8 @@ fun tpsl_cancel_maker_self_match_cannot_bypass_price_bounds() {
     let (
         mut scenario,
         clock,
-        admin_cap,
-        maintainer_cap,
+        _admin_cap,
+        _maintainer_cap,
         usdc_pool_id,
         sui_pool_id,
         pool_id,
