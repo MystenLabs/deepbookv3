@@ -867,7 +867,7 @@ fun test_liquidate_dust_repay_burning_no_shares_aborts() {
 
 // Every existing base-debt liquidation drains the manager's entire base leg, so
 // `out_amount.min(base_asset)` is always pinned by `base_asset` and replacing it with a
-// bare `base_asset` left all 424 tests green — while handing the liquidator the WHOLE
+// bare `base_asset` left the whole suite green — while handing the liquidator the WHOLE
 // base collateral for a token repayment. This is the other side of that `min`: a
 // liquidator repaying 0.01 BTC against a 0.4 BTC debt is entitled to 0.01 * 1.05 BTC and
 // must receive exactly that, not the 0.4 BTC the manager holds.
@@ -933,8 +933,8 @@ fun test_liquidate_base_debt_partial_payout_capped() {
     let btc_price_2200 = build_btc_price_info_object(&mut scenario, 2200, &clock);
 
     // The liquidator brings only 0.01 BTC. After the 3% pool cut that funds
-    // repay_amount = 0.00970873 BTC, so the payout is 0.00970873 * 1.05 BTC — three
-    // orders of magnitude below the 0.4 BTC the manager holds.
+    // repay_amount = 0.00970873 BTC, so the payout is 0.00970873 * 1.05 BTC — about a
+    // fortieth of the 0.4 BTC the manager holds, which is what leaves the cap slack.
     let repay_coin = mint_coin<BTC>(1_000_000, scenario.ctx()); // 0.01 BTC
     let (base_coin, quote_coin, remaining_repay_coin) = mm.liquidate<BTC, USDC, BTC>(
         &registry,

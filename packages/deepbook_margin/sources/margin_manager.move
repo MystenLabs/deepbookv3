@@ -664,7 +664,7 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Returns the risk ratio without validating oracle price staleness or confidence.
+/// Returns the risk ratio without validating staleness, EWMA divergence or confidence - only the feed id is checked.
 /// Use for read-only queries where stale prices are acceptable.
 /// Twin: `margin_manager_upgraded::risk_ratio_unsafe`. Edit both.
 public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
@@ -1781,9 +1781,10 @@ fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
-/// True when the manager owes anything on either leg. The entrypoints that read the
-/// oracle lazily are all gated on exactly this, so it lives here rather than being
-/// spelled out at each call site.
+/// True when the manager owes anything on either leg. `pool_proxy`'s order-placement
+/// entrypoints gate their lazy oracle reads on exactly this, so it lives here rather
+/// than being spelled out at each call site; `withdraw`, `deposit` and `risk_ratio` use
+/// their own predicates below.
 public(package) fun has_debt<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): bool {
@@ -2010,7 +2011,9 @@ public(package) fun deposit_core<BaseAsset, QuoteAsset, DepositAsset>(
 /// `risk_*_reading` are validated reads, needed only when the manager carries debt.
 /// `event_*_reading` are unvalidated reads used solely for the telemetry event, and
 /// only when a base/quote asset is withdrawn. Both are `none` otherwise, so a
-/// debt-free withdrawal never touches the oracle - matching the pre-upgrade
+/// debt-free withdrawal takes no *validated* read, so a stale feed cannot block a user
+/// reclaiming collateral. A base or quote withdrawal still takes an unsafe read for the
+/// event, which checks the feed id but not staleness - matching the pre-upgrade
 /// behaviour, where a stale feed could not block a user reclaiming collateral.
 public(package) fun withdraw_core<BaseAsset, QuoteAsset, WithdrawAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,

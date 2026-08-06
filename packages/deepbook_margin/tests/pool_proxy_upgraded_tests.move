@@ -12,6 +12,7 @@ module deepbook_margin::pool_proxy_upgraded_tests;
 
 use deepbook::{constants, pool::Pool, registry::Registry};
 use deepbook_margin::{
+    margin_constants,
     margin_manager::{Self, MarginManager},
     margin_manager_upgraded,
     margin_pool::MarginPool,
@@ -42,7 +43,7 @@ use sui::test_scenario::return_shared;
 fun update_current_price_upgraded_refreshes_the_registry() {
     let (
         mut scenario,
-        clock,
+        mut clock,
         admin_cap,
         maintainer_cap,
         _b,
@@ -54,6 +55,13 @@ fun update_current_price_upgraded_refreshes_the_registry() {
     scenario.next_tx(test_constants::user1());
     let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
+
+    // The setup's `initialize_pool_price` already wrote 1e9, and USDC/USDT are both
+    // $1.00, so asserting the bounds straight after the call proves nothing — the same
+    // numbers are there whether or not it ran. Age the stored price past
+    // `max_price_age_ms` first: `get_price_bounds` then aborts `EPriceUpdateRequired`
+    // unless this call actually wrote a fresh one.
+    clock.increment_for_testing(margin_constants::default_max_price_age_ms() + 1);
 
     let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let usdt_price = build_demo_usdt_price_info_object_upgraded(&mut scenario, &clock);
@@ -67,7 +75,6 @@ fun update_current_price_upgraded_refreshes_the_registry() {
     );
 
     // $1.00 base over $1.00 quote is a pool price of 1e9; the default tolerance is 5%.
-    // Without this the call could write nothing at all and the test would still pass.
     let (lower_bound, upper_bound) = registry.get_price_bounds(pool_id, &clock);
     assert!(lower_bound == 950_000_000);
     assert!(upper_bound == 1_050_000_000);

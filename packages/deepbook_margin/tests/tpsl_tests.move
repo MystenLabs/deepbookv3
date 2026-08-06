@@ -5478,7 +5478,7 @@ fun add_conditional_order_max_bound_counts_both_trigger_queues() {
 
 // The v3 executor's net monotonic gate (`risk_ratio_after >= risk_ratio_before`) is the
 // only thing standing between a permissionless caller and value leak out of a
-// danger-band manager. Deleting the assert left all 424 tests green: every existing v3
+// danger-band manager. Deleting the assert left the whole suite green: every existing v3
 // test either fills a MARKET order (which repays and improves the ratio) or rests a
 // limit order (which is ratio-neutral). A *crossing* limit is the uncovered third case
 // — it pays the taker spread but, being a limit order, never triggers v3's repay, so

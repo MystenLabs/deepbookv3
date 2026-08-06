@@ -4772,7 +4772,7 @@ fun risk_ratio_unsafe_with_debt_prices_both_legs() {
 // `unregister_margin_manager` refuses to detach a manager that still holds collateral,
 // so the registry's per-owner list never loses track of a funded object. Only the debt
 // guards are covered today (and those are shadowed by the `margin_pool_id` check that
-// fires with the same code), so dropping both balance asserts left all 424 tests green.
+// fires with the same code), so dropping both balance asserts left the whole suite green.
 // This manager never borrows: debt-free, but funded.
 #[test, expected_failure(abort_code = margin_manager::EOutstandingAsset)]
 fun test_unregister_margin_manager_fails_with_leftover_collateral() {

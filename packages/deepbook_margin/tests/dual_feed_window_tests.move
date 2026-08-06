@@ -3,9 +3,10 @@
 
 /// Behaviour of the window in which BOTH Pyth feeds are live and authoritative.
 ///
-/// Between this upgrade and Pyth's Core cutover, `read_price*` and `read_price_upgraded*`
-/// each validate against the same feed id, staleness window, confidence and EWMA
-/// bounds - but independently, with no cross-feed comparison. `PythReading` erases
+/// Between this upgrade and Pyth's Core cutover, `read_price` and `read_price_upgraded`
+/// each enforce the same feed id, staleness window and EWMA bound, and carry the
+/// confidence interval for `price_config` to check at pricing time - but they do so
+/// independently, with no cross-feed comparison. `PythReading` erases
 /// which feed produced it and both entrypoint families share one `_core`, so a caller
 /// chooses per call. These tests pin what that does and does not permit.
 ///
@@ -19,7 +20,8 @@
 /// The exposed set is wider than liquidation. Liquidating on the lower feed needs the
 /// manager in the danger band and the caller to post a repay coin. Firing a
 /// conditional order needs neither: `execute_conditional_orders_v2`/`v3` are
-/// permissionless, take no capital, and act on healthy debt-free managers — see
+/// permissionless, take no capital, and act on a manager that is healthy — in or out
+/// of the danger band — see
 /// `dual_feed_window_fires_a_stop_on_the_lower_feed_alone`.
 ///
 /// If a mitigation lands (an admin switch making exactly one reader family

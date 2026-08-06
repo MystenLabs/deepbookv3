@@ -8934,7 +8934,7 @@ fun place_market_order_v2_no_debt_tolerates_stale_feed() {
 
 // `place_reduce_only_market_order_v2` computes an effective fill price and feeds it to
 // `registry.assert_price`, which is the only oracle-band guard on that entry — a market
-// order has no limit price to bound it. Deleting that one call left all 424 tests green:
+// order has no limit price to bound it. Deleting that one call left the whole suite green:
 // every reduce-only market test runs against an in-band book, so the guard never fires.
 // Here the only liquidity is an ask 10% above the oracle, well outside the 5% band.
 #[test, expected_failure(abort_code = margin_registry::EPriceDeviationTooHigh)]

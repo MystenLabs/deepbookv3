@@ -98,7 +98,7 @@ fun test_calculate_usd_currency_2() {
 
 // Every other `calculate_usd_currency_amount` case above divides evenly, so the
 // rounding direction of the first divide (by `10^pyth_decimals`) is invisible to them:
-// swapping its `divide_and_round_up` for a plain `/` left all 424 tests green. This
+// swapping its `divide_and_round_up` for a plain `/` left the whole suite green. This
 // pins the direction on an input that does not divide evenly — 1 unit at a price of
 // 3.80000001 is 3.80000001 USD-units, which must round UP to 4, not down to 3.
 #[test]
@@ -191,7 +191,7 @@ fun test_calculate_target_currency_2() {
 // `calculate_target_currency_amount` rounds up twice — once by `pyth_price`, once by
 // `10^BUFFER`. The cases above only pin the second: the first divide's remainder is
 // almost always absorbed by the second, so swapping its `divide_and_round_up` for a
-// plain `/` left all 424 tests green. The inputs here are the minimal ones that make the
+// plain `/` left the whole suite green. The inputs here are the minimal ones that make the
 // first divide's rounding survive into the result — the first divide lands exactly on a
 // `10^BUFFER` multiple, so rounding it down instead of up drops the answer from 2 to 1.
 #[test]
@@ -1091,7 +1091,7 @@ fun test_reading_consumed_as_its_own_asset_prices_normally() {
 // branches. It is the only thing stopping a `u128` price from being silently truncated
 // by the `as u64` cast on the next line — and the truncated value would flow straight
 // into `registry.update_current_price` and every tpsl trigger comparison. Loosening the
-// ceiling a millionfold left all 424 tests green. USDC (6 decimals) over a SUI (9
+// ceiling a millionfold left the whole suite green. USDC (6 decimals) over a SUI (9
 // decimals) feed reporting 1e-8 lands the ratio at 1e20, past the 2^63-1 ceiling.
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPrice)]
 fun test_calculate_price_rejects_a_ratio_past_the_max_price_ceiling() {

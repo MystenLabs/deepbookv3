@@ -288,7 +288,11 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     let trigger_below_price = condition.trigger_below_price;
     let trigger_price = condition.trigger_price;
 
-    // Validate trigger condition (use <= and >= for consistency with execute_conditional_orders)
+    // A trigger must not already be met at registration: `trigger_below` orders take a
+    // price at or below the current one, `trigger_above` at or above. Note this is
+    // non-strict while *firing* is strict (`collect_triggered_orders` breaks on `>=` /
+    // `<=`), so an order registered exactly at the current price is legal and does not
+    // fire until the price moves past it.
     assert!(
         (trigger_below_price && trigger_price <= current_price) ||
             (!trigger_below_price && trigger_price >= current_price),
