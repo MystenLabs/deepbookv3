@@ -301,15 +301,15 @@ test("Sessions mode arguments are explicit and smoke always broadcasts", () => {
     assert.throws(() => parseDeploymentArgs(["--wat"]), /unknown deployment arguments/);
 });
 
-test("an atomic smoke receipt checkpoints both mint and full redemption", () => {
+test("smoke checkpoints a mint before recording its later full redemption", () => {
     const state = createSessionsDeploymentState();
     const marketId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     const deployer = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
     const eventPackage = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     state.smoke.marketId = marketId;
     state.smoke.quantity = "4000000";
-    recordSessionsTransactionCheckpoint(state, "smoke_sessions_mint_redeem", {
-        digest: "atomic-smoke-digest",
+    recordSessionsTransactionCheckpoint(state, "smoke_sessions_mint", {
+        digest: "smoke-mint-digest",
         events: [
             {
                 type: `${eventPackage}::order_events::OrderMinted`,
@@ -318,8 +318,20 @@ test("an atomic smoke receipt checkpoints both mint and full redemption", () => 
                     owner: deployer,
                     order_id: "123456",
                     quantity: "4000000",
+                    minted_at_ms: "123000",
                 },
             },
+        ],
+    });
+    assert.equal(state.smoke.status, "not_started");
+    assert.equal(state.smoke.orderId, "123456");
+    assert.equal(state.smoke.mintedAtMs, "123000");
+    assert.equal(state.smoke.mintTx, "smoke-mint-digest");
+    assert.equal(state.smoke.redeemTx, null);
+
+    recordSessionsTransactionCheckpoint(state, "smoke_sessions_redeem", {
+        digest: "smoke-redeem-digest",
+        events: [
             {
                 type: `${eventPackage}::order_events::LiveOrderRedeemed`,
                 parsedJson: {
@@ -333,11 +345,9 @@ test("an atomic smoke receipt checkpoints both mint and full redemption", () => 
         ],
     });
     assert.equal(state.smoke.status, "complete");
-    assert.equal(state.smoke.orderId, "123456");
-    assert.equal(state.smoke.mintTx, "atomic-smoke-digest");
-    assert.equal(state.smoke.redeemTx, "atomic-smoke-digest");
-    assert.equal(state.smoke.transactions.smoke_sessions_mint_redeem, "atomic-smoke-digest");
-    assert.equal(state.transactions.smoke_sessions_mint_redeem, "atomic-smoke-digest");
+    assert.equal(state.smoke.redeemTx, "smoke-redeem-digest");
+    assert.equal(state.smoke.transactions.smoke_sessions_mint, "smoke-mint-digest");
+    assert.equal(state.transactions.smoke_sessions_redeem, "smoke-redeem-digest");
 });
 
 test("a fresh deployment targets the official Block Scholes package pair", () => {

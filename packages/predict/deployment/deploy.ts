@@ -110,12 +110,14 @@ interface SessionsSmokeState {
     marketId: string | null;
     quantity: string | null;
     orderId: string | null;
+    mintedAtMs: string | null;
     transactions: Record<string, string>;
     authorizationTx: string | null;
     mintTx: string | null;
     redeemTx: string | null;
     revokeTx: string | null;
     returnGasTx: string | null;
+    cleanupTx: string | null;
     lastError: string | null;
 }
 
@@ -939,12 +941,14 @@ export function createSessionsDeploymentState(): SessionsDeploymentState {
             marketId: null,
             quantity: null,
             orderId: null,
+            mintedAtMs: null,
             transactions: {},
             authorizationTx: null,
             mintTx: null,
             redeemTx: null,
             revokeTx: null,
             returnGasTx: null,
+            cleanupTx: null,
             lastError: null,
         },
     };
@@ -4147,7 +4151,7 @@ async function verifySessionsDeployment(runtime: SessionsRuntime): Promise<void>
 
 const SMOKE_SESSION_DURATION_MS = 5n * 60n * 1_000n;
 const SMOKE_SESSION_GAS = 200_000_000n;
-const SMOKE_TRANSACTION_GAS_BUDGET = 150_000_000n;
+const SMOKE_TRANSACTION_GAS_BUDGET = 50_000_000n;
 const SMOKE_PREMIUM_BUDGET = 2_000_000n;
 const SMOKE_ACCOUNT_BUFFER = 1_000_000n;
 const SMOKE_MIN_QUANTITY = 10_000n;
@@ -4290,44 +4294,76 @@ function eventAddress(fields: Record<string, unknown>, name: string, eventName: 
     return normalizeId(raw);
 }
 
-export function recordSmokeMintRedeem(state: SessionsDeploymentState, receipt: Receipt): void {
-    const digest = requiredString(receipt.digest, "atomic smoke transaction digest");
+function assertSmokeEventIdentity(
+    state: SessionsDeploymentState,
+    fields: Record<string, unknown>,
+    eventName: string,
+): void {
     const marketId = requiredObjectId(state.smoke.marketId, "smoke market");
+    if (eventAddress(fields, "expiry_market_id", eventName) !== marketId) {
+        throw new Error(`${eventName} market does not match the smoke market`);
+    }
+    if (eventAddress(fields, "owner", eventName) !== DEPLOYER) {
+        throw new Error(`${eventName} owner does not match the smoke Account owner`);
+    }
+}
+
+export function recordSmokeMint(state: SessionsDeploymentState, receipt: Receipt): void {
+    const digest = requiredString(receipt.digest, "smoke mint transaction digest");
     const quantity = decimalString(state.smoke.quantity, "smoke quantity");
     const minted = eventNamed(receipt, "OrderMinted");
-    const redeemed = eventNamed(receipt, "LiveOrderRedeemed");
-    if (!minted || !redeemed) {
-        throw new Error(`${digest} did not emit both OrderMinted and LiveOrderRedeemed`);
+    if (!minted) throw new Error(`${digest} did not emit OrderMinted`);
+    const fields = asRecord(minted.parsedJson);
+    assertSmokeEventIdentity(state, fields, "OrderMinted");
+    if (eventDecimal(fields, "quantity", "OrderMinted") !== quantity) {
+        throw new Error("OrderMinted quantity does not match the smoke quantity");
     }
-    const mintedFields = asRecord(minted.parsedJson);
-    const redeemedFields = asRecord(redeemed.parsedJson);
     const orderId = orderIdFromEvent(receipt, "OrderMinted");
-    if (orderIdFromEvent(receipt, "LiveOrderRedeemed") !== orderId) {
-        throw new Error("LiveOrderRedeemed order ID does not match OrderMinted");
+    state.smoke.orderId = orderId;
+    state.smoke.mintedAtMs = eventDecimal(fields, "minted_at_ms", "OrderMinted");
+    state.smoke.mintTx = digest;
+}
+
+function recordSmokeClose(
+    state: SessionsDeploymentState,
+    receipt: Receipt,
+    eventName: "LiveOrderRedeemed" | "SettledOrderRedeemed",
+): void {
+    const digest = requiredString(receipt.digest, "smoke close transaction digest");
+    const quantity = decimalString(state.smoke.quantity, "smoke quantity");
+    const expectedOrderId = decimalString(state.smoke.orderId, "smoke order ID");
+    const redeemed = eventNamed(receipt, eventName);
+    if (!redeemed) throw new Error(`${digest} did not emit ${eventName}`);
+    const fields = asRecord(redeemed.parsedJson);
+    assertSmokeEventIdentity(state, fields, eventName);
+    if (orderIdFromEvent(receipt, eventName) !== expectedOrderId) {
+        throw new Error(`${eventName} order ID does not match OrderMinted`);
     }
-    for (const [name, fields] of [
-        ["OrderMinted", mintedFields],
-        ["LiveOrderRedeemed", redeemedFields],
-    ] as const) {
-        if (eventAddress(fields, "expiry_market_id", name) !== marketId) {
-            throw new Error(`${name} market does not match the smoke market`);
-        }
-        if (eventAddress(fields, "owner", name) !== DEPLOYER) {
-            throw new Error(`${name} owner does not match the smoke Account owner`);
-        }
+    if (eventDecimal(fields, "quantity_closed", eventName) !== quantity) {
+        throw new Error(`${eventName} quantity does not fully close the smoke order`);
     }
     if (
-        eventDecimal(mintedFields, "quantity", "OrderMinted") !== quantity ||
-        eventDecimal(redeemedFields, "quantity_closed", "LiveOrderRedeemed") !== quantity ||
-        eventDecimal(redeemedFields, "remaining_quantity", "LiveOrderRedeemed") !== "0"
+        eventName === "LiveOrderRedeemed" &&
+        eventDecimal(fields, "remaining_quantity", eventName) !== "0"
     ) {
-        throw new Error("atomic smoke events do not describe a full close of the minted quantity");
+        throw new Error("LiveOrderRedeemed left a smoke-order remainder");
     }
-    state.smoke.orderId = orderId;
-    state.smoke.mintTx = digest;
+}
+
+export function recordSmokeRedeem(state: SessionsDeploymentState, receipt: Receipt): void {
+    recordSmokeClose(state, receipt, "LiveOrderRedeemed");
+    const digest = requiredString(receipt.digest, "smoke redeem transaction digest");
     state.smoke.redeemTx = digest;
     state.smoke.status = "complete";
     state.smoke.lastError = null;
+}
+
+function recordSmokeOwnerCleanup(state: SessionsDeploymentState, receipt: Receipt): void {
+    const eventName = eventNamed(receipt, "LiveOrderRedeemed")
+        ? "LiveOrderRedeemed"
+        : "SettledOrderRedeemed";
+    recordSmokeClose(state, receipt, eventName);
+    state.smoke.cleanupTx = requiredString(receipt.digest, "smoke cleanup transaction digest");
 }
 
 export function recordSessionsTransactionCheckpoint(
@@ -4340,7 +4376,9 @@ export function recordSessionsTransactionCheckpoint(
     if (!label.startsWith("smoke_")) return;
     state.smoke.transactions[label] = digest;
     if (label === "smoke_authorize_session") state.smoke.authorizationTx = digest;
-    if (label === "smoke_sessions_mint_redeem") recordSmokeMintRedeem(state, receipt);
+    if (label === "smoke_sessions_mint") recordSmokeMint(state, receipt);
+    if (label === "smoke_sessions_redeem") recordSmokeRedeem(state, receipt);
+    if (label === "smoke_owner_cleanup") recordSmokeOwnerCleanup(state, receipt);
     if (label === "smoke_revoke_session") state.smoke.revokeTx = digest;
     if (label === "smoke_return_session_gas") state.smoke.returnGasTx = digest;
 }
@@ -4374,6 +4412,77 @@ async function revokeSmokeSession(
     }
 }
 
+async function waitForSmokeClockAdvance(
+    runtime: SessionsRuntime,
+    mintedAtMs: bigint,
+): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt++) {
+        const now = await inspectU64(
+            runtime,
+            "smoke_redeem_clock",
+            "0x2::clock::timestamp_ms",
+            (tx) => [tx.object(CLOCK_ID)],
+        );
+        if (now > mintedAtMs) return;
+        await new Promise((done) => setTimeout(done, 250));
+    }
+    throw new Error(`Testnet Clock did not advance past mint timestamp ${mintedAtMs}`);
+}
+
+async function cleanupInterruptedSmokeOrder(
+    runtime: SessionsRuntime,
+    wrapperId: string,
+): Promise<void> {
+    const state = runtime.state;
+    const marketId = requiredObjectId(state.smoke.marketId, "smoke cleanup market");
+    const orderId = BigInt(decimalString(state.smoke.orderId, "smoke cleanup order ID"));
+    const quantity = BigInt(decimalString(state.smoke.quantity, "smoke cleanup quantity"));
+    const settled = await inspectBool(
+        runtime,
+        "smoke_cleanup_market_settled",
+        `${DEPLOYED_PREDICT}::expiry_market::is_settled`,
+        (tx) => [tx.object(marketId)],
+    );
+    const tx = new Transaction();
+    const auth = call(tx, `${DEPLOYED_ACCOUNT}::account::generate_auth`, []);
+    if (settled) {
+        call(tx, `${DEPLOYED_PREDICT}::expiry_market::redeem_settled`, [
+            tx.object(marketId),
+            tx.object(wrapperId),
+            auth,
+            tx.object(runtime.manifest.objects.protocolConfig),
+            tx.pure.u256(orderId),
+            tx.pure.u64(quantity),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ]);
+    } else {
+        const pricer = call(tx, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
+            tx.object(marketId),
+            tx.object(runtime.manifest.objects.protocolConfig),
+            tx.object(runtime.manifest.objects.oracleRegistry),
+            tx.object(runtime.manifest.underlyings.BTC.pythFeed),
+            tx.object(runtime.manifest.underlyings.BTC.blockScholesValueStore),
+            tx.object(runtime.manifest.underlyings.BTC.blockScholesSviStore),
+            tx.object(CLOCK_ID),
+        ]);
+        call(tx, `${DEPLOYED_PREDICT}::expiry_market::redeem_live`, [
+            tx.object(marketId),
+            tx.object(wrapperId),
+            auth,
+            tx.object(runtime.manifest.objects.protocolConfig),
+            pricer,
+            tx.pure.u256(orderId),
+            tx.pure.u64(quantity),
+            tx.pure.u64(0n),
+            tx.pure.u64(0n),
+            tx.object(ACCUMULATOR_ROOT_ID),
+            tx.object(CLOCK_ID),
+        ]);
+    }
+    await executeSessionsTransaction(runtime, "smoke_owner_cleanup", tx);
+}
+
 async function runSessionsSmoke(runtime: SessionsRuntime): Promise<void> {
     const state = runtime.state;
     const wrapperId = await sessionsAccountWrapper(runtime);
@@ -4390,6 +4499,9 @@ async function runSessionsSmoke(runtime: SessionsRuntime): Promise<void> {
             state.smoke.lastError = null;
             writeSessionsState(state);
             return;
+        }
+        if (state.smoke.orderId && !state.smoke.redeemTx && !state.smoke.cleanupTx) {
+            await cleanupInterruptedSmokeOrder(runtime, wrapperId);
         }
     }
     const market = await discoverSmokeMarket(runtime);
@@ -4445,48 +4557,69 @@ async function runSessionsSmoke(runtime: SessionsRuntime): Promise<void> {
         authorized = true;
 
         const manifest = runtime.manifest;
-        const trade = new Transaction();
-        const pricer = call(trade, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
-            trade.object(market.id),
-            trade.object(manifest.objects.protocolConfig),
-            trade.object(manifest.objects.oracleRegistry),
-            trade.object(manifest.underlyings.BTC.pythFeed),
-            trade.object(manifest.underlyings.BTC.blockScholesValueStore),
-            trade.object(manifest.underlyings.BTC.blockScholesSviStore),
-            trade.object(CLOCK_ID),
+        const mint = new Transaction();
+        const mintPricer = call(mint, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
+            mint.object(market.id),
+            mint.object(manifest.objects.protocolConfig),
+            mint.object(manifest.objects.oracleRegistry),
+            mint.object(manifest.underlyings.BTC.pythFeed),
+            mint.object(manifest.underlyings.BTC.blockScholesValueStore),
+            mint.object(manifest.underlyings.BTC.blockScholesSviStore),
+            mint.object(CLOCK_ID),
         ]);
-        const orderId = call(trade, `${state.sessions.packageId}::sessions::mint_exact_quantity`, [
-            trade.object(market.id),
-            trade.object(DEPLOYED_ACCOUNT_REGISTRY),
-            trade.object(wrapperId),
-            trade.object(manifest.objects.protocolConfig),
-            pricer,
-            trade.pure.u64(market.referenceTick),
-            trade.pure.u64(POS_INF_TICK),
-            trade.pure.u64(market.quantity),
-            trade.pure.u64(1_000_000_000n),
-            trade.pure.u64(U64_MAX),
-            trade.pure.u64(U64_MAX),
-            trade.object(ACCUMULATOR_ROOT_ID),
-            trade.object(CLOCK_ID),
-        ]);
-        call(trade, `${state.sessions.packageId}::sessions::redeem_live`, [
-            trade.object(market.id),
-            trade.object(DEPLOYED_ACCOUNT_REGISTRY),
-            trade.object(wrapperId),
-            trade.object(manifest.objects.protocolConfig),
-            pricer,
-            orderId,
-            trade.pure.u64(market.quantity),
-            trade.pure.u64(0n),
-            trade.pure.u64(0n),
-            trade.object(ACCUMULATOR_ROOT_ID),
-            trade.object(CLOCK_ID),
+        call(mint, `${state.sessions.packageId}::sessions::mint_exact_quantity`, [
+            mint.object(market.id),
+            mint.object(DEPLOYED_ACCOUNT_REGISTRY),
+            mint.object(wrapperId),
+            mint.object(manifest.objects.protocolConfig),
+            mintPricer,
+            mint.pure.u64(market.referenceTick),
+            mint.pure.u64(POS_INF_TICK),
+            mint.pure.u64(market.quantity),
+            mint.pure.u64(1_000_000_000n),
+            mint.pure.u64(U64_MAX),
+            mint.pure.u64(U64_MAX),
+            mint.object(ACCUMULATOR_ROOT_ID),
+            mint.object(CLOCK_ID),
         ]);
         await executeSessionsTransaction(
             runtime,
-            "smoke_sessions_mint_redeem",
-            trade,
+            "smoke_sessions_mint",
+            mint,
+            sessionSigner,
+            SMOKE_TRANSACTION_GAS_BUDGET,
+        );
+        const orderId = BigInt(decimalString(state.smoke.orderId, "smoke order ID"));
+        const mintedAtMs = BigInt(decimalString(state.smoke.mintedAtMs, "smoke mint timestamp"));
+        await waitForSmokeClockAdvance(runtime, mintedAtMs);
+
+        const redeem = new Transaction();
+        const redeemPricer = call(redeem, `${DEPLOYED_PREDICT}::expiry_market::load_live_pricer`, [
+            redeem.object(market.id),
+            redeem.object(manifest.objects.protocolConfig),
+            redeem.object(manifest.objects.oracleRegistry),
+            redeem.object(manifest.underlyings.BTC.pythFeed),
+            redeem.object(manifest.underlyings.BTC.blockScholesValueStore),
+            redeem.object(manifest.underlyings.BTC.blockScholesSviStore),
+            redeem.object(CLOCK_ID),
+        ]);
+        call(redeem, `${state.sessions.packageId}::sessions::redeem_live`, [
+            redeem.object(market.id),
+            redeem.object(DEPLOYED_ACCOUNT_REGISTRY),
+            redeem.object(wrapperId),
+            redeem.object(manifest.objects.protocolConfig),
+            redeemPricer,
+            redeem.pure.u256(orderId),
+            redeem.pure.u64(market.quantity),
+            redeem.pure.u64(0n),
+            redeem.pure.u64(0n),
+            redeem.object(ACCUMULATOR_ROOT_ID),
+            redeem.object(CLOCK_ID),
+        ]);
+        await executeSessionsTransaction(
+            runtime,
+            "smoke_sessions_redeem",
+            redeem,
             sessionSigner,
             SMOKE_TRANSACTION_GAS_BUDGET,
         );
@@ -4501,6 +4634,18 @@ async function runSessionsSmoke(runtime: SessionsRuntime): Promise<void> {
                 await revokeSmokeSession(runtime, wrapperId, sessionAddress);
             } catch (error) {
                 if (!coreError) coreError = error;
+            }
+            if (
+                !state.inFlight &&
+                state.smoke.orderId &&
+                !state.smoke.redeemTx &&
+                !state.smoke.cleanupTx
+            ) {
+                try {
+                    await cleanupInterruptedSmokeOrder(runtime, wrapperId);
+                } catch (error) {
+                    if (!coreError) coreError = error;
+                }
             }
             if (!state.inFlight) {
                 try {
