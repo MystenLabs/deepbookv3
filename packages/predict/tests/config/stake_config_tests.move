@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::stake_config_tests;
 
-use deepbook_predict::{config_constants, stake_config};
+use deepbook_predict::{config_constants, stake_config::{Self, StakeConfig}};
 use std::unit_test::{assert_eq, destroy};
 
 // Active-stake levels in raw DEEP units.
@@ -20,11 +20,119 @@ const HALF_BENEFIT_FEE: u64 = 750_000_000;
 const THREE_HUNDRED_K_DISCOUNTED_FEE: u64 = 700_000_000;
 const FULL_BENEFIT_FEE: u64 = 500_000_000;
 
+// Rebate expectations on the default curve: `eligible x benefit_ratio`, with no
+// staking-side cap. Ratios are 0.1 / 0.5 / 0.6 / 1.0 at the stakes above.
+const ELIGIBLE_REBATE: u64 = 1_000_000_000;
+const NO_REBATE: u64 = 0;
+const TWENTY_K_REBATE: u64 = 100_000_000;
+const HALF_BENEFIT_REBATE: u64 = 500_000_000;
+const THREE_HUNDRED_K_REBATE: u64 = 600_000_000;
+const FULL_BENEFIT_REBATE: u64 = 1_000_000_000;
+
+// === Default config: benefits ship disabled ===
+
+#[test]
+fun new_config_charges_the_undiscounted_fee_at_every_stake() {
+    let config = stake_config::new();
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, 0), NO_DISCOUNT_FEE);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWENTY_K), NO_DISCOUNT_FEE);
+    assert_eq!(
+        config.fee_amount_after_discount(
+            FEE_AMOUNT,
+            config_constants::default_lower_benefit_power!(),
+        ),
+        NO_DISCOUNT_FEE,
+    );
+    assert_eq!(
+        config.fee_amount_after_discount(
+            FEE_AMOUNT,
+            config_constants::default_upper_benefit_power!(),
+        ),
+        NO_DISCOUNT_FEE,
+    );
+    // Past the top of the curve, where full benefits would otherwise apply.
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWO_MILLION), NO_DISCOUNT_FEE);
+    destroy(config);
+}
+
+#[test]
+fun new_config_pays_no_rebate_at_every_stake() {
+    let config = stake_config::new();
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, 0), NO_REBATE);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWENTY_K), NO_REBATE);
+    assert_eq!(
+        config.rebate_amount(ELIGIBLE_REBATE, config_constants::default_upper_benefit_power!()),
+        NO_REBATE,
+    );
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWO_MILLION), NO_REBATE);
+    destroy(config);
+}
+
+// === set_benefits_enabled ===
+
+#[test]
+fun enabling_activates_both_benefits() {
+    let mut config = stake_config::new();
+    config.set_benefits_enabled(true);
+    assert_eq!(
+        config.fee_amount_after_discount(
+            FEE_AMOUNT,
+            config_constants::default_upper_benefit_power!(),
+        ),
+        FULL_BENEFIT_FEE,
+    );
+    assert_eq!(
+        config.rebate_amount(ELIGIBLE_REBATE, config_constants::default_upper_benefit_power!()),
+        FULL_BENEFIT_REBATE,
+    );
+    destroy(config);
+}
+
+#[test]
+fun disabling_after_enabling_zeroes_both_benefits() {
+    let mut config = enabled_config();
+    config.set_benefits_enabled(false);
+    assert_eq!(
+        config.fee_amount_after_discount(
+            FEE_AMOUNT,
+            config_constants::default_upper_benefit_power!(),
+        ),
+        NO_DISCOUNT_FEE,
+    );
+    assert_eq!(
+        config.rebate_amount(ELIGIBLE_REBATE, config_constants::default_upper_benefit_power!()),
+        NO_REBATE,
+    );
+    destroy(config);
+}
+
+#[test]
+fun toggling_preserves_configured_benefit_powers() {
+    let mut config = enabled_config();
+    config.set_benefit_powers(CUSTOM_LOWER, CUSTOM_UPPER);
+    config.set_benefits_enabled(false);
+    config.set_benefits_enabled(true);
+    // The custom kink, not the default one, so the thresholds survived the toggle.
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_LOWER), HALF_BENEFIT_FEE);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_UPPER), FULL_BENEFIT_FEE);
+    destroy(config);
+}
+
+#[test]
+fun benefit_powers_are_settable_while_disabled() {
+    let mut config = stake_config::new();
+    config.set_benefit_powers(CUSTOM_LOWER, CUSTOM_UPPER);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_UPPER), NO_DISCOUNT_FEE);
+    config.set_benefits_enabled(true);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_UPPER), FULL_BENEFIT_FEE);
+    destroy(config);
+}
+
 // === set_benefit_powers ===
 
 #[test]
 fun set_benefit_powers_updates_curve() {
-    let mut config = stake_config::new();
+    let mut config = enabled_config();
     config.set_benefit_powers(CUSTOM_LOWER, CUSTOM_UPPER);
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_LOWER), HALF_BENEFIT_FEE);
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, CUSTOM_UPPER), FULL_BENEFIT_FEE);
@@ -33,7 +141,7 @@ fun set_benefit_powers_updates_curve() {
 
 #[test]
 fun set_benefit_powers_accepts_boundaries() {
-    let mut config = stake_config::new();
+    let mut config = enabled_config();
 
     // Min lower with min upper: 100k > 2*10k.
     config.set_benefit_powers(
@@ -92,11 +200,11 @@ fun set_benefit_powers_upper_below_min_aborts() {
     abort 999
 }
 
-// === benefit curve (default config: lower 100k, upper 1.1M; fee cap 50%, rebate uncapped) ===
+// === Benefit curve once enabled (default config: lower 100k, upper 1.1M; fee cap 50%, rebate uncapped) ===
 
 #[test]
 fun fee_amount_after_discount_follows_two_segment_curve() {
-    let config = stake_config::new();
+    let config = enabled_config();
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, 0), NO_DISCOUNT_FEE);
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWENTY_K), TWENTY_K_DISCOUNTED_FEE);
     assert_eq!(
@@ -119,4 +227,30 @@ fun fee_amount_after_discount_follows_two_segment_curve() {
     );
     assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWO_MILLION), FULL_BENEFIT_FEE);
     destroy(config);
+}
+
+#[test]
+fun rebate_amount_follows_two_segment_curve() {
+    let config = enabled_config();
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, 0), NO_REBATE);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWENTY_K), TWENTY_K_REBATE);
+    assert_eq!(
+        config.rebate_amount(ELIGIBLE_REBATE, config_constants::default_lower_benefit_power!()),
+        HALF_BENEFIT_REBATE,
+    );
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, THREE_HUNDRED_K), THREE_HUNDRED_K_REBATE);
+    assert_eq!(
+        config.rebate_amount(ELIGIBLE_REBATE, config_constants::default_upper_benefit_power!()),
+        FULL_BENEFIT_REBATE,
+    );
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWO_MILLION), FULL_BENEFIT_REBATE);
+    destroy(config);
+}
+
+// === Helpers ===
+
+fun enabled_config(): StakeConfig {
+    let mut config = stake_config::new();
+    config.set_benefits_enabled(true);
+    config
 }

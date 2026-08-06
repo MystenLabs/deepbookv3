@@ -187,6 +187,20 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Fees, staking, and rebates (recent)
 
+- **The staking programme ships disabled, behind one master switch.** `StakeConfig.enabled`
+  defaults false, so a freshly created protocol charges every trader the undiscounted fee
+  and pays no stake-scaled loss rebate; an `AdminCap` holder activates it later with
+  `set_stake_benefits_enabled`, with no package upgrade. *Why a switch and not tuned
+  thresholds:* the `*_benefit_power` validation envelope has no setting that yields a zero
+  benefit — the lowest admissible `lower_benefit_power` still pays a proportional discount —
+  so "off" was previously unreachable for an admin. The switch gates `benefit_ratio` itself
+  rather than either consumer, so both benefits move together by construction (see the
+  applied-twice entry below); thresholds survive a toggle, so activation needs no re-tuning.
+  *Rejected:* making `max_fee_discount` admin-tunable at zero, which would disable the fee
+  discount while leaving the rebate — the rebate has no staking-side cap — and would move an
+  upgrade-required constant into tunable config for no gain. *Consequence:* while off, the
+  rebate reserve still accrues at `trading_loss_rebate_rate` and returns to the pool in full
+  at settlement; zeroing that rate is a separate operator action, not a code change.
 - **Staking is a gaming-resistance gate for the loss rebate, not a reward per se.**
   The trading-loss rebate exists to move value from winners toward net losers; it
   must target *aggregate* net losers (per trader), else a balanced (50/50) book

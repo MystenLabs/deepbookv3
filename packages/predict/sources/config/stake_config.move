@@ -8,6 +8,10 @@
 /// half to full over `lower_benefit_power..upper_benefit_power`, capped at full
 /// above. That ratio scales the fixed `constants::max_fee_discount` for fees.
 /// The same benefit ratio scales settled trading-loss rebates.
+///
+/// The whole programme sits behind an `enabled` master switch that ships off, so
+/// a freshly created protocol charges undiscounted fees and pays no stake-scaled
+/// rebate until an admin turns it on.
 module deepbook_predict::stake_config;
 
 use deepbook_predict::{config_constants, constants};
@@ -22,6 +26,9 @@ public struct StakeConfig has store {
     lower_benefit_power: u64,
     /// Active stake for full (max) benefits, in raw DEEP units.
     upper_benefit_power: u64,
+    /// Master switch; every staking benefit is zero while false. The thresholds
+    /// above keep their values across a toggle, so the curve resumes unchanged.
+    enabled: bool,
 }
 
 // === Public-Package Functions ===
@@ -52,7 +59,14 @@ public(package) fun new(): StakeConfig {
     StakeConfig {
         lower_benefit_power: config_constants::default_lower_benefit_power!(),
         upper_benefit_power: config_constants::default_upper_benefit_power!(),
+        enabled: config_constants::default_stake_benefits_enabled!(),
     }
+}
+
+/// Turn the whole benefit programme on or off. Thresholds are untouched, so
+/// re-enabling restores the curve that was configured before.
+public(package) fun set_benefits_enabled(config: &mut StakeConfig, enabled: bool) {
+    config.enabled = enabled;
 }
 
 /// Set both benefit thresholds together (validated as a pair: each in range and
@@ -69,8 +83,10 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 // === Private Functions ===
 
 /// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING.
-/// Each segment rounds down, so the returned benefit never exceeds the curve.
+/// Zero while the programme is disabled, whatever the stake. Each segment rounds
+/// down, so the returned benefit never exceeds the curve.
 fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
+    if (!config.enabled) return 0;
     let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;

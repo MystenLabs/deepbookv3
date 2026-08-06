@@ -883,6 +883,10 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (
         helpers::expected_market_cash(cash_after_losing_redeem(premium), 0, REBATE_AFTER_MINT),
     );
 
+    // Benefits ship disabled, so the rebate this fixture stages is only payable
+    // once they are on. The mint above already priced at zero stake, so enabling
+    // here leaves its fee untouched.
+    fx.set_stake_benefits_enabled_bundle(&mut market, true);
     fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
     fx.stake_deep_bundle(
         &mut market,

@@ -422,6 +422,26 @@ public fun set_pyth_spot_freshness_bundle(
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
 }
 
+/// Turn the DEEP-stake benefit programme on or off through the real admin path.
+/// Benefits ship disabled, so any test asserting a staking fee discount or a
+/// stake-scaled loss rebate has to enable them first.
+public fun set_stake_benefits_enabled(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    enabled: bool,
+) {
+    config.set_stake_benefits_enabled(&self.admin_cap, enabled);
+}
+
+/// Turn the DEEP-stake benefit programme on or off through a market bundle.
+public fun set_stake_benefits_enabled_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    enabled: bool,
+) {
+    self.set_stake_benefits_enabled(&mut market.config, enabled);
+}
+
 /// Enable the EWMA congestion penalty with explicit parameters through the
 /// real admin path.
 public fun set_ewma_penalty(

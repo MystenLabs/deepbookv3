@@ -169,6 +169,18 @@ public fun set_template_backing_buffer_lambda(
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
 }
 
+/// Enable or disable every DEEP-stake benefit. Ships disabled, so the protocol
+/// charges undiscounted fees and pays no stake-scaled loss rebate until this is
+/// turned on. Thresholds survive a toggle.
+public fun set_stake_benefits_enabled(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+) {
+    config.assert_version();
+    config.stake_config.set_benefits_enabled(enabled);
+}
+
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
 /// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
 public fun set_benefit_powers(

@@ -480,6 +480,13 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
 
 // === Staking ===
 
+/// Master switch for the whole DEEP-stake benefit curve. Ships `false`: the
+/// protocol charges every trader the undiscounted fee and pays no stake-scaled
+/// loss rebate until an admin activates the programme. The thresholds below keep
+/// their normal defaults while off, so activation is one call and needs no
+/// re-tuning. No bounds helper: a bool has no invalid value.
+public(package) macro fun default_stake_benefits_enabled(): bool { false }
+
 /// Active stake at the benefit-curve kink: half of max benefits. Default 100k
 /// DEEP, admin-tunable 10k..1M.
 public(package) macro fun default_lower_benefit_power(): u64 {
