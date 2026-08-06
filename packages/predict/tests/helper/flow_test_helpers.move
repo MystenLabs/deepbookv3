@@ -425,11 +425,7 @@ public fun set_pyth_spot_freshness_bundle(
 /// Turn the DEEP-stake benefit programme on or off through the real admin path.
 /// Benefits ship disabled, so any test asserting a staking fee discount or a
 /// stake-scaled loss rebate has to enable them first.
-public fun set_stake_benefits_enabled(
-    self: &Fixture,
-    config: &mut ProtocolConfig,
-    enabled: bool,
-) {
+public fun set_stake_benefits_enabled(self: &Fixture, config: &mut ProtocolConfig, enabled: bool) {
     config.set_stake_benefits_enabled(&self.admin_cap, enabled);
 }
 
