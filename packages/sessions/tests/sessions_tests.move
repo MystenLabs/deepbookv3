@@ -6,30 +6,27 @@ module deepbook_sessions::sessions_tests;
 
 use account::{
     account::{Self as account, AccountWrapper},
-    account_registry::{Self as account_registry, AccountAdminCap, AccountRegistry}
+    account_registry::{Self as account_registry, AccountRegistry}
 };
-use bs_oracle::verify;
 use deepbook_predict::{
-    admin::AdminCap,
     expiry_market::{Self as expiry_market, ExpiryMarket},
-    market_lifecycle_cap::MarketLifecycleCap,
-    market_manager,
-    order,
-    plp::{Self as plp, PoolVault},
+    flow_test_helpers as predict_helpers,
+    order_events,
+    predict_account,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
-    registry::{Self as predict_registry, Registry as PredictRegistry}
+    test_constants
 };
 use deepbook_sessions::sessions::{Self as sessions, SessionAuthorized, SessionRevoked, SessionsApp};
-use fixed_math::math;
+use dusdc::dusdc::DUSDC;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
-    pyth_feed::{Self as pyth_feed, PythFeed},
-    registry::{Self as propbook_registry, OracleRegistry, RegistryAdminCap}
+    pyth_feed::PythFeed,
+    registry::{Self as propbook_registry, OracleRegistry}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::{bcs, unit_test::{assert_eq, destroy}};
 use sui::{
-    accumulator::{Self as accumulator, AccumulatorRoot},
+    accumulator::AccumulatorRoot,
     clock::{Self as clock, Clock},
     event,
     test_scenario::{Self as test, Scenario, return_shared}
@@ -79,54 +76,62 @@ const POST_REVOKE_EXPIRES_AT_MS: u64 = 62_000; // 2_000 + 60_000.
 const ONE_EVENT: u64 = 1;
 const EUnexpectedSuccess: u64 = 999;
 
-const PROPBOOK_UNDERLYING_ID: u32 = 42;
-const PYTH_SOURCE_ID: u32 = 1;
-const MARKET_TICK_SIZE: u64 = 1_000_000_000;
-const MARKET_ADMISSION_TICK_SIZE: u64 = 10_000_000_000;
-const MARKET_MAX_EXPIRY_ALLOCATION: u64 = 250_000_000_000;
-const MARKET_INITIAL_EXPIRY_CASH: u64 = 20_000_000_000;
-const MARKET_CADENCE_WINDOW_SIZE: u64 = 1;
-const GATE_NOW_MS: u64 = 120_000;
-const GATE_SESSION_EXPIRES_AT_MS: u64 = 180_000; // 120_000 + 60_000.
-const MARKET_EXPIRY_MS: u64 = 180_000;
-const LIVE_SOURCE_TIMESTAMP_MS: u64 = 119_000;
-const LIVE_PRICE: u64 = 100_000_000_000;
-const PYTH_EXPONENT_NEG_9: u16 = 9;
-const SVI_A_MAGNITUDE: u128 = 1;
-const SVI_B: u128 = 10_000;
-const SVI_SIGMA: u128 = 1_000_000;
-const SVI_RHO_MAGNITUDE: u128 = 1_000_000_000;
-const SVI_M_MAGNITUDE: u128 = 10_000_000_000;
-const MINT_LOWER_TICK: u64 = 0;
-const MINT_HIGHER_TICK: u64 = 100;
-// Ten contracts at an approximately 50% range price stays above Predict's one-DUSDC minimum net premium and is an exact position-lot multiple.
-const MINT_QUANTITY: u64 = 10_000_000;
-const MINT_MAX_PREMIUM: u64 = 1_000;
+const FLOW_SESSION_EXPIRES_AT_MS: u64 = 180_000; // 120_000 + 60_000.
+const SETTLEMENT_SESSION_DURATION_MS: u64 = 180_000;
+const SETTLEMENT_SESSION_EXPIRES_AT_MS: u64 = 300_000; // 120_000 + 180_000.
+const LIVE_REDEEM_MS: u64 = 120_001;
+const DEFAULT_TRADE_FEE: u64 = 5_000_000;
+const TEN_THOUSAND_LOTS: u64 = 100_000_000;
+const NEXT_LOT_QUANTITY: u64 = 100_010_000;
+const SETTLEMENT_HIGHER_TICK_OFFSET: u64 = 10;
+const SETTLEMENT_PRICE_TICK_OFFSET: u64 = 1;
+const ONE_RAW_UNIT: u64 = 1;
+const ONE_POSITION: u64 = 1;
+const ZERO_POSITIONS: u64 = 0;
 const ZERO_COST: u64 = 0;
+const ZERO_PREMIUM: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
 
-macro fun mint_leverage(): u64 { math::float_scaling!() }
+public struct ExpectedSessionAuthorized has copy, drop {
+    account_id: ID,
+    session: address,
+    expires_at_ms: u64,
+}
 
-public struct GateFixture {
-    scenario: Scenario,
+public struct ExpectedSessionRevoked has copy, drop {
+    account_id: ID,
+    session: address,
+    expires_at_ms: u64,
+}
+
+public struct SessionFlowFixture {
+    predict: predict_helpers::Fixture,
     clock: Clock,
     market_id: ID,
+    owner: address,
     wrapper_id: ID,
     config_id: ID,
-    oracle_registry_id: ID,
     pyth_id: ID,
     bs_values_id: ID,
     bs_svi_id: ID,
 }
 
-public struct LiveGateInputs {
+public struct LiveInputs {
     market: ExpiryMarket,
     account_registry: AccountRegistry,
     wrapper: AccountWrapper,
     config: ProtocolConfig,
     pricer: Pricer,
+    root: AccumulatorRoot,
+}
+
+public struct SettledInputs {
+    market: ExpiryMarket,
+    account_registry: AccountRegistry,
+    wrapper: AccountWrapper,
+    config: ProtocolConfig,
     root: AccumulatorRoot,
 }
 
@@ -151,12 +156,12 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     );
     let authorized = event::events_by_type<SessionAuthorized>();
     assert_eq!(authorized.length(), ONE_EVENT);
-    let (event_account_id, event_session, event_expiration) = sessions::session_authorized_fields(
+    assert_session_authorized_event(
         &authorized[0],
+        account_id,
+        SESSION,
+        SESSION_EXPIRES_AT_MS,
     );
-    assert_eq!(event_account_id, account_id);
-    assert_eq!(event_session, SESSION);
-    assert_eq!(event_expiration, SESSION_EXPIRES_AT_MS);
     return_shared(wrapper);
 
     scenario.next_tx(ALICE);
@@ -175,11 +180,12 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     );
     let reauthorized = event::events_by_type<SessionAuthorized>();
     assert_eq!(reauthorized.length(), ONE_EVENT);
-    let (_, event_session, event_expiration) = sessions::session_authorized_fields(
+    assert_session_authorized_event(
         &reauthorized[0],
+        account_id,
+        SESSION,
+        REAUTH_EXPIRES_AT_MS,
     );
-    assert_eq!(event_session, SESSION);
-    assert_eq!(event_expiration, REAUTH_EXPIRES_AT_MS);
     return_shared(wrapper);
 
     scenario.next_tx(ALICE);
@@ -189,12 +195,12 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     assert!(wrapper.load_account().has_data<SessionsApp>());
     let revoked = event::events_by_type<SessionRevoked>();
     assert_eq!(revoked.length(), ONE_EVENT);
-    let (event_account_id, event_session, event_expiration) = sessions::session_revoked_fields(
+    assert_session_revoked_event(
         &revoked[0],
+        account_id,
+        SESSION,
+        REAUTH_EXPIRES_AT_MS,
     );
-    assert_eq!(event_account_id, account_id);
-    assert_eq!(event_session, SESSION);
-    assert_eq!(event_expiration, REAUTH_EXPIRES_AT_MS);
     return_shared(wrapper);
 
     scenario.next_tx(ALICE);
@@ -406,20 +412,16 @@ fun non_owner_cannot_revoke_session() {
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun unapproved_session_cannot_use_predict_wrapper() {
-    let GateFixture {
-        mut scenario,
-        clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        ..,
-    } = setup_gate_fixture();
-    scenario.next_tx(SESSION);
-    let mut market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
-    let account_registry = scenario.take_shared<AccountRegistry>();
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    let root = scenario.take_shared<AccumulatorRoot>();
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    let SettledInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        root,
+    } = begin_settled_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
 
     let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
         &mut market,
@@ -429,7 +431,7 @@ fun unapproved_session_cannot_use_predict_wrapper() {
         MISSING_ORDER_ID,
         CLOSE_QUANTITY,
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
@@ -440,15 +442,17 @@ fun unapproved_session_cannot_use_predict_wrapper() {
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun unapproved_session_cannot_mint_exact_quantity() {
-    let (mut scenario, clock, inputs) = setup_unapproved_live_gate();
-    let LiveGateInputs {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    let LiveInputs {
         mut market,
         account_registry,
         mut wrapper,
         config,
         pricer,
         root,
-    } = inputs;
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
 
     let order_id = sessions::mint_exact_quantity(
         &mut market,
@@ -456,14 +460,14 @@ fun unapproved_session_cannot_mint_exact_quantity() {
         &mut wrapper,
         &config,
         &pricer,
-        MINT_LOWER_TICK,
-        MINT_HIGHER_TICK,
-        MINT_QUANTITY,
-        mint_leverage!(),
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
         std::u64::max_value!(),
         ZERO_PROBABILITY,
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
     destroy(order_id);
@@ -473,15 +477,17 @@ fun unapproved_session_cannot_mint_exact_quantity() {
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun unapproved_session_cannot_mint_exact_amount() {
-    let (mut scenario, clock, inputs) = setup_unapproved_live_gate();
-    let LiveGateInputs {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    let LiveInputs {
         mut market,
         account_registry,
         mut wrapper,
         config,
         pricer,
         root,
-    } = inputs;
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
 
     let order_id = sessions::mint_exact_amount(
         &mut market,
@@ -489,14 +495,14 @@ fun unapproved_session_cannot_mint_exact_amount() {
         &mut wrapper,
         &config,
         &pricer,
-        MINT_LOWER_TICK,
-        MINT_HIGHER_TICK,
-        MINT_MAX_PREMIUM,
-        MINT_QUANTITY,
-        mint_leverage!(),
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        test_constants::mint_deposit(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
         ZERO_COST,
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
     destroy(order_id);
@@ -506,15 +512,17 @@ fun unapproved_session_cannot_mint_exact_amount() {
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun unapproved_session_cannot_redeem_live() {
-    let (mut scenario, clock, inputs) = setup_unapproved_live_gate();
-    let LiveGateInputs {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    let LiveInputs {
         mut market,
         account_registry,
         mut wrapper,
         config,
         pricer,
         root,
-    } = inputs;
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
 
     let (closed_order_id, replacement_order_id) = sessions::redeem_live(
         &mut market,
@@ -527,7 +535,7 @@ fun unapproved_session_cannot_redeem_live() {
         ZERO_PROBABILITY,
         ZERO_COST,
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
@@ -538,32 +546,18 @@ fun unapproved_session_cannot_redeem_live() {
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun session_at_exact_expiration_cannot_use_predict_wrapper() {
-    let GateFixture {
-        mut scenario,
-        mut clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        ..,
-    } = setup_gate_fixture();
-    scenario.next_tx(ALICE);
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    sessions::authorize_session(
-        &mut wrapper,
-        SESSION,
-        SESSION_DURATION_MS,
-        &clock,
-        scenario.ctx(),
-    );
-    return_shared(wrapper);
-
-    clock.set_for_testing(GATE_SESSION_EXPIRES_AT_MS);
-    scenario.next_tx(SESSION);
-    let mut market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
-    let account_registry = scenario.take_shared<AccountRegistry>();
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    let root = scenario.take_shared<AccumulatorRoot>();
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    authorize_flow_session(&mut fixture, SESSION_DURATION_MS);
+    fixture.clock.set_for_testing(FLOW_SESSION_EXPIRES_AT_MS);
+    let SettledInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        root,
+    } = begin_settled_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
 
     let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
         &mut market,
@@ -573,52 +567,7 @@ fun session_at_exact_expiration_cannot_use_predict_wrapper() {
         MISSING_ORDER_ID,
         CLOSE_QUANTITY,
         &root,
-        &clock,
-        scenario.ctx(),
-    );
-    destroy(closed_order_id);
-    destroy(replacement_order_id);
-
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
-fun active_session_passes_session_gate_and_reaches_predict() {
-    let GateFixture {
-        mut scenario,
         clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        ..,
-    } = setup_gate_fixture();
-    scenario.next_tx(ALICE);
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    sessions::authorize_session(
-        &mut wrapper,
-        SESSION,
-        SESSION_DURATION_MS,
-        &clock,
-        scenario.ctx(),
-    );
-    return_shared(wrapper);
-
-    scenario.next_tx(SESSION);
-    let mut market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
-    let account_registry = scenario.take_shared<AccountRegistry>();
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    let root = scenario.take_shared<AccumulatorRoot>();
-
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
-        &mut market,
-        &account_registry,
-        &mut wrapper,
-        &config,
-        MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
-        &root,
-        &clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
@@ -629,27 +578,18 @@ fun active_session_passes_session_gate_and_reaches_predict() {
 
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun revoked_session_cannot_use_predict_wrapper() {
-    let GateFixture {
-        mut scenario,
-        clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        ..,
-    } = setup_gate_fixture();
-    authorize_gate_session(&mut scenario, &clock, wrapper_id);
-
-    scenario.next_tx(ALICE);
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
-    return_shared(wrapper);
-
-    scenario.next_tx(SESSION);
-    let mut market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
-    let account_registry = scenario.take_shared<AccountRegistry>();
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    let root = scenario.take_shared<AccumulatorRoot>();
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    authorize_flow_session(&mut fixture, SESSION_DURATION_MS);
+    revoke_flow_session(&mut fixture);
+    let SettledInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        root,
+    } = begin_settled_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
 
     let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
         &mut market,
@@ -659,7 +599,7 @@ fun revoked_session_cannot_use_predict_wrapper() {
         MISSING_ORDER_ID,
         CLOSE_QUANTITY,
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
@@ -668,168 +608,327 @@ fun revoked_session_cannot_use_predict_wrapper() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = expiry_market::EMintProbabilityAboveMax)]
-fun active_session_reaches_predict_mint_exact_quantity() {
-    let GateFixture {
-        mut scenario,
+#[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
+fun another_signer_cannot_use_an_approved_session() {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    authorize_flow_session(&mut fixture, SESSION_DURATION_MS);
+    let SettledInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        root,
+    } = begin_settled_tx(&mut fixture, BOB);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+
+    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        MISSING_ORDER_ID,
+        CLOSE_QUANTITY,
+        &root,
         clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-    } = setup_gate_fixture();
-    authorize_gate_session(&mut scenario, &clock, wrapper_id);
-    scenario.next_tx(SESSION);
-    let LiveGateInputs {
+        scenario.ctx(),
+    );
+    destroy(closed_order_id);
+    destroy(replacement_order_id);
+
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun session_mints_exact_quantity_and_redeems_live() {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    authorize_flow_session(&mut fixture, SESSION_DURATION_MS);
+    let market_id = fixture.market_id;
+    let LiveInputs {
         mut market,
         account_registry,
         mut wrapper,
         config,
         pricer,
         root,
-    } = take_live_gate_inputs(
-        &mut scenario,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-        &clock,
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    // Predict's independent ATM reference anchors the quote; this test owns
+    // forwarding its exact cost and probability through Sessions.
+    let quote = market.quote_mint_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        ZERO_PREMIUM,
+        test_constants::mint_quantity(),
+        true,
+        test_constants::leverage_one_x(),
+        &root,
+        clock,
+        scenario.ctx(),
     );
-
+    predict_helpers::assert_atm_entry_probability(quote.entry_probability());
     let order_id = sessions::mint_exact_quantity(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         &pricer,
-        MINT_LOWER_TICK,
-        MINT_HIGHER_TICK,
-        MINT_QUANTITY,
-        mint_leverage!(),
-        std::u64::max_value!(),
-        ZERO_PROBABILITY,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+        quote.all_in_cost(),
+        quote.entry_probability(),
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
-    destroy(order_id);
+    let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
+    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
+    assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    assert_eq!(
+        predict_account::expiry_position_count(wrapper.load_account(), market_id),
+        ONE_POSITION,
+    );
+    assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, SESSION),
+        option::some(FLOW_SESSION_EXPIRES_AT_MS),
+    );
+    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
 
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = expiry_market::EMintCostCapRequired)]
-fun active_session_reaches_predict_mint_exact_amount() {
-    let GateFixture {
-        mut scenario,
-        clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-    } = setup_gate_fixture();
-    authorize_gate_session(&mut scenario, &clock, wrapper_id);
-    scenario.next_tx(SESSION);
-    let LiveGateInputs {
+    fixture.clock.set_for_testing(LIVE_REDEEM_MS);
+    let LiveInputs {
         mut market,
         account_registry,
         mut wrapper,
         config,
         pricer,
         root,
-    } = take_live_gate_inputs(
-        &mut scenario,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-        &clock,
-    );
-
-    let order_id = sessions::mint_exact_amount(
-        &mut market,
-        &account_registry,
-        &mut wrapper,
-        &config,
-        &pricer,
-        MINT_LOWER_TICK,
-        MINT_HIGHER_TICK,
-        MINT_MAX_PREMIUM,
-        MINT_QUANTITY,
-        mint_leverage!(),
-        ZERO_COST,
-        &root,
-        &clock,
-        scenario.ctx(),
-    );
-    destroy(order_id);
-
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = order::EInvalidFloorShares)]
-fun active_session_reaches_predict_redeem_live() {
-    let GateFixture {
-        mut scenario,
-        clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-    } = setup_gate_fixture();
-    authorize_gate_session(&mut scenario, &clock, wrapper_id);
-    scenario.next_tx(SESSION);
-    let LiveGateInputs {
-        mut market,
-        account_registry,
-        mut wrapper,
-        config,
-        pricer,
-        root,
-    } = take_live_gate_inputs(
-        &mut scenario,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-        &clock,
-    );
-
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    let gross_value = market.order_value(option::some(copy pricer), order_id);
     let (closed_order_id, replacement_order_id) = sessions::redeem_live(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         &pricer,
-        MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
+        order_id,
+        test_constants::mint_quantity(),
         ZERO_PROBABILITY,
         ZERO_COST,
         &root,
-        &clock,
+        clock,
         scenario.ctx(),
     );
-    destroy(closed_order_id);
-    destroy(replacement_order_id);
+    assert_eq!(closed_order_id, order_id);
+    assert!(replacement_order_id.is_none());
+    // The public order value is gross of the fixture's one minimum close fee.
+    assert_eq!(
+        wrapper.load_account().balance<DUSDC>(&root, clock),
+        post_mint_balance + gross_value - DEFAULT_TRADE_FEE,
+    );
+    assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    assert_eq!(
+        predict_account::expiry_position_count(wrapper.load_account(), market_id),
+        ZERO_POSITIONS,
+    );
+    assert_eq!(event::events_by_type<order_events::LiveOrderRedeemed>().length(), ONE_EVENT);
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, SESSION),
+        option::some(FLOW_SESSION_EXPIRES_AT_MS),
+    );
+    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+    finish_flow_fixture(fixture);
+}
 
-    abort EUnexpectedSuccess
+#[test]
+fun session_mints_exact_amount() {
+    let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
+    authorize_flow_session(&mut fixture, SESSION_DURATION_MS);
+    let market_id = fixture.market_id;
+    let LiveInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    let next_lot_quote = market.quote_mint_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        ZERO_PREMIUM,
+        NEXT_LOT_QUANTITY,
+        true,
+        test_constants::leverage_one_x(),
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    predict_helpers::assert_atm_entry_probability(next_lot_quote.entry_probability());
+    let expected_quote = market.quote_mint_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        ZERO_PREMIUM,
+        TEN_THOUSAND_LOTS,
+        true,
+        test_constants::leverage_one_x(),
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    predict_helpers::assert_atm_entry_probability(expected_quote.entry_probability());
+    // One raw unit below the next lot's premium must size exactly ten thousand lots.
+    let budget = next_lot_quote.net_premium() - ONE_RAW_UNIT;
+    let order_id = sessions::mint_exact_amount(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        budget,
+        TEN_THOUSAND_LOTS,
+        test_constants::leverage_one_x(),
+        expected_quote.all_in_cost(),
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    assert_eq!(expected_quote.quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(
+        wrapper.load_account().balance<DUSDC>(&root, clock),
+        test_constants::mint_deposit() - expected_quote.all_in_cost(),
+    );
+    assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    assert_eq!(
+        predict_account::expiry_position_count(wrapper.load_account(), market_id),
+        ONE_POSITION,
+    );
+    assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, SESSION),
+        option::some(FLOW_SESSION_EXPIRES_AT_MS),
+    );
+    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+    finish_flow_fixture(fixture);
+}
+
+#[test]
+fun session_redeems_settled_order() {
+    let expiry_ms = test_constants::short_expiry_ms();
+    let mut fixture = setup_flow_fixture(expiry_ms);
+    authorize_flow_session(&mut fixture, SETTLEMENT_SESSION_DURATION_MS);
+    let market_id = fixture.market_id;
+    let lower_tick = predict_helpers::strike_tick();
+    let higher_tick = lower_tick + SETTLEMENT_HIGHER_TICK_OFFSET;
+    let LiveInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        pricer,
+        root,
+    } = begin_live_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    // Predict's quote tests own the mint cost; this flow owns session auth and
+    // the independently exact in-range 1x terminal payout.
+    let quote = market.quote_mint_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        lower_tick,
+        higher_tick,
+        ZERO_PREMIUM,
+        test_constants::mint_quantity(),
+        true,
+        test_constants::leverage_one_x(),
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    let order_id = sessions::mint_exact_quantity(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        &pricer,
+        lower_tick,
+        higher_tick,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+        quote.all_in_cost(),
+        quote.entry_probability(),
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
+    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
+    assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+
+    fixture.clock.set_for_testing(expiry_ms);
+    fixture.predict.set_clock_for_testing(expiry_ms);
+    let settlement_price =
+        (lower_tick + SETTLEMENT_PRICE_TICK_OFFSET) * test_constants::default_tick_size();
+    settle_flow_market(&mut fixture, settlement_price);
+    let SettledInputs {
+        mut market,
+        account_registry,
+        mut wrapper,
+        config,
+        root,
+    } = begin_settled_tx(&mut fixture, SESSION);
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    assert_eq!(market.order_value(option::none(), order_id), test_constants::mint_quantity());
+    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+        &mut market,
+        &account_registry,
+        &mut wrapper,
+        &config,
+        order_id,
+        test_constants::mint_quantity(),
+        &root,
+        clock,
+        scenario.ctx(),
+    );
+    assert_eq!(closed_order_id, order_id);
+    assert!(replacement_order_id.is_none());
+    assert_eq!(
+        wrapper.load_account().balance<DUSDC>(&root, clock),
+        post_mint_balance + test_constants::mint_quantity(),
+    );
+    assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
+    assert_eq!(
+        predict_account::expiry_position_count(wrapper.load_account(), market_id),
+        ZERO_POSITIONS,
+    );
+    assert_eq!(event::events_by_type<order_events::SettledOrderRedeemed>().length(), ONE_EVENT);
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, SESSION),
+        option::some(SETTLEMENT_SESSION_EXPIRES_AT_MS),
+    );
+    return_settled_inputs(SettledInputs { market, account_registry, wrapper, config, root });
+    finish_flow_fixture(fixture);
 }
 
 fun session_addresses(): vector<address> {
@@ -875,63 +974,95 @@ fun setup_account(): (Scenario, Clock, ID) {
     (scenario, clock, wrapper_id)
 }
 
-fun authorize_gate_session(scenario: &mut Scenario, clock: &Clock, wrapper_id: ID) {
-    scenario.next_tx(ALICE);
-    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    sessions::authorize_session(
-        &mut wrapper,
-        SESSION,
-        SESSION_DURATION_MS,
-        clock,
-        scenario.ctx(),
+fun assert_session_authorized_event(
+    actual: &SessionAuthorized,
+    account_id: ID,
+    session: address,
+    expires_at_ms: u64,
+) {
+    let expected = ExpectedSessionAuthorized { account_id, session, expires_at_ms };
+    assert_eq!(bcs::to_bytes(actual), bcs::to_bytes(&expected));
+}
+
+fun assert_session_revoked_event(
+    actual: &SessionRevoked,
+    account_id: ID,
+    session: address,
+    expires_at_ms: u64,
+) {
+    let expected = ExpectedSessionRevoked { account_id, session, expires_at_ms };
+    assert_eq!(bcs::to_bytes(actual), bcs::to_bytes(&expected));
+}
+
+fun setup_flow_fixture(expiry_ms: u64): SessionFlowFixture {
+    let (mut predict, market_id, trader) = predict_helpers::setup_live_market(
+        expiry_ms,
+        test_constants::default_live_price(),
     );
+    predict.authorize_account_app<SessionsApp>();
+    let owner = predict_helpers::owner(&trader);
+    let config_id = predict.config_id();
+    let pyth_id = predict.pyth_id();
+    let now_ms = predict.clock().timestamp_ms();
+    let mut clock = clock::create_for_testing(predict.scenario_mut().ctx());
+    clock.set_for_testing(now_ms);
+
+    let account_registry = predict.scenario_mut().take_shared<AccountRegistry>();
+    let wrapper_id = account_registry.derived_wrapper_address(owner).to_id();
+    let oracle_registry = predict.scenario_mut().take_shared<OracleRegistry>();
+    let bs_pair = oracle_registry
+        .propbook_block_scholes_store_pair_for_underlying(
+            test_constants::propbook_underlying_id(),
+        )
+        .destroy_some();
+    let bs_values_id = bs_pair.block_scholes_value_store_id();
+    let bs_svi_id = bs_pair.block_scholes_svi_store_id();
+    return_shared(account_registry);
+    return_shared(oracle_registry);
+    predict.scenario_mut().next_tx(test_constants::admin());
+
+    SessionFlowFixture {
+        predict,
+        clock,
+        market_id,
+        owner,
+        wrapper_id,
+        config_id,
+        pyth_id,
+        bs_values_id,
+        bs_svi_id,
+    }
+}
+
+fun authorize_flow_session(fixture: &mut SessionFlowFixture, duration_ms: u64) {
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    scenario.next_tx(fixture.owner);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id);
+    sessions::authorize_session(&mut wrapper, SESSION, duration_ms, clock, scenario.ctx());
     return_shared(wrapper);
+    scenario.next_tx(test_constants::admin());
 }
 
-fun setup_unapproved_live_gate(): (Scenario, Clock, LiveGateInputs) {
-    let GateFixture {
-        mut scenario,
-        clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-    } = setup_gate_fixture();
-    scenario.next_tx(SESSION);
-    let inputs = take_live_gate_inputs(
-        &mut scenario,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
-        &clock,
-    );
-    (scenario, clock, inputs)
+fun revoke_flow_session(fixture: &mut SessionFlowFixture) {
+    let scenario = fixture.predict.scenario_mut();
+    scenario.next_tx(fixture.owner);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id);
+    sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
+    return_shared(wrapper);
+    scenario.next_tx(test_constants::admin());
 }
 
-fun take_live_gate_inputs(
-    scenario: &mut Scenario,
-    market_id: ID,
-    wrapper_id: ID,
-    config_id: ID,
-    oracle_registry_id: ID,
-    pyth_id: ID,
-    bs_values_id: ID,
-    bs_svi_id: ID,
-    clock: &Clock,
-): LiveGateInputs {
-    let market = scenario.take_shared_by_id<ExpiryMarket>(market_id);
-    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    let oracle_registry = scenario.take_shared_by_id<OracleRegistry>(oracle_registry_id);
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    let bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(bs_values_id);
-    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(bs_svi_id);
+fun begin_live_tx(fixture: &mut SessionFlowFixture, sender: address): LiveInputs {
+    let clock = &fixture.clock;
+    let scenario = fixture.predict.scenario_mut();
+    scenario.next_tx(sender);
+    let market = scenario.take_shared_by_id<ExpiryMarket>(fixture.market_id);
+    let config = scenario.take_shared_by_id<ProtocolConfig>(fixture.config_id);
+    let oracle_registry = scenario.take_shared<OracleRegistry>();
+    let pyth = scenario.take_shared_by_id<PythFeed>(fixture.pyth_id);
+    let bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(fixture.bs_values_id);
+    let bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(fixture.bs_svi_id);
     let pricer = market.load_live_pricer(
         &config,
         &oracle_registry,
@@ -946,192 +1077,85 @@ fun take_live_gate_inputs(
     return_shared(bs_values);
     return_shared(bs_svi);
 
-    LiveGateInputs {
+    LiveInputs {
         market,
         account_registry: scenario.take_shared<AccountRegistry>(),
-        wrapper: scenario.take_shared_by_id<AccountWrapper>(wrapper_id),
+        wrapper: scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id),
         config,
         pricer,
         root: scenario.take_shared<AccumulatorRoot>(),
     }
 }
 
-fun setup_gate_fixture(): GateFixture {
-    let mut scenario = test::begin(ADMIN);
-    scenario.next_tx(@0x0);
-    accumulator::create_for_testing(scenario.ctx());
-    scenario.next_tx(ADMIN);
-    account_registry::init_for_testing(scenario.ctx());
-    let vault_id = plp::init_for_testing(scenario.ctx());
-    let predict_registry_id = predict_registry::init_for_testing(scenario.ctx());
-    propbook_registry::init_for_testing(scenario.ctx());
-    scenario.next_tx(ADMIN);
-
-    let account_admin_cap = scenario.take_from_sender<AccountAdminCap>();
-    let mut account_registry = scenario.take_shared<AccountRegistry>();
-    account_registry.authorize_app<SessionsApp>(&account_admin_cap);
+fun return_live_inputs(inputs: LiveInputs) {
+    let LiveInputs { market, account_registry, wrapper, config, pricer: _, root } = inputs;
+    return_shared(market);
     return_shared(account_registry);
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let config = scenario.take_shared<ProtocolConfig>();
-    let config_id = config.id();
-    let mut registry = scenario.take_shared_by_id<PredictRegistry>(predict_registry_id);
-    registry.register_underlying(&config, &admin_cap, PROPBOOK_UNDERLYING_ID);
-    registry.set_template_cadence_config(
-        &config,
-        &admin_cap,
-        PROPBOOK_UNDERLYING_ID,
-        market_manager::cadence_one_minute!(),
-        MARKET_TICK_SIZE,
-        MARKET_ADMISSION_TICK_SIZE,
-        MARKET_MAX_EXPIRY_ALLOCATION,
-        MARKET_INITIAL_EXPIRY_CASH,
-        MARKET_CADENCE_WINDOW_SIZE,
-    );
-    let lifecycle_cap = registry.mint_lifecycle_cap(&config, &admin_cap, scenario.ctx());
+    return_shared(wrapper);
     return_shared(config);
-    return_shared(registry);
+    return_shared(root);
+}
 
-    let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let oracle_registry_id = oracle_registry.id();
-    let pyth_id = propbook_registry::create_and_share_pyth_feed(
-        &mut oracle_registry,
-        PYTH_SOURCE_ID,
-        scenario.ctx(),
-    );
-    let bs_pair = propbook_registry::create_and_share_block_scholes_stores(
-        &mut oracle_registry,
-        &propbook_admin_cap,
-        PROPBOOK_UNDERLYING_ID,
-        b"BTC".to_string(),
-        scenario.ctx(),
-    );
-    let bs_values_id = bs_pair.block_scholes_value_store_id();
-    let bs_svi_id = bs_pair.block_scholes_svi_store_id();
-    return_shared(oracle_registry);
-
-    scenario.next_tx(ADMIN);
-    let mut oracle_registry = scenario.take_shared_by_id<OracleRegistry>(oracle_registry_id);
-    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
-    propbook_registry::bind_pyth_to_underlying(
-        &mut oracle_registry,
-        &propbook_admin_cap,
-        &pyth,
-        PROPBOOK_UNDERLYING_ID,
-    );
-    let mut registry = scenario.take_shared_by_id<PredictRegistry>(predict_registry_id);
-    let mut vault = scenario.take_shared_by_id<PoolVault>(vault_id);
-    let config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(GATE_NOW_MS);
-    let market_id = registry.create_and_share_expiry_market(
-        &mut vault,
-        &config,
-        &oracle_registry,
-        &lifecycle_cap,
-        PROPBOOK_UNDERLYING_ID,
-        market_manager::cadence_one_minute!(),
-        &clock,
-        scenario.ctx(),
-    );
-    pyth_feed::record_raw_for_testing(
-        &mut pyth,
-        LIVE_PRICE,
-        false,
-        PYTH_EXPONENT_NEG_9,
-        true,
-        LIVE_SOURCE_TIMESTAMP_MS * 1000,
-        LIVE_SOURCE_TIMESTAMP_MS * 1000,
-        GATE_NOW_MS,
-        false,
-        scenario.ctx(),
-    );
-    let mut bs_values = scenario.take_shared_by_id<BlockScholesValueStore>(bs_values_id);
-    let spot_sid = bs_values.spot_sid();
-    bs_values.apply_spot_batch(
-        verify::new_value_batch_for_testing(
-            LIVE_SOURCE_TIMESTAMP_MS,
-            vector[
-                verify::new_value_update_for_testing(
-                    spot_sid,
-                    LIVE_SOURCE_TIMESTAMP_MS,
-                    LIVE_PRICE as u128,
-                ),
-            ],
-        ),
-        &clock,
-        scenario.ctx(),
-    );
-    let forward_sid = bs_values.forward_sid(MARKET_EXPIRY_MS);
-    bs_values.apply_forward_batch(
-        verify::new_value_batch_for_testing(
-            LIVE_SOURCE_TIMESTAMP_MS,
-            vector[
-                verify::new_value_update_for_testing(
-                    forward_sid,
-                    LIVE_SOURCE_TIMESTAMP_MS,
-                    LIVE_PRICE as u128,
-                ),
-            ],
-        ),
-        vector[MARKET_EXPIRY_MS],
-        &clock,
-        scenario.ctx(),
-    );
-    let mut bs_svi = scenario.take_shared_by_id<BlockScholesSVIStore>(bs_svi_id);
-    let svi_sid = bs_svi.svi_sid(MARKET_EXPIRY_MS);
-    bs_svi.apply_svi_batch(
-        verify::new_svi_batch_for_testing(
-            GATE_NOW_MS,
-            vector[
-                verify::new_svi_for_testing(
-                    svi_sid,
-                    GATE_NOW_MS,
-                    SVI_A_MAGNITUDE,
-                    false,
-                    SVI_B,
-                    SVI_SIGMA,
-                    SVI_RHO_MAGNITUDE,
-                    false,
-                    SVI_M_MAGNITUDE,
-                    false,
-                ),
-            ],
-        ),
-        vector[MARKET_EXPIRY_MS],
-        &clock,
-        scenario.ctx(),
-    );
-    return_shared(pyth);
-    return_shared(bs_values);
-    return_shared(bs_svi);
-    return_shared(oracle_registry);
-    return_shared(registry);
-    return_shared(vault);
-    return_shared(config);
-    destroy(account_admin_cap);
-    destroy(admin_cap);
-    destroy(propbook_admin_cap);
-    destroy(lifecycle_cap);
-
-    scenario.next_tx(ALICE);
-    let mut account_registry = scenario.take_shared<AccountRegistry>();
-    let wrapper = account_registry.new(scenario.ctx());
-    let wrapper_id = wrapper.id();
-    wrapper.share();
-    return_shared(account_registry);
-    scenario.next_tx(ADMIN);
-
-    GateFixture {
-        scenario,
-        clock,
-        market_id,
-        wrapper_id,
-        config_id,
-        oracle_registry_id,
-        pyth_id,
-        bs_values_id,
-        bs_svi_id,
+fun begin_settled_tx(fixture: &mut SessionFlowFixture, sender: address): SettledInputs {
+    let scenario = fixture.predict.scenario_mut();
+    scenario.next_tx(sender);
+    SettledInputs {
+        market: scenario.take_shared_by_id<ExpiryMarket>(fixture.market_id),
+        account_registry: scenario.take_shared<AccountRegistry>(),
+        wrapper: scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id),
+        config: scenario.take_shared_by_id<ProtocolConfig>(fixture.config_id),
+        root: scenario.take_shared<AccumulatorRoot>(),
     }
+}
+
+fun return_settled_inputs(inputs: SettledInputs) {
+    let SettledInputs { market, account_registry, wrapper, config, root } = inputs;
+    return_shared(market);
+    return_shared(account_registry);
+    return_shared(wrapper);
+    return_shared(config);
+    return_shared(root);
+}
+
+fun settle_flow_market(fixture: &mut SessionFlowFixture, settlement_price: u64) {
+    let expiry_ms = fixture.clock.timestamp_ms();
+    fixture.predict.scenario_mut().next_tx(test_constants::admin());
+    let mut pyth = fixture.predict.scenario_mut().take_shared_by_id<PythFeed>(fixture.pyth_id);
+    fixture.predict.insert_exact_settlement_spot(&mut pyth, expiry_ms, settlement_price);
+    return_shared(pyth);
+
+    fixture.predict.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fixture
+        .predict
+        .scenario_mut()
+        .take_shared_by_id<ExpiryMarket>(fixture.market_id);
+    let config = fixture
+        .predict
+        .scenario_mut()
+        .take_shared_by_id<ProtocolConfig>(fixture.config_id);
+    let oracle_registry = fixture.predict.scenario_mut().take_shared<OracleRegistry>();
+    let pyth = fixture.predict.scenario_mut().take_shared_by_id<PythFeed>(fixture.pyth_id);
+    assert_eq!(market.try_settle(&config, &oracle_registry, &pyth, &fixture.clock), true);
+    assert_eq!(market.try_settlement_price(), option::some(settlement_price));
+    return_shared(market);
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(pyth);
+    fixture.predict.scenario_mut().next_tx(test_constants::admin());
+}
+
+fun finish_flow_fixture(fixture: SessionFlowFixture) {
+    let SessionFlowFixture {
+        predict,
+        clock,
+        market_id: _,
+        owner: _,
+        wrapper_id: _,
+        config_id: _,
+        pyth_id: _,
+        bs_values_id: _,
+        bs_svi_id: _,
+    } = fixture;
+    clock.destroy_for_testing();
+    predict.finish();
 }

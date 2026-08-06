@@ -8,6 +8,7 @@ account = { local = "../account" }
 deepbook_predict = { local = "../predict" }
 propbook = { local = "../propbook" }
 fixed_math = { local = "../fixed_math" }
+dusdc = { local = "../dusdc" }
 # This publishable root repeats Predict's direct Pyth source so the testnet
 # replacement identities below apply to the transitive Pyth/Wormhole graph.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
