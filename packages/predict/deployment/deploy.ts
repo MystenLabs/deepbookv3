@@ -3747,6 +3747,16 @@ function sessionsPublishedPath(): string {
     return resolve(REPO_ROOT, "packages", "sessions", "Published.toml");
 }
 
+function withGeneratedSessionsLockRemoved<T>(operation: () => T): T {
+    const lock = resolve(REPO_ROOT, "packages", "sessions", "Move.lock");
+    const existed = existsSync(lock);
+    try {
+        return operation();
+    } finally {
+        if (!existed) rmSync(lock, { force: true });
+    }
+}
+
 function collectResolvedPackageIds(directory: string): Set<string> {
     const ids = new Set<string>();
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -3763,16 +3773,18 @@ function collectResolvedPackageIds(directory: string): Set<string> {
 }
 
 function assertResolvedSessionsPackages(manifest: IntegrationManifest): void {
-    command(SUI, [
-        "move",
-        "build",
-        "--path",
-        resolve(REPO_ROOT, "packages", "sessions"),
-        "--build-env",
-        NETWORK,
-        "--warnings-are-errors",
-        "--force",
-    ]);
+    withGeneratedSessionsLockRemoved(() =>
+        command(SUI, [
+            "move",
+            "build",
+            "--path",
+            resolve(REPO_ROOT, "packages", "sessions"),
+            "--build-env",
+            NETWORK,
+            "--warnings-are-errors",
+            "--force",
+        ]),
+    );
     const dependencies = resolve(
         REPO_ROOT,
         "packages",
@@ -3947,20 +3959,22 @@ async function publishSessions(runtime: SessionsRuntime): Promise<void> {
         digest: null,
     };
     writeSessionsState(state);
-    const output = suiClient(runtime.snapshot, [
-        "publish",
-        resolve(REPO_ROOT, "packages", "sessions"),
-        "--build-env",
-        NETWORK,
-        "--warnings-are-errors",
-        "--force",
-        "--sender",
-        DEPLOYER,
-        "--skip-dependency-verification",
-        "--gas-budget",
-        PACKAGE_GAS_BUDGET,
-        "--json",
-    ]);
+    const output = withGeneratedSessionsLockRemoved(() =>
+        suiClient(runtime.snapshot, [
+            "publish",
+            resolve(REPO_ROOT, "packages", "sessions"),
+            "--build-env",
+            NETWORK,
+            "--warnings-are-errors",
+            "--force",
+            "--sender",
+            DEPLOYER,
+            "--skip-dependency-verification",
+            "--gas-budget",
+            PACKAGE_GAS_BUDGET,
+            "--json",
+        ]),
+    );
     const receipt = JSON.parse(output) as Receipt;
     const failure = effectsError(receipt.effects);
     if (failure || !receipt.digest) throw new Error(`publish Sessions failed: ${failure}`);
