@@ -66,6 +66,9 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 /// from `test_constants` so existing call sites keep one source of truth.
 public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
+/// Positive-infinity tick sentinel for fixtures owned by dependent packages.
+public fun pos_inf_tick(): u64 { constants::pos_inf_tick!() }
+
 /// Assert a quoted at-the-money entry probability against the independently
 /// generated true digital, within its documented budget.
 ///
@@ -583,6 +586,15 @@ public fun set_default_cadence_allocation(
     );
     return_shared(config);
     return_shared(registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Authorize an Account app in fixtures owned by another package.
+public fun authorize_account_app<App>(self: &mut Fixture) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
+    account_registry.authorize_app<App>(&self.account_admin_cap);
+    return_shared(account_registry);
     self.scenario.next_tx(test_constants::admin());
 }
 
