@@ -13,7 +13,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig
 };
 use std::internal::permit;
-use sui::{accumulator::AccumulatorRoot, clock::Clock, table::{Self, Table}};
+use sui::{accumulator::AccumulatorRoot, clock::Clock, event, table::{Self, Table}};
 
 // === Errors ===
 
@@ -32,6 +32,20 @@ public struct SessionsApp has drop {}
 /// Session expiration timestamps keyed by transaction signer address.
 public struct SessionsData has store {
     sessions: Table<address, u64>,
+}
+
+/// A session was authorized or reauthorized through `expires_at_ms`.
+public struct SessionAuthorized has copy, drop {
+    account_id: ID,
+    session: address,
+    expires_at_ms: u64,
+}
+
+/// An existing session grant was removed before or after its expiration.
+public struct SessionRevoked has copy, drop {
+    account_id: ID,
+    session: address,
+    expires_at_ms: u64,
 }
 
 // === Public Functions ===
@@ -60,6 +74,7 @@ public fun authorize_session(
     assert!(duration_ms > 0 && duration_ms <= max_session_duration_ms!(), EInvalidSessionDuration);
     let expires_at_ms = clock.timestamp_ms() + duration_ms;
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
+    let account_id = account.account_id();
     if (!account.has_data<SessionsApp>()) {
         account.attach(permit<SessionsApp>(), SessionsData { sessions: table::new(ctx) });
     };
@@ -69,15 +84,18 @@ public fun authorize_session(
     } else {
         data.sessions.add(session, expires_at_ms);
     };
+    event::emit(SessionAuthorized { account_id, session, expires_at_ms });
 }
 
 /// Revoke `session` if it is present. Only the Account owner may call this function.
 public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &mut TxContext) {
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     if (!account.has_data<SessionsApp>()) return;
+    let account_id = account.account_id();
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
     if (data.sessions.contains(session)) {
-        data.sessions.remove(session);
+        let expires_at_ms = data.sessions.remove(session);
+        event::emit(SessionRevoked { account_id, session, expires_at_ms });
     };
 }
 
