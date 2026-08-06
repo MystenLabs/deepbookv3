@@ -135,30 +135,7 @@ macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_f
 
 macro fun min_svi_sigma(): u64 { 1_000_000 }
 
-/// Upper bound on `|a|` and `sigma`. Tight rather than a loose sanity cap,
-/// because these bounds are what make the deep-ITM/deep-OTM ratio saturations in
-/// `compute_nd2` exact. Those branches return the digital limits 1 and 0, which
-/// hold only while total variance stays small: `d2 = -(k + w/2)/sqrt(w)` tends to
-/// `-sqrt(w)/2` for any fixed `k`, so a high-variance surface drives the true
-/// deep-ITM digital away from 1 while the branch keeps returning 1. `a` enters
-/// total variance directly, which is why it is capped at 1 and not higher.
-/// Real Block Scholes surfaces sit far inside (`pricing_reference_data`:
-/// `|a| <= 1.8e-4`, `sigma <= 1.6e-2`).
-macro fun max_svi_input(): u64 { math::float_scaling!() }
-
-/// Upper bound on `b`. Tighter than the others because `b` scales the entire
-/// moneyness-dependent part of total variance, making it the binding constraint
-/// on saturation exactness. Real `b <= 7.5e-3`.
-macro fun max_svi_b(): u64 { math::float_scaling!() / 10 }
-
-/// Upper bound on `|m|`. Looser than `a` and `sigma` because `m` reaches total
-/// variance only through `b * |k - m|`, so its contribution is already damped by
-/// the `b` cap. Chosen against the saturation error budget rather than against
-/// observed surfaces: over the admissible box this cap set holds the worst
-/// deep-ITM saturation error to ~5.3e-11, i.e. 0.05 of one raw unit at the 1e9
-/// scale the digital is returned in, so the limits are exact at the resolution
-/// the contract can express. Real `|m| <= 3.7e-3`.
-macro fun max_svi_m(): u64 { 10 * math::float_scaling!() }
+macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
 
@@ -569,9 +546,9 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
     assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
-    assert!(svi.b() <= max_svi_b!(), EBlockScholesInputsInvalid);
+    assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
-    assert!(svi.m().magnitude() <= max_svi_m!(), EBlockScholesInputsInvalid);
+    assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(
         svi.sigma() >= min_svi_sigma!() && svi.sigma() <= max_svi_input!(),
         EBlockScholesInputsInvalid,
@@ -629,15 +606,23 @@ fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
 fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // Saturate ratios outside the fixed-point domain to their digital-probability
-    // limits instead of aborting live valuation and position flows.
-    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
-    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
-    let strike_ratio = strike_ratio_opt.destroy_some();
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
-    let k = math::ln(strike_ratio);
+    // Log-moneyness as a DIFFERENCE of logarithms, never as `ln` of a fixed-point
+    // ratio. Forming `strike * 1e9 / forward` first destroys exactly the tails it
+    // is asked about: the quotient floors to zero once `strike` is a billionth of
+    // `forward` and leaves `u64` once it is 1.8e10 times it, and just inside those
+    // limits it survives as a handful of raw units carrying tens of percent of
+    // truncation error. That is why this used to short-circuit to the digital
+    // limits 1 and 0 there — a saturation that is only true when total variance is
+    // small, and silently wrong when it is not, on a value the mint's entry
+    // probability, the liquidation threshold and the NAV mark all consume.
+    //
+    // `ln` is defined across the whole positive `u64` domain, so the difference is
+    // well-conditioned over every representable pair: `|k| <= 44.4` against the
+    // 20.7 the ratio form could reach, at a relative error of 1e-7 per term rather
+    // than a relative error that grows without bound as the tail deepens. No
+    // strike needs a special case, and no surface has to be restricted to keep a
+    // shortcut honest.
+    let k = math::ln(strike).sub(&math::ln(forward));
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
@@ -666,7 +651,7 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     let slope_ratio = k_minus_m.div_scaled(&sq_i64);
     let slope = rho.add(&slope_ratio);
     // `b` is at 1e18 and `slope` at 1e9, so the product comes back down by 1e18
-    // to leave `w'` at 1e9. `b <= max_svi_b * 1e9` and `|slope| <= 2e9`
+    // to leave `w'` at 1e9. `b <= max_svi_input * 1e9` and `|slope| <= 2e9`
     // (`|rho| <= 1e9` and `|k - m| <= sq`), so the u128 product and the u64
     // narrowing both fit.
     let scale = math::float_scaling!() as u128;

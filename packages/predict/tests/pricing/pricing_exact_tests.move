@@ -41,7 +41,7 @@ use fixed_math::math;
 use std::unit_test::assert_eq;
 
 const SKEW_CLAMP_SVI_A: u64 = 1;
-const SKEW_CLAMP_SVI_B: u64 = 100_000_000;
+const SKEW_CLAMP_SVI_B: u64 = 100_000_000_000;
 const SKEW_CLAMP_RHO_UNIT: u64 = 1_000_000_000;
 const SKEW_CLAMP_M: u64 = 0;
 const SKEW_CLAMP_SIGMA: u64 = 1_000_000;
@@ -153,7 +153,7 @@ fun flat_surface_at_the_forward_matches_true_math() {
 }
 
 /// Production-valid SVI envelope point where strike == forward, m == 0, |rho| == 1,
-/// b == max_svi_b, and sigma == min_svi_sigma. Then d2 is near -0.158, so the
+/// b == max_svi_input, and sigma == min_svi_sigma. Then d2 is near -0.158, so the
 /// normal CDF/PDF tail guards do not fire; the enormous signed `w'` term is what
 /// pushes the raw adjusted digital outside [0, 1] and exercises compute_nd2's final
 /// clamp.

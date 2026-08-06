@@ -9,9 +9,13 @@
 ///     passes;
 ///   - `EBlockScholesPriceStale`: a hard staleness abort when one of the split
 ///     Block Scholes price feeds is past its configured freshness window.
-/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone: the price
-/// tail now SATURATES instead of aborting, so those are pinned here as exact-value
-/// tests (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0). A stale Pyth spot no
+/// The old deep-ITM/deep-OTM aborts (`EInvalidStrikeRatio`) are gone, and so is the
+/// ratio short-circuit that replaced them: log-moneyness is now a difference of
+/// logarithms, so both tails are COMPUTED and their limits are reached through
+/// `d2`'s normal-CDF clamp rather than asserted by a branch. They stay pinned here
+/// as exact-value tests (deep-ITM up tail -> 1.0, deep-OTM up tail -> 0) on an
+/// ordinary surface, alongside the high-variance case where the deep-ITM tail is 0
+/// instead — the pair that shows the tail follows the surface. A stale Pyth spot no
 /// longer aborts either — it falls back to the stored Block Scholes forward; that
 /// fallback is pinned with exact values in
 /// `pricing_tests::live_forward_switches_source_exactly_at_pyth_staleness_boundary`,
@@ -63,27 +67,29 @@ const MAX_REPRESENTABLE_U64: u128 = 18_446_744_073_709_551_615;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
-/// A strike so far below the forward that `strike * 1e9 / forward` truncates to 0,
-/// hitting the deep-ITM saturation branch (the neg_inf limit). With the default
-/// forward (100e9) the threshold is `forward / 1e9 == 100`, so strike 1 saturates.
+/// A strike far below the forward. On an ordinary low-variance surface the digital
+/// reaches its neg_inf limit here through `d2`'s normal-CDF clamp; on a
+/// high-variance surface it does not, which is what
+/// `deep_itm_up_price_follows_the_surface_not_the_strike_ratio` pins. Both tests
+/// use the default forward (100e9), where `k = ln(1e-9) - ln(100) = -25.33`.
 const DEEP_ITM_STRIKE: u64 = 1;
 
-/// A finite (non-`pos_inf`) strike so far above a tiny forward that
-/// `strike * 1e9 / forward` exceeds `u64::MAX`, hitting the deep-OTM saturation
-/// branch (the pos_inf limit). With forward 1 this needs `strike > ~1.8446e10`.
+/// A finite (non-`pos_inf`) strike far above a tiny forward. The up tail is 0 for
+/// every admissible surface here: `d2 <= -sqrt(2k)` bounds the true digital below
+/// 1e-11 at this moneyness regardless of variance, unlike the ITM side.
 const DEEP_OTM_STRIKE: u64 = 1_000_000_000_000_000_000;
+
+/// Surface whose total variance at `DEEP_ITM_STRIKE` is 481.2, far enough that the
+/// deep-ITM digital is 4.9e-23 rather than 1. Well inside the pricing-safe envelope.
+const HIGH_VARIANCE_SVI_B: u64 = 10_000_000_000;
+const HIGH_VARIANCE_SIGMA: u64 = 100_000_000;
+const HIGH_VARIANCE_RHO_MAGNITUDE: u64 = 900_000_000;
 // Independent copies of `pricing.move`'s private pricing-safe envelope (the macros
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
 const PRICE_MEMO_MISSING_TICK: u64 = 100;
 const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
-/// SVI corner that made the deep-ITM digital limit wrong under the old caps:
-/// `b = 10`, `sigma = 0.1`, `rho = -0.9`. See
-/// `surface_whose_variance_breaks_the_digital_limits_is_rejected_at_load`.
-const SATURATION_BREAKING_SVI_B: u64 = 10_000_000_000;
-const SATURATION_BREAKING_SIGMA: u64 = 100_000_000;
-const SATURATION_BREAKING_RHO_MAGNITUDE: u64 = 900_000_000;
 const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
 const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
 const NEGATIVE_A_AT_FORWARD_REFERENCE: u64 = 487_386_440;
@@ -155,7 +161,7 @@ fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
         test_constants::default_live_price(),
         1,
         false,
-        test_constants::pricing_max_svi_b(),
+        test_constants::pricing_max_svi_input(),
         test_constants::pricing_min_svi_sigma(),
         test_constants::float(),
         true,
@@ -647,6 +653,47 @@ fun deep_itm_up_price_saturates_to_one() {
     fx.finish();
 }
 
+/// The same deep-ITM strike as the test above, repriced on a high-variance surface:
+/// the digital limit is a property of the SURFACE, not of the strike alone, and this
+/// is the case that separates them.
+///
+/// `b = 10`, `sigma = 0.1`, `rho = -0.9`, `m = 0` at `k = ln(1e-9) - ln(100) =
+/// -25.3285` gives total variance `w = 481.2`, hence
+/// `d2 = -(k + w/2)/sqrt(w) = -9.81` and a true digital of `4.9e-23` — zero at the
+/// 1e9 scale the price is returned in. Reference computed from Python stdlib `erf`,
+/// independent of the contract.
+///
+/// This inverts under the previous implementation, which formed `strike * 1e9 /
+/// forward` first: that quotient floors to zero here, and the deep-ITM branch
+/// returned the exact digital limit `1e9` — certainty, against a true probability
+/// of ~0 — for every admissible surface, because the branch never read the surface
+/// at all. Every consumer of `range_price` inherited it: the mint's entry
+/// probability, the liquidation threshold, and the NAV mark.
+#[test]
+fun deep_itm_up_price_follows_the_surface_not_the_strike_ratio() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        test_constants::default_svi_a(),
+        false,
+        HIGH_VARIANCE_SVI_B,
+        HIGH_VARIANCE_SIGMA,
+        HIGH_VARIANCE_RHO_MAGNITUDE,
+        true,
+        0,
+        false,
+    );
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    assert_eq!(pricer.up_price(strike(DEEP_ITM_STRIKE)), 0);
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 /// Deep-OTM up tail: a strike far above the forward overflows the strike ratio past
 /// `u64::MAX`, so `up_price` returns 0 (the pos_inf limit) instead of aborting.
 #[test]
@@ -805,34 +852,8 @@ fun negative_svi_a_with_nonpositive_min_variance_aborts_at_load() {
 fun surface_with_svi_b_above_max_aborts() {
     load_pricer_with_invalid_svi(
         default_svi_a(),
-        test_constants::pricing_max_svi_b() + 1,
+        test_constants::pricing_max_svi_input() + 1,
         default_svi_sigma(),
-    );
-    abort EUnexpectedSuccess
-}
-
-/// The surface class the `b` cap exists to exclude, pinned by its own numbers so
-/// the cap cannot be loosened back without this failing.
-///
-/// `b = 10` with `sigma = 0.1`, `rho = -0.9`, `m = 0` puts total variance at
-/// `w ~ 394` at the deepest non-saturating log-moneyness (`k = ln(1e-9) =
-/// -20.72`, the boundary at which `strike * 1e9 / forward` truncates to zero).
-/// There `d2 = -(k + w/2)/sqrt(w) = -9.87`, so the true digital is ~2.6e-23 —
-/// while `compute_nd2`'s deep-ITM branch returns the exact limit 1.0. That is a
-/// 100% absolute error on a value the liquidation threshold and the NAV mark both
-/// consume. Reference values are true-math (Python stdlib `erf`), independent of
-/// the contract. The surface is otherwise production-shaped and was admitted
-/// before this cap existed.
-#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
-fun surface_whose_variance_breaks_the_digital_limits_is_rejected_at_load() {
-    load_pricer_with_full_svi(
-        default_svi_a(),
-        SATURATION_BREAKING_SVI_B,
-        SATURATION_BREAKING_SIGMA,
-        SATURATION_BREAKING_RHO_MAGNITUDE,
-        true,
-        0,
-        false,
     );
     abort EUnexpectedSuccess
 }
@@ -860,7 +881,7 @@ fun surface_with_svi_m_above_max_aborts() {
         default_svi_sigma(),
         test_constants::float(),
         false,
-        test_constants::pricing_max_svi_m() + 1,
+        test_constants::pricing_max_svi_input() + 1,
         false,
     );
     abort EUnexpectedSuccess
