@@ -6,11 +6,17 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
     MANIFEST_RELATIVE,
+    SESSIONS_STATE_RELATIVE,
     STATE_RELATIVE,
     assertIntegrationManifest,
     buildIntegrationManifest,
+    buildSessionsIntegrationManifest,
     createDeploymentState,
+    createSessionsDeploymentState,
+    parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
+    recordSessionsTransactionFailure,
+    recordSessionsTransactionCheckpoint,
     type DeploymentResult,
     type IntegrationManifest,
 } from "./deploy.ts";
@@ -267,6 +273,105 @@ test("operator state and integration manifest are separate artifacts", () => {
     assert.equal(MANIFEST_RELATIVE.endsWith(".state.json"), false);
     const gitignore = readFileSync(new URL("../../../.gitignore", import.meta.url), "utf8");
     assert.match(gitignore, new RegExp(`^${STATE_RELATIVE}$`, "m"));
+    assert.match(SESSIONS_STATE_RELATIVE, /\.state\.json$/);
+    assert.notEqual(SESSIONS_STATE_RELATIVE, STATE_RELATIVE);
+    assert.notEqual(SESSIONS_STATE_RELATIVE, MANIFEST_RELATIVE);
+    assert.match(gitignore, new RegExp(`^${SESSIONS_STATE_RELATIVE}$`, "m"));
+    assert.match(gitignore, new RegExp(`^${SESSIONS_STATE_RELATIVE}\.tmp$`, "m"));
+});
+
+test("Sessions mode arguments are explicit and smoke always broadcasts", () => {
+    assert.deepEqual(parseDeploymentArgs([]), { execute: false, sessions: false, smoke: false });
+    assert.deepEqual(parseDeploymentArgs(["--execute"]), {
+        execute: true,
+        sessions: false,
+        smoke: false,
+    });
+    assert.deepEqual(parseDeploymentArgs(["--sessions"]), {
+        execute: false,
+        sessions: true,
+        smoke: false,
+    });
+    assert.deepEqual(parseDeploymentArgs(["--sessions", "--smoke", "--execute"]), {
+        execute: true,
+        sessions: true,
+        smoke: true,
+    });
+    assert.throws(() => parseDeploymentArgs(["--smoke"]), /requires --sessions/);
+    assert.throws(() => parseDeploymentArgs(["--sessions", "--smoke"]), /requires --execute/);
+    assert.throws(() => parseDeploymentArgs(["--wat"]), /unknown deployment arguments/);
+});
+
+test("smoke checkpoints a mint before recording its later full redemption", () => {
+    const state = createSessionsDeploymentState();
+    const marketId = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const deployer = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
+    const eventPackage = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    state.smoke.marketId = marketId;
+    state.smoke.quantity = "4000000";
+    recordSessionsTransactionCheckpoint(state, "smoke_sessions_mint", {
+        digest: "smoke-mint-digest",
+        events: [
+            {
+                type: `${eventPackage}::order_events::OrderMinted`,
+                parsedJson: {
+                    expiry_market_id: marketId,
+                    owner: deployer,
+                    order_id: "123456",
+                    quantity: "4000000",
+                    minted_at_ms: "123000",
+                },
+            },
+        ],
+    });
+    assert.equal(state.smoke.status, "not_started");
+    assert.equal(state.smoke.orderId, "123456");
+    assert.equal(state.smoke.mintedAtMs, "123000");
+    assert.equal(state.smoke.mintTx, "smoke-mint-digest");
+    assert.equal(state.smoke.redeemTx, null);
+
+    recordSessionsTransactionCheckpoint(state, "smoke_sessions_redeem", {
+        digest: "smoke-redeem-digest",
+        events: [
+            {
+                type: `${eventPackage}::order_events::LiveOrderRedeemed`,
+                parsedJson: {
+                    expiry_market_id: marketId,
+                    owner: deployer,
+                    order_id: "123456",
+                    quantity_closed: "4000000",
+                    remaining_quantity: "0",
+                },
+            },
+        ],
+    });
+    assert.equal(state.smoke.status, "complete");
+    assert.equal(state.smoke.redeemTx, "smoke-redeem-digest");
+    assert.equal(state.smoke.transactions.smoke_sessions_mint, "smoke-mint-digest");
+    assert.equal(state.transactions.smoke_sessions_redeem, "smoke-redeem-digest");
+});
+
+test("a known failed smoke digest clears in-flight state for cleanup", () => {
+    const state = createSessionsDeploymentState();
+    state.inFlight = {
+        kind: "transaction",
+        label: "smoke_sessions_redeem",
+        startedAt: "2026-08-06T12:00:00.000Z",
+        digest: "failed-smoke-digest",
+    };
+    recordSessionsTransactionFailure(
+        state,
+        "smoke_sessions_redeem",
+        "failed-smoke-digest",
+        "MoveAbort at redeem_live",
+    );
+    assert.equal(state.inFlight, null);
+    assert.equal(state.smoke.status, "failed");
+    assert.equal(state.smoke.lastError, "MoveAbort at redeem_live");
+    const failure = state.failedTransactions.smoke_sessions_redeem;
+    assert.equal(failure.digest, "failed-smoke-digest");
+    assert.equal(failure.error, "MoveAbort at redeem_live");
+    assert.match(failure.recordedAt, /^2026-/);
 });
 
 test("a fresh deployment targets the official Block Scholes package pair", () => {
@@ -399,4 +504,95 @@ test("configuration provenance requires exact shared-object anchors", () => {
     delete invalid.initialConfiguration.verifiedAfterCheckpoint;
     delete invalid.initialConfiguration.stateAnchors;
     assert.throws(() => assertIntegrationManifest(invalid), /initialConfiguration keys/);
+});
+
+const SESSIONS_PACKAGE = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SESSIONS_CAP = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+function completeSessionsState() {
+    const state = createSessionsDeploymentState();
+    state.status = "complete";
+    state.sourceCommit = "bd4535c900000000000000000000000000000000";
+    state.startedAt = "2026-08-06T12:00:00.000Z";
+    state.completedAt = "2026-08-06T12:05:00.000Z";
+    state.sessions = {
+        packageId: SESSIONS_PACKAGE,
+        publishTx: "publish-digest",
+        upgradeCapId: SESSIONS_CAP,
+    };
+    state.authorization = {
+        authorized: true,
+        authorizeTx: "authorize-digest",
+        verifiedAt: state.completedAt,
+    };
+    state.verification = {
+        verifiedAt: state.completedAt,
+        package: evidence(SESSIONS_PACKAGE),
+        upgradeCap: evidence(SESSIONS_CAP),
+        accountRegistry: evidence(FIXTURE.sharedObjects.accountRegistry),
+        accountAdminCap: evidence(
+            "0xb60110c92b80b64433b627bc141e68f5bbe1a404b06bcadd02b4073e98a3a6ae",
+        ),
+        appAuthorized: true,
+    };
+    return state;
+}
+
+test("schema-3 to schema-4 extension changes only the source, schema, and Sessions package", () => {
+    assertIntegrationManifest(manifest);
+    const before = JSON.parse(JSON.stringify(manifest)) as Record<string, unknown>;
+    const extended = buildSessionsIntegrationManifest(manifest, completeSessionsState());
+    assert.equal(extended.schemaVersion, 4);
+    assert.equal(extended.sourceCommit, "bd4535c900000000000000000000000000000000");
+    assert.equal(extended.packages.sessions, SESSIONS_PACKAGE);
+    assert.deepEqual(manifest, before, "the committed schema-3 input is not mutated");
+    const expected = JSON.parse(JSON.stringify(manifest)) as IntegrationManifest;
+    expected.schemaVersion = 4;
+    expected.sourceCommit = "bd4535c900000000000000000000000000000000";
+    expected.packages.sessions = SESSIONS_PACKAGE;
+    assert.deepEqual(extended, expected);
+    assert.deepEqual(extended.indexing, (manifest as IntegrationManifest).indexing);
+    assert.deepEqual(
+        extended.initialConfiguration,
+        (manifest as IntegrationManifest).initialConfiguration,
+    );
+});
+
+test("partial Sessions state cannot extend or write the public manifest", () => {
+    assert.throws(
+        () => buildSessionsIntegrationManifest(manifest, createSessionsDeploymentState()),
+        /complete, verified Sessions deployment state/,
+    );
+    const partial = completeSessionsState();
+    partial.inFlight = {
+        kind: "transaction",
+        label: "authorize_sessions_app",
+        startedAt: partial.completedAt!,
+        digest: "known-digest",
+    };
+    assert.throws(
+        () => buildSessionsIntegrationManifest(manifest, partial),
+        /complete, verified Sessions deployment state/,
+    );
+});
+
+test("schema-4 manifest excludes Sessions operator and secret-bearing fields", () => {
+    const extended = buildSessionsIntegrationManifest(manifest, completeSessionsState());
+    for (const key of [
+        "deployer",
+        "publishTx",
+        "upgradeCapId",
+        "authorization",
+        "transactions",
+        "verification",
+        "smoke",
+        "privateKey",
+        "secretKey",
+    ]) {
+        assert.equal(key in extended, false);
+    }
+    assert.throws(
+        () => assertIntegrationManifest({ ...extended, transactions: {} }),
+        /integration manifest keys/,
+    );
 });

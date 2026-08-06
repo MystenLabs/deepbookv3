@@ -66,6 +66,9 @@ const PYTH_EXPONENT_NEG_9: u16 = 9;
 /// from `test_constants` so existing call sites keep one source of truth.
 public fun strike_tick(): u64 { test_constants::default_strike_tick() }
 
+/// Positive-infinity tick sentinel for fixtures owned by dependent packages.
+public fun pos_inf_tick(): u64 { constants::pos_inf_tick!() }
+
 /// Assert a quoted at-the-money entry probability against the independently
 /// generated true digital, within its documented budget.
 ///
@@ -116,6 +119,7 @@ public struct Fixture {
     propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
+    config_id: ID,
     vault_id: ID,
     pyth_id: ID,
     bs_values_id: ID,
@@ -177,6 +181,7 @@ public fun setup_market(tick: u64): Fixture {
     return_shared(account_registry);
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
+    let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
@@ -240,6 +245,7 @@ public fun setup_market(tick: u64): Fixture {
         propbook_admin_cap,
         lifecycle_cap,
         clock,
+        config_id,
         vault_id,
         pyth_id,
         bs_values_id,
@@ -527,6 +533,15 @@ public fun set_default_cadence_allocation(
     );
     return_shared(config);
     return_shared(registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Authorize an Account app in fixtures owned by another package.
+public fun authorize_account_app<App>(self: &mut Fixture) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
+    account_registry.authorize_app<App>(&self.account_admin_cap);
+    return_shared(account_registry);
     self.scenario.next_tx(test_constants::admin());
 }
 
@@ -2404,6 +2419,8 @@ public fun insert_exact_settlement_spot_bundle(
     self.insert_exact_settlement_spot(&mut market.pyth, market.market.expiry(), spot);
 }
 
+public fun config_id(self: &Fixture): ID { self.config_id }
+
 public fun vault_id(self: &Fixture): ID { self.vault_id }
 
 public fun pyth_id(self: &Fixture): ID { self.pyth_id }
@@ -2441,6 +2458,7 @@ public fun finish(self: Fixture) {
         propbook_admin_cap,
         lifecycle_cap,
         clock,
+        config_id: _,
         vault_id: _,
         pyth_id: _,
         bs_values_id: _,
