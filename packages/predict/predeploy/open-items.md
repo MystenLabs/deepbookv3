@@ -9,8 +9,8 @@ Updated 2026-08-05. This is the live work register governed by the [predeploy li
 **Severity:** Deploy gate.
 
 Neither `packages/predict/Move.toml` nor `packages/propbook/Move.toml` could
-link a mainnet publish: of the external dependency identities a mainnet publish
-needs, two do not exist anywhere. `[dep-replacements.mainnet]` now carries the
+link a mainnet publish: several of the external dependency identities a mainnet
+publish needs do not exist. `[dep-replacements.mainnet]` now carries the
 resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06 —
 and `packages/token/Published.toml` already records a mainnet entry. The rest
 is open, and none of it is a manifest fix:
@@ -23,15 +23,20 @@ is open, and none of it is a manifest fix:
   testnet-only and records that its `UpgradeCap` is not held here, so it cannot be
   republished to make a mainnet graph resolve. Which asset is the mainnet
   quote/collateral is an open decision upstream of this gate.
-- **The `pyth_lazer` source pin lags the deployed mainnet package.** The pinned
-  revision predates mainnet version 2, which adds a `channel_v2` module the pin
-  does not carry. Linking is upgrade-compatible, but the pin must be advanced
-  and the bytecode reproduced before a mainnet publish is verified — and the
-  same revision serves testnet, which is live, so advancing it is its own
-  change with its own testnet re-verification.
 
-**Action:** Do not attempt a mainnet publish while any identity above is
-missing, and never resolve one with `--with-unpublished-dependencies`: that
+**Recorded, not blocking: mainnet `pyth_lazer` links version 1 on purpose.**
+The lineage has been upgraded — version 2 adds `channel_v2` and `update_v2`,
+purely additively — so `published-at` had a choice to make. It links version 1,
+because that is the version the pinned source revision describes exactly (its
+module set matches, and matches the testnet package already linked) and it is
+also the single package id Pyth documents for Sui mainnet. Linking the version
+2 head would point the linkage table at bytecode this repo's pinned source does
+not describe, for modules Predict does not use. Advancing to version 2 would
+mean advancing the source pin — which also serves live testnet — and is only
+worth doing if Predict ever needs the `_v2` surface.
+
+**Action:** Do not attempt a mainnet publish while either bullet above is open,
+and never resolve one with `--with-unpublished-dependencies`: that
 republishes packages this repo does not own and changes their type identity.
 Close this gate by recording each identity as it lands, then re-resolving both
 manifests against a mainnet environment.
