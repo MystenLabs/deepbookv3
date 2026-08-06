@@ -10,7 +10,7 @@ The Account registry administrator must authorize `SessionsApp` before any wrapp
 
 An Account owner opts in by calling `authorize_session` on the Account's shared `AccountWrapper`. Owner authorization is derived from the transaction sender, so this flow supports EOA-owned Accounts and does not authorize object-owned Accounts.
 
-A session grant contains only the session address and its expiration timestamp in milliseconds. Each Account may store at most 10 session addresses. The requested duration must be greater than zero and no more than 30 days. Expiration is calculated from the on-chain `Clock` at execution time, and reauthorizing the same address replaces its stored expiration without consuming another slot.
+A session grant contains only the session address and its expiration timestamp in milliseconds. Each Account may store at most 20 session addresses. The requested duration must be greater than zero and no more than 30 days. Expiration is calculated from the on-chain `Clock` at execution time, and reauthorizing the same address replaces its stored expiration without consuming another slot.
 
 Every Predict wrapper requires both of these conditions:
 
@@ -46,7 +46,7 @@ public fun revoke_session(
 
 The shared `AccountWrapper` can be supplied as an object input in a programmable transaction block and borrowed immutably for `session_expiration_ms`. SDKs may also use the function through dev-inspect reads.
 
-Revoking a known session removes it from the session map immediately, whether it is active or already expired, and frees its slot for another address. When the final grant is revoked, the package detaches its app-data slot from the Account. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; they continue to count toward the 10-session limit until the owner revokes them, while reauthorization replaces the expiration in place.
+Revoking a known session removes it from the session map immediately, whether it is active or already expired, and frees its slot for another address. Once the Sessions app-data slot has been attached to an Account, it remains attached even when the session map becomes empty. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; they continue to count toward the 20-session limit until the owner revokes them, while reauthorization replaces the expiration in place.
 
 ## Predict wrappers
 

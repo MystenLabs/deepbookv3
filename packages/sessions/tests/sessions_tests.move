@@ -50,6 +50,16 @@ const SESSION_EIGHT: address = @0x58;
 const SESSION_NINE: address = @0x59;
 const SESSION_TEN: address = @0x510;
 const SESSION_ELEVEN: address = @0x511;
+const SESSION_TWELVE: address = @0x512;
+const SESSION_THIRTEEN: address = @0x513;
+const SESSION_FOURTEEN: address = @0x514;
+const SESSION_FIFTEEN: address = @0x515;
+const SESSION_SIXTEEN: address = @0x516;
+const SESSION_SEVENTEEN: address = @0x517;
+const SESSION_EIGHTEEN: address = @0x518;
+const SESSION_NINETEEN: address = @0x519;
+const SESSION_TWENTY: address = @0x520;
+const SESSION_TWENTY_ONE: address = @0x521;
 
 const NOW_MS: u64 = 1_000;
 const SESSION_DURATION_MS: u64 = 60_000;
@@ -61,10 +71,10 @@ const MAX_SESSION_DURATION_MS: u64 = 2_592_000_000; // 30 days.
 const MAX_SESSION_EXPIRES_AT_MS: u64 = 2_592_001_000; // 1_000 + 30 days.
 const ABOVE_MAX_SESSION_DURATION_MS: u64 = 2_592_000_001;
 const ZERO_DURATION_MS: u64 = 0;
-const MAX_SESSIONS: u64 = 10;
+const MAX_SESSIONS: u64 = 20;
 const FIRST_SESSION_INDEX: u64 = 0;
-const LAST_SESSION_INDEX: u64 = 9;
-const EXCESS_SESSION_INDEX: u64 = 10;
+const LAST_SESSION_INDEX: u64 = 19;
+const EXCESS_SESSION_INDEX: u64 = 20;
 const POST_REVOKE_EXPIRES_AT_MS: u64 = 62_000; // 2_000 + 60_000.
 const ONE_EVENT: u64 = 1;
 const EUnexpectedSuccess: u64 = 999;
@@ -176,7 +186,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
-    assert!(!wrapper.load_account().has_data<SessionsApp>());
+    assert!(wrapper.load_account().has_data<SessionsApp>());
     let revoked = event::events_by_type<SessionRevoked>();
     assert_eq!(revoked.length(), ONE_EVENT);
     let (event_account_id, event_session, event_expiration) = sessions::session_revoked_fields(
@@ -290,7 +300,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
 }
 
 #[test, expected_failure(abort_code = sessions::ESessionLimitExceeded)]
-fun eleventh_distinct_session_aborts() {
+fun twenty_first_distinct_session_aborts() {
     let (mut scenario, clock, wrapper_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -835,6 +845,16 @@ fun session_addresses(): vector<address> {
         SESSION_NINE,
         SESSION_TEN,
         SESSION_ELEVEN,
+        SESSION_TWELVE,
+        SESSION_THIRTEEN,
+        SESSION_FOURTEEN,
+        SESSION_FIFTEEN,
+        SESSION_SIXTEEN,
+        SESSION_SEVENTEEN,
+        SESSION_EIGHTEEN,
+        SESSION_NINETEEN,
+        SESSION_TWENTY,
+        SESSION_TWENTY_ONE,
     ]
 }
 

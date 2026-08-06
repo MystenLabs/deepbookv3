@@ -25,7 +25,7 @@ const ESessionLimitExceeded: u64 = 2;
 
 macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
 
-macro fun max_sessions(): u64 { 10 }
+macro fun max_sessions(): u64 { 20 }
 
 // === Structs ===
 
@@ -62,7 +62,7 @@ public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Op
 }
 
 /// Authorize `session` from execution time for at most 30 days.
-/// Accounts may store at most 10 addresses; reauthorization replaces in place.
+/// Accounts may store at most 20 addresses; reauthorization replaces in place.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     session: address,
@@ -92,19 +92,10 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     if (!account.has_data<SessionsApp>()) return;
     let account_id = account.account_id();
-    let remove_data = {
-        let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
-        if (!data.sessions.contains(&session)) return;
-        let (_, expires_at_ms) = data.sessions.remove(&session);
-        event::emit(SessionRevoked { account_id, session, expires_at_ms });
-        data.sessions.is_empty()
-    };
-    if (remove_data) {
-        let SessionsData { sessions } = account.detach<SessionsApp, SessionsData>(
-            permit<SessionsApp>(),
-        );
-        sessions.destroy_empty();
-    };
+    let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
+    if (!data.sessions.contains(&session)) return;
+    let (_, expires_at_ms) = data.sessions.remove(&session);
+    event::emit(SessionRevoked { account_id, session, expires_at_ms });
 }
 
 /// Mint an exact Predict position quantity for an Account with an active session.
