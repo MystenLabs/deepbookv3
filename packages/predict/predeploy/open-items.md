@@ -4,6 +4,45 @@ Updated 2026-08-05. This is the live work register governed by the [predeploy li
 
 ## Deploy Gates
 
+### S-7: Predict cannot resolve a mainnet publication graph
+
+**Severity:** Deploy gate.
+
+Neither `packages/predict/Move.toml` nor `packages/propbook/Move.toml` could
+link a mainnet publish: of the external dependency identities a mainnet publish
+needs, two do not exist anywhere. `[dep-replacements.mainnet]` now carries the
+resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06 —
+and `packages/token/Published.toml` already records a mainnet entry. The rest
+is open, and none of it is a manifest fix:
+
+- **`bs_oracle` and `bs_sid` are unpublished on mainnet.** The pinned upstream
+  revision's publication metadata records testnet only. Closed by the provider
+  publishing to mainnet and handing over the package identity, the same
+  handover the signer-custody confirmation waits on.
+- **`dusdc` is unpublished on mainnet.** `packages/dusdc/Published.toml` is
+  testnet-only and records that its `UpgradeCap` is not held here, so it cannot be
+  republished to make a mainnet graph resolve. Which asset is the mainnet
+  quote/collateral is an open decision upstream of this gate.
+- **The `pyth_lazer` source pin lags the deployed mainnet package.** The pinned
+  revision predates mainnet version 2, which adds a `channel_v2` module the pin
+  does not carry. Linking is upgrade-compatible, but the pin must be advanced
+  and the bytecode reproduced before a mainnet publish is verified — and the
+  same revision serves testnet, which is live, so advancing it is its own
+  change with its own testnet re-verification.
+
+**Action:** Do not attempt a mainnet publish while any identity above is
+missing, and never resolve one with `--with-unpublished-dependencies`: that
+republishes packages this repo does not own and changes their type identity.
+Close this gate by recording each identity as it lands, then re-resolving both
+manifests against a mainnet environment.
+
+**Adjacent testnet observation, not part of this gate.** The linked testnet
+`pyth_lazer` and the deployment Pyth currently documents are both version 1 of
+*separate* lineages — Pyth republished rather than upgraded — so the linked
+package is superseded though still live. Whether the relayer and the live
+testnet deployment should move to the current lineage is an open question for
+whoever owns the next testnet republish.
+
 ## Contract Findings
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
