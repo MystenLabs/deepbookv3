@@ -8,7 +8,7 @@ module deepbook_sessions::sessions;
 
 use account::{account::{Self, AccountWrapper, Auth}, account_registry::AccountRegistry};
 use deepbook_predict::{
-    expiry_market::{Self as expiry_market, ExpiryMarket},
+    expiry_market::ExpiryMarket,
     pricing::Pricer,
     protocol_config::ProtocolConfig
 };
@@ -99,8 +99,7 @@ public fun mint_exact_quantity(
     ctx: &mut TxContext,
 ): u256 {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
-    expiry_market::mint_exact_quantity(
-        market,
+    market.mint_exact_quantity(
         wrapper,
         auth,
         config,
@@ -135,8 +134,7 @@ public fun mint_exact_amount(
     ctx: &mut TxContext,
 ): u256 {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
-    expiry_market::mint_exact_amount(
-        market,
+    market.mint_exact_amount(
         wrapper,
         auth,
         config,
@@ -169,8 +167,7 @@ public fun redeem_live(
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
-    expiry_market::redeem_live(
-        market,
+    market.redeem_live(
         wrapper,
         auth,
         config,
@@ -198,8 +195,7 @@ public fun redeem_settled(
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
-    expiry_market::redeem_settled(
-        market,
+    market.redeem_settled(
         wrapper,
         auth,
         config,
