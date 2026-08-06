@@ -289,8 +289,10 @@ public fun balance<T>(self: &LiquidationVault): u64 {
 /// Pyth is replacing Core with a separately published package, so its `PriceInfoObject`
 /// is a distinct Move type and `liquidate_base`'s frozen signature can never accept it.
 /// Once Pyth stops publishing legacy Core the legacy entry aborts on staleness by
-/// itself, and this becomes the only way the vault can liquidate. Everything but the
-/// two oracle reads is shared with the legacy entry.
+/// itself, and this becomes the only way the vault can liquidate. The gate
+/// (`should_liquidate`) and the settlement (`settle_base_liquidation`) are shared with
+/// the legacy entry; the body between them is duplicated, because the two
+/// `PriceInfoObject` types cannot be unified.
 public fun liquidate_base_upgraded<BaseAsset, QuoteAsset>(
     self: &mut LiquidationVault,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -502,10 +504,12 @@ fun id(self: &LiquidationVault): ID {
 /// liquidation engine accounts from, and its fields are module-private, so without
 /// this a flipped `base_liquidation` discriminator or a transposed `base_in`/`quote_in`
 /// is unobservable from a test.
+#[test_only]
 public fun liquidation_event_margin_pool_id(e: &LiquidationByVault): ID {
     e.margin_pool_id
 }
 
+#[test_only]
 public fun liquidation_event_fields(e: &LiquidationByVault): (u64, u64, u64, u64, u64, bool) {
     (e.base_in, e.quote_in, e.base_out, e.quote_out, e.repay_balance_remaining, e.base_liquidation)
 }
