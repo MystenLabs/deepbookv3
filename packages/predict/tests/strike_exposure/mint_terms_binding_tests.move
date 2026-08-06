@@ -14,7 +14,8 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use sui::object::{Self, UID};
+use std::unit_test::assert_eq;
+use sui::{object::{Self, UID}, test_scenario::return_shared};
 
 public struct ExposureHarness has key {
     id: UID,
@@ -57,6 +58,55 @@ fun allocating_terms_priced_on_another_exposure_aborts() {
     harness_b.exposure.allocate_mint_order(terms);
 
     abort 999
+}
+
+#[test]
+fun mint_and_live_close_use_the_same_loading_for_one_pricer() {
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        test_constants::short_expiry_ms(),
+    );
+    let expiry_id = fx.expiry_id();
+    let expiry_ms = fx.expiry();
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let harness_id = create_and_share_exposure_harness(&mut fx, expiry_id, expiry_ms);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    let mint_terms = harness
+        .exposure
+        .quote_mint_terms(
+            &pricer,
+            test_constants::default_strike_tick(),
+            constants::pos_inf_tick!(),
+            0,
+            test_constants::mint_quantity(),
+            true,
+            test_constants::leverage_one_x(),
+            fx.clock(),
+        );
+    let mint_loading = mint_terms.mint_confidence_fee_loading();
+    let order = harness.exposure.allocate_mint_order(mint_terms);
+    let close_terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
+    assert_eq!(
+        harness
+            .exposure
+            .order_confidence_fee_loading(
+                &pricer,
+                &order,
+                close_terms.range_probability(),
+            ),
+        mint_loading,
+    );
+
+    return_shared(harness);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 fun create_and_share_exposure_harness(

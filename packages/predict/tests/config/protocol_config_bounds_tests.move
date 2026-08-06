@@ -3,7 +3,7 @@
 
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
-/// strike-exposure templates (base fee, min fee, entry-probability bounds,
+/// strike-exposure templates (base fee, min fee, confidence-fee slope/cap, entry-probability bounds,
 /// expiry-fee ramp, liquidation LTV, max admission leverage, backing buffer lambda), the
 /// expiry-cash trading-loss rebate template. Every abort test drives the real
 /// admin setter on a shared
@@ -62,6 +62,32 @@ fun template_min_fee_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!() + 1);
+    abort 999
+}
+
+// === Strike-exposure templates: confidence-fee loading ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeSlope)]
+fun template_fee_slope_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_fee_slope(&admin_cap, config_constants::max_fee_slope!() + 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeCap)]
+fun template_fee_cap_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_fee_cap(&admin_cap, config_constants::min_fee_cap!() - 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeCap)]
+fun template_fee_cap_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_fee_cap(&admin_cap, config_constants::max_fee_cap!() + 1);
     abort 999
 }
 
@@ -240,6 +266,8 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     // drop to its floor first.
     config.set_template_base_fee(&admin_cap, config_constants::min_base_fee!());
     config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
+    config.set_template_fee_slope(&admin_cap, config_constants::min_fee_slope!());
+    config.set_template_fee_cap(&admin_cap, config_constants::min_fee_cap!());
     config.set_template_min_entry_probability(
         &admin_cap,
         config_constants::min_min_entry_probability!(),
@@ -269,6 +297,8 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::min_base_fee!());
     assert_eq!(snapshot.min_fee(), config_constants::min_min_fee!());
+    assert_eq!(snapshot.fee_slope(), config_constants::min_fee_slope!());
+    assert_eq!(snapshot.fee_cap(), config_constants::min_fee_cap!());
     assert_eq!(snapshot.min_entry_probability(), config_constants::min_min_entry_probability!());
     assert_eq!(
         snapshot.max_entry_probability(),
@@ -297,7 +327,9 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::max_min_entry_probability!() - 1,
     );
     config.set_template_base_fee(&admin_cap, config_constants::max_base_fee!());
+    config.set_template_fee_cap(&admin_cap, config_constants::max_fee_cap!());
     config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!());
+    config.set_template_fee_slope(&admin_cap, config_constants::max_fee_slope!());
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
         config_constants::max_expiry_fee_window_ms!(),
@@ -319,6 +351,8 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::max_base_fee!());
     assert_eq!(snapshot.min_fee(), config_constants::max_min_fee!());
+    assert_eq!(snapshot.fee_slope(), config_constants::max_fee_slope!());
+    assert_eq!(snapshot.fee_cap(), config_constants::max_fee_cap!());
     assert_eq!(
         snapshot.min_entry_probability(),
         config_constants::max_min_entry_probability!() - 1,

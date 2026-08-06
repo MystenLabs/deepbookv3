@@ -30,6 +30,7 @@ use deepbook_predict::{
     admin::AdminCap,
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
     builder_code::BuilderCode,
+    config_constants,
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
@@ -182,6 +183,9 @@ public fun setup_market(tick: u64): Fixture {
     let mut config = scenario.take_shared<ProtocolConfig>();
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1);
+    // General flow fixtures isolate the minimum-fee path. Confidence-loading
+    // behavior is enabled explicitly by its dedicated pricing and flow tests.
+    config.set_template_fee_slope(&admin_cap, 0);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -264,6 +268,25 @@ public fun setup_market_default(): Fixture {
 /// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
+}
+
+/// A short-dated live market with the production confidence-fee slope enabled.
+/// General flow fixtures keep that slope at zero so unrelated fee assertions
+/// remain isolated.
+public fun setup_confidence_fee_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+): (Fixture, ID, Trader) {
+    let mut fx = setup_market_default();
+    fx.set_template_fee_slope(config_constants::default_fee_slope!());
+    let expiry_id = fx.create_expiry(expiry_ms);
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, live_price);
+    fx.seed_market_cash(&mut market.market, test_constants::default_seeded_expiry_cash());
+    return_market_bundle(market);
+    fx.scenario.next_tx(test_constants::admin());
+    (fx, expiry_id, trader)
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
@@ -489,6 +512,14 @@ public fun set_template_zero_min_fee(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_min_fee(&self.admin_cap, 0);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+public fun set_template_fee_slope(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_fee_slope(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }

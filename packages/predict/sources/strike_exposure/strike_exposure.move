@@ -74,6 +74,7 @@ public struct MintTerms has drop {
     quantity: u64,
     leverage: u64,
     entry_probability: u64,
+    confidence_fee_loading: u64,
     net_premium: u64,
     floor_shares: u64,
 }
@@ -134,6 +135,10 @@ public(package) fun quantity(terms: &MintTerms): u64 {
 
 public(package) fun leverage(terms: &MintTerms): u64 {
     terms.leverage
+}
+
+public(package) fun mint_confidence_fee_loading(terms: &MintTerms): u64 {
+    terms.confidence_fee_loading
 }
 
 public(package) fun is_liquidated(terms: &CloseTerms): bool {
@@ -240,6 +245,14 @@ public(package) fun backing_buffer_lambda(exposure: &StrikeExposure): u64 {
     exposure.config.backing_buffer_lambda()
 }
 
+public(package) fun fee_slope(exposure: &StrikeExposure): u64 {
+    exposure.config.fee_slope()
+}
+
+public(package) fun fee_cap(exposure: &StrikeExposure): u64 {
+    exposure.config.fee_cap()
+}
+
 public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {
     exposure.config.expiry_fee_window_ms()
 }
@@ -276,16 +289,9 @@ public(package) fun trading_fee(
     exposure: &StrikeExposure,
     probability: u64,
     quantity: u64,
-    clock: &Clock,
+    loading: u64,
 ): u64 {
-    exposure
-        .config
-        .trading_fee(
-            exposure.expiry_ms,
-            probability,
-            quantity,
-            clock.timestamp_ms(),
-        )
+    exposure.config.trading_fee(probability, quantity, loading)
 }
 
 /// Return whether a leveraged order remains in the liquidation index. One-x
@@ -310,6 +316,12 @@ public(package) fun quote_mint_terms(
     clock: &Clock,
 ): MintTerms {
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
+    let confidence_fee_loading = exposure.confidence_fee_loading(
+        pricer,
+        lower_tick,
+        higher_tick,
+        entry_probability,
+    );
     let time_to_expiry_ms = exposure.expiry_ms - clock.timestamp_ms();
 
     let quantity = if (exact_quantity) {
@@ -359,6 +371,7 @@ public(package) fun quote_mint_terms(
         quantity,
         leverage,
         entry_probability,
+        confidence_fee_loading,
         net_premium: admission.net_premium(),
         floor_shares: admission.floor_shares(),
     }
@@ -434,6 +447,23 @@ public(package) fun quote_close(
     exposure.close_terms(
         order,
         CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
+    )
+}
+
+/// Compute the confidence-fee loading for one already-priced order. Live redeem
+/// calls this only after close classification, keeping fee-only repricing out of
+/// gross-value reads and liquidation probes.
+public(package) fun order_confidence_fee_loading(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+    probability: u64,
+): u64 {
+    exposure.confidence_fee_loading(
+        pricer,
+        order.lower_tick(),
+        order.higher_tick(),
+        probability,
     )
 }
 
@@ -759,5 +789,20 @@ fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
     pricer.range_price(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
+    )
+}
+
+fun confidence_fee_loading(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    probability: u64,
+): u64 {
+    pricing::loading(
+        pricer,
+        range_codec::strike_from_tick(lower_tick, exposure.tick_size),
+        range_codec::strike_from_tick(higher_tick, exposure.tick_size),
+        probability,
     )
 }

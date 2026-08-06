@@ -164,8 +164,9 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 ## Fees
 
 - **Trading fee** — the variance-based per-trade fee,
-  `max(base_fee × sqrt(p(1−p)), min_fee)` times an expiry ramp multiplier; a
-  transaction cost, never part of the contract's terms. See
+  `max(base_fee × sqrt(p(1−p)), min_fee)` times a live confidence-loading
+  multiplier, capped by `fee_cap`; a transaction cost, never part of the
+  contract's terms. See
   [fees and rebates](./concepts/fees-and-rebates.md).
 - **Congestion surcharge** — a flat per-unit penalty added when the gas-price
   EWMA flags abnormal congestion. Code keeps DeepBook core's penalty

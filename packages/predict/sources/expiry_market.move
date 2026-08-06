@@ -154,12 +154,22 @@ public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
     market.strike_exposure.backing_buffer_lambda()
 }
 
-/// Return the snapshotted fee-ramp window for SDK and devInspect reads.
+/// Return the confidence-fee loading slope snapshotted for this expiry.
+public fun fee_slope(market: &ExpiryMarket): u64 {
+    market.strike_exposure.fee_slope()
+}
+
+/// Return the absolute confidence-fee cap snapshotted for this expiry.
+public fun fee_cap(market: &ExpiryMarket): u64 {
+    market.strike_exposure.fee_cap()
+}
+
+/// Return the deprecated inert fee-ramp window for SDK and devInspect reads.
 public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_window_ms()
 }
 
-/// Return the snapshotted fee-ramp multiplier for SDK and devInspect reads.
+/// Return the deprecated inert fee-ramp multiplier for SDK and devInspect reads.
 public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
 }
@@ -303,7 +313,7 @@ public fun quote_mint(
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(config, &terms, 0, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(config, &terms, 0, &builder_code_id, penalty_fee)
 }
 
 /// Quote the all-in cost of a mint request for one account, reading the
@@ -350,7 +360,6 @@ public fun quote_mint_for_account(
         predict_account::active_stake(account),
         &builder_code_id,
         penalty_fee,
-        clock,
     )
 }
 
@@ -951,7 +960,6 @@ fun mint_prepared(
         active_stake,
         &builder_code_id,
         penalty_amount,
-        clock,
     );
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
 
@@ -985,11 +993,16 @@ fun compute_mint_quote(
     active_stake: u64,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
-    clock: &Clock,
 ): MintQuote {
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
-    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let raw_fee_amount = market
+        .strike_exposure
+        .trading_fee(
+            entry_probability,
+            quantity,
+            terms.mint_confidence_fee_loading(),
+        );
     let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
@@ -1132,6 +1145,9 @@ fun redeem(
         // Close-side slippage floor: reject if the quoted per-contract probability
         // has slipped below the caller's bound. `0` disables.
         assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
+        let confidence_fee_loading = market
+            .strike_exposure
+            .order_confidence_fee_loading(pricer.borrow(), &order, range_probability);
         // Clamp before discount: the raw fee is capped at the redeem first, so
         // the stake discount always leaves a discounted staker a positive net
         // even when the raw fee exceeds the payout (discount-then-clamp could
@@ -1141,7 +1157,7 @@ fun redeem(
             .trading_fee(
                 range_probability,
                 close_quantity,
-                clock,
+                confidence_fee_loading,
             )
             .min(redeem_amount);
         let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);

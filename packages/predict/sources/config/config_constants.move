@@ -35,6 +35,8 @@ const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
 const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
+const EInvalidFeeSlope: u64 = 28;
+const EInvalidFeeCap: u64 = 29;
 
 // === Fees ===
 
@@ -258,10 +260,33 @@ public(package) macro fun default_min_fee(): u64 { 5_000_000 }
 
 public(package) macro fun min_min_fee(): u64 { 0 }
 
-public(package) macro fun max_min_fee(): u64 { fixed_math::math::float_scaling!() }
+public(package) macro fun max_min_fee(): u64 { 100_000_000 }
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
+}
+
+/// Confidence-fee loading slope. One unit of normalized sensitivity raises the
+/// base fee by this fraction; 0.35 is the calibrated MVP value.
+public(package) macro fun default_fee_slope(): u64 { 350_000_000 }
+
+public(package) macro fun min_fee_slope(): u64 { 0 }
+
+public(package) macro fun max_fee_slope(): u64 { fixed_math::math::float_scaling!() }
+
+public(package) fun assert_fee_slope(value: u64) {
+    assert!(value >= min_fee_slope!() && value <= max_fee_slope!(), EInvalidFeeSlope);
+}
+
+/// Absolute ceiling on the assembled confidence fee, in FLOAT_SCALING.
+public(package) macro fun default_fee_cap(): u64 { 30_000_000 }
+
+public(package) macro fun min_fee_cap(): u64 { 1 }
+
+public(package) macro fun max_fee_cap(): u64 { 100_000_000 }
+
+public(package) fun assert_fee_cap(value: u64) {
+    assert!(value >= min_fee_cap!() && value <= max_fee_cap!(), EInvalidFeeCap);
 }
 
 /// Window before expiry over which trade fees ramp up to the per-expiry max

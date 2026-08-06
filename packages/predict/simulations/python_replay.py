@@ -51,8 +51,8 @@ SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
         "trading_loss_rebate_rate": None,
         "max_expiry_allocation": None,
         "initial_expiry_cash": None,
-        "expiry_fee_window_ms": None,
-        "expiry_fee_max_multiplier": None,
+        "fee_slope": None,
+        "fee_cap": None,
         "max_admission_leverage": None,
         "liquidation_ltv": None,
         "backing_buffer_lambda": None,
@@ -110,9 +110,8 @@ PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 # world. The async flush pays withdrawals exactly pro-rata (plp::withdraw_dusdc).
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
-# Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
-EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
-EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
+FEE_SLOPE = 350_000_000
+FEE_CAP = 30_000_000
 
 # Dynamic mint-admission cap. Actual liquidation still uses LIQUIDATION_LTV.
 MAX_ADMISSION_LEVERAGE = 3_000_000_000  # 3x, default_max_admission_leverage
@@ -228,8 +227,8 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global TRADING_LOSS_REBATE_RATE
     global MAX_EXPIRY_ALLOCATION
     global INITIAL_EXPIRY_CASH
-    global EXPIRY_FEE_WINDOW_MS
-    global EXPIRY_FEE_MAX_MULTIPLIER
+    global FEE_SLOPE
+    global FEE_CAP
     global BACKING_BUFFER_LAMBDA
     global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
@@ -287,16 +286,8 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
         "protocol",
         "backing_buffer_lambda",
     )
-    EXPIRY_FEE_WINDOW_MS = _config_int(
-        config,
-        "protocol",
-        "expiry_fee_window_ms",
-    )
-    EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
-        config,
-        "protocol",
-        "expiry_fee_max_multiplier",
-    )
+    FEE_SLOPE = _config_int(config, "protocol", "fee_slope")
+    FEE_CAP = _config_int(config, "protocol", "fee_cap")
     MAX_ADMISSION_LEVERAGE = _config_int(
         config,
         "protocol",
@@ -853,6 +844,18 @@ def normal_pdf(value: I64) -> int:
     return deepbook_mul(exp_u128(r, n, True), INV_SQRT_2PI)
 
 
+def total_variance(a: I64, b: int, inner: int) -> int:
+    increment = b * inner // F
+    if a.is_negative:
+        if increment <= a.magnitude:
+            raise ValueError("SVI total variance must be positive")
+        return increment - a.magnitude
+    total = increment + a.magnitude
+    if total == 0:
+        raise ValueError("SVI total variance must be positive")
+    return total
+
+
 def variance_sqrt_and_d2(a: I64, b: int, inner: int, k: I64) -> tuple[int, I64]:
     """Total variance, sqrt(w) and d2 at u128/1e18, mirroring pricing.move.
 
@@ -861,15 +864,7 @@ def variance_sqrt_and_d2(a: I64, b: int, inner: int, k: I64) -> tuple[int, I64]:
     root of a 1e18-scaled value is its 1e9-scaled root. Returns
     (sqrt(w) @1e9, d2 @1e9).
     """
-    increment = b * inner // F
-    if a.is_negative:
-        if increment <= a.magnitude:
-            raise ValueError("SVI total variance must be positive")
-        total_var = increment - a.magnitude
-    else:
-        if increment + a.magnitude == 0:
-            raise ValueError("SVI total variance must be positive")
-        total_var = increment + a.magnitude
+    total_var = total_variance(a, b, inner)
     sqrt_var = sqrt_u128(total_var)
 
     # d2 = -(k + w/2) / sqrt(w): the numerator stays at 1e18 and the divisor is the
@@ -1466,18 +1461,47 @@ def unmaterialized_protocol_profit_exclusion(state: dict[str, int], active_expir
     return deepbook_mul(aggregate_credits - aggregate_debits, PROTOCOL_RESERVE_PROFIT_SHARE)
 
 
-def expiry_fee_multiplier(time_to_expiry_ms: int | None) -> int:
-    if time_to_expiry_ms is None or time_to_expiry_ms >= EXPIRY_FEE_WINDOW_MS:
-        return FLOAT_SCALING
-    ramp = mul_div_round_down(
-        EXPIRY_FEE_MAX_MULTIPLIER - FLOAT_SCALING,
-        EXPIRY_FEE_WINDOW_MS - time_to_expiry_ms,
-        EXPIRY_FEE_WINDOW_MS,
+def confidence_fee_loading(
+    svi: dict[str, Any],
+    forward: int,
+    lower: int,
+    higher: int,
+    probability: int,
+    remaining_ms: int,
+) -> int:
+    bump = 500_000
+    forward_up = deepbook_mul(forward, FLOAT_SCALING + bump)
+    forward_down = max(1, deepbook_mul(forward, FLOAT_SCALING - bump))
+    probability_up = compute_range_price(svi, forward_up, lower, higher)
+    probability_down = compute_range_price(svi, forward_down, lower, higher)
+    sensitivity = (abs(probability_up - probability) + abs(probability_down - probability)) // 2
+
+    zero = I64(0)
+    m = I64(svi["m"], svi["mNegative"])
+    k_minus_m = zero.sub(m)
+    sq = sqrt_down(k_minus_m.square_scaled() + deepbook_mul(svi["sigma"], svi["sigma"]))
+    inner = I64(svi["rho"], svi["rhoNegative"]).mul_scaled(k_minus_m).add(I64(sq))
+    if inner.is_negative:
+        raise ValueError("SVI inner term cannot be negative")
+    variance_scale = 1 if svi.get("at1e18") else F
+    reference_variance = max(
+        1,
+        total_variance(
+            I64(svi["a"] * variance_scale, svi.get("aNegative", False)),
+            svi["b"] * variance_scale,
+            inner.magnitude,
+        )
+        * (8 * 60 * 60 * 1000)
+        // remaining_ms,
     )
-    return FLOAT_SCALING + ramp
+    reference = max(
+        1,
+        mul_div_round_down(normal_pdf(zero), bump, sqrt_u128(reference_variance)),
+    )
+    return deepbook_div(sensitivity, reference)
 
 
-def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
+def fee_rate(probability: int, loading: int) -> int:
     if probability == 0 or probability == FLOAT_SCALING:
         raw_fee = 0
     else:
@@ -1486,7 +1510,8 @@ def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
         bernoulli_factor = sqrt_down(variance)
         raw_fee = deepbook_mul(BASE_FEE, bernoulli_factor)
     base = raw_fee if raw_fee > MIN_FEE else MIN_FEE
-    return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
+    multiplier = FLOAT_SCALING + deepbook_mul(FEE_SLOPE, loading)
+    return min(deepbook_mul(base, multiplier), FEE_CAP)
 
 
 def assert_entry_probability_bounds(probability: int) -> None:
@@ -1494,8 +1519,8 @@ def assert_entry_probability_bounds(probability: int) -> None:
         raise ValueError("entry probability out of bounds")
 
 
-def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
-    return fee_rate(probability, time_to_expiry_ms)
+def assert_mint_fee_rate(probability: int, loading: int) -> int:
+    return fee_rate(probability, loading)
 
 
 def initial_state() -> dict[str, int]:
@@ -1688,14 +1713,22 @@ def order_minted_update(
     svi: dict[str, Any],
     forward: int,
     sequence: int,
-    time_to_expiry_ms: int | None = None,
+    time_to_expiry_ms: int,
 ) -> dict[str, str]:
     strike = align_strike_to_tick(mint["strike"])
     lower, higher = binary_range_bounds(strike, mint["isUp"])
     lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
     assert_entry_probability_bounds(entry_probability)
-    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
+    loading = confidence_fee_loading(
+        svi,
+        forward,
+        lower,
+        higher,
+        entry_probability,
+        time_to_expiry_ms,
+    )
+    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, loading), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
     assert_net_premium_above_min(terms["contribution"])
     return {
@@ -1943,12 +1976,15 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], timestamp_ms: int) ->
         raise ValueError("mint requires prior price and SVI updates")
     if row["orderRef"] in model["orders"]:
         raise ValueError(f"duplicate order_ref {row['orderRef']}")
+    remaining_ms = model_fee_time_to_expiry_ms(model, timestamp_ms)
+    if remaining_ms is None:
+        raise ValueError("confidence fee requires pricing expiry and timestamp")
     update = order_minted_update(
         row,
         model["current_svi"],
         model["current_forward"],
         model["next_sequence"],
-        model_fee_time_to_expiry_ms(model, timestamp_ms),
+        remaining_ms,
     )
     terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
     lower_tick = int(update["lower_tick"])
@@ -2000,7 +2036,18 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         raise ValueError(f"order_ref {ref} is not redeemable")
 
     probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
-    fee = deepbook_mul(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
+    remaining_ms = model_fee_time_to_expiry_ms(model)
+    if remaining_ms is None:
+        raise ValueError("confidence fee requires pricing expiry and timestamp")
+    loading = confidence_fee_loading(
+        model["current_svi"],
+        model["current_forward"],
+        order["lower"],
+        order["higher"],
+        probability,
+        remaining_ms,
+    )
+    fee = deepbook_mul(fee_rate(probability, loading), close_quantity)
     gross = deepbook_mul(probability, close_quantity)
 
     remaining_quantity = order["quantity"] - close_quantity

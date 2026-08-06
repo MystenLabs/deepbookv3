@@ -27,6 +27,8 @@ public struct Pricer has copy, drop {
     expiry_market_id: ID,
     forward: u64,
     svi: PricingSVI,
+    /// Milliseconds remaining when the rolled SVI snapshot was built.
+    remaining_ms: u64,
     /// Source timestamps of the oracle observations present when this snapshot
     /// was loaded. Pyth is `0` only when no usable normalized observation exists.
     /// The Block Scholes ones are the provider's model times — when each series' data is "as of",
@@ -137,6 +139,12 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+/// Relative forward bump used by the confidence-fee finite difference: 5 bps.
+macro fun confidence_fee_bump(): u64 { 500_000 }
+
+/// Reference horizon used to normalize confidence-fee sensitivity: 8 hours.
+macro fun confidence_fee_reference_ms(): u64 { 8 * constants::one_hour_ms!() }
+
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and
@@ -172,6 +180,26 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
 
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
+}
+
+/// Return the confidence-fee loading for a priced range.
+///
+/// The numerator is the symmetric mean absolute move in the range probability
+/// under finite +/-5 bp forward shifts. The denominator synthesizes the
+/// surface's 8-hour at-the-money sensitivity from its current rolled SVI:
+/// `w_ref = w(0) * 8h / remaining` and
+/// `g_ref = phi(0) * bump / sqrt(w_ref)`. Only the reference uses this
+/// flat-vol approximation; the contract numerator retains the finite
+/// smile-consistent digital evaluations whose saturation bounds the short end.
+public(package) fun loading(pricer: &Pricer, lower: Strike, higher: Strike, probability: u64): u64 {
+    let bump = confidence_fee_bump!();
+    let scale = math::float_scaling!();
+    let forward_up = math::mul_down(pricer.forward, scale + bump);
+    let forward_down = math::mul_down(pricer.forward, scale - bump).max(1);
+    let probability_up = compute_range_price(&pricer.svi, forward_up, lower, higher);
+    let probability_down = compute_range_price(&pricer.svi, forward_down, lower, higher);
+    let sensitivity = (probability_up.diff(probability) + probability_down.diff(probability)) / 2;
+    math::div_down(sensitivity, confidence_fee_reference(&pricer.svi, pricer.remaining_ms))
 }
 
 /// Scale one 1e9-scaled SVI magnitude down by the fraction of anchored time
@@ -422,6 +450,7 @@ fun resolve_live_pricer(
     );
     let raw_svi = narrow_svi(&svi_read.read_value());
     assert_inputs_pricing_safe(bs_spot, bs_forward, &raw_svi);
+    let remaining_ms = expiry - clock.timestamp_ms();
     let svi = roll_down_svi(
         &raw_svi,
         block_scholes_svi_source_timestamp_ms,
@@ -461,6 +490,7 @@ fun resolve_live_pricer(
         expiry_market_id,
         forward,
         svi,
+        remaining_ms,
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms,
@@ -663,6 +693,35 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     adjusted.magnitude()
 }
 
+/// Approximate the live surface's 8-hour at-the-money finite-bump sensitivity.
+///
+/// The one-raw-unit floor applies only after extrapolating total variance and
+/// prevents the reference normalizer from introducing a new zero-variance halt.
+fun confidence_fee_reference(svi: &PricingSVI, remaining_ms: u64): u64 {
+    let zero = i64::from_u64(0);
+    let k_minus_m = zero.sub(&svi.m);
+    let sq = math::sqrt_down(k_minus_m.square_scaled() + math::mul_down(svi.sigma, svi.sigma));
+    let inner = svi.rho.mul_scaled(&k_minus_m).add(&i64::from_u64(sq));
+    assert!(!inner.is_negative(), ECannotBeNegative);
+    let atm_variance = total_variance(
+        svi.a_magnitude,
+        svi.a_is_negative,
+        svi.b,
+        inner.magnitude(),
+    );
+    let reference_variance =
+        (
+            (atm_variance as u256) * (confidence_fee_reference_ms!() as u256)
+            / (remaining_ms as u256),
+        ).max(1) as u128;
+    let reference_sqrt_variance = math::sqrt_u128_down(reference_variance) as u64;
+    math::mul_div_down(
+        math::normal_pdf(&zero),
+        confidence_fee_bump!(),
+        reference_sqrt_variance,
+    ).max(1)
+}
+
 /// Total variance `w`, its square root, and `d2`, carried at `u128` / 1e18.
 ///
 /// `a_magnitude` and `b` arrive already rolled down and already at 1e18, so the
@@ -681,14 +740,7 @@ fun variance_sqrt_and_d2(
     k: &I64,
 ): (u64, I64) {
     let scale = math::float_scaling!() as u128;
-    let increment = b * (inner as u128) / scale;
-    let total_var = if (a_is_negative) {
-        assert!(increment > a_magnitude, ENonPositiveVariance);
-        increment - a_magnitude
-    } else {
-        assert!(increment + a_magnitude > 0, ENonPositiveVariance);
-        increment + a_magnitude
-    };
+    let total_var = total_variance(a_magnitude, a_is_negative, b, inner);
     let sqrt_var = math::sqrt_u128_down(total_var) as u64;
 
     // d2 = -(k + w/2) / sqrt(w). The numerator stays at 1e18 and the divisor is
@@ -711,6 +763,17 @@ fun variance_sqrt_and_d2(
     let d2_magnitude = if (d2_magnitude > saturation) saturation else d2_magnitude;
 
     (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
+}
+
+fun total_variance(a_magnitude: u128, a_is_negative: bool, b: u128, inner: u64): u128 {
+    let increment = b * (inner as u128) / (math::float_scaling!() as u128);
+    if (a_is_negative) {
+        assert!(increment > a_magnitude, ENonPositiveVariance);
+        increment - a_magnitude
+    } else {
+        assert!(increment + a_magnitude > 0, ENonPositiveVariance);
+        increment + a_magnitude
+    }
 }
 
 fun is_positive(value: &I64): bool {

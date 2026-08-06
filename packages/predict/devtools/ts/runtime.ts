@@ -1620,6 +1620,23 @@ export function setTradeLiquidationBudgetTx(protocolConfigId: string, budget: bi
     return tx;
 }
 
+export function setTemplateConfidenceFeeConfigTx(
+    protocolConfigId: string,
+    feeSlope: bigint,
+    feeCap: bigint,
+): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_template_fee_slope"),
+        arguments: [tx.object(protocolConfigId), tx.object(ADMIN_CAP_ID), tx.pure.u64(feeSlope)],
+    });
+    tx.moveCall({
+        target: target("protocol_config", "set_template_fee_cap"),
+        arguments: [tx.object(protocolConfigId), tx.object(ADMIN_CAP_ID), tx.pure.u64(feeCap)],
+    });
+    return tx;
+}
+
 export function updatePythTrustedSignerTx(): Transaction {
     const tx = new Transaction();
     const vaaBytes = updateTrustedSignerVaaFromConfig(localPythConfig());

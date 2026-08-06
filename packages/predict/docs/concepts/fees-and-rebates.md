@@ -1,6 +1,6 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. The trading fee itself is shaped by an expiry ramp and reduced by a staking discount. Active DEEP stakers earn a discount on the trading fee. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. The trading fee combines a probability-shaped base with a live confidence loading and is then reduced by a staking discount. Active DEEP stakers earn a discount on the trading fee. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
@@ -14,15 +14,16 @@ The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at cr
 
 ```text
 base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
-ramped_rate     = base_fee_rate * expiry_fee_multiplier(time_to_expiry)   (>= base_fee_rate)
-trading_fee     = ramped_rate * quantity
+loading         = finite_bump_sensitivity(range, live_surface) / synthesized_8h_atm_reference
+loaded_rate     = min( base_fee_rate * (1 + fee_slope * loading) , fee_cap )
+trading_fee     = loaded_rate * quantity
 
 fee_after_disc  = trading_fee - trading_fee * (benefit_ratio * max_fee_discount)   (staking)
 builder_fee     = min( fee_after_disc * builder_fee_multiplier , quantity * max_builder_fee_rate )
 congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
 ```
 
-The base trading fee, the expiry ramp, and the staking discount together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
+The base trading fee, confidence loading, and staking discount together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
 
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
@@ -40,23 +41,33 @@ Because the raw fee vanishes at the edges, a floor keeps near-certain contracts 
 base_fee_rate = max( raw_fee_rate , min_fee )
 ```
 
-As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
+As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity`. The floor is applied before confidence loading and independently of the absolute cap.
 
 Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
 
-## 2. Expiry fee ramp
+## 2. Confidence loading
 
-As an expiry approaches, the remaining time for an LP to hedge or for a contract to revalue shrinks, while last-minute trades concentrate risk against the pool. The expiry ramp lifts the fee over a final window before expiry:
+The base does not capture how sharply a range probability moves when the underlying moves. Predict measures that adverse-selection exposure directly from the same rolled SVI surface used to price the contract. It re-evaluates the range probability under finite relative forward shifts of `+5bp` and `-5bp`, then takes the symmetric mean absolute move:
 
 ```text
-phase      = (expiry_fee_window_ms - time_to_expiry) / expiry_fee_window_ms
-multiplier = 1.0 + (expiry_fee_max_multiplier - 1.0) * phase
-fee_rate   = base_fee_rate * multiplier
+g = 0.5 * (abs(p(F * 1.0005) - p(F)) + abs(p(F * 0.9995) - p(F)))
 ```
 
-Outside the window (`time_to_expiry ≥ expiry_fee_window_ms`) the multiplier is exactly 1.0 and the ramp is inert. Inside the window the multiplier rises **linearly** from 1.0 toward `expiry_fee_max_multiplier` as expiry approaches. Setting `expiry_fee_max_multiplier` to 1.0 disables the ramp entirely. Both the window length and the peak multiplier are configured per expiry (snapshotted at creation).
+The finite bump is deliberate. An analytic derivative diverges like `1/sqrt(T)` near expiry; the finite probability move saturates instead because a probability cannot move beyond zero or one.
 
-The ramp applies identically to mints and live redeems, since both create or unwind risk against the pool in the final window.
+The normalizer is synthesized from the contract's own rolled surface without reading or requiring a separate 8-hour expiry:
+
+```text
+w_atm = w(k = 0)
+w_ref = w_atm * (8 hours / time_to_expiry)
+g_ref = phi(0) * 0.0005 / sqrt(w_ref)
+loading = g / g_ref
+fee_rate = min(base_fee_rate * (1 + fee_slope * loading), fee_cap)
+```
+
+This is a flat-vol extrapolation only for the reference. The numerator remains the true finite difference of the smile-consistent range digital. `fee_slope` and the reference construction are one calibration pair: changing the reference rescales loading and therefore requires recalibrating the slope. The cap applies to the assembled fee, not the multiplier, so it is one absolute ceiling at every probability.
+
+The loading applies identically to mints and live redeems. The former expiry-time ramp is retained only as inert config layout; it is not stacked with the loading, because sensitivity already supplies the intended short-end shape.
 
 ## 3. Builder fee add-on
 
@@ -113,7 +124,7 @@ discount_fraction = benefit_ratio * max_fee_discount
 fee_after_discount = trading_fee - trading_fee * discount_fraction
 ```
 
-`max_fee_discount` is an upgrade-required constant (a fixed cap on how much of the fee can be discounted); the two `*_benefit_power` thresholds are admin-tunable. At full stake the discount reaches the cap; below `upper_benefit_power` it is proportionally smaller. The discount applies to the **trading fee** (already including the expiry ramp), and because the builder fee is computed from the post-discount fee, staking also shrinks the builder fee. The congestion surcharge is not discounted.
+`max_fee_discount` is an upgrade-required constant (a fixed cap on how much of the fee can be discounted); the two `*_benefit_power` thresholds are admin-tunable. At full stake the discount reaches the cap; below `upper_benefit_power` it is proportionally smaller. The discount applies to the **trading fee** (already including confidence loading), and because the builder fee is computed from the post-discount fee, staking also shrinks the builder fee. The congestion surcharge is not discounted.
 
 ### Lazy epoch rollover
 
@@ -155,8 +166,8 @@ The full flow for a single trade:
 ```mermaid
 flowchart TD
     P[Range probability p] --> BF["Base fee: max(base_fee * sqrt(p(1-p)), min_fee)"]
-    BF --> RAMP["x expiry ramp multiplier (>= 1)"]
-    RAMP --> FEE[trading fee = rate x quantity]
+    BF --> LOAD["x confidence loading; cap assembled rate"]
+    LOAD --> FEE[trading fee = rate x quantity]
     FEE --> DISC["- staking discount (benefit_ratio x max_fee_discount)"]
     DISC --> NETFEE[fee after discount]
     NETFEE --> BUILD["builder fee = min(fee x builder_mult, quantity x max_builder_rate)"]
@@ -215,5 +226,5 @@ The fee is deliberately separate from the mark. The mark stays the exact pool-wi
 - [leverage-and-floor.md](./leverage-and-floor.md) — why trading and builder fees are transaction costs, not part of the contract floor.
 - [liquidity-and-nav.md](./liquidity-and-nav.md) — the cash-backing invariant that holds the rebate reserve, and how fee revenue reaches LPs.
 - [liquidation.md](./liquidation.md) — how a leveraged order is closed when it falls below its floor.
-- [../design/configuration.md](../design/configuration.md) — the configured fee rates, ramp window, builder and congestion parameters, stake thresholds, and rebate rate.
+- [../design/configuration.md](../design/configuration.md) — the configured fee rates, confidence-loading slope and cap, builder and congestion parameters, stake thresholds, and rebate rate.
 - [../design/architecture.md](../design/architecture.md) — the `BuilderCode` object and accumulator-address fund custody.
