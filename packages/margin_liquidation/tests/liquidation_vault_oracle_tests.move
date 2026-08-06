@@ -633,3 +633,72 @@ fun liquidate_base_settles_the_same_numbers_on_the_legacy_generation() {
     destroy(clock);
     scenario.end();
 }
+
+/// The vault's swap entrypoints are gated by `assert_trader`, and nothing exercised
+/// that gate through them: the three tests named for it in `liquidation_vault_tests`
+/// call `assert_trader_for_testing` directly, so deleting the check from
+/// `swap_base_to_quote` left the whole suite green. That check is the only thing
+/// between an arbitrary caller and swapping the vault's entire inventory with
+/// `min_quote_out` of zero.
+#[test, expected_failure(abort_code = liquidation_vault::ETraderNotAuthorized)]
+fun swap_base_to_quote_rejects_an_unauthorised_caller() {
+    let (mut scenario, clock, _btc_pool_id, _usdc_pool_id) = manager_with_base_debt();
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
+    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
+    vault.deposit(&cap, mint_coin<BTC>(btc_multiplier(), scenario.ctx()));
+    // Authorise someone else, so the traders set exists and the call reaches the
+    // membership check rather than aborting on a missing dynamic field.
+    vault.authorize_trader(&cap, test_constants::user1());
+
+    // user2 was never authorised.
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    vault.swap_base_to_quote<BTC, USDC>(
+        &mut pool,
+        btc_multiplier(),
+        0,
+        0,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy(vault);
+    destroy(cap);
+    return_shared(pool);
+    destroy(clock);
+    scenario.end();
+}
+
+/// Quote-side twin, so neither swap entry can lose its gate unnoticed.
+#[test, expected_failure(abort_code = liquidation_vault::ETraderNotAuthorized)]
+fun swap_quote_to_base_rejects_an_unauthorised_caller() {
+    let (mut scenario, clock, _btc_pool_id, _usdc_pool_id) = manager_with_base_debt();
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
+    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
+    vault.deposit(
+        &cap,
+        mint_coin<USDC>(1_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+    );
+    vault.authorize_trader(&cap, test_constants::user1());
+
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    vault.swap_quote_to_base<BTC, USDC>(
+        &mut pool,
+        1_000 * test_constants::usdc_multiplier(),
+        0,
+        0,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy(vault);
+    destroy(cap);
+    return_shared(pool);
+    destroy(clock);
+    scenario.end();
+}
