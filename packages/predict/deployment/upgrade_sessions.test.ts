@@ -5,13 +5,20 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+    assertObservedPreflightBindings,
     assertSmokeSessionResume,
     assertSessionsUpgradeState,
+    assertUpgradeCapResumeVersion,
     buildSessionsUpgradeManifest,
+    canRetrySessionTransaction,
+    commitSuccessfulTransaction,
     createSessionsUpgradeState,
     parsePackageMetadata,
     parseSessionsUpgradeArgs,
     parseUpgradeCapMetadata,
+    reconcileJournaledTransaction,
+    requiredDeployerBalance,
+    unexpectedUpgradeSourcePaths,
     type SessionsUpgradeState,
 } from "./upgrade_sessions.ts";
 import type { IntegrationManifest } from "./deploy.ts";
@@ -67,6 +74,7 @@ function completeState(): SessionsUpgradeState {
     state.smoke.marketPaidFees = "1000000";
     state.smoke.marketPostSuiBalance = "175000000";
     state.smoke.marketPostDeepBalance = "10000000";
+    state.smoke.marketFillExact = true;
     state.smoke.accountFundsRecovered = true;
     state.smoke.sessionRevoked = true;
     state.smoke.sessionGasReturned = true;
@@ -85,13 +93,210 @@ test("upgrade defaults to non-broadcasting mode and smoke requires execute", () 
 });
 
 test("session resume allows post-market cleanup but rejects missing write authority", () => {
-    assert.doesNotThrow(() => assertSmokeSessionResume(false, false, 123n));
-    assert.doesNotThrow(() => assertSmokeSessionResume(true, true, null));
-    assert.throws(() => assertSmokeSessionResume(false, false, null), /no longer authorized/);
+    assert.doesNotThrow(() => assertSmokeSessionResume(false, false, 124n, 123n));
+    assert.doesNotThrow(() => assertSmokeSessionResume(true, true, null, 123n));
+    assert.throws(() => assertSmokeSessionResume(false, false, 123n, 123n), /no longer authorized/);
+    assert.throws(() => assertSmokeSessionResume(false, false, 122n, 123n), /no longer authorized/);
+    assert.throws(() => assertSmokeSessionResume(false, false, null, 123n), /no longer authorized/);
     assert.throws(
-        () => assertSmokeSessionResume(true, false, null),
+        () => assertSmokeSessionResume(true, false, null, 123n),
         /revoked before the market checkpoint/,
     );
+});
+
+test("UpgradeCap version accepts only the exact resumable upgrade boundary", () => {
+    assert.doesNotThrow(() => assertUpgradeCapResumeVersion(false, null, "1"));
+    assert.throws(() => assertUpgradeCapResumeVersion(false, null, "2"), /upgrade boundary/);
+    assert.doesNotThrow(() => assertUpgradeCapResumeVersion(false, "upgrade_sessions_v2", "1"));
+    assert.doesNotThrow(() => assertUpgradeCapResumeVersion(false, "upgrade_sessions_v2", "2"));
+    assert.doesNotThrow(() => assertUpgradeCapResumeVersion(true, null, "2"));
+    assert.throws(() => assertUpgradeCapResumeVersion(true, null, "1"), /upgrade boundary/);
+});
+
+test("preflight bindings reject source, CLI, RPC, network, chain, and signer drift", () => {
+    const state = createSessionsUpgradeState();
+    state.sourceCommit = "a".repeat(40);
+    state.suiVersion = "sui 1.74.1-test";
+    state.rpcUrlHash = "b".repeat(64);
+    const observed = {
+        sourceCommit: state.sourceCommit,
+        suiVersion: state.suiVersion,
+        rpcUrlHash: state.rpcUrlHash,
+        network: "testnet",
+        chainId: "4c78adac",
+        deployer: DEPLOYER,
+    };
+    assert.doesNotThrow(() => assertObservedPreflightBindings(state, observed));
+    for (const [field, value] of [
+        ["sourceCommit", "c".repeat(40)],
+        ["suiVersion", "sui 1.75.0"],
+        ["rpcUrlHash", "d".repeat(64)],
+        ["network", "mainnet"],
+        ["chainId", "deadbeef"],
+        ["deployer", V2],
+    ] as const) {
+        assert.throws(() =>
+            assertObservedPreflightBindings(state, { ...observed, [field]: value }),
+        );
+    }
+});
+
+test("source dirt allowlist admits only journals and deployment records", () => {
+    assert.deepEqual(
+        unexpectedUpgradeSourcePaths(
+            [
+                " M packages/predict/deployment/deployment.testnet.json",
+                "?? packages/predict/deployment/deployment.sessions-v2.testnet.state.json",
+                "?? packages/predict/deployment/deployment.sessions-v2.testnet.state.json.tmp",
+                " M packages/sessions/Published.toml",
+            ].join("\n"),
+        ),
+        [],
+    );
+    assert.deepEqual(unexpectedUpgradeSourcePaths("?? packages/sessions/Move.lock"), [
+        "packages/sessions/Move.lock",
+    ]);
+});
+
+test("deployer funding follows remaining irreversible steps and completed reruns need none", () => {
+    const pending = createSessionsUpgradeState();
+    assert.equal(requiredDeployerBalance(pending), 11_500_000_000n);
+    pending.inFlight = {
+        label: "upgrade_sessions_v2",
+        digest: "known-upgrade",
+        startedAt: "2026-08-07T12:00:00.000Z",
+    };
+    assert.equal(requiredDeployerBalance(pending), 6_500_000_000n);
+    pending.inFlight = null;
+    pending.packageId = V2;
+    pending.upgradeTx = "upgrade-digest";
+    assert.equal(requiredDeployerBalance(pending), 6_500_000_000n);
+    pending.smoke.transactions.smoke_authorize_and_fund = "setup-digest";
+    assert.equal(requiredDeployerBalance(pending), 3_000_000_000n);
+    assert.equal(requiredDeployerBalance(completeState()), 0n);
+});
+
+const irreversibleLabels = [
+    "upgrade_sessions_v2",
+    "smoke_authorize_and_fund",
+    "smoke_session_limit_place",
+    "smoke_session_limit_cancel",
+    "smoke_session_market_fill",
+    "smoke_owner_cancel_cleanup",
+    "smoke_revoke_session",
+    "smoke_recover_account_funds",
+    "smoke_return_session_gas",
+] as const;
+
+test("every irreversible label commits its known digest and clears in-flight atomically", async () => {
+    for (const label of irreversibleLabels) {
+        const state = createSessionsUpgradeState();
+        state.inFlight = {
+            label,
+            digest: `${label}-digest`,
+            startedAt: "2026-08-07T12:00:00.000Z",
+        };
+        const persisted: SessionsUpgradeState[] = [];
+        const digest = await reconcileJournaledTransaction(
+            state,
+            async () => ({ effects: { status: { status: "success" } } }),
+            async () => {},
+            (value) => persisted.push(structuredClone(value)),
+        );
+        assert.equal(digest, `${label}-digest`);
+        assert.equal(state.inFlight, null);
+        assert.equal(state.transactions[label], digest);
+        if (label.startsWith("smoke_")) assert.equal(state.smoke.transactions[label], digest);
+        assert.equal(persisted.length, 1);
+        assert.equal(persisted[0].inFlight, null);
+    }
+});
+
+test("unknown digest and failed semantic checkpoint both retain the recovery fence", async () => {
+    for (const failurePoint of ["lookup", "checkpoint"] as const) {
+        const state = createSessionsUpgradeState();
+        state.inFlight = {
+            label: "smoke_session_market_fill",
+            digest: "known-digest",
+            startedAt: "2026-08-07T12:00:00.000Z",
+        };
+        let persisted = false;
+        await assert.rejects(
+            reconcileJournaledTransaction(
+                state,
+                async () => {
+                    if (failurePoint === "lookup") throw new Error("not found");
+                    return { effects: { status: { status: "success" } } };
+                },
+                async () => {
+                    throw new Error("semantic mismatch");
+                },
+                () => {
+                    persisted = true;
+                },
+            ),
+            failurePoint === "lookup" ? /not visible on Testnet/ : /semantic mismatch/,
+        );
+        assert.equal(state.inFlight?.digest, "known-digest");
+        assert.equal(state.transactions.smoke_session_market_fill, undefined);
+        assert.equal(persisted, false);
+    }
+});
+
+test("known failed effects clear the fence without claiming an applied transaction", async () => {
+    for (const label of irreversibleLabels) {
+        const state = createSessionsUpgradeState();
+        state.inFlight = {
+            label,
+            digest: `${label}-digest`,
+            startedAt: "2026-08-07T12:00:00.000Z",
+        };
+        let persisted = false;
+        await assert.rejects(
+            reconcileJournaledTransaction(
+                state,
+                async () => ({
+                    effects: { status: { status: "failure", error: "MoveAbort" } },
+                }),
+                async () => assert.fail("failed effects must not run semantic checkpoints"),
+                () => {
+                    persisted = true;
+                },
+            ),
+            /MoveAbort/,
+        );
+        assert.equal(state.inFlight, null);
+        assert.equal(state.transactions[label], undefined);
+        assert.equal(persisted, true);
+        const sessionLabel = [
+            "smoke_session_limit_place",
+            "smoke_session_limit_cancel",
+            "smoke_session_market_fill",
+            "smoke_return_session_gas",
+        ].includes(label);
+        assert.equal(state.smoke.sessionFailedTransactions, sessionLabel ? 1 : 0);
+        assert.equal(canRetrySessionTransaction(state, label), sessionLabel);
+    }
+});
+
+test("temporary session retry reserve is bounded", () => {
+    const state = createSessionsUpgradeState();
+    assert.equal(canRetrySessionTransaction(state, "smoke_session_market_fill"), true);
+    state.smoke.sessionFailedTransactions = state.maxSessionFailedTransactions;
+    assert.equal(canRetrySessionTransaction(state, "smoke_session_market_fill"), false);
+    assert.equal(canRetrySessionTransaction(state, "smoke_revoke_session"), false);
+});
+
+test("successful commit does not misclassify the package upgrade as smoke evidence", () => {
+    const state = createSessionsUpgradeState();
+    state.inFlight = {
+        label: "upgrade_sessions_v2",
+        digest: "upgrade-digest",
+        startedAt: "2026-08-07T12:00:00.000Z",
+    };
+    commitSuccessfulTransaction(state, "upgrade_sessions_v2", "upgrade-digest");
+    assert.equal(state.transactions.upgrade_sessions_v2, "upgrade-digest");
+    assert.deepEqual(state.smoke.transactions, {});
 });
 
 test("journal validation pins the Testnet chain, deployer, v1 package, and UpgradeCap", () => {
@@ -121,6 +326,10 @@ test("journal validation pins the Testnet chain, deployer, v1 package, and Upgra
         () => assertSessionsUpgradeState({ ...state, sessionTransactionGasBudget: "1" }),
         /pinned Sessions v2 upgrade/,
     );
+    assert.throws(
+        () => assertSessionsUpgradeState({ ...state, maxSessionFailedTransactions: 5 }),
+        /pinned Sessions v2 upgrade/,
+    );
 });
 
 test("complete journal requires both package audit and live spot smoke", () => {
@@ -147,6 +356,9 @@ test("complete journal requires both package audit and live spot smoke", () => {
         incomplete.smoke[field] = false;
         assert.throws(() => assertSessionsUpgradeState(incomplete), /lacks verification or smoke/);
     }
+    const partialFill = completeState();
+    partialFill.smoke.marketFillExact = false;
+    assert.throws(() => assertSessionsUpgradeState(partialFill), /lacks verification or smoke/);
 });
 
 test("package parser preserves logical version, type origins, linkage, and provenance", () => {
