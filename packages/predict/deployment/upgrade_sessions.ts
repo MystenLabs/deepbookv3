@@ -20,6 +20,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { bcs } from "@mysten/sui/bcs";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import {
     Transaction,
@@ -60,6 +61,9 @@ const FAILED_AUDIT_PACKAGE = "0x403ac487b19635c022f5c50378b9097ed7d80175f9b3ff7e
 const FAILED_AUDIT_TX = "25axtEqPVuuEtwaY9TpKLessNeU7VsuJgHnJ3iC8aehe";
 const FAILED_AUTHORIZATION_AUDIT =
     "unable%20to%20find%20function%200xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::registry::is_app_authorized";
+const FAILED_BOOK_SOURCE = "1b14fca76fb0ec6709ab2f5105ac2e7d3f3c6b01";
+const FAILED_BOOK_READ =
+    "unable%20to%20find%20function%200xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::pool::best_ask_price";
 const WRAPPER = "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239";
 const DEEPBOOK = "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
@@ -433,19 +437,25 @@ function createSpotSmoke(attempt = 0): SpotSmoke {
     };
 }
 
-function isFailedAuditRecovery(state: SessionsUpgradeState): boolean {
-    return (
+function isKnownSourceCommitRecovery(state: SessionsUpgradeState): boolean {
+    const failedAudit =
         state.sourceCommit === FAILED_AUDIT_SOURCE &&
+        state.verification === null &&
+        (state.lastError === "Sessions UpgradeCap identity, policy, owner, or version mismatch" ||
+            state.lastError === FAILED_AUTHORIZATION_AUDIT);
+    const failedBookRead =
+        state.sourceCommit === FAILED_BOOK_SOURCE &&
+        state.verification !== null &&
+        state.lastError === FAILED_BOOK_READ;
+    return (
+        (failedAudit || failedBookRead) &&
         state.status === "partial" &&
         state.packageId === FAILED_AUDIT_PACKAGE &&
         state.upgradeTx === FAILED_AUDIT_TX &&
         state.inFlight === null &&
-        state.verification === null &&
         state.transactions.upgrade_sessions_v2 === FAILED_AUDIT_TX &&
         Object.keys(state.transactions).length === 1 &&
-        JSON.stringify(state.smoke) === JSON.stringify(createSpotSmoke()) &&
-        (state.lastError === "Sessions UpgradeCap identity, policy, owner, or version mismatch" ||
-            state.lastError === FAILED_AUTHORIZATION_AUDIT)
+        JSON.stringify(state.smoke) === JSON.stringify(createSpotSmoke())
     );
 }
 
@@ -1008,6 +1018,13 @@ function parseU64(bytes: number[]): bigint {
     return result;
 }
 
+function parseU64Vector(bytes: number[]): bigint[] {
+    return bcs
+        .vector(bcs.u64())
+        .parse(Uint8Array.from(bytes))
+        .map((value) => BigInt(value));
+}
+
 function parseBool(bytes: number[]): boolean {
     if (bytes.length !== 1) throw new Error("invalid bool return");
     return bytes[0] === 1;
@@ -1310,22 +1327,16 @@ async function poolParameters(runtime: Runtime): Promise<{
     call(tx, `${DEEPBOOK}::pool::pool_book_params`, [tx.object(DEEP_SUI_POOL)], types);
     call(
         tx,
-        `${DEEPBOOK}::pool::best_ask_price`,
-        [tx.object(DEEP_SUI_POOL), tx.object(CLOCK)],
-        types,
-    );
-    call(
-        tx,
-        `${DEEPBOOK}::pool::best_bid_price`,
-        [tx.object(DEEP_SUI_POOL), tx.object(CLOCK)],
+        `${DEEPBOOK}::pool::get_level2_ticks_from_mid`,
+        [tx.object(DEEP_SUI_POOL), tx.pure.u64(1), tx.object(CLOCK)],
         types,
     );
     const response = await devInspect(runtime, "DEEP/SUI book", tx);
     const tickSize = parseU64(returnBytes(response, 0, 0));
     const lotSize = parseU64(returnBytes(response, 0, 1));
     const minSize = parseU64(returnBytes(response, 0, 2));
-    const bestAsk = parseOptionU64(returnBytes(response, 1));
-    const bestBid = parseOptionU64(returnBytes(response, 2));
+    const bestBid = parseU64Vector(returnBytes(response, 1, 0))[0] ?? null;
+    const bestAsk = parseU64Vector(returnBytes(response, 1, 2))[0] ?? null;
     if (!bestAsk) throw new Error("DEEP/SUI has no live ask for the market-fill smoke");
     const quoteTx = new Transaction();
     call(
@@ -2173,7 +2184,7 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
     const sourceCommitRecovery =
         state.sourceCommit !== null &&
         state.sourceCommit !== sourceCommit &&
-        isFailedAuditRecovery(state);
+        isKnownSourceCommitRecovery(state);
     const suiVersion = command(SUI, ["--version"]);
     const rpcUrlHash = createHash("sha256").update(snapshot.rpcUrl).digest("hex");
     assertObservedPreflightBindings(
