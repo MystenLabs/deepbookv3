@@ -360,6 +360,17 @@ export function assertObservedPreflightBindings(
     }
 }
 
+export function parseCliChainIdentifier(output: string): string {
+    const value = output.trim();
+    if (/^[0-9a-fA-F]{8}$/.test(value)) return value.toLowerCase();
+    const lines = value.split(/\r?\n/);
+    const hex = lines.find((line) => line.startsWith("Hex: "))?.slice(5);
+    if (!hex || !/^[0-9a-fA-F]{8}$/.test(hex)) {
+        throw new Error("Sui CLI returned an unrecognized chain identifier");
+    }
+    return hex.toLowerCase();
+}
+
 export function unexpectedUpgradeSourcePaths(status: string): string[] {
     const allowed = new Set([
         STATE_RELATIVE,
@@ -2080,7 +2091,7 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
         suiVersion,
         rpcUrlHash,
         network: suiClient(snapshot, ["active-env"]),
-        chainId: suiClient(snapshot, ["chain-identifier"]),
+        chainId: parseCliChainIdentifier(suiClient(snapshot, ["chain-identifier"])),
         deployer: suiClient(snapshot, ["active-address"]),
     });
     const client = new SuiGrpcClient({ baseUrl: snapshot.rpcUrl, network: NETWORK });

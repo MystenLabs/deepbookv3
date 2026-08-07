@@ -17,6 +17,7 @@ import {
     createSessionsUpgradeState,
     limitOrderResolvedAtCheckpoint,
     maxSmokeAttributableDeep,
+    parseCliChainIdentifier,
     parsePackageMetadata,
     parseSessionsUpgradeArgs,
     parseUpgradeCapMetadata,
@@ -154,6 +155,17 @@ test("preflight bindings reject source, CLI, RPC, network, chain, and signer dri
             assertObservedPreflightBindings(state, { ...observed, [field]: value }),
         );
     }
+});
+
+test("chain identifier parser accepts pinned old and current CLI output shapes", () => {
+    assert.equal(parseCliChainIdentifier("4c78adac"), "4c78adac");
+    assert.equal(
+        parseCliChainIdentifier(
+            "Base58: 69WiPg3DAQiwdxfncX6wYQ2siKwAe6L9BZthQea3JNMD\nHex: 4C78ADAC",
+        ),
+        "4c78adac",
+    );
+    assert.throws(() => parseCliChainIdentifier("Base58: unexpected"), /unrecognized/);
 });
 
 test("source dirt allowlist admits only journals and deployment records", () => {
