@@ -64,6 +64,21 @@ const FAILED_AUTHORIZATION_AUDIT =
 const FAILED_BOOK_SOURCE = "1b14fca76fb0ec6709ab2f5105ac2e7d3f3c6b01";
 const FAILED_BOOK_READ =
     "unable%20to%20find%20function%200xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::pool::best_ask_price";
+const FAILED_EXPIRY_SOURCE = "795a4c9841ac795ad8aa3a038bd982bbeb29b5cc";
+const FAILED_EXPIRY_SMOKE =
+    "Transaction resolution failed: MoveAbort in 1st command, abort code: 3, in " +
+    "'0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::order_info::validate_inputs'" +
+    " (instruction 34)";
+const FAILED_EXPIRY_CLEANUP_LABELS = [
+    "smoke_authorize_and_fund",
+    "smoke_revoke_session",
+    "smoke_recover_account_funds",
+    "smoke_return_session_gas",
+];
+/// DeepBook asserts `clock.timestamp_ms() <= expire_timestamp`, and uses max u64 as its
+/// no-expiry value (`deepbook::constants::max_u64`). The smoke cancels its own order, so the
+/// resting order needs no shorter deadline.
+const NO_ORDER_EXPIRY = 18446744073709551615n;
 const WRAPPER = "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239";
 const DEEPBOOK = "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
@@ -457,6 +472,50 @@ function isKnownSourceCommitRecovery(state: SessionsUpgradeState): boolean {
         Object.keys(state.transactions).length === 1 &&
         JSON.stringify(state.smoke) === JSON.stringify(createSpotSmoke())
     );
+}
+
+/// The smoke placed its limit order with expire_timestamp 0, which DeepBook rejects
+/// unconditionally, so every attempt aborted before any order rested and each one cleaned
+/// up in full. The retry budget was spent on that tool defect rather than on chain state,
+/// so this exact journal shape is readmitted with a fresh budget.
+export function isKnownSmokeExpiryRecovery(state: SessionsUpgradeState): boolean {
+    const labels = Object.keys(state.smoke.transactions).sort();
+    return (
+        state.sourceCommit === FAILED_EXPIRY_SOURCE &&
+        state.lastError === FAILED_EXPIRY_SMOKE &&
+        state.status === "partial" &&
+        state.verification !== null &&
+        state.packageId === FAILED_AUDIT_PACKAGE &&
+        state.upgradeTx === FAILED_AUDIT_TX &&
+        state.inFlight === null &&
+        state.smoke.status === "failed" &&
+        state.smoke.attempt + 1 === state.maxSmokeAttempts &&
+        isCleanedIncompleteSmokeAttempt(state) &&
+        labels.length === FAILED_EXPIRY_CLEANUP_LABELS.length &&
+        labels.every((label, index) => label === [...FAILED_EXPIRY_CLEANUP_LABELS].sort()[index])
+    );
+}
+
+/// Archive the defect-failed attempt under its own prefix and restart the smoke from a
+/// fresh budget. Existing `smoke_attempt_<n>_*` archives are left untouched.
+function resetSmokeAfterExpiryDefect(state: SessionsUpgradeState): void {
+    const previous = state.smoke;
+    for (const [label, digest] of Object.entries(previous.transactions)) {
+        state.transactions[`smoke_expiry_defect_${previous.attempt}_${label}`] = digest;
+        delete state.transactions[label];
+    }
+    for (let attempt = 0; attempt < previous.attempt; attempt += 1) {
+        for (const label of FAILED_EXPIRY_CLEANUP_LABELS) {
+            const key = `smoke_attempt_${attempt}_${label}`;
+            const digest = state.transactions[key];
+            if (digest === undefined) continue;
+            state.transactions[`smoke_expiry_defect_${attempt}_${label}`] = digest;
+            delete state.transactions[key];
+        }
+    }
+    state.smoke = createSpotSmoke();
+    state.lastError = null;
+    writeState(state);
 }
 
 export function createSessionsUpgradeState(): SessionsUpgradeState {
@@ -1933,7 +1992,7 @@ async function runSmoke(runtime: Runtime): Promise<void> {
                     limit.pure.u64(BigInt(smokeValue(smoke, "quantity", "limit quantity"))),
                     limit.pure.bool(true),
                     limit.pure.bool(false),
-                    limit.pure.u64(0n),
+                    limit.pure.u64(NO_ORDER_EXPIRY),
                     limit.object(ACCUMULATOR_ROOT),
                     limit.object(CLOCK),
                 ],
@@ -2181,10 +2240,11 @@ function releaseLock(lock: { path: string; token: string }): void {
 async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState): Promise<Runtime> {
     assertCleanSource();
     const sourceCommit = git(["rev-parse", "HEAD"]);
+    const smokeExpiryRecovery = isKnownSmokeExpiryRecovery(state);
     const sourceCommitRecovery =
         state.sourceCommit !== null &&
         state.sourceCommit !== sourceCommit &&
-        isKnownSourceCommitRecovery(state);
+        (isKnownSourceCommitRecovery(state) || smokeExpiryRecovery);
     const suiVersion = command(SUI, ["--version"]);
     const rpcUrlHash = createHash("sha256").update(snapshot.rpcUrl).digest("hex");
     assertObservedPreflightBindings(
@@ -2199,6 +2259,7 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
         },
         sourceCommitRecovery,
     );
+    if (smokeExpiryRecovery) resetSmokeAfterExpiryDefect(state);
     const client = new SuiGrpcClient({ baseUrl: snapshot.rpcUrl, network: NETWORK });
     if ((await shortChainId(client)) !== CHAIN_ID) throw new Error("SDK RPC chain mismatch");
     const signer = signerFromKeystore(snapshot.keystorePath);
