@@ -31,6 +31,7 @@ function completeState(): SessionsUpgradeState {
     state.status = "complete";
     state.sourceCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     state.suiVersion = "sui 1.74.1-test";
+    state.rpcUrlHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     state.startedAt = "2026-08-07T12:00:00.000Z";
     state.completedAt = "2026-08-07T12:10:00.000Z";
     state.packageId = V2;
@@ -50,9 +51,24 @@ function completeState(): SessionsUpgradeState {
     state.smoke.sessionAddress =
         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     state.smoke.quantity = "10000000";
+    state.smoke.fundingAmount = "500000000";
+    state.smoke.initialSuiBalance = "0";
+    state.smoke.initialDeepBalance = "0";
+    state.smoke.marketPreSuiBalance = "500000000";
+    state.smoke.marketPreDeepBalance = "0";
+    state.smoke.limitClientId = "1";
+    state.smoke.marketClientId = "2";
+    state.smoke.limitPrice = "100000000";
+    state.smoke.marketPriceLimit = "125000000";
     state.smoke.limitOrderId = "123";
     state.smoke.marketExecutedQuantity = "10000000";
     state.smoke.marketQuoteQuantity = "324000000";
+    state.smoke.marketPaidFees = "1000000";
+    state.smoke.marketPostSuiBalance = "175000000";
+    state.smoke.marketPostDeepBalance = "10000000";
+    state.smoke.accountFundsRecovered = true;
+    state.smoke.sessionRevoked = true;
+    state.smoke.sessionGasReturned = true;
     return state;
 }
 
@@ -86,6 +102,14 @@ test("journal validation pins the Testnet chain, deployer, v1 package, and Upgra
         () => assertSessionsUpgradeState({ ...state, upgradeCapId: V2 }),
         /pinned Sessions v2 upgrade/,
     );
+    assert.throws(
+        () => assertSessionsUpgradeState({ ...state, packageGasBudget: "1" }),
+        /pinned Sessions v2 upgrade/,
+    );
+    assert.throws(
+        () => assertSessionsUpgradeState({ ...state, sessionTransactionGasBudget: "1" }),
+        /pinned Sessions v2 upgrade/,
+    );
 });
 
 test("complete journal requires both package audit and live spot smoke", () => {
@@ -103,6 +127,15 @@ test("complete journal requires both package audit and live spot smoke", () => {
         () => buildSessionsUpgradeManifest(manifest, complete),
         /complete audited upgrade and spot smoke/,
     );
+    for (const field of [
+        "accountFundsRecovered",
+        "sessionRevoked",
+        "sessionGasReturned",
+    ] as const) {
+        const incomplete = completeState();
+        incomplete.smoke[field] = false;
+        assert.throws(() => assertSessionsUpgradeState(incomplete), /lacks verification or smoke/);
+    }
 });
 
 test("package parser preserves logical version, type origins, linkage, and provenance", () => {
@@ -135,6 +168,10 @@ test("package parser preserves logical version, type origins, linkage, and prove
             { module: "sessions", datatype: "SessionsData", package: V1 },
         ],
         dependencies: [WRAPPER, ACCOUNT].sort(),
+        linkages: [
+            { originalId: WRAPPER, upgradedId: WRAPPER },
+            { originalId: ACCOUNT, upgradedId: ACCOUNT },
+        ].sort((left, right) => left.originalId.localeCompare(right.originalId)),
         previousTransaction: "upgrade-digest",
     });
 });
@@ -159,6 +196,9 @@ test("manifest generation changes only sourceCommit and latest Sessions package"
     assert.deepEqual(updated, expected);
     assert.deepEqual(manifest, before, "manifest input must not be mutated");
     assert.equal(updated.packages.deepbookCoreAccount, WRAPPER);
+
+    const rerun = buildSessionsUpgradeManifest(updated, state);
+    assert.deepEqual(rerun, updated, "completion manifest generation must be idempotent");
 });
 
 test("partial or unaudited upgrades cannot update the public manifest", () => {

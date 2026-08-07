@@ -3,7 +3,7 @@
 
 /** Upgrade the deployed Testnet Sessions package to v2 and exercise spot trading. */
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import {
     chmodSync,
     closeSync,
@@ -40,6 +40,7 @@ const SUI_VERSION = /^sui 1\.74\.1(?:-|$)/;
 const PACKAGE_GAS_BUDGET = process.env.PACKAGE_GAS_BUDGET ?? "5000000000";
 const TRANSACTION_GAS_BUDGET = BigInt(process.env.TRANSACTION_GAS_BUDGET ?? "1000000000");
 const SESSION_GAS = 200_000_000n;
+const SESSION_TRANSACTION_GAS_BUDGET = 50_000_000n;
 const SESSION_DURATION_MS = 5n * 60n * 1_000n;
 const MAX_SPOT_PRINCIPAL = 2_000_000_000n;
 const SMOKE_BUFFER = 50_000_000n;
@@ -83,6 +84,9 @@ const EXPECTED_DEPENDENCIES = new Set([
     "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
     "0x6a54299d593fca24edf6b17bf8c3aff0b7ba8bc8f4276e9c1065689c50223bba",
 ]);
+const EXPECTED_LINKAGES = new Map([...EXPECTED_DEPENDENCIES].map((id) => [id, id] as const));
+EXPECTED_LINKAGES.delete(DEEPBOOK);
+EXPECTED_LINKAGES.set(DEEPBOOK_ORIGINAL, DEEPBOOK);
 
 export interface SessionsUpgradeMode {
     execute: boolean;
@@ -101,9 +105,24 @@ interface SpotSmoke {
     sessionAddress: string | null;
     poolId: string;
     quantity: string | null;
+    fundingAmount: string | null;
+    initialSuiBalance: string | null;
+    initialDeepBalance: string | null;
+    marketPreSuiBalance: string | null;
+    marketPreDeepBalance: string | null;
+    limitClientId: string | null;
+    marketClientId: string | null;
+    limitPrice: string | null;
+    marketPriceLimit: string | null;
     limitOrderId: string | null;
     marketExecutedQuantity: string | null;
     marketQuoteQuantity: string | null;
+    marketPaidFees: string | null;
+    marketPostSuiBalance: string | null;
+    marketPostDeepBalance: string | null;
+    accountFundsRecovered: boolean;
+    sessionRevoked: boolean;
+    sessionGasReturned: boolean;
     transactions: Record<string, string>;
     lastError: string | null;
 }
@@ -123,6 +142,12 @@ export interface SessionsUpgradeState {
     chainId: string;
     buildEnvironment: "testnet";
     deployer: string;
+    packageGasBudget: string;
+    transactionGasBudget: string;
+    sessionGas: string;
+    sessionTransactionGasBudget: string;
+    maxSpotPrincipal: string;
+    rpcUrlHash: string | null;
     suiVersion: string | null;
     sourceCommit: string | null;
     startedAt: string | null;
@@ -179,6 +204,7 @@ interface PackageMetadata {
     modules: string[];
     typeOrigins: Array<{ module: string; datatype: string; package: string }>;
     dependencies: string[];
+    linkages: Array<{ originalId: string; upgradedId: string }>;
     previousTransaction: string | null;
 }
 
@@ -249,6 +275,12 @@ export function createSessionsUpgradeState(): SessionsUpgradeState {
         chainId: CHAIN_ID,
         buildEnvironment: NETWORK,
         deployer: DEPLOYER,
+        packageGasBudget: PACKAGE_GAS_BUDGET,
+        transactionGasBudget: TRANSACTION_GAS_BUDGET.toString(),
+        sessionGas: SESSION_GAS.toString(),
+        sessionTransactionGasBudget: SESSION_TRANSACTION_GAS_BUDGET.toString(),
+        maxSpotPrincipal: MAX_SPOT_PRINCIPAL.toString(),
+        rpcUrlHash: null,
         suiVersion: null,
         sourceCommit: null,
         startedAt: null,
@@ -266,9 +298,24 @@ export function createSessionsUpgradeState(): SessionsUpgradeState {
             sessionAddress: null,
             poolId: DEEP_SUI_POOL,
             quantity: null,
+            fundingAmount: null,
+            initialSuiBalance: null,
+            initialDeepBalance: null,
+            marketPreSuiBalance: null,
+            marketPreDeepBalance: null,
+            limitClientId: null,
+            marketClientId: null,
+            limitPrice: null,
+            marketPriceLimit: null,
             limitOrderId: null,
             marketExecutedQuantity: null,
             marketQuoteQuantity: null,
+            marketPaidFees: null,
+            marketPostSuiBalance: null,
+            marketPostDeepBalance: null,
+            accountFundsRecovered: false,
+            sessionRevoked: false,
+            sessionGasReturned: false,
             transactions: {},
             lastError: null,
         },
@@ -283,6 +330,11 @@ export function assertSessionsUpgradeState(state: SessionsUpgradeState): void {
         state.chainId !== CHAIN_ID ||
         state.buildEnvironment !== NETWORK ||
         normalizeId(state.deployer) !== DEPLOYER ||
+        state.packageGasBudget !== PACKAGE_GAS_BUDGET ||
+        state.transactionGasBudget !== TRANSACTION_GAS_BUDGET.toString() ||
+        state.sessionGas !== SESSION_GAS.toString() ||
+        state.sessionTransactionGasBudget !== SESSION_TRANSACTION_GAS_BUDGET.toString() ||
+        state.maxSpotPrincipal !== MAX_SPOT_PRINCIPAL.toString() ||
         normalizeId(state.previousPackageId) !== SESSIONS_V1 ||
         normalizeId(state.upgradeCapId) !== SESSIONS_CAP
     ) {
@@ -290,9 +342,21 @@ export function assertSessionsUpgradeState(state: SessionsUpgradeState): void {
     }
     if (state.packageId && !state.upgradeTx) throw new Error("package checkpoint lacks upgrade tx");
     if (state.verification && !state.packageId) throw new Error("verification lacks package ID");
+    if (SESSION_TRANSACTION_GAS_BUDGET > SESSION_GAS) {
+        throw new Error("session transaction gas budget exceeds funded session gas");
+    }
     if (
         state.status === "complete" &&
-        (!state.completedAt || !state.verification || state.smoke.status !== "complete")
+        (!state.completedAt ||
+            !state.sourceCommit ||
+            !state.suiVersion ||
+            !state.rpcUrlHash ||
+            !state.verification ||
+            state.smoke.status !== "complete" ||
+            !state.smoke.marketExecutedQuantity ||
+            !state.smoke.accountFundsRecovered ||
+            !state.smoke.sessionRevoked ||
+            !state.smoke.sessionGasReturned)
     ) {
         throw new Error("complete Sessions upgrade lacks verification or smoke evidence");
     }
@@ -346,6 +410,17 @@ export function parsePackageMetadata(raw: unknown): PackageMetadata {
     const origins = content.type_origin_table ?? content.typeOriginTable;
     const linkage = asRecord(content.linkage_table ?? content.linkageTable);
     if (!Array.isArray(origins)) throw new Error("package type origins are missing");
+    const linkages = Object.entries(linkage)
+        .map(([originalId, value]) => {
+            const link = asRecord(value);
+            return {
+                originalId: normalizeId(originalId),
+                upgradedId: normalizeId(
+                    requiredString(link.upgraded_id ?? link.upgradedId, "linked package"),
+                ),
+            };
+        })
+        .sort((left, right) => left.originalId.localeCompare(right.originalId));
     return {
         id: normalizeId(requiredString(content.id ?? root.objectId, "package ID")),
         version: decimal(content.version ?? root.version, "package version"),
@@ -361,14 +436,8 @@ export function parsePackageMetadata(raw: unknown): PackageMetadata {
                 package: normalizeId(requiredString(origin.package, "origin package")),
             };
         }),
-        dependencies: Object.values(linkage)
-            .map((value) => {
-                const link = asRecord(value);
-                return normalizeId(
-                    requiredString(link.upgraded_id ?? link.upgradedId, "linked package"),
-                );
-            })
-            .sort(),
+        dependencies: linkages.map(({ upgradedId }) => upgradedId).sort(),
+        linkages,
         previousTransaction:
             typeof root.prevTx === "string"
                 ? root.prevTx
@@ -534,7 +603,6 @@ async function executeBytes(
     label: string,
     bytes: Uint8Array,
     signer = runtime.signer,
-    checkpoint?: (receipt: Receipt, digest: string) => void,
 ): Promise<Receipt> {
     if (runtime.state.inFlight) throw new Error(`${runtime.state.inFlight.label} is in flight`);
     const simulated = await runtime.client.simulateTransaction({
@@ -576,7 +644,7 @@ async function executeBytes(
         throw new Error(runtime.state.lastError);
     }
     receipt = await settledReceipt(runtime.client, digest);
-    checkpoint?.(receipt, digest);
+    await checkpointTransaction(runtime, label, receipt, digest);
     runtime.state.transactions[label] = digest;
     runtime.state.smoke.transactions[label] = digest;
     runtime.state.inFlight = null;
@@ -694,16 +762,70 @@ function readUpgradeCap(snapshot: ClientSnapshot): UpgradeCapMetadata {
     );
 }
 
-function auditDependencySet(metadata: PackageMetadata): void {
-    for (const dependency of metadata.dependencies) {
-        if (!EXPECTED_DEPENDENCIES.has(dependency)) {
-            throw new Error(`Sessions v2 links unexpected package ${dependency}`);
-        }
+function assertExactDependencies(dependencies: string[], label: string): void {
+    const expected = [...EXPECTED_DEPENDENCIES].sort();
+    const actual = [...dependencies].map(normalizeId).sort();
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error(
+            `${label} dependency mismatch: got ${actual.join(",")}; expected ${expected.join(",")}`,
+        );
     }
-    for (const required of [ACCOUNT, WRAPPER, DEEPBOOK]) {
-        if (!metadata.dependencies.includes(required)) {
-            throw new Error(`Sessions v2 does not link required package ${required}`);
+}
+
+function normalizedLinkages(linkages: ReadonlyMap<string, string>): PackageMetadata["linkages"] {
+    return [...linkages]
+        .map(([originalId, upgradedId]) => ({ originalId, upgradedId }))
+        .sort((left, right) => left.originalId.localeCompare(right.originalId));
+}
+
+function assertExactLinkages(
+    actual: PackageMetadata["linkages"],
+    expectedMap: ReadonlyMap<string, string>,
+    label: string,
+): void {
+    const expected = normalizedLinkages(expectedMap);
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+        throw new Error(
+            `${label} original-to-upgraded linkage mismatch: got ${JSON.stringify(actual)}; expected ${JSON.stringify(expected)}`,
+        );
+    }
+}
+
+function auditDependencySet(metadata: PackageMetadata): void {
+    assertExactDependencies(metadata.dependencies, "Sessions v2 linkage");
+    assertExactLinkages(metadata.linkages, EXPECTED_LINKAGES, "Sessions v2");
+}
+
+function compiledDependencies(): string[] {
+    const lock = resolve(REPO_ROOT, "packages", "sessions", "Move.lock");
+    const hadLock = existsSync(lock);
+    try {
+        const output = command(SUI, [
+            "move",
+            "build",
+            "--path",
+            resolve(REPO_ROOT, "packages", "sessions"),
+            "--dump-bytecode-as-base64",
+            "--build-env",
+            NETWORK,
+            "--warnings-are-errors",
+        ]);
+        const line = output
+            .split("\n")
+            .reverse()
+            .find((candidate) => candidate.trimStart().startsWith('{"modules"'));
+        if (!line) throw new Error("Sui Move build did not return bytecode metadata");
+        const metadata = asRecord(JSON.parse(line));
+        if (!Array.isArray(metadata.dependencies)) {
+            throw new Error("Sui Move build did not return a dependency list");
         }
+        const dependencies = metadata.dependencies.map((value) =>
+            normalizeId(requiredString(value, "compiled dependency")),
+        );
+        assertExactDependencies(dependencies, "compiled Sessions v2");
+        return dependencies;
+    } finally {
+        if (!hadLock) rmSync(lock, { force: true });
     }
 }
 
@@ -720,9 +842,12 @@ async function auditUpgrade(runtime: Runtime): Promise<void> {
     ) {
         throw new Error("Sessions v2 package identity, version, modules, or provenance mismatch");
     }
+    const expectedOrigins = ["SessionAuthorized", "SessionRevoked", "SessionsApp", "SessionsData"];
     if (
         metadata.typeOrigins.length !== 4 ||
-        metadata.typeOrigins.some((origin) => origin.package !== SESSIONS_V1)
+        metadata.typeOrigins.some((origin) => origin.package !== SESSIONS_V1) ||
+        JSON.stringify(metadata.typeOrigins.map((origin) => origin.datatype).sort()) !==
+            JSON.stringify(expectedOrigins)
     ) {
         throw new Error("Sessions v2 did not preserve all v1 type origins");
     }
@@ -786,6 +911,9 @@ function serializedUpgrade(snapshot: ClientSnapshot): Uint8Array {
             "--force",
             "--sender",
             DEPLOYER,
+            // Immutable Testnet dependencies do not all reproduce byte-for-byte with this
+            // historical toolchain. Preflight independently binds the exact compiled latest-ID
+            // set and the exact live original-ID -> latest-ID map before these bytes are signed.
             "--skip-dependency-verification",
             "--gas-budget",
             PACKAGE_GAS_BUDGET,
@@ -808,19 +936,7 @@ async function runUpgrade(runtime: Runtime): Promise<void> {
     }
     runtime.state.status = "upgrading";
     writeState(runtime.state);
-    await executeBytes(
-        runtime,
-        "upgrade_sessions_v2",
-        serializedUpgrade(runtime.snapshot),
-        runtime.signer,
-        (_receipt, digest) => {
-            runtime.state.upgradeTx = digest;
-            runtime.state.packageId = publishedPackageId(
-                transactionBlock(runtime.snapshot, digest),
-            );
-            runtime.state.status = "verifying";
-        },
-    );
+    await executeBytes(runtime, "upgrade_sessions_v2", serializedUpgrade(runtime.snapshot));
     await auditUpgrade(runtime);
 }
 
@@ -842,29 +958,7 @@ async function reconcileInFlight(runtime: Runtime): Promise<void> {
         writeState(runtime.state);
         throw new Error(runtime.state.lastError);
     }
-    if (inFlight.label === "upgrade_sessions_v2") {
-        runtime.state.upgradeTx = inFlight.digest;
-        runtime.state.packageId = publishedPackageId(
-            transactionBlock(runtime.snapshot, inFlight.digest),
-        );
-        runtime.state.status = "verifying";
-    } else if (inFlight.label === "smoke_session_limit_place") {
-        const placed = eventJson(receipt, "::order_info::OrderPlaced");
-        runtime.state.smoke.limitOrderId = decimal(
-            placed.order_id ?? placed.orderId,
-            "limit order ID",
-        );
-    } else if (inFlight.label === "smoke_session_market_fill") {
-        const info = eventJson(receipt, "::order_info::OrderInfo");
-        runtime.state.smoke.marketExecutedQuantity = decimal(
-            info.executed_quantity ?? info.executedQuantity,
-            "executed quantity",
-        );
-        runtime.state.smoke.marketQuoteQuantity = decimal(
-            info.cumulative_quote_quantity ?? info.cumulativeQuoteQuantity,
-            "market quote quantity",
-        );
-    }
+    await checkpointTransaction(runtime, inFlight.label, receipt, inFlight.digest);
     runtime.state.transactions[inFlight.label] = inFlight.digest;
     runtime.state.smoke.transactions[inFlight.label] = inFlight.digest;
     runtime.state.inFlight = null;
@@ -979,11 +1073,171 @@ function eventJson(receipt: Receipt, suffix: string): Record<string, unknown> {
     return asRecord(event.parsedJson);
 }
 
+function smokeValue(smoke: SpotSmoke, key: keyof SpotSmoke, label: string): string {
+    return requiredString(smoke[key], label);
+}
+
+function eventId(value: unknown, label: string): string {
+    if (typeof value === "string") return normalizeId(value);
+    const record = asRecord(value);
+    return normalizeId(requiredString(record.bytes ?? record.id, label));
+}
+
+function eventBool(value: unknown, label: string): boolean {
+    if (typeof value !== "boolean") throw new Error(`${label} is not boolean`);
+    return value;
+}
+
+async function checkpointTransaction(
+    runtime: Runtime,
+    label: string,
+    receipt: Receipt,
+    digest: string,
+): Promise<void> {
+    const smoke = runtime.state.smoke;
+    if (label === "upgrade_sessions_v2") {
+        runtime.state.upgradeTx = digest;
+        runtime.state.packageId = publishedPackageId(transactionBlock(runtime.snapshot, digest));
+        runtime.state.status = "verifying";
+        return;
+    }
+    const wrapper = smokeValue(smoke, "wrapperId", "smoke wrapper");
+    if (label === "smoke_authorize_and_fund") {
+        const session = smokeValue(smoke, "sessionAddress", "smoke session");
+        const expiration = await sessionExpiration(runtime, wrapper, session);
+        const suiBalance = await accountBalance(runtime, wrapper, SUI_TYPE);
+        const deepBalance = await accountBalance(runtime, wrapper, DEEP_TYPE);
+        const expectedSui =
+            BigInt(smokeValue(smoke, "initialSuiBalance", "initial SUI balance")) +
+            BigInt(smokeValue(smoke, "fundingAmount", "smoke funding"));
+        const expectedDeep = BigInt(
+            smokeValue(smoke, "initialDeepBalance", "initial DEEP balance"),
+        );
+        const sessionBalance = await runtime.client.getBalance({ owner: session });
+        if (
+            expiration === null ||
+            suiBalance !== expectedSui ||
+            deepBalance !== expectedDeep ||
+            BigInt(sessionBalance.balance.balance) !== SESSION_GAS
+        ) {
+            throw new Error("authorize/fund checkpoint does not match the journaled smoke bounds");
+        }
+        return;
+    }
+    if (label === "smoke_session_limit_place") {
+        const placed = eventJson(receipt, "::order_info::OrderPlaced");
+        if (
+            eventId(placed.pool_id ?? placed.poolId, "limit pool") !== DEEP_SUI_POOL ||
+            decimal(placed.client_order_id ?? placed.clientOrderId, "limit client order ID") !==
+                smokeValue(smoke, "limitClientId", "limit client order ID") ||
+            decimal(placed.placed_quantity ?? placed.placedQuantity, "limit quantity") !==
+                smokeValue(smoke, "quantity", "limit quantity") ||
+            decimal(placed.price, "limit price") !==
+                smokeValue(smoke, "limitPrice", "limit price") ||
+            eventBool(placed.is_bid ?? placed.isBid, "limit direction") !== true
+        ) {
+            throw new Error("limit placement event does not match the journaled order");
+        }
+        const orderId = decimal(placed.order_id ?? placed.orderId, "limit order ID");
+        if ((await openOrderCount(runtime, wrapper)) !== 1n) {
+            throw new Error("non-crossing limit order is not open at checkpoint");
+        }
+        smoke.limitOrderId = orderId;
+        return;
+    }
+    if (label === "smoke_session_limit_cancel" || label === "smoke_owner_cancel_cleanup") {
+        if ((await openOrderCount(runtime, wrapper)) !== 0n) {
+            throw new Error("limit order remains open after cancellation");
+        }
+        return;
+    }
+    if (label === "smoke_session_market_fill") {
+        const info = eventJson(receipt, "::order_info::OrderInfo");
+        const quantity = BigInt(smokeValue(smoke, "quantity", "market quantity"));
+        const executed = BigInt(
+            decimal(info.executed_quantity ?? info.executedQuantity, "executed quantity"),
+        );
+        const quote = BigInt(
+            decimal(
+                info.cumulative_quote_quantity ?? info.cumulativeQuoteQuantity,
+                "market quote quantity",
+            ),
+        );
+        const paidFees = BigInt(decimal(info.paid_fees ?? info.paidFees, "market paid fees"));
+        if (
+            eventId(info.pool_id ?? info.poolId, "market pool") !== DEEP_SUI_POOL ||
+            decimal(info.client_order_id ?? info.clientOrderId, "market client order ID") !==
+                smokeValue(smoke, "marketClientId", "market client order ID") ||
+            decimal(info.original_quantity ?? info.originalQuantity, "market original quantity") !==
+                quantity.toString() ||
+            decimal(info.order_type ?? info.orderType, "market order type") !== "1" ||
+            decimal(info.status, "market order status") !== "2" ||
+            eventBool(info.is_bid ?? info.isBid, "market direction") !== true ||
+            eventBool(info.market_order ?? info.marketOrder, "market order flag") !== true ||
+            eventBool(info.order_inserted ?? info.orderInserted, "market insertion flag") !==
+                false ||
+            eventBool(info.fee_is_deep ?? info.feeIsDeep, "market fee currency") !== false ||
+            executed !== quantity ||
+            quote === 0n
+        ) {
+            throw new Error("market fill event does not match the exact journaled order");
+        }
+        const preSui = BigInt(smokeValue(smoke, "marketPreSuiBalance", "pre-market SUI balance"));
+        const preDeep = BigInt(
+            smokeValue(smoke, "marketPreDeepBalance", "pre-market DEEP balance"),
+        );
+        const postSui = await accountBalance(runtime, wrapper, SUI_TYPE);
+        const postDeep = await accountBalance(runtime, wrapper, DEEP_TYPE);
+        if (postSui !== preSui - quote - paidFees || postDeep !== preDeep + executed) {
+            throw new Error("market fill Account deltas do not match OrderInfo");
+        }
+        smoke.marketExecutedQuantity = executed.toString();
+        smoke.marketQuoteQuantity = quote.toString();
+        smoke.marketPaidFees = paidFees.toString();
+        smoke.marketPostSuiBalance = postSui.toString();
+        smoke.marketPostDeepBalance = postDeep.toString();
+        return;
+    }
+    if (label === "smoke_revoke_session") {
+        const session = smokeValue(smoke, "sessionAddress", "smoke session");
+        if ((await sessionExpiration(runtime, wrapper, session)) !== null) {
+            throw new Error("session grant remains after revocation");
+        }
+        smoke.sessionRevoked = true;
+        return;
+    }
+    if (label === "smoke_recover_account_funds") {
+        const suiBalance = await accountBalance(runtime, wrapper, SUI_TYPE);
+        const deepBalance = await accountBalance(runtime, wrapper, DEEP_TYPE);
+        if (
+            suiBalance !== BigInt(smokeValue(smoke, "initialSuiBalance", "initial SUI balance")) ||
+            deepBalance !== BigInt(smokeValue(smoke, "initialDeepBalance", "initial DEEP balance"))
+        ) {
+            throw new Error("smoke-attributable Account funds were not recovered to baseline");
+        }
+        smoke.accountFundsRecovered = true;
+        return;
+    }
+    if (label === "smoke_return_session_gas") {
+        const session = smokeValue(smoke, "sessionAddress", "smoke session");
+        const balance = await runtime.client.getBalance({ owner: session });
+        if (BigInt(balance.balance.balance) !== 0n) {
+            throw new Error("temporary session gas remains after return transaction");
+        }
+        smoke.sessionGasReturned = true;
+        return;
+    }
+    throw new Error(`no semantic checkpoint is defined for ${label}`);
+}
+
 async function cleanupOwnerOrder(
     runtime: Runtime,
     wrapper: string,
     orderId: bigint,
 ): Promise<void> {
+    const count = await openOrderCount(runtime, wrapper);
+    if (count === 0n) return;
+    if (count !== 1n) throw new Error(`smoke Account has ${count} open orders during cleanup`);
     const tx = new Transaction();
     const auth = call(tx, `${ACCOUNT}::account::generate_auth`, []);
     call(
@@ -1001,99 +1255,138 @@ async function cleanupOwnerOrder(
     await executeTransaction(runtime, "smoke_owner_cancel_cleanup", tx);
 }
 
-async function revokeSessionOwner(
-    runtime: Runtime,
-    wrapper: string,
-    session: string,
-): Promise<void> {
-    if ((await sessionExpiration(runtime, wrapper, session)) === null) return;
+function smokeSessionSigner(runtime: Runtime): Ed25519Keypair {
+    // Derive the one-rollout session deterministically so a resumed process can clean it up
+    // without putting any private key or signature in the operator journal.
+    const seed = createHmac("sha256", runtime.signer.getSecretKey())
+        .update(
+            `deepbookv3/DBU-712/sessions-v2-smoke/${runtime.sourceCommit}/${runtime.state.packageId}`,
+        )
+        .digest();
+    return Ed25519Keypair.fromSecretKey(seed);
+}
+
+async function ensureSessionRevoked(runtime: Runtime, wrapper: string): Promise<void> {
+    const session = smokeValue(runtime.state.smoke, "sessionAddress", "smoke session");
+    if ((await sessionExpiration(runtime, wrapper, session)) === null) {
+        runtime.state.smoke.sessionRevoked = true;
+        writeState(runtime.state);
+        return;
+    }
     const revoke = new Transaction();
     call(revoke, `${runtime.state.packageId}::sessions::revoke_session`, [
         revoke.object(wrapper),
         revoke.pure.address(session),
     ]);
-    await executeTransaction(runtime, "smoke_owner_revoke_recovery", revoke);
-    if ((await sessionExpiration(runtime, wrapper, session)) !== null) {
-        throw new Error("recovered session grant remains present");
+    await executeTransaction(runtime, "smoke_revoke_session", revoke);
+}
+
+async function ensureAccountFundsRecovered(runtime: Runtime, wrapper: string): Promise<void> {
+    const smoke = runtime.state.smoke;
+    const initialSui = BigInt(smokeValue(smoke, "initialSuiBalance", "initial SUI balance"));
+    const initialDeep = BigInt(smokeValue(smoke, "initialDeepBalance", "initial DEEP balance"));
+    const currentSui = await accountBalance(runtime, wrapper, SUI_TYPE);
+    const currentDeep = await accountBalance(runtime, wrapper, DEEP_TYPE);
+    if (currentSui < initialSui || currentDeep < initialDeep) {
+        throw new Error("smoke Account balance fell below its journaled baseline");
     }
+    const suiDelta = currentSui - initialSui;
+    const deepDelta = currentDeep - initialDeep;
+    const funding = BigInt(smokeValue(smoke, "fundingAmount", "smoke funding"));
+    const executed = BigInt(
+        smokeValue(smoke, "marketExecutedQuantity", "market executed quantity"),
+    );
+    if (suiDelta > funding || deepDelta > executed) {
+        throw new Error("Account cleanup delta exceeds journaled smoke attribution");
+    }
+    if (suiDelta === 0n && deepDelta === 0n) {
+        smoke.accountFundsRecovered = true;
+        writeState(runtime.state);
+        return;
+    }
+    const tx = new Transaction();
+    const recovered = [];
+    if (suiDelta > 0n) {
+        const auth = call(tx, `${ACCOUNT}::account::generate_auth`, []);
+        recovered.push(
+            call(
+                tx,
+                `${ACCOUNT}::account::withdraw_funds`,
+                [
+                    tx.object(wrapper),
+                    auth,
+                    tx.pure.u64(suiDelta),
+                    tx.object(ACCUMULATOR_ROOT),
+                    tx.object(CLOCK),
+                ],
+                [SUI_TYPE],
+            ),
+        );
+    }
+    if (deepDelta > 0n) {
+        const auth = call(tx, `${ACCOUNT}::account::generate_auth`, []);
+        recovered.push(
+            call(
+                tx,
+                `${ACCOUNT}::account::withdraw_funds`,
+                [
+                    tx.object(wrapper),
+                    auth,
+                    tx.pure.u64(deepDelta),
+                    tx.object(ACCUMULATOR_ROOT),
+                    tx.object(CLOCK),
+                ],
+                [DEEP_TYPE],
+            ),
+        );
+    }
+    tx.transferObjects(recovered, tx.pure.address(DEPLOYER));
+    await executeTransaction(runtime, "smoke_recover_account_funds", tx);
+}
+
+async function ensureSessionGasReturned(
+    runtime: Runtime,
+    sessionSigner: Ed25519Keypair,
+): Promise<void> {
+    const session = smokeValue(runtime.state.smoke, "sessionAddress", "smoke session");
+    const balance = await runtime.client.getBalance({ owner: session });
+    if (BigInt(balance.balance.balance) === 0n) {
+        runtime.state.smoke.sessionGasReturned = true;
+        writeState(runtime.state);
+        return;
+    }
+    if (BigInt(balance.balance.balance) < SESSION_TRANSACTION_GAS_BUDGET) {
+        throw new Error("temporary session balance is below its return transaction gas budget");
+    }
+    const returnGas = new Transaction();
+    returnGas.transferObjects([returnGas.gas], returnGas.pure.address(DEPLOYER));
+    await executeTransaction(
+        runtime,
+        "smoke_return_session_gas",
+        returnGas,
+        sessionSigner,
+        SESSION_TRANSACTION_GAS_BUDGET,
+    );
 }
 
 async function runSmoke(runtime: Runtime): Promise<void> {
     const packageId = requiredString(runtime.state.packageId, "Sessions v2 package");
     const wrapper = await accountWrapper(runtime);
-    if (runtime.state.smoke.sessionAddress) {
-        await revokeSessionOwner(runtime, wrapper, runtime.state.smoke.sessionAddress);
-    }
-    if (runtime.state.smoke.limitOrderId && (await openOrderCount(runtime, wrapper)) > 0n) {
-        await cleanupOwnerOrder(runtime, wrapper, BigInt(runtime.state.smoke.limitOrderId));
-    }
-    if (
-        runtime.state.smoke.marketExecutedQuantity &&
-        BigInt(runtime.state.smoke.marketExecutedQuantity) > 0n
-    ) {
-        runtime.state.smoke.status = "complete";
-        runtime.state.smoke.lastError = null;
-        writeState(runtime.state);
-        return;
-    }
-    const book = await poolParameters(runtime);
-    if (book.minSize % book.lotSize !== 0n) throw new Error("pool min size is not lot aligned");
-    if (book.quoteRequired + SMOKE_BUFFER > MAX_SPOT_PRINCIPAL) {
-        throw new Error(`live market quote ${book.quoteRequired} exceeds smoke principal bound`);
-    }
-    const preSui = await accountBalance(runtime, wrapper, SUI_TYPE);
-    const preDeep = await accountBalance(runtime, wrapper, DEEP_TYPE);
-    const initialOrders = await openOrderCount(runtime, wrapper);
-    if (initialOrders !== 0n) throw new Error("smoke Account already has live DEEP/SUI orders");
-
-    const sessionSigner = Ed25519Keypair.generate();
+    const sessionSigner = smokeSessionSigner(runtime);
     const session = normalizeId(sessionSigner.getPublicKey().toSuiAddress());
-    runtime.state.status = "smoke";
-    runtime.state.smoke = {
-        ...runtime.state.smoke,
-        status: "running",
-        wrapperId: wrapper,
-        sessionAddress: session,
-        quantity: book.minSize.toString(),
-        lastError: null,
-    };
-    writeState(runtime.state);
-
-    let limitOrderId: bigint | null = null;
-    let authorized = false;
-    let primaryError: unknown;
-    try {
-        const setup = new Transaction();
-        const [accountFunding, sessionGas] = setup.splitCoins(setup.gas, [
-            setup.pure.u64(book.quoteRequired + SMOKE_BUFFER),
-            setup.pure.u64(SESSION_GAS),
-        ]);
-        const ownerAuth = call(setup, `${ACCOUNT}::account::generate_auth`, []);
-        call(
-            setup,
-            `${ACCOUNT}::account::deposit_funds`,
-            [
-                setup.object(wrapper),
-                ownerAuth,
-                accountFunding,
-                setup.object(ACCUMULATOR_ROOT),
-                setup.object(CLOCK),
-            ],
-            [SUI_TYPE],
-        );
-        setup.transferObjects([sessionGas], setup.pure.address(session));
-        call(setup, `${packageId}::sessions::authorize_session`, [
-            setup.object(wrapper),
-            setup.pure.address(session),
-            setup.pure.u64(SESSION_DURATION_MS),
-            setup.object(CLOCK),
-        ]);
-        await executeTransaction(runtime, "smoke_authorize_and_fund", setup);
-        authorized = true;
-        if ((await sessionExpiration(runtime, wrapper, session)) === null) {
-            throw new Error("session grant was not recorded");
+    const smoke = runtime.state.smoke;
+    if (smoke.status === "not_started") {
+        const book = await poolParameters(runtime);
+        if (book.minSize % book.lotSize !== 0n) throw new Error("pool min size is not lot aligned");
+        const fundingAmount = book.quoteRequired + SMOKE_BUFFER;
+        if (fundingAmount > MAX_SPOT_PRINCIPAL) {
+            throw new Error(
+                `live market quote ${book.quoteRequired} exceeds smoke principal bound`,
+            );
         }
-
+        if ((await openOrderCount(runtime, wrapper)) !== 0n) {
+            throw new Error("smoke Account already has live DEEP/SUI orders");
+        }
         const passivePrice =
             book.bestBid && book.bestBid + book.tickSize < book.bestAsk
                 ? book.bestBid + book.tickSize
@@ -1102,159 +1395,188 @@ async function runSmoke(runtime: Runtime): Promise<void> {
             throw new Error("cannot derive a non-crossing DEEP/SUI bid");
         }
         const limitClientId = BigInt(Date.now());
-        const limit = new Transaction();
-        call(
-            limit,
-            `${packageId}::sessions::place_limit_order`,
-            [
-                limit.object(DEEP_SUI_POOL),
-                limit.object(DEEPBOOK_REGISTRY),
-                limit.object(ACCOUNT_REGISTRY),
-                limit.object(wrapper),
-                limit.pure.u64(limitClientId),
-                limit.pure.u8(3),
-                limit.pure.u8(0),
-                limit.pure.u64(passivePrice),
-                limit.pure.u64(book.minSize),
-                limit.pure.bool(true),
-                limit.pure.bool(false),
-                limit.pure.u64(0n),
-                limit.object(ACCUMULATOR_ROOT),
-                limit.object(CLOCK),
-            ],
-            [DEEP_TYPE, SUI_TYPE],
-        );
-        const limitReceipt = await executeTransaction(
-            runtime,
-            "smoke_session_limit_place",
-            limit,
-            sessionSigner,
-        );
-        const placed = eventJson(limitReceipt, "::order_info::OrderPlaced");
-        if (
-            decimal(placed.client_order_id ?? placed.clientOrderId, "limit client order ID") !==
-            limitClientId.toString()
-        ) {
-            throw new Error("limit placement event has the wrong client order ID");
-        }
-        limitOrderId = BigInt(decimal(placed.order_id ?? placed.orderId, "limit order ID"));
-        runtime.state.smoke.limitOrderId = limitOrderId.toString();
+        runtime.state.status = "smoke";
+        Object.assign(smoke, {
+            status: "running",
+            wrapperId: wrapper,
+            sessionAddress: session,
+            quantity: book.minSize.toString(),
+            fundingAmount: fundingAmount.toString(),
+            initialSuiBalance: (await accountBalance(runtime, wrapper, SUI_TYPE)).toString(),
+            initialDeepBalance: (await accountBalance(runtime, wrapper, DEEP_TYPE)).toString(),
+            limitClientId: limitClientId.toString(),
+            marketClientId: (limitClientId + 1n).toString(),
+            limitPrice: passivePrice.toString(),
+            marketPriceLimit: (book.bestAsk + book.bestAsk / 4n + book.tickSize).toString(),
+            lastError: null,
+        });
         writeState(runtime.state);
-        if ((await openOrderCount(runtime, wrapper)) !== 1n) {
-            throw new Error("non-crossing limit order is not open");
-        }
-
-        const cancel = new Transaction();
-        call(
-            cancel,
-            `${packageId}::sessions::cancel_live_order`,
-            [
-                cancel.object(DEEP_SUI_POOL),
-                cancel.object(ACCOUNT_REGISTRY),
-                cancel.object(wrapper),
-                cancel.pure.u128(limitOrderId),
-                cancel.object(CLOCK),
-            ],
-            [DEEP_TYPE, SUI_TYPE],
-        );
-        await executeTransaction(runtime, "smoke_session_limit_cancel", cancel, sessionSigner);
-        if ((await openOrderCount(runtime, wrapper)) !== 0n) {
-            throw new Error("canceled limit order remains open");
-        }
-        limitOrderId = null;
-
-        const marketClientId = limitClientId + 1n;
-        const priceLimit = book.bestAsk + book.bestAsk / 4n + book.tickSize;
-        const market = new Transaction();
-        call(
-            market,
-            `${packageId}::sessions::place_market_order`,
-            [
-                market.object(DEEP_SUI_POOL),
-                market.object(DEEPBOOK_REGISTRY),
-                market.object(ACCOUNT_REGISTRY),
-                market.object(wrapper),
-                market.pure.u64(marketClientId),
-                market.pure.u8(0),
-                market.pure.u64(book.minSize),
-                market.pure.u64(priceLimit),
-                market.pure.bool(true),
-                market.pure.bool(false),
-                market.object(ACCUMULATOR_ROOT),
-                market.object(CLOCK),
-            ],
-            [DEEP_TYPE, SUI_TYPE],
-        );
-        const marketReceipt = await executeTransaction(
-            runtime,
-            "smoke_session_market_fill",
-            market,
-            sessionSigner,
-        );
-        const info = eventJson(marketReceipt, "::order_info::OrderInfo");
-        const executed = BigInt(
-            decimal(info.executed_quantity ?? info.executedQuantity, "executed quantity"),
-        );
-        const quote = BigInt(
-            decimal(
-                info.cumulative_quote_quantity ?? info.cumulativeQuoteQuantity,
-                "market quote quantity",
-            ),
-        );
-        if (executed === 0n || quote === 0n) throw new Error("market smoke did not fill");
-        const postSui = await accountBalance(runtime, wrapper, SUI_TYPE);
-        const postDeep = await accountBalance(runtime, wrapper, DEEP_TYPE);
-        if (postDeep <= preDeep || postSui >= preSui + book.quoteRequired + SMOKE_BUFFER) {
-            throw new Error("market fill did not produce the expected Account balance movement");
-        }
-        runtime.state.smoke.marketExecutedQuantity = executed.toString();
-        runtime.state.smoke.marketQuoteQuantity = quote.toString();
-        writeState(runtime.state);
-    } catch (error) {
-        primaryError = error;
-        runtime.state.smoke.status = "failed";
-        runtime.state.smoke.lastError = error instanceof Error ? error.message : String(error);
-        writeState(runtime.state);
-    } finally {
-        if (limitOrderId !== null && !runtime.state.inFlight) {
-            try {
-                await cleanupOwnerOrder(runtime, wrapper, limitOrderId);
-            } catch (error) {
-                primaryError ??= error;
-            }
-        }
-        if (authorized && !runtime.state.inFlight) {
-            try {
-                const revoke = new Transaction();
-                call(revoke, `${packageId}::sessions::revoke_session`, [
-                    revoke.object(wrapper),
-                    revoke.pure.address(session),
-                ]);
-                await executeTransaction(runtime, "smoke_revoke_session", revoke);
-                if ((await sessionExpiration(runtime, wrapper, session)) !== null) {
-                    throw new Error("revoked session is still present");
-                }
-            } catch (error) {
-                primaryError ??= error;
-            }
-            try {
-                const returnGas = new Transaction();
-                returnGas.transferObjects([returnGas.gas], returnGas.pure.address(DEPLOYER));
-                await executeTransaction(
-                    runtime,
-                    "smoke_return_session_gas",
-                    returnGas,
-                    sessionSigner,
-                    50_000_000n,
-                );
-            } catch (error) {
-                console.warn(`[sessions:v2] could not return temporary gas: ${String(error)}`);
-            }
-        }
+    } else if (
+        normalizeId(smokeValue(smoke, "wrapperId", "smoke wrapper")) !== wrapper ||
+        normalizeId(smokeValue(smoke, "sessionAddress", "smoke session")) !== session
+    ) {
+        throw new Error("resumed smoke wrapper or deterministic session does not match journal");
     }
-    if (primaryError) throw primaryError;
-    runtime.state.smoke.status = "complete";
-    runtime.state.smoke.lastError = null;
+
+    try {
+        if (!smoke.transactions.smoke_authorize_and_fund) {
+            const setup = new Transaction();
+            const [accountFunding, sessionGas] = setup.splitCoins(setup.gas, [
+                setup.pure.u64(BigInt(smokeValue(smoke, "fundingAmount", "smoke funding"))),
+                setup.pure.u64(SESSION_GAS),
+            ]);
+            const ownerAuth = call(setup, `${ACCOUNT}::account::generate_auth`, []);
+            call(
+                setup,
+                `${ACCOUNT}::account::deposit_funds`,
+                [
+                    setup.object(wrapper),
+                    ownerAuth,
+                    accountFunding,
+                    setup.object(ACCUMULATOR_ROOT),
+                    setup.object(CLOCK),
+                ],
+                [SUI_TYPE],
+            );
+            setup.transferObjects([sessionGas], setup.pure.address(session));
+            call(setup, `${packageId}::sessions::authorize_session`, [
+                setup.object(wrapper),
+                setup.pure.address(session),
+                setup.pure.u64(SESSION_DURATION_MS),
+                setup.object(CLOCK),
+            ]);
+            await executeTransaction(runtime, "smoke_authorize_and_fund", setup);
+        } else if ((await sessionExpiration(runtime, wrapper, session)) === null) {
+            throw new Error("journaled smoke session is no longer authorized");
+        }
+
+        if (!smoke.transactions.smoke_session_limit_place) {
+            const limit = new Transaction();
+            call(
+                limit,
+                `${packageId}::sessions::place_limit_order`,
+                [
+                    limit.object(DEEP_SUI_POOL),
+                    limit.object(DEEPBOOK_REGISTRY),
+                    limit.object(ACCOUNT_REGISTRY),
+                    limit.object(wrapper),
+                    limit.pure.u64(
+                        BigInt(smokeValue(smoke, "limitClientId", "limit client order ID")),
+                    ),
+                    limit.pure.u8(3),
+                    limit.pure.u8(0),
+                    limit.pure.u64(BigInt(smokeValue(smoke, "limitPrice", "limit price"))),
+                    limit.pure.u64(BigInt(smokeValue(smoke, "quantity", "limit quantity"))),
+                    limit.pure.bool(true),
+                    limit.pure.bool(false),
+                    limit.pure.u64(0n),
+                    limit.object(ACCUMULATOR_ROOT),
+                    limit.object(CLOCK),
+                ],
+                [DEEP_TYPE, SUI_TYPE],
+            );
+            await executeTransaction(
+                runtime,
+                "smoke_session_limit_place",
+                limit,
+                sessionSigner,
+                SESSION_TRANSACTION_GAS_BUDGET,
+            );
+        }
+
+        if (!smoke.transactions.smoke_session_limit_cancel) {
+            const cancel = new Transaction();
+            call(
+                cancel,
+                `${packageId}::sessions::cancel_live_order`,
+                [
+                    cancel.object(DEEP_SUI_POOL),
+                    cancel.object(ACCOUNT_REGISTRY),
+                    cancel.object(wrapper),
+                    cancel.pure.u128(BigInt(smokeValue(smoke, "limitOrderId", "limit order ID"))),
+                    cancel.object(CLOCK),
+                ],
+                [DEEP_TYPE, SUI_TYPE],
+            );
+            await executeTransaction(
+                runtime,
+                "smoke_session_limit_cancel",
+                cancel,
+                sessionSigner,
+                SESSION_TRANSACTION_GAS_BUDGET,
+            );
+        }
+
+        if (!smoke.marketPreSuiBalance || !smoke.marketPreDeepBalance) {
+            smoke.marketPreSuiBalance = (
+                await accountBalance(runtime, wrapper, SUI_TYPE)
+            ).toString();
+            smoke.marketPreDeepBalance = (
+                await accountBalance(runtime, wrapper, DEEP_TYPE)
+            ).toString();
+            writeState(runtime.state);
+        }
+
+        if (!smoke.transactions.smoke_session_market_fill) {
+            const market = new Transaction();
+            call(
+                market,
+                `${packageId}::sessions::place_market_order`,
+                [
+                    market.object(DEEP_SUI_POOL),
+                    market.object(DEEPBOOK_REGISTRY),
+                    market.object(ACCOUNT_REGISTRY),
+                    market.object(wrapper),
+                    market.pure.u64(
+                        BigInt(smokeValue(smoke, "marketClientId", "market client order ID")),
+                    ),
+                    market.pure.u8(0),
+                    market.pure.u64(BigInt(smokeValue(smoke, "quantity", "market quantity"))),
+                    market.pure.u64(
+                        BigInt(smokeValue(smoke, "marketPriceLimit", "market price limit")),
+                    ),
+                    market.pure.bool(true),
+                    market.pure.bool(false),
+                    market.object(ACCUMULATOR_ROOT),
+                    market.object(CLOCK),
+                ],
+                [DEEP_TYPE, SUI_TYPE],
+            );
+            await executeTransaction(
+                runtime,
+                "smoke_session_market_fill",
+                market,
+                sessionSigner,
+                SESSION_TRANSACTION_GAS_BUDGET,
+            );
+        }
+        if ((await openOrderCount(runtime, wrapper)) !== 0n) {
+            await cleanupOwnerOrder(
+                runtime,
+                wrapper,
+                BigInt(smokeValue(smoke, "limitOrderId", "limit order ID")),
+            );
+        }
+        await ensureSessionRevoked(runtime, wrapper);
+        await ensureAccountFundsRecovered(runtime, wrapper);
+        await ensureSessionGasReturned(runtime, sessionSigner);
+    } catch (error) {
+        smoke.status = "failed";
+        smoke.lastError = error instanceof Error ? error.message : String(error);
+        writeState(runtime.state);
+        throw error;
+    }
+    if (
+        !smoke.marketExecutedQuantity ||
+        !smoke.marketQuoteQuantity ||
+        !smoke.accountFundsRecovered ||
+        !smoke.sessionRevoked ||
+        !smoke.sessionGasReturned
+    ) {
+        throw new Error("live spot smoke did not reach its audited completion state");
+    }
+    smoke.status = "complete";
+    smoke.lastError = null;
     writeState(runtime.state);
 }
 
@@ -1299,6 +1621,13 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
     }
     const suiVersion = command(SUI, ["--version"]);
     if (!SUI_VERSION.test(suiVersion)) throw new Error(`unsupported Sui CLI ${suiVersion}`);
+    if (state.suiVersion && state.suiVersion !== suiVersion) {
+        throw new Error(`upgrade journal is bound to Sui CLI ${state.suiVersion}`);
+    }
+    const rpcUrlHash = createHash("sha256").update(snapshot.rpcUrl).digest("hex");
+    if (state.rpcUrlHash && state.rpcUrlHash !== rpcUrlHash) {
+        throw new Error("upgrade journal is bound to a different RPC endpoint");
+    }
     if (
         suiClient(snapshot, ["active-env"]) !== NETWORK ||
         suiClient(snapshot, ["chain-identifier"]) !== CHAIN_ID ||
@@ -1309,20 +1638,65 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
     const client = new SuiGrpcClient({ baseUrl: snapshot.rpcUrl, network: NETWORK });
     if ((await shortChainId(client)) !== CHAIN_ID) throw new Error("SDK RPC chain mismatch");
     const signer = signerFromKeystore(snapshot.keystorePath);
+    compiledDependencies();
+    const balance = await client.getBalance({ owner: DEPLOYER });
+    const available = BigInt(balance.balance.balance);
+    const required =
+        BigInt(PACKAGE_GAS_BUDGET) + 8n * TRANSACTION_GAS_BUDGET + MAX_SPOT_PRINCIPAL + SESSION_GAS;
+    if (available < required) {
+        throw new Error(
+            `insufficient deployer SUI: have ${available}, require at least ${required} for upgrade and smoke bounds`,
+        );
+    }
     const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf8")) as unknown;
     assertIntegrationManifest(manifest);
+    if (manifest.schemaVersion !== 5 || manifest.packages.deepbookCoreAccount !== WRAPPER) {
+        throw new Error("committed manifest does not bind the Sessions spot wrapper");
+    }
+    const manifestSessions = normalizeId(
+        requiredString(manifest.packages.sessions, "manifest Sessions package"),
+    );
     if (
-        manifest.schemaVersion !== 5 ||
-        manifest.packages.sessions !== SESSIONS_V1 ||
-        manifest.packages.deepbookCoreAccount !== WRAPPER
+        (!state.packageId && manifestSessions !== SESSIONS_V1) ||
+        (state.packageId &&
+            manifestSessions !== SESSIONS_V1 &&
+            manifestSessions !== normalizeId(state.packageId))
     ) {
-        throw new Error("committed manifest does not bind Sessions v1 and its spot wrapper");
+        throw new Error("committed manifest does not match the journaled Sessions package");
     }
     const oldPackage = readPackage(snapshot, SESSIONS_V1);
+    const wrapperPackage = readPackage(snapshot, WRAPPER);
+    const deepbookPackage = readPackage(snapshot, DEEPBOOK);
     const cap = readUpgradeCap(snapshot);
-    if (oldPackage.version !== "1" || cap.packageId !== SESSIONS_V1 || cap.version !== "1") {
-        if (!state.packageId)
+    const expectedV1Dependencies = [...EXPECTED_DEPENDENCIES]
+        .filter((id) => id !== WRAPPER && id !== DEEPBOOK)
+        .sort();
+    const expectedV1Linkages = new Map(EXPECTED_LINKAGES);
+    expectedV1Linkages.delete(WRAPPER);
+    expectedV1Linkages.delete(DEEPBOOK_ORIGINAL);
+    if (
+        oldPackage.version !== "1" ||
+        JSON.stringify(oldPackage.dependencies) !== JSON.stringify(expectedV1Dependencies) ||
+        wrapperPackage.id !== WRAPPER ||
+        wrapperPackage.version !== "1" ||
+        wrapperPackage.typeOrigins.some((origin) => origin.package !== WRAPPER) ||
+        deepbookPackage.id !== DEEPBOOK ||
+        deepbookPackage.version !== "20" ||
+        !deepbookPackage.typeOrigins.some((origin) => origin.package === DEEPBOOK_ORIGINAL)
+    ) {
+        throw new Error("live Sessions v1, spot wrapper, or DeepBook dependency identity mismatch");
+    }
+    assertExactLinkages(oldPackage.linkages, expectedV1Linkages, "live Sessions v1");
+    if (!state.packageId) {
+        if (cap.packageId !== SESSIONS_V1 || cap.version !== "1") {
             throw new Error("live Sessions package is not at the expected v1 base");
+        }
+    } else if (
+        cap.packageId !== SESSIONS_V1 ||
+        cap.version !== "2" ||
+        normalizeId(state.packageId) === SESSIONS_V1
+    ) {
+        throw new Error("live Sessions upgrade does not match its v2 journal checkpoint");
     }
     return { state, snapshot, client, signer, sourceCommit };
 }
@@ -1348,6 +1722,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
         }
         state.sourceCommit ??= runtime.sourceCommit;
         state.suiVersion ??= suiVersion;
+        state.rpcUrlHash ??= createHash("sha256").update(snapshot.rpcUrl).digest("hex");
         state.startedAt ??= new Date().toISOString();
         state.lastError = null;
         writeState(state);
