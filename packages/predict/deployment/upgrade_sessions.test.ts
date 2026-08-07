@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+    assertSmokeSessionResume,
     assertSessionsUpgradeState,
     buildSessionsUpgradeManifest,
     createSessionsUpgradeState,
@@ -81,6 +82,16 @@ test("upgrade defaults to non-broadcasting mode and smoke requires execute", () 
     });
     assert.throws(() => parseSessionsUpgradeArgs(["--smoke"]), /requires --execute/);
     assert.throws(() => parseSessionsUpgradeArgs(["--force"]), /unknown Sessions upgrade/);
+});
+
+test("session resume allows post-market cleanup but rejects missing write authority", () => {
+    assert.doesNotThrow(() => assertSmokeSessionResume(false, false, 123n));
+    assert.doesNotThrow(() => assertSmokeSessionResume(true, true, null));
+    assert.throws(() => assertSmokeSessionResume(false, false, null), /no longer authorized/);
+    assert.throws(
+        () => assertSmokeSessionResume(true, false, null),
+        /revoked before the market checkpoint/,
+    );
 });
 
 test("journal validation pins the Testnet chain, deployer, v1 package, and UpgradeCap", () => {

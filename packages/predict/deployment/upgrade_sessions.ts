@@ -267,6 +267,19 @@ export function parseSessionsUpgradeArgs(args: readonly string[]): SessionsUpgra
     return result;
 }
 
+export function assertSmokeSessionResume(
+    sessionRevoked: boolean,
+    marketCheckpointed: boolean,
+    expiration: bigint | null,
+): void {
+    if (!sessionRevoked && expiration === null) {
+        throw new Error("journaled smoke session is no longer authorized");
+    }
+    if (sessionRevoked && !marketCheckpointed) {
+        throw new Error("smoke session was revoked before the market checkpoint");
+    }
+}
+
 export function createSessionsUpgradeState(): SessionsUpgradeState {
     return {
         schemaVersion: 1,
@@ -1446,15 +1459,12 @@ async function runSmoke(runtime: Runtime): Promise<void> {
                 setup.object(CLOCK),
             ]);
             await executeTransaction(runtime, "smoke_authorize_and_fund", setup);
-        } else if (
-            !smoke.sessionRevoked &&
-            (await sessionExpiration(runtime, wrapper, session)) === null
-        ) {
-            throw new Error("journaled smoke session is no longer authorized");
-        }
-
-        if (smoke.sessionRevoked && !smoke.transactions.smoke_session_market_fill) {
-            throw new Error("smoke session was revoked before the market checkpoint");
+        } else {
+            assertSmokeSessionResume(
+                smoke.sessionRevoked,
+                Boolean(smoke.transactions.smoke_session_market_fill),
+                await sessionExpiration(runtime, wrapper, session),
+            );
         }
 
         if (!smoke.transactions.smoke_session_limit_place) {
