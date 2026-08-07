@@ -32,6 +32,10 @@ use margin_liquidation::liquidation_vault::{Self, LiquidationByVault};
 use std::unit_test::destroy;
 use sui::{clock::Clock, test_scenario::{Self as test, return_shared}};
 
+const HEALTHY_BTC_PRICE: u64 = 50_000;
+const STALE_PRICE_AGE_SECS: u64 = 600;
+const WRONG_ABORT_SENTINEL: u64 = 999;
+
 /// A healthy BTC/USDC manager: 1 BTC of collateral against a 40k USDC loan at $50k.
 /// Every test here starts from it, then varies only the feed handed to the vault.
 fun healthy_manager(): (test::Scenario, Clock, ID, ID, ID) {
@@ -484,6 +488,45 @@ fun manager_with_base_debt(): (test::Scenario, Clock, ID, ID) {
     return_shared(pool);
     return_shared(mm);
     (scenario, clock, btc_pool_id, usdc_pool_id)
+}
+
+/// The base-side upgraded entry must validate freshness before its healthy-manager
+/// early return. Otherwise an unsafe pre-check could silently accept a stale feed.
+#[test, expected_failure(abort_code = pyth_upgraded::pyth::E_STALE_PRICE_UPDATE)]
+fun liquidate_base_upgraded_rejects_a_stale_feed() {
+    let (mut scenario, clock, btc_pool_id, usdc_pool_id) = manager_with_base_debt();
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // At the original $50k price the manager is healthy, so replacing the validated
+    // pre-check with `risk_ratio_unsafe` returns before `liquidate` can reject staleness.
+    let stale_btc = build_stale_btc_price_info_object_upgraded(
+        &mut scenario,
+        HEALTHY_BTC_PRICE,
+        STALE_PRICE_AGE_SECS,
+        &clock,
+    );
+    let usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
+
+    vault.liquidate_base_upgraded<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &stale_btc,
+        &usdc,
+        &mut btc_pool,
+        &mut usdc_pool,
+        &mut pool,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+    abort WRONG_ABORT_SENTINEL
 }
 
 /// The base side of the payout path, which nothing else reaches. Until this existed,
