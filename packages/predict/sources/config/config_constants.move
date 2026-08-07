@@ -36,6 +36,7 @@ const EInvalidMaxLpPoolValue: u64 = 25;
 const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
 const EInvalidMaxBenefitRatio: u64 = 28;
+const EInvalidInventoryImpactMaxRate: u64 = 29;
 
 // === Fees ===
 
@@ -240,6 +241,29 @@ public(package) fun assert_backing_buffer_lambda(value: u64) {
     assert!(
         value >= min_backing_buffer_lambda!() && value <= max_backing_buffer_lambda!(),
         EInvalidBackingBufferLambda,
+    );
+}
+
+// === Inventory Impact ===
+
+/// Maximum marginal inventory-impact rate, in FLOAT_SCALING. The mechanism
+/// ships inert; a zero rate short-circuits before any payout-tree range read.
+public(package) macro fun default_inventory_impact_max_rate(): u64 { 0 }
+
+public(package) macro fun min_inventory_impact_max_rate(): u64 { 0 }
+
+/// A full-scale rate means that, above the market's inventory scale, one
+/// additional DUSDC of payout liability can cost at most one DUSDC. This is a
+/// hard representability envelope, not a recommended operating value.
+public(package) macro fun max_inventory_impact_max_rate(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_inventory_impact_max_rate(value: u64) {
+    assert!(
+        value >= min_inventory_impact_max_rate!()
+            && value <= max_inventory_impact_max_rate!(),
+        EInvalidInventoryImpactMaxRate,
     );
 }
 

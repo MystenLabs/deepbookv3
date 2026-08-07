@@ -110,7 +110,7 @@ current_nav = max(0, free_cash − exact_live_liability)
 
 where:
 
-- **`free_cash = cash_balance − rebate_reserve`** — the expiry's DUSDC net of the rebate it still owes.
+- **`free_cash = cash_balance − rebate_reserve − inventory_impact_reserve`** — the expiry's DUSDC net of both isolated obligations it still owes. Inventory-impact escrow is not LP value while live.
 - **`exact_live_liability = walk_linear − correction_value`**, floored at zero, is the exact mark-to-model liability of every open order:
   - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer and caching those boundary prices in a transaction-local memo.
   - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book using the memo populated by `walk_linear`.
@@ -131,7 +131,7 @@ If that exact spot is not present, the market remains unsettled and the live bra
 
 Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence), and the same lock-free inner logic runs inside the flush's `value_expiry` before each market is valued.
 
-Each expiry has a **required cash** floor of `payout_liability + rebate_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
+Each expiry has a **required cash** floor of `payout_liability + rebate_reserve + inventory_impact_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
 
 - `target_cash = max(required_cash × (1 + band), expiry_cash_floor)`
 - `sweep_threshold = max(required_cash × (1 + 2 × band), expiry_cash_floor)`
@@ -140,7 +140,7 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle DUSDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
-- **Settled sweep:** a settled expiry is deactivated, cash above settled payout liability plus unresolved rebate reserve is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)). Later rebate claims pay owed rebates and return residual reserve through the same pool accounting path.
+- **Settled sweep:** settlement first releases the now-unclaimable inventory-impact earmark into ordinary expiry surplus. The expiry is then deactivated, cash above settled payout liability plus unresolved trading-loss rebate reserve is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)). Later trading-loss rebate claims pay owed rebates and return residual reserve through the same pool accounting path.
 
 Funding room is bounded by the **per-expiry allocation cap** snapshotted from cadence config when the market is created. The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
 
@@ -153,7 +153,7 @@ Every cash movement is recorded in the ledger: cash sent accumulates into the pr
 The custody leaf (`ExpiryCash`) enforces, on every operation, that:
 
 ```
-cash_balance ≥ payout_liability + rebate_reserve
+cash_balance ≥ payout_liability + rebate_reserve + inventory_impact_reserve
 ```
 
 For a live market, `payout_liability` is a **settlement floor plus a liquidity buffer**:
@@ -169,6 +169,8 @@ The floor is `max_net_payout` — the maximum summed net payout at any *single* 
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
 The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and unresolved rebate claims. A claim first shrinks the unresolved basis for the resolved account, then pays the rebate and returns any residual reserve; no flow lets cash drop below the post-claim backing line.
+
+The independent `inventory_impact_reserve` is the cumulative inventory potential collected from mints minus rebates paid to voluntary live closes. It is excluded from NAV and pool sweeps, and the market additionally asserts `inventory_impact_reserve ≥ phi(current payout_liability)`. Exact state-function differences make equality hold for ordinary mint/close paths; liquidations can only leave a surplus. Settlement releases that residual earmark because the live-rebate path is no longer reachable. See [fees and rebates](./fees-and-rebates.md#inventory-impact-charge-and-rebate).
 
 ## Profit materialization at settlement
 

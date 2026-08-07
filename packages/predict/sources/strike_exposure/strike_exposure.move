@@ -34,6 +34,7 @@ const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EWrongCloseOutcome: u64 = 6;
 const EPricerRequired: u64 = 7;
+const EInvalidInventoryImpactScale: u64 = 8;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -51,6 +52,10 @@ public struct StrikeExposure has store {
     reference_tick: Option<u64>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
+    /// Immutable DUSDC scale for the inventory-impact curve. This is the
+    /// expiry's snapshotted maximum pool allocation: a risk-capacity parameter,
+    /// not live pool equity, so LP flows cannot reprice an existing book.
+    inventory_impact_scale: u64,
     next_order_sequence: u64,
     /// Terminal settlement price once the exposure has entered its settled phase.
     settlement_price: Option<u64>,
@@ -76,6 +81,8 @@ public struct MintTerms has drop {
     entry_probability: u64,
     net_premium: u64,
     floor_shares: u64,
+    /// Separate inventory-impact charge, sampled against the pre-mint book.
+    inventory_impact_charge: u64,
 }
 
 /// Compute-once terms for one prospective close of `order`. Built only by
@@ -118,6 +125,8 @@ public struct LiveCloseTerms has drop {
     remove_floor_shares: u64,
     redeem_amount: u64,
     range_probability: u64,
+    /// Separate inventory-impact rebate, sampled against the pre-close book.
+    inventory_impact_rebate: u64,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -134,6 +143,10 @@ public(package) fun quantity(terms: &MintTerms): u64 {
 
 public(package) fun leverage(terms: &MintTerms): u64 {
     terms.leverage
+}
+
+public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
+    terms.inventory_impact_charge
 }
 
 public(package) fun is_liquidated(terms: &CloseTerms): bool {
@@ -176,6 +189,10 @@ public(package) fun range_probability(terms: &CloseTerms): u64 {
     terms.live_terms().range_probability
 }
 
+public(package) fun inventory_impact_rebate(terms: &CloseTerms): u64 {
+    terms.live_terms().inventory_impact_rebate
+}
+
 /// Return the recorded settlement price. Aborts while the exposure is live.
 public(package) fun settlement_price(exposure: &StrikeExposure): u64 {
     exposure.settlement_price.destroy_some()
@@ -200,9 +217,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
         exposure.settled_payout_liability
     } else {
         let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
-        // The point max is a subset-sum of the same non-negative per-order net payouts.
-        let gap = total_net_payout - max_net_payout;
-        max_net_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
+        exposure.live_payout_liability_from_terms(max_net_payout, total_net_payout)
     }
 }
 
@@ -252,6 +267,14 @@ public(package) fun no_leverage_window_ms(exposure: &StrikeExposure): u64 {
     exposure.config.no_leverage_window_ms()
 }
 
+public(package) fun inventory_impact_max_rate(exposure: &StrikeExposure): u64 {
+    exposure.config.inventory_impact_max_rate()
+}
+
+public(package) fun inventory_impact_scale(exposure: &StrikeExposure): u64 {
+    exposure.inventory_impact_scale
+}
+
 public(package) fun tick_size(exposure: &StrikeExposure): u64 {
     exposure.tick_size
 }
@@ -286,6 +309,83 @@ public(package) fun trading_fee(
             quantity,
             clock.timestamp_ms(),
         )
+}
+
+/// Return the deterministic inventory-impact potential for the current live
+/// payout liability. The marginal rate rises linearly from zero to
+/// `inventory_impact_max_rate` over `inventory_impact_scale`, then stays capped:
+///
+/// `phi(L) = r_max * L^2 / (2B)` for `L <= B`
+/// `phi(L) = phi(B) + r_max * (L - B)` for `L > B`.
+///
+/// On-chain arithmetic defines `phi` by this exact sequence of rounded integer
+/// operations. Trades always subtract two evaluations of the same function, so
+/// charges and rebates telescope exactly even when the ideal real-valued
+/// quadratic would have fractional dust.
+public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
+    // Preserve the zero-rate kill switch through the post-trade backing check:
+    // disabled markets do not perform a second payout-tree read here.
+    if (exposure.is_settled() || exposure.config.inventory_impact_max_rate() == 0) return 0;
+    exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
+}
+
+/// Return how much live payout liability `net_payout` over `(lower_tick,
+/// higher_tick]` would add or remove.
+///
+/// With current point maximum `M`, total `T`, peak in the range `R`, peak in its
+/// complement `C`, and backing buffer `lambda`, the max-point movement is:
+///
+/// - add:    `g = max(M, R + N) - M`
+/// - remove: `g = M - max(R - N, C)`
+///
+/// In real arithmetic, `delta L = lambda*N + (1-lambda)*g`. On chain this
+/// function evaluates the complete before/after liabilities instead, preserving
+/// the fixed-point carry from the book's existing `T-M` gap. Cold, disjoint
+/// exposure moves only the buffered part; exposure that raises the worst
+/// settlement point moves close to its full net payout.
+public(package) fun marginal_payout_liability(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    adding: bool,
+): u64 {
+    if (net_payout == 0) return 0;
+    let (before, after) = exposure.payout_liabilities_after_change(
+        lower_tick,
+        higher_tick,
+        net_payout,
+        adding,
+    );
+    if (adding) after - before else before - after
+}
+
+/// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
+/// single book-level potential. Using one state function for every range makes
+/// all closed inventory cycles sum to zero before ordinary trading fees.
+public(package) fun inventory_impact(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    adding: bool,
+): u64 {
+    // Kill switch before the O(log n) range and complement reads.
+    if (exposure.config.inventory_impact_max_rate() == 0 || net_payout == 0) return 0;
+
+    let (before, after) = exposure.payout_liabilities_after_change(
+        lower_tick,
+        higher_tick,
+        net_payout,
+        adding,
+    );
+    let before_potential = exposure.inventory_impact_potential_for_liability(before);
+    let after_potential = exposure.inventory_impact_potential_for_liability(after);
+    if (adding) {
+        after_potential - before_potential
+    } else {
+        before_potential - after_potential
+    }
 }
 
 /// Return whether a leveraged order remains in the liquidation index. One-x
@@ -352,6 +452,7 @@ public(package) fun quote_mint_terms(
         );
     // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
+    let floor_shares = admission.floor_shares();
     MintTerms {
         expiry_market_id: exposure.expiry_market_id,
         lower_tick,
@@ -360,7 +461,13 @@ public(package) fun quote_mint_terms(
         leverage,
         entry_probability,
         net_premium: admission.net_premium(),
-        floor_shares: admission.floor_shares(),
+        floor_shares,
+        inventory_impact_charge: exposure.inventory_impact(
+            lower_tick,
+            higher_tick,
+            quantity - floor_shares,
+            true,
+        ),
     }
 }
 
@@ -433,7 +540,7 @@ public(package) fun quote_close(
     };
     exposure.close_terms(
         order,
-        CloseOutcome::Live(quote_live_close(order, close_quantity, range_probability)),
+        CloseOutcome::Live(exposure.quote_live_close(order, close_quantity, range_probability)),
     )
 }
 
@@ -531,9 +638,11 @@ public(package) fun new(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    inventory_impact_scale: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
+    assert!(inventory_impact_scale > 0, EInvalidInventoryImpactScale);
     StrikeExposure {
         expiry_market_id,
         expiry_ms,
@@ -542,6 +651,7 @@ public(package) fun new(
         reference_tick_source_timestamp_ms,
         reference_tick: option::none(),
         config,
+        inventory_impact_scale,
         next_order_sequence: 0,
         settlement_price: option::none(),
         settled_payout_liability: 0,
@@ -563,6 +673,65 @@ fun admitted_entry_probability(
     let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
     let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
     pricer.range_price(lower, higher)
+}
+
+fun inventory_impact_potential_for_liability(exposure: &StrikeExposure, liability: u64): u64 {
+    let max_rate = exposure.config.inventory_impact_max_rate();
+    if (max_rate == 0 || liability == 0) return 0;
+
+    let scale = exposure.inventory_impact_scale;
+    let capped_liability = liability.min(scale);
+    let utilization = math::mul_div_down(
+        capped_liability,
+        math::float_scaling!(),
+        scale,
+    );
+    let marginal_rate = math::mul_down(max_rate, utilization);
+    let potential_at_capped_liability =
+        math::mul_down(
+        marginal_rate,
+        capped_liability,
+    ) / 2;
+    if (liability <= scale) return potential_at_capped_liability;
+
+    potential_at_capped_liability + math::mul_down(max_rate, liability - scale)
+}
+
+/// Return the exact current and prospective live liabilities for one range
+/// change. Evaluating the full terms on both sides is necessary: independently
+/// rounding `lambda * delta(T-M)` can miss a one-atom carry already accumulated
+/// in the book's buffered gap.
+fun payout_liabilities_after_change(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    adding: bool,
+): (u64, u64) {
+    let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
+    let range_max = exposure.payout.range_max_net_payout(lower_tick, higher_tick);
+    let (after_max, after_total) = if (adding) {
+        (max_net_payout.max(range_max + net_payout), total_net_payout + net_payout)
+    } else {
+        // Every live order contributes its complete net payout at every point in
+        // its range, so the pre-close range maximum is at least `net_payout`.
+        let complement_max = exposure.payout.complement_max_net_payout(lower_tick, higher_tick);
+        ((range_max - net_payout).max(complement_max), total_net_payout - net_payout)
+    };
+    (
+        exposure.live_payout_liability_from_terms(max_net_payout, total_net_payout),
+        exposure.live_payout_liability_from_terms(after_max, after_total),
+    )
+}
+
+fun live_payout_liability_from_terms(
+    exposure: &StrikeExposure,
+    max_net_payout: u64,
+    total_net_payout: u64,
+): u64 {
+    // The point max is a subset-sum of the same non-negative per-order net payouts.
+    let gap = total_net_payout - max_net_payout;
+    max_net_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
@@ -613,7 +782,12 @@ fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
 /// range probability: the floor-share split and the redeem facts, touching
 /// neither the book nor the oracle. The trade fee is recovered via
 /// `trading_fee` from the returned `range_probability`.
-fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64): LiveCloseTerms {
+fun quote_live_close(
+    exposure: &StrikeExposure,
+    order: &Order,
+    close_quantity: u64,
+    range_probability: u64,
+): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     let old_quantity = order.quantity();
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
@@ -638,12 +812,19 @@ fun quote_live_close(order: &Order, close_quantity: u64, range_probability: u64)
     // can owe up to one unit of round-down dust more floor than its own gross
     // value; the shortfall stays in expiry cash.
     let redeem_amount = gross_redeem_amount.saturating_sub(remove_floor_shares);
+    let inventory_impact_rebate = exposure.inventory_impact(
+        order.lower_tick(),
+        order.higher_tick(),
+        close_quantity - remove_floor_shares,
+        false,
+    );
 
     LiveCloseTerms {
         close_quantity,
         remove_floor_shares,
         redeem_amount,
         range_probability,
+        inventory_impact_rebate,
     }
 }
 

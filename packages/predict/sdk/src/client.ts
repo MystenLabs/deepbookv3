@@ -133,13 +133,21 @@ export interface MintQuote {
 	/** Net premium into LP backing (quote units). */
 	premium: number;
 	fees: { trading: number; subsidy: number; builder: number; penalty: number };
+	/** Separate charge escrowed for risk-reducing live closes, not fee revenue. */
+	inventoryImpactCharge: number;
 	/**
-	 * All-in account debit: premium + (trading − subsidy) + builder + penalty —
-	 * exactly what the chain withdraws; pass this (plus your buffer) as maxCost.
+	 * All-in debit: premium + ordinary fees + inventory impact. Pass this plus
+	 * your slippage buffer as maxCost.
 	 */
 	cost: number;
 	quantity: number;
-	raw: { premium: bigint; cost: bigint; quantity: bigint; entryProbability: bigint };
+	raw: {
+		premium: bigint;
+		inventoryImpactCharge: bigint;
+		cost: bigint;
+		quantity: bigint;
+		entryProbability: bigint;
+	};
 	/** True: computed by the real mint code path against real account state. */
 	feesExact: true;
 }
@@ -151,11 +159,18 @@ export interface RedeemQuote {
 	/** Gross close value before fees. */
 	gross: number;
 	fees: { trading: number; builder: number; penalty: number };
+	/** Separate rebate credited from the market's inventory-impact escrow. */
+	inventoryImpactRebate: number;
 	quantityClosed: number;
 	remaining: number;
 	/** True when the position would close as a liquidated tombstone (zero payout). */
 	wouldLiquidate: boolean;
-	raw: { proceeds: bigint; gross: bigint; quantityClosed: bigint };
+	raw: {
+		proceeds: bigint;
+		gross: bigint;
+		inventoryImpactRebate: bigint;
+		quantityClosed: bigint;
+	};
 	feesExact: true;
 }
 
@@ -541,15 +556,18 @@ export class PredictClient {
 				r.raw.netPremium +
 				(r.raw.tradingFee - r.raw.feeIncentiveSubsidy) +
 				r.raw.builderFee +
-				r.raw.penaltyFee;
+				r.raw.penaltyFee +
+				r.raw.inventoryImpactCharge;
 			return {
 				entryProbability: r.entryProbability,
 				premium: r.netPremium,
 				fees: r.fees,
+				inventoryImpactCharge: r.inventoryImpactCharge,
 				cost: rawToUsdc(costRaw),
 				quantity: r.quantity,
 				raw: {
 					premium: r.raw.netPremium,
+					inventoryImpactCharge: r.raw.inventoryImpactCharge,
 					cost: costRaw,
 					quantity: r.raw.quantity,
 					entryProbability: r.raw.entryProbability,
@@ -572,12 +590,14 @@ export class PredictClient {
 				proceeds: r.proceeds,
 				gross: r.gross,
 				fees: { trading: r.fees.trading, builder: r.fees.builder, penalty: r.fees.penalty },
+				inventoryImpactRebate: r.inventoryImpactRebate,
 				quantityClosed: r.quantityClosed,
 				remaining: r.remaining,
 				wouldLiquidate: r.liquidated,
 				raw: {
 					proceeds: r.raw.proceeds,
 					gross: r.raw.gross,
+					inventoryImpactRebate: r.raw.inventoryImpactRebate,
 					quantityClosed: r.raw.quantityClosed,
 				},
 				feesExact: true,
