@@ -1322,13 +1322,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   0.5 against a returned 1.0. No envelope that admits arbitrage-free surfaces can
   make the shortcut sound, so the shortcut is the thing that had to go. Removing the
   precision loss removes the need for both.
-- **Risk profile:** `MEASURED`. The identity is exact in reals and the fixed-point
+- **Risk profile:** `BEST-GUESS`. The identity is exact in reals and the fixed-point
   error is bounded by two `ln` evaluations instead of one `ln` of a truncated
   quotient, which is strictly better everywhere and unboundedly better in the tails.
   Existing exact-value coverage is unchanged: the four real-scenario reference tests
   and the flat-surface at-the-forward digital all still hold to their derived
   budgets. One differential test moved off a bit-equality that held only for the old
-  path's price low bits (see below).
+  path's price low bits (see below). No dated findings record is filed under
+  `evidence/`, so this entry does not claim a measured risk profile.
 - **Envelope unchanged:** `max_svi_input` stays at 100. It was tightened in an
   earlier draft of this policy and reverted after checking calibrated raw-SVI
   parameters for real BTC surfaces — `b` reaches 0.21 across maturities and 0.10
