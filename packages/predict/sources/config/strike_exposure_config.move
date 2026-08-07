@@ -50,6 +50,9 @@ public struct StrikeExposureConfig has store {
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
     no_leverage_window_ms: u64,
+    /// Maximum marginal rate of the path-independent inventory-impact curve, in
+    /// FLOAT_SCALING. `0` disables both charges and rebates.
+    inventory_impact_max_rate: u64,
 }
 
 /// Mint admission outcome: the net premium charged for the order and the static
@@ -99,6 +102,10 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
     config.no_leverage_window_ms
+}
+
+public(package) fun inventory_impact_max_rate(config: &StrikeExposureConfig): u64 {
+    config.inventory_impact_max_rate
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -196,6 +203,7 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
+        inventory_impact_max_rate: config_constants::default_inventory_impact_max_rate!(),
     }
 }
 
@@ -212,6 +220,7 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         no_leverage_window_ms: config.no_leverage_window_ms,
+        inventory_impact_max_rate: config.inventory_impact_max_rate,
     }
 }
 
@@ -265,6 +274,11 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {
     config_constants::assert_no_leverage_window_ms(window_ms);
     config.no_leverage_window_ms = window_ms;
+}
+
+public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_impact_max_rate(value);
+    config.inventory_impact_max_rate = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.

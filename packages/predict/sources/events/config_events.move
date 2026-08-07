@@ -51,6 +51,8 @@ public struct MarketCreated has copy, drop, store {
     expiry_fee_max_multiplier: u64,
     /// Window before expiry within which this market admits no leverage above 1x.
     no_leverage_window_ms: u64,
+    /// Maximum marginal inventory-impact rate snapshotted by this market.
+    inventory_impact_max_rate: u64,
     trading_loss_rebate_rate: u64,
     /// Share of the DEEP-stake benefit curve this market pays out, snapshotted at
     /// creation. `0` means staking earns nothing here, whatever the template later
@@ -151,6 +153,7 @@ public(package) fun emit_market_created(
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         no_leverage_window_ms: strike_exposure_config.no_leverage_window_ms(),
+        inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
         max_benefit_ratio: stake_config.max_benefit_ratio(),
         lower_benefit_power: stake_config.lower_benefit_power(),

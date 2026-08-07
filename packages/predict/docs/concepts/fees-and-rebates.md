@@ -1,6 +1,6 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. The trading fee itself is shaped by an expiry ramp and, when the market's DEEP-stake benefit ratio is above zero, reduced by a staking discount. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp and, when the market's DEEP-stake benefit ratio is above zero, reduced by a staking discount. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 The staking programme ships at a **zero benefit ratio**: as shipped, no trader receives a fee discount and no trader receives a loss rebate. An admin raises it for markets created from that point on — each market freezes its benefit policy at creation, so the change never reaches a market already trading. See [the staking fee discount](#5-staking-fee-discount) below.
 
@@ -164,6 +164,50 @@ The rebate is offset by any profit, so only net-losing traders are eligible: a p
 
 If `rebate_amount` is less than `resolved_reserve`, the residual reserve is returned to PLP idle and may materialize as terminal expiry profit, split between the protocol reserve and LPs by the configured protocol profit share. Zero-owed claims are allowed so a keeper can sweep accounts without reverting a batch just because one account has nothing to claim.
 
+## Inventory-impact charge and rebate
+
+Inventory impact is an optional, path-independent transfer layered **on top of** the normal fee system. It is not trading-fee revenue, is not discounted by stake, does not earn a builder cut, does not enter the trading-loss rebate basis, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and uses its cadence `max_expiry_allocation` as the immutable impact scale `B`; changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
+
+### Step 1: measure the book's payout liability
+
+Let:
+
+- `M` be the largest summed net payout at any one settlement price;
+- `T` be the sum of every live order's net payout (`quantity - floor_shares`);
+- `lambda` be `backing_buffer_lambda`.
+
+The existing live reserve liability is:
+
+```text
+L = M + lambda * (T - M)
+```
+
+A candidate range does not necessarily move `M` by its full net payout. The payout tree therefore reads the current maximum inside the range and in its complement in `O(log n)`, computes the exact change in `M`, and combines that with the always-changing buffered part of `T`. This charges overlapping exposure more than a cold disjoint range when it raises the book's worst settlement point.
+
+### Step 2: map liability to one book-level potential
+
+For maximum marginal rate `r_max` and scale `B`:
+
+```text
+phi(L) = r_max * L^2 / (2 * B)                  when L <= B
+phi(L) = r_max * B / 2 + r_max * (L - B)        when L > B
+```
+
+Below `B`, the marginal rate rises linearly from zero to `r_max`: at 25% utilization the marginal rate is 25% of `r_max`; at 100% utilization it reaches `r_max`. Above `B`, it stays capped instead of growing without bound. On chain, `phi` is defined by one exact sequence of round-down fixed-point operations. Both directions evaluate that same integer function.
+
+### Step 3: charge or rebate only the potential change
+
+```text
+mint charge       = phi(L_after)  - phi(L_before)
+live-close rebate = phi(L_before) - phi(L_after)
+```
+
+This state-function construction is the key safety property. Splitting a trade, closing it in pieces, or cycling through ranges only creates intermediate terms that cancel. For any sequence that returns the book to the same state, total inventory charges equal total inventory rebates exactly, including integer rounding. A probability-local multiplier would not have this property: changing another range could change the price/rate used on exit and make a cross-range cycle profitable.
+
+Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_reserve`. Required cash includes the earmark and free cash/NAV excludes it. A live close can spend only this reserve. Liquidation reduces risk but pays no inventory rebate, because it is an involuntary zero-payout transition; the resulting escrow surplus stays reserved until settlement. Settlement releases whatever remains into ordinary expiry surplus, because no live close can occur afterward.
+
+This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
+
 ## How the components combine
 
 The full flow for a single trade:
@@ -180,6 +224,9 @@ flowchart TD
     NETFEE --> COLLECT[fee -> expiry cash, basis += trader-paid fee]
     BUILD --> BUILDER[builder fee -> builder code address]
     CONG --> SURPLUS[surcharge -> expiry cash surplus]
+    L[Book payout liability L] --> PHI["inventory potential phi(L)"]
+    PHI --> IMPACT["mint: charge delta / live close: rebate delta"]
+    IMPACT --> IRESERVE[isolated inventory-impact reserve]
     COLLECT --> RESERVE["rebate reserve = basis x rebate_rate (held in expiry cash)"]
     RESERVE --> CLAIM[owner/keeper claim pays rebate; residual returns to PLP]
 ```
@@ -193,8 +240,9 @@ Cash routing at trade time:
 | Builder fee | add-on to trading fee | builder code address | No | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No | No |
 | Trading-loss rebate | funded from trader-paid trading fees | reserved on-chain; claimed on-chain after settlement | (drawn from reserve) | No |
+| Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No | No |
 
-At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `net_premium` budget, capped to the account's available DUSDC before sizing, and pays trading fees, builder fees, and congestion surcharge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the trading fee, builder fee, and surcharge are withheld from the gross redeem amount, each capped so the payout cannot go negative (the trading fee is capped at the redeem amount, the builder fee at what remains after the fee, the surcharge at what remains after both). At **settled redeem**, the winning payout is paid in full with no per-trade fee; the trading-loss rebate is claimed separately after all of that account's expiry positions are closed.
+At **mint**, the trader's withdrawal is `net_premium + trading_fee + builder_fee + congestion_surcharge + inventory_impact_charge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `net_premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate; the trading-loss rebate is claimed separately after all of that account's expiry positions are closed.
 
 ## The LP supply/withdraw fee
 
