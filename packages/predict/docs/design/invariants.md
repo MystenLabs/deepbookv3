@@ -11,10 +11,21 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Solvency and custody
 
-- **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
-  plus its unresolved trading-loss rebate reserve (`cash ≥ payout_liability +
-  rebate_reserve`), re-asserted after every cash mutation
+- **Cash backing.** Every expiry's DUSDC cash always covers its payout liability,
+  unresolved trading-loss rebate reserve, and isolated inventory-impact reserve
+  (`cash ≥ payout_liability + rebate_reserve + inventory_impact_reserve`),
+  re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
+- **Inventory-impact escrow covers the current potential.** While live,
+  `inventory_impact_reserve ≥ phi(payout_liability)`. Mints credit exactly the
+  potential increase and voluntary live closes may withdraw only the potential
+  decrease. Liquidation pays no rebate and can only create reserve surplus;
+  settlement releases the residual earmark when live closes become impossible.
+- **Inventory cycles telescope.** Inventory charge/rebate is always the signed
+  difference between two evaluations of the same deterministic integer state
+  function. Therefore any sequence returning the payout book to its starting
+  state has exactly zero net inventory transfer, including rounding and
+  cross-range reorderings.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed net payout at any *single* settlement price, read
   from `StrikePayoutTree::net_payout_reserve_terms`; the buffer is
@@ -62,7 +73,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
   free_cash − exact_per_order_liability`, floored at zero, where `free_cash =
-  cash − rebate_reserve` and the liability is the payout-tree linear walk
+  cash − rebate_reserve − inventory_impact_reserve` and the liability is the payout-tree linear walk
   (`strike_payout_tree::walk_linear`, `Σ qty·P`, caching boundary prices for the
   same valuation) minus the leveraged-book floor correction
   (`liquidation_book::correction_value`, reading order range prices from that

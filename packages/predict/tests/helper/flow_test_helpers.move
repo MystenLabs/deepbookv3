@@ -545,6 +545,16 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Set the isolated inventory-impact potential's maximum marginal rate. Markets
+/// snapshot this value at creation; `0` disables the mechanism.
+public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
