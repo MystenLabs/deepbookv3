@@ -18,6 +18,7 @@ import {
     createSessionsUpgradeState,
     limitOrderResolvedAtCheckpoint,
     maxSmokeAttributableDeep,
+    mustResumeSmokeCleanup,
     nextSmokeCleanupStep,
     parseCliChainIdentifier,
     parsePackageMetadata,
@@ -63,6 +64,7 @@ function completeState(): SessionsUpgradeState {
         verifiedAt: "2026-08-07T12:05:00.000Z",
     };
     state.smoke.status = "complete";
+    state.smoke.cleanupStarted = true;
     state.smoke.wrapperId = "0xe008235d34146f0993bea592191b382f5172d34a3142c07637cef31732445707";
     state.smoke.sessionAddress =
         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -348,6 +350,8 @@ test("only fully cleaned incomplete smoke attempts can restart within the bound"
     const state = createSessionsUpgradeState();
     state.smoke.status = "failed";
     state.smoke.transactions.smoke_authorize_and_fund = "setup-digest";
+    state.smoke.cleanupStarted = true;
+    assert.equal(mustResumeSmokeCleanup(structuredClone(state)), true);
     assert.equal(canRestartSmokeAttempt(state), false);
     assert.equal(nextSmokeCleanupStep(structuredClone(state)), "sweep_settled");
     const cleanupFlags = [
@@ -360,6 +364,7 @@ test("only fully cleaned incomplete smoke attempts can restart within the bound"
         state.smoke[field] = true;
         const resumed = structuredClone(state);
         assertSessionsUpgradeState(resumed);
+        assert.equal(mustResumeSmokeCleanup(resumed), true);
         assert.equal(nextSmokeCleanupStep(resumed), nextStep);
         assert.equal(canRestartSmokeAttempt(state), index === 3);
     }
@@ -372,6 +377,8 @@ test("only fully cleaned incomplete smoke attempts can restart within the bound"
     state.smoke.marketFillExact = true;
     assert.equal(canRestartSmokeAttempt(state), false, "exact fill must complete, not restart");
     assert.equal(nextSmokeCleanupStep(structuredClone(state)), "complete");
+    state.smoke.status = "complete";
+    assert.equal(mustResumeSmokeCleanup(structuredClone(state)), false);
 });
 
 test("every checkpointed limit order bounds maker-fill recovery through cancellation", () => {
@@ -451,6 +458,7 @@ test("complete journal requires both package audit and live spot smoke", () => {
         /complete audited upgrade and spot smoke/,
     );
     for (const field of [
+        "cleanupStarted",
         "accountFundsRecovered",
         "settledAmountsSwept",
         "sessionRevoked",

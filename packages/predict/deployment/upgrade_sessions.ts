@@ -113,6 +113,7 @@ interface InFlight {
 interface SpotSmoke {
     attempt: number;
     status: "not_started" | "running" | "complete" | "failed";
+    cleanupStarted: boolean;
     wrapperId: string | null;
     sessionAddress: string | null;
     poolId: string;
@@ -389,6 +390,7 @@ function createSpotSmoke(attempt = 0): SpotSmoke {
     return {
         attempt,
         status: "not_started",
+        cleanupStarted: false,
         wrapperId: null,
         sessionAddress: null,
         poolId: DEEP_SUI_POOL,
@@ -488,6 +490,7 @@ export function assertSessionsUpgradeState(state: SessionsUpgradeState): void {
             !state.rpcUrlHash ||
             !state.verification ||
             state.smoke.status !== "complete" ||
+            !state.smoke.cleanupStarted ||
             !state.smoke.marketExecutedQuantity ||
             state.smoke.marketFillExact !== true ||
             !state.smoke.settledAmountsSwept ||
@@ -783,6 +786,7 @@ function isCleanedIncompleteSmokeAttempt(state: SessionsUpgradeState): boolean {
     const smoke = state.smoke;
     return (
         Boolean(smoke.transactions.smoke_authorize_and_fund) &&
+        smoke.cleanupStarted &&
         smoke.marketFillExact !== true &&
         smoke.settledAmountsSwept &&
         smoke.accountFundsRecovered &&
@@ -814,6 +818,10 @@ export function nextSmokeCleanupStep(state: SessionsUpgradeState): SmokeCleanupS
     if (!smoke.sessionGasReturned) return "return_session_gas";
     if (smoke.marketFillExact === true) return "complete";
     return canRestartSmokeAttempt(state) ? "restart" : "exhausted";
+}
+
+export function mustResumeSmokeCleanup(state: SessionsUpgradeState): boolean {
+    return state.smoke.cleanupStarted && state.smoke.status !== "complete";
 }
 
 export function maxSmokeAttributableDeep(state: SessionsUpgradeState): bigint {
@@ -1695,6 +1703,10 @@ async function cleanupSmokeAttempt(
     sessionSigner: Ed25519Keypair,
 ): Promise<void> {
     const smoke = runtime.state.smoke;
+    if (!smoke.cleanupStarted) {
+        smoke.cleanupStarted = true;
+        writeState(runtime.state);
+    }
     const openOrders = await openOrderCount(runtime, wrapper);
     if (openOrders > 0n) {
         await cleanupOwnerOrder(
@@ -1740,6 +1752,9 @@ async function runSmoke(runtime: Runtime): Promise<void> {
     const sessionSigner = smokeSessionSigner(runtime);
     const session = normalizeId(sessionSigner.getPublicKey().toSuiAddress());
     const smoke = runtime.state.smoke;
+    if (mustResumeSmokeCleanup(runtime.state)) {
+        await cleanupSmokeAttempt(runtime, wrapper, sessionSigner);
+    }
     if (canRestartSmokeAttempt(runtime.state)) {
         restartSmokeAttempt(runtime);
         return runSmoke(runtime);
