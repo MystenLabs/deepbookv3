@@ -10,6 +10,10 @@ deepbook_margin = { local = "../deepbook_margin" }
 
 # Pyth dependency
 pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-mainnet" }
+# Pyth's upgraded Core: a separate on-chain package, not an upgrade of the above. Both are
+# linked at once so the legacy entrypoints keep their frozen signatures.
+pyth_upgraded = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-pro-compatible-contract-mainnet", rename-from = "pyth" }
 
 [dep-replacements.testnet]
 pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
+pyth_upgraded = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-pro-compatible-contract-testnet", rename-from = "pyth" }
