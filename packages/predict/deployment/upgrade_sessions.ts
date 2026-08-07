@@ -58,6 +58,8 @@ const SESSIONS_CAP = "0xec1a56cd72b2a6a97c592b0a66512bf92ce2d0508ebac2b8956abbc5
 const FAILED_AUDIT_SOURCE = "9c453058549bfc4a96ce9dc48457b69e2c12c14f";
 const FAILED_AUDIT_PACKAGE = "0x403ac487b19635c022f5c50378b9097ed7d80175f9b3ff7ea5a8a4a5fe0ecfbe";
 const FAILED_AUDIT_TX = "25axtEqPVuuEtwaY9TpKLessNeU7VsuJgHnJ3iC8aehe";
+const FAILED_AUTHORIZATION_AUDIT =
+    "unable%20to%20find%20function%200xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::registry::is_app_authorized";
 const WRAPPER = "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239";
 const DEEPBOOK = "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
@@ -442,7 +444,8 @@ function isFailedAuditRecovery(state: SessionsUpgradeState): boolean {
         state.transactions.upgrade_sessions_v2 === FAILED_AUDIT_TX &&
         Object.keys(state.transactions).length === 1 &&
         JSON.stringify(state.smoke) === JSON.stringify(createSpotSmoke()) &&
-        state.lastError === "Sessions UpgradeCap identity, policy, owner, or version mismatch"
+        (state.lastError === "Sessions UpgradeCap identity, policy, owner, or version mismatch" ||
+            state.lastError === FAILED_AUTHORIZATION_AUDIT)
     );
 }
 
@@ -1029,23 +1032,29 @@ function parseOptionU64(bytes: number[]): bigint | null {
 async function inspectAuthorization(
     runtime: Runtime,
 ): Promise<{ sessions: boolean; wrapper: boolean }> {
-    const tx = new Transaction();
+    const accountTx = new Transaction();
     call(
-        tx,
+        accountTx,
         `${ACCOUNT}::account_registry::is_app_authorized`,
-        [tx.object(ACCOUNT_REGISTRY)],
+        [accountTx.object(ACCOUNT_REGISTRY)],
         [`${runtime.state.packageId ?? SESSIONS_V1}::sessions::SessionsApp`],
     );
+    const accountResponse = await devInspect(
+        runtime,
+        "Sessions application authorization",
+        accountTx,
+    );
+    const deepbookTx = new Transaction();
     call(
-        tx,
-        `${DEEPBOOK}::registry::is_app_authorized`,
-        [tx.object(DEEPBOOK_REGISTRY)],
+        deepbookTx,
+        `${DEEPBOOK}::registry::assert_app_is_authorized`,
+        [deepbookTx.object(DEEPBOOK_REGISTRY)],
         [`${WRAPPER}::account_data::DeepbookCoreAccountApp`],
     );
-    const response = await devInspect(runtime, "application authorization", tx);
+    await devInspect(runtime, "DeepBook application authorization", deepbookTx);
     return {
-        sessions: parseBool(returnBytes(response, 0)),
-        wrapper: parseBool(returnBytes(response, 1)),
+        sessions: parseBool(returnBytes(accountResponse, 0)),
+        wrapper: true,
     };
 }
 
