@@ -80,6 +80,8 @@ const DEPLOYED_ACCOUNT_ADMIN_CAP =
 const DEPLOYED_PREDICT = "0xfe742239a3b033f7d52ed5275f238c17d27498ca0ee5ea5672ea732eb3f4dbbb";
 const DEPLOYED_PROPBOOK = "0xed1295ff3c9a9415766afff20a74cdf2e362647be09aaf13b809302c0109e912";
 const DEPLOYED_FIXED_MATH = "0xdf0bd2a0d201562f2bdecb1b77d7998c7af316f6fd7d1eab9b9035064f21bfd4";
+const DEPLOYED_DEEPBOOK_CORE_ACCOUNT =
+    "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239";
 const LIFECYCLE_CAP_RECIPIENT =
     "0xc230d3a341a4fddd752979fbac7625fb2b302ea28202d218a81b007653380c82";
 const SUI_VERSION = /^sui 1\.74\.1(?:-|$)/;
@@ -532,7 +534,7 @@ export interface DeploymentResult {
 }
 
 export interface IntegrationManifest {
-    schemaVersion: 3 | 4;
+    schemaVersion: 3 | 4 | 5;
     deployment: string;
     network: string;
     chainId: string;
@@ -542,6 +544,7 @@ export interface IntegrationManifest {
         account: string;
         propbook: string;
         predict: string;
+        deepbookCoreAccount?: string;
         sessions?: string;
     };
     coinTypes: {
@@ -1011,7 +1014,9 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "integration manifest",
     );
     if (
-        (manifest.schemaVersion !== 3 && manifest.schemaVersion !== 4) ||
+        (manifest.schemaVersion !== 3 &&
+            manifest.schemaVersion !== 4 &&
+            manifest.schemaVersion !== 5) ||
         manifest.deployment !== DEPLOYMENT ||
         manifest.network !== NETWORK ||
         manifest.chainId !== CHAIN_ID ||
@@ -1023,12 +1028,20 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
     const packages = asRecord(manifest.packages);
     exactKeys(
         packages,
-        manifest.schemaVersion === 4
-            ? ["fixedMath", "account", "propbook", "predict", "sessions"]
-            : ["fixedMath", "account", "propbook", "predict"],
+        manifest.schemaVersion === 5
+            ? ["fixedMath", "account", "propbook", "predict", "deepbookCoreAccount", "sessions"]
+            : manifest.schemaVersion === 4
+              ? ["fixedMath", "account", "propbook", "predict", "sessions"]
+              : ["fixedMath", "account", "propbook", "predict"],
         "packages",
     );
     for (const [name, id] of Object.entries(packages)) requiredObjectId(id, `packages.${name}`);
+    if (
+        manifest.schemaVersion === 5 &&
+        packages.deepbookCoreAccount !== DEPLOYED_DEEPBOOK_CORE_ACCOUNT
+    ) {
+        throw new Error("packages.deepbookCoreAccount does not match the verified Testnet wrapper");
+    }
 
     const coinTypes = asRecord(manifest.coinTypes);
     exactKeys(coinTypes, ["dusdc", "deep", "plp"], "coinTypes");
@@ -1671,6 +1684,9 @@ function committedManifest(): IntegrationManifest {
         account: DEPLOYED_ACCOUNT,
         propbook: DEPLOYED_PROPBOOK,
         predict: DEPLOYED_PREDICT,
+        ...(value.schemaVersion === 5
+            ? { deepbookCoreAccount: DEPLOYED_DEEPBOOK_CORE_ACCOUNT }
+            : {}),
     };
     if (
         Object.entries(expected).some(

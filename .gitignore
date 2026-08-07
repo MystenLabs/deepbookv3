@@ -35,6 +35,8 @@ packages/predict/deployment/deployment.testnet.state.json.tmp
 packages/predict/deployment/deployment.testnet.json.tmp
 packages/predict/deployment/deployment.sessions.testnet.state.json
 packages/predict/deployment/deployment.sessions.testnet.state.json.tmp
+packages/predict/deployment/deployment.sessions-v2.testnet.state.json
+packages/predict/deployment/deployment.sessions-v2.testnet.state.json.tmp
 
 # Research
 predict_research/
