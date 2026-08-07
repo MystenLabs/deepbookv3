@@ -6,13 +6,17 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
     assertObservedPreflightBindings,
+    assertSessionTransactionReserve,
     assertSmokeSessionResume,
     assertSessionsUpgradeState,
     assertUpgradeCapResumeVersion,
     buildSessionsUpgradeManifest,
+    canRestartSmokeAttempt,
     canRetrySessionTransaction,
     commitSuccessfulTransaction,
     createSessionsUpgradeState,
+    limitOrderResolvedAtCheckpoint,
+    maxSmokeAttributableDeep,
     parsePackageMetadata,
     parseSessionsUpgradeArgs,
     parseUpgradeCapMetadata,
@@ -39,7 +43,7 @@ function completeState(): SessionsUpgradeState {
     const state = createSessionsUpgradeState();
     state.status = "complete";
     state.sourceCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    state.suiVersion = "sui 1.74.1-test";
+    state.suiVersion = "sui 1.77.1-test";
     state.rpcUrlHash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     state.startedAt = "2026-08-07T12:00:00.000Z";
     state.completedAt = "2026-08-07T12:10:00.000Z";
@@ -76,6 +80,7 @@ function completeState(): SessionsUpgradeState {
     state.smoke.marketPostSuiBalance = "175000000";
     state.smoke.marketPostDeepBalance = "10000000";
     state.smoke.marketFillExact = true;
+    state.smoke.settledAmountsSwept = true;
     state.smoke.accountFundsRecovered = true;
     state.smoke.sessionRevoked = true;
     state.smoke.sessionGasReturned = true;
@@ -126,7 +131,7 @@ test("UpgradeCap version accepts only the exact resumable upgrade boundary", () 
 test("preflight bindings reject source, CLI, RPC, network, chain, and signer drift", () => {
     const state = createSessionsUpgradeState();
     state.sourceCommit = "a".repeat(40);
-    state.suiVersion = "sui 1.74.1-test";
+    state.suiVersion = "sui 1.77.1-test";
     state.rpcUrlHash = "b".repeat(64);
     const observed = {
         sourceCommit: state.sourceCommit,
@@ -139,7 +144,7 @@ test("preflight bindings reject source, CLI, RPC, network, chain, and signer dri
     assert.doesNotThrow(() => assertObservedPreflightBindings(state, observed));
     for (const [field, value] of [
         ["sourceCommit", "c".repeat(40)],
-        ["suiVersion", "sui 1.75.0"],
+        ["suiVersion", "sui 1.78.0"],
         ["rpcUrlHash", "d".repeat(64)],
         ["network", "mainnet"],
         ["chainId", "deadbeef"],
@@ -170,19 +175,19 @@ test("source dirt allowlist admits only journals and deployment records", () => 
 
 test("deployer funding follows remaining irreversible steps and completed reruns need none", () => {
     const pending = createSessionsUpgradeState();
-    assert.equal(requiredDeployerBalance(pending), 11_500_000_000n);
+    assert.equal(requiredDeployerBalance(pending), 12_500_000_000n);
     pending.inFlight = {
         label: "upgrade_sessions_v2",
         digest: "known-upgrade",
         startedAt: "2026-08-07T12:00:00.000Z",
     };
-    assert.equal(requiredDeployerBalance(pending), 6_500_000_000n);
+    assert.equal(requiredDeployerBalance(pending), 7_500_000_000n);
     pending.inFlight = null;
     pending.packageId = V2;
     pending.upgradeTx = "upgrade-digest";
-    assert.equal(requiredDeployerBalance(pending), 6_500_000_000n);
+    assert.equal(requiredDeployerBalance(pending), 7_500_000_000n);
     pending.smoke.transactions.smoke_authorize_and_fund = "setup-digest";
-    assert.equal(requiredDeployerBalance(pending), 3_000_000_000n);
+    assert.equal(requiredDeployerBalance(pending), 4_000_000_000n);
     assert.equal(requiredDeployerBalance(completeState()), 0n);
 });
 
@@ -193,6 +198,7 @@ const irreversibleLabels = [
     "smoke_session_limit_cancel",
     "smoke_session_market_fill",
     "smoke_owner_cancel_cleanup",
+    "smoke_owner_withdraw_settled_cleanup",
     "smoke_revoke_session",
     "smoke_recover_account_funds",
     "smoke_return_session_gas",
@@ -295,6 +301,52 @@ test("temporary session retry reserve is bounded", () => {
     state.smoke.sessionFailedTransactions = state.maxSessionFailedTransactions;
     assert.equal(canRetrySessionTransaction(state, "smoke_session_market_fill"), false);
     assert.equal(canRetrySessionTransaction(state, "smoke_revoke_session"), false);
+    assert.throws(
+        () => assertSessionTransactionReserve(state, "smoke_session_market_fill"),
+        /retry reserve/,
+    );
+    assert.doesNotThrow(() => assertSessionTransactionReserve(state, "smoke_return_session_gas"));
+    state.smoke.sessionFailedTransactions += 1;
+    assert.throws(
+        () => assertSessionTransactionReserve(state, "smoke_return_session_gas"),
+        /retry reserve/,
+    );
+});
+
+test("only fully cleaned incomplete smoke attempts can restart within the bound", () => {
+    const state = createSessionsUpgradeState();
+    state.smoke.status = "failed";
+    state.smoke.transactions.smoke_authorize_and_fund = "setup-digest";
+    assert.equal(canRestartSmokeAttempt(state), false);
+    const cleanupFlags = [
+        "settledAmountsSwept",
+        "sessionRevoked",
+        "accountFundsRecovered",
+        "sessionGasReturned",
+    ] as const;
+    for (const [index, field] of cleanupFlags.entries()) {
+        state.smoke[field] = true;
+        assert.equal(canRestartSmokeAttempt(state), index === 3);
+    }
+    state.smoke.marketFillExact = false;
+    assert.equal(canRestartSmokeAttempt(state), true, "partial IOC is retryable after cleanup");
+    state.smoke.attempt = state.maxSmokeAttempts - 1;
+    assert.equal(canRestartSmokeAttempt(state), false);
+    state.smoke.attempt = 0;
+    state.smoke.marketFillExact = true;
+    assert.equal(canRestartSmokeAttempt(state), false, "exact fill must complete, not restart");
+});
+
+test("externally resolved limit orders bound recovered DEEP by the placed quantity", () => {
+    const state = createSessionsUpgradeState();
+    state.smoke.quantity = "10";
+    state.smoke.marketExecutedQuantity = "3";
+    assert.equal(maxSmokeAttributableDeep(state), 3n);
+    state.smoke.limitOrderResolvedExternally = true;
+    assert.equal(maxSmokeAttributableDeep(state), 13n);
+    assert.equal(limitOrderResolvedAtCheckpoint(1n), false);
+    assert.equal(limitOrderResolvedAtCheckpoint(0n), true);
+    assert.throws(() => limitOrderResolvedAtCheckpoint(2n), /unexpected open-order count/);
 });
 
 test("successful commit does not misclassify the package upgrade as smoke evidence", () => {
@@ -340,6 +392,10 @@ test("journal validation pins the Testnet chain, deployer, v1 package, and Upgra
         () => assertSessionsUpgradeState({ ...state, maxSessionFailedTransactions: 5 }),
         /pinned Sessions v2 upgrade/,
     );
+    assert.throws(
+        () => assertSessionsUpgradeState({ ...state, maxSmokeAttempts: 4 }),
+        /pinned Sessions v2 upgrade/,
+    );
 });
 
 test("complete journal requires both package audit and live spot smoke", () => {
@@ -359,6 +415,7 @@ test("complete journal requires both package audit and live spot smoke", () => {
     );
     for (const field of [
         "accountFundsRecovered",
+        "settledAmountsSwept",
         "sessionRevoked",
         "sessionGasReturned",
     ] as const) {
