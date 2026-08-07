@@ -1446,8 +1446,15 @@ async function runSmoke(runtime: Runtime): Promise<void> {
                 setup.object(CLOCK),
             ]);
             await executeTransaction(runtime, "smoke_authorize_and_fund", setup);
-        } else if ((await sessionExpiration(runtime, wrapper, session)) === null) {
+        } else if (
+            !smoke.sessionRevoked &&
+            (await sessionExpiration(runtime, wrapper, session)) === null
+        ) {
             throw new Error("journaled smoke session is no longer authorized");
+        }
+
+        if (smoke.sessionRevoked && !smoke.transactions.smoke_session_market_fill) {
+            throw new Error("smoke session was revoked before the market checkpoint");
         }
 
         if (!smoke.transactions.smoke_session_limit_place) {
