@@ -4,6 +4,11 @@
   "captured_at": "2026-08-07T01:14:03.893658Z",
   "network": "sui-testnet",
   "synthetic": false,
+  "pricing_model": {
+    "family": "raw_svi_nd2",
+    "uses_svi_roll_down": false,
+    "uses_svi_digital_skew_adjustment": false
+  },
   "deployment": {
     "predict_package": "0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e",
     "propbook_package": "0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b",
@@ -19,7 +24,7 @@
       "svi": "0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b::oracle_lane::ObservationRecorded<0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b::oracle_lane::OracleRead<0x8eb2adde1c91f8b7c9ba5e9b0a32bfb804510c342939c5f77458fd8143f9755b::block_scholes_svi_feed::RawSVI>>"
     },
     "mint_event_type": "0xdb3ef5a5129920e59c9b2ae25a77eddb48acd0e1c6307b97073f0e076016446e::order_events::OrderMinted",
-    "sampling": "Ten Testnet mints from the densest ten-mint window among the latest 100; 1,000 as-of snapshots formed from real Pyth events joined to the latest preceding BS spot, forward, and SVI events for the sampled mint expiries, with each mint's latest prior snapshot retained."
+    "sampling": "Ten Testnet mints from the densest ten-mint window among the latest 100; 1,000 as-of snapshots formed from real Pyth events joined to the latest BS spot, forward, and SVI observations available at each Pyth event, including same-transaction observations, with each mint's latest strictly earlier snapshot retained."
   },
   "units": {
     "price_and_svi_scale": 1000000000,

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Replay real Testnet Predict mints from real oracle events.
+"""Replay real mints from an earlier Predict package on Sui Testnet.
 
 This is deliberately a pricing-only proof of concept. It reads oracle inputs and
 mint terms, derives a probability from the live forward and SVI smile, and turns
 that probability into a fair contract value. It does not model inventory,
 hedging, pool state, fees, liquidation, settlement, or transaction execution.
+It implements the sampled package's raw-SVI N(d2) formula, not the current
+Predict source's SVI roll-down and digital-skew adjustment.
 
 Run:
     python3 predict_probability_demo.py
@@ -209,6 +211,13 @@ def main() -> None:
     mints = fixture["mints"]
     if fixture.get("synthetic") is not False or fixture.get("network") != "sui-testnet":
         raise ValueError("fixture must contain real Sui Testnet data")
+    pricing_model = fixture.get("pricing_model", {})
+    if (
+        pricing_model.get("family") != "raw_svi_nd2"
+        or pricing_model.get("uses_svi_roll_down") is not False
+        or pricing_model.get("uses_svi_digital_skew_adjustment") is not False
+    ):
+        raise ValueError("fixture must describe the historical raw-SVI N(d2) model")
     if len(stream) != 1_000 or len(mints) != 10:
         raise ValueError(
             f"expected 1,000 oracle snapshots and 10 mints, got {len(stream)} and {len(mints)}"
