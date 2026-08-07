@@ -890,14 +890,15 @@ def variance_sqrt_and_d2(a: I64, b: int, inner: int, k: I64) -> tuple[int, I64]:
 
 
 def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
-    # Mirror pricing.move's u128 deep-tail saturation exactly: ratio 0 is the
-    # neg_inf limit (P = 1), ratio above u64::MAX is the pos_inf limit (P = 0).
-    strike_ratio_scaled = strike * FLOAT_SCALING // forward
-    if strike_ratio_scaled == 0:
-        return FLOAT_SCALING
-    if strike_ratio_scaled > 2**64 - 1:
-        return 0
-    k = ln_fixed(strike_ratio_scaled)
+    # Mirror pricing.move exactly: log-moneyness is a DIFFERENCE of logarithms,
+    # never `ln` of a fixed-point ratio. Forming `strike * 1e9 / forward` first
+    # floors the quotient to zero below a ratio of 1e-9 and past u64 above 1.8e10,
+    # which is why the contract used to short-circuit to the digital limits 1e9
+    # and 0 there. Both the quotient and those shortcuts are gone; this model is
+    # bit-compared against the chain, so it must not reintroduce either. The
+    # difference is well-conditioned over every representable pair (|k| <= 44.4),
+    # and the tails now reach their limits through the d2 clamp instead.
+    k = ln_fixed(strike).sub(ln_fixed(forward))
     m = I64(svi["m"], svi["mNegative"])
     k_minus_m = k.sub(m)
     k_minus_m_squared = k_minus_m.square_scaled()
