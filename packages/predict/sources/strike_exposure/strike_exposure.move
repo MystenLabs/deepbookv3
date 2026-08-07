@@ -34,7 +34,7 @@ const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EWrongCloseOutcome: u64 = 6;
 const EPricerRequired: u64 = 7;
-const EInvalidInventoryImpactScale: u64 = 9;
+const EInvalidInventoryImpactScale: u64 = 8;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -217,9 +217,7 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
         exposure.settled_payout_liability
     } else {
         let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
-        // The point max is a subset-sum of the same non-negative per-order net payouts.
-        let gap = total_net_payout - max_net_payout;
-        max_net_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
+        exposure.live_payout_liability_from_terms(max_net_payout, total_net_payout)
     }
 }
 
@@ -325,7 +323,9 @@ public(package) fun trading_fee(
 /// charges and rebates telescope exactly even when the ideal real-valued
 /// quadratic would have fractional dust.
 public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
-    if (exposure.is_settled()) return 0;
+    // Preserve the zero-rate kill switch through the post-trade backing check:
+    // disabled markets do not perform a second payout-tree read here.
+    if (exposure.is_settled() || exposure.config.inventory_impact_max_rate() == 0) return 0;
     exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
 }
 
@@ -338,9 +338,11 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
 /// - add:    `g = max(M, R + N) - M`
 /// - remove: `g = M - max(R - N, C)`
 ///
-/// Therefore `delta L = lambda*N + (1-lambda)*g`. Cold, disjoint exposure moves
-/// only the buffered part; exposure that raises the worst settlement point moves
-/// close to its full net payout.
+/// In real arithmetic, `delta L = lambda*N + (1-lambda)*g`. On chain this
+/// function evaluates the complete before/after liabilities instead, preserving
+/// the fixed-point carry from the book's existing `T-M` gap. Cold, disjoint
+/// exposure moves only the buffered part; exposure that raises the worst
+/// settlement point moves close to its full net payout.
 public(package) fun marginal_payout_liability(
     exposure: &StrikeExposure,
     lower_tick: u64,
@@ -349,16 +351,13 @@ public(package) fun marginal_payout_liability(
     adding: bool,
 ): u64 {
     if (net_payout == 0) return 0;
-    let (max_net_payout, _) = exposure.payout.net_payout_reserve_terms();
-    let range_max = exposure.payout.range_max_net_payout(lower_tick, higher_tick);
-    let max_point_change = if (adding) {
-        (range_max + net_payout).saturating_sub(max_net_payout)
-    } else {
-        let complement_max = exposure.payout.complement_max_net_payout(lower_tick, higher_tick);
-        max_net_payout - range_max.saturating_sub(net_payout).max(complement_max)
-    };
-    math::mul_down(exposure.config.backing_buffer_lambda(), net_payout - max_point_change)
-        + max_point_change
+    let (before, after) = exposure.payout_liabilities_after_change(
+        lower_tick,
+        higher_tick,
+        net_payout,
+        adding,
+    );
+    if (adding) after - before else before - after
 }
 
 /// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
@@ -374,14 +373,12 @@ public(package) fun inventory_impact(
     // Kill switch before the O(log n) range and complement reads.
     if (exposure.config.inventory_impact_max_rate() == 0 || net_payout == 0) return 0;
 
-    let before = exposure.payout_liability();
-    let delta = exposure.marginal_payout_liability(
+    let (before, after) = exposure.payout_liabilities_after_change(
         lower_tick,
         higher_tick,
         net_payout,
         adding,
     );
-    let after = if (adding) before + delta else before - delta;
     let before_potential = exposure.inventory_impact_potential_for_liability(before);
     let after_potential = exposure.inventory_impact_potential_for_liability(after);
     if (adding) {
@@ -698,6 +695,43 @@ fun inventory_impact_potential_for_liability(exposure: &StrikeExposure, liabilit
     if (liability <= scale) return potential_at_capped_liability;
 
     potential_at_capped_liability + math::mul_down(max_rate, liability - scale)
+}
+
+/// Return the exact current and prospective live liabilities for one range
+/// change. Evaluating the full terms on both sides is necessary: independently
+/// rounding `lambda * delta(T-M)` can miss a one-atom carry already accumulated
+/// in the book's buffered gap.
+fun payout_liabilities_after_change(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    net_payout: u64,
+    adding: bool,
+): (u64, u64) {
+    let (max_net_payout, total_net_payout) = exposure.payout.net_payout_reserve_terms();
+    let range_max = exposure.payout.range_max_net_payout(lower_tick, higher_tick);
+    let (after_max, after_total) = if (adding) {
+        (max_net_payout.max(range_max + net_payout), total_net_payout + net_payout)
+    } else {
+        // Every live order contributes its complete net payout at every point in
+        // its range, so the pre-close range maximum is at least `net_payout`.
+        let complement_max = exposure.payout.complement_max_net_payout(lower_tick, higher_tick);
+        ((range_max - net_payout).max(complement_max), total_net_payout - net_payout)
+    };
+    (
+        exposure.live_payout_liability_from_terms(max_net_payout, total_net_payout),
+        exposure.live_payout_liability_from_terms(after_max, after_total),
+    )
+}
+
+fun live_payout_liability_from_terms(
+    exposure: &StrikeExposure,
+    max_net_payout: u64,
+    total_net_payout: u64,
+): u64 {
+    // The point max is a subset-sum of the same non-negative per-order net payouts.
+    let gap = total_net_payout - max_net_payout;
+    max_net_payout + math::mul_down(exposure.config.backing_buffer_lambda(), gap)
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {

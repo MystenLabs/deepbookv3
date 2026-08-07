@@ -166,7 +166,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   residual. One deterministic integer state function makes trade splitting and
   every closed cross-range cycle telescope exactly. The payout tree supplies
   O(log n) in-range/complement peaks needed to compute the true marginal move in
-  `M`. *Rejected:* a range-local skew multiplier tied to that range's current
+  `M`; the implementation evaluates the complete before/after liability so
+  fixed-point buffer carries are part of the state difference. *Rejected:* a
+  range-local skew multiplier tied to that range's current
   probability. Its entry and exit rates can be changed by trading another range,
   so a cycle that returns the book to its starting state can extract value. Also
   rejected: live cash/NAV as `B` (trader/pool flows could move the curve under

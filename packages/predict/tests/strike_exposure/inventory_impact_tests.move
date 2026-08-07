@@ -14,11 +14,12 @@ use deepbook_predict::{
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     order::Order,
     strike_exposure::{Self, StrikeExposure},
-    strike_exposure_config,
+    strike_exposure_config::{Self, StrikeExposureConfig},
     test_constants
 };
+use fixed_math::math;
 use std::unit_test::assert_eq;
-use sui::{clock::Clock, object::{Self, UID}, test_scenario::return_shared};
+use sui::{clock::Clock, object::{Self, UID}, test_scenario::return_shared, tx_context};
 
 public struct ExposureHarness has key {
     id: UID,
@@ -29,10 +30,17 @@ const IMPACT_SCALE: u64 = 4_000_000_000;
 const IMPACT_MAX_RATE: u64 = 200_000_000; // 20%
 const BACKING_BUFFER_LAMBDA: u64 = 500_000_000; // 50%
 const ONE_ORDER: u64 = 1_000_000_000;
+const ROUNDING_IMPACT_SCALE: u64 = 50_000_000;
+const ROUNDING_BUFFER_LAMBDA: u64 = 333_333_333;
+const ROUNDING_DOMINANT_QUANTITY: u64 = 100_000_000;
+const ROUNDING_SEED_QUANTITY: u64 = 10_000_000;
+const ROUNDING_CARRY_QUANTITY: u64 = 30_000_000;
+const ROUNDING_BEFORE_POTENTIAL: u64 = 78_333_333;
+const ROUNDING_AFTER_POTENTIAL: u64 = 88_333_333;
 
 #[test]
 fun default_zero_rate_is_a_kill_switch() {
-    let (mut fx, oracle, mut harness) = new_harness(false);
+    let (mut fx, oracle, mut harness) = disabled_harness();
     let pricer = fx.load_pricer_bundle(&oracle);
     let terms = harness
         .exposure
@@ -58,7 +66,7 @@ fun default_zero_rate_is_a_kill_switch() {
 
 #[test]
 fun quadratic_below_scale_and_linear_above_scale() {
-    let (mut fx, oracle, mut harness) = new_harness(true);
+    let (mut fx, oracle, mut harness) = enabled_harness();
     let pricer = fx.load_pricer_bundle(&oracle);
 
     // Same range means liability equals total net payout. At L=3B/4:
@@ -94,7 +102,7 @@ fun quadratic_below_scale_and_linear_above_scale() {
 
 #[test]
 fun cross_range_cycle_cannot_extract_inventory_escrow() {
-    let (mut fx, oracle, mut harness) = new_harness(true);
+    let (mut fx, oracle, mut harness) = enabled_harness();
     let pricer = fx.load_pricer_bundle(&oracle);
     let strike = test_constants::default_strike_tick();
 
@@ -137,7 +145,7 @@ fun cross_range_cycle_cannot_extract_inventory_escrow() {
 
 #[test]
 fun partial_close_schedule_telescopes_without_rounding_dust() {
-    let (mut fx, oracle, mut harness) = new_harness(true);
+    let (mut fx, oracle, mut harness) = enabled_harness();
     let pricer = fx.load_pricer_bundle(&oracle);
     let mint = quote_mint(&harness.exposure, &pricer, ONE_ORDER, fx.clock());
     let charge = mint.inventory_impact_charge();
@@ -159,6 +167,79 @@ fun partial_close_schedule_telescopes_without_rounding_dust() {
     assert_eq!(charge, first_rebate + final_rebate);
     assert_eq!(harness.exposure.inventory_impact_potential(), 0);
     cleanup(fx, oracle, harness);
+}
+
+#[test]
+fun buffered_liability_carry_is_included_in_charge_and_rebate() {
+    let (mut fx, oracle, mut harness) = rounding_harness();
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let strike = test_constants::default_strike_tick();
+
+    // A 100M lower-range position owns M. The first disjoint 10M upper-range
+    // position leaves gap=10M and floor(lambda*gap)=3,333,333.
+    let dominant = quote_range_mint(
+        &harness.exposure,
+        &pricer,
+        0,
+        strike,
+        ROUNDING_DOMINANT_QUANTITY,
+        fx.clock(),
+    );
+    harness.exposure.allocate_mint_order(dominant);
+    let seed = quote_range_mint(
+        &harness.exposure,
+        &pricer,
+        strike,
+        constants::pos_inf_tick!(),
+        ROUNDING_SEED_QUANTITY,
+        fx.clock(),
+    );
+    harness.exposure.allocate_mint_order(seed);
+    assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_BEFORE_POTENTIAL);
+
+    // Adding 30M grows the gap from 10M to 40M:
+    // floor(lambda*40M) - floor(lambda*10M) = 13,333,333 - 3,333,333 = 10M.
+    // Rounding the 30M increment alone would incorrectly produce 9,999,999.
+    let carried = quote_range_mint(
+        &harness.exposure,
+        &pricer,
+        strike,
+        constants::pos_inf_tick!(),
+        ROUNDING_CARRY_QUANTITY,
+        fx.clock(),
+    );
+    assert_eq!(carried.inventory_impact_charge(), 10_000_000);
+    let carried_order = harness.exposure.allocate_mint_order(carried);
+    assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_AFTER_POTENTIAL);
+
+    let close = harness
+        .exposure
+        .quote_close(
+            option::some(pricer),
+            &carried_order,
+            carried_order.quantity(),
+        );
+    assert_eq!(close.inventory_impact_rebate(), 10_000_000);
+    harness.exposure.process_close(option::some(pricer), close, fx.clock());
+    assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_BEFORE_POTENTIAL);
+
+    cleanup(fx, oracle, harness);
+}
+
+#[test, expected_failure(abort_code = strike_exposure::EInvalidInventoryImpactScale)]
+fun zero_inventory_impact_scale_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let _exposure = strike_exposure::new(
+        object::id_from_address(@0xCAFE),
+        test_constants::short_expiry_ms(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        0,
+        0,
+        strike_exposure_config::new(),
+        ctx,
+    );
+    abort 999
 }
 
 fun quote_mint(
@@ -197,7 +278,36 @@ fun quote_range_mint(
     )
 }
 
-fun new_harness(enabled: bool): (OracleFixture, OracleBundle, ExposureHarness) {
+fun disabled_harness(): (OracleFixture, OracleBundle, ExposureHarness) {
+    new_harness(impact_config(0, BACKING_BUFFER_LAMBDA), IMPACT_SCALE)
+}
+
+fun enabled_harness(): (OracleFixture, OracleBundle, ExposureHarness) {
+    new_harness(
+        impact_config(IMPACT_MAX_RATE, BACKING_BUFFER_LAMBDA),
+        IMPACT_SCALE,
+    )
+}
+
+fun rounding_harness(): (OracleFixture, OracleBundle, ExposureHarness) {
+    new_harness(
+        impact_config(math::float_scaling!(), ROUNDING_BUFFER_LAMBDA),
+        ROUNDING_IMPACT_SCALE,
+    )
+}
+
+fun impact_config(max_rate: u64, backing_buffer_lambda: u64): StrikeExposureConfig {
+    let mut config = strike_exposure_config::new();
+    config.set_no_leverage_window_ms(0);
+    config.set_backing_buffer_lambda(backing_buffer_lambda);
+    config.set_inventory_impact_max_rate(max_rate);
+    config
+}
+
+fun new_harness(
+    config: StrikeExposureConfig,
+    inventory_impact_scale: u64,
+): (OracleFixture, OracleBundle, ExposureHarness) {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -208,17 +318,13 @@ fun new_harness(enabled: bool): (OracleFixture, OracleBundle, ExposureHarness) {
     fx.scenario_mut().next_tx(test_constants::admin());
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
-    let mut config = strike_exposure_config::new();
-    config.set_no_leverage_window_ms(0);
-    config.set_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
-    if (enabled) config.set_inventory_impact_max_rate(IMPACT_MAX_RATE);
     let exposure = strike_exposure::new(
         expiry_id,
         expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
-        IMPACT_SCALE,
+        inventory_impact_scale,
         config,
         fx.scenario_mut().ctx(),
     );
