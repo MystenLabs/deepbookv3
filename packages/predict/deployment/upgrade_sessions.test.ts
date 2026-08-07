@@ -18,6 +18,7 @@ import {
     createSessionsUpgradeState,
     limitOrderResolvedAtCheckpoint,
     maxSmokeAttributableDeep,
+    nextSmokeCleanupStep,
     parseCliChainIdentifier,
     parsePackageMetadata,
     parseSessionsUpgradeArgs,
@@ -348,31 +349,37 @@ test("only fully cleaned incomplete smoke attempts can restart within the bound"
     state.smoke.status = "failed";
     state.smoke.transactions.smoke_authorize_and_fund = "setup-digest";
     assert.equal(canRestartSmokeAttempt(state), false);
+    assert.equal(nextSmokeCleanupStep(structuredClone(state)), "sweep_settled");
     const cleanupFlags = [
-        "settledAmountsSwept",
-        "sessionRevoked",
-        "accountFundsRecovered",
-        "sessionGasReturned",
+        ["settledAmountsSwept", "revoke_session"],
+        ["sessionRevoked", "recover_account"],
+        ["accountFundsRecovered", "return_session_gas"],
+        ["sessionGasReturned", "restart"],
     ] as const;
-    for (const [index, field] of cleanupFlags.entries()) {
+    for (const [index, [field, nextStep]] of cleanupFlags.entries()) {
         state.smoke[field] = true;
+        const resumed = structuredClone(state);
+        assertSessionsUpgradeState(resumed);
+        assert.equal(nextSmokeCleanupStep(resumed), nextStep);
         assert.equal(canRestartSmokeAttempt(state), index === 3);
     }
     state.smoke.marketFillExact = false;
     assert.equal(canRestartSmokeAttempt(state), true, "partial IOC is retryable after cleanup");
     state.smoke.attempt = state.maxSmokeAttempts - 1;
     assert.equal(canRestartSmokeAttempt(state), false);
+    assert.equal(nextSmokeCleanupStep(structuredClone(state)), "exhausted");
     state.smoke.attempt = 0;
     state.smoke.marketFillExact = true;
     assert.equal(canRestartSmokeAttempt(state), false, "exact fill must complete, not restart");
+    assert.equal(nextSmokeCleanupStep(structuredClone(state)), "complete");
 });
 
-test("externally resolved limit orders bound recovered DEEP by the placed quantity", () => {
+test("every checkpointed limit order bounds maker-fill recovery through cancellation", () => {
     const state = createSessionsUpgradeState();
     state.smoke.quantity = "10";
     state.smoke.marketExecutedQuantity = "3";
     assert.equal(maxSmokeAttributableDeep(state), 3n);
-    state.smoke.limitOrderResolvedExternally = true;
+    state.smoke.limitOrderMayHaveFilled = true;
     assert.equal(maxSmokeAttributableDeep(state), 13n);
     assert.equal(limitOrderResolvedAtCheckpoint(1n), false);
     assert.equal(limitOrderResolvedAtCheckpoint(0n), true);

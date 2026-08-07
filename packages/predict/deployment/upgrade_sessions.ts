@@ -127,7 +127,7 @@ interface SpotSmoke {
     limitPrice: string | null;
     marketPriceLimit: string | null;
     limitOrderId: string | null;
-    limitOrderResolvedExternally: boolean;
+    limitOrderMayHaveFilled: boolean;
     marketExecutedQuantity: string | null;
     marketQuoteQuantity: string | null;
     marketPaidFees: string | null;
@@ -403,7 +403,7 @@ function createSpotSmoke(attempt = 0): SpotSmoke {
         limitPrice: null,
         marketPriceLimit: null,
         limitOrderId: null,
-        limitOrderResolvedExternally: false,
+        limitOrderMayHaveFilled: false,
         marketExecutedQuantity: null,
         marketQuoteQuantity: null,
         marketPaidFees: null,
@@ -797,10 +797,29 @@ export function canRestartSmokeAttempt(state: SessionsUpgradeState): boolean {
     );
 }
 
+export type SmokeCleanupStep =
+    | "sweep_settled"
+    | "revoke_session"
+    | "recover_account"
+    | "return_session_gas"
+    | "restart"
+    | "complete"
+    | "exhausted";
+
+export function nextSmokeCleanupStep(state: SessionsUpgradeState): SmokeCleanupStep {
+    const smoke = state.smoke;
+    if (!smoke.settledAmountsSwept) return "sweep_settled";
+    if (!smoke.sessionRevoked) return "revoke_session";
+    if (!smoke.accountFundsRecovered) return "recover_account";
+    if (!smoke.sessionGasReturned) return "return_session_gas";
+    if (smoke.marketFillExact === true) return "complete";
+    return canRestartSmokeAttempt(state) ? "restart" : "exhausted";
+}
+
 export function maxSmokeAttributableDeep(state: SessionsUpgradeState): bigint {
     const smoke = state.smoke;
     const marketExecuted = BigInt(smoke.marketExecutedQuantity ?? "0");
-    const limitExecutedBound = smoke.limitOrderResolvedExternally
+    const limitExecutedBound = smoke.limitOrderMayHaveFilled
         ? BigInt(smokeValue(smoke, "quantity", "limit quantity"))
         : 0n;
     return marketExecuted + limitExecutedBound;
@@ -1413,7 +1432,8 @@ async function checkpointTransaction(
         const orderId = decimal(placed.order_id ?? placed.orderId, "limit order ID");
         const openOrders = await openOrderCount(runtime, wrapper);
         smoke.limitOrderId = orderId;
-        smoke.limitOrderResolvedExternally = limitOrderResolvedAtCheckpoint(openOrders);
+        limitOrderResolvedAtCheckpoint(openOrders);
+        smoke.limitOrderMayHaveFilled = true;
         return;
     }
     if (label === "smoke_session_limit_cancel" || label === "smoke_owner_cancel_cleanup") {
@@ -1683,10 +1703,24 @@ async function cleanupSmokeAttempt(
             BigInt(smokeValue(smoke, "limitOrderId", "limit order ID")),
         );
     }
-    await ensureSettledAmountsSwept(runtime, wrapper);
-    await ensureSessionRevoked(runtime, wrapper);
-    await ensureAccountFundsRecovered(runtime, wrapper);
-    await ensureSessionGasReturned(runtime, sessionSigner);
+    for (;;) {
+        switch (nextSmokeCleanupStep(runtime.state)) {
+            case "sweep_settled":
+                await ensureSettledAmountsSwept(runtime, wrapper);
+                break;
+            case "revoke_session":
+                await ensureSessionRevoked(runtime, wrapper);
+                break;
+            case "recover_account":
+                await ensureAccountFundsRecovered(runtime, wrapper);
+                break;
+            case "return_session_gas":
+                await ensureSessionGasReturned(runtime, sessionSigner);
+                break;
+            default:
+                return;
+        }
+    }
 }
 
 function restartSmokeAttempt(runtime: Runtime): void {
@@ -1857,7 +1891,7 @@ async function runSmoke(runtime: Runtime): Promise<void> {
 
         if (!smoke.transactions.smoke_session_limit_cancel) {
             if ((await openOrderCount(runtime, wrapper)) === 0n) {
-                smoke.limitOrderResolvedExternally = true;
+                smoke.limitOrderMayHaveFilled = true;
                 writeState(runtime.state);
                 await cleanupSmokeAttempt(runtime, wrapper, sessionSigner);
                 if (!canRestartSmokeAttempt(runtime.state)) {
@@ -1889,7 +1923,7 @@ async function runSmoke(runtime: Runtime): Promise<void> {
         }
 
         if ((await poolCustodyBalances(runtime, wrapper)).some((balance) => balance !== 0n)) {
-            smoke.limitOrderResolvedExternally = true;
+            smoke.limitOrderMayHaveFilled = true;
             writeState(runtime.state);
             await cleanupSmokeAttempt(runtime, wrapper, sessionSigner);
             if (!canRestartSmokeAttempt(runtime.state)) {
