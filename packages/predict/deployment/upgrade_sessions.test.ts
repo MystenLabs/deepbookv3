@@ -18,6 +18,7 @@ import {
     parseUpgradeCapMetadata,
     reconcileJournaledTransaction,
     requiredDeployerBalance,
+    serializedUpgradeArgs,
     unexpectedUpgradeSourcePaths,
     type SessionsUpgradeState,
 } from "./upgrade_sessions.ts";
@@ -90,6 +91,15 @@ test("upgrade defaults to non-broadcasting mode and smoke requires execute", () 
     });
     assert.throws(() => parseSessionsUpgradeArgs(["--smoke"]), /requires --execute/);
     assert.throws(() => parseSessionsUpgradeArgs(["--force"]), /unknown Sessions upgrade/);
+});
+
+test("serialized upgrade uses the pinned client environment without forbidden build-env", () => {
+    const args = serializedUpgradeArgs();
+    assert.equal(args[0], "upgrade");
+    assert.equal(args.includes("--build-env"), false);
+    assert.equal(args.includes("--serialize-unsigned-transaction"), true);
+    assert.equal(args.includes("--skip-dependency-verification"), true);
+    assert.equal(args.at(args.indexOf("--gas-budget") + 1), "5000000000");
 });
 
 test("session resume allows post-market cleanup but rejects missing write authority", () => {

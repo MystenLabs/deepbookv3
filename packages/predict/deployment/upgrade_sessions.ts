@@ -1079,29 +1079,31 @@ function publishedPackageId(block: Record<string, unknown>): string {
     throw new Error("upgrade receipt has no published package");
 }
 
+export function serializedUpgradeArgs(): string[] {
+    return [
+        "upgrade",
+        resolve(REPO_ROOT, "packages", "sessions"),
+        "--upgrade-capability",
+        SESSIONS_CAP,
+        "--warnings-are-errors",
+        "--force",
+        "--sender",
+        DEPLOYER,
+        // Immutable Testnet dependencies do not all reproduce byte-for-byte with this
+        // historical toolchain. Preflight independently binds the exact compiled latest-ID
+        // set and the exact live original-ID -> latest-ID map before these bytes are signed.
+        "--skip-dependency-verification",
+        "--gas-budget",
+        PACKAGE_GAS_BUDGET,
+        "--serialize-unsigned-transaction",
+    ];
+}
+
 function serializedUpgrade(snapshot: ClientSnapshot): Uint8Array {
     const lock = resolve(REPO_ROOT, "packages", "sessions", "Move.lock");
     const hadLock = existsSync(lock);
     try {
-        const output = suiClient(snapshot, [
-            "upgrade",
-            resolve(REPO_ROOT, "packages", "sessions"),
-            "--upgrade-capability",
-            SESSIONS_CAP,
-            "--build-env",
-            NETWORK,
-            "--warnings-are-errors",
-            "--force",
-            "--sender",
-            DEPLOYER,
-            // Immutable Testnet dependencies do not all reproduce byte-for-byte with this
-            // historical toolchain. Preflight independently binds the exact compiled latest-ID
-            // set and the exact live original-ID -> latest-ID map before these bytes are signed.
-            "--skip-dependency-verification",
-            "--gas-budget",
-            PACKAGE_GAS_BUDGET,
-            "--serialize-unsigned-transaction",
-        ]);
+        const output = suiClient(snapshot, serializedUpgradeArgs());
         const encoded = output.split(/\r?\n/).filter(Boolean).at(-1);
         if (!encoded || !/^[A-Za-z0-9+/=]+$/.test(encoded)) {
             throw new Error("Sui CLI did not return serialized upgrade bytes");
