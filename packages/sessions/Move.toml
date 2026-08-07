@@ -6,9 +6,14 @@ version = "0.0.1"
 [dependencies]
 account = { local = "../account" }
 deepbook_predict = { local = "../predict" }
+deepbook_core_account = { local = "../deepbook_core_account" }
+deepbook = { local = "../deepbook" }
 propbook = { local = "../propbook" }
 fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
+# Predict consumes the in-tree token package while the spot wrapper pins the
+# byte-identical release source. Resolve both through the published in-tree identity.
+token = { local = "../token", override = true }
 # This publishable root repeats Predict's direct Pyth source so the testnet
 # replacement identities below apply to the transitive Pyth/Wormhole graph.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
