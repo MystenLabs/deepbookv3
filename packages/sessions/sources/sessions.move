@@ -1,12 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Owns time-limited Predict session grants attached to canonical Accounts.
+/// Owns time-limited trading session grants attached to canonical Accounts.
 /// Account owners grant and revoke sessions; an active session can only generate
-/// app auth inside the four Predict wrappers exposed here.
+/// app auth inside the Predict and DeepBook spot wrappers exposed here.
 module deepbook_sessions::sessions;
 
 use account::{account::{Self, AccountWrapper, Auth}, account_registry::AccountRegistry};
+use deepbook::{order_info::OrderInfo, pool::Pool, registry::Registry};
+use deepbook_core_account::deepbook_core_account;
 use deepbook_predict::{
     expiry_market::ExpiryMarket,
     pricing::Pricer,
@@ -96,6 +98,116 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
     if (!data.sessions.contains(&session)) return;
     let (_, expires_at_ms) = data.sessions.remove(&session);
     event::emit(SessionRevoked { account_id, session, expires_at_ms });
+}
+
+/// Place a DeepBook spot limit order for an Account with an active session.
+public fun place_limit_order<BaseAsset, QuoteAsset>(
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    deepbook_registry: &Registry,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    deepbook_core_account::place_limit_order(
+        pool,
+        deepbook_registry,
+        wrapper,
+        auth,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Place a DeepBook spot market order for an Account with an active session.
+public fun place_market_order<BaseAsset, QuoteAsset>(
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    deepbook_registry: &Registry,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    price_limit: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    root: &AccumulatorRoot,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    deepbook_core_account::place_market_order(
+        pool,
+        deepbook_registry,
+        wrapper,
+        auth,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        price_limit,
+        is_bid,
+        pay_with_deep,
+        root,
+        clock,
+        ctx,
+    )
+}
+
+/// Cancel a DeepBook spot order for an Account with an active session.
+public fun cancel_live_order<BaseAsset, QuoteAsset>(
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    order_id: u128,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    deepbook_core_account::cancel_live_order(pool, wrapper, auth, order_id, clock, ctx);
+}
+
+/// Cancel multiple DeepBook spot orders for an Account with an active session.
+public fun cancel_live_orders<BaseAsset, QuoteAsset>(
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    order_ids: vector<u128>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    deepbook_core_account::cancel_live_orders(pool, wrapper, auth, order_ids, clock, ctx);
+}
+
+/// Sweep settled DeepBook spot proceeds into an Account with an active session.
+public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    account_registry: &AccountRegistry,
+    wrapper: &mut AccountWrapper,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    deepbook_core_account::withdraw_settled_amounts(pool, wrapper, auth, ctx);
 }
 
 /// Mint an exact Predict position quantity for an Account with an active session.
