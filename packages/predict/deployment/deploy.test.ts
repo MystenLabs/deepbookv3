@@ -26,6 +26,15 @@ const manifest = JSON.parse(
     readFileSync(new URL("deployment.testnet.json", import.meta.url), "utf8"),
 ) as unknown;
 
+function schema3Manifest(): IntegrationManifest {
+    const value = JSON.parse(JSON.stringify(manifest)) as IntegrationManifest;
+    value.schemaVersion = 3;
+    value.sourceCommit = FIXTURE.sourceCommit;
+    delete value.packages.deepbookCoreAccount;
+    delete value.packages.sessions;
+    return value;
+}
+
 function evidence(objectId: string, version = "1", digest = "test") {
     return {
         objectId,
@@ -493,12 +502,15 @@ test("the committed integration manifest has the stable public schema", () => {
         account: publishedAt("account"),
         propbook: publishedAt("propbook"),
         predict: publishedAt("predict"),
+        deepbookCoreAccount: publishedAt("deepbook_core_account"),
+        sessions: publishedAt("sessions"),
     });
 });
 
-test("a complete verified state deterministically generates the committed manifest", () => {
-    assertIntegrationManifest(manifest);
-    assert.deepEqual(buildIntegrationManifest(verifiedState()), manifest);
+test("a complete verified state deterministically generates the schema-3 base manifest", () => {
+    const base = schema3Manifest();
+    assertIntegrationManifest(base);
+    assert.deepEqual(buildIntegrationManifest(verifiedState()), base);
 });
 
 test("partial deployment state cannot generate an integration manifest", () => {
@@ -513,6 +525,16 @@ test("the manifest validator rejects operator-only fields", () => {
     assert.throws(
         () => assertIntegrationManifest({ ...manifest, transactions: {} }),
         /integration manifest keys/,
+    );
+});
+
+test("schema-5 manifest pins the verified DeepBook Account wrapper", () => {
+    const invalid = JSON.parse(JSON.stringify(manifest)) as IntegrationManifest;
+    invalid.packages.deepbookCoreAccount =
+        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    assert.throws(
+        () => assertIntegrationManifest(invalid),
+        /does not match the verified Testnet wrapper/,
     );
 });
 
@@ -569,28 +591,27 @@ function completeSessionsState() {
 }
 
 test("schema-3 to schema-4 extension changes only the source, schema, and Sessions package", () => {
-    assertIntegrationManifest(manifest);
-    const before = JSON.parse(JSON.stringify(manifest)) as Record<string, unknown>;
-    const extended = buildSessionsIntegrationManifest(manifest, completeSessionsState());
+    const base = schema3Manifest();
+    assertIntegrationManifest(base);
+    const before = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
+    const extended = buildSessionsIntegrationManifest(base, completeSessionsState());
     assert.equal(extended.schemaVersion, 4);
     assert.equal(extended.sourceCommit, "bd4535c900000000000000000000000000000000");
     assert.equal(extended.packages.sessions, SESSIONS_PACKAGE);
-    assert.deepEqual(manifest, before, "the committed schema-3 input is not mutated");
-    const expected = JSON.parse(JSON.stringify(manifest)) as IntegrationManifest;
+    assert.deepEqual(base, before, "the schema-3 input is not mutated");
+    const expected = JSON.parse(JSON.stringify(base)) as IntegrationManifest;
     expected.schemaVersion = 4;
     expected.sourceCommit = "bd4535c900000000000000000000000000000000";
     expected.packages.sessions = SESSIONS_PACKAGE;
     assert.deepEqual(extended, expected);
-    assert.deepEqual(extended.indexing, (manifest as IntegrationManifest).indexing);
-    assert.deepEqual(
-        extended.initialConfiguration,
-        (manifest as IntegrationManifest).initialConfiguration,
-    );
+    assert.deepEqual(extended.indexing, base.indexing);
+    assert.deepEqual(extended.initialConfiguration, base.initialConfiguration);
 });
 
 test("partial Sessions state cannot extend or write the public manifest", () => {
+    const base = schema3Manifest();
     assert.throws(
-        () => buildSessionsIntegrationManifest(manifest, createSessionsDeploymentState()),
+        () => buildSessionsIntegrationManifest(base, createSessionsDeploymentState()),
         /complete, verified Sessions deployment state/,
     );
     const partial = completeSessionsState();
@@ -601,13 +622,13 @@ test("partial Sessions state cannot extend or write the public manifest", () => 
         digest: "known-digest",
     };
     assert.throws(
-        () => buildSessionsIntegrationManifest(manifest, partial),
+        () => buildSessionsIntegrationManifest(base, partial),
         /complete, verified Sessions deployment state/,
     );
 });
 
 test("schema-4 manifest excludes Sessions operator and secret-bearing fields", () => {
-    const extended = buildSessionsIntegrationManifest(manifest, completeSessionsState());
+    const extended = buildSessionsIntegrationManifest(schema3Manifest(), completeSessionsState());
     for (const key of [
         "deployer",
         "publishTx",

@@ -9,5 +9,5 @@
         "strict": true,
         "target": "ES2022"
     },
-    "include": ["deploy.ts", "deploy.test.ts"]
+    "include": ["deploy.ts", "deploy.test.ts", "upgrade_sessions.ts", "upgrade_sessions.test.ts"]
 }
