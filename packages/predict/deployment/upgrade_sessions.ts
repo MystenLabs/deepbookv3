@@ -20,6 +20,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
+import { bcs } from "@mysten/sui/bcs";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import {
     Transaction,
@@ -55,6 +56,29 @@ const ACCOUNT = "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c
 const ACCOUNT_REGISTRY = "0x21a7ed28397363b5550853c1f08795731257de81028cd1bf87f20c0752c8ca2f";
 const SESSIONS_V1 = "0x78887ffbb5e449776152c612fe05af03f729c02dbb7218c270e645c241ad527b";
 const SESSIONS_CAP = "0xec1a56cd72b2a6a97c592b0a66512bf92ce2d0508ebac2b8956abbc5d98a55a8";
+const FAILED_AUDIT_SOURCE = "9c453058549bfc4a96ce9dc48457b69e2c12c14f";
+const FAILED_AUDIT_PACKAGE = "0x403ac487b19635c022f5c50378b9097ed7d80175f9b3ff7ea5a8a4a5fe0ecfbe";
+const FAILED_AUDIT_TX = "25axtEqPVuuEtwaY9TpKLessNeU7VsuJgHnJ3iC8aehe";
+const FAILED_AUTHORIZATION_AUDIT =
+    "unable%20to%20find%20function%200xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::registry::is_app_authorized";
+const FAILED_BOOK_SOURCE = "1b14fca76fb0ec6709ab2f5105ac2e7d3f3c6b01";
+const FAILED_BOOK_READ =
+    "unable%20to%20find%20function%200xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::pool::best_ask_price";
+const FAILED_EXPIRY_SOURCE = "795a4c9841ac795ad8aa3a038bd982bbeb29b5cc";
+const FAILED_EXPIRY_SMOKE =
+    "Transaction resolution failed: MoveAbort in 1st command, abort code: 3, in " +
+    "'0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24::order_info::validate_inputs'" +
+    " (instruction 34)";
+const FAILED_EXPIRY_CLEANUP_LABELS = [
+    "smoke_authorize_and_fund",
+    "smoke_revoke_session",
+    "smoke_recover_account_funds",
+    "smoke_return_session_gas",
+];
+/// DeepBook asserts `clock.timestamp_ms() <= expire_timestamp`, and uses max u64 as its
+/// no-expiry value (`deepbook::constants::max_u64`). The smoke cancels its own order, so the
+/// resting order needs no shorter deadline.
+const NO_ORDER_EXPIRY = 18446744073709551615n;
 const WRAPPER = "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239";
 const DEEPBOOK = "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
@@ -204,6 +228,7 @@ interface Runtime {
     client: SuiGrpcClient;
     signer: Ed25519Keypair;
     sourceCommit: string;
+    sourceCommitRecovery: boolean;
 }
 
 interface EventRecord {
@@ -337,8 +362,13 @@ export interface ObservedPreflightBindings {
 export function assertObservedPreflightBindings(
     state: SessionsUpgradeState,
     observed: ObservedPreflightBindings,
+    allowSourceCommitRecovery = false,
 ): void {
-    if (state.sourceCommit && state.sourceCommit !== observed.sourceCommit) {
+    if (
+        state.sourceCommit &&
+        state.sourceCommit !== observed.sourceCommit &&
+        !allowSourceCommitRecovery
+    ) {
         throw new Error(
             `upgrade journal is bound to ${state.sourceCommit}, not ${observed.sourceCommit}`,
         );
@@ -420,6 +450,72 @@ function createSpotSmoke(attempt = 0): SpotSmoke {
         transactions: {},
         lastError: null,
     };
+}
+
+function isKnownSourceCommitRecovery(state: SessionsUpgradeState): boolean {
+    const failedAudit =
+        state.sourceCommit === FAILED_AUDIT_SOURCE &&
+        state.verification === null &&
+        (state.lastError === "Sessions UpgradeCap identity, policy, owner, or version mismatch" ||
+            state.lastError === FAILED_AUTHORIZATION_AUDIT);
+    const failedBookRead =
+        state.sourceCommit === FAILED_BOOK_SOURCE &&
+        state.verification !== null &&
+        state.lastError === FAILED_BOOK_READ;
+    return (
+        (failedAudit || failedBookRead) &&
+        state.status === "partial" &&
+        state.packageId === FAILED_AUDIT_PACKAGE &&
+        state.upgradeTx === FAILED_AUDIT_TX &&
+        state.inFlight === null &&
+        state.transactions.upgrade_sessions_v2 === FAILED_AUDIT_TX &&
+        Object.keys(state.transactions).length === 1 &&
+        JSON.stringify(state.smoke) === JSON.stringify(createSpotSmoke())
+    );
+}
+
+/// The smoke placed its limit order with expire_timestamp 0, which DeepBook rejects
+/// unconditionally, so every attempt aborted before any order rested and each one cleaned
+/// up in full. The retry budget was spent on that tool defect rather than on chain state,
+/// so this exact journal shape is readmitted with a fresh budget.
+export function isKnownSmokeExpiryRecovery(state: SessionsUpgradeState): boolean {
+    const labels = Object.keys(state.smoke.transactions).sort();
+    return (
+        state.sourceCommit === FAILED_EXPIRY_SOURCE &&
+        state.lastError === FAILED_EXPIRY_SMOKE &&
+        state.status === "partial" &&
+        state.verification !== null &&
+        state.packageId === FAILED_AUDIT_PACKAGE &&
+        state.upgradeTx === FAILED_AUDIT_TX &&
+        state.inFlight === null &&
+        state.smoke.status === "failed" &&
+        state.smoke.attempt + 1 === state.maxSmokeAttempts &&
+        isCleanedIncompleteSmokeAttempt(state) &&
+        labels.length === FAILED_EXPIRY_CLEANUP_LABELS.length &&
+        labels.every((label, index) => label === [...FAILED_EXPIRY_CLEANUP_LABELS].sort()[index])
+    );
+}
+
+/// Archive the defect-failed attempt under its own prefix and restart the smoke from a
+/// fresh budget. Existing `smoke_attempt_<n>_*` archives are left untouched.
+function resetSmokeAfterExpiryDefect(state: SessionsUpgradeState): void {
+    const previous = state.smoke;
+    for (const [label, digest] of Object.entries(previous.transactions)) {
+        state.transactions[`smoke_expiry_defect_${previous.attempt}_${label}`] = digest;
+        delete state.transactions[label];
+    }
+    for (let attempt = 0; attempt < previous.attempt; attempt += 1) {
+        for (const label of FAILED_EXPIRY_CLEANUP_LABELS) {
+            const key = `smoke_attempt_${attempt}_${label}`;
+            const digest = state.transactions[key];
+            if (digest === undefined) continue;
+            state.transactions[`smoke_expiry_defect_${attempt}_${label}`] = digest;
+            delete state.transactions[key];
+        }
+    }
+    state.smoke = createSpotSmoke();
+    state.lastError = null;
+    writeState(state);
 }
 
 export function createSessionsUpgradeState(): SessionsUpgradeState {
@@ -981,6 +1077,13 @@ function parseU64(bytes: number[]): bigint {
     return result;
 }
 
+function parseU64Vector(bytes: number[]): bigint[] {
+    return bcs
+        .vector(bcs.u64())
+        .parse(Uint8Array.from(bytes))
+        .map((value) => BigInt(value));
+}
+
 function parseBool(bytes: number[]): boolean {
     if (bytes.length !== 1) throw new Error("invalid bool return");
     return bytes[0] === 1;
@@ -1005,23 +1108,29 @@ function parseOptionU64(bytes: number[]): bigint | null {
 async function inspectAuthorization(
     runtime: Runtime,
 ): Promise<{ sessions: boolean; wrapper: boolean }> {
-    const tx = new Transaction();
+    const accountTx = new Transaction();
     call(
-        tx,
+        accountTx,
         `${ACCOUNT}::account_registry::is_app_authorized`,
-        [tx.object(ACCOUNT_REGISTRY)],
+        [accountTx.object(ACCOUNT_REGISTRY)],
         [`${runtime.state.packageId ?? SESSIONS_V1}::sessions::SessionsApp`],
     );
+    const accountResponse = await devInspect(
+        runtime,
+        "Sessions application authorization",
+        accountTx,
+    );
+    const deepbookTx = new Transaction();
     call(
-        tx,
-        `${DEEPBOOK}::registry::is_app_authorized`,
-        [tx.object(DEEPBOOK_REGISTRY)],
+        deepbookTx,
+        `${DEEPBOOK}::registry::assert_app_is_authorized`,
+        [deepbookTx.object(DEEPBOOK_REGISTRY)],
         [`${WRAPPER}::account_data::DeepbookCoreAccountApp`],
     );
-    const response = await devInspect(runtime, "application authorization", tx);
+    await devInspect(runtime, "DeepBook application authorization", deepbookTx);
     return {
-        sessions: parseBool(returnBytes(response, 0)),
-        wrapper: parseBool(returnBytes(response, 1)),
+        sessions: parseBool(returnBytes(accountResponse, 0)),
+        wrapper: true,
     };
 }
 
@@ -1126,7 +1235,7 @@ async function auditUpgrade(runtime: Runtime): Promise<void> {
     }
     auditDependencySet(metadata);
     if (
-        cap.packageId !== SESSIONS_V1 ||
+        cap.packageId !== runtime.state.packageId ||
         cap.version !== "2" ||
         cap.policy !== "0" ||
         cap.owner !== DEPLOYER
@@ -1277,22 +1386,16 @@ async function poolParameters(runtime: Runtime): Promise<{
     call(tx, `${DEEPBOOK}::pool::pool_book_params`, [tx.object(DEEP_SUI_POOL)], types);
     call(
         tx,
-        `${DEEPBOOK}::pool::best_ask_price`,
-        [tx.object(DEEP_SUI_POOL), tx.object(CLOCK)],
-        types,
-    );
-    call(
-        tx,
-        `${DEEPBOOK}::pool::best_bid_price`,
-        [tx.object(DEEP_SUI_POOL), tx.object(CLOCK)],
+        `${DEEPBOOK}::pool::get_level2_ticks_from_mid`,
+        [tx.object(DEEP_SUI_POOL), tx.pure.u64(1), tx.object(CLOCK)],
         types,
     );
     const response = await devInspect(runtime, "DEEP/SUI book", tx);
     const tickSize = parseU64(returnBytes(response, 0, 0));
     const lotSize = parseU64(returnBytes(response, 0, 1));
     const minSize = parseU64(returnBytes(response, 0, 2));
-    const bestAsk = parseOptionU64(returnBytes(response, 1));
-    const bestBid = parseOptionU64(returnBytes(response, 2));
+    const bestBid = parseU64Vector(returnBytes(response, 1, 0))[0] ?? null;
+    const bestAsk = parseU64Vector(returnBytes(response, 1, 2))[0] ?? null;
     if (!bestAsk) throw new Error("DEEP/SUI has no live ask for the market-fill smoke");
     const quoteTx = new Transaction();
     call(
@@ -1889,7 +1992,7 @@ async function runSmoke(runtime: Runtime): Promise<void> {
                     limit.pure.u64(BigInt(smokeValue(smoke, "quantity", "limit quantity"))),
                     limit.pure.bool(true),
                     limit.pure.bool(false),
-                    limit.pure.u64(0n),
+                    limit.pure.u64(NO_ORDER_EXPIRY),
                     limit.object(ACCUMULATOR_ROOT),
                     limit.object(CLOCK),
                 ],
@@ -2137,16 +2240,26 @@ function releaseLock(lock: { path: string; token: string }): void {
 async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState): Promise<Runtime> {
     assertCleanSource();
     const sourceCommit = git(["rev-parse", "HEAD"]);
+    const smokeExpiryRecovery = isKnownSmokeExpiryRecovery(state);
+    const sourceCommitRecovery =
+        state.sourceCommit !== null &&
+        state.sourceCommit !== sourceCommit &&
+        (isKnownSourceCommitRecovery(state) || smokeExpiryRecovery);
     const suiVersion = command(SUI, ["--version"]);
     const rpcUrlHash = createHash("sha256").update(snapshot.rpcUrl).digest("hex");
-    assertObservedPreflightBindings(state, {
-        sourceCommit,
-        suiVersion,
-        rpcUrlHash,
-        network: suiClient(snapshot, ["active-env"]),
-        chainId: parseCliChainIdentifier(suiClient(snapshot, ["chain-identifier"])),
-        deployer: suiClient(snapshot, ["active-address"]),
-    });
+    assertObservedPreflightBindings(
+        state,
+        {
+            sourceCommit,
+            suiVersion,
+            rpcUrlHash,
+            network: suiClient(snapshot, ["active-env"]),
+            chainId: parseCliChainIdentifier(suiClient(snapshot, ["chain-identifier"])),
+            deployer: suiClient(snapshot, ["active-address"]),
+        },
+        sourceCommitRecovery,
+    );
+    if (smokeExpiryRecovery) resetSmokeAfterExpiryDefect(state);
     const client = new SuiGrpcClient({ baseUrl: snapshot.rpcUrl, network: NETWORK });
     if ((await shortChainId(client)) !== CHAIN_ID) throw new Error("SDK RPC chain mismatch");
     const signer = signerFromKeystore(snapshot.keystorePath);
@@ -2191,10 +2304,8 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
         throw new Error("live Sessions v1, spot wrapper, or DeepBook dependency identity mismatch");
     }
     assertExactLinkages(oldPackage.linkages, expectedV1Linkages, "live Sessions v1");
-    if (
-        cap.packageId !== SESSIONS_V1 ||
-        (state.packageId && normalizeId(state.packageId) === SESSIONS_V1)
-    ) {
+    const expectedCapPackage = state.packageId ? normalizeId(state.packageId) : SESSIONS_V1;
+    if (cap.packageId !== expectedCapPackage) {
         throw new Error("live Sessions upgrade does not match its v2 journal checkpoint");
     }
     assertUpgradeCapResumeVersion(
@@ -2202,7 +2313,7 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
         state.inFlight?.label ?? null,
         cap.version,
     );
-    return { state, snapshot, client, signer, sourceCommit };
+    return { state, snapshot, client, signer, sourceCommit, sourceCommitRecovery };
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
@@ -2242,6 +2353,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
         try {
             await reconcileInFlight(runtime);
             await runUpgrade(runtime);
+            if (runtime.sourceCommitRecovery) {
+                state.sourceCommit = runtime.sourceCommit;
+                writeState(state);
+            }
             if (mode.smoke && state.smoke.status !== "complete") await runSmoke(runtime);
             if (!mode.smoke && state.smoke.status !== "complete") {
                 console.log(
