@@ -140,8 +140,8 @@ public fun rebate_reserve(market: &ExpiryMarket): u64 {
     market.cash.rebate_reserve()
 }
 
-/// Return the isolated inventory-impact escrow still available for live-close
-/// rebates.
+/// Return the isolated inventory-impact escrow for SDK and devInspect state
+/// reads.
 public fun inventory_impact_reserve(market: &ExpiryMarket): u64 {
     market.cash.inventory_impact_reserve()
 }
@@ -189,12 +189,14 @@ public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.no_leverage_window_ms()
 }
 
-/// Return this market's immutable maximum marginal inventory-impact rate.
+/// Return this market's immutable maximum marginal inventory-impact rate for SDK
+/// and devInspect state reads.
 public fun inventory_impact_max_rate(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_max_rate()
 }
 
-/// Return the immutable DUSDC scale of this market's inventory-impact curve.
+/// Return the immutable DUSDC scale of this market's inventory-impact curve for
+/// SDK and devInspect state reads.
 public fun inventory_impact_scale(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_scale()
 }
@@ -417,7 +419,8 @@ public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
 }
 
-/// Return the separate inventory-impact charge for this mint quote.
+/// Return the separate inventory-impact charge for SDK and devInspect quote
+/// consumers.
 public fun inventory_impact_charge(quote: &MintQuote): u64 {
     quote.inventory_impact_charge
 }

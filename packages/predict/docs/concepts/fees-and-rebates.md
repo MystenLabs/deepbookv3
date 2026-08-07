@@ -182,7 +182,7 @@ The existing live reserve liability is:
 L = M + lambda * (T - M)
 ```
 
-A candidate range does not necessarily move `M` by its full net payout. The payout tree therefore reads the current maximum inside the range and in its complement in `O(log n)`, computes the exact change in `M`, and combines that with the always-changing buffered part of `T`. This charges overlapping exposure more than a cold disjoint range when it raises the book's worst settlement point.
+A candidate range does not necessarily move `M` by its full net payout. The payout tree therefore reads the current maximum inside the range and in its complement in `O(log n)`, computes the exact prospective `M` and `T`, and evaluates the complete liability formula before and after the trade. Evaluating both complete states matters for integer arithmetic: rounding only the incremental buffer could miss a one-atom carry already accumulated in `lambda * (T-M)`. This charges overlapping exposure more than a cold disjoint range when it raises the book's worst settlement point.
 
 ### Step 2: map liability to one book-level potential
 
