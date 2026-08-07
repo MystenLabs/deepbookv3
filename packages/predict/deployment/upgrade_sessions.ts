@@ -55,6 +55,9 @@ const ACCOUNT = "0xbdbb60b00f2d4f30daeff62f2c642b18433a8fcdfbebccc808df578df2a0c
 const ACCOUNT_REGISTRY = "0x21a7ed28397363b5550853c1f08795731257de81028cd1bf87f20c0752c8ca2f";
 const SESSIONS_V1 = "0x78887ffbb5e449776152c612fe05af03f729c02dbb7218c270e645c241ad527b";
 const SESSIONS_CAP = "0xec1a56cd72b2a6a97c592b0a66512bf92ce2d0508ebac2b8956abbc5d98a55a8";
+const FAILED_AUDIT_SOURCE = "9c453058549bfc4a96ce9dc48457b69e2c12c14f";
+const FAILED_AUDIT_PACKAGE = "0x403ac487b19635c022f5c50378b9097ed7d80175f9b3ff7ea5a8a4a5fe0ecfbe";
+const FAILED_AUDIT_TX = "25axtEqPVuuEtwaY9TpKLessNeU7VsuJgHnJ3iC8aehe";
 const WRAPPER = "0x7ea715df00320b9460cd17531ecb507d8cc28925dce5be5de40af448c1d34239";
 const DEEPBOOK = "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
@@ -204,6 +207,7 @@ interface Runtime {
     client: SuiGrpcClient;
     signer: Ed25519Keypair;
     sourceCommit: string;
+    sourceCommitRecovery: boolean;
 }
 
 interface EventRecord {
@@ -337,8 +341,13 @@ export interface ObservedPreflightBindings {
 export function assertObservedPreflightBindings(
     state: SessionsUpgradeState,
     observed: ObservedPreflightBindings,
+    allowSourceCommitRecovery = false,
 ): void {
-    if (state.sourceCommit && state.sourceCommit !== observed.sourceCommit) {
+    if (
+        state.sourceCommit &&
+        state.sourceCommit !== observed.sourceCommit &&
+        !allowSourceCommitRecovery
+    ) {
         throw new Error(
             `upgrade journal is bound to ${state.sourceCommit}, not ${observed.sourceCommit}`,
         );
@@ -420,6 +429,21 @@ function createSpotSmoke(attempt = 0): SpotSmoke {
         transactions: {},
         lastError: null,
     };
+}
+
+function isFailedAuditRecovery(state: SessionsUpgradeState): boolean {
+    return (
+        state.sourceCommit === FAILED_AUDIT_SOURCE &&
+        state.status === "partial" &&
+        state.packageId === FAILED_AUDIT_PACKAGE &&
+        state.upgradeTx === FAILED_AUDIT_TX &&
+        state.inFlight === null &&
+        state.verification === null &&
+        state.transactions.upgrade_sessions_v2 === FAILED_AUDIT_TX &&
+        Object.keys(state.transactions).length === 1 &&
+        JSON.stringify(state.smoke) === JSON.stringify(createSpotSmoke()) &&
+        state.lastError === "Sessions UpgradeCap identity, policy, owner, or version mismatch"
+    );
 }
 
 export function createSessionsUpgradeState(): SessionsUpgradeState {
@@ -1126,7 +1150,7 @@ async function auditUpgrade(runtime: Runtime): Promise<void> {
     }
     auditDependencySet(metadata);
     if (
-        cap.packageId !== SESSIONS_V1 ||
+        cap.packageId !== runtime.state.packageId ||
         cap.version !== "2" ||
         cap.policy !== "0" ||
         cap.owner !== DEPLOYER
@@ -2137,16 +2161,24 @@ function releaseLock(lock: { path: string; token: string }): void {
 async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState): Promise<Runtime> {
     assertCleanSource();
     const sourceCommit = git(["rev-parse", "HEAD"]);
+    const sourceCommitRecovery =
+        state.sourceCommit !== null &&
+        state.sourceCommit !== sourceCommit &&
+        isFailedAuditRecovery(state);
     const suiVersion = command(SUI, ["--version"]);
     const rpcUrlHash = createHash("sha256").update(snapshot.rpcUrl).digest("hex");
-    assertObservedPreflightBindings(state, {
-        sourceCommit,
-        suiVersion,
-        rpcUrlHash,
-        network: suiClient(snapshot, ["active-env"]),
-        chainId: parseCliChainIdentifier(suiClient(snapshot, ["chain-identifier"])),
-        deployer: suiClient(snapshot, ["active-address"]),
-    });
+    assertObservedPreflightBindings(
+        state,
+        {
+            sourceCommit,
+            suiVersion,
+            rpcUrlHash,
+            network: suiClient(snapshot, ["active-env"]),
+            chainId: parseCliChainIdentifier(suiClient(snapshot, ["chain-identifier"])),
+            deployer: suiClient(snapshot, ["active-address"]),
+        },
+        sourceCommitRecovery,
+    );
     const client = new SuiGrpcClient({ baseUrl: snapshot.rpcUrl, network: NETWORK });
     if ((await shortChainId(client)) !== CHAIN_ID) throw new Error("SDK RPC chain mismatch");
     const signer = signerFromKeystore(snapshot.keystorePath);
@@ -2191,10 +2223,8 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
         throw new Error("live Sessions v1, spot wrapper, or DeepBook dependency identity mismatch");
     }
     assertExactLinkages(oldPackage.linkages, expectedV1Linkages, "live Sessions v1");
-    if (
-        cap.packageId !== SESSIONS_V1 ||
-        (state.packageId && normalizeId(state.packageId) === SESSIONS_V1)
-    ) {
+    const expectedCapPackage = state.packageId ? normalizeId(state.packageId) : SESSIONS_V1;
+    if (cap.packageId !== expectedCapPackage) {
         throw new Error("live Sessions upgrade does not match its v2 journal checkpoint");
     }
     assertUpgradeCapResumeVersion(
@@ -2202,7 +2232,7 @@ async function preflight(snapshot: ClientSnapshot, state: SessionsUpgradeState):
         state.inFlight?.label ?? null,
         cap.version,
     );
-    return { state, snapshot, client, signer, sourceCommit };
+    return { state, snapshot, client, signer, sourceCommit, sourceCommitRecovery };
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
@@ -2242,6 +2272,10 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
         try {
             await reconcileInFlight(runtime);
             await runUpgrade(runtime);
+            if (runtime.sourceCommitRecovery) {
+                state.sourceCommit = runtime.sourceCommit;
+                writeState(state);
+            }
             if (mode.smoke && state.smoke.status !== "complete") await runSmoke(runtime);
             if (!mode.smoke && state.smoke.status !== "complete") {
                 console.log(
