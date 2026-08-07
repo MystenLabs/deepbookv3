@@ -7,6 +7,7 @@ import test from "node:test";
 import {
     assertObservedPreflightBindings,
     assertSessionTransactionReserve,
+    assertSimulationSucceeded,
     assertSmokeSessionResume,
     assertSessionsUpgradeState,
     assertUpgradeCapResumeVersion,
@@ -106,6 +107,23 @@ test("serialized upgrade uses the pinned client environment without forbidden bu
     assert.equal(args.includes("--serialize-unsigned-transaction"), true);
     assert.equal(args.includes("--skip-dependency-verification"), true);
     assert.equal(args.at(args.indexOf("--gas-budget") + 1), "5000000000");
+});
+
+test("preflight and execution share the same checked simulation result", () => {
+    assert.doesNotThrow(() =>
+        assertSimulationSucceeded("upgrade", {
+            Transaction: { effects: { status: { status: "success" } } },
+        }),
+    );
+    assert.throws(
+        () =>
+            assertSimulationSucceeded("upgrade", {
+                Transaction: {
+                    effects: { status: { status: "failure", error: "MoveAbort" } },
+                },
+            }),
+        /upgrade dry run failed: MoveAbort/,
+    );
 });
 
 test("session resume allows post-market cleanup but rejects missing write authority", () => {

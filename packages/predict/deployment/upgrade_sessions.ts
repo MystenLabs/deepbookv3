@@ -717,6 +717,11 @@ function coreReceipt(response: unknown): Receipt {
     };
 }
 
+export function assertSimulationSucceeded(label: string, response: unknown): void {
+    const failure = effectsError(coreReceipt(response).effects);
+    if (failure) throw new Error(`${label} dry run failed: ${failure}`);
+}
+
 async function settledReceipt(client: SuiGrpcClient, digest: string): Promise<Receipt> {
     let last: unknown;
     for (let attempt = 0; attempt < 30; attempt++) {
@@ -851,8 +856,7 @@ async function executeBytes(
         checksEnabled: true,
         include: { effects: true },
     });
-    const dryRunError = effectsError(coreReceipt(simulated).effects);
-    if (dryRunError) throw new Error(`${label} dry run failed: ${dryRunError}`);
+    assertSimulationSucceeded(label, simulated);
     const digest = TransactionDataBuilder.getDigestFromBytes(bytes);
     runtime.state.inFlight = { label, digest, startedAt: new Date().toISOString() };
     writeState(runtime.state);
@@ -2168,7 +2172,15 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
         console.log(`[sessions:v2] wrapper: ${WRAPPER}`);
         console.log(`[sessions:v2] Sui CLI: ${suiVersion}`);
         if (!mode.execute) {
-            serializedUpgrade(snapshot);
+            const bytes = serializedUpgrade(snapshot);
+            assertSimulationSucceeded(
+                "upgrade_sessions_v2",
+                await runtime.client.simulateTransaction({
+                    transaction: bytes,
+                    checksEnabled: true,
+                    include: { effects: true },
+                }),
+            );
             console.log("[sessions:v2] preflight complete; no transactions submitted");
             return;
         }
