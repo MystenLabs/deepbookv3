@@ -1,0 +1,84 @@
+{
+  "formula": "gamma * (delta / net_payout) * p * (1 - p)",
+  "gamma_meaning": "per-unit rate at maximum crowding and maximum uncertainty (p=1/2), times four; uncapped peak rate = gamma/4",
+  "baseline": {
+    "gamma": 0,
+    "rebate_enabled": false,
+    "terminal_lp_profit": 0,
+    "terminal_protocol_profit": 0,
+    "returned_pool_cash": 49964588736,
+    "skew_charged": 0,
+    "skew_rebated": 0,
+    "net_skew_retained": 0,
+    "mint_count": 40,
+    "live_redeem_count": 8
+  },
+  "sweep": [
+    {
+      "gamma": 50000000,
+      "rebate_enabled": false,
+      "terminal_lp_profit": 0,
+      "terminal_protocol_profit": 0,
+      "returned_pool_cash": 49966346736,
+      "skew_charged": 1758000,
+      "skew_rebated": 0,
+      "net_skew_retained": 1758000,
+      "mint_count": 40,
+      "live_redeem_count": 8
+    },
+    {
+      "gamma": 100000000,
+      "rebate_enabled": false,
+      "terminal_lp_profit": 0,
+      "terminal_protocol_profit": 0,
+      "returned_pool_cash": 49968104776,
+      "skew_charged": 3516040,
+      "skew_rebated": 0,
+      "net_skew_retained": 3516040,
+      "mint_count": 40,
+      "live_redeem_count": 8
+    },
+    {
+      "gamma": 200000000,
+      "rebate_enabled": false,
+      "terminal_lp_profit": 0,
+      "terminal_protocol_profit": 0,
+      "returned_pool_cash": 49971620856,
+      "skew_charged": 7032120,
+      "skew_rebated": 0,
+      "net_skew_retained": 7032120,
+      "mint_count": 40,
+      "live_redeem_count": 8
+    },
+    {
+      "gamma": 400000000,
+      "rebate_enabled": false,
+      "terminal_lp_profit": 0,
+      "terminal_protocol_profit": 0,
+      "returned_pool_cash": 49978652976,
+      "skew_charged": 14064240,
+      "skew_rebated": 0,
+      "net_skew_retained": 14064240,
+      "mint_count": 40,
+      "live_redeem_count": 8
+    }
+  ],
+  "skewed": {
+    "gamma": 50000000,
+    "rebate_enabled": false,
+    "terminal_lp_profit": 0,
+    "terminal_protocol_profit": 0,
+    "returned_pool_cash": 49966346736,
+    "skew_charged": 1758000,
+    "skew_rebated": 0,
+    "net_skew_retained": 1758000,
+    "mint_count": 40,
+    "live_redeem_count": 8
+  },
+  "calibrated_gamma": 50000000,
+  "delta_returned_pool_cash": 1758000,
+  "delta_returned_pool_cash_dusdc": 1.758,
+  "delta_lp_profit": 0,
+  "helps_lps": true,
+  "notes": "Piled up-binary inventory on one strike; skew escrow residual returns to LPs at terminal closeout. Rebates disabled (ship default). Gate uses returned_pool_cash because terminal_lp_profit stays 0 while net_losses_to_fill absorbs recoveries. Gamma recalibrated for the locality-only rate (no u_after / capital-basis factor)."
+}

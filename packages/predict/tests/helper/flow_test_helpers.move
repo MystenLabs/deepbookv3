@@ -545,6 +545,24 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Arm the inventory-skew charge on the template. Call before creating the expiry
+/// that should snapshot it; the defaults leave the whole feature inert (`gamma = 0`
+/// is the sole kill switch).
+public fun set_template_inventory_skew(
+    self: &mut Fixture,
+    gamma: u64,
+    cap: u64,
+    rebate_enabled: bool,
+) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_inventory_skew_gamma(&self.admin_cap, gamma);
+    config.set_template_inventory_skew_cap(&self.admin_cap, cap);
+    config.set_template_inventory_skew_rebate_enabled(&self.admin_cap, rebate_enabled);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();

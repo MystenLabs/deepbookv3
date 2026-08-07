@@ -143,6 +143,39 @@ class StrikePayoutTree:
     def settled_payout_liability(self, settlement: int) -> int:
         return _net_payout(self._settlement_prefix_terms(self.root, settlement, self.base))
 
+    def range_max_net_payout(self, lower: int, higher: int) -> int:
+        """Max existing net-payout profile over the half-open range `(lower, higher]`.
+
+        Uses prefix-at-lower plus absolute prefixes at every boundary strictly
+        inside `(lower, higher)`. Ends at `higher` are excluded so the closed
+        endpoint still reflects inventory that settles inside the range.
+        """
+        if lower >= higher:
+            raise ValueError("invalid payout range")
+        # `settlement_prefix` includes strikes strictly below `settlement`, so
+        # `lower + 1` folds in a start boundary at `lower`.
+        best = _net_payout(self._settlement_prefix_terms(self.root, lower + 1, self.base))
+        for strike in self.nodes:
+            if lower < strike < higher:
+                prefix = _net_payout(
+                    self._settlement_prefix_terms(self.root, strike + 1, self.base)
+                )
+                if prefix > best:
+                    best = prefix
+        return best
+
+    def complement_max_net_payout(self, lower: int, higher: int) -> int:
+        """Max net-payout profile outside `(lower, higher]`.
+
+        Complement is `(-inf, lower] ∪ (higher, +inf]`: `lower` is uncovered and
+        belongs to the left arm; `higher` is covered and is excluded from the right.
+        """
+        if lower >= higher:
+            raise ValueError("invalid payout range")
+        left = 0 if lower == self.neg_inf else self.range_max_net_payout(self.neg_inf, lower)
+        right = 0 if higher == self.pos_inf else self.range_max_net_payout(higher, self.pos_inf)
+        return max(left, right)
+
     def _apply_range(self, lower: int, higher: int, terms: PayoutTerms, add: bool) -> None:
         self._assert_range_boundaries(lower, higher)
         if terms.quantity == 0 and terms.floor_shares == 0:

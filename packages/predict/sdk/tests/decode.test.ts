@@ -42,6 +42,7 @@ const OrderMintedBcs = bcs.struct("OrderMinted", {
 	fee_incentive_subsidy: bcs.u64(),
 	builder_fee: bcs.u64(),
 	penalty_fee: bcs.u64(),
+	inventory_skew_charge: bcs.u64(),
 	builder_code_id: bcs.option(bcs.Address),
 });
 
@@ -64,6 +65,7 @@ function mintedEvent(orderId: bigint, overrides: Record<string, unknown> = {}): 
 			fee_incentive_subsidy: 20_000n,
 			builder_fee: 30_000n,
 			penalty_fee: 5_000n,
+			inventory_skew_charge: 40_000n,
 			builder_code_id: CODE,
 			...overrides,
 		}).toBytes(),
@@ -81,6 +83,10 @@ describe("decodeMints", () => {
 		expect(r.entryProbability).toBeCloseTo(0.3);
 		expect(r.leverage).toBe(2);
 		expect(r.fees).toEqual({ trading: 0.1, subsidy: 0.02, builder: 0.03, penalty: 0.005 });
+		// The skew charge is billed alongside the fees but reported on its own: it is
+		// escrowed for close-side rebates, not earned, so it never joins `fees`.
+		expect(r.inventorySkewCharge).toBe(0.04);
+		expect(r.raw.inventorySkewCharge).toBe(40_000n);
 		expect(r.builderCodeId).toBe(CODE);
 		expect(r.raw.quantity).toBe(50_000_000n);
 		expect(r.raw.netPremium).toBe(12_500_000n);
@@ -143,6 +149,7 @@ describe("decodeRedeems", () => {
 		trading_fee: bcs.u64(),
 		builder_fee: bcs.u64(),
 		penalty_fee: bcs.u64(),
+		inventory_skew_rebate: bcs.u64(),
 		builder_code_id: bcs.option(bcs.Address),
 	});
 
@@ -162,6 +169,7 @@ describe("decodeRedeems", () => {
 				trading_fee: 50_000n,
 				builder_fee: 0n,
 				penalty_fee: 0n,
+				inventory_skew_rebate: 10_000n,
 				builder_code_id: null,
 			}).toBytes(),
 		};
@@ -171,10 +179,12 @@ describe("decodeRedeems", () => {
 		const [r] = decodeRedeems(cfg, { events: [liveRedeem(8n)] });
 		expect(r.replacementOrderId).toBe(8n);
 		expect(r.remaining).toBe(30);
-		// redeem_amount 6.0 is GROSS; net = gross − trading (0.05) − builder − penalty
+		// redeem_amount 6.0 is GROSS; net = gross + skew rebate (0.01) − trading
+		// (0.05) − builder − penalty. The rebate is credited, not deducted.
 		expect(r.gross).toBe(6);
-		expect(r.proceeds).toBe(5.95);
-		expect(r.raw.proceeds).toBe(5_950_000n);
+		expect(r.inventorySkewRebate).toBe(0.01);
+		expect(r.proceeds).toBe(5.96);
+		expect(r.raw.proceeds).toBe(5_960_000n);
 		expect(r.liquidated).toBe(false);
 	});
 

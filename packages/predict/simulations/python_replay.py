@@ -112,6 +112,11 @@ TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 # Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
+# Inventory skew (locality-only transaction charge). Defaults match Move inert ship values.
+# Rate = gamma * (delta / net_payout) * p * (1 - p); gamma == 0 is the sole kill switch.
+INVENTORY_SKEW_GAMMA = 0
+INVENTORY_SKEW_CAP = FLOAT_SCALING
+INVENTORY_SKEW_REBATE_ENABLED = False
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
 # Dynamic mint-admission cap. Actual liquidation still uses LIQUIDATION_LTV.
@@ -1288,11 +1293,12 @@ def live_position_liability(model: dict[str, Any]) -> int:
 
 
 # current_nav (per ExpiryMarket): free cash minus the exact per-order live
-# liability, floored at zero. free_cash = expiry_cash - rebate_reserve. This is the
-# EXACT mark the flush prices supply AND withdraw at.
+# liability, floored at zero. free_cash = expiry_cash - rebate_reserve -
+# skew_reserve. This is the EXACT mark the flush prices supply AND withdraw at.
 def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    free_cash = max(0, state["expiry_cash_balance"] - rebate_reserve)
+    reserved = rebate_reserve + state["expiry_skew_reserve"]
+    free_cash = max(0, state["expiry_cash_balance"] - reserved)
     return max(0, free_cash - exact_live_liability(model))
 
 
@@ -1489,6 +1495,87 @@ def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
     return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
 
 
+def marginal_reserve_consumption(
+    model: dict[str, Any],
+    lower: int,
+    higher: int,
+    net_payout: int,
+    *,
+    adding: bool,
+) -> int:
+    """Reserve delta for adding or removing `net_payout` over `(lower, higher]`.
+
+    With L = M + λ(T − M), R = max inside the range, C = max outside it:
+      add:    g = max(M, R + N) − M
+      remove: g = M − max(R − N, C)
+    and delta = λN + (1 − λ)g. Immediate open-then-close of the same range/size
+    has g_add == g_removal exactly.
+    """
+    if net_payout == 0:
+        return 0
+    max_net_payout, _total_net_payout = model["payout"].net_payout_reserve_terms()
+    range_max = model["payout"].range_max_net_payout(lower, higher)
+    if adding:
+        raised = range_max + net_payout
+        g = raised - max_net_payout if raised > max_net_payout else 0
+    else:
+        complement_max = model["payout"].complement_max_net_payout(lower, higher)
+        post_range = range_max - net_payout if range_max > net_payout else 0
+        m_post = post_range if post_range > complement_max else complement_max
+        g = max_net_payout - m_post
+    # delta = λN + (1−λ)g = λ(N − g) + g
+    return deepbook_mul(BACKING_BUFFER_LAMBDA, net_payout - g) + g
+
+
+def inventory_skew_rate(
+    model: dict[str, Any],
+    lower: int,
+    higher: int,
+    net_payout: int,
+    probability: int,
+    *,
+    adding: bool,
+) -> int:
+    """Locality-only per-unit inventory skew rate: gamma · crowding · p(1-p)."""
+    # Kill switch: must precede marginal_reserve_consumption / range-max walks.
+    if INVENTORY_SKEW_GAMMA == 0 or net_payout == 0 or probability == 0 or probability == FLOAT_SCALING:
+        return 0
+    delta = marginal_reserve_consumption(
+        model,
+        lower,
+        higher,
+        net_payout,
+        adding=adding,
+    )
+    crowding = mul_div_round_down(delta, FLOAT_SCALING, net_payout)
+    variance = deepbook_mul(probability, FLOAT_SCALING - probability)
+    rate = deepbook_mul(deepbook_mul(INVENTORY_SKEW_GAMMA, crowding), variance)
+    return rate if rate < INVENTORY_SKEW_CAP else INVENTORY_SKEW_CAP
+
+
+def inventory_skew_charge(
+    model: dict[str, Any],
+    lower: int,
+    higher: int,
+    net_payout: int,
+    quantity: int,
+    probability: int,
+    *,
+    adding: bool,
+) -> int:
+    return deepbook_mul(
+        inventory_skew_rate(
+            model,
+            lower,
+            higher,
+            net_payout,
+            probability,
+            adding=adding,
+        ),
+        quantity,
+    )
+
+
 def assert_entry_probability_bounds(probability: int) -> None:
     if probability < MIN_ENTRY_PROBABILITY or probability > MAX_ENTRY_PROBABILITY:
         raise ValueError("entry probability out of bounds")
@@ -1506,6 +1593,7 @@ def initial_state() -> dict[str, int]:
         "manager_balance": MANAGER_SEED,
         "expiry_cash_balance": INITIAL_EXPIRY_CASH,
         "expiry_unresolved_trading_fees": 0,
+        "expiry_skew_reserve": 0,
         "vault_idle_balance": VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY - INITIAL_EXPIRY_CASH,
         "vault_protocol_reserve_balance": 0,
         "pending_protocol_profit": 0,
@@ -1529,6 +1617,7 @@ CANONICAL_STATE_KEYS = (
     "manager_balance",
     "expiry_cash_balance",
     "expiry_unresolved_trading_fees",
+    "expiry_skew_reserve",
     "vault_idle_balance",
     "vault_protocol_reserve_balance",
     "pending_protocol_profit",
@@ -1714,6 +1803,7 @@ def order_minted_update(
         "fee_incentive_subsidy": "0",
         "builder_fee": "0",
         "penalty_fee": "0",
+        "inventory_skew_charge": "0",
     }
 
 
@@ -1724,12 +1814,18 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         fee_incentive_subsidy = int(update.get("fee_incentive_subsidy", 0))
         builder_fee = int(update["builder_fee"])
         penalty_fee = int(update["penalty_fee"])
+        skew_charge = int(update.get("inventory_skew_charge", 0))
         quantity = int(update["quantity"])
         state["manager_balance"] -= (
-            contribution + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
+            contribution
+            + (trading_fee - fee_incentive_subsidy)
+            + builder_fee
+            + penalty_fee
+            + skew_charge
         )
-        state["expiry_cash_balance"] += contribution + trading_fee + penalty_fee
+        state["expiry_cash_balance"] += contribution + trading_fee + penalty_fee + skew_charge
         state["expiry_unresolved_trading_fees"] += trading_fee
+        state["expiry_skew_reserve"] += skew_charge
         state["open_order_count"] += 1
         state["open_order_quantity"] += quantity
     elif update["type"] == "order_liquidated":
@@ -1742,12 +1838,20 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         trading_fee = int(update["trading_fee"])
         builder_fee = int(update["builder_fee"])
         penalty_fee = int(update["penalty_fee"])
+        skew_rebate = min(
+            int(update.get("inventory_skew_rebate", 0)),
+            state["expiry_skew_reserve"],
+        )
         quantity_closed = int(update["quantity_closed"])
         remaining_quantity = int(update["remaining_quantity"])
-        state["manager_balance"] += redeem_amount - trading_fee - builder_fee - penalty_fee
+        state["manager_balance"] += (
+            redeem_amount - trading_fee - builder_fee - penalty_fee + skew_rebate
+        )
         state["expiry_cash_balance"] -= redeem_amount
         state["expiry_cash_balance"] += trading_fee + penalty_fee
+        state["expiry_cash_balance"] -= skew_rebate
         state["expiry_unresolved_trading_fees"] += trading_fee
+        state["expiry_skew_reserve"] -= skew_rebate
         state["open_order_quantity"] -= quantity_closed
         if remaining_quantity == 0:
             state["open_order_count"] -= 1
@@ -1954,6 +2058,17 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], timestamp_ms: int) ->
     lower_tick = int(update["lower_tick"])
     higher_tick = int(update["higher_tick"])
     lower, higher = strikes_from_ticks(lower_tick, higher_tick)
+    net_payout = row["quantity"] - terms["floor_shares"]
+    skew_charge = inventory_skew_charge(
+        model,
+        lower,
+        higher,
+        net_payout,
+        row["quantity"],
+        int(update["entry_probability"]),
+        adding=True,
+    )
+    update["inventory_skew_charge"] = str(skew_charge)
     order = {
         "ref": row["orderRef"],
         "sequence": model["next_sequence"],
@@ -2003,6 +2118,21 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
     fee = deepbook_mul(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
     gross = deepbook_mul(probability, close_quantity)
 
+    old_floor_shares = order_floor_shares(order)
+    closed_floor_shares = mul_div_round_up(old_floor_shares, close_quantity, order["quantity"])
+    net_closed = close_quantity - closed_floor_shares
+    skew_rebate = 0
+    if INVENTORY_SKEW_REBATE_ENABLED and net_closed > 0:
+        skew_rebate = inventory_skew_charge(
+            model,
+            order["lower"],
+            order["higher"],
+            net_closed,
+            close_quantity,
+            probability,
+            adding=False,
+        )
+
     remaining_quantity = order["quantity"] - close_quantity
     if remaining_quantity == 0:
         replacement_ref = None
@@ -2013,7 +2143,6 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
     else:
         replacement_ref = row["replacementOrderRef"] or ref
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
-        old_floor_shares = order_floor_shares(order)
         close_fraction = deepbook_div(close_quantity, order["quantity"])
         remaining_floor_shares = old_floor_shares - deepbook_mul(old_floor_shares, close_fraction)
         replacement = {
@@ -2048,6 +2177,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         "trading_fee": str(fee),
         "builder_fee": "0",
         "penalty_fee": "0",
+        "inventory_skew_rebate": str(skew_rebate),
     }
 
 
@@ -2186,6 +2316,7 @@ def assert_terminal_state_closed(state: dict[str, int]) -> None:
     expected_zero = (
         "expiry_cash_balance",
         "expiry_unresolved_trading_fees",
+        "expiry_skew_reserve",
         "open_order_count",
         "open_order_quantity",
         "liquidated_order_count",
@@ -2265,6 +2396,9 @@ def terminal_closeout_update(
     state["vault_idle_balance"] += returned_rebate_reserve
     materialize_terminal_return(returned_rebate_reserve)
 
+    # Residual skew escrow is still inside expiry cash; returning the pool cash
+    # releases it to LPs. Clear the accounting field alongside the balance.
+    state["expiry_skew_reserve"] = 0
     returned_pool_cash = state["expiry_cash_balance"]
     state["expiry_cash_balance"] = 0
     state["vault_idle_balance"] += returned_pool_cash
