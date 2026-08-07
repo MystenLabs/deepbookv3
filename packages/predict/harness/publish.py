@@ -24,7 +24,8 @@ PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
     "wormhole": (),
     "pyth_lazer": ("wormhole",),
     "bs_oracle": (),
-    "propbook": ("fixed_math", "wormhole", "pyth_lazer", "bs_oracle"),
+    "bs_sid": (),
+    "propbook": ("fixed_math", "wormhole", "pyth_lazer", "bs_oracle", "bs_sid"),
     "predict": (
         "token",
         "dusdc",
@@ -93,10 +94,13 @@ def rewrite_pyth_lazer(
     toml_path.write_text(text)
 
 
-def rewrite_bs_oracle(toml_path: Path) -> None:
-    """Use the localnet's implicit Sui framework in the staged upstream package."""
+def rewrite_block_scholes_package(toml_path: Path) -> None:
+    """Use the localnet's implicit Sui framework in a staged Block Scholes package."""
     text = toml_path.read_text()
     manifest = tomllib.loads(text)
+    package_name = manifest.get("package", {}).get("name")
+    if package_name not in {"bs_oracle", "bs_sid"}:
+        raise ValueError(f"unexpected Block Scholes package: {package_name}")
     dependencies = manifest.get("dependencies", {})
     expected = {
         "Sui": "crates/sui-framework/packages/sui-framework",
@@ -109,7 +113,7 @@ def rewrite_bs_oracle(toml_path: Path) -> None:
             or source.get("git") != "https://github.com/MystenLabs/sui.git"
             or source.get("subdir") != subdir
         ):
-            raise ValueError(f"unexpected bs_oracle {name} dependency: {source}")
+            raise ValueError(f"unexpected {package_name} {name} dependency: {source}")
         text, count = re.subn(
             rf"(?m)^{name}\s*=\s*\{{[^\n]*\}}\n",
             "",
@@ -117,17 +121,17 @@ def rewrite_bs_oracle(toml_path: Path) -> None:
             count=1,
         )
         if count != 1:
-            raise ValueError(f"could not remove bs_oracle {name} dependency")
+            raise ValueError(f"could not remove {package_name} {name} dependency")
 
-    text, count = re.subn(
-        r"(?m)^# Explicitly pinned[^\n]*\n(?:#[^\n]*\n)+\n(?=\[dependencies\])",
-        "",
-        text,
-        count=1,
-    )
-    if count != 1:
-        raise ValueError("could not remove bs_oracle framework-pin comment")
-    toml_path.write_text(text)
+    lines = text.splitlines()
+    dependencies_index = lines.index("[dependencies]")
+    comment_start = dependencies_index
+    while comment_start > 0 and (
+        not lines[comment_start - 1] or lines[comment_start - 1].startswith("#")
+    ):
+        comment_start -= 1
+    lines[comment_start:dependencies_index] = [""]
+    toml_path.write_text("\n".join(lines) + "\n")
 
 
 def reset_staged_lock(package_path: Path) -> None:
@@ -146,6 +150,8 @@ def rewrite_consumer(
     wormhole_id: str,
     bs_oracle_local: Path,
     bs_oracle_id: str,
+    bs_sid_local: Path,
+    bs_sid_id: str,
     build_env: str = config.BUILD_ENV,
 ) -> None:
     """Point a staged Propbook/Predict manifest at staged oracle packages."""
@@ -162,10 +168,18 @@ def rewrite_consumer(
         text,
         "bs_oracle dependency",
     )
+    has_bs_sid = bool(re.search(r"(?m)^bs_sid\s*=\s*\{\s*git", text))
+    if has_bs_sid:
+        text = _replace_first(
+            r"bs_sid = \{ git[^}]*\}",
+            f'bs_sid = {{ local = "{bs_sid_local}" }}',
+            text,
+            "bs_sid dependency",
+        )
     text, count = re.subn(r"\[dep-replacements\.testnet\][^\[]*", "", text)
     if count != 1:
         raise ValueError(f"expected one testnet dependency-replacement section, found {count}")
-    text = text.rstrip() + (
+    replacements = (
         f"\n\n[dep-replacements.{build_env}]\n"
         f'pyth_lazer = {{ local = "{pyth_lazer_local}", '
         f'published-at = "{pyth_lazer_id}", original-id = "{pyth_lazer_id}" }}\n'
@@ -174,6 +188,12 @@ def rewrite_consumer(
         f'bs_oracle = {{ local = "{bs_oracle_local}", '
         f'published-at = "{bs_oracle_id}", original-id = "{bs_oracle_id}" }}\n'
     )
+    if has_bs_sid:
+        replacements += (
+            f'bs_sid = {{ local = "{bs_sid_local}", '
+            f'published-at = "{bs_sid_id}", original-id = "{bs_sid_id}" }}\n'
+        )
+    text = text.rstrip() + replacements
     toml_path.write_text(text)
 
 
@@ -303,8 +323,8 @@ def publish_closure(
                 packages["wormhole"],
             )
             staging.validate_workspace(workspace)
-        elif name == "bs_oracle":
-            rewrite_bs_oracle(paths[name] / "Move.toml")
+        elif name in {"bs_oracle", "bs_sid"}:
+            rewrite_block_scholes_package(paths[name] / "Move.toml")
             staging.validate_workspace(workspace)
         elif name in {"propbook", "predict"}:
             rewrite_consumer(
@@ -315,6 +335,8 @@ def publish_closure(
                 packages["wormhole"],
                 paths["bs_oracle"],
                 packages["block_scholes_oracle"],
+                paths["bs_sid"],
+                packages["bs_sid"],
             )
             staging.validate_workspace(workspace)
 

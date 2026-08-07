@@ -43,9 +43,9 @@ public struct Pricer has copy, drop {
 ///
 /// The provider carries every parameter at 128 bits; Predict prices `rho`, `m`, and `sigma` at 64,
 /// so the narrowing happens once where the `Pricer` is built and every bound below reads these
-/// widths. A provider value too large for them aborts on the narrowing itself — Move's own overflow
-/// guard — and everything representable is then bounded semantically by
-/// `assert_inputs_pricing_safe`, whose limits are far tighter than the widths.
+/// widths. A provider value too large for them aborts with `EBlockScholesInputTooWide` before the
+/// cast, and everything representable is then bounded semantically by `assert_inputs_pricing_safe`,
+/// whose limits are far tighter than the widths.
 public struct RawSVI has copy, drop {
     a: I64,
     b: u64,
@@ -120,6 +120,7 @@ const ENonMonotonePriceMemo: u64 = 16;
 /// `tx_context::digest()`), not sender identity — not every read of a same-tx
 /// write is prohibited (Pyth is checked only on the re-anchor branch).
 const EOracleWrittenInThisTransaction: u64 = 17;
+const EBlockScholesInputTooWide: u64 = 18;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -314,8 +315,7 @@ fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
     abort ETickNotInPriceMemo
 }
 
-/// A store names the underlying it holds, but only the registry says which store is the one for
-/// that underlying, so the binding is checked here rather than taking the object's own word.
+/// Validate all supplied feed objects against Propbook's canonical bindings.
 fun assert_current_oracles(
     propbook_registry: &OracleRegistry,
     propbook_underlying_id: u32,
@@ -324,16 +324,17 @@ fun assert_current_oracles(
     bs_svi: &BlockScholesSVIStore,
 ) {
     assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
+    let block_scholes_binding = propbook_registry.propbook_block_scholes_store_pair_for_underlying(
+        propbook_underlying_id,
+    );
+    assert!(block_scholes_binding.is_some(), EWrongBlockScholesValueStore);
+    let block_scholes_binding = block_scholes_binding.destroy_some();
     assert!(
-        propbook_registry
-            .propbook_block_scholes_value_store_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_values.value_store_id()),
+        block_scholes_binding.block_scholes_value_store_id() == bs_values.value_store_id(),
         EWrongBlockScholesValueStore,
     );
     assert!(
-        propbook_registry
-            .propbook_block_scholes_svi_store_id_for_underlying(propbook_underlying_id)
-            .contains(&bs_svi.svi_store_id()),
+        block_scholes_binding.block_scholes_svi_store_id() == bs_svi.svi_store_id(),
         EWrongBlockScholesSVIStore,
     );
 }
@@ -471,22 +472,27 @@ fun assert_oracle_not_written_this_tx(writer_digest: &vector<u8>, ctx: &TxContex
     assert!(writer_digest != ctx.digest(), EOracleWrittenInThisTransaction);
 }
 
-/// Narrow one Block Scholes price to Predict's pricing width. See `RawSVI` on why the narrowing is
-/// unguarded.
+/// Narrow one Block Scholes price to Predict's pricing width with the provider-width error shared
+/// by every Block Scholes input.
 fun narrow_price(value: u128): u64 {
-    value as u64
+    narrow_input(value)
 }
 
 /// Narrow a stored Block Scholes tuple to Predict's pricing widths, keeping the provider's
 /// magnitude-and-sign form for the signed parameters.
 fun narrow_svi(svi: &SVIParams): RawSVI {
     RawSVI {
-        a: i64::from_parts(svi.svi_a_magnitude() as u64, svi.svi_a_is_negative()),
-        b: svi.svi_b() as u64,
-        rho: i64::from_parts(svi.svi_rho_magnitude() as u64, svi.svi_rho_is_negative()),
-        m: i64::from_parts(svi.svi_m_magnitude() as u64, svi.svi_m_is_negative()),
-        sigma: svi.svi_sigma() as u64,
+        a: i64::from_parts(narrow_input(svi.svi_a_magnitude()), svi.svi_a_is_negative()),
+        b: narrow_input(svi.svi_b()),
+        rho: i64::from_parts(narrow_input(svi.svi_rho_magnitude()), svi.svi_rho_is_negative()),
+        m: i64::from_parts(narrow_input(svi.svi_m_magnitude()), svi.svi_m_is_negative()),
+        sigma: narrow_input(svi.svi_sigma()),
     }
+}
+
+fun narrow_input(value: u128): u64 {
+    assert!(value <= (std::u64::max_value!() as u128), EBlockScholesInputTooWide);
+    value as u64
 }
 
 fun a(svi: &RawSVI): I64 {
@@ -600,15 +606,23 @@ fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
 fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    // Saturate ratios outside the fixed-point domain to their digital-probability
-    // limits instead of aborting live valuation and position flows.
-    let strike_ratio_opt = math::try_mul_div_down(strike, math::float_scaling!(), forward);
-    // Deep-OTM up tail (strike >> forward): P ≈ 0, the pos_inf limit.
-    if (strike_ratio_opt.is_none()) return 0;
-    let strike_ratio = strike_ratio_opt.destroy_some();
-    // Deep-ITM up tail (strike << forward): P(settle > strike) ≈ 1, the neg_inf limit.
-    if (strike_ratio == 0) return math::float_scaling!();
-    let k = math::ln(strike_ratio);
+    // Log-moneyness as a DIFFERENCE of logarithms, never as `ln` of a fixed-point
+    // ratio. Forming `strike * 1e9 / forward` first destroys exactly the tails it
+    // is asked about: the quotient floors to zero once `strike` is a billionth of
+    // `forward` and leaves `u64` once it is 1.8e10 times it, and just inside those
+    // limits it survives as a handful of raw units carrying tens of percent of
+    // truncation error. That is why this used to short-circuit to the digital
+    // limits 1 and 0 there — a saturation that is only true when total variance is
+    // small, and silently wrong when it is not, on a value the mint's entry
+    // probability, the liquidation threshold and the NAV mark all consume.
+    //
+    // `ln` is defined across the whole positive `u64` domain, so the difference is
+    // well-conditioned over every representable pair: `|k| <= 44.4` against the
+    // 20.7 the ratio form could reach, at a relative error of 1e-7 per term rather
+    // than a relative error that grows without bound as the tail deepens. No
+    // strike needs a special case, and no surface has to be restricted to keep a
+    // shortcut honest.
+    let k = math::ln(strike).sub(&math::ln(forward));
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();

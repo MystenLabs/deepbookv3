@@ -24,7 +24,7 @@ let A = args
 if (typeof A === 'string') { try { A = JSON.parse(A) } catch (e) { A = {} } }
 if (!A || typeof A !== 'object') A = {}
 const CORPUS_PATH = A.corpusPath || `${SKILL}/evals/verify_corpus.json`
-const SETTLED_SOURCES = 'AGENTS.md "Settled design decisions" (incl. the D-id ledger), packages/predict/predeploy/response-policies.md (Rounding policy R1-R3), packages/predict/predeploy/response-policies.md (RP-* tail-state decisions), and packages/predict/predeploy/open-items.md'
+const SETTLED_SOURCES = 'packages/predict/predeploy/README.md § Authority order and the owning registers it routes'
 const CODEX = 'codex:codex-rescue'
 const SEVRANK = { critical: 5, high: 4, medium: 3, low: 2, info: 1 }
 function sevOf(s) { return SEVRANK[(s || '').toLowerCase()] || 0 }
@@ -46,7 +46,7 @@ const LENSES = [
   { tag: 'settled', agentType: null, build: () => `ADVERSARIAL LENS = SETTLED-DECISION CHECK. Check ${SETTLED_SOURCES}. Is this an accepted/rejected design decision, committed policy, or already-tracked open item? If yes, verdict "settled" with the D-id or committed-doc reference in evidence. Otherwise pass through.` },
   { tag: 'repro', agentType: CODEX, build: () => 'ADVERSARIAL LENS = REPRODUCE. Trace the exact PTB-ordered sequence through the real mint/redeem/liquidate/settle/flush code. Does it actually reach the cited line with all preconditions co-occurring? If they cannot co-exist, verdict "refuted"; if it genuinely triggers, "confirmed". Cite the call chain.' },
 ]
-const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md for the module map + prior-awareness. The .claude/predict-review/ files are STALE — trust the current tree. Do NOT run sui build/test or localnet; reason from source, grep, git, and Python. STAY SCOPED. Verdicts: confirmed / refuted / settled (cite a D-id) / uncertain. Provide file:line / git evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object.`
+const VERIFY_PREAMBLE = `You are an ADVERSARIAL VERIFIER in a Predict smart-contract audit. A lens proposed the finding below; TEST it against the actual code + git + the settled-decision priors, do NOT agree by default. Read ${SKILL}/primer.md and follow its scope, prior-awareness, source, scratch, and main-loop boundaries. Verdicts: confirmed / refuted / settled (cite the owning reference) / uncertain. Provide file:line / git evidence. adjusted_severity = your independent severity (Info if refuted/settled). OUTPUT: emit ONLY the structured verdict object.`
 function verifyPrompt(f, lens) { return `${VERIFY_PREAMBLE}\n\nFINDING:\n${JSON.stringify(f, null, 2)}\n\n${lens.build()}` }
 
 function aggregateStatus(verdicts) {

@@ -370,22 +370,26 @@ function normalizePythObservation(event: any): Record<string, unknown> {
     };
 }
 
-// One oracle refresh lands as two `BlockScholesBatchIngested` events (one value
-// batch carrying spot + forward, one SVI batch). The event carries counts, not
+// One oracle refresh lands as three `BlockScholesBatchIngested` events (spot,
+// forward, then SVI). The event carries counts, not
 // values, so the parity row's values come from the refresh inputs on the scenario
 // row; the event assertions confirm the chain accepted every update. The values
 // remain chain-checked downstream: order/flush parity round-trips the stored
 // series through on-chain `load_live_pricer`.
-function assertBlockScholesBatchIngested(event: any): void {
+function blockScholesBatchSeriesKind(event: any): number {
     const json = event.parsedJson ?? {};
     const updateCount = BigInt(decimal(json.update_count));
-    const matched = BigInt(decimal(json.matched));
     const applied = BigInt(decimal(json.applied));
-    if (updateCount === 0n || matched !== updateCount || applied !== updateCount) {
+    if (updateCount === 0n || applied !== updateCount) {
         throw new Error(
-            `Block Scholes batch not fully applied: update_count=${updateCount} matched=${matched} applied=${applied}`,
+            `Block Scholes batch not fully applied: update_count=${updateCount} applied=${applied}`,
         );
     }
+    const seriesKind = Number(decimal(json.series_kind));
+    if (!Number.isInteger(seriesKind) || seriesKind < 0 || seriesKind > 2) {
+        throw new Error(`invalid Block Scholes series_kind ${String(json.series_kind)}`);
+    }
+    return seriesKind;
 }
 
 // Rebuild the synthetic surface update the Python replay emits from the row's
@@ -637,11 +641,16 @@ function normalizeUpdates(
         )
             updates.push(normalizePythObservation(event));
         else if (fullType.includes("::block_scholes_store::BlockScholesBatchIngested")) {
-            assertBlockScholesBatchIngested(event);
+            const seriesKind = blockScholesBatchSeriesKind(event);
+            if (seriesKind !== pendingBsBatches) {
+                throw new Error(
+                    `Block Scholes batch order mismatch: expected series_kind=${pendingBsBatches}, saw ${seriesKind}`,
+                );
+            }
             pendingBsBatches++;
-            // The second batch of a refresh (value, then SVI) completes the
+            // The third batch of a refresh (spot, forward, then SVI) completes the
             // synthetic surface update.
-            if (pendingBsBatches === 2) {
+            if (pendingBsBatches === 3) {
                 updates.push(blockScholesSurfaceUpdateFromRow(row));
                 pendingBsBatches = 0;
             }
@@ -669,7 +678,7 @@ function normalizeUpdates(
             updates.push(normalizeExpiryProfitMaterialized(event));
     }
     if (pendingBsBatches !== 0) {
-        throw new Error("incomplete Block Scholes batch pair in transaction events");
+        throw new Error("incomplete Block Scholes batch set in transaction events");
     }
     if (mintIndex !== mintOrderRefs.length) {
         throw new Error(`expected ${mintOrderRefs.length} OrderMinted events, saw ${mintIndex}`);

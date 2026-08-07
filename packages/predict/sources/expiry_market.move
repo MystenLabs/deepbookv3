@@ -25,6 +25,7 @@ use deepbook_predict::{
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     range_codec,
+    stake_config::StakeConfig,
     strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config
 };
@@ -67,6 +68,13 @@ public struct ExpiryMarket has key {
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
+    /// DEEP-stake benefit policy for this market, snapshotted at creation from the
+    /// protocol template and immutable thereafter. Frozen because both benefits
+    /// resolve after the trade that earned them — the fee discount at mint, the
+    /// loss rebate at a post-settlement claim — so reading live policy would let an
+    /// admin reprice contracts already written, and shrink or erase a rebate
+    /// already earned (the claim is one-shot).
+    stake_config: StakeConfig,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -313,7 +321,7 @@ public fun quote_mint(
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(config, &terms, 0, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(&terms, 0, &builder_code_id, penalty_fee, clock)
 }
 
 /// Quote the all-in cost of a mint request for one account, reading the
@@ -355,7 +363,6 @@ public fun quote_mint_for_account(
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     market.compute_mint_quote(
-        config,
         &terms,
         predict_account::active_stake(account),
         &builder_code_id,
@@ -802,7 +809,6 @@ public(package) fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     account: &mut Account,
     summary: &ResolvedExpirySummary,
-    config: &ProtocolConfig,
     ctx: &mut TxContext,
 ): (Balance<DUSDC>, u64) {
     assert!(market.is_settled(), EMarketNotSettled);
@@ -818,7 +824,7 @@ public(package) fun claim_trading_loss_rebate(
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    let rebate_amount = config.stake_config().rebate_amount(eligible_rebate, active_stake);
+    let rebate_amount = market.stake_config.rebate_amount(eligible_rebate, active_stake);
 
     if (rebate_amount > 0) {
         let payout = market.cash.pay_authorized(rebate_amount);
@@ -865,10 +871,10 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, and
-/// per-market config and starts with zero expiry cash; it needs no live spot at
-/// creation (strikes are absolute ticks, so there is no grid to center). Current
-/// oracle object IDs stay in Propbook and are resolved on every priced flow.
+/// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
+/// starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
+/// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
+/// priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     propbook_underlying_id: u32,
@@ -899,6 +905,7 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
+        stake_config: config.stake_config_snapshot(),
     };
     transfer::share_object(market);
     expiry_market_id
@@ -964,7 +971,6 @@ fun mint_prepared(
     let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
     let quote = market.compute_mint_quote(
-        config,
         &terms,
         active_stake,
         &builder_code_id,
@@ -999,7 +1005,6 @@ fun mint_prepared(
 /// Assemble the cost decomposition shared by mint quotes and execution.
 fun compute_mint_quote(
     market: &ExpiryMarket,
-    config: &ProtocolConfig,
     terms: &MintTerms,
     active_stake: u64,
     builder_code_id: &Option<ID>,
@@ -1009,7 +1014,7 @@ fun compute_mint_quote(
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
     let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
-    let trading_fee = config.stake_config().fee_amount_after_discount(raw_fee_amount, active_stake);
+    let trading_fee = market.stake_config.fee_amount_after_discount(raw_fee_amount, active_stake);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let net_premium = terms.net_premium();
@@ -1168,7 +1173,7 @@ fun redeem(
                 clock,
             )
             .min(redeem_amount);
-        let fee_amount = config.stake_config().fee_amount_after_discount(fee_amount, active_stake);
+        let fee_amount = market.stake_config.fee_amount_after_discount(fee_amount, active_stake);
 
         // The redeem payment decomposition, computed in full before any cash moves:
         // builder fee and penalty are each clamped at the payout remaining after the

@@ -11,8 +11,8 @@
 // args = { rules: string[] | 'all' (REQUIRED — subset of family keys, or the explicit string 'all' for every
 //            family; there is NO whole-sweep default), maxFindings?: number, groundTruth?: string,
 //          files?: string[] (DELTA SCOPE: concentrate the sweep on these changed files + direct callers) }
-// There is no cross-run adjudication carry: durable dispositions live in the committed settled-decision
-// registers (AGENTS.md + predeploy policies), which the PRELUDE already makes every agent read.
+// There is no cross-run adjudication carry: durable dispositions follow the committed authority order,
+// which the PRELUDE already makes every agent read.
 // ONE PASS, ALL FINDINGS RAW: these families ENUMERATE grep-decidable properties rather than sample — in the
 // last multi-round run no family ever retired dry and the extra rounds only lengthened the raw tail — so each
 // family runs exactly once at medium effort and the OPERATOR is the verifier for this mechanical tier.
@@ -115,9 +115,9 @@ if (wantRules && !FAMILIES.length) {
 }
 
 const PRELUDE = `You are an agent in the Predict RULE SWEEP — a per-rule conformance audit of the MECHANICAL repo rules. FIRST read:
-  1. ${SKILL}/primer.md  (current module map, scope, prior-awareness, report format)
-  2. the source rules: .claude/rules/move.md, .claude/rules/predict-contracts.md, .claude/rules/code-review.md, .claude/rules/unit-tests.md, and AGENTS.md "Settled design decisions".
-Conflict order: most-specific Predict rule in AGENTS.md, then committed predeploy policy (rounding-policy + response-policies RP-*) / open items, then .claude/rules/*.md, then general guidance. Be prior-aware: a candidate matching an AGENTS settled decision or committed predeploy policy/open item is a non-finding (tag it). Do not use local ignored design scratch as authority for audit triage. The .claude/predict-review map is STALE — trust primer.md + the current tree. Read-only on source; do NOT run sui build/test or localnet (the watchdog kills subagents — the main loop runs the compiler in reconciliation). Your job is ONE rule only; do not report other rules' violations or the ownership-walk's R1-R7.`
+  1. ${SKILL}/primer.md  (shared scope, authority, execution, evidence, and report contract)
+  2. the source rules: .claude/rules/move.md, .claude/rules/predict-contracts.md, .claude/rules/code-review.md, and .claude/rules/unit-tests.md.
+Follow the primer's scope, prior-awareness, source, scratch, and main-loop boundaries. Your job is one rule only; do not report other rules' violations or the ownership walk's R1–R7.`
 
 const FINDING = {
   type: 'object',

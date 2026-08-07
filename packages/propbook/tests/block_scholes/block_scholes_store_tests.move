@@ -3,8 +3,8 @@
 
 /// Covers what a store accepts and what it refuses, driven through the batch entries a relayer
 /// actually calls. The refusals matter most: a relayer chooses which signed batches to submit and
-/// when, so replaying an old batch, resubmitting one unchanged, or aiming another underlying's
-/// batch at this store must leave the stored series alone without discarding the rest of the batch.
+/// when, so descriptor mismatches fail the whole transaction while stale authenticated data is
+/// skipped without discarding newer entries from the same canonical batch.
 #[test_only]
 module propbook::block_scholes_store_tests;
 
@@ -20,12 +20,14 @@ use propbook::{
     },
     constants
 };
-use std::unit_test::assert_eq;
+use std::{string::String, unit_test::assert_eq};
 use sui::{clock::{Self, Clock}, event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
-const UNDERLYING_ID: u32 = 42;
-const OTHER_UNDERLYING_ID: u32 = 43;
+const SERIES_KIND_SPOT: u8 = 0;
+const SERIES_KIND_FORWARD: u8 = 1;
+const SERIES_KIND_SVI: u8 = 2;
+const SPOT_EXPIRY_MS: u64 = 0;
 
 const EXPIRY_A: u64 = 1_700_100_000_000;
 const EXPIRY_B: u64 = 1_700_200_000_000;
@@ -59,14 +61,14 @@ const SVI_M_NEG: bool = false;
 
 #[test]
 fun a_spot_observation_lands_with_all_three_clocks() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -76,6 +78,9 @@ fun a_spot_observation_lands_with_all_three_clocks() {
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
     assert_eq!(read.read_published_at_ms(), PUBLISHED_EARLY);
     assert_eq!(read.read_recorded_at_ms(), CHAIN_TIME_MS);
+    let events = event::events_by_type<store::BlockScholesBatchIngested>();
+    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_SPOT);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -87,23 +92,27 @@ fun a_spot_observation_lands_with_all_three_clocks() {
 /// observation with all three clocks.
 #[test]
 fun a_stored_observation_is_what_its_event_reports() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
 
     let events = event::events_by_type<store::BlockScholesObservationRecorded<BsRead<u128>>>();
     assert_eq!(events.length(), 1);
-    let (oracle_id, sid, observation) = store::observation_recorded_fields(&events[0]);
+    let (oracle_id, sid, series_kind, expiry_ms, observation) = store::observation_recorded_fields(
+        &events[0],
+    );
     assert_eq!(oracle_id, value_id);
-    assert_eq!(sid, block_scholes_sid::spot(UNDERLYING_ID));
+    assert_eq!(sid, block_scholes_sid::spot(&btc()));
+    assert_eq!(series_kind, SERIES_KIND_SPOT);
+    assert_eq!(expiry_ms, SPOT_EXPIRY_MS);
     assert_eq!(observation.read_value(), SPOT);
     assert_eq!(observation.read_model_timestamp_ms(), MODEL_EARLY);
     assert_eq!(observation.read_published_at_ms(), PUBLISHED_EARLY);
@@ -116,21 +125,21 @@ fun a_stored_observation_is_what_its_event_reports() {
 
 #[test]
 fun a_newer_batch_replaces_the_stored_observation() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_LATE, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -148,21 +157,21 @@ fun a_newer_batch_replaces_the_stored_observation() {
 /// advances, so the stored model time must stay put even as the series is refreshed.
 #[test]
 fun a_retransmission_advances_the_envelope_but_not_the_model_time() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -177,21 +186,29 @@ fun a_retransmission_advances_the_envelope_but_not_the_model_time() {
     scenario.end();
 }
 
-/// Spot and forward ride one batch and are separated only by their series ids.
+/// The signed spot and forward lanes are applied separately, while forward expiries share one
+/// homogeneous batch and remain independently readable.
 #[test]
-fun one_batch_fills_spot_and_every_forward_expiry_independently() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+fun typed_batches_fill_spot_and_every_forward_expiry_independently() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    apply_forwards(
+        &mut value_store,
+        PUBLISHED_EARLY,
         vector[
-            spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT),
-            forward_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
-            forward_update(UNDERLYING_ID, EXPIRY_B, MODEL_EARLY, FORWARD_B),
+            forward_update(&btc(), EXPIRY_A, MODEL_EARLY, FORWARD_A),
+            forward_update(&btc(), EXPIRY_B, MODEL_EARLY, FORWARD_B),
         ],
+        vector[EXPIRY_A, EXPIRY_B],
         &chain_clock,
         scenario.ctx(),
     );
@@ -199,6 +216,14 @@ fun one_batch_fills_spot_and_every_forward_expiry_independently() {
     assert_eq!(store::spot(&value_store).destroy_some().read_value(), SPOT);
     assert_eq!(store::forward(&value_store, EXPIRY_A).destroy_some().read_value(), FORWARD_A);
     assert_eq!(store::forward(&value_store, EXPIRY_B).destroy_some().read_value(), FORWARD_B);
+    let events = event::events_by_type<store::BlockScholesObservationRecorded<BsRead<u128>>>();
+    assert_eq!(events.length(), 3);
+    let (_, _, series_kind, expiry_ms, _) = store::observation_recorded_fields(&events[1]);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
+    assert_eq!(expiry_ms, EXPIRY_A);
+    let (_, _, series_kind, expiry_ms, _) = store::observation_recorded_fields(&events[2]);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
+    assert_eq!(expiry_ms, EXPIRY_B);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -207,7 +232,7 @@ fun one_batch_fills_spot_and_every_forward_expiry_independently() {
 
 #[test]
 fun reads_are_none_before_anything_lands() {
-    let (scenario, value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, value_id, svi_id) = setup_stores();
     let value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
 
@@ -225,21 +250,21 @@ fun reads_are_none_before_anything_lands() {
 /// Replaying an older batch must not roll the series back.
 #[test]
 fun an_older_batch_leaves_the_stored_observation_intact() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_LATE, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_EARLY,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -257,21 +282,21 @@ fun an_older_batch_leaves_the_stored_observation_intact() {
 /// alone must not be able to roll a series' model data back.
 #[test]
 fun a_newer_envelope_with_an_older_model_time_cannot_roll_the_series_back() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT)],
+        vector[spot_update(&btc(), MODEL_LATE, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_LATER,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -290,21 +315,21 @@ fun a_newer_envelope_with_an_older_model_time_cannot_roll_the_series_back() {
 /// older envelope, and freshness then honestly reflects that envelope's publish time.
 #[test]
 fun newer_model_data_in_an_older_envelope_still_lands() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_MID,
-        vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_MID, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -324,8 +349,8 @@ fun newer_model_data_in_an_older_envelope_still_lands() {
 #[test]
 fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     let mut scenario = test::begin(ADMIN);
-    let forward_id = store::create_and_share_value_store(UNDERLYING_ID, scenario.ctx());
-    let reversed_id = store::create_and_share_value_store(UNDERLYING_ID, scenario.ctx());
+    let forward_id = store::create_and_share_value_store(btc(), scenario.ctx());
+    let reversed_id = store::create_and_share_value_store(btc(), scenario.ctx());
     scenario.next_tx(ADMIN);
     let mut forward_store = scenario.take_shared_by_id<BlockScholesValueStore>(forward_id);
     let mut reversed_store = scenario.take_shared_by_id<BlockScholesValueStore>(reversed_id);
@@ -334,14 +359,14 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     apply_values(
         &mut forward_store,
         PUBLISHED_MID,
-        vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT)],
+        vector[spot_update(&btc(), MODEL_MID, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut forward_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -349,14 +374,14 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     apply_values(
         &mut reversed_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut reversed_store,
         PUBLISHED_MID,
-        vector[spot_update(UNDERLYING_ID, MODEL_MID, SPOT)],
+        vector[spot_update(&btc(), MODEL_MID, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -380,28 +405,29 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
 /// while its valid neighbour still lands.
 #[test]
 fun a_model_time_after_its_own_envelope_is_skipped() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
-    apply_values(
+    apply_forwards(
         &mut value_store,
         PUBLISHED_EARLY,
         vector[
-            spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER),
-            forward_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
+            forward_update(&btc(), EXPIRY_A, MODEL_LATE, FORWARD_A),
+            forward_update(&btc(), EXPIRY_B, MODEL_EARLY, FORWARD_B),
         ],
+        vector[EXPIRY_A, EXPIRY_B],
         &chain_clock,
         scenario.ctx(),
     );
 
-    assert!(store::spot(&value_store).is_none());
-    assert_eq!(store::forward(&value_store, EXPIRY_A).destroy_some().read_value(), FORWARD_A);
+    assert!(store::forward(&value_store, EXPIRY_A).is_none());
+    assert_eq!(store::forward(&value_store, EXPIRY_B).destroy_some().read_value(), FORWARD_B);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, _, update_count, matched, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 2);
-    assert_eq!(matched, 2);
     assert_eq!(applied, 1);
 
     clock::destroy_for_testing(chain_clock);
@@ -411,14 +437,14 @@ fun a_model_time_after_its_own_envelope_is_skipped() {
 
 #[test]
 fun an_svi_model_time_after_its_own_envelope_is_skipped() {
-    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, _value_id, svi_id) = setup_stores();
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_svis(
         &mut svi_store,
         PUBLISHED_EARLY,
-        vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_LATE)],
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_LATE)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -433,21 +459,21 @@ fun an_svi_model_time_after_its_own_envelope_is_skipped() {
 /// Two relayers racing the same batch must not make either of them fail.
 #[test]
 fun resubmitting_the_same_batch_changes_nothing_and_does_not_abort() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         PUBLISHED_MID,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_values(
         &mut value_store,
         PUBLISHED_MID,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -461,66 +487,56 @@ fun resubmitting_the_same_batch_changes_nothing_and_does_not_abort() {
     scenario.end();
 }
 
-/// A foreign series in an otherwise valid batch must be dropped while its neighbours still land.
-#[test]
-fun a_foreign_series_is_dropped_without_discarding_the_rest_of_the_batch() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+/// Every descriptor is checked before storage, so one foreign SID rejects the whole batch.
+#[test, expected_failure(abort_code = store::ESeriesIdMismatch)]
+fun a_foreign_series_rejects_the_whole_forward_batch() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
-    apply_values(
+    apply_forwards(
         &mut value_store,
         PUBLISHED_EARLY,
         vector[
-            spot_update(OTHER_UNDERLYING_ID, MODEL_EARLY, SPOT_LATER),
-            spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT),
+            forward_update(&eth(), EXPIRY_A, MODEL_EARLY, FORWARD_A),
+            forward_update(&btc(), EXPIRY_B, MODEL_EARLY, FORWARD_B),
         ],
+        vector[EXPIRY_A, EXPIRY_B],
         &chain_clock,
         scenario.ctx(),
     );
 
-    assert_eq!(store::spot(&value_store).destroy_some().read_value(), SPOT);
-
-    clock::destroy_for_testing(chain_clock);
-    return_shared(value_store);
-    scenario.end();
+    abort 999
 }
 
-/// Aiming another underlying's batch at this store must store nothing.
-#[test]
-fun a_wholly_foreign_batch_stores_nothing() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+#[test, expected_failure(abort_code = store::EUnexpectedBatchLength)]
+fun forward_batch_with_wrong_expiry_count_aborts() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
-    apply_values(
+    apply_forwards(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[
-            spot_update(OTHER_UNDERLYING_ID, MODEL_EARLY, SPOT),
-            forward_update(OTHER_UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
-        ],
+        vector[forward_update(&btc(), EXPIRY_A, MODEL_EARLY, FORWARD_A)],
+        vector[],
         &chain_clock,
         scenario.ctx(),
     );
 
-    assert!(store::spot(&value_store).is_none());
-
-    clock::destroy_for_testing(chain_clock);
-    return_shared(value_store);
-    scenario.end();
+    abort 999
 }
 
 #[test]
 fun a_zero_envelope_time_is_skipped() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         0,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -535,14 +551,14 @@ fun a_zero_envelope_time_is_skipped() {
 /// An envelope stamped after the chain's own clock cannot be a real observation.
 #[test]
 fun an_envelope_time_after_chain_time_is_skipped() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         CHAIN_TIME_MS + 1,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -558,14 +574,14 @@ fun an_envelope_time_after_chain_time_is_skipped() {
 /// real observation and lands.
 #[test]
 fun an_envelope_time_at_exactly_chain_time_lands() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_values(
         &mut value_store,
         CHAIN_TIME_MS,
-        vector[spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT)],
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -583,14 +599,14 @@ fun an_envelope_time_at_exactly_chain_time_lands() {
 
 #[test]
 fun an_svi_batch_lands_every_parameter_source_native() {
-    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, _value_id, svi_id) = setup_stores();
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_svis(
         &mut svi_store,
         PUBLISHED_EARLY,
-        vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -606,6 +622,9 @@ fun an_svi_batch_lands_every_parameter_source_native() {
     assert_eq!(params.svi_m_magnitude(), SVI_M_MAG);
     assert_eq!(params.svi_m_is_negative(), SVI_M_NEG);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
+    let events = event::events_by_type<store::BlockScholesBatchIngested>();
+    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_SVI);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(svi_store);
@@ -614,14 +633,14 @@ fun an_svi_batch_lands_every_parameter_source_native() {
 
 #[test]
 fun svi_expiries_are_independent() {
-    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, _value_id, svi_id) = setup_stores();
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_svis(
         &mut svi_store,
         PUBLISHED_EARLY,
-        vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -634,44 +653,40 @@ fun svi_expiries_are_independent() {
     scenario.end();
 }
 
-#[test]
-fun a_foreign_svi_batch_stores_nothing() {
-    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+#[test, expected_failure(abort_code = store::ESeriesIdMismatch)]
+fun a_foreign_svi_series_rejects_the_batch() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_svis(
         &mut svi_store,
         PUBLISHED_LATE,
-        vector[svi_update(OTHER_UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
+        vector[svi_update(&eth(), EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
         scenario.ctx(),
     );
 
-    assert!(store::svi(&svi_store, EXPIRY_A).is_none());
-
-    clock::destroy_for_testing(chain_clock);
-    return_shared(svi_store);
-    scenario.end();
+    abort 999
 }
 
 #[test]
 fun an_older_svi_batch_leaves_the_stored_parameters_intact() {
-    let (mut scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, _value_id, svi_id) = setup_stores();
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
     let chain_clock = new_clock(&mut scenario);
 
     apply_svis(
         &mut svi_store,
         PUBLISHED_LATE,
-        vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_LATE)],
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_LATE)],
         &chain_clock,
         scenario.ctx(),
     );
     apply_svis(
         &mut svi_store,
         PUBLISHED_EARLY,
-        vector[svi_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY)],
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_EARLY)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -687,43 +702,50 @@ fun an_older_svi_batch_leaves_the_stored_parameters_intact() {
 
 // === Batch reporting ===
 
-/// The counts are how an off-chain consumer tells "the feed ran and nothing moved" from "the feed
-/// ran and this much moved", so they must distinguish series that were not ours from ours that did
-/// not advance. Here one update is another underlying's, one is ours but stale, one is ours and new.
+/// The counts let an off-chain consumer distinguish "the feed ran and nothing moved" from "the
+/// feed ran and this much moved." Canonical admission is all-or-nothing, so `update_count` is the
+/// verified batch size and `applied` excludes only observations that did not advance their series.
 #[test]
-fun an_ingested_batch_reports_what_it_carried_matched_and_stored() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+fun an_ingested_batch_reports_what_it_carried_and_stored() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
-    apply_values(
+    apply_forwards(
         &mut value_store,
         PUBLISHED_LATE,
-        vector[spot_update(UNDERLYING_ID, MODEL_LATE, SPOT_LATER)],
+        vector[forward_update(&btc(), EXPIRY_A, MODEL_LATE, FORWARD_A)],
+        vector[EXPIRY_A],
         &chain_clock,
         scenario.ctx(),
     );
-    apply_values(
+    apply_forwards(
         &mut value_store,
         PUBLISHED_MID,
         vector[
-            spot_update(OTHER_UNDERLYING_ID, MODEL_EARLY, SPOT),
-            spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT),
-            forward_update(UNDERLYING_ID, EXPIRY_A, MODEL_EARLY, FORWARD_A),
+            forward_update(&btc(), EXPIRY_A, MODEL_EARLY, FORWARD_A),
+            forward_update(&btc(), EXPIRY_B, MODEL_EARLY, FORWARD_B),
         ],
+        vector[EXPIRY_A, EXPIRY_B],
         &chain_clock,
         scenario.ctx(),
     );
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
     assert_eq!(events.length(), 2);
-    let (oracle_id, published_at_ms, update_count, matched, applied) = store::batch_ingested_fields(
+    let (
+        oracle_id,
+        series_kind,
+        published_at_ms,
+        update_count,
+        applied,
+    ) = store::batch_ingested_fields(
         &events[1],
     );
     assert_eq!(oracle_id, value_id);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(published_at_ms, PUBLISHED_MID);
-    assert_eq!(update_count, 3);
-    assert_eq!(matched, 2);
+    assert_eq!(update_count, 2);
     assert_eq!(applied, 1);
 
     clock::destroy_for_testing(chain_clock);
@@ -736,30 +758,31 @@ fun an_ingested_batch_reports_what_it_carried_matched_and_stored() {
 /// strictly newer valid model time is newer data and wins.
 #[test]
 fun a_series_repeated_within_one_batch_resolves_by_model_time() {
-    let (mut scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
 
-    apply_values(
+    apply_forwards(
         &mut value_store,
         PUBLISHED_LATE,
         vector[
-            spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT),
-            spot_update(UNDERLYING_ID, MODEL_EARLY, SPOT_LATER),
-            spot_update(UNDERLYING_ID, MODEL_MID, SPOT_LATER),
+            forward_update(&btc(), EXPIRY_A, MODEL_EARLY, FORWARD_A),
+            forward_update(&btc(), EXPIRY_A, MODEL_EARLY, FORWARD_B),
+            forward_update(&btc(), EXPIRY_A, MODEL_MID, FORWARD_B),
         ],
+        vector[EXPIRY_A, EXPIRY_A, EXPIRY_A],
         &chain_clock,
         scenario.ctx(),
     );
 
-    let read = store::spot(&value_store).destroy_some();
-    assert_eq!(read.read_value(), SPOT_LATER);
+    let read = store::forward(&value_store, EXPIRY_A).destroy_some();
+    assert_eq!(read.read_value(), FORWARD_B);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, _, update_count, matched, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 3);
-    assert_eq!(matched, 3);
     assert_eq!(applied, 2);
 
     clock::destroy_for_testing(chain_clock);
@@ -770,13 +793,13 @@ fun a_series_repeated_within_one_batch_resolves_by_model_time() {
 // === Store identity and version ===
 
 #[test]
-fun a_new_store_reports_its_underlying_and_running_version() {
-    let (scenario, value_id, svi_id) = setup_stores(UNDERLYING_ID);
+fun a_new_store_reports_its_base_asset_and_running_version() {
+    let (scenario, value_id, svi_id) = setup_stores();
     let value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
 
-    assert_eq!(value_store.value_store_underlying_id(), UNDERLYING_ID);
-    assert_eq!(svi_store.svi_store_underlying_id(), UNDERLYING_ID);
+    assert_eq!(value_store.value_store_base_asset(), btc());
+    assert_eq!(svi_store.svi_store_base_asset(), btc());
     assert_eq!(value_store.value_store_version(), constants::current_version!());
     assert_eq!(svi_store.svi_store_version(), constants::current_version!());
     assert_eq!(value_store.value_store_id(), value_id);
@@ -787,9 +810,28 @@ fun a_new_store_reports_its_underlying_and_running_version() {
     scenario.end();
 }
 
+#[test]
+fun migrating_older_stores_advances_them_to_the_running_version() {
+    let (scenario, value_id, svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    store::set_store_versions_for_testing(&mut value_store, &mut svi_store, 0);
+    assert_eq!(value_store.value_store_version(), 0);
+    assert_eq!(svi_store.svi_store_version(), 0);
+
+    store::migrate_value_store(&mut value_store);
+    store::migrate_svi_store(&mut svi_store);
+
+    assert_eq!(value_store.value_store_version(), constants::current_version!());
+    assert_eq!(svi_store.svi_store_version(), constants::current_version!());
+    return_shared(value_store);
+    return_shared(svi_store);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = store::ENotNewerVersion)]
 fun migrating_a_value_store_already_at_the_running_version_aborts() {
-    let (scenario, value_id, _svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
 
     store::migrate_value_store(&mut value_store);
@@ -799,7 +841,7 @@ fun migrating_a_value_store_already_at_the_running_version_aborts() {
 
 #[test, expected_failure(abort_code = store::ENotNewerVersion)]
 fun migrating_an_svi_store_already_at_the_running_version_aborts() {
-    let (scenario, _value_id, svi_id) = setup_stores(UNDERLYING_ID);
+    let (scenario, _value_id, svi_id) = setup_stores();
     let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
 
     store::migrate_svi_store(&mut svi_store);
@@ -809,10 +851,10 @@ fun migrating_an_svi_store_already_at_the_running_version_aborts() {
 
 // === Helpers ===
 
-fun setup_stores(propbook_underlying_id: u32): (Scenario, ID, ID) {
+fun setup_stores(): (Scenario, ID, ID) {
     let mut scenario = test::begin(ADMIN);
-    let value_id = store::create_and_share_value_store(propbook_underlying_id, scenario.ctx());
-    let svi_id = store::create_and_share_svi_store(propbook_underlying_id, scenario.ctx());
+    let value_id = store::create_and_share_value_store(btc(), scenario.ctx());
+    let svi_id = store::create_and_share_svi_store(btc(), scenario.ctx());
     scenario.next_tx(ADMIN);
     (scenario, value_id, svi_id)
 }
@@ -830,7 +872,7 @@ fun apply_values(
     chain_clock: &Clock,
     ctx: &TxContext,
 ) {
-    store::apply_value_batch(
+    store::apply_spot_batch(
         value_store,
         verify::new_value_batch_for_testing(published_at_ms, updates),
         chain_clock,
@@ -848,35 +890,53 @@ fun apply_svis(
     store::apply_svi_batch(
         svi_store,
         verify::new_svi_batch_for_testing(published_at_ms, updates),
+        vector[EXPIRY_A],
         chain_clock,
         ctx,
     )
 }
 
-fun spot_update(propbook_underlying_id: u32, model_timestamp_ms: u64, value: u128): ValueUpdate {
+fun apply_forwards(
+    value_store: &mut BlockScholesValueStore,
+    published_at_ms: u64,
+    updates: vector<ValueUpdate>,
+    expiries_ms: vector<u64>,
+    chain_clock: &Clock,
+    ctx: &TxContext,
+) {
+    store::apply_forward_batch(
+        value_store,
+        verify::new_value_batch_for_testing(published_at_ms, updates),
+        expiries_ms,
+        chain_clock,
+        ctx,
+    )
+}
+
+fun spot_update(base_asset: &String, model_timestamp_ms: u64, value: u128): ValueUpdate {
     verify::new_value_update_for_testing(
-        block_scholes_sid::spot(propbook_underlying_id),
+        block_scholes_sid::spot(base_asset),
         model_timestamp_ms,
         value,
     )
 }
 
 fun forward_update(
-    propbook_underlying_id: u32,
+    base_asset: &String,
     expiry_ms: u64,
     model_timestamp_ms: u64,
     value: u128,
 ): ValueUpdate {
     verify::new_value_update_for_testing(
-        block_scholes_sid::forward(propbook_underlying_id, expiry_ms),
+        block_scholes_sid::forward(base_asset, expiry_ms),
         model_timestamp_ms,
         value,
     )
 }
 
-fun svi_update(propbook_underlying_id: u32, expiry_ms: u64, model_timestamp_ms: u64): SviUpdate {
+fun svi_update(base_asset: &String, expiry_ms: u64, model_timestamp_ms: u64): SviUpdate {
     verify::new_svi_for_testing(
-        block_scholes_sid::svi(propbook_underlying_id, expiry_ms),
+        block_scholes_sid::svi(base_asset, expiry_ms),
         model_timestamp_ms,
         SVI_A_MAG,
         SVI_A_NEG,
@@ -887,4 +947,12 @@ fun svi_update(propbook_underlying_id: u32, expiry_ms: u64, model_timestamp_ms: 
         SVI_M_MAG,
         SVI_M_NEG,
     )
+}
+
+fun btc(): String {
+    b"BTC".to_string()
+}
+
+fun eth(): String {
+    b"ETH".to_string()
 }

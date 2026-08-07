@@ -27,7 +27,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (the liquidated state is derived from the order's absence from the active
   index, not stored). *Rejected:* residual-paying liquidation; a stored
   tombstone table (removed as a duplicate of the account position).
-- **The ask-price band applies to mint only — redeems price at the live mark.**
+- **D025 — The ask-price band applies to mint only — redeems price at the live mark.**
   The mint-time `[min_entry_probability, max_entry_probability]` band is admission policy: the protocol
   declines to become counterparty in the tail price regions where the curve is
   least reliable. Once a contract is live, redeeming at the live mark is the
@@ -38,10 +38,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Adjusted one-sided digital prices clamp to probability bounds.** The
   pricing-safe envelope bounds each SVI parameter independently and enforces no
   butterfly/no-arbitrage condition, so an admissible surface can push the raw
-  skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any moneyness
-  (open-items P-11). The one-sided UP price saturates to `[0, 1]` and range
-  differencing floors at zero rather than aborting live mint, redeem, or
-  liquidation reads; surface quality is the Block Scholes feed's responsibility.
+  skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any
+  moneyness. The one-sided UP price saturates to `[0, 1]` and range differencing
+  floors at zero rather than aborting live mint, redeem, or liquidation reads;
+  Block Scholes guarantees its published SVI surfaces are monotone and
+  butterfly-arbitrage-free (response policy RP-15).
   NAV valuation additionally rejects an active-book surface whose cached finite
   boundary UP prices are non-monotone, because the aggregate payout-tree walk
   nets signed boundary contributions across orders.
@@ -107,7 +108,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   reserve↔payout pairing (a reserve and its payout derive from the same quantity
   via the *identical* helper). *Rejected:* mixed ceil/floor primitives, which
   introduced super-additivity drift and were deleted.
-- **Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
+- **D026 — Strike-quantity math stays `u64`.** A `u128` widening was tried and reverted:
   the `u64` mul ceiling is accepted because the failure mode is a graceful per-tx
   mint abort at extreme strike×quantity (never a brick), and inline `u128` casts
   duplicated `fixed_math` semantics inside a core module. *Rejected:* the widening.
@@ -122,7 +123,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Backing and solvency (recent)
 
-- **The live cash-backing reserve is a settlement floor plus a tunable liquidity
+- **D030 — The live cash-backing reserve is a settlement floor plus a tunable liquidity
   buffer**: `max_net_payout + λ · (Σ net_payout − max_net_payout)`, with
   `λ` (`backing_buffer_lambda`) an admin template value, default 0.25. The floor
   — the maximum summed payout at any *single* settlement price — pays every
@@ -186,6 +187,34 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Fees, staking, and rebates (recent)
 
+- **The staking programme ships at a zero benefit ratio, and each market freezes its whole
+  benefit policy at creation.** `StakeConfig.max_benefit_ratio` scales the stake curve and
+  defaults to `0`, so a market created from the shipped template charges every trader the
+  undiscounted fee and pays no stake-scaled loss rebate. There is deliberately no boolean
+  switch: "off" is just `0`, which also lets the programme run at partial strength on the way
+  up. Every `ExpiryMarket` snapshots the whole config — ratio and both thresholds — at
+  creation, and prices both benefits against its own copy; `set_template_max_benefit_ratio`
+  and `set_template_benefit_powers` bind only markets created afterwards. *Why a scaled ratio
+  and not tuned thresholds:* the `*_benefit_power` envelope has no setting that yields a zero
+  benefit — the lowest admissible `lower_benefit_power` still pays a proportional discount —
+  so zero was otherwise unreachable for an admin. *Why snapshotted rather than read live:*
+  both benefits resolve after the trade that earned them (the discount at mint, the rebate at
+  a post-settlement claim), so live policy would reprice contracts already written, and a
+  retune would shrink or erase an already-earned rebate — measured at 2_500_000 -> 1_252_551
+  for a full staker when the thresholds were widened post-trade, and the claim removes the
+  account's expiry summary, so nothing could recover it. Freezing makes that unrepresentable
+  rather than leaving it an operator-ordering hazard, and matches `StrikeExposureConfig`,
+  which is already snapshotted per expiry for the same reason. The cost is accepted: raising
+  the ratio likewise does not reach live markets, so the programme phases in over about one
+  cadence period. Pinned by `settlement_flow_tests::
+  retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`. *Rejected:* making
+  `max_fee_discount` admin-tunable at zero, which would silence the fee side while leaving the
+  uncapped rebate live, and would move an upgrade-required constant into tunable config.
+  *Consequence:* while a market's ratio is zero, its rebate reserve still accrues at that
+  market's `trading_loss_rebate_rate` and is released to the pool as the permissionless
+  cleanout resolves each account after settlement, not at settlement itself (the settled sweep
+  holds the reserve back). Zeroing that rate is likewise a template action, binding only
+  markets created after the change.
 - **Staking is a gaming-resistance gate for the loss rebate, not a reward per se.**
   The trading-loss rebate exists to move value from winners toward net losers; it
   must target *aggregate* net losers (per trader), else a balanced (50/50) book
@@ -315,23 +344,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   into the transaction, not the mid" above), which avoids both failure modes by never
   touching the quoted mid.
 
-- **The Block Scholes feeds became signed-series stores gated by the production
-	  verifier.** The three per-source feed objects and the stub
-	  `block_scholes_oracle` package were replaced by two per-underlying stores
-	  (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs,
-	  written only through batch types the `bs_oracle` signature verifier mints.
-	  Holding a verified batch is the provenance proof, so relayers are untrusted;
-	  a series id encodes kind, underlying, value scale, and expiry, so a valid
-	  observation can only land in the slot it was signed for. Each observation
-	  carries the provider's model time and batch-envelope time separately:
-	  freshness and the SVI roll-down anchor both key on the model time — the
-	  envelope is transport metadata — replacing on-chain change-detection that
-	  reconstructed the anchor.
-  *Rationale:* authenticity moves from the writer to the data, closing predeploy
-  gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted
-  writer (retains our own key custody in the trust set), and an on-chain
-  sid→slot mapping table (a registration step per new expiry on the market-roll
-  path; deriving the id from the slot's own identity needs no state).
+- **The Block Scholes feeds became signed-series stores gated by the production verifier.** The three per-source feed objects and the stub `block_scholes_oracle` package were replaced by two per-underlying stores (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs and written only through batch types the `bs_oracle` signature verifier mints. Holding a verified batch is the provenance proof, so relayers are untrusted. Each store pair is immutably bound to one provider base-asset spelling; typed spot, forward, and SVI ingestion derives the accepted ids through the provider-owned `bs_sid` package from the complete subscription descriptor, and forward/SVI expiry witnesses are checked through that derivation. Each observation carries the provider's model time and batch-envelope time separately: freshness and the SVI roll-down anchor both key on the model time — the envelope is transport metadata — replacing on-chain change-detection that reconstructed the anchor. *Rationale:* authenticity moves from the writer to the data, closing predeploy gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted writer (retains our own key custody in the trust set), and an on-chain sid→slot mapping table (a registration step per new expiry on the market-roll path; deriving the provider-defined id from immutable store identity needs no state).
 
 ## One canonical strike representation — absolute ticks (recent)
 
@@ -555,7 +568,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   one formula. *Rejected:* a per-market or per-expiry selector, which would let two
   live markets on the same underlying disagree about the forward and produce a
   mixed pool NAV for no calibration benefit.
-- **No cross-source deviation guard comes with it.** Flipping the setting can move
+- **D031 — No cross-source deviation guard comes with it.** Flipping the setting can move
   every live mark by the current Pyth-vs-Block-Scholes divergence. Nothing bounds
   that divergence directly: the envelope bounds each formula's inputs, and the
   re-anchored forward is deliberately not re-checked against it (its own bound is

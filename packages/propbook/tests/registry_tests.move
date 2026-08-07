@@ -8,7 +8,7 @@ use propbook::{
     pyth_feed::{Self as pyth_feed, PythFeed},
     registry::{Self, OracleMetadata, OracleRegistry, RegistryAdminCap}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::{string::String, unit_test::{assert_eq, destroy}};
 use sui::{event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
@@ -207,38 +207,43 @@ fun assert_metadata(
 // === Block Scholes stores ===
 
 #[test]
-fun create_block_scholes_stores_records_both_lookups() {
+fun create_block_scholes_stores_records_the_pair_lookup() {
     let mut scenario = test::begin(ADMIN);
     registry::init_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
 
     let mut registry = scenario.take_shared<OracleRegistry>();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let (value_store_id, svi_store_id) = registry::create_and_share_block_scholes_stores(
+    let created_pair = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
+    let value_store_id = created_pair.block_scholes_value_store_id();
+    let svi_store_id = created_pair.block_scholes_svi_store_id();
 
-    assert_eq!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(BTC_UNDERLYING_ID),
-        option::some(value_store_id),
-    );
-    assert_eq!(
-        registry.propbook_block_scholes_svi_store_id_for_underlying(BTC_UNDERLYING_ID),
-        option::some(svi_store_id),
-    );
+    let pair = registry
+        .propbook_block_scholes_store_pair_for_underlying(BTC_UNDERLYING_ID)
+        .destroy_some();
+    assert_eq!(pair.block_scholes_value_store_id(), value_store_id);
+    assert_eq!(pair.block_scholes_svi_store_id(), svi_store_id);
+    assert_eq!(pair.block_scholes_base_asset(), btc());
     assert!(value_store_id != svi_store_id);
 
     let events = event::events_by_type<registry::BlockScholesStoresRegistered>();
     assert_eq!(events.length(), 1);
-    let (event_underlying_id, event_value_id, event_svi_id) = registry::stores_registered_fields(
-        &events[0],
-    );
+    let (
+        event_underlying_id,
+        event_value_id,
+        event_svi_id,
+        event_base_asset,
+    ) = registry::stores_registered_fields(&events[0]);
     assert_eq!(event_underlying_id, BTC_UNDERLYING_ID);
     assert_eq!(event_value_id, value_store_id);
     assert_eq!(event_svi_id, svi_store_id);
+    assert_eq!(event_base_asset, btc());
 
     return_shared(registry);
     destroy(admin_cap);
@@ -259,23 +264,19 @@ fun store_lookups_are_none_for_an_underlying_without_a_pair() {
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
 
-    assert!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
-    );
-    assert!(
-        registry.propbook_block_scholes_svi_store_id_for_underlying(ETH_UNDERLYING_ID).is_none(),
-    );
+    assert!(registry.propbook_block_scholes_store_pair_for_underlying(ETH_UNDERLYING_ID).is_none());
 
     return_shared(registry);
     destroy(admin_cap);
     scenario.end();
 }
 
-/// One pair per underlying for life: a second pair would leave two stores each able to claim the
-/// underlying with nothing to choose between them.
+/// One canonical storage pair per underlying for life: observations advance it in place, and any
+/// future structural recovery belongs to the package upgrade that defines the migration.
 #[test, expected_failure(abort_code = registry::EBlockScholesStoresAlreadyExist)]
 fun creating_a_second_store_pair_for_an_underlying_aborts() {
     let mut scenario = test::begin(ADMIN);
@@ -288,12 +289,14 @@ fun creating_a_second_store_pair_for_an_underlying_aborts() {
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
     registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
 
@@ -309,30 +312,110 @@ fun each_underlying_gets_its_own_store_pair() {
 
     let mut registry = scenario.take_shared<OracleRegistry>();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
-    let (btc_value_id, _btc_svi_id) = registry::create_and_share_block_scholes_stores(
+    let btc_created_pair = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         BTC_UNDERLYING_ID,
+        btc(),
         scenario.ctx(),
     );
-    let (eth_value_id, _eth_svi_id) = registry::create_and_share_block_scholes_stores(
+    let eth_created_pair = registry::create_and_share_block_scholes_stores(
         &mut registry,
         &admin_cap,
         ETH_UNDERLYING_ID,
+        eth(),
         scenario.ctx(),
     );
+    let btc_value_id = btc_created_pair.block_scholes_value_store_id();
+    let eth_value_id = eth_created_pair.block_scholes_value_store_id();
 
     assert!(btc_value_id != eth_value_id);
-    assert_eq!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(BTC_UNDERLYING_ID),
-        option::some(btc_value_id),
-    );
-    assert_eq!(
-        registry.propbook_block_scholes_value_store_id_for_underlying(ETH_UNDERLYING_ID),
-        option::some(eth_value_id),
-    );
+    let btc_pair = registry
+        .propbook_block_scholes_store_pair_for_underlying(BTC_UNDERLYING_ID)
+        .destroy_some();
+    let eth_pair = registry
+        .propbook_block_scholes_store_pair_for_underlying(ETH_UNDERLYING_ID)
+        .destroy_some();
+    assert_eq!(btc_pair.block_scholes_value_store_id(), btc_value_id);
+    assert_eq!(eth_pair.block_scholes_value_store_id(), eth_value_id);
 
     return_shared(registry);
     destroy(admin_cap);
     scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EInvalidBlockScholesBaseAsset)]
+fun creating_store_pair_with_empty_base_asset_aborts() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        b"".to_string(),
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+/// 32 bytes is the longest accepted spelling; the boundary lands on the accepting side.
+#[test]
+fun creating_store_pair_with_a_maximum_length_base_asset_succeeds() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let pair = registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        thirty_two_byte_asset(),
+        scenario.ctx(),
+    );
+    assert_eq!(pair.block_scholes_base_asset(), thirty_two_byte_asset());
+
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = registry::EInvalidBlockScholesBaseAsset)]
+fun creating_store_pair_with_an_over_length_base_asset_aborts() {
+    let mut scenario = test::begin(ADMIN);
+    registry::init_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
+
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut over_length = thirty_two_byte_asset();
+    over_length.append(b"X".to_string());
+    registry::create_and_share_block_scholes_stores(
+        &mut registry,
+        &admin_cap,
+        BTC_UNDERLYING_ID,
+        over_length,
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+fun btc(): String {
+    b"BTC".to_string()
+}
+
+/// Exactly 32 ASCII bytes, counted by hand: eight groups of four.
+fun thirty_two_byte_asset(): String {
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ012345".to_string()
+}
+
+fun eth(): String {
+    b"ETH".to_string()
 }

@@ -6,6 +6,7 @@ module deepbook_predict::config_events;
 
 use deepbook_predict::{
     expiry_cash_config::ExpiryCashConfig,
+    stake_config::StakeConfig,
     strike_exposure_config::StrikeExposureConfig
 };
 use sui::event;
@@ -51,6 +52,14 @@ public struct MarketCreated has copy, drop, store {
     /// Window before expiry within which this market admits no leverage above 1x.
     no_leverage_window_ms: u64,
     trading_loss_rebate_rate: u64,
+    /// Share of the DEEP-stake benefit curve this market pays out, snapshotted at
+    /// creation. `0` means staking earns nothing here, whatever the template later
+    /// becomes, so an indexer must read this per market rather than protocol-wide.
+    max_benefit_ratio: u64,
+    /// Active stake at this market's benefit-curve kink (half benefits), raw DEEP.
+    lower_benefit_power: u64,
+    /// Active stake for this market's full benefits, raw DEEP.
+    upper_benefit_power: u64,
 }
 
 /// Emitted when an admin updates or disables one underlying's cadence policy.
@@ -121,6 +130,7 @@ public(package) fun emit_market_created(
     initial_expiry_cash: u64,
     strike_exposure_config: &StrikeExposureConfig,
     expiry_cash_config: &ExpiryCashConfig,
+    stake_config: &StakeConfig,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -142,6 +152,9 @@ public(package) fun emit_market_created(
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         no_leverage_window_ms: strike_exposure_config.no_leverage_window_ms(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
+        max_benefit_ratio: stake_config.max_benefit_ratio(),
+        lower_benefit_power: stake_config.lower_benefit_power(),
+        upper_benefit_power: stake_config.upper_benefit_power(),
     });
 }
 

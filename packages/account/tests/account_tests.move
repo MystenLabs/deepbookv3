@@ -73,7 +73,7 @@ fun registry_records_referrer_on_account() {
     let referrer_wrapper_id = registry.derived_wrapper_address(BOB).to_id();
     let referrer_wrapper = scenario.take_shared_by_id<AccountWrapper>(referrer_wrapper_id);
     let referrer_account_id = referrer_wrapper.load_account().account_id();
-    let wrapper = registry.new_with_referrer(referrer_wrapper.load_account(), scenario.ctx());
+    let wrapper = registry.new_with_referrer(&referrer_wrapper, scenario.ctx());
     let wrapper_id = wrapper.id();
 
     assert_eq!(wrapper.load_account().referrer_account_id(), option::some(referrer_account_id));
@@ -127,7 +127,7 @@ fun referral_constructor_cannot_create_second_account_for_same_owner() {
     scenario.next_tx(ALICE);
     let mut registry = scenario.take_shared<AccountRegistry>();
     let first = registry.new(scenario.ctx());
-    let second = registry.new_with_referrer(first.load_account(), scenario.ctx());
+    let second = registry.new_with_referrer(&first, scenario.ctx());
     first.share();
     second.share();
 

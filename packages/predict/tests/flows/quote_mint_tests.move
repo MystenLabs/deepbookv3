@@ -277,8 +277,71 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
 }
 
 #[test]
-fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
+fun raising_the_stake_benefit_template_cannot_discount_an_existing_market() {
+    // The mint-side twin of the rebate regression in `settlement_flow_tests`. The
+    // market below is created while the template pays nothing, so its snapshot is
+    // zero; raising the template afterwards must not reach it. Were the fee path
+    // reading live policy, this fully-staked mint would be charged the discounted
+    // fee and the balance assertion would fail.
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.set_template_max_benefit_ratio(fixed_math::math::float_scaling!());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
+    fx.stake_deep_bundle(
+        &mut market,
+        &mut account,
+        config_constants::default_upper_benefit_power!(),
+    );
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    // Roll the stake so it is active: the undiscounted fee below is the market's
+    // snapshot, not an inactive-stake artifact.
+    fx.scenario_mut().next_epoch(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
+
+    let premium = quote.net_premium();
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+    assert_eq!(
+        fx.account_balance_bundle<dusdc::dusdc::DUSDC>(&account),
+        test_constants::mint_deposit() - (premium + MIN_TRADING_FEE),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
+    // Benefits ship disabled and freeze at market creation; this test is about the
+    // discount, so the market must snapshot them on.
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market_with_stake_benefits(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );

@@ -7,10 +7,10 @@ whole fleet and nothing else detects it. This is a cheap, deterministic guard:
 
   1. MODULE-MAP DRIFT (FATAL) — every `foo/bar.move` path named in primer.md's module map must exist under
      packages/. Unambiguous and always resolvable from the tree, so a miss is a hard error.
-  2. D-ID DRIFT (WARNING) — every D0NN id cited anywhere in the skill should resolve to a committed guidance
-     file (AGENTS.md / CLAUDE.md / .claude/rules/ / packages/predict/predeploy/). A miss means the decision
-     lives only in the local (gitignored) decision journal — a real gap to promote into a committed doc, but
-     not a reason to block a run, so it warns rather than fails.
+  2. D-ID DRIFT (WARNING) — every D0NN id cited anywhere in the skill, including JSON fixtures consumed by
+     its workflows, should resolve to an explicit entry in the committed design or response-policy register.
+     A miss means the decision has no canonical record — a real gap to promote, but not a reason to block a
+     run, so it warns rather than fails.
 
 Usage:  python3 .claude/skills/predict-audit/preflight.py [REPO_ROOT]
 Exits 1 only on FATAL module-map drift; D-id warnings print but keep exit 0.
@@ -44,23 +44,28 @@ def check_module_map(root, errors, warnings):
 
 
 def check_dids(root, warnings):
-    """Every D0NN cited anywhere in the skill SHOULD be defined in a committed guidance file, so a settled_ref
-    the prompts lean on is real, not dangling. 'Defined' = the id appears in one of the ground-truth docs. A
-    miss is a WARNING (the decision may live only in the local decision journal — promote it), not fatal."""
-    ledger_files = [os.path.join(root, 'AGENTS.md'), os.path.join(root, 'CLAUDE.md')]
-    ledger_files += glob.glob(os.path.join(root, '.claude', 'rules', '*.md'))
-    ledger_files += glob.glob(os.path.join(root, 'packages', 'predict', 'predeploy', '**', '*.md'), recursive=True)
-    ledger_text = ''
-    for p in ledger_files:
+    """Every D0NN cited anywhere in the skill SHOULD have an explicit canonical decision or policy entry, so
+    a settled_ref the prompts lean on is real, not dangling. A miss is a WARNING, not fatal."""
+    definition_sources = [
+        (
+            os.path.join(root, 'packages', 'predict', 'docs', 'design', 'decisions.md'),
+            re.compile(r'^-\s+\*\*(D0\d\d)\s+—', re.MULTILINE),
+        ),
+        (
+            os.path.join(root, 'packages', 'predict', 'predeploy', 'response-policies.md'),
+            re.compile(r'^##\s+.*\((D0\d\d)\)\s*$', re.MULTILINE),
+        ),
+    ]
+    defined = set()
+    for p, pattern in definition_sources:
         try:
-            ledger_text += open(p, encoding='utf-8', errors='replace').read() + '\n'
+            defined.update(pattern.findall(open(p, encoding='utf-8', errors='replace').read()))
         except OSError:
             pass
-    defined = set(re.findall(r'\bD0\d\d\b', ledger_text))
 
     cited = {}  # d-id -> set of skill files citing it
     for path in glob.glob(os.path.join(SKILL, '**', '*'), recursive=True):
-        if '__pycache__' in path or not os.path.isfile(path) or not path.endswith(('.md', '.js', '.py')):
+        if '__pycache__' in path or not os.path.isfile(path) or not path.endswith(('.md', '.js', '.py', '.json')):
             continue
         if os.path.abspath(path) == os.path.abspath(__file__):
             continue
@@ -74,7 +79,7 @@ def check_dids(root, warnings):
     for did in sorted(cited):
         if did not in defined:
             where = ', '.join(sorted(cited[did]))
-            warnings.append(f"D-id {did} is cited in the skill ({where}) but not in any committed ledger file — it lives only in the local decision journal; promote the decision into AGENTS.md/predeploy so agents can verify it")
+            warnings.append(f"D-id {did} is cited in the skill ({where}) but not in a canonical decision or policy register; promote it to packages/predict/docs/design/decisions.md or the matching predeploy register")
     return len(cited)
 
 

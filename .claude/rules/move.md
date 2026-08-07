@@ -7,9 +7,7 @@ paths:
 
 # Sui Move Instructions
 
-**Update the matching rule file** when you discover new Move patterns, gotchas, or best practices during sessions: general Move (any package) → this file; Predict-specific (architecture, economics, capacity) → `.claude/rules/predict-contracts.md`. Before adding a rule, check whether an existing one already covers it; a new rule should name the failure it prevents. Point at measured findings and history (stress docs, git, design records) instead of restating their numbers.
-
-Predict-specific rules (package architecture, config/capability shapes, API shape, validation ownership, economics, gas/capacity) live in `.claude/rules/predict-contracts.md` — auto-injected for the Predict-cluster packages (`packages/{predict,propbook,block_scholes_oracle,account}/**/*.move`); read it explicitly otherwise.
+**Update this file** when you discover a general Move pattern, gotcha, or best practice that applies across packages. Before adding a rule, check whether an existing one already covers it; a new rule should name the failure it prevents. Point at measured findings and history (stress docs, git, design records) instead of restating their numbers.
 
 - Comments are opt-in, not a coverage requirement. Use comments to explain module responsibility, public API contracts, ownership boundaries, invariants, unit/scaling conventions, lifecycle state, sequencing requirements, gas/storage tradeoffs, external dependency quirks, or non-obvious math.
 
@@ -60,8 +58,6 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - Function inputs should be ordered by role: mutable receiver/state owner first, capability or authority proofs next, other domain/config objects next, primitive domain values and options next, execution context last. `clock: &Clock` is execution context and should be second-to-last when present; `ctx: &mut TxContext` is always last. Constructors with only primitive grid inputs should use natural domain order such as `min_strike, tick_size, max_strike, ctx`. Private algorithm helpers may keep traversal/key ordering when changing it would make the algorithm less readable, but public and package APIs should not put primitive values before object references. `&AccumulatorRoot` is execution context and sits in the tail alongside clock/ctx. `emit_*` helpers in `events/` modules may order parameters to mirror the event struct's field order (including refs used only to extract fields). Do NOT reorder an existing `public` entrypoint's parameters to satisfy this rule: positional TypeScript PTB callers (`scripts/`, `packages/predict/harness/ts`, `packages/predict/simulations`) break at runtime, not compile time — apply the role order to new functions, and if an existing public signature must change, grep all three TS surfaces for the target name first.
 
 - Utility and math modules should only guard local mathematical or data-structure preconditions (division by zero, invalid precision, insufficient balance/quantity, invalid ranges). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
-
-- Do not add explicit overflow, underflow, or numeric-cast asserts solely to replace Move's primitive VM aborts. Move arithmetic and numeric casts already abort atomically on overflow. Keep named assertions for semantic domain bounds, division by zero when the module has a meaningful named zero error, solvency/accounting invariants, authorization, lifecycle, and gas-bounded iteration.
 
 - Subtraction is exact by default — Move's underflow abort is a free invariant check, so never convert a subtraction with a documented no-underflow invariant into a clamp. When clamping at zero *is* the policy, spell it `a.saturating_sub(b)` (`std::u64`, receiver syntax, no import needed) — never `a - a.min(b)`, `if (a > b) a - b else 0`, or a hand-rolled `sat_sub` helper. One spelling keeps the package's clamp inventory grep-complete (`grep saturating_sub`), and per the producer-fact rule each call site is a policy decision owned by the clamping module, ideally with a one-line why-clamp-not-abort comment. The same layering applies to other numeric utilities: take them from `std::uN` when std has the exact semantics (`min`/`max`/`diff`/`divide_and_round_up`); `predict_math` is only for fixed-point and domain math std cannot express.
 
@@ -161,7 +157,6 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 ## Tool Calling Instructions
 
-- Build/test/format commands live in `CLAUDE.md` (§ Quick Commands and § Predict Build & Verify). The high test gas limit is required because sui 1.66+ lowered the default test gas budget.
 - When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding.
 - Before claiming Move or protocol work is complete, run the impacted package test suite(s) and confirm they pass with zero failures. If the change affects multiple packages or local package manifests, run each impacted package's tests.
 - When you have completed making Move changes, run `pnpm install --frozen-lockfile && pnpm format:move` before opening the PR. CI runs the same script (`format:move:check`) over the same file set, so a clean local run means a clean check.

@@ -21,6 +21,7 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
+    pricing,
     protocol_config::{Self, ProtocolConfig},
     test_constants
 };
@@ -68,6 +69,8 @@ const REPRICE_SOURCE_TS: u64 = 119_500;
 /// the 11e9 active+returned credit basis, the frozen LP mark is 6.61e9.
 const ABOVE_MAX_PRICE_MARKET_CASH: u64 = 11_000_000_000;
 const ABOVE_MAX_PRICE_POOL_NAV: u64 = 6_610_000_000;
+/// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
+const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
 // === Happy path: aggregation ===
 
@@ -224,6 +227,65 @@ fun empty_pool_valuation_returns_idle() {
 
     return_shared(config);
     return_shared(vault);
+    fx.finish();
+}
+
+// === Oracle-width propagation and recovery ===
+
+/// `value_expiry` is the mandatory per-market leg of a pool-wide flush, so an over-wide active
+/// market observation must surface the named pricing-boundary error here rather than a VM cast.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
+fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.set_bs_spot_raw_for_testing_bundle(
+        &mut market,
+        test_constants::live_source_timestamp_ms() + 1,
+        FIRST_UNREPRESENTABLE_U64,
+    );
+
+    let mut valuation = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut valuation, &mut market);
+    abort 999
+}
+
+/// A newer representable observation replaces the rejected provider row and restores the same
+/// mandatory valuation path without configuration or package changes.
+#[test]
+fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let overwide_timestamp_ms = test_constants::live_source_timestamp_ms() + 1;
+    fx.set_bs_spot_raw_for_testing_bundle(
+        &mut market,
+        overwide_timestamp_ms,
+        FIRST_UNREPRESENTABLE_U64,
+    );
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
+        overwide_timestamp_ms + 1,
+    );
+
+    let mut valuation = fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut valuation, &mut market);
+    let pool_nav = fx.finish_flush_bundle(
+        valuation,
+        &mut market,
+        option::none(),
+        option::none(),
+    );
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
     fx.finish();
 }
 

@@ -1,150 +1,63 @@
 # Predict Predeploy Open Items
 
-Updated 2026-07-29. **The single source of truth for open work.** Anything that
-needs conscious attention — a bug, a suspicion, an undecided question, an audit
-finding — lands here first; if it is not on this list, it does not need
-addressing. An item that needs measurement carries its experiment plan inline
-(question, harness strategy, decision rule written before the run); run results
-land as immutable dated records in `evidence/`. An item exits only by deletion
-in the PR that resolves it; if the resolution embodied a judgment call, the
-decision graduates to `response-policies.md`. There is no third destination.
-Raw audit output stays in ignored agent scratchpads; this file is the tracked
-manifest.
+Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
-### S-5: A client-supplied series id commits to no Block Scholes instrument
+### S-7: Predict cannot resolve a mainnet publication graph
 
 **Severity:** Deploy gate.
 
-`block_scholes_sid::encode` packs layout version, kind, Propbook underlying,
-value scale, and expiry. It carries nothing about the instrument Block Scholes
-resolved — exchange, asset, base/quote, model. The provider signs whatever
-series the subscription names, under the id the client supplies, so a valid
-signature proves "signed for Propbook underlying N", not "this is the asset
-Propbook means by N". Sid-keyed storage closes misrouting of already-signed
-data; it does not bind which instrument was signed in the first place.
+Neither `packages/predict/Move.toml` nor `packages/propbook/Move.toml` could
+link a mainnet publish: several of the external dependency identities a mainnet
+publish needs do not exist. `[dep-replacements.mainnet]` now carries the
+resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06 —
+and `packages/token/Published.toml` already records a mainnet entry. The rest
+is open, and none of it is a manifest fix:
 
-Consequence: the claim that the relayer is untrusted holds for replay,
-reordering, and cross-slot routing, but not for subscription configuration. If a
-party able to obtain Block Scholes signatures can request an arbitrary
-client-supplied sid, it can have the provider sign one asset's data under
-another's slot id and land it as canonical — a path no on-chain check can see,
-because the signature and the sid are both exactly what the store expects. The
-sid's scale field makes a provider-side rescale a halt; there is no equivalent
-for a provider-side instrument mismatch.
+- **`bs_oracle` and `bs_sid` are unpublished on mainnet.** The pinned upstream
+  revision's publication metadata records testnet only. Closed by the provider
+  publishing to mainnet and handing over the package identity, the same
+  handover the signer-custody confirmation waits on.
+- **`dusdc` has no mainnet counterpart, and the intended mainnet collateral is
+  a differently-named type.** `packages/dusdc/Published.toml` is testnet-only
+  and records that its `UpgradeCap` is not held here, so it cannot be
+  republished to make a mainnet graph resolve. The intended mainnet collateral
+  is native USDC —
+  `0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC`.
+  A `dep-replacements.mainnet` entry cannot express that: a replacement
+  substitutes the address only, while Predict names the collateral nominally
+  (`use dusdc::dusdc::DUSDC`, ~140 references), and the USDC package publishes a
+  single module `usdc` containing no `dusdc::DUSDC`. Closing this means renaming
+  the collateral type in source so one module path resolves on both networks —
+  which also changes the coin type of the live testnet deployment, and so is its
+  own change with its own republish — not a manifest edit.
 
-This is the accepted cost of client-supplied sids over provider-generated ones
-(the alternative was rejected because it needs an on-chain sid→slot table and a
-registration transaction per expiry on the market-roll path). It is recorded as
-a gate rather than a design change because it is closed by a provider answer,
-not by contract code.
+**Recorded, not blocking: mainnet `pyth_lazer` links version 1 on purpose.**
+The lineage has been upgraded — version 2 adds `channel_v2` and `update_v2`,
+purely additively — so `published-at` had a choice to make. It links version 1,
+because that is the version the pinned source revision describes exactly (its
+module set matches, and matches the testnet package already linked) and it is
+also the single package id Pyth documents for Sui mainnet. Linking the version
+2 head would point the linkage table at bytecode this repo's pinned source does
+not describe, for modules Predict does not use. Advancing to version 2 would
+mean advancing the source pin — which also serves live testnet — and is only
+worth doing if Predict ever needs the `_v2` surface.
 
-**Action:** Before a value-bearing deployment, confirm with Block Scholes that
-client-supplied sids are scoped per signing account — that no other subscriber
-can request a sid this deployment derives — and record the answer. If they are
-globally addressable, close it provider-side (have the signer re-derive the
-expected sid from the resolved instrument config and refuse a mismatch) rather
-than on-chain. Until answered, the residual trust set in `docs/risks.md` and the
-`predict-audit` lens 08 trust boundary must name subscription configuration
-alongside data quality, key custody, and pause discretion.
+**Action:** Do not attempt a mainnet publish while either bullet above is open,
+and never resolve one with `--with-unpublished-dependencies`: that
+republishes packages this repo does not own and changes their type identity.
+Close this gate by recording each identity as it lands, then re-resolving both
+manifests against a mainnet environment.
+
+**Adjacent testnet observation, not part of this gate.** The linked testnet
+`pyth_lazer` and the deployment Pyth currently documents are both version 1 of
+*separate* lineages — Pyth republished rather than upgraded — so the linked
+package is superseded though still live. Whether the relayer and the live
+testnet deployment should move to the current lineage is an open question for
+whoever owns the next testnet republish.
 
 ## Contract Findings
-
-### P-23: The Pyth re-anchor can substitute a staler spot than the one it replaces
-
-**Severity:** Medium; on the default pricing path.
-
-`pricing::resolve_live_pricer` enters the re-anchoring branch on the Pyth spot's
-own freshness alone and never compares it against
-`block_scholes_spot_source_timestamp_ms`, the model time of the Block Scholes
-spot it is displacing. The branch exists to carry the Block Scholes basis on a
-*higher-frequency* spot, but nothing enforces that the substitute is actually
-fresher: with `use_pyth_spot_for_forward` set (the default), a Pyth spot at the
-edge of its window can re-anchor a forward whose Block Scholes spot is
-sub-second old, and `forward = pyth_spot * bs_forward / bs_spot` then prices the
-market at the older of the two clocks. The magnitude is the underlying's move
-across the age gap, and the gap widened when the Pyth default moved from 2s to
-10s alongside the model-clock cutover. Trade timing is caller-chosen, so this is
-an adverse-selection surface rather than a liveness one.
-
-**Action:** Gate the re-anchor on relative freshness — require the Pyth source
-timestamp to be at least as recent as the Block Scholes spot model time (or
-bound the skew) — or record why substituting a staler spot is acceptable and
-what bounds the resulting error.
-
-### P-24: BS spot/forward model-time staleness aborts the pool-wide flush, unregistered
-
-**Severity:** Medium; liveness, unregistered response policy.
-
-Freshness moving from the batch envelope to the per-series model time is the
-correct economic reading, but it creates a halt mode the envelope clock did not
-have: a series the provider retransmits unchanged keeps its original model time,
-so it ages out even while transport is visibly alive. Past the window,
-`load_live_pricer` aborts, `plp::value_expiry` aborts with it, and the flush is
-one PTB over every active market — so a single un-refreshed series defers every
-queued LP fill pool-wide.
-
-RP-21 registers exactly this for SVI at its 60s window. The spot and forward
-lane runs the same mechanism at `block_scholes_price_freshness_ms` — 10s by
-default, six times tighter — and has no corresponding entry, so the blast-radius
-classification for the tighter of the two lanes is undecided rather than
-accepted. The flush requires every live market's spot, forward, *and* SVI to be
-simultaneously inside their windows, so the exposure compounds across expiries
-rather than being per-market.
-
-The supporting measurement does not yet settle it. The harness updater counts
-pinned retransmissions per series (`harness/ts/oracleService.ts`) and the first
-live run observed 8 pinned forward and 8 pinned SVI retransmissions across 73
-pushes, but a count is not the quantity that decides the question — the maximum
-*consecutive* pinned age per series is. A 10s window is breached by one run of
-pins, and pins cluster in quiet markets rather than arriving independently.
-
-**Action:** Extend the harness probe to report max consecutive pinned age per
-series, run it long enough to cover a quiet period, then either register the
-spot/forward lane's abort in `response-policies.md` alongside RP-21 with that
-measurement as its risk profile, or move the lane down the blast-radius ladder
-(skip/carry the affected market rather than aborting the flush).
-
-### P-25: Provider width overflow aborts a mandatory path with no named error
-
-**Severity:** Low; diagnosability and unregistered response.
-
-`pricing::narrow_price` and `narrow_svi` are checked `u128 -> u64` casts, and
-they run *before* `assert_inputs_pricing_safe`. A provider value above `u64::MAX`
-therefore aborts on the cast with a bare VM arithmetic error rather than the
-named envelope code that covers every strictly narrower violation, in a path the
-flush must complete. Not adding an assert is correct per the general rule
-against wrapping primitive overflow; the gap is that a provider-controlled
-variable can abort a mandatory path with an abort code no runbook can map and no
-response policy classifies. No test exercises the claim that the narrowing is
-the guard.
-
-**Action:** Either return absence from the narrowing and treat an
-unrepresentable observation as unavailable (reusing
-`EBlockScholesPriceUnavailable`), or keep the cast and register the abort with
-the rest of the provider-quality residuals so the operational response is
-written down.
-
-### P-26: An underlying's Block Scholes store pair can never be repointed
-
-**Severity:** Low pre-deploy; one-way door after.
-
-`registry::create_and_share_block_scholes_stores` is create-once per underlying
-(`EBlockScholesStoresAlreadyExist`) with no admin replacement path, while the
-Pyth lane carries `replace_pyth_binding_for_underlying` for exactly this
-purpose. The stated reason — that a second pair would leave two stores each able
-to claim the underlying with nothing to choose between them — does not hold: the
-registry binding *is* what chooses, which is why the Pyth replacement is safe.
-If a pair is ever created against the wrong underlying, or becomes unusable
-under a future store shape, that underlying has no on-chain route to a working
-pair and every market on it is stranded behind a package upgrade. Adding the
-setter is free while pre-deploy and impossible to add compatibly later only in
-the sense that the absence has to be lived with.
-
-**Action:** Add an admin-gated replacement for an underlying's store pair
-mirroring `replace_pyth_binding_for_underlying`, or record the decision that the
-pair is deliberately permanent and what the recovery path is if one is wrong.
 
 ### P-5: BS zero/non-normalizable updates can blank live reads
 
@@ -177,57 +90,6 @@ guard to the exact-ms settlement insert (reject a raw that cannot produce a
 positive normalized spot before it can claim the key), or add an authorized
 overwrite/removal for a non-normalizable exact-expiry read; and extend RP-4 to
 cover the permanent (not just transient) case.
-
-### P-11: The coarse SVI envelope admits butterfly-arbitrage-able surfaces that break NAV netting
-
-**Severity:** Open envelope-hardening item; non-blocking for the skew-pricing
-correction. No sampled Block Scholes surface triggers it (`g(k) >= 0` over the
-scanned band on 4,000 sampled surfaces), and observed `b` is roughly 3,000 times
-below the constructed corner. The contract nevertheless accepts the corner
-because it bounds each SVI parameter independently and does not enforce
-butterfly freedom (`g(k) >= 0`).
-
-**Condition and controller.** The fixed-point counterexample uses an admitted
-surface with `a=1`, `b=max_svi_input`, `rho=-1`, `m=0`, and `sigma=min` at a
-forward of `100e9`. The trusted surface source controls these inputs; a trader
-cannot choose them. Exploitation additionally requires pre-existing offsetting
-ranges, a pool flush while the surface is active, and queued LP withdrawals.
-Under that surface the adjusted digital is non-monotone. `walk_linear` nets
-signed boundary contributions tree-wide and floors once at the aggregate,
-whereas `compute_range_price` floors each order at zero; without an active-book
-monotonicity guard the tree can therefore net away real liability and make
-`current_nav` overstate withdrawable value.
-
-**Economic impact.** The replay uses two ranges with `1e9` raw DUSDC units of
-quantity each, a $1,000 face value per range at six decimals. Per-order pricing
-returns `0` for `(80e9, 90e9]` and `898,433,481` raw units ($898.433481, or
-89.843% of face) for `(95e9, 105e9]`, so the contract's own per-order liability
-is $898.433481. `walk_linear` nets the first signed contribution before flooring
-and reports `255,159,574` raw units ($255.159574, or 25.516% of face): an
-absolute liability understatement of `643,273,907` raw units ($643.273907, or
-64.327% of face), which is 71.6% of the per-order liability. `current_nav`
-overstates by the same absolute amount; its percentage error depends on the
-market's free cash. This is an internal accounting discrepancy, not a claim that
-a live contract quote is 64% inaccurate.
-
-**Evidence grade.** The mechanism follows directly from `walk_linear`'s
-tree-wide signed netting versus `compute_range_price`'s per-order zero floor;
-the numbers above are reproduced by the fixed-point replay. They are a synthetic
-accepted-envelope counterexample, not a live-pool measurement or a realistic
-loss estimate.
-
-**Action:** Measure a `b`-specific envelope against observed surface history and
-evaluate a source-level butterfly/monotonicity admission check. The active-book
-price-memo guard prevents the known NAV overstatement by aborting valuation on a
-non-monotone active boundary set, so the completed-valuation-discrepancy risk is
-closed (only P-13 now describes a live valuation gap). Because the guard
-aborts rather than reprices, and the pool flush values every active market in one
-transaction, an admitted non-monotone surface now stalls that flush until the
-surface is replaced — the residual is a surface-quality admission gap plus this
-flush-liveness cost, not a mispriced NAV. Surface quality remains a trusted input
-for single-order prices until the stronger envelope lands. (2026-07-09 PR #1110
-review; quantitative framing corrected 2026-07-11; active-book guard added by
-DBU-548.)
 
 ### P-13: Boundary aggregation can understate positive liability by one raw unit
 
@@ -505,20 +367,10 @@ correctness today.
 
 ### H-3: Smaller cleanup items
 
-- `block_scholes_store::belongs` matches only the sid's underlying field, so an
-  observation whose layout version, kind, or value scale differs from this
-  package's is accepted into the table and then never read — reads derive whole
-  ids. A provider-side layout or scale change therefore accumulates unreadable
-  rows the writer pays for instead of failing visibly. Matching version and
-  scale as well would make it a clean ingestion refusal, which is the halt the
-  sid design already intends for a rescale.
 - The store tables have no pruning path: every expiry ever quoted leaves a
   permanent row in `values`/`svis`, and neither store can be unwrapped (`key`
   only). Reads stay O(1), so this is unreclaimable storage rather than a
   liveness risk, but it grows monotonically for the life of the deployment.
-- `apply_value_batch`/`apply_svi_batch` assert the store version, then
-  `apply_value`/`apply_svi` assert it again once per update inside the loop —
-  a defensive duplicate and a per-iteration re-check of a loop invariant.
 - `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
   component so per-expiry DUSDC has one owner.
