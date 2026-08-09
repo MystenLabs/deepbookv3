@@ -175,11 +175,11 @@ fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
 
 /// A retransmission carries the tuple's original model time in a newer envelope, and the envelope
 /// is the economic clock: the roll-down re-anchors to the retransmit's publish time — the provider
-/// re-asserted the tuple as current there — while the snapshotted source time still reports the
-/// model time the data is "as of". Quoted between the retransmit and expiry, the envelope anchor
+/// re-asserted the tuple as current there — and the snapshotted timestamp reports that same
+/// publish clock to trade events. Quoted between the retransmit and expiry, the envelope anchor
 /// scales the raw surface by 1/2; the old model anchor would have scaled it by 1/4.
 #[test]
-fun svi_retransmit_reanchors_the_roll_down_and_holds_the_source_time() {
+fun svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp() {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -227,7 +227,7 @@ fun svi_retransmit_reanchors_the_roll_down_and_holds_the_source_time() {
     );
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
     // Quoted at 165_000: remaining 15s over the envelope anchor's 30s horizon
     // scales raw a=2 to effective a=1 and b remains zero. At K=F, positive
     // variance gives d2=-sqrt(1e-9)/2, checked against the generated

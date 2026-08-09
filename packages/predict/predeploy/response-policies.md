@@ -1030,7 +1030,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
   `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
   `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
-  `svi_retransmit_reanchors_the_roll_down_and_holds_the_source_time`;
+  `svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp`;
   `pricing_guard_tests.move` —
   `live_quote_with_a_freshly_retransmitted_aged_spot_model_succeeds`,
   `live_quote_with_a_freshly_retransmitted_aged_forward_model_succeeds`,

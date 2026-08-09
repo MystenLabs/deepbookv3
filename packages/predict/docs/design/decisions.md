@@ -536,12 +536,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the basis factor, `forward <= 100 × pyth_spot`). Adding a band here would
   reintroduce exactly the state-triggered abort over an externally-controlled
   variable that response policy RP-5 removed. Disclosed in `docs/risks.md` instead.
-- **Pricing keys on the publish time; the model time is provenance.** Freshness
-  for all three Block Scholes reads and the SVI roll-down anchor key on each
+- **Pricing keys on the publish time; the model time is calibration identity.**
+  Freshness for all three Block Scholes reads, the SVI roll-down anchor, and the
+  timestamps snapshotted onto the `Pricer` for trade events all key on each
   stored observation's signed batch-envelope time (`published_at_ms`), which
   advances on every provider flush including retransmissions of an unchanged
-  value; the model time stays on the observation and the trade events as "as of"
-  provenance. This implements the provider contract: the model timestamp is
+  value; the model time stays on the stored observation and its ingestion
+  events. This implements the provider contract: the model timestamp is
   re-derived roughly every 20 seconds, and an SVI publish whose model time is
   unchanged carries the same calibration already rolled down to its new publish
   time — duplicate SVI retransmission does not exist — so every publish carries
