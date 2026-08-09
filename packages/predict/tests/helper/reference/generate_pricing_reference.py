@@ -415,8 +415,8 @@ ADMITTED_LOW_VARIANCE = {
 # first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
 # moves the digital by ~890 units against a 21-unit budget. Mirrors the fixture in
 # `pricing_guard_tests::w_prime_keeps_the_rolled_b_precision`, which seeds the
-# tuple at 120_000, advances the clock to 121_000, and retransmits it unchanged so
-# the anchor is preserved and `b` is genuinely non-integral at 1e9.
+# tuple at 120_000 and quotes at 121_000 — one second past the tuple's publish
+# anchor — so `b` is genuinely non-integral at 1e9.
 W_PRIME_PRECISION_SURFACE = {
     "a": 203 / F,
     "b": 13 / F,

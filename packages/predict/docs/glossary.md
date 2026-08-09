@@ -98,12 +98,12 @@ Predict reads it but does not own it.
   `propbook::pyth_feed`.
 - **`BlockScholesValueStore`** — one per-underlying store of the latest BS spot
   and forward observations, keyed by signed series id. Predict reads `spot()` /
-  `forward(expiry_ms)` and each read's `model_timestamp_ms` for freshness — the
-  batch envelope time is transport metadata Predict never prices from. Code
+  `forward(expiry_ms)` and each read's `published_at_ms` envelope time for
+  freshness — the model time is retained as trade-event provenance. Code
   module `propbook::block_scholes_store`.
 - **`BlockScholesSVIStore`** — one per-underlying store of the latest BS SVI
   parameter sets, keyed by signed series id. Predict reads `svi(expiry_ms)` and
-  its `model_timestamp_ms`, one clock for both freshness and the roll-down
+  its `published_at_ms`, one clock for both freshness and the roll-down
   anchor. Code module `propbook::block_scholes_store`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are

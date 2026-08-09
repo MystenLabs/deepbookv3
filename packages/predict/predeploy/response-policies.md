@@ -953,12 +953,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-21: Block Scholes series age from their model timestamps (resolves P-2, P-24)
+## RP-21: Block Scholes series age from their publish timestamps (resolves P-2, P-24; reanchored by DBU-715)
 
 - **Trigger state:** the Block Scholes publisher retransmits an unchanged spot,
-  forward, or normalized SVI tuple. The transport envelope advances, but the
-  series retains the model timestamp at which the provider last derived that
-  value; for SVI, time-to-expiry also continues to decrease.
+  forward, or normalized SVI tuple, or stops publishing a series entirely. A
+  retransmission advances the transport envelope while the series retains the
+  model timestamp at which the provider last derived the value; for SVI,
+  time-to-expiry also continues to decrease.
 - **Controller:** external × protocol clock — the publisher controls the
   series values, model timestamps, and envelope cadence; elapsed time is
   objective on-chain state.
@@ -967,20 +968,21 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   underlying; a stale forward or SVI affects its expiry. Because a flush must
   value every active market, any one stale required series blocks the pool-wide
   flush and all queued LP fills. Exact settlement does not use Block Scholes.
-- **Response:** fail closed on model age, regardless of transport activity.
-  Spot and forward age out at `block_scholes_price_freshness_ms` (10s by
-  default); SVI ages out at `block_scholes_svi_freshness_ms` (60s by default,
-  configurable up to a 120s maximum). A retransmission refreshes nothing
-  economically. Recovery is a newly derived signed series with a newer model
-  timestamp, followed by retrying the affected action or flush. Before SVI
-  reaches that boundary, proceed with anchored remaining-time roll-down. The
-  provider stamps each tuple with `model_timestamp_ms` and holds it fixed across
-  retransmissions of an unchanged tuple; the store orders each
-  series by that model time (the batch envelope only breaks ties between
-  retransmissions), so the roll-down anchor is the tuple's own signed model
-  time and a changed tuple carries a new one. Predict computes
+- **Response:** fail closed on publish age — a series is usable while its
+  signed batch envelope time is inside the window, and each publish is trusted
+  as the provider's assertion that the carried value is current then. Spot and
+  forward age out at `block_scholes_price_freshness_ms` (10s by default); SVI
+  ages out at `block_scholes_svi_freshness_ms` (60s by default, configurable up
+  to a 120s maximum). A retransmission of an unchanged tuple therefore
+  refreshes the series and re-anchors the SVI roll-down at its new publish
+  time; pricing halts only when envelopes stop arriving, and recovery is
+  resumed publishing followed by retrying the affected action or flush. The
+  store keys ordering on model time first and never lets a series' stored
+  envelope time regress (`propbook::block_scholes_store::apply`), so the anchor
+  is monotone. Predict computes
   `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and
-  `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)`, both **at 1e18** with
+  `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)` with
+  `anchor_tte_ms = expiry - published_at`, both **at 1e18** with
   a `u256` intermediate, and hands them to the variance path in that domain;
   `rho`, `m`, and `sigma` are unchanged. The scaled results are carried at 1e18
   rather than narrowed back to 1e9 because the roll-down multiplies terms that
@@ -995,21 +997,22 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   between `a` and `b·inner`, not on `a` alone. The existing
   `ENonPositiveVariance` guard remains authoritative for that state, including
   in pool valuation.
-- **Reasoning:** transport freshness and parameter age answer different
-  questions. A retransmit proves the delivery path is live but does not make an
-  unchanged price, forward, or variance calibration new. The mandatory pricing
-  path therefore requires every consumed model to be inside its own absolute
-  window at the same valuation instant; it does not carry a stale model or
-  partially value a pool. Preserving both timestamps also lets SVI consume the
-  current tuple at the remaining horizon without a separate near-expiry mode or
-  minimum-time cutoff. The pre-expiry variance abort is likewise accepted: the
-  flush is retriable, and flooring variance to a fabricated positive value
-  would hide an unusable effective surface.
+- **Reasoning:** the provider's `a`/`b` describe the variance remaining over the
+  horizon from publish, so the publish time is the correct roll-down anchor —
+  anchoring on the earlier model time under-scaled the surface whenever publish
+  lagged calibration. Keying freshness on the same clock keeps one economic
+  clock per read and makes liveness a transport property: a quiet-but-publishing
+  feed keeps pricing (the earlier model-keyed policy halted the flush on exactly
+  that state), at the trust cost that Predict cannot distinguish a republished
+  stale calibration from a re-derived one — data quality is the provider's
+  signed commitment (`docs/risks.md` § stopped transport). The pre-expiry
+  variance abort is likewise accepted: the flush is retriable, and flooring
+  variance to a fabricated positive value would hide an unusable effective
+  surface.
 - **Risk profile:** `BEST-GUESS` — the timestamp and arithmetic policy are
-  deterministic and pinned. The longest consecutive model age per series, and
-  therefore the frequency of a 10s or 60s breach during quiet markets, is not
-  measured; aggregate pinned-retransmission counts do not answer that question.
-  This measurement is operational validation of the accepted fail-closed
+  deterministic and pinned. The provider's publish cadence per series, and
+  therefore the frequency of a 10s or 60s envelope breach, is not measured;
+  this measurement is operational validation of the accepted fail-closed
   policy, not a prerequisite for its correctness. Whether linear roll-down is
   the best calibration model remains owned by the still-open O-1 calibration
   work.
@@ -1017,18 +1020,23 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
   `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
   `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
-  `identical_svi_retransmit_holds_the_anchor_and_the_source_time`;
+  `svi_retransmit_reanchors_the_roll_down_and_holds_the_source_time`;
   `pricing_guard_tests.move` —
-  `live_quote_with_a_freshly_retransmitted_but_aged_spot_model_aborts`,
-  `live_quote_with_a_freshly_retransmitted_but_aged_forward_model_aborts`,
-  `live_quote_with_a_freshly_retransmitted_but_aged_svi_model_aborts`,
+  `live_quote_with_a_freshly_retransmitted_aged_spot_model_succeeds`,
+  `live_quote_with_a_freshly_retransmitted_aged_forward_model_succeeds`,
+  `live_quote_with_a_freshly_retransmitted_aged_svi_model_succeeds`,
+  `live_quote_with_stale_block_scholes_surface_aborts`,
+  `live_quote_with_fresh_spot_but_stale_forward_aborts`,
+  `live_quote_with_fresh_prices_but_stale_svi_aborts`,
   `pre_expiry_roll_down_keeps_positive_variance`,
-  `terminal_roll_down_to_zero_is_preempted_by_model_freshness`, and
+  `terminal_roll_down_to_zero_is_preempted_by_envelope_freshness`, and
   `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
   correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
-  units against a 21-unit budget).
-- **Reopen when:** the provider changes series or timestamp semantics, observed
-  model-age breaches materially interrupt LP flush liveness or lack timely
+  units against a 21-unit budget); `block_scholes_store_tests.move` —
+  `svi_data_in_an_older_envelope_is_skipped_even_with_a_newer_model_time`.
+- **Reopen when:** the provider changes series or timestamp semantics or is
+  observed republishing surfaces it has stopped re-deriving, observed
+  envelope-age breaches materially interrupt LP flush liveness or lack timely
   recovery, Predict adopts partial/async pool valuation, Predict adopts a
   calibrated non-linear horizon transform, or live pricing stops consuming SVI
   total variance as variance-to-expiry.

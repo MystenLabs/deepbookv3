@@ -680,8 +680,8 @@ public fun set_bs_svi_raw_for_testing_bundle(
 }
 
 /// Re-send an unchanged SVI tuple in a later batch: the envelope advances while the tuple keeps the
-/// model time it was first calibrated at. This is what a provider retransmission looks like, and it
-/// is the sequence the roll-down anchors on.
+/// model time it was first calibrated at. This is what a provider retransmission looks like; the
+/// advancing envelope re-anchors the roll-down and refreshes the tuple's freshness.
 public fun retransmit_bs_svi_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,

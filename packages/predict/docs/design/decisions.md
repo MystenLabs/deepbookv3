@@ -305,7 +305,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   overflow risk (built, then fully reverted). Revisit only if the drift and overflow
   are solved AND skew is shown to help LPs.
 
-- **The Block Scholes feeds became signed-series stores gated by the production verifier.** The three per-source feed objects and the stub `block_scholes_oracle` package were replaced by two per-underlying stores (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs and written only through batch types the `bs_oracle` signature verifier mints. Holding a verified batch is the provenance proof, so relayers are untrusted. Each store pair is immutably bound to one provider base-asset spelling; typed spot, forward, and SVI ingestion derives the accepted ids through the provider-owned `bs_sid` package from the complete subscription descriptor, and forward/SVI expiry witnesses are checked through that derivation. Each observation carries the provider's model time and batch-envelope time separately: freshness and the SVI roll-down anchor both key on the model time — the envelope is transport metadata — replacing on-chain change-detection that reconstructed the anchor. *Rationale:* authenticity moves from the writer to the data, closing predeploy gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted writer (retains our own key custody in the trust set), and an on-chain sid→slot mapping table (a registration step per new expiry on the market-roll path; deriving the provider-defined id from immutable store identity needs no state).
+- **The Block Scholes feeds became signed-series stores gated by the production verifier.** The three per-source feed objects and the stub `block_scholes_oracle` package were replaced by two per-underlying stores (`propbook::block_scholes_store`) keyed by the series id Block Scholes signs and written only through batch types the `bs_oracle` signature verifier mints. Holding a verified batch is the provenance proof, so relayers are untrusted. Each store pair is immutably bound to one provider base-asset spelling; typed spot, forward, and SVI ingestion derives the accepted ids through the provider-owned `bs_sid` package from the complete subscription descriptor, and forward/SVI expiry witnesses are checked through that derivation. Each observation carries the provider's model time and batch-envelope time separately, replacing on-chain change-detection that reconstructed the anchor. (Freshness and the SVI roll-down anchor originally keyed on the model time; "Pricing keys on the publish time" below moved both to the envelope time.) *Rationale:* authenticity moves from the writer to the data, closing predeploy gate S-4. *Rejected:* keeping the stub constructors behind an allowlisted writer (retains our own key custody in the trust set), and an on-chain sid→slot mapping table (a registration step per new expiry on the market-roll path; deriving the provider-defined id from immutable store identity needs no state).
 
 ## One canonical strike representation — absolute ticks (recent)
 
@@ -536,3 +536,25 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the basis factor, `forward <= 100 × pyth_spot`). Adding a band here would
   reintroduce exactly the state-triggered abort over an externally-controlled
   variable that response policy RP-5 removed. Disclosed in `docs/risks.md` instead.
+- **Pricing keys on the publish time; the model time is provenance.** Freshness
+  for all three Block Scholes reads and the SVI roll-down anchor key on each
+  stored observation's signed batch-envelope time (`published_at_ms`), which
+  advances on every provider flush including retransmissions of an unchanged
+  value; the model time stays on the observation and the trade events as "as of"
+  provenance. A publish is treated as the provider's assertion that the value is
+  current then, so a retransmission re-anchors the roll-down and refreshes the
+  tuple, and pricing halts only when envelopes stop arriving (stopped transport).
+  The store additionally refuses to move a series' stored envelope time backwards
+  (`propbook::block_scholes_store::apply`), since a regressed anchor would stretch
+  the roll-down horizon and understate rolled `a`/`b`. *Supersedes* the
+  model-time keying in "The Block Scholes feeds became signed-series stores"
+  above. *Rationale:* the provider's `a`/`b` describe the horizon remaining at
+  publish; anchoring on the earlier model time systematically under-scaled them
+  whenever publish lagged calibration, and model-keyed freshness halted pricing
+  on quiet-but-alive feeds (`docs/risks.md` § stopped transport carries the
+  residual trust cost). *Rejected:* keying freshness on the envelope while
+  anchoring on the model time (two economic clocks for one read), and an
+  envelope-first store ordering (newest envelope always wins — order-independent,
+  but lets a later envelope roll a series' model data back; the envelope floor
+  keeps the model-first ordering and accepts first-writer-wins for the degenerate
+  publish-stream-regression case instead).
