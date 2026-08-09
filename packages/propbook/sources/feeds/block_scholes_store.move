@@ -34,9 +34,10 @@ public struct BsRead<Value: copy + drop + store> has copy, drop, store {
     /// Provider time the series data is "as of", held fixed across retransmissions of a value that
     /// has not changed. The provider's per-series replay key: ordering keys on this first.
     model_timestamp_ms: u64,
-    /// Envelope time of the batch this observation arrived in, advancing on every provider flush.
-    /// Transport metadata: ordering falls back to it only between equal model times, and consumers
-    /// price from the model time, never from this.
+    /// Envelope time of the batch this observation arrived in, advancing on every provider flush
+    /// and never regressing once stored (see `apply`). The economic clock: consumers gate
+    /// freshness on it and the SVI roll-down anchors on it, so a republished unchanged value is
+    /// re-asserted as current at its new envelope time.
     published_at_ms: u64,
     /// Sui clock time when the accepting transaction executed.
     recorded_at_ms: u64,
@@ -537,16 +538,16 @@ public fun set_store_versions_for_testing(
     svi_store.version = version;
 }
 
-/// Ordering is lexicographic on (model time, envelope time) — the provider names the per-series
-/// model time as the replay key and the envelope only as transport, and never promises that a
-/// later flush carries later model times. Keying on the pair makes the stored observation the same
-/// whatever order a relayer lands honestly signed batches in: newer model data always wins, even
-/// arriving in an older envelope (whose honest, older publish time it then carries), and an equal
-/// model time advances only with a fresher envelope (a retransmission updates transport metadata
-/// without making the data economically newer). A model time after its own envelope is provider
-/// garbage — data cannot be "as of" later than its publish — and admitting it would let the
-/// pricing roll-down anchor land on or past expiry, so it is skipped like any other unusable
-/// entry.
+/// Ordering is lexicographic on (model time, envelope time), and the stored envelope time never
+/// regresses. The provider names the per-series model time as the replay key and the envelope as
+/// transport, so newer model data wins and an equal model time advances only with a fresher
+/// envelope (a retransmission updates transport metadata). The envelope floor exists because
+/// consumers price from the stored `published_at_ms` — it gates freshness and anchors the SVI
+/// roll-down — so a read that would move it backwards (a delayed batch whose newer model time
+/// arrived in an older envelope: the provider's own publish stream regressed) is skipped rather
+/// than allowed to stretch the anchor. A model time after its own envelope is provider garbage —
+/// data cannot be "as of" later than its publish — and admitting it would let the roll-down
+/// anchor land on or past expiry, so it is skipped like any other unusable entry.
 fun apply<Value: copy + drop + store>(
     reads: &mut Table<u256, BsRead<Value>>,
     propbook_oracle_id: ID,
@@ -561,7 +562,8 @@ fun apply<Value: copy + drop + store>(
     if (reads.contains(sid)) {
         let latest = reads.borrow_mut(sid);
         let advances =
-            read.model_timestamp_ms > latest.model_timestamp_ms ||
+            (read.published_at_ms >= latest.published_at_ms &&
+                read.model_timestamp_ms > latest.model_timestamp_ms) ||
             (read.model_timestamp_ms == latest.model_timestamp_ms &&
                 read.published_at_ms > latest.published_at_ms);
         if (!advances) return false;

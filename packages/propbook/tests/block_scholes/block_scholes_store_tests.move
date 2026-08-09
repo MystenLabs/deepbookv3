@@ -311,10 +311,12 @@ fun a_newer_envelope_with_an_older_model_time_cannot_roll_the_series_back() {
     scenario.end();
 }
 
-/// Newer model data is the better observation whichever flush carried it; it lands even from an
-/// older envelope, and freshness then honestly reflects that envelope's publish time.
+/// Consumers price from the stored envelope time — it gates freshness and anchors the SVI
+/// roll-down — so a batch that would move it backwards is refused even when it carries newer
+/// model data. A provider whose newer model data really is current republishes it in its next
+/// envelope, which then lands normally.
 #[test]
-fun newer_model_data_in_an_older_envelope_still_lands() {
+fun newer_model_data_in_an_older_envelope_is_skipped() {
     let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
     let chain_clock = new_clock(&mut scenario);
@@ -335,17 +337,20 @@ fun newer_model_data_in_an_older_envelope_still_lands() {
     );
 
     let read = store::spot(&value_store).destroy_some();
-    assert_eq!(read.read_value(), SPOT_LATER);
-    assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_MID);
+    assert_eq!(read.read_value(), SPOT);
+    assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
+    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
     scenario.end();
 }
 
-/// The relayer chooses submission order, so the stored observation must be the same for any order
-/// of the same signed batches — otherwise ordering becomes a lever over the data.
+/// The relayer chooses submission order, so for a monotone provider stream — model and envelope
+/// times advancing together, the only stream an honest provider emits — the stored observation
+/// must be the same for any landing order. (A provider stream whose envelope order disagrees with
+/// its model order hits the envelope floor instead; see
+/// `newer_model_data_in_an_older_envelope_is_skipped`.)
 #[test]
 fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     let mut scenario = test::begin(ADMIN);
@@ -366,7 +371,7 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     apply_values(
         &mut forward_store,
         PUBLISHED_LATE,
-        vector[spot_update(&btc(), MODEL_EARLY, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_LATE, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -374,7 +379,7 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     apply_values(
         &mut reversed_store,
         PUBLISHED_LATE,
-        vector[spot_update(&btc(), MODEL_EARLY, SPOT_LATER)],
+        vector[spot_update(&btc(), MODEL_LATE, SPOT_LATER)],
         &chain_clock,
         scenario.ctx(),
     );
@@ -391,8 +396,8 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     assert_eq!(forward_read.read_value(), reversed_read.read_value());
     assert_eq!(forward_read.read_model_timestamp_ms(), reversed_read.read_model_timestamp_ms());
     assert_eq!(forward_read.read_published_at_ms(), reversed_read.read_published_at_ms());
-    assert_eq!(forward_read.read_value(), SPOT);
-    assert_eq!(forward_read.read_model_timestamp_ms(), MODEL_MID);
+    assert_eq!(forward_read.read_value(), SPOT_LATER);
+    assert_eq!(forward_read.read_model_timestamp_ms(), MODEL_LATE);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(forward_store);
@@ -694,6 +699,38 @@ fun an_older_svi_batch_leaves_the_stored_parameters_intact() {
     let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
     assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_LATE);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(svi_store);
+    scenario.end();
+}
+
+/// The SVI envelope time anchors the pricing roll-down, so it especially must never regress:
+/// a backwards anchor stretches the remaining-time fraction and understates rolled `a`/`b`.
+#[test]
+fun svi_data_in_an_older_envelope_is_skipped_even_with_a_newer_model_time() {
+    let (mut scenario, _value_id, svi_id) = setup_stores();
+    let mut svi_store = scenario.take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_svis(
+        &mut svi_store,
+        PUBLISHED_LATE,
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_EARLY)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    apply_svis(
+        &mut svi_store,
+        PUBLISHED_MID,
+        vector[svi_update(&btc(), EXPIRY_A, MODEL_MID)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
+    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(svi_store);
