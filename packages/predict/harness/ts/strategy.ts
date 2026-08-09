@@ -46,6 +46,7 @@ export interface Snap {
   expiries: Record<string, {
     forward: number;
     sviTsMs: number;
+    sviPublishedAtMs: number;
     svi: { alpha: number; beta: number; rho: number; m: number; sigma: number };
   }>;
 }
@@ -200,11 +201,11 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       sigma: exp.svi.sigma,
     };
     // Match load_live_pricer: use Block Scholes' own signed spot for the
-    // basis re-anchor, then roll a/b from the signed SVI model timestamp to
+    // basis re-anchor, then roll a/b from the SVI batch's publish timestamp to
     // this quote's wall-clock time. Using Pyth as both spots and leaving SVI
     // at its anchor made near-expiry max-probability guards reject otherwise
     // valid strategy quotes.
-    const svi = rollDownSvi(rawSvi, Number(exp.sviTsMs), market.expiryMs, Date.now());
+    const svi = rollDownSvi(rawSvi, Number(exp.sviPublishedAtMs), market.expiryMs, Date.now());
     if (!svi) return null;
     return {
       pythSpot: spot,

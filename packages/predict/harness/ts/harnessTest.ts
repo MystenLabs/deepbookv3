@@ -91,6 +91,7 @@ test("hub snapshots require the current complete schema without provider credent
           mNegative: false,
         },
         sviTsMs: 80,
+        sviPublishedAtMs: 90,
       },
     ]]),
   });
