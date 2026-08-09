@@ -46,7 +46,6 @@ export interface Snap {
   expiries: Record<string, {
     forward: number;
     sviTsMs: number;
-    sviPublishedAtMs: number;
     svi: { alpha: number; beta: number; rho: number; m: number; sigma: number };
   }>;
 }
@@ -201,11 +200,14 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       sigma: exp.svi.sigma,
     };
     // Match load_live_pricer: use Block Scholes' own signed spot for the
-    // basis re-anchor, then roll a/b from the SVI batch's publish timestamp to
-    // this quote's wall-clock time. Using Pyth as both spots and leaving SVI
-    // at its anchor made near-expiry max-probability guards reject otherwise
-    // valid strategy quotes.
-    const svi = rollDownSvi(rawSvi, Number(exp.sviPublishedAtMs), market.expiryMs, Date.now());
+    // basis re-anchor, then roll a/b from the ON-CHAIN batch envelope to this
+    // quote's wall-clock time. The updater re-signs every push under its own
+    // clamped envelope and writes it back as the snapshot's `publishedAtMs`, so
+    // that — not the upstream provider's batch timestamp, which never reaches
+    // the chain — is the anchor the contract will use. Using Pyth as both spots
+    // and leaving SVI at its anchor made near-expiry max-probability guards
+    // reject otherwise valid strategy quotes.
+    const svi = rollDownSvi(rawSvi, Number(snap.publishedAtMs), market.expiryMs, Date.now());
     if (!svi) return null;
     return {
       pythSpot: spot,

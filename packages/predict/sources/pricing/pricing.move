@@ -375,12 +375,12 @@ fun resolve_live_pricer(
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
     assert_oracle_not_written_this_tx(&bs_spot_read.read_writer_digest(), ctx);
-    // Freshness reads each observation's batch envelope time, not its model time: the provider
-    // republishes an unchanged value with its original model time and a fresh envelope, and that
-    // republication re-asserts the value as current. Pricing therefore halts only when envelopes
-    // stop arriving within the window (transport stopped), never merely because the provider has
-    // not re-derived a quiet series. The store admits an observation only when
-    // `model <= published <= recorded`, so a fresh envelope also bounds the model time's age.
+    // Freshness reads each observation's batch envelope time, not its model time: per the
+    // provider contract, every publish carries values valid as-of that publish (an unchanged
+    // model time means the same calibration republished, for SVI already rolled down to the new
+    // publish — never duplicate data). Pricing therefore halts only when envelopes stop arriving
+    // within the window (transport stopped), never merely because the calibration clock is quiet.
+    // The store admits an observation only when `model <= published <= recorded`.
     // The model times are still snapshotted below as trade-event provenance.
     assert!(
         timestamp_is_fresh(

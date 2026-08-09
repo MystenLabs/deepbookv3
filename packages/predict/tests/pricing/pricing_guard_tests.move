@@ -1111,15 +1111,12 @@ fun d2_saturates_at_the_normal_clamp_instead_of_overflowing() {
     assert!(d2.magnitude() < SATURATED_D2_MAGNITUDE);
 }
 
-/// Raw `a == 1` one millisecond past the parameter anchor. The 1e9 roll-down
+/// Raw `a == 1` one millisecond past the publish anchor. The 1e9 roll-down
 /// floored it straight to zero here and aborted `ENonPositiveVariance` on a
 /// surface whose variance is barely reduced; carrying the roll-down at 1e18
-/// leaves `a` at 0.9999833e-9 and the surface prices normally.
-///
-/// An identical retransmit at that later millisecond refreshes the envelope
-/// without resetting the anchor, so this is the real production sequence, not a
-/// contrived one. The expected value is the flat-surface reference: `b` is zero,
-/// so `w` is just the rolled `a`, and the roll-down moves the digital by well
+/// leaves `a` at 0.9999833e-9 (ratio 59_999/60_000) and the surface prices
+/// normally. The expected value is the flat-surface reference: `b` is zero, so
+/// `w` is just the rolled `a`, and the roll-down moves the digital by well
 /// under one raw unit at this horizon.
 #[test]
 fun pre_expiry_roll_down_keeps_positive_variance() {
@@ -1144,18 +1141,6 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
         false,
     );
     fx.set_clock_for_testing(test_constants::now_ms() + ROLL_DOWN_CLOCK_ADVANCE_MS);
-    fx.set_bs_svi_for_testing_bundle(
-        &mut oracle,
-        test_constants::now_ms() + ROLL_DOWN_CLOCK_ADVANCE_MS,
-        ROLL_DOWN_ZERO_VARIANCE_RAW_A,
-        false,
-        ROLL_DOWN_ZERO_VARIANCE_RAW_B,
-        default_svi_sigma(),
-        ZERO_SVI_SHAPE_PARAM,
-        false,
-        ZERO_SVI_SHAPE_PARAM,
-        false,
-    );
     let pricer = fx.load_pricer_bundle(&oracle);
 
     test_helpers::assert_within(

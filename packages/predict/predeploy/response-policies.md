@@ -203,7 +203,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   operator steering live pricing away from the Pyth spot; a provider magnitude
   that does not fit Predict's `u64` pricing domain; or, while
   `use_pyth_spot_for_forward` is set, an independently fresh Pyth spot whose
-  source timestamp is older than the Block Scholes spot model time.
+  source timestamp is older than the Block Scholes spot observation's publish
+  time.
 - **Controller:** external (oracle operator).
 - **Blast radius:** every live price — entry prices, NAV marks, and liquidation.
   The same load sits inside mandatory `plp::value_expiry`, so one over-wide
@@ -997,15 +998,24 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   between `a` and `b·inner`, not on `a` alone. The existing
   `ENonPositiveVariance` guard remains authoritative for that state, including
   in pool valuation.
-- **Reasoning:** the provider's `a`/`b` describe the variance remaining over the
-  horizon from publish, so the publish time is the correct roll-down anchor —
-  anchoring on the earlier model time under-scaled the surface whenever publish
-  lagged calibration. Keying freshness on the same clock keeps one economic
-  clock per read and makes liveness a transport property: a quiet-but-publishing
-  feed keeps pricing (the earlier model-keyed policy halted the flush on exactly
-  that state), at the trust cost that Predict cannot distinguish a republished
-  stale calibration from a re-derived one — data quality is the provider's
-  signed commitment (`docs/risks.md` § stopped transport). The pre-expiry
+- **Reasoning:** the provider contract (stated 2026-08-09) is that the model
+  timestamp is re-derived roughly every 20 seconds and that an SVI publish
+  whose model time is unchanged carries the same calibration already rolled
+  down to its new publish time — duplicate SVI retransmission does not exist.
+  The published `a`/`b` therefore always describe the variance remaining over
+  the horizon from publish, making the publish time the only correct roll-down
+  anchor: the previous model anchor under-scaled the surface whenever publish
+  lagged calibration (it re-applied a discount the provider had already
+  applied). Keying freshness on the same clock keeps one economic clock per
+  read and makes liveness a transport property: a quiet-but-publishing feed
+  keeps pricing (the earlier model-keyed policy halted the flush on exactly
+  that state), at the trust cost that the contract itself is unverifiable
+  on-chain — a provider republishing without actually rolling or recalibrating
+  moves quotes as if the surface were current. Calibration age is observable
+  off-chain from `BlockScholesObservationRecorded`, which is where a tripwire
+  belongs: an on-chain model-age abort would be a state-triggered abort on the
+  mandatory flush over an externally-controlled variable, the guard class RP-5
+  removed (`docs/risks.md` § stopped transport). The pre-expiry
   variance abort is likewise accepted: the flush is retriable, and flooring
   variance to a fabricated positive value would hide an unusable effective
   surface.

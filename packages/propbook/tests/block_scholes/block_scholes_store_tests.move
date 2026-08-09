@@ -348,11 +348,9 @@ fun newer_model_data_in_an_older_envelope_is_skipped() {
 
 /// The relayer chooses submission order, so for a monotone provider stream — model and envelope
 /// times advancing together, the only stream an honest provider emits — the stored observation
-/// must be the same for any landing order. (A provider stream whose envelope order disagrees with
-/// its model order hits the envelope floor instead; see
-/// `newer_model_data_in_an_older_envelope_is_skipped`.)
+/// must be the same for any landing order.
 #[test]
-fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
+fun a_monotone_provider_stream_stores_the_same_observation_in_any_order() {
     let mut scenario = test::begin(ADMIN);
     let forward_id = store::create_and_share_value_store(btc(), scenario.ctx());
     let reversed_id = store::create_and_share_value_store(btc(), scenario.ctx());
@@ -398,6 +396,64 @@ fun the_stored_observation_is_the_same_whatever_order_batches_land_in() {
     assert_eq!(forward_read.read_published_at_ms(), reversed_read.read_published_at_ms());
     assert_eq!(forward_read.read_value(), SPOT_LATER);
     assert_eq!(forward_read.read_model_timestamp_ms(), MODEL_LATE);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(forward_store);
+    return_shared(reversed_store);
+    scenario.end();
+}
+
+/// The one pair the envelope floor makes order-dependent, pinned as a checked decision: a
+/// regressed provider publish stream emits (newer model, older envelope) alongside (older model,
+/// newer envelope), neither of which advances over the other, so whichever lands first stays.
+/// Refusing an anchor regression outranks order-independence for provider garbage; an honest
+/// monotone stream never produces this pair (see the test above).
+#[test]
+fun a_regressed_publish_stream_is_first_writer_wins() {
+    let mut scenario = test::begin(ADMIN);
+    let forward_id = store::create_and_share_value_store(btc(), scenario.ctx());
+    let reversed_id = store::create_and_share_value_store(btc(), scenario.ctx());
+    scenario.next_tx(ADMIN);
+    let mut forward_store = scenario.take_shared_by_id<BlockScholesValueStore>(forward_id);
+    let mut reversed_store = scenario.take_shared_by_id<BlockScholesValueStore>(reversed_id);
+    let chain_clock = new_clock(&mut scenario);
+
+    apply_values(
+        &mut forward_store,
+        PUBLISHED_LATE,
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    apply_values(
+        &mut forward_store,
+        PUBLISHED_MID,
+        vector[spot_update(&btc(), MODEL_MID, SPOT_LATER)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    apply_values(
+        &mut reversed_store,
+        PUBLISHED_MID,
+        vector[spot_update(&btc(), MODEL_MID, SPOT_LATER)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    apply_values(
+        &mut reversed_store,
+        PUBLISHED_LATE,
+        vector[spot_update(&btc(), MODEL_EARLY, SPOT)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    let forward_read = store::spot(&forward_store).destroy_some();
+    let reversed_read = store::spot(&reversed_store).destroy_some();
+    assert_eq!(forward_read.read_value(), SPOT);
+    assert_eq!(forward_read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(reversed_read.read_value(), SPOT_LATER);
+    assert_eq!(reversed_read.read_published_at_ms(), PUBLISHED_MID);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(forward_store);

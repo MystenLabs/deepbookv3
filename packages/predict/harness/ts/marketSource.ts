@@ -81,11 +81,11 @@ export interface FixedSvi {
   m: bigint;
   mNegative: boolean;
 }
-// One expiry's provider data with each series' own model timestamp — when that data is "as of",
-// pinned by the provider across retransmissions of an unchanged value. The on-chain stores order
-// series by this clock first, so discarding it would collapse the dual-clock contract the
-// updater exists to exercise; the SVI additionally carries its batch envelope time, the clock
-// on-chain freshness gates and the roll-down anchors on.
+// One expiry's provider data with each series' own model timestamp — the provider's calibration
+// clock, pinned across publishes of an unchanged calibration. The on-chain stores order series by
+// this clock first, so discarding it would collapse the dual-clock contract the updater exists to
+// exercise. The pricing clock (freshness gate and SVI roll-down anchor) is the on-chain batch
+// envelope, which the updater stamps per push and surfaces as the snapshot's `publishedAtMs`.
 export interface ExpiryData {
   forward: number;
   /// Exact provider integer at the signed subscription's decimals=9 scale.
@@ -95,8 +95,6 @@ export interface ExpiryData {
   /// Exact provider integers/sign bits used when re-domain-signing for localnet.
   svi1e9: FixedSvi;
   sviTsMs: number;
-  /// Envelope time of the batch that last carried the SVI tuple — the roll-down anchor.
-  sviPublishedAtMs: number;
 }
 export interface MarketSnapshot {
   /// Pyth spot (the Pyth lane's input), stamped by the Pyth stream.
@@ -143,7 +141,6 @@ export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, u
             mNegative: entry.svi1e9.mNegative,
           },
           sviTsMs: entry.sviTsMs,
-          sviPublishedAtMs: entry.sviPublishedAtMs,
         },
       ]),
     ),
@@ -204,7 +201,7 @@ function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
   const entry = (e: any): ExpiryData => {
     const encoded = strictObject(
       e,
-      ["forward", "forward1e9", "forwardTsMs", "svi", "svi1e9", "sviTsMs", "sviPublishedAtMs"],
+      ["forward", "forward1e9", "forwardTsMs", "svi", "svi1e9", "sviTsMs"],
       "snapshot expiry",
     );
     const encodedSvi = strictObject(
@@ -244,7 +241,6 @@ function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
         mNegative: boolean(encodedFixed.mNegative, "snapshot expiry.svi1e9.mNegative"),
       },
       sviTsMs: finiteNumber(encoded.sviTsMs, "snapshot expiry.sviTsMs"),
-      sviPublishedAtMs: finiteNumber(encoded.sviPublishedAtMs, "snapshot expiry.sviPublishedAtMs"),
     };
   };
   const expiries = new Map<number, ExpiryData>();
@@ -417,7 +413,7 @@ export class DirectWsSource implements MarketSource {
   #spotMs = 0n;
   #bsSpot: { raw1e9: bigint; tsMs: number } | null = null;
   #fwd = new Map<number, { raw1e9: bigint; tsMs: number }>();
-  #svi = new Map<number, { raw1e9: FixedSvi; tsMs: number; publishedAtMs: number }>();
+  #svi = new Map<number, { raw1e9: FixedSvi; tsMs: number }>();
   #expiries: number[] = [];
   #routes = new Map<string, BsRoute>();
   #acknowledgedSids = new Set<string>();
@@ -660,7 +656,6 @@ export class DirectWsSource implements MarketSource {
               mNegative: update.mNegative,
             },
             tsMs: Number(update.timestampMs),
-            publishedAtMs: Number(batch.batchTimestampMs),
           });
         }
       }
@@ -806,7 +801,6 @@ export class DirectWsSource implements MarketSource {
           svi: sviView(svi.raw1e9),
           svi1e9: svi.raw1e9,
           sviTsMs: svi.tsMs,
-          sviPublishedAtMs: svi.publishedAtMs,
         });
       }
     }

@@ -541,9 +541,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   stored observation's signed batch-envelope time (`published_at_ms`), which
   advances on every provider flush including retransmissions of an unchanged
   value; the model time stays on the observation and the trade events as "as of"
-  provenance. A publish is treated as the provider's assertion that the value is
-  current then, so a retransmission re-anchors the roll-down and refreshes the
-  tuple, and pricing halts only when envelopes stop arriving (stopped transport).
+  provenance. This implements the provider contract: the model timestamp is
+  re-derived roughly every 20 seconds, and an SVI publish whose model time is
+  unchanged carries the same calibration already rolled down to its new publish
+  time — duplicate SVI retransmission does not exist — so every publish carries
+  values valid as-of that publish, a republication re-anchors the roll-down and
+  refreshes the tuple, and pricing halts only when envelopes stop arriving
+  (stopped transport).
   The store additionally refuses to move a series' stored envelope time backwards
   (`propbook::block_scholes_store::apply`), since a regressed anchor would stretch
   the roll-down horizon and understate rolled `a`/`b`. *Supersedes* the
@@ -553,7 +557,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   whenever publish lagged calibration, and model-keyed freshness halted pricing
   on quiet-but-alive feeds (`docs/risks.md` § stopped transport carries the
   residual trust cost). *Rejected:* keying freshness on the envelope while
-  anchoring on the model time (two economic clocks for one read), and an
+  anchoring on the model time — since published values are already
+  provider-rolled to the publish, a model anchor would apply that discount a
+  second time — and an
   envelope-first store ordering (newest envelope always wins — order-independent,
   but lets a later envelope roll a series' model data back; the envelope floor
   keeps the model-first ordering and accepts first-writer-wins for the degenerate

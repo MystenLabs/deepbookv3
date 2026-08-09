@@ -27,12 +27,15 @@ macro fun series_kind_forward(): u8 { 1 }
 macro fun series_kind_svi(): u8 { 2 }
 
 /// One accepted observation and the three clocks that describe it.
-/// The clocks answer different questions and are not interchangeable: a series that has not moved
-/// is retransmitted with its original model time, so only `published_at_ms` distinguishes a quiet
-/// feed from a stopped one.
+/// The clocks answer different questions and are not interchangeable: a calibration that has not
+/// changed republishes under its original model time, so only `published_at_ms` distinguishes a
+/// quiet feed from a stopped one.
 public struct BsRead<Value: copy + drop + store> has copy, drop, store {
-    /// Provider time the series data is "as of", held fixed across retransmissions of a value that
-    /// has not changed. The provider's per-series replay key: ordering keys on this first.
+    /// Provider calibration time — when the series was last re-derived, held fixed across
+    /// republishes of that calibration. The provider's per-series replay key: ordering keys on
+    /// this first. The published VALUES are as-of the envelope time: per the provider contract,
+    /// an SVI publish whose model time is unchanged carries the same calibration already rolled
+    /// down to its new publish time, never duplicate data.
     model_timestamp_ms: u64,
     /// Envelope time of the batch this observation arrived in, advancing on every provider flush
     /// and never regressing once stored (see `apply`). The economic clock: consumers gate
