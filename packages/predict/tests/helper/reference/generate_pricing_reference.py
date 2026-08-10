@@ -387,15 +387,18 @@ FLOW_FIXTURE = {
 # omitted while the roll-down floored at 1e9, because flooring snapped every
 # fixture ratio in [0.5, 1) onto the same effective `a` and the un-rolled value
 # agreed by construction (predeploy open item P-17).
-PARAMS_TIMESTAMP_MS = 119_000          # test_constants::live_source_timestamp_ms
+# The seed batch's envelope time — the roll-down anchor. The fixtures stamp the
+# model time equal to it, so it is also test_constants::live_source_timestamp_ms.
+SEED_PUBLISHED_AT_MS = 119_000
 NOW_MS = 120_000                       # test_constants::now_ms
 DEFAULT_EXPIRY_MS = 31_536_120_000     # test_constants::default_expiry_ms
 SHORT_EXPIRY_MS = 240_000              # test_constants::short_expiry_ms
 
 
 def roll_down_ratio(expiry_ms):
-    """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`."""
-    return (expiry_ms - NOW_MS) / (expiry_ms - PARAMS_TIMESTAMP_MS)
+    """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`, anchored
+    at the seed batch's publish time."""
+    return (expiry_ms - NOW_MS) / (expiry_ms - SEED_PUBLISHED_AT_MS)
 # A surface in the region the 1e18 variance path newly admits: its per-strike
 # total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
 # aborted `ENonPositiveVariance` here while the analytical minimum still passed the
@@ -415,8 +418,8 @@ ADMITTED_LOW_VARIANCE = {
 # first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
 # moves the digital by ~890 units against a 21-unit budget. Mirrors the fixture in
 # `pricing_guard_tests::w_prime_keeps_the_rolled_b_precision`, which seeds the
-# tuple at 120_000, advances the clock to 121_000, and retransmits it unchanged so
-# the anchor is preserved and `b` is genuinely non-integral at 1e9.
+# tuple at 120_000 and quotes at 121_000 — one second past the tuple's publish
+# anchor — so `b` is genuinely non-integral at 1e9.
 W_PRIME_PRECISION_SURFACE = {
     "a": 203 / F,
     "b": 13 / F,

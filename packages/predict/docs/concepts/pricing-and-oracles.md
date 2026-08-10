@@ -9,8 +9,8 @@ Predict separates the *spot* of the underlying asset, the forward surface, and t
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |
 | Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
-| Block Scholes spot + forward | `propbook::block_scholes_store::BlockScholesValueStore` | One per-underlying store of the latest spot and per-expiry forward observations, keyed by signed series id | `spot()` / `forward(expiry_ms)` and each read's `model_timestamp_ms` |
-| SVI params | `propbook::block_scholes_store::BlockScholesSVIStore` | One per-underlying store of the latest per-expiry SVI parameter sets, keyed by signed series id | `svi(expiry_ms)` and its `model_timestamp_ms` |
+| Block Scholes spot + forward | `propbook::block_scholes_store::BlockScholesValueStore` | One per-underlying store of the latest spot and per-expiry forward observations, keyed by signed series id | `spot()` / `forward(expiry_ms)` and each read's `published_at_ms` |
+| SVI params | `propbook::block_scholes_store::BlockScholesSVIStore` | One per-underlying store of the latest per-expiry SVI parameter sets, keyed by signed series id | `svi(expiry_ms)` and its `published_at_ms` |
 
 The `pricing` module is a stateless read layer over these objects. It resolves them on demand, checks BS price and SVI freshness, computes prices, and never mutates oracle, pool, expiry, or position state.
 
@@ -47,7 +47,7 @@ The SVI curve is described by five stochastic-volatility-inspired parameters, st
 
 `a`, `rho`, and `m` are signed because the baseline variance, wing tilt, and smile-center offset can each point either direction; `b` and `sigma` remain unsigned. `I64` is the signed fixed-point type from the shared `fixed_math` package (the renamed `predict_math`), a magnitude-plus-sign type with normalized zero. (The "Role" column describes each parameter's place in the variance formula below; the standard raw-SVI reading — `a` baseline variance, `b` wing slope, `rho` skew, `m` horizontal shift, `sigma` curvature — is consistent with it.)
 
-SVI is its own per-expiry series and has a looser freshness threshold than BS spot/forward. Each stored observation carries the provider's two clocks directly: `model_timestamp_ms` is the time the series data is "as of" — the clock pricing freshness asserts against and the SVI roll-down anchors on — and `published_at_ms` is the batch envelope time, transport metadata advancing on every provider flush. A retransmission of an unchanged tuple arrives with a newer envelope and its original model time, so it refreshes nothing economically: data the provider has not re-derived within the freshness window ages out and pricing halts. A batch whose entries do not advance a series is a clean skip rather than an abort, so concurrent relayers and replayed batches cannot fail each other or roll a series back.
+SVI is its own per-expiry series and has a looser freshness threshold than BS spot/forward. Each stored observation carries the provider's two clocks directly: `published_at_ms` is the batch envelope time, advancing on every provider flush — the clock pricing freshness asserts against and the SVI roll-down anchors on — and `model_timestamp_ms` is the provider's calibration time, held fixed across republishes of an unchanged calibration and kept on the stored observation as calibration identity (trade events report the publish time pricing validated). The provider contract behind the anchor choice: the model timestamp is re-derived on the order of every 20 seconds, and an SVI publish whose model time is unchanged carries the same calibration already rolled down to its new publish time — duplicate SVI retransmission does not exist — so the published values always describe the horizon remaining from publish, and anchoring on the model time instead would apply the provider's roll a second time. Pricing halts only when envelopes stop arriving within the freshness window — a stopped transport — never merely because the calibration clock is quiet. A batch whose entries do not advance a series is a clean skip rather than an abort, so concurrent relayers and replayed batches cannot fail each other, roll a series' model data back, or move its stored envelope time backwards.
 
 The stores validate the series id and record the source-native payload. They do not impose Predict's pricing-safe envelope at ingest; Predict applies its own read-time checks before using a row for pricing.
 
@@ -72,14 +72,14 @@ The endpoints carry sentinel handling so open-ended ranges work without special-
 
 ### SVI remaining-time roll-down
 
-The provider's SVI `a` and `b` values describe variance over the horizon that remained when the current tuple first appeared. Let `T_params` be that tuple's `model_timestamp_ms`, `T_expiry` the market expiry, and `t` the current Sui clock. Before evaluating any strike, Predict derives:
+The provider's SVI `a` and `b` values describe variance over the horizon that remained when the current tuple was published — for republications too, since a publish with an unchanged model time carries the calibration rolled to that publish (see the store-contract paragraph above). Let `T_published` be the stored observation's `published_at_ms` — the envelope time of the batch that last carried it — `T_expiry` the market expiry, and `t` the current Sui clock. Before evaluating any strike, Predict derives:
 
     remaining_ms = T_expiry - t
-    anchor_tte_ms = T_expiry - T_params
+    anchor_tte_ms = T_expiry - T_published
     a_eff_1e18 = sign(a) × floor(abs(a) × 1e9 × remaining_ms / anchor_tte_ms)
     b_eff_1e18 = floor(b × 1e9 × remaining_ms / anchor_tte_ms)
 
-The multiplications use `u256` intermediates and produce 1e18-scaled `u128` magnitudes; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the parameter anchor the tuple is unchanged at 1e18 precision; an identical provider retransmit refreshes only the stored observation's envelope/transport timestamp — neither the anchor nor the economic source time move, and freshness keys on that same model timestamp, so elapsed time continues to reduce `a_eff` and `b_eff` until the tuple either ages out of the SVI freshness window or the provider re-derives it, which carries a new model anchor. Live pricing is already forbidden at or after expiry.
+The multiplications use `u256` intermediates and produce 1e18-scaled `u128` magnitudes; both magnitudes round down, so signed `a` rounds toward zero. `rho`, `m`, and `sigma` are copied unchanged. At the publish anchor the tuple is unchanged at 1e18 precision. An identical provider retransmit advances the stored envelope time, which re-anchors the roll-down: the provider re-asserted the tuple as current at that publish, so `a` and `b` again describe the horizon remaining from it. Between publishes, elapsed time reduces `a_eff` and `b_eff`; a feed whose envelopes stop arriving ages out of the SVI freshness window (keyed on the same envelope clock) and pricing halts. Live pricing is already forbidden at or after expiry.
 
 The raw tuple must pass Predict's existing pricing envelope before roll-down. If fixed-point flooring makes the effective per-strike total variance non-positive before expiry, the existing `ENonPositiveVariance` quote guard aborts. This policy addresses the age of an unchanged variance-to-expiry tuple; it does not claim that the provider's near-expiry calibration is accurate.
 
@@ -140,11 +140,11 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 `pricing` reads feed state on demand and validates it at read time rather than trusting a writer kept it fresh. The relevant bounds:
 
-**Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against its observation's source time (Pyth's normalized `source_timestamp_ms`; the Block Scholes reads' `model_timestamp_ms`):
+**Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against its observation's own clock (Pyth's normalized `source_timestamp_ms`; the Block Scholes reads' `published_at_ms` envelope time):
 
 - **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward. Only consulted while `use_pyth_spot_for_forward` is set.
 - **Block Scholes price freshness** (`block_scholes_price_freshness_ms`) — how recent the BS spot and expiry forward must be to compute the fallback forward and Pyth-reanchored basis.
-- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the SVI tuple's own model time must be; the same clock anchors the remaining-time roll-down, so an unchanged retransmitted tuple ages out rather than being rejuvenated by delivery. This window is intentionally looser than BS price freshness because SVI changes more slowly, and its configurable maximum is wider (120s vs 60s).
+- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recently the SVI tuple must have been published; the same envelope clock anchors the remaining-time roll-down, so an unchanged retransmitted tuple stays usable and re-anchored for as long as the provider keeps publishing it. This window is intentionally looser than BS price freshness because SVI changes more slowly, and its configurable maximum is wider (120s vs 60s).
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 

@@ -81,10 +81,11 @@ export interface FixedSvi {
   m: bigint;
   mNegative: boolean;
 }
-// One expiry's provider data with each series' own model timestamp — when that data is "as of",
-// pinned by the provider across retransmissions of an unchanged value. The on-chain stores order
-// and age series by this clock, so discarding it would collapse the dual-clock contract the
-// updater exists to exercise.
+// One expiry's provider data with each series' own model timestamp — the provider's calibration
+// clock, pinned across publishes of an unchanged calibration. The on-chain stores order series by
+// this clock first, so discarding it would collapse the dual-clock contract the updater exists to
+// exercise. The pricing clock (freshness gate and SVI roll-down anchor) is the on-chain batch
+// envelope, which the updater stamps per push and surfaces as the snapshot's `publishedAtMs`.
 export interface ExpiryData {
   forward: number;
   /// Exact provider integer at the signed subscription's decimals=9 scale.

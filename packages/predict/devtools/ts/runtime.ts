@@ -925,9 +925,9 @@ export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | n
 
 // Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then
 // separate BS spot, forward, and SVI batches. Pre-warms the whole boundary grid
-// in a single transaction under one (clamped) envelope timestamp, while each
-// series keeps its own provider model time — the clock the on-chain stores order
-// and age series by.
+// in a single transaction under one (clamped) envelope timestamp — the clock the
+// on-chain stores age series by and the SVI roll-down anchors on — while each
+// series keeps its own provider model time, the clock the stores order by.
 export interface GridExpiry {
     expiry: bigint;
     forward: bigint;

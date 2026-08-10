@@ -76,6 +76,10 @@ const ROLL_DOWN_EXPIRY_MS: u64 = 120_100;
 const ROLL_DOWN_MIDPOINT_MS: u64 = 120_050;
 const SHORT_ROLL_DOWN_EXPIRY_MS: u64 = 180_000;
 const SHORT_ROLL_DOWN_MIDPOINT_MS: u64 = 150_000;
+/// Halfway between the retransmit envelope (150_000) and expiry: the envelope anchor
+/// scales the surface by 1/2 here, while the original model anchor (120_000) would
+/// scale it by 1/4 — far enough apart that the ATM reference band tells them apart.
+const SHORT_ROLL_DOWN_QUOTE_MS: u64 = 165_000;
 const ODD_ROLL_DOWN_VALUE: u64 = 11;
 const BOUNDARY_ROLL_DOWN_VALUE: u64 = 100;
 const ONE_MS_ROLL_DOWN_VALUE: u64 = 1;
@@ -169,11 +173,13 @@ fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
     assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
 }
 
-/// A retransmission carries the tuple's original model time in a newer envelope. The envelope is
-/// transport, not new data: the roll-down anchor AND the economic source time both hold, and
-/// pricing keeps working only because the model age is still inside the freshness window.
+/// A retransmission carries the tuple's original model time in a newer envelope, and the envelope
+/// is the economic clock: the roll-down re-anchors to the retransmit's publish time — the provider
+/// re-asserted the tuple as current there — and the snapshotted timestamp reports that same
+/// publish clock to trade events. Quoted between the retransmit and expiry, the envelope anchor
+/// scales the raw surface by 1/2; the old model anchor would have scaled it by 1/4.
 #[test]
-fun identical_svi_retransmit_holds_the_anchor_and_the_source_time() {
+fun svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp() {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -195,16 +201,6 @@ fun identical_svi_retransmit_holds_the_anchor_and_the_source_time() {
     );
 
     fx.set_clock_for_testing(SHORT_ROLL_DOWN_MIDPOINT_MS);
-    fx.set_bs_spot_for_testing_bundle(
-        &mut oracle,
-        SHORT_ROLL_DOWN_MIDPOINT_MS,
-        test_constants::default_live_price(),
-    );
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        SHORT_ROLL_DOWN_MIDPOINT_MS,
-        test_constants::default_live_price(),
-    );
     fx.retransmit_bs_svi_for_testing(
         &mut oracle,
         ROLL_DOWN_ANCHOR_MS,
@@ -218,13 +214,25 @@ fun identical_svi_retransmit_holds_the_anchor_and_the_source_time() {
         ZERO_SVI_SHAPE_PARAM,
         false,
     );
+    fx.set_clock_for_testing(SHORT_ROLL_DOWN_QUOTE_MS);
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_QUOTE_MS,
+        test_constants::default_live_price(),
+    );
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        SHORT_ROLL_DOWN_QUOTE_MS,
+        test_constants::default_live_price(),
+    );
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
-    // At the midpoint, the preserved anchor scales raw a=2 to effective a=1
-    // and b remains zero. At K=F, positive variance gives d2=-sqrt(1e-9)/2,
-    // checked against the generated first-principles reference. If the
-    // retransmit incorrectly reset the anchor, raw a=2 would remain unscaled.
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
+    // Quoted at 165_000: remaining 15s over the envelope anchor's 30s horizon
+    // scales raw a=2 to effective a=1 and b remains zero. At K=F, positive
+    // variance gives d2=-sqrt(1e-9)/2, checked against the generated
+    // first-principles reference. Anchoring on the retransmitted tuple's model
+    // time instead would scale by 15s/60s and halve the effective variance again.
     test_helpers::assert_within(
         pricer.range_price(
             strike(test_constants::default_live_price()),

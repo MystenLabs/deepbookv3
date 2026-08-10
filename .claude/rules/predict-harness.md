@@ -36,7 +36,7 @@ Read this before editing the Predict local development system under `packages/pr
 
 ## Units & clock
 - Tick size `$0.01` = `1e7` (NOT 1e9). Quantity / cash / payouts are **DUSDC-native `1e6`** (NOT 1e9). Leverage and probability are `1e9`-scaled. Mixing these is the #1 scaling bug.
-- Real-time only: the localnet `Clock` is not warpable (README § Note). The contract freshness defaults now match testnet's configured 10s (Pyth spot + BS price), so there is no config divergence; BS pricing freshness keys on each observation's provider model time, not the batch envelope.
+- Real-time only: the localnet `Clock` is not warpable (README § Note). The contract freshness defaults now match testnet's configured 10s (Pyth spot + BS price), so there is no config divergence; BS pricing freshness and the SVI roll-down anchor key on each observation's batch envelope time, which the updater stamps with each push's clamped envelope, so pushed data is always envelope-fresh.
 
 ## Resilience invariants
 - Shared files (`snapshot/feeds/markets.json`, `hub-snapshot.json`) are written with `io.ts atomicWriteFile` (temp+rename). Use it for any new shared file, and guard every cross-process JSON parse (a torn read must not throw out of a loop).
