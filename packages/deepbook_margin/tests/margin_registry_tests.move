@@ -518,11 +518,11 @@ fun test_oracle_max_age_exceeded() {
     );
 
     // This should fail with Pyth error because price is older than 60 seconds
+    // Staleness is enforced by the reader now, so the read is the failing step.
     let _usd_value = oracle::calculate_usd_price<USDC>(
-        &old_price_info,
+        oracle::read_price<USDC>(&old_price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
 
     destroy(old_price_info);
@@ -563,10 +563,9 @@ fun test_oracle_max_age_within_limit() {
 
     // This should succeed because price is within 60 second limit
     let usd_value = oracle::calculate_usd_price<USDC>(
-        &recent_price_info,
+        oracle::read_price<USDC>(&recent_price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
-        &clock,
     );
     assert!(usd_value > 900_000_000 && usd_value < 1_100_000_000);
 

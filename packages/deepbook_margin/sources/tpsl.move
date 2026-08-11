@@ -4,8 +4,11 @@
 module deepbook_margin::tpsl;
 
 use deepbook::{constants, pool::Pool};
-use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
-use pyth::price_info::PriceInfoObject;
+use deepbook_margin::{
+    margin_constants,
+    margin_registry::MarginRegistry,
+    oracle::{PythReading, calculate_price}
+};
 use sui::{clock::Clock, event};
 
 // === Errors ===
@@ -256,8 +259,8 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut TakeProfitStopLoss,
     pool: &Pool<BaseAsset, QuoteAsset>,
     manager_id: ID,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
+    base_reading: PythReading,
+    quote_reading: PythReading,
     registry: &MarginRegistry,
     conditional_order_id: u64,
     condition: Condition,
@@ -278,15 +281,18 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
 
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
-        base_price_info_object,
-        quote_price_info_object,
-        clock,
+        base_reading,
+        quote_reading,
     );
 
     let trigger_below_price = condition.trigger_below_price;
     let trigger_price = condition.trigger_price;
 
-    // Validate trigger condition (use <= and >= for consistency with execute_conditional_orders)
+    // A trigger must not already be met at registration: `trigger_below` orders take a
+    // price at or below the current one, `trigger_above` at or above. Note this is
+    // non-strict while *firing* is strict (`collect_triggered_orders` breaks on `>=` /
+    // `<=`), so an order registered exactly at the current price is legal and does not
+    // fire until the price moves past it.
     assert!(
         (trigger_below_price && trigger_price <= current_price) ||
             (!trigger_below_price && trigger_price >= current_price),

@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      # the parity guard's own source, so a PR that only edits the check still runs it
+      - ".github/scripts/**"
       - "packages/**"
   push:
     branches:
@@ -17,6 +19,20 @@ env:
   SUI_VERSION: testnet-v1.74.1
 
 jobs:
+  upgraded-twin-parity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # The legacy and upgraded Pyth surfaces must be edited together. Nothing in the
+      # compiler ties them, so a parameter added to one side only ships a surface that
+      # silently disagrees with itself.
+      - name: Check upgraded-twin parity
+        run: python3 .github/scripts/check_upgraded_parity.py
+
   test-linux:
     runs-on: ubuntu-latest
 
