@@ -206,14 +206,18 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     assert_eq!(mutated_walk, rebuilt_walk);
     // The GC claim is the assertion above — the mutated tree and a tree that never
     // held the removed range walk identically. Against the per-order reference the
-    // two survivors share no boundary, so the walk truncates once in total where
-    // the reference truncates once per order: `Σ floor(p·qᵢ) <= floor(p·Σqᵢ)`,
-    // bounded by one raw unit per extra order. The gap is protocol-favoured (R2 —
-    // the walk is a liability and never understates the per-order sum), which is
-    // what is asserted here; the previous bit-equality held only for the particular
-    // price low bits the old log-moneyness path happened to produce.
+    // two survivors share no boundary, so each one floors its start and end
+    // independently and contributes `floor(p_lo·q) - floor(p_hi·q) -
+    // floor((p_lo - p_hi)·q) ∈ {0, 1}`: the bound is one raw unit per order that
+    // truncates, so `GC_SURVIVOR_COUNT`, not one less. Survivor A happens to
+    // contribute 0 today because its quantity is exactly `1e9`, which makes
+    // `mul_down` the identity — do not tighten the bound to that coincidence, it is
+    // the same class of accident as the bit-equality this replaced (that one held
+    // only for the price low bits the old log-moneyness path produced). The gap is
+    // protocol-favoured either way: R2, the walk is a liability and never
+    // understates the per-order sum.
     assert!(mutated_walk >= reference);
-    assert!(mutated_walk - reference <= GC_SURVIVOR_COUNT - 1);
+    assert!(mutated_walk - reference <= GC_SURVIVOR_COUNT);
 
     destroy(tree);
     destroy(rebuilt);

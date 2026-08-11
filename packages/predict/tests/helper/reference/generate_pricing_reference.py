@@ -67,9 +67,8 @@ DOCUMENTED per-primitive budgets (math.move "Precision contract"):
 evaluated at the TRUE (reference) values — NOT read from the contract. The
 composition is, with F=1e9 and all quantities in real (un-scaled) units:
 
-    ratio = strike/forward ;  e_ratio = 1/F                         (div floor)
-    k     = ln(ratio)
-      d_k = e_ratio/ratio + 1e-7*|k| + 1/F                          (ratio floor; ln rel; k ULP)
+    k     = ln(strike) - ln(forward)                                (difference of logs)
+      d_k = 1e-7*(|ln strike| + |ln forward|) + 2/F                 (ln rel, twice; two ULPs)
     km    = k - m                                                   (m exact)
     km2   = km^2          ; e_km2 = 2|km|*d_k + 1/F                 (square floor)
     sig2  = sigma^2       ; e_sig2 = 1/F                            (sigma exact; mul floor)
@@ -243,8 +242,15 @@ class Scenario:
         ratio = strike / self.forward_live
         S = math.sqrt(w)
         N = k + w / 2.0
-        # error in k
-        d_k = (1.0 / F) / ratio + 1e-7 * abs(k) + 1.0 / F
+        # error in k. The contract takes a DIFFERENCE OF LOGS (`ln(strike) -
+        # ln(forward)`), so there is no ratio floor to propagate; the cost is one
+        # `ln` relative error per operand plus one result ULP each. NOTE: the
+        # committed `pricing_reference_data.move` predates this and was generated
+        # under the old ratio model, which understates this by ~6x near the money.
+        # Its tolerances still hold (worst-case budget usage is unchanged at 61%),
+        # so they are conservative rather than wrong — but they are no longer
+        # derived, and must be regenerated when the scenario dataset is available.
+        d_k = 1e-7 * (abs(math.log(strike / F)) + abs(math.log(self.forward_live / F))) + 2.0 / F
         km = k - self.mf
         # error in the total-variance VALUE w (before the /2 and sqrt)
         e_km2 = 2.0 * abs(km) * d_k + 1.0 / F

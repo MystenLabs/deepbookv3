@@ -332,17 +332,25 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   re-adding a creation-time spot read purely to sanity-check the tick size against the
   asset's price scale — the tick size is sized operationally and a mismatch fails
   loud at the first mint.
-- **Deep-tail pricing saturates, it does not abort.** `compute_nd2` computes
-  `strike/forward` in `u128` and saturates both tails (deep-ITM up tail → ~1.0, the
-  `neg_inf` limit; deep-OTM up tail → 0) instead of aborting on underflow or wrapping
-  the `u64` cast. *Rationale:* the widened tick domain makes a deep tail reachable by
-  a forward drift alone, and the NAV walk prices every live boundary — one
-  unpriceable order would otherwise brick NAV, redeem, and liquidation for the whole
-  market until settlement. Saturation keeps those reads live; the `[min_entry_probability, max_entry_probability]`
-  admission band, not an abort, is what keeps the protocol from writing a tail it
-  prices poorly. *Rejected:* a standalone reject-at-mint strike-range guard (redundant
-  with the ask band on mint, and it would not cover redeem / NAV / liquidation, which
-  re-price already-minted orders with no band).
+- **Deep-tail pricing stays live, and it is computed rather than asserted.**
+  `compute_nd2` takes log-moneyness as a difference of logarithms, `k = ln(strike) -
+  ln(forward)`, so both tails price through the ordinary formula and converge on
+  their limits via `d2`'s normal-CDF clamp. *Rationale:* the widened tick domain
+  makes a deep tail reachable by a forward drift alone, and the NAV walk prices every
+  live boundary — one unpriceable order would otherwise brick NAV, redeem, and
+  liquidation for the whole market until settlement. The `[min_entry_probability,
+  max_entry_probability]` admission band, not an abort, is what keeps the protocol
+  from writing a tail it prices poorly. *Superseded:* the original form computed
+  `strike/forward` as a fixed-point ratio and short-circuited to the exact digital
+  limits when that quotient floored to zero or left `u64`. Those limits hold only
+  while total variance is small, and the branch returned them without reading the
+  surface, so a high-variance surface was mispriced by up to 100% in either
+  direction — `predeploy/response-policies.md` RP-26. Removing the ratio removed the
+  need for the shortcut. *Rejected:* a standalone reject-at-mint strike-range guard
+  (redundant with the ask band on mint, and it would not cover redeem / NAV /
+  liquidation, which re-price already-minted orders with no band); and bounding the
+  SVI envelope so the shortcut became exact (no envelope that admits arbitrage-free
+  surfaces can — RP-26).
 
 ## Async LP, exact NAV, and the privileged flush (recent)
 

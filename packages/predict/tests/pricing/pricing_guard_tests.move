@@ -691,10 +691,12 @@ fun pyth_spot_above_pricing_ceiling_is_inert_while_the_switch_is_off() {
     fx.finish();
 }
 
-// === Price-tail saturation (replaces the deleted strike-ratio aborts) ===
+// === Price tails (computed, not branched on the strike ratio) ===
 
-/// Deep-ITM up tail: a strike far below the forward underflows the strike ratio to
-/// 0, so `up_price` returns ~1.0 (the neg_inf limit) instead of aborting.
+/// Deep-ITM up tail on an ordinary low-variance surface: a strike far below the
+/// forward prices to ~1.0 (the neg_inf limit), reached through `d2`'s normal-CDF
+/// clamp rather than asserted by a branch. The companion test below drives the same
+/// strike on a high-variance surface, where the correct answer is 0 instead.
 #[test]
 fun deep_itm_up_price_saturates_to_one() {
     let mut fx = oracle_fixture::setup_oracle_default();
@@ -750,8 +752,10 @@ fun deep_itm_up_price_follows_the_surface_not_the_strike_ratio() {
     fx.finish();
 }
 
-/// Deep-OTM up tail: a strike far above the forward overflows the strike ratio past
-/// `u64::MAX`, so `up_price` returns 0 (the pos_inf limit) instead of aborting.
+/// Deep-OTM up tail: a strike far above the forward prices to 0 (the pos_inf limit).
+/// Unlike the ITM side this holds for every admissible surface, not just low-variance
+/// ones — `d2 <= -sqrt(2k)` bounds the true digital below 1e-11 at this moneyness
+/// regardless of variance — so there is no high-variance companion case.
 #[test]
 fun deep_otm_up_price_saturates_to_zero() {
     let mut fx = oracle_fixture::setup_oracle_default();

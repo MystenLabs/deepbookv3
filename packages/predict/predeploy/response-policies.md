@@ -1324,8 +1324,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Response:** compute `k = ln(strike) - ln(forward)` instead of `ln` of the ratio,
   and delete both short-circuits. `ln` is defined across the whole positive `u64`
   domain, so the difference is well-conditioned over every representable pair:
-  `|k| <= 44.4` against the 20.7 the ratio form could reach, at 1e-7 relative error
-  per term rather than an error that grows without bound as the tail deepens. The
+  `|k| <= 44.4` against the `[-20.72, +23.64]` the ratio form could reach, at 1e-7
+  relative error per term rather than an error that grows without bound as the tail
+  deepens. The
   tails still reach their limits, now through `d2`'s existing normal-CDF clamp
   (RP-20) — computed rather than asserted.
 - **Reasoning:** the saturations were a repair for a self-inflicted precision loss,
@@ -1340,14 +1341,21 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   0.5 against a returned 1.0. No envelope that admits arbitrage-free surfaces can
   make the shortcut sound, so the shortcut is the thing that had to go. Removing the
   precision loss removes the need for both.
-- **Risk profile:** `BEST-GUESS`. The identity is exact in reals and the fixed-point
-  error is bounded by two `ln` evaluations instead of one `ln` of a truncated
-  quotient, which is strictly better everywhere and unboundedly better in the tails.
-  Existing exact-value coverage is unchanged: the four real-scenario reference tests
-  and the flat-surface at-the-forward digital all still hold to their derived
-  budgets. One differential test moved off a bit-equality that held only for the old
-  path's price low bits (see below). No dated findings record is filed under
-  `evidence/`, so this entry does not claim a measured risk profile.
+- **Risk profile:** `BEST-GUESS`. The identity is exact in reals, and the fixed-point
+  error *bound* is uniformly better: two `ln` evaluations instead of one `ln` of a
+  truncated quotient, which removes a term that grows without bound as the tail
+  deepens. Measured over 200,000 random `(strike, forward)` pairs, worst
+  `|k - k_exact|` is 2.2e-8 for the difference form against 5.4e-7 for the ratio form
+  over representable ratios and unbounded outside them. **Pointwise it is not
+  strictly better** — the difference form is the less accurate of the two on ~13% of
+  pairs, by at most 1.2e-8 — so the claim to rely on is the bound, not per-point
+  dominance. Existing exact-value coverage is unchanged: the four real-scenario
+  reference tests and the flat-surface at-the-forward digital all still hold to their
+  derived budgets, with worst-case budget usage unchanged at 61%. One differential
+  test moved off a bit-equality that held only for the old path's price low bits (see
+  below). No dated findings record is
+  filed under `evidence/`, so this entry does not yet claim a measured risk
+  profile; filing the 200,000-pair run there promotes it.
 - **Envelope unchanged:** `max_svi_input` stays at 100. It was tightened in an
   earlier draft of this policy and reverted after checking calibrated raw-SVI
   parameters for real BTC surfaces — `b` reaches 0.21 across maturities and 0.10

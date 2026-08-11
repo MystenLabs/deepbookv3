@@ -620,10 +620,10 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     //
     // `ln` is defined across the whole positive `u64` domain, so the difference is
     // well-conditioned over every representable pair: `|k| <= 44.4` against the
-    // 20.7 the ratio form could reach, at a relative error of 1e-7 per term rather
-    // than a relative error that grows without bound as the tail deepens. No
-    // strike needs a special case, and no surface has to be restricted to keep a
-    // shortcut honest.
+    // `[-20.72, +23.64]` the ratio form could reach, at a relative error of 1e-7 per
+    // term rather than a relative error that grows without bound as the tail
+    // deepens. No strike needs a special case, and no surface has to be restricted
+    // to keep a shortcut honest.
     let k = math::ln(strike).sub(&math::ln(forward));
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
