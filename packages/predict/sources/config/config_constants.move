@@ -16,25 +16,26 @@ const EInvalidBlockScholesPriceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
 const EInvalidTradingLossRebateRate: u64 = 7;
 const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
-const EInvalidLowerBenefitPower: u64 = 11;
-const EInvalidUpperBenefitPower: u64 = 12;
-const EInvalidTradeLiquidationBudget: u64 = 13;
-const EInvalidLiquidationLtv: u64 = 14;
-const EInvalidMarketTickSize: u64 = 15;
-const EInvalidEwmaAlpha: u64 = 16;
-const EInvalidEwmaZScoreThreshold: u64 = 17;
-const EInvalidEwmaPenaltyRate: u64 = 18;
-const EInvalidBackingBufferLambda: u64 = 19;
-const EInvalidMaxAdmissionLeverage: u64 = 20;
-const EInvalidCadenceWindowSize: u64 = 21;
-const EMarketTickSizeTooLarge: u64 = 22;
-const EInvalidNoLeverageWindowMs: u64 = 23;
-const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
-const EInvalidMaxLpPoolValue: u64 = 25;
-const EInvalidPlpSupplyFeeRate: u64 = 26;
-const EInvalidPlpWithdrawFeeRate: u64 = 27;
-const EInvalidFeeSlope: u64 = 28;
-const EInvalidFeeCap: u64 = 29;
+const EInvalidLowerBenefitPower: u64 = 9;
+const EInvalidUpperBenefitPower: u64 = 10;
+const EInvalidTradeLiquidationBudget: u64 = 11;
+const EInvalidLiquidationLtv: u64 = 12;
+const EInvalidMarketTickSize: u64 = 13;
+const EInvalidEwmaAlpha: u64 = 14;
+const EInvalidEwmaZScoreThreshold: u64 = 15;
+const EInvalidEwmaPenaltyRate: u64 = 16;
+const EInvalidBackingBufferLambda: u64 = 17;
+const EInvalidMaxAdmissionLeverage: u64 = 18;
+const EInvalidCadenceWindowSize: u64 = 19;
+const EMarketTickSizeTooLarge: u64 = 20;
+const EInvalidNoLeverageWindowMs: u64 = 21;
+const EInvalidLpRequestLimitFlushAttempts: u64 = 22;
+const EInvalidMaxLpPoolValue: u64 = 23;
+const EInvalidPlpSupplyFeeRate: u64 = 24;
+const EInvalidPlpWithdrawFeeRate: u64 = 25;
+const EInvalidFeeSlope: u64 = 26;
+const EInvalidFeeCap: u64 = 27;
+const EInvalidConfidenceFeeReferenceSensitivity: u64 = 28;
 
 // === Fees ===
 
@@ -285,6 +286,24 @@ public(package) macro fun max_fee_cap(): u64 { 100_000_000 }
 
 public(package) fun assert_fee_cap(value: u64) {
     assert!(value >= min_fee_cap!() && value <= max_fee_cap!(), EInvalidFeeCap);
+}
+
+/// Six-month average of the vendor surface's finite +/-5 bp probability move
+/// at the 8-hour, 50-cent reference node, in FLOAT_SCALING.
+public(package) macro fun default_confidence_fee_reference_sensitivity(): u64 { 13_198_741 }
+
+public(package) macro fun min_confidence_fee_reference_sensitivity(): u64 { 1 }
+
+public(package) macro fun max_confidence_fee_reference_sensitivity(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_confidence_fee_reference_sensitivity(value: u64) {
+    assert!(
+        value >= min_confidence_fee_reference_sensitivity!()
+            && value <= max_confidence_fee_reference_sensitivity!(),
+        EInvalidConfidenceFeeReferenceSensitivity,
+    );
 }
 
 public(package) fun assert_market_tick_size_bounds(value: u64) {

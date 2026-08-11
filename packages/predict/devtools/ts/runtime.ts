@@ -1599,6 +1599,7 @@ export function setTemplateConfidenceFeeConfigTx(
     protocolConfigId: string,
     feeSlope: bigint,
     feeCap: bigint,
+    referenceSensitivity: bigint,
 ): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -1608,6 +1609,17 @@ export function setTemplateConfidenceFeeConfigTx(
     tx.moveCall({
         target: target("protocol_config", "set_template_fee_cap"),
         arguments: [tx.object(protocolConfigId), tx.object(ADMIN_CAP_ID), tx.pure.u64(feeCap)],
+    });
+    tx.moveCall({
+        target: target(
+            "protocol_config",
+            "set_template_confidence_fee_reference_sensitivity",
+        ),
+        arguments: [
+            tx.object(protocolConfigId),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u64(referenceSensitivity),
+        ],
     });
     return tx;
 }

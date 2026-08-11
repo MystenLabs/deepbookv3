@@ -164,6 +164,11 @@ public fun fee_cap(market: &ExpiryMarket): u64 {
     market.strike_exposure.fee_cap()
 }
 
+/// Return the confidence-fee reference sensitivity snapshotted for this expiry.
+public fun confidence_fee_reference_sensitivity(market: &ExpiryMarket): u64 {
+    market.strike_exposure.confidence_fee_reference_sensitivity()
+}
+
 /// Return the near-expiry no-leverage window snapshotted for this expiry, in ms.
 /// Within this much time of expiry the market admits no leverage above 1x; `0`
 /// disables the block. Read by devInspect (SDK/UI) to size a leverage selector

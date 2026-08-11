@@ -178,7 +178,7 @@ and contributors. For *how* each mechanism works, follow the links into
   `fee_rate = min(max(base_fee × √(p·(1−p)), min_fee) ×
   (1 + fee_slope × confidence_loading), fee_cap)`. The loading is the range
   digital's symmetric finite response to a ±5 bp forward bump, normalized to
-  the synthesized 8-hour ATM reference.
+  the snapshotted vendor-calibrated reference sensitivity.
 - The builder fee and the gas-congestion surcharge are add-ons; both are excluded
   from the trading-loss rebate fee basis (only the trade fee counts).
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,

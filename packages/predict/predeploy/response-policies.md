@@ -1285,33 +1285,32 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-26: Confidence loading uses a synthesized live-surface reference
+## RP-26: Confidence loading uses a stored vendor reference sensitivity
 
 - **Trigger state:** a mint or live redeem computes its trading fee from the
     current range probability and rolled SVI surface.
 - **Controller:** external × protocol — the signed Block Scholes surface
     controls live sensitivity; protocol config controls the base, loading slope,
-    and absolute fee cap.
+    reference sensitivity, and absolute fee cap.
 - **Blast radius:** one trade's fee. The same formula applies to open and close;
     it does not enter settlement, NAV, backing, or oracle freshness.
 - **Response:** compute the range's symmetric mean absolute probability move
-    under finite `+/-5bp` forward shifts, divide it by an 8-hour at-the-money
-    reference synthesized from the same rolled surface, then charge
-    `min(base * (1 + fee_slope * loading), fee_cap)`. The reference uses
-    `w_ref = w(0) * 8h / remaining` and
-    `g_ref = phi(0) * 5bp / sqrt(w_ref)`. `fee_slope` ships at `0.35`; the cap
-    ships at `3%`. The old expiry-time ramp is removed rather than stacked with
-    loading.
+    under finite `+/-5bp` forward shifts, divide it by the snapshotted
+    `confidence_fee_reference_sensitivity`, then charge
+    `min(base * (1 + fee_slope * loading), fee_cap)`. The reference ships at
+    `0.013198741`, the fixed-point calibration of the vendor surface's
+    six-month-average 8-hour, 50-cent finite-bump move; `fee_slope` ships at
+    `0.35`; the cap ships at `3%`. The old expiry-time ramp is removed rather
+    than stacked with loading.
 - **Reasoning:** the finite numerator preserves the spec's short-end
-    saturation; an analytic derivative diverges like `1/sqrt(T)`. Synthesizing
-    the reference tracks the live volatility level without requiring a separate
-    fresh 8-hour expiry or cache, so the normalizer adds no oracle read and no
-    new stale-reference halt. The flat-vol approximation touches only the
-    reference; actual contract sensitivity still uses the smile-consistent range
-    digital. Reference construction and `fee_slope` are one calibration pair:
-    changing either requires recalibrating the other. The cap applies to the
-    assembled product, not the multiplier, preserving the near-the-money
-    shoulder under one absolute ceiling.
+    saturation; an analytic derivative diverges like `1/sqrt(T)`. A stored
+    reference gives every tenor one comparable denominator and removes the
+    previous on-chain flat-vol extrapolation, while adding no oracle read,
+    cache, or stale-reference halt. The live numerator still uses the
+    smile-consistent range digital. Reference sensitivity and `fee_slope` are one
+    calibration pair: changing either requires recalibrating the other. The cap
+    applies to the assembled product, not the multiplier, preserving the
+    near-the-money shoulder under one absolute ceiling.
 - **Risk profile:** `BEST-GUESS` — the formula and published calibration cells
     are independently pinned, but production fee distributions under live
     surfaces and order flow are not yet measured. The short-end increase is
@@ -1319,9 +1318,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     100-bps base to the 300-bps cap.
 - **Pinning tests:** `pricing_tests.move` —
     `confidence_fee_loading_is_unit_normalized_at_eight_hour_atm` and
-    `confidence_fee_loading_uses_the_finite_short_end_bump`,
+    `confidence_fee_loading_is_comparable_across_tenors`,
     `confidence_fee_loading_uses_both_finite_range_boundaries`, and
-    `confidence_fee_reference_stays_live_at_short_high_variance_boundary`;
+    `confidence_fee_loading_saturates_cleanly_in_live_surface_wings`;
+    `protocol_config_bounds_tests.move` — reference bounds, valuation locking,
+    and template snapshot round trips;
     `strike_exposure_config_tests.move` —
     `confidence_fee_matches_published_surface_cells`,
     `confidence_fee_caps_the_assembled_product`, and
@@ -1330,10 +1331,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     `confidence_loading_is_charged_and_settled_on_mint_and_redeem`;
     `mint_terms_binding_tests.move` —
     `mint_and_live_close_use_the_same_loading_for_one_pricer`.
-- **Reopen when:** live calibration shows the synthesized reference materially
-    diverges from a true 8-hour 50c node; the reference construction changes;
-    `fee_slope` is recalibrated from observed flow; or the fee gains a dynamic
-    inventory or staleness component.
+- **Reopen when:** live calibration moves the six-month-average 8-hour, 50-cent
+    reference; `fee_slope` is recalibrated from observed flow; or the fee gains
+    a dynamic inventory or staleness component.
 
 ---
 

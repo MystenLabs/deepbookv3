@@ -67,7 +67,13 @@ fun confidence_loading_is_charged_and_settled_on_mint_and_redeem() {
     let lower = strike(test_constants::default_live_price());
     let higher = strike(constants::pos_inf!());
     let probability = pricer.range_price(lower, higher);
-    let loading = pricing::loading(&pricer, lower, higher, probability);
+    let loading = pricing::loading(
+        &pricer,
+        lower,
+        higher,
+        probability,
+        config_constants::default_confidence_fee_reference_sensitivity!(),
+    );
     let multiplier =
         math::float_scaling!() + math::mul_down(config_constants::default_fee_slope!(), loading);
     let fee_rate = math::mul_down(config_constants::default_min_fee!(), multiplier).min(

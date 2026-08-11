@@ -175,23 +175,16 @@ class Generator:
                 entry_probability = replay.compute_range_price(svi, pricing_forward, lower, higher)
                 replay.assert_entry_probability_bounds(entry_probability)
                 remaining_ms = self.fee_time_to_expiry(snapshot)
-                if remaining_ms is None:
-                    # Generation does not know the runtime market expiry. Size
-                    # against the absolute fee cap so every generated mint
-                    # remains affordable under any confidence loading.
-                    fee_rate = replay.FEE_CAP
-                elif remaining_ms == 0:
+                if remaining_ms == 0:
                     raise ValueError("confidence fee requires a live expiry")
-                else:
-                    loading = replay.confidence_fee_loading(
-                        svi,
-                        pricing_forward,
-                        lower,
-                        higher,
-                        entry_probability,
-                        remaining_ms,
-                    )
-                    fee_rate = replay.assert_mint_fee_rate(entry_probability, loading)
+                loading = replay.confidence_fee_loading(
+                    svi,
+                    pricing_forward,
+                    lower,
+                    higher,
+                    entry_probability,
+                )
+                fee_rate = replay.assert_mint_fee_rate(entry_probability, loading)
                 leverage = self.random_leverage(entry_probability)
                 quantity = self.quantity_for_spend(
                     self.random_mint_spend(),

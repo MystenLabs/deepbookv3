@@ -253,6 +253,10 @@ public(package) fun fee_cap(exposure: &StrikeExposure): u64 {
     exposure.config.fee_cap()
 }
 
+public(package) fun confidence_fee_reference_sensitivity(exposure: &StrikeExposure): u64 {
+    exposure.config.confidence_fee_reference_sensitivity()
+}
+
 public(package) fun no_leverage_window_ms(exposure: &StrikeExposure): u64 {
     exposure.config.no_leverage_window_ms()
 }
@@ -796,5 +800,6 @@ fun confidence_fee_loading(
         range_codec::strike_from_tick(lower_tick, exposure.tick_size),
         range_codec::strike_from_tick(higher_tick, exposure.tick_size),
         probability,
+        exposure.config.confidence_fee_reference_sensitivity(),
     )
 }

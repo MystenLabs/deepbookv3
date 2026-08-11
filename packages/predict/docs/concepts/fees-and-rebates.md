@@ -14,7 +14,7 @@ The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at cr
 
 ```text
 base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
-loading         = finite_bump_sensitivity(range, live_surface) / synthesized_8h_atm_reference
+loading         = finite_bump_sensitivity(range, live_surface) / confidence_fee_reference_sensitivity
 loaded_rate     = min( base_fee_rate * (1 + fee_slope * loading) , fee_cap )
 trading_fee     = loaded_rate * quantity
 
@@ -55,17 +55,16 @@ g = 0.5 * (abs(p(F * 1.0005) - p(F)) + abs(p(F * 0.9995) - p(F)))
 
 The finite bump is deliberate. An analytic derivative diverges like `1/sqrt(T)` near expiry; the finite probability move saturates instead because a probability cannot move beyond zero or one.
 
-The normalizer is synthesized from the contract's own rolled surface without reading or requiring a separate 8-hour expiry:
+The normalizer is a stored, admin-tunable constant calibrated to the vendor
+surface's six-month-average 8-hour, 50-cent finite-bump sensitivity:
 
 ```text
-w_atm = w(k = 0)
-w_ref = w_atm * (8 hours / time_to_expiry)
-g_ref = phi(0) * 0.0005 / sqrt(w_ref)
+g_ref = confidence_fee_reference_sensitivity
 loading = g / g_ref
 fee_rate = min(base_fee_rate * (1 + fee_slope * loading), fee_cap)
 ```
 
-This is a flat-vol extrapolation only for the reference. The numerator remains the true finite difference of the smile-consistent range digital. `fee_slope` and the reference construction are one calibration pair: changing the reference rescales loading and therefore requires recalibrating the slope. The cap applies to the assembled fee, not the multiplier, so it is one absolute ceiling at every probability.
+The numerator remains the true finite difference of the smile-consistent range digital. The stored reference gives every tenor one shared scale without another oracle read, extrapolation, or per-trade reference calculation. `fee_slope` and `confidence_fee_reference_sensitivity` are one calibration pair: changing the reference rescales loading and therefore requires recalibrating the slope. The cap applies to the assembled fee, not the multiplier, so it is one absolute ceiling at every probability.
 
 The loading applies identically to mints and live redeems. It replaces the former expiry-time ramp rather than stacking with it, because sensitivity already supplies the intended short-end shape.
 
@@ -226,5 +225,5 @@ The fee is deliberately separate from the mark. The mark stays the exact pool-wi
 - [leverage-and-floor.md](./leverage-and-floor.md) — why trading and builder fees are transaction costs, not part of the contract floor.
 - [liquidity-and-nav.md](./liquidity-and-nav.md) — the cash-backing invariant that holds the rebate reserve, and how fee revenue reaches LPs.
 - [liquidation.md](./liquidation.md) — how a leveraged order is closed when it falls below its floor.
-- [../design/configuration.md](../design/configuration.md) — the configured fee rates, confidence-loading slope and cap, builder and congestion parameters, stake thresholds, and rebate rate.
+- [../design/configuration.md](../design/configuration.md) — the configured fee rates, confidence-loading slope, reference sensitivity, and cap, builder and congestion parameters, stake thresholds, and rebate rate.
 - [../design/architecture.md](../design/architecture.md) — the `BuilderCode` object and accumulator-address fund custody.

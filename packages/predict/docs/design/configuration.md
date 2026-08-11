@@ -29,7 +29,7 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 
 | Template (on `ProtocolConfig`) | Snapshotted into | Governs |
 | --- | --- | --- |
-| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Liquidation LTV, max admission leverage, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, confidence-loading slope and assembled-fee cap), all-in mint price bounds |
+| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Liquidation LTV, max admission leverage, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, confidence-loading slope, reference sensitivity, and assembled-fee cap), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
 
 When `create_and_share_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.

@@ -53,6 +53,7 @@ SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
         "initial_expiry_cash": None,
         "fee_slope": None,
         "fee_cap": None,
+        "confidence_fee_reference_sensitivity": None,
         "max_admission_leverage": None,
         "liquidation_ltv": None,
         "backing_buffer_lambda": None,
@@ -112,6 +113,7 @@ TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 FEE_SLOPE = 350_000_000
 FEE_CAP = 30_000_000
+CONFIDENCE_FEE_REFERENCE_SENSITIVITY = 13_198_741
 
 # Dynamic mint-admission cap. Actual liquidation still uses LIQUIDATION_LTV.
 MAX_ADMISSION_LEVERAGE = 3_000_000_000  # 3x, default_max_admission_leverage
@@ -229,6 +231,7 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global INITIAL_EXPIRY_CASH
     global FEE_SLOPE
     global FEE_CAP
+    global CONFIDENCE_FEE_REFERENCE_SENSITIVITY
     global BACKING_BUFFER_LAMBDA
     global MAX_ADMISSION_LEVERAGE
     global LIQUIDATION_LTV
@@ -288,6 +291,11 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     )
     FEE_SLOPE = _config_int(config, "protocol", "fee_slope")
     FEE_CAP = _config_int(config, "protocol", "fee_cap")
+    CONFIDENCE_FEE_REFERENCE_SENSITIVITY = _config_int(
+        config,
+        "protocol",
+        "confidence_fee_reference_sensitivity",
+    )
     MAX_ADMISSION_LEVERAGE = _config_int(
         config,
         "protocol",
@@ -1124,16 +1132,6 @@ def current_order_floor_amount(model: dict[str, Any], order: dict[str, Any]) -> 
     return floor_amount(order_floor_shares(order))
 
 
-def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int | None = None) -> int | None:
-    if not model.get("wall_clock_time"):
-        return None
-    now_ms = model.get("now_ms") if timestamp_ms is None else timestamp_ms
-    expiry_ms = model.get("pricing_expiry_ms")
-    if now_ms is None or expiry_ms is None:
-        raise ValueError("exact-time fee ramp requires now_ms and expiry_ms")
-    return max(0, expiry_ms - now_ms)
-
-
 def order_index_update_terms(order: dict[str, Any]) -> tuple[int, int]:
     floor_shares = order_floor_shares(order)
     return (order["quantity"], floor_shares)
@@ -1467,7 +1465,6 @@ def confidence_fee_loading(
     lower: int,
     higher: int,
     probability: int,
-    remaining_ms: int,
 ) -> int:
     bump = 500_000
     forward_up = deepbook_mul(forward, FLOAT_SCALING + bump)
@@ -1475,30 +1472,7 @@ def confidence_fee_loading(
     probability_up = compute_range_price(svi, forward_up, lower, higher)
     probability_down = compute_range_price(svi, forward_down, lower, higher)
     sensitivity = (abs(probability_up - probability) + abs(probability_down - probability)) // 2
-
-    zero = I64(0)
-    m = I64(svi["m"], svi["mNegative"])
-    k_minus_m = zero.sub(m)
-    sq = sqrt_down(k_minus_m.square_scaled() + deepbook_mul(svi["sigma"], svi["sigma"]))
-    inner = I64(svi["rho"], svi["rhoNegative"]).mul_scaled(k_minus_m).add(I64(sq))
-    if inner.is_negative:
-        raise ValueError("SVI inner term cannot be negative")
-    variance_scale = 1 if svi.get("at1e18") else F
-    reference_variance = max(
-        1,
-        total_variance(
-            I64(svi["a"] * variance_scale, svi.get("aNegative", False)),
-            svi["b"] * variance_scale,
-            inner.magnitude,
-        )
-        * (8 * 60 * 60 * 1000)
-        // remaining_ms,
-    )
-    reference = max(
-        1,
-        mul_div_round_down(normal_pdf(zero), bump, sqrt_u128(reference_variance)),
-    )
-    return deepbook_div(sensitivity, reference)
+    return deepbook_div(sensitivity, CONFIDENCE_FEE_REFERENCE_SENSITIVITY)
 
 
 def fee_rate(probability: int, loading: int) -> int:
@@ -1713,7 +1687,6 @@ def order_minted_update(
     svi: dict[str, Any],
     forward: int,
     sequence: int,
-    time_to_expiry_ms: int,
 ) -> dict[str, str]:
     strike = align_strike_to_tick(mint["strike"])
     lower, higher = binary_range_bounds(strike, mint["isUp"])
@@ -1726,7 +1699,6 @@ def order_minted_update(
         lower,
         higher,
         entry_probability,
-        time_to_expiry_ms,
     )
     fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, loading), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
@@ -1976,15 +1948,11 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], timestamp_ms: int) ->
         raise ValueError("mint requires prior price and SVI updates")
     if row["orderRef"] in model["orders"]:
         raise ValueError(f"duplicate order_ref {row['orderRef']}")
-    remaining_ms = model_fee_time_to_expiry_ms(model, timestamp_ms)
-    if remaining_ms is None:
-        raise ValueError("confidence fee requires pricing expiry and timestamp")
     update = order_minted_update(
         row,
         model["current_svi"],
         model["current_forward"],
         model["next_sequence"],
-        remaining_ms,
     )
     terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
     lower_tick = int(update["lower_tick"])
@@ -2036,16 +2004,12 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         raise ValueError(f"order_ref {ref} is not redeemable")
 
     probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
-    remaining_ms = model_fee_time_to_expiry_ms(model)
-    if remaining_ms is None:
-        raise ValueError("confidence fee requires pricing expiry and timestamp")
     loading = confidence_fee_loading(
         model["current_svi"],
         model["current_forward"],
         order["lower"],
         order["higher"],
         probability,
-        remaining_ms,
     )
     fee = deepbook_mul(fee_rate(probability, loading), close_quantity)
     gross = deepbook_mul(probability, close_quantity)

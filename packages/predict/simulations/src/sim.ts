@@ -1077,6 +1077,10 @@ async function setupSimulation(
     console.log(`[${ts()}] --- Setup ---`);
     const feeSlope = protocolConfigValue(scenarioConfig, "fee_slope");
     const feeCap = protocolConfigValue(scenarioConfig, "fee_cap");
+    const confidenceFeeReferenceSensitivity = protocolConfigValue(
+        scenarioConfig,
+        "confidence_fee_reference_sensitivity",
+    );
     const maxAdmissionLeverage = protocolConfigValue(
         scenarioConfig,
         "max_admission_leverage",
@@ -1151,10 +1155,17 @@ async function setupSimulation(
     console.log(`[${ts()}]   Global feeds bound to underlying`);
 
     await executeAndWait(
-        setTemplateConfidenceFeeConfigTx(protocolConfigId, feeSlope, feeCap),
+        setTemplateConfidenceFeeConfigTx(
+            protocolConfigId,
+            feeSlope,
+            feeCap,
+            confidenceFeeReferenceSensitivity,
+        ),
         "set_template_confidence_fee_config",
     );
-    console.log(`[${ts()}]   Confidence fee: slope=${feeSlope} cap=${feeCap}`);
+    console.log(
+        `[${ts()}]   Confidence fee: slope=${feeSlope} cap=${feeCap} reference=${confidenceFeeReferenceSensitivity}`,
+    );
 
     await executeAndWait(
         setTemplateMaxAdmissionLeverageTx(protocolConfigId, maxAdmissionLeverage),

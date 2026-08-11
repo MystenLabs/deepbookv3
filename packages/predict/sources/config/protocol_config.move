@@ -121,6 +121,18 @@ public fun set_template_fee_cap(config: &mut ProtocolConfig, _admin_cap: &AdminC
     config.strike_exposure_template_config.set_fee_cap(cap);
 }
 
+/// Set the confidence-fee reference sensitivity snapshotted by newly created
+/// expiry markets. Locked during valuation like the other fee-policy mutations.
+public fun set_template_confidence_fee_reference_sensitivity(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_confidence_fee_reference_sensitivity(value);
+}
+
 /// Set the near-expiry no-leverage window snapshotted by newly created expiry markets.
 public fun set_template_no_leverage_window_ms(
     config: &mut ProtocolConfig,

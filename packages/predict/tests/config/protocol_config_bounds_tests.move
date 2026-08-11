@@ -3,8 +3,8 @@
 
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
-/// strike-exposure templates (base fee, min fee, confidence-fee slope/cap, entry-probability bounds,
-/// expiry-fee ramp, liquidation LTV, max admission leverage, backing buffer lambda), the
+/// strike-exposure templates (base fee, min fee, confidence-fee slope/cap/reference,
+/// entry-probability bounds, liquidation LTV, max admission leverage, backing buffer lambda), the
 /// expiry-cash trading-loss rebate template. Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
@@ -88,6 +88,40 @@ fun template_fee_cap_above_max_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_fee_cap(&admin_cap, config_constants::max_fee_cap!() + 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidConfidenceFeeReferenceSensitivity)]
+fun template_confidence_fee_reference_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_confidence_fee_reference_sensitivity(
+        &admin_cap,
+        config_constants::min_confidence_fee_reference_sensitivity!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidConfidenceFeeReferenceSensitivity)]
+fun template_confidence_fee_reference_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_confidence_fee_reference_sensitivity(
+        &admin_cap,
+        config_constants::max_confidence_fee_reference_sensitivity!() + 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun template_confidence_fee_reference_during_valuation_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.begin_valuation();
+    config.set_template_confidence_fee_reference_sensitivity(
+        &admin_cap,
+        config_constants::default_confidence_fee_reference_sensitivity!(),
+    );
     abort 999
 }
 
@@ -222,6 +256,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
     config.set_template_fee_slope(&admin_cap, config_constants::min_fee_slope!());
     config.set_template_fee_cap(&admin_cap, config_constants::min_fee_cap!());
+    config.set_template_confidence_fee_reference_sensitivity(
+        &admin_cap,
+        config_constants::min_confidence_fee_reference_sensitivity!(),
+    );
     config.set_template_min_entry_probability(
         &admin_cap,
         config_constants::min_min_entry_probability!(),
@@ -245,6 +283,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.min_fee(), config_constants::min_min_fee!());
     assert_eq!(snapshot.fee_slope(), config_constants::min_fee_slope!());
     assert_eq!(snapshot.fee_cap(), config_constants::min_fee_cap!());
+    assert_eq!(
+        snapshot.confidence_fee_reference_sensitivity(),
+        config_constants::min_confidence_fee_reference_sensitivity!(),
+    );
     assert_eq!(snapshot.min_entry_probability(), config_constants::min_min_entry_probability!());
     assert_eq!(
         snapshot.max_entry_probability(),
@@ -271,6 +313,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     config.set_template_fee_cap(&admin_cap, config_constants::max_fee_cap!());
     config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!());
     config.set_template_fee_slope(&admin_cap, config_constants::max_fee_slope!());
+    config.set_template_confidence_fee_reference_sensitivity(
+        &admin_cap,
+        config_constants::max_confidence_fee_reference_sensitivity!(),
+    );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::max_liquidation_ltv!());
     config.set_template_max_admission_leverage(
         &admin_cap,
@@ -286,6 +332,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.min_fee(), config_constants::max_min_fee!());
     assert_eq!(snapshot.fee_slope(), config_constants::max_fee_slope!());
     assert_eq!(snapshot.fee_cap(), config_constants::max_fee_cap!());
+    assert_eq!(
+        snapshot.confidence_fee_reference_sensitivity(),
+        config_constants::max_confidence_fee_reference_sensitivity!(),
+    );
     assert_eq!(
         snapshot.min_entry_probability(),
         config_constants::max_min_entry_probability!() - 1,

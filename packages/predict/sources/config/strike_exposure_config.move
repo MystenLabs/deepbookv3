@@ -44,6 +44,8 @@ public struct StrikeExposureConfig has store {
     fee_slope: u64,
     /// Absolute cap on the assembled base-times-loading fee.
     fee_cap: u64,
+    /// Vendor-calibrated finite-bump sensitivity used to normalize confidence loading.
+    confidence_fee_reference_sensitivity: u64,
     /// Minimum raw entry probability allowed for mint admission.
     min_entry_probability: u64,
     /// Maximum raw entry probability allowed for mint admission.
@@ -88,6 +90,10 @@ public(package) fun fee_slope(config: &StrikeExposureConfig): u64 {
 
 public(package) fun fee_cap(config: &StrikeExposureConfig): u64 {
     config.fee_cap
+}
+
+public(package) fun confidence_fee_reference_sensitivity(config: &StrikeExposureConfig): u64 {
+    config.confidence_fee_reference_sensitivity
 }
 
 public(package) fun min_entry_probability(config: &StrikeExposureConfig): u64 {
@@ -190,6 +196,7 @@ public(package) fun new(): StrikeExposureConfig {
         min_fee: config_constants::default_min_fee!(),
         fee_slope: config_constants::default_fee_slope!(),
         fee_cap: config_constants::default_fee_cap!(),
+        confidence_fee_reference_sensitivity: config_constants::default_confidence_fee_reference_sensitivity!(),
         min_entry_probability: config_constants::default_min_entry_probability!(),
         max_entry_probability: config_constants::default_max_entry_probability!(),
         no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
@@ -206,6 +213,7 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         min_fee: config.min_fee,
         fee_slope: config.fee_slope,
         fee_cap: config.fee_cap,
+        confidence_fee_reference_sensitivity: config.confidence_fee_reference_sensitivity,
         min_entry_probability: config.min_entry_probability,
         max_entry_probability: config.max_entry_probability,
         no_leverage_window_ms: config.no_leverage_window_ms,
@@ -247,6 +255,14 @@ public(package) fun set_fee_cap(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_fee_cap(value);
     assert!(value >= config.min_fee, EFeeCapBelowMinimum);
     config.fee_cap = value;
+}
+
+public(package) fun set_confidence_fee_reference_sensitivity(
+    config: &mut StrikeExposureConfig,
+    value: u64,
+) {
+    config_constants::assert_confidence_fee_reference_sensitivity(value);
+    config.confidence_fee_reference_sensitivity = value;
 }
 
 public(package) fun set_min_entry_probability(config: &mut StrikeExposureConfig, value: u64) {

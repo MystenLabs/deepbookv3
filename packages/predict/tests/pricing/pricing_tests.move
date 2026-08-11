@@ -18,6 +18,7 @@
 module deepbook_predict::pricing_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants,
     oracle_fixture,
     pricing,
@@ -110,15 +111,14 @@ const FLAT_EIGHT_HOUR_SVI_A: u64 = 228_311;
 /// over the fixture's 60 seconds remaining.
 const FLAT_ONE_MINUTE_SVI_A: u64 = 484;
 const FLAT_SVI_B: u64 = 0;
-/// Independent Python `math.erf` reference for the finite +/-5bp loading on
-/// the flat surfaces above. Generator expression:
-/// `g / (phi(0) * 5e-4 / sqrt(w * 8h / T))`.
-const EIGHT_HOUR_ATM_LOADING: u64 = 999_789_023;
-const ONE_MINUTE_ATM_LOADING: u64 = 20_133_434_044;
+/// Independent Python `math.erf` references for each finite +/-5bp sensitivity
+/// divided by the vendor-calibrated stored reference.
+const EIGHT_HOUR_ATM_LOADING: u64 = 1_000_000_113;
+const ONE_MINUTE_ATM_LOADING: u64 = 20_128_500_027;
 /// Independent `math.erf` reference for the finite range `(100, 101]` on the
 /// same 8-hour flat surface. Both digital boundaries move under each forward
 /// bump, so this pins range loading rather than only a one-sided UP digital.
-const EIGHT_HOUR_FINITE_RANGE_LOADING: u64 = 198_831_697;
+const EIGHT_HOUR_FINITE_RANGE_LOADING: u64 = 198_873_677;
 /// The pricing primitives are documented to tens of raw probability units;
 /// one million loading units leaves headroom for the three digital evaluations
 /// and integer reference normalization without weakening the surface signal.
@@ -204,12 +204,24 @@ fun confidence_fee_loading_is_unit_normalized_at_eight_hour_atm() {
 }
 
 #[test]
-fun confidence_fee_loading_uses_the_finite_short_end_bump() {
+fun confidence_fee_loading_is_comparable_across_tenors() {
+    let eight_hour_loading = flat_atm_confidence_fee_loading(EIGHT_HOURS_MS, FLAT_EIGHT_HOUR_SVI_A);
+    let one_minute_loading = flat_atm_confidence_fee_loading(ONE_MINUTE_MS, FLAT_ONE_MINUTE_SVI_A);
+    let same_surface_one_minute_loading = flat_atm_confidence_fee_loading(
+        ONE_MINUTE_MS,
+        FLAT_EIGHT_HOUR_SVI_A,
+    );
+
     test_helpers::assert_within(
-        flat_atm_confidence_fee_loading(ONE_MINUTE_MS, FLAT_ONE_MINUTE_SVI_A),
+        one_minute_loading,
         ONE_MINUTE_ATM_LOADING,
         LOADING_FIXED_POINT_BUDGET,
     );
+    // The realistic one-minute surface is sharper than the realistic eight-hour
+    // surface. Holding the rolled surface itself fixed, tenor metadata cannot
+    // change loading: both divide the same sensitivity by the same stored value.
+    assert!(one_minute_loading > eight_hour_loading);
+    assert_eq!(same_surface_one_minute_loading, eight_hour_loading);
 }
 
 #[test]
@@ -229,7 +241,7 @@ fun confidence_fee_loading_uses_both_finite_range_boundaries() {
 #[test]
 fun confidence_fee_loading_saturates_cleanly_in_live_surface_wings() {
     // Drive the full live-pricer path, including the finite forward bumps and
-    // synthesized reference. Both tails are beyond the normal-CDF support on
+    // stored reference. Both tails are beyond the normal-CDF support on
     // this 8-hour surface, so sensitivity must saturate to zero without aborting.
     assert_eq!(
         flat_confidence_fee_loading(
@@ -249,17 +261,6 @@ fun confidence_fee_loading_saturates_cleanly_in_live_surface_wings() {
         ),
         0,
     );
-}
-
-#[test]
-fun confidence_fee_reference_stays_live_at_short_high_variance_boundary() {
-    // One millisecond remaining maximizes the 8-hour extrapolation. The largest
-    // accepted SVI input ensures the rounded normalizer cannot halt pricing.
-    // Sensitivity is at most 1.0 and the normalizer is floored at one raw unit,
-    // so loading is bounded by 1e18 in the protocol's 1e9 scale.
-    let loading = flat_atm_confidence_fee_loading(1, test_constants::pricing_max_svi_input());
-    assert!(loading > 0);
-    assert!(loading <= float!() * float!());
 }
 
 /// A retransmission carries the tuple's original model time in a newer envelope. The envelope is
@@ -400,7 +401,13 @@ fun flat_confidence_fee_loading(
     let lower = strike(lower_strike);
     let higher = strike(higher_strike);
     let probability = pricer.range_price(lower, higher);
-    let loading = pricing::loading(&pricer, lower, higher, probability);
+    let loading = pricing::loading(
+        &pricer,
+        lower,
+        higher,
+        probability,
+        config_constants::default_confidence_fee_reference_sensitivity!(),
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

@@ -440,19 +440,18 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
     `max(0.02 * sqrt(p * (1-p)), 0.005)`. Loading is the symmetric mean
     absolute range-probability move under finite `+/-5bp` forward shifts,
     normalized to an 8-hour at-the-money reference. The loading slope is `0.35`.
-- **The reference is synthesized from the contract's own rolled SVI.** Predict
-    computes `w(0)` from the current pricer, flat-vol extrapolates it to eight
-    hours, and uses `phi(0) * bump / sqrt(w_ref)`. This keeps the normalizer tied
-    to the live volatility level without a second oracle read, a dependency on an
-    8-hour expiry existing, or cache state. The approximation affects only the
-    reference; the contract numerator remains the true finite-difference
-    smile-consistent digital.
-- **Reference construction and slope are one calibration pair.** Re-anchoring
+- **The reference is a stored vendor-calibrated sensitivity.** The snapshotted
+    `confidence_fee_reference_sensitivity` is the six-month-average finite-bump
+    move at the vendor surface's 8-hour, 50-cent node. One read replaces the
+    previous on-chain flat-vol extrapolation and gives every tenor one shared
+    denominator without another oracle dependency or cache.
+- **Reference sensitivity and slope are one calibration pair.** Re-anchoring
     rescales loading, so `fee_slope` must be recalibrated with any reference
-    change. _Rejected:_ an independently admin-set reference, because it can
-    drift from live volatility; reading a live 8-hour surface, because a missing
-    or stale reference expiry would become a new pricing halt; caching per
-    surface, because it adds state and a staleness policy for a normalizer.
+    change. _Rejected:_ synthesizing a contract-tenor-specific denominator,
+    because it makes loading values from different tenors incomparable and adds
+    pricing math; reading a live 8-hour surface, because a missing or stale
+    reference expiry would become a new pricing halt; caching per surface,
+    because it adds state and a staleness policy for a normalizer.
 - **The finite bump and product cap are load-bearing.** An analytic derivative
     diverges into expiry and overstates the short end; the finite bump saturates.
     The cap applies after `base * (1 + slope * loading)`, not to the multiplier,
