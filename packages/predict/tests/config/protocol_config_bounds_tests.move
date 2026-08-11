@@ -133,30 +133,6 @@ fun template_max_entry_probability_above_max_aborts() {
     abort 999
 }
 
-// === Strike-exposure templates: expiry fee ramp ===
-
-#[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeWindowMs)]
-fun template_expiry_fee_window_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_expiry_fee_window_ms(
-        &admin_cap,
-        config_constants::min_expiry_fee_window_ms!() - 1,
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeWindowMs)]
-fun template_expiry_fee_window_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_expiry_fee_window_ms(
-        &admin_cap,
-        config_constants::max_expiry_fee_window_ms!() + 1,
-    );
-    abort 999
-}
-
 // The no-leverage window's minimum is 0 (0 disables the block), so only the
 // upper bound can be violated.
 #[test, expected_failure(abort_code = config_constants::EInvalidNoLeverageWindowMs)]
@@ -166,28 +142,6 @@ fun template_no_leverage_window_above_max_aborts() {
     config.set_template_no_leverage_window_ms(
         &admin_cap,
         config_constants::max_no_leverage_window_ms!() + 1,
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
-fun template_expiry_fee_max_multiplier_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_expiry_fee_max_multiplier(
-        &admin_cap,
-        config_constants::min_expiry_fee_max_multiplier!() - 1,
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
-fun template_expiry_fee_max_multiplier_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_expiry_fee_max_multiplier(
-        &admin_cap,
-        config_constants::max_expiry_fee_max_multiplier!() + 1,
     );
     abort 999
 }
@@ -276,14 +230,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         &admin_cap,
         config_constants::min_min_entry_probability!() + 1,
     );
-    config.set_template_expiry_fee_window_ms(
-        &admin_cap,
-        config_constants::min_expiry_fee_window_ms!(),
-    );
-    config.set_template_expiry_fee_max_multiplier(
-        &admin_cap,
-        config_constants::min_expiry_fee_max_multiplier!(),
-    );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::min_liquidation_ltv!());
     config.set_template_max_admission_leverage(
         &admin_cap,
@@ -303,11 +249,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(
         snapshot.max_entry_probability(),
         config_constants::min_min_entry_probability!() + 1,
-    );
-    assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::min_expiry_fee_window_ms!());
-    assert_eq!(
-        snapshot.expiry_fee_max_multiplier(),
-        config_constants::min_expiry_fee_max_multiplier!(),
     );
     assert_eq!(snapshot.liquidation_ltv(), config_constants::min_liquidation_ltv!());
     assert_eq!(snapshot.max_admission_leverage(), config_constants::min_max_admission_leverage!());
@@ -330,14 +271,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     config.set_template_fee_cap(&admin_cap, config_constants::max_fee_cap!());
     config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!());
     config.set_template_fee_slope(&admin_cap, config_constants::max_fee_slope!());
-    config.set_template_expiry_fee_window_ms(
-        &admin_cap,
-        config_constants::max_expiry_fee_window_ms!(),
-    );
-    config.set_template_expiry_fee_max_multiplier(
-        &admin_cap,
-        config_constants::max_expiry_fee_max_multiplier!(),
-    );
     config.set_template_liquidation_ltv(&admin_cap, config_constants::max_liquidation_ltv!());
     config.set_template_max_admission_leverage(
         &admin_cap,
@@ -358,11 +291,6 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         config_constants::max_min_entry_probability!() - 1,
     );
     assert_eq!(snapshot.max_entry_probability(), config_constants::max_max_entry_probability!());
-    assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::max_expiry_fee_window_ms!());
-    assert_eq!(
-        snapshot.expiry_fee_max_multiplier(),
-        config_constants::max_expiry_fee_max_multiplier!(),
-    );
     assert_eq!(snapshot.liquidation_ltv(), config_constants::max_liquidation_ltv!());
     assert_eq!(snapshot.max_admission_leverage(), config_constants::max_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());

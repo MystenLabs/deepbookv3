@@ -164,16 +164,6 @@ public fun fee_cap(market: &ExpiryMarket): u64 {
     market.strike_exposure.fee_cap()
 }
 
-/// Return the deprecated inert fee-ramp window for SDK and devInspect reads.
-public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
-    market.strike_exposure.expiry_fee_window_ms()
-}
-
-/// Return the deprecated inert fee-ramp multiplier for SDK and devInspect reads.
-public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
-    market.strike_exposure.expiry_fee_max_multiplier()
-}
-
 /// Return the near-expiry no-leverage window snapshotted for this expiry, in ms.
 /// Within this much time of expiry the market admits no leverage above 1x; `0`
 /// disables the block. Read by devInspect (SDK/UI) to size a leverage selector

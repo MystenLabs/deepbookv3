@@ -253,14 +253,6 @@ public(package) fun fee_cap(exposure: &StrikeExposure): u64 {
     exposure.config.fee_cap()
 }
 
-public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {
-    exposure.config.expiry_fee_window_ms()
-}
-
-public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
-    exposure.config.expiry_fee_max_multiplier()
-}
-
 public(package) fun no_leverage_window_ms(exposure: &StrikeExposure): u64 {
     exposure.config.no_leverage_window_ms()
 }

@@ -48,8 +48,6 @@ public struct MarketCreated has copy, drop, store {
     fee_cap: u64,
     min_entry_probability: u64,
     max_entry_probability: u64,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
     /// Window before expiry within which this market admits no leverage above 1x.
     no_leverage_window_ms: u64,
     trading_loss_rebate_rate: u64,
@@ -142,8 +140,6 @@ public(package) fun emit_market_created(
         fee_cap: strike_exposure_config.fee_cap(),
         min_entry_probability: strike_exposure_config.min_entry_probability(),
         max_entry_probability: strike_exposure_config.max_entry_probability(),
-        expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
-        expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         no_leverage_window_ms: strike_exposure_config.no_leverage_window_ms(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
     });

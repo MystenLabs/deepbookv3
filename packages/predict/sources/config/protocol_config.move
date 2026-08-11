@@ -121,26 +121,6 @@ public fun set_template_fee_cap(config: &mut ProtocolConfig, _admin_cap: &AdminC
     config.strike_exposure_template_config.set_fee_cap(cap);
 }
 
-/// Set the deprecated inert expiry-fee ramp window.
-public fun set_template_expiry_fee_window_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
-}
-
-/// Set the deprecated inert expiry-fee max multiplier.
-public fun set_template_expiry_fee_max_multiplier(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
-}
-
 /// Set the near-expiry no-leverage window snapshotted by newly created expiry markets.
 public fun set_template_no_leverage_window_ms(
     config: &mut ProtocolConfig,

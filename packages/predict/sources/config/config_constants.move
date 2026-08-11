@@ -16,8 +16,6 @@ const EInvalidBlockScholesPriceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
 const EInvalidTradingLossRebateRate: u64 = 7;
 const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
-const EInvalidExpiryFeeWindowMs: u64 = 9;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
 const EInvalidLowerBenefitPower: u64 = 11;
 const EInvalidUpperBenefitPower: u64 = 12;
 const EInvalidTradeLiquidationBudget: u64 = 13;
@@ -287,48 +285,6 @@ public(package) macro fun max_fee_cap(): u64 { 100_000_000 }
 
 public(package) fun assert_fee_cap(value: u64) {
     assert!(value >= min_fee_cap!() && value <= max_fee_cap!(), EInvalidFeeCap);
-}
-
-/// Window before expiry over which trade fees ramp up to the per-expiry max
-/// multiplier. Five minutes is the shortest admin-tunable window.
-public(package) macro fun default_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::one_day_ms!()
-}
-
-public(package) macro fun min_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::five_minutes_ms!()
-}
-
-public(package) macro fun max_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::one_year_ms!()
-}
-
-public(package) fun assert_expiry_fee_window_ms(value: u64) {
-    assert!(
-        value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
-        EInvalidExpiryFeeWindowMs,
-    );
-}
-
-/// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
-/// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
-public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
-    10 * fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
-    assert!(
-        value >= min_expiry_fee_max_multiplier!() && value <= max_expiry_fee_max_multiplier!(),
-        EInvalidExpiryFeeMaxMultiplier,
-    );
 }
 
 public(package) fun assert_market_tick_size_bounds(value: u64) {

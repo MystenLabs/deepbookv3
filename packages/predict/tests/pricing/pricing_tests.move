@@ -33,6 +33,8 @@ use std::unit_test::assert_eq;
 // strikes straddle it.
 const STRIKE_BELOW: u64 = 90_000_000_000;
 const STRIKE_ABOVE: u64 = 110_000_000_000;
+const DEEP_DOWN_WING_STRIKE: u64 = 50_000_000_000;
+const DEEP_UP_WING_STRIKE: u64 = 200_000_000_000;
 
 /// The UP digital when the strike sits exactly on the live forward, for the
 /// default test surface (`a` 1e-9, `b` 1e-5, `rho` 1, `m` 10, `sigma` 1e-3):
@@ -221,6 +223,31 @@ fun confidence_fee_loading_uses_both_finite_range_boundaries() {
         ),
         EIGHT_HOUR_FINITE_RANGE_LOADING,
         LOADING_FIXED_POINT_BUDGET,
+    );
+}
+
+#[test]
+fun confidence_fee_loading_saturates_cleanly_in_live_surface_wings() {
+    // Drive the full live-pricer path, including the finite forward bumps and
+    // synthesized reference. Both tails are beyond the normal-CDF support on
+    // this 8-hour surface, so sensitivity must saturate to zero without aborting.
+    assert_eq!(
+        flat_confidence_fee_loading(
+            EIGHT_HOURS_MS,
+            FLAT_EIGHT_HOUR_SVI_A,
+            constants::neg_inf!(),
+            DEEP_DOWN_WING_STRIKE,
+        ),
+        0,
+    );
+    assert_eq!(
+        flat_confidence_fee_loading(
+            EIGHT_HOURS_MS,
+            FLAT_EIGHT_HOUR_SVI_A,
+            DEEP_UP_WING_STRIKE,
+            constants::pos_inf!(),
+        ),
+        0,
     );
 }
 

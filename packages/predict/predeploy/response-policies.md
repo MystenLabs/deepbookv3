@@ -1300,8 +1300,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
     `min(base * (1 + fee_slope * loading), fee_cap)`. The reference uses
     `w_ref = w(0) * 8h / remaining` and
     `g_ref = phi(0) * 5bp / sqrt(w_ref)`. `fee_slope` ships at `0.35`; the cap
-    ships at `3%`. The old expiry-time ramp remains stored but inert and is not
-    stacked with loading.
+    ships at `3%`. The old expiry-time ramp is removed rather than stacked with
+    loading.
 - **Reasoning:** the finite numerator preserves the spec's short-end
     saturation; an analytic derivative diverges like `1/sqrt(T)`. Synthesizing
     the reference tracks the live volatility level without requiring a separate

@@ -1562,31 +1562,6 @@ export function bindFeedsToUnderlyingTx(params: { pythFeedId: string }): Transac
     return tx;
 }
 
-export function setTemplateExpiryFeeConfigTx(
-    protocolConfigId: string,
-    expiryFeeWindowMs: bigint,
-    expiryFeeMaxMultiplier: bigint,
-): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: target("protocol_config", "set_template_expiry_fee_window_ms"),
-        arguments: [
-            tx.object(protocolConfigId),
-            tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(expiryFeeWindowMs),
-        ],
-    });
-    tx.moveCall({
-        target: target("protocol_config", "set_template_expiry_fee_max_multiplier"),
-        arguments: [
-            tx.object(protocolConfigId),
-            tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(expiryFeeMaxMultiplier),
-        ],
-    });
-    return tx;
-}
-
 export function setTemplateMaxAdmissionLeverageTx(
     protocolConfigId: string,
     maxAdmissionLeverage: bigint,

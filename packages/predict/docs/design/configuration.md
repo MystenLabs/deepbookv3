@@ -93,7 +93,7 @@ The grouped EWMA setter still validates each field against its own
 
 Defaults are applied only in the module that constructs the config; runtime logic treats config fields as plain numbers and never reads the `default_*` seeds. Bounds (`min_*`/`max_*`) may also be read directly by runtime logic when they intentionally serve as a hard floor or ceiling, but there are no config fields or getters for the bounds themselves.
 
-Several bounds are tightened on purpose so a single bad admin call cannot quietly disable a safety mechanism: the confidence-fee cap cannot be set below `min_fee`; the EWMA z-score threshold floors at one sigma and is capped so it cannot be set so high the penalty never fires; the EWMA penalty rate is capped to bound how punitive the surcharge can be. The retained `expiry_fee_window_ms` and `expiry_fee_max_multiplier` compatibility fields are inert and must not be stacked with confidence loading. For the concrete defaults and envelopes, see the source `config_constants` module; this document deliberately does not hardcode numbers that drift.
+Several bounds are tightened on purpose so a single bad admin call cannot quietly disable a safety mechanism: the confidence-fee cap cannot be set below `min_fee`; the EWMA z-score threshold floors at one sigma and is capped so it cannot be set so high the penalty never fires; the EWMA penalty rate is capped to bound how punitive the surcharge can be. The former expiry-fee ramp has been removed rather than stacked with confidence loading. For the concrete defaults and envelopes, see the source `config_constants` module; this document deliberately does not hardcode numbers that drift.
 
 ## Registry tuning: underlyings and cadences
 

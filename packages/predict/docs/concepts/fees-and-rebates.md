@@ -67,7 +67,7 @@ fee_rate = min(base_fee_rate * (1 + fee_slope * loading), fee_cap)
 
 This is a flat-vol extrapolation only for the reference. The numerator remains the true finite difference of the smile-consistent range digital. `fee_slope` and the reference construction are one calibration pair: changing the reference rescales loading and therefore requires recalibrating the slope. The cap applies to the assembled fee, not the multiplier, so it is one absolute ceiling at every probability.
 
-The loading applies identically to mints and live redeems. The former expiry-time ramp is retained only as inert config layout; it is not stacked with the loading, because sensitivity already supplies the intended short-end shape.
+The loading applies identically to mints and live redeems. It replaces the former expiry-time ramp rather than stacking with it, because sensitivity already supplies the intended short-end shape.
 
 ## 3. Builder fee add-on
 

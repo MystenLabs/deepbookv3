@@ -48,10 +48,6 @@ public struct StrikeExposureConfig has store {
     min_entry_probability: u64,
     /// Maximum raw entry probability allowed for mint admission.
     max_entry_probability: u64,
-    /// Deprecated inert time-ramp window, retained for config-layout compatibility.
-    expiry_fee_window_ms: u64,
-    /// Deprecated inert time-ramp multiplier, retained for config-layout compatibility.
-    expiry_fee_max_multiplier: u64,
     /// Window before expiry within which mint admission caps leverage at 1x, in ms.
     /// `0` disables the block.
     no_leverage_window_ms: u64,
@@ -100,14 +96,6 @@ public(package) fun min_entry_probability(config: &StrikeExposureConfig): u64 {
 
 public(package) fun max_entry_probability(config: &StrikeExposureConfig): u64 {
     config.max_entry_probability
-}
-
-public(package) fun expiry_fee_window_ms(config: &StrikeExposureConfig): u64 {
-    config.expiry_fee_window_ms
-}
-
-public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u64 {
-    config.expiry_fee_max_multiplier
 }
 
 public(package) fun no_leverage_window_ms(config: &StrikeExposureConfig): u64 {
@@ -204,8 +192,6 @@ public(package) fun new(): StrikeExposureConfig {
         fee_cap: config_constants::default_fee_cap!(),
         min_entry_probability: config_constants::default_min_entry_probability!(),
         max_entry_probability: config_constants::default_max_entry_probability!(),
-        expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
-        expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         no_leverage_window_ms: config_constants::default_no_leverage_window_ms!(),
     }
 }
@@ -222,8 +208,6 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         fee_cap: config.fee_cap,
         min_entry_probability: config.min_entry_probability,
         max_entry_probability: config.max_entry_probability,
-        expiry_fee_window_ms: config.expiry_fee_window_ms,
-        expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         no_leverage_window_ms: config.no_leverage_window_ms,
     }
 }
@@ -275,16 +259,6 @@ public(package) fun set_max_entry_probability(config: &mut StrikeExposureConfig,
     config_constants::assert_max_entry_probability(value);
     assert!(value > config.min_entry_probability, EInvalidEntryProbabilityBound);
     config.max_entry_probability = value;
-}
-
-public(package) fun set_expiry_fee_window_ms(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_expiry_fee_window_ms(value);
-    config.expiry_fee_window_ms = value;
-}
-
-public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_expiry_fee_max_multiplier(value);
-    config.expiry_fee_max_multiplier = value;
 }
 
 public(package) fun set_no_leverage_window_ms(config: &mut StrikeExposureConfig, window_ms: u64) {

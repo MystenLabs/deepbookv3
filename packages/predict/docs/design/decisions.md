@@ -457,7 +457,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
     diverges into expiry and overstates the short end; the finite bump saturates.
     The cap applies after `base * (1 + slope * loading)`, not to the multiplier,
     so near-the-money shoulders retain their risk-shaped fee under one absolute
-    ceiling. The old linear time ramp is inert and is not stacked with loading.
+    ceiling. The old linear time ramp is removed rather than stacked with loading.
 
 ## Near-expiry leverage block (recent)
 
@@ -480,8 +480,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Admin-tunable per template, snapshotted per expiry, `0` disables.** It is a
   contract term like `max_admission_leverage`: future markets pick up a new value,
   live markets keep the one they snapshotted, so an admin cannot retroactively
-  change a live market's economics. `0` is a deliberate escape hatch, mirroring how
-  `expiry_fee_max_multiplier = 1x` disables the fee ramp.
+  change a live market's economics. `0` is a deliberate escape hatch for this
+  admission policy.
 - **Origination only; no repricing and no forced deleveraging.** Admitted orders keep
   their frozen floor `F` and their terms, and closing / liquidation / settlement are
   untouched. Reducing risk on positions already open into the window would need a
