@@ -112,7 +112,9 @@ public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 /// pushing the flush over the ceiling. A cap above the budget is not a tuning mistake
 /// — it makes a market permanently un-valuable, and `finish_flush` requires every
 /// snapshotted market valued, so one such market freezes LP supply and withdraw
-/// pool-wide until it expires.
+/// pool-wide until it expires. No operator lever shortens that: a live market's tree
+/// only shrinks when its own position holders close, and 1x positions are never
+/// liquidatable.
 ///
 /// **Precondition:** one `value_expiry` per transaction, never batched with another
 /// market's or with `finish_flush` (whose queue drain walks its own pages). The

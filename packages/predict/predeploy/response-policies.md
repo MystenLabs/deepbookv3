@@ -1419,7 +1419,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   same 1,000. Only system transactions get 16×.
 - **Blast radius:** on overflow the flush aborts `MEMORY_LIMIT_EXCEEDED` inside
   `dynamic_field::borrow_child_object`, so no market is valued and the LP
-  supply/withdraw queues stay frozen pool-wide until the books shrink. Reachable
+  supply/withdraw queues stay frozen pool-wide until the books shrink. A bare retry
+  changes nothing and there is no partial-flush escape, but relief does not require a
+  successful flush: `rebalance_expiry_cash` is permissionless and sweeps a settled
+  market out of the active set on its own, and `remove_range` frees a node whenever a
+  strike tick empties through a close or a liquidation. What no path can do is shrink a
+  LIVE market's tree on demand — a 1x position is closable only by its owner and is
+  never liquidatable, so a poisoned live market holds until it expires. Reachable
   adversarially, not only by organic growth: reusing one lower boundary and
   varying the upper mints one new node per order, and at the compiled floors
   (`min_net_premium` 1 DUSDC, entry band [1%, 99%], `min_fee` 0.5% on quantity)
@@ -1516,7 +1522,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   premium plus ~5 DUSDC of fees.
 - **Blast radius:** the market becomes permanently un-valuable, and `finish_flush`
   requires every snapshotted market valued, so LP supply and withdraw freeze
-  **pool-wide** until that market expires and is swept. This is strictly worse than a
+  **pool-wide** until that market expires and is swept — and because a live market's tree
+  cannot be shrunk by anyone but its position holders, no operator or permissionless
+  action shortens that. This is strictly worse than a
   degraded fill, which is why the response is a hard bound rather than a tuned one.
 - **Response:** rung 2 — a derived cap plus a written operational bound.
   `max_payout_tree_nodes` is no longer a chosen number; it is
