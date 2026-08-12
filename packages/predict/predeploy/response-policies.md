@@ -1507,7 +1507,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Trigger state:** one market's `plp::value_expiry` loads more distinct
   dynamic-field children than a transaction may hold. The worst case is
   `max_payout_tree_nodes` (the full `walk_linear`) + `ceil(max_active_leveraged_orders
-  / 64)` liquidation pages (the `correction_value` scan) + the market's base children.
+  / 32)` liquidation pages (the `correction_value` scan — half the page capacity, because
+  pages split at their midpoint and only merge when the neighbour has room) + the market's
+  base children.
 - **Controller:** partly external (the Sui constant), partly ours (the caps). Reaching
   it is market-controlled: any actor may mint boundaries up to the node cap, and at
   the compiled floors ~999 near-certain orders cost ~1,000 DUSDC of recoverable

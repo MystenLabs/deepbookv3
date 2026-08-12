@@ -96,7 +96,7 @@ and contributors. For *how* each mechanism works, follow the links into
   direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
 - **Exactly-once full-pool valuation.** Vault-held `PoolValuation` snapshots the
   active-expiry set at `start_pool_valuation`; each `value_expiry` proves its market
-  is in the snapshot and not already valued, and `finish_flush` proves the valued set
+  is not already valued (one outside the snapshot is skipped, RP-29), and `finish_flush` proves the valued set
   equals the snapshot. A missed or double-counted market would mis-price the pool, so
   the completeness proof is mandatory. Because the valuation is vault state rather
   than a hot potato, the lock it holds is released by `finish_flush`,

@@ -321,7 +321,7 @@ public fun snapshot_expiry_pricer(
     // settle-then-sweep roll calls it — leaves that list holding a market this flush has no
     // business touching. Aborting made a routine race fail the whole flush (RP-29).
     // Skipping is safe because `expected_expiry_markets` is read on-chain here, not
-    // supplied: see `assert_snapshot_complete` for why nothing real can be skipped.
+    // supplied: see `seal_valuation_snapshot` for why nothing real can be skipped.
     if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;
     assert!(!valuation.frozen_pricers.contains(&expiry_market_id), EExpiryPricerAlreadySnapshotted);
 
@@ -1239,8 +1239,8 @@ fun assert_expiry_not_already_valued(valuation: &PoolValuation, expiry_market_id
 }
 
 /// The exactly-once completeness proof: the valued set must equal the snapshot
-/// (a missed market means a wrong pool NAV). `value_expiry` already rejects
-/// non-snapshot and duplicate ids, so equal lengths plus full coverage suffice.
+/// (a missed market means a wrong pool NAV). `value_expiry` rejects duplicate ids and
+/// skips ids outside the snapshot, so equal lengths plus full coverage suffice.
 fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
     assert!(valued.length() == expected.length(), EMissingExpiryValuation);
     expected.do_ref!(|id| assert!(valued.contains(id), EMissingExpiryValuation));

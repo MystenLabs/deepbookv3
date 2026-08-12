@@ -200,10 +200,14 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   account, with a minimum-output limit and a cancellable index), and the flush
   fills eligible heads. Code `RequestQueue`, events `SupplyRequested` /
   `WithdrawRequested`.
-- **The flush** — the transaction-local valuation-and-drain cycle that marks the
-  whole pool once and fills eligible queued heads at that mark. It is a **hot potato**:
-  `start_pool_valuation` opens it (engaging the valuation lock), `value_expiry`
-  is called once per active market to accumulate `Σ current_nav`, and
+- **The flush** — the valuation-and-drain cycle that marks the whole pool once and
+  fills eligible queued heads at that mark. It runs in three stages and spans
+  transactions: an **atomic snapshot** (`start_pool_valuation` engages the valuation
+  lock and mints a `SnapshotStage` hot potato, `snapshot_expiry_pricer` freezes one
+  `Pricer` per active market, `seal_valuation_snapshot` consumes the potato — all in
+  one transaction, which is what makes the marks simultaneous); then a **resumable
+  valuation**, `value_expiry` once per active market across as many transactions as
+  needed, accumulating `Σ current_nav` against the frozen pricers; and
   `finish_flush` computes `pool_nav`, then `lp_book::drain` mints/burns PLP
   and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
   up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`;

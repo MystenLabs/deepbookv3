@@ -26,10 +26,12 @@ machine and each public entry as a transition.
    Per move.md, exits/settlement/valuation should be blocked only by the valuation lock, not trading-pause —
    verify that holds.
 
-3. **VALUATION-LOCK ATOMICITY** — the full-pool valuation (`PoolValuation` hot potato) must open and close
-   within ONE tx, snapshot the active-expiry set, value each expiry exactly once, and price PLP shares only
-   against a fully-finished sync. Stress it: can the lock be left open or closed early? Can the expected set
-   drift between snapshot and finish? Can a market be created/registered or a config changed mid-valuation?
+3. **VALUATION-LOCK ATOMICITY** — since RP-27 the flush spans transactions: only the SNAPSHOT stage is
+   atomic (forced by the `SnapshotStage` hot potato), while `value_expiry` is resumable and the lock is held
+   across the whole sequence. The valuation must snapshot the active-expiry set, value each expiry exactly
+   once, and price PLP shares only against a fully-finished sync. Stress it: can the snapshot stage be split
+   across transactions? Can the lock be left stranded (and does `abort_valuation` clear it)? Can the expected
+   set drift between snapshot and finish? Can a market be created/registered or a config changed mid-valuation?
    Can shares price against a partially-built NAV? Can an expiry be valued twice or zero times? Note: the flush
    prices supply AND withdraw at one frozen mark — a half-built mark breaks both.
 

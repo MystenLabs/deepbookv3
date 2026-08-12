@@ -364,12 +364,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   limits when that quotient floored to zero or left `u64`. Those limits hold only
   while total variance is small, and the branch returned them without reading the
   surface, so a high-variance surface was mispriced by up to 100% in either
-  direction — `predeploy/response-policies.md` RP-28. Removing the ratio removed the
+  direction — `predeploy/response-policies.md` RP-26. Removing the ratio removed the
   need for the shortcut. *Rejected:* a standalone reject-at-mint strike-range guard
   (redundant with the ask band on mint, and it would not cover redeem / NAV /
   liquidation, which re-price already-minted orders with no band); and bounding the
   SVI envelope so the shortcut became exact (no envelope that admits arbitrage-free
-  surfaces can — RP-28).
+  surfaces can — RP-26).
 
 ## Async LP, exact NAV, and the privileged flush (recent)
 

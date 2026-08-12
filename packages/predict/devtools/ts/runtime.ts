@@ -1316,6 +1316,15 @@ function addSnapshotStage(tx: Transaction, params: FlushParams): void {
 // why it is the one that may need its own transaction per market under Sui's
 // 1,000-dynamic-field-children ceiling. `finish_flush` drains both queues at the frozen
 // mark; its two budgets are `None` (unbounded).
+// Values the single market and finishes, in ONE transaction.
+//
+// This deliberately batches `value_expiry` with `finish_flush`, which the per-market
+// object budget (RP-28) says not to do in general: the budget bounds ONE market's
+// valuation, and `finish_flush`'s queue drain walks its own pages on top. It is safe
+// here only because devtools runs exactly one expiry market with a small book, so the
+// combined footprint is nowhere near the ceiling. A multi-market or full-book caller
+// must issue one `value_expiry` per transaction and finish in its own — see
+// `keeperFlushTxs`, which does.
 function addValuationAndFinish(tx: Transaction, params: FlushParams): void {
     tx.moveCall({
         target: target("plp", "value_expiry"),

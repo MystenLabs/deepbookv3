@@ -328,7 +328,7 @@ tolerances are now conservative by luck rather than derived.
 `generate_pricing_reference.py` derives every tolerance analytically from
 `math.move`'s documented per-primitive budgets, and its `d_k` term has been
 corrected to the difference-of-logs form (`1e-7·(|ln strike| + |ln forward|) +
-2/F`) that RP-28 shipped. The committed `pricing_reference_data.move` was
+2/F`) that RP-26 shipped. The committed `pricing_reference_data.move` was
 generated under the previous ratio model (`1/F/ratio + 1e-7·|k| + 1/F`), which
 understates the current implementation by roughly 6x near the money — the old
 model's `1e-7·|k|` term vanishes at the money, while two `ln` evaluations do not.
@@ -440,7 +440,7 @@ elapses.
 
 **Severity:** Low, but it compounds. Not a defect; a stale measurement.
 
-RP-28 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
+RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
 `walk_linear` pays that per payout-tree node and the pool-wide flush prices every
 active market in one PTB, so the increment lands directly on the C-1 computation
 budget — last measured at ~51% of the wall.
