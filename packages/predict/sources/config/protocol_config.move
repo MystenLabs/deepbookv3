@@ -59,7 +59,7 @@ public struct ProtocolConfig has key {
     /// How long a started full-pool valuation may stay in flight before
     /// `plp::abort_valuation` becomes permissionless. Because the valuation lock
     /// freezes the whole mutation surface, this is the maximum protocol pause a
-    /// stalled keeper can cause, and so is tuned alongside flush cadence (RP-25).
+    /// stalled keeper can cause, and so is tuned alongside flush cadence (RP-27).
     max_valuation_window_ms: u64,
     expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
@@ -329,7 +329,7 @@ public fun set_lp_request_limit_flush_attempts(
 /// discard it. This is the maximum protocol pause a stalled keeper can cause, so it
 /// belongs with the flush cadence as an operator liveness decision: too short and a
 /// legitimate long flush can be discarded from under the keeper, too long and an
-/// abandoned one freezes the protocol for that duration. See RP-25.
+/// abandoned one freezes the protocol for that duration. See RP-27.
 public fun set_max_valuation_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

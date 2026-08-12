@@ -328,7 +328,7 @@ tolerances are now conservative by luck rather than derived.
 `generate_pricing_reference.py` derives every tolerance analytically from
 `math.move`'s documented per-primitive budgets, and its `d_k` term has been
 corrected to the difference-of-logs form (`1e-7·(|ln strike| + |ln forward|) +
-2/F`) that RP-26 shipped. The committed `pricing_reference_data.move` was
+2/F`) that RP-28 shipped. The committed `pricing_reference_data.move` was
 generated under the previous ratio model (`1/F/ratio + 1e-7·|k| + 1/F`), which
 understates the current implementation by roughly 6x near the money — the old
 model's `1e-7·|k|` term vanishes at the money, while two `ln` evaluations do not.
@@ -440,7 +440,7 @@ elapses.
 
 **Severity:** Low, but it compounds. Not a defect; a stale measurement.
 
-RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
+RP-28 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
 `walk_linear` pays that per payout-tree node and the pool-wide flush prices every
 active market in one PTB, so the increment lands directly on the C-1 computation
 budget — last measured at ~51% of the wall.
@@ -518,7 +518,7 @@ trust coupling.
 
 **Severity:** Low / tighten before deployment; the unsafe case is already closed.
 
-RP-25 removed the *joint* flush budget, and RP-26 closed the *per-market* one by
+RP-27 removed the *joint* flush budget, and RP-28 closed the *per-market* one by
 deriving `max_payout_tree_nodes` from the transaction budget rather than choosing it:
 `object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
 = 1,000 − 157 − 40 = **803**. A single `value_expiry` therefore fits by construction,
@@ -540,7 +540,7 @@ transaction, and read the base children off the abort boundary — the node coun
 which a single `value_expiry` aborts, minus the pages present. If the measured base
 is below 40, lower `valuation_base_children_reserve` to the measured figure plus a
 stated margin and follow with one run that reaches the new boundary. If it is above
-40, that is a correctness finding on RP-26, not a tuning result: raise the reserve
+40, that is a correctness finding on RP-28, not a tuning result: raise the reserve
 and re-derive.
 
 The run must carry **leveraged** orders, not the 1x-only book the superseded

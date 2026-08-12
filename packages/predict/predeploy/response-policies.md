@@ -1396,7 +1396,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   output scale changes, or a strike/forward pair is admitted whose `|k|` exceeds
   44.4 (impossible while both are `u64` at 1e9).
 
-## RP-XX-A: Full-pool valuation is resumable across transactions (resolves C-1)
+## RP-27: Full-pool valuation is resumable across transactions (resolves C-1)
 
 - **Trigger state:** the sum of dynamic-field children the flush must load —
   dominated by distinct strike ticks, one `Table<tick,PayoutNode>` child each —
@@ -1406,7 +1406,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   two markets at 586 nodes each aborted at 1,172 combined
   (`evidence/c1-object-cache-flush-2026-07-07.md`).
 
-  **Correction to that record's capacity law, which RP-25 inherited:** it writes the
+  **Correction to that record's capacity law, which RP-27 inherited:** it writes the
   liquidation-book term as `ceil(leveraged_orders / 64)`. That is the best case, not the
   bound. `insert_active_order_id` splits an over-full page at its midpoint (32 and 33,
   never 64) and `merge_page_if_small` declines exactly when the neighbour is full, so
@@ -1502,7 +1502,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-26: The payout-tree cap is derived from the per-transaction object budget
+## RP-28: The payout-tree cap is derived from the per-transaction object budget
 
 - **Trigger state:** one market's `plp::value_expiry` loads more distinct
   dynamic-field children than a transaction may hold. The worst case is
@@ -1526,7 +1526,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   into one PTB, which re-creates the joint budget. **One `value_expiry` per transaction,
   never batched with `finish_flush`,** is an operator convention, and the failure if it
   is broken is a recoverable abort rather than a freeze.
-- **Reasoning:** RP-25 removed the *joint* budget across markets but left the
+- **Reasoning:** RP-27 removed the *joint* budget across markets but left the
   *per-market* one at a number that could not fit — 1,000 nodes alone equalled the
   whole budget, before pages and base children. Picking a smaller literal would have
   fixed today's arithmetic and left the two caps free to drift apart again; deriving
@@ -1574,7 +1574,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-27: The flush skips a market outside its active set instead of aborting
+## RP-29: The flush skips a market outside its active set instead of aborting
 
 - **Trigger state:** a caller passes `snapshot_expiry_pricer` or `value_expiry` a market
   that is not in `expected_expiry_markets` — the active set `start_pool_valuation` read
@@ -1611,7 +1611,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   keeper's own signal is that flushes stop failing. `EExpiryMarketAlreadyValued` is
   unchanged and still guards double-counting.
 - **Risk profile:** `MEASURED` for the failure removed
-  (`evidence/rp27-flush-active-set-race-2026-07-30.md`): an on-chain testnet abort with a
+  (`evidence/rp29-flush-active-set-race-2026-07-30.md`): an on-chain testnet abort with a
   transaction digest, ~13 failures in 3 hours on one operator. The skip itself is a
   structural argument, not a measurement.
 - **Rejected: fixing only the caller.** A caller can narrow the window — re-read the

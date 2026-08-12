@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Pins the capacity terms that keep one `plp::value_expiry` inside a single
-/// transaction's dynamic-field-children budget. See RP-26.
+/// transaction's dynamic-field-children budget. See RP-28.
 ///
 /// The load-bearing test is `worst_case_page_occupancy_stays_within_the_bound`: it
 /// builds a real liquidation book and counts real pages, because the derivation's weak

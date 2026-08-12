@@ -147,7 +147,7 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 /// dead keeper freezes the protocol, so at a ten-minute cadence the one-hour default
 /// is six missed flush cycles, while at an hourly cadence it is about one. A live
 /// operator never waits it out — `abort_valuation_privileged` is immediate — so this
-/// only binds when the keeper is genuinely gone. See RP-25.
+/// only binds when the keeper is genuinely gone. See RP-27.
 public(package) macro fun default_max_valuation_window_ms(): u64 {
     deepbook_predict::constants::one_hour_ms!()
 }

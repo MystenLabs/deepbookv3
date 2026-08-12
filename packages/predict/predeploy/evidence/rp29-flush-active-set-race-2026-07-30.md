@@ -1,6 +1,6 @@
 # Flush aborts on a stale active-market list — testnet, 2026-07-30
 
-**Item:** RP-27 · **Instrument:** live testnet observation (`predict-6-24`) · **Date:** 2026-07-30
+**Item:** RP-29 · **Instrument:** live testnet observation (`predict-6-24`) · **Date:** 2026-07-30
 
 Status: reproduced failure, observed on chain. The full-pool flush aborts when the
 market list it was built from no longer matches the active set the flush snapshots at
@@ -79,18 +79,18 @@ the abort lands specifically on active-set membership.
 
 ## Why the resumable flush does not change it
 
-RP-25 splits the flush but keeps the membership assertion, moving it into
+RP-27 splits the flush but keeps the membership assertion, moving it into
 `snapshot_expiry_pricer`. The same stale list produces the same abort, earlier and more
 cheaply — before any payout-tree walk — but the flush still fails. The failure is
-independent of the capacity work in RP-25 and RP-26.
+independent of the capacity work in RP-27 and RP-28.
 
 ## Decision rule this record supports
 
-RP-27 makes both stages skip a market outside the snapshotted set rather than abort. The
+RP-29 makes both stages skip a market outside the snapshotted set rather than abort. The
 completeness proof is unaffected: `seal_valuation_snapshot` requires a frozen pricer for
 every expected market and `finish_flush` requires every expected market valued, so a
 market that genuinely belongs to the flush still cannot be skipped.
 
-Reopen if flush failures with this signature persist after RP-27 lands — that would mean
+Reopen if flush failures with this signature persist after RP-29 lands — that would mean
 the divergence runs in the other direction (a market entering the active set after the
 list was built), which still aborts at the seal by design.

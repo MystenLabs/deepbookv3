@@ -319,7 +319,7 @@ public fun snapshot_expiry_pricer(
     // market list off-chain before submitting, and anything that sweeps a settled market
     // in the meantime — `rebalance_expiry_cash` is permissionless, and the ordinary
     // settle-then-sweep roll calls it — leaves that list holding a market this flush has no
-    // business touching. Aborting made a routine race fail the whole flush (RP-27).
+    // business touching. Aborting made a routine race fail the whole flush (RP-29).
     // Skipping is safe because `expected_expiry_markets` is read on-chain here, not
     // supplied: see `assert_snapshot_complete` for why nothing real can be skipped.
     if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;

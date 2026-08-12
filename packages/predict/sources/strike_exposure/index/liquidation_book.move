@@ -18,7 +18,7 @@ const EActiveOrderNotFound: u64 = 1;
 const EMaxActiveLeveragedOrders: u64 = 2;
 
 /// Orders one page holds before it splits. Single-homed in `constants` because the
-/// flush's per-transaction object budget is derived from it (RP-26).
+/// flush's per-transaction object budget is derived from it (RP-28).
 macro fun page_capacity(): u64 { constants::liquidation_page_capacity!() }
 
 /// Active leveraged-order scan source.

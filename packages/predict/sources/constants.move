@@ -117,7 +117,7 @@ public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 /// **Precondition:** one `value_expiry` per transaction, never batched with another
 /// market's or with `finish_flush` (whose queue drain walks its own pages). The
 /// derivation bounds ONE market's valuation; batching re-creates the joint budget this
-/// exists to remove. See RP-26.
+/// exists to remove. See RP-28.
 public(package) macro fun max_payout_tree_nodes(): u64 {
     object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()
 }

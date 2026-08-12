@@ -237,8 +237,10 @@ fun empty_pool_valuation_returns_idle() {
 
 // === Oracle-width propagation and recovery ===
 
-/// `value_expiry` is the mandatory per-market leg of a pool-wide flush, so an over-wide active
-/// market observation must surface the named pricing-boundary error here rather than a VM cast.
+/// Freezing the pricer is the mandatory per-market leg of a pool-wide flush, so an over-wide
+/// active market observation must surface the named pricing-boundary error there rather than a
+/// VM cast. Since RP-27 the oracle read happens in the atomic snapshot stage rather than in
+/// `value_expiry`, so the abort lands inside the flush's first transaction.
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
     let mut fx = helpers::setup_market_default();
@@ -253,8 +255,7 @@ fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
         FIRST_UNREPRESENTABLE_U64,
     );
 
-    let mut valuation = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut valuation, &mut market);
+    fx.start_flush_bundle(&mut market);
     abort 999
 }
 
@@ -280,14 +281,9 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
         overwide_timestamp_ms + 1,
     );
 
-    let mut valuation = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut valuation, &mut market);
-    let pool_nav = fx.finish_flush_bundle(
-        valuation,
-        &mut market,
-        option::none(),
-        option::none(),
-    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market, option::none(), option::none());
     assert_eq!(pool_nav, IDLE_SEED);
 
     helpers::return_market_bundle(market);
