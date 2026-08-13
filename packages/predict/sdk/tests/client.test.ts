@@ -54,6 +54,7 @@ const MINTED_EVENT = {
 			fee_incentive_subsidy: bcs.u64(),
 			builder_fee: bcs.u64(),
 			penalty_fee: bcs.u64(),
+			inventory_impact_charge: bcs.u64(),
 			builder_code_id: bcs.option(bcs.Address),
 		})
 		.serialize({
@@ -72,6 +73,7 @@ const MINTED_EVENT = {
 			fee_incentive_subsidy: 20_000n, // $0.02 sponsor-paid
 			builder_fee: 30_000n, // $0.03
 			penalty_fee: 5_000n, // $0.005
+			inventory_impact_charge: 40_000n, // $0.04 isolated escrow
 			builder_code_id: null,
 		})
 		.toBytes(),
@@ -92,6 +94,7 @@ const REDEEMED_EVENT = {
 			trading_fee: bcs.u64(),
 			builder_fee: bcs.u64(),
 			penalty_fee: bcs.u64(),
+			inventory_impact_rebate: bcs.u64(),
 			builder_code_id: bcs.option(bcs.Address),
 		})
 		.serialize({
@@ -107,6 +110,7 @@ const REDEEMED_EVENT = {
 			trading_fee: 50_000n,
 			builder_fee: 0n,
 			penalty_fee: 0n,
+			inventory_impact_rebate: 10_000n,
 			builder_code_id: null,
 		})
 		.toBytes(),
@@ -409,9 +413,10 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 		expect(counts.quote_mint_sim).toBe(1);
 		expect(q.entryProbability).toBeCloseTo(0.34);
 		expect(q.premium).toBe(17);
-		// cost = premium + (trading − subsidy) + builder + penalty
-		expect(q.raw.cost).toBe(17_000_000n + 80_000n + 30_000n + 5_000n);
-		expect(q.cost).toBeCloseTo(17.115);
+		// cost = premium + (trading − subsidy) + builder + penalty + inventory impact
+		expect(q.raw.inventoryImpactCharge).toBe(40_000n);
+		expect(q.raw.cost).toBe(17_000_000n + 80_000n + 30_000n + 5_000n + 40_000n);
+		expect(q.cost).toBeCloseTo(17.155);
 		expect(q.quantity).toBe(50);
 		expect(q.feesExact).toBe(true);
 	});
@@ -424,7 +429,9 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 			{ orderId: 7n, quantity: 0.02 },
 		);
 		expect(q.gross).toBe(6);
-		expect(q.proceeds).toBe(5.95);
+		expect(q.inventoryImpactRebate).toBe(0.01);
+		expect(q.raw.inventoryImpactRebate).toBe(10_000n);
+		expect(q.proceeds).toBe(5.96);
 		expect(q.wouldLiquidate).toBe(false);
 		expect(q.remaining).toBe(30);
 		expect(q.feesExact).toBe(true);

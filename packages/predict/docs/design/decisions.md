@@ -155,6 +155,25 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   also serves the exact NAV linear walk (`Σ qty·P` over its live boundaries), so it
   is the single full-lifecycle live index. *Rejected:* folding settlement into the
   deleted NAV matrix and dropping the tree.
+- **D032 — Inventory impact is the difference of one capped book-level potential.**
+  Define the risk coordinate as the existing payout liability
+  `L = M + λ(T-M)`, and charge mints / rebate voluntary live closes by the signed
+  change of a convex potential whose marginal rate rises linearly to
+  `inventory_impact_max_rate` at `B = max_expiry_allocation`, then remains capped.
+  The rate snapshots at market creation, ships at zero, and cannot exceed 1.0.
+  Charges sit in an isolated escrow excluded from NAV and every ordinary fee or
+  loss-rebate basis; liquidation earns no rebate, and settlement releases the
+  residual. One deterministic integer state function makes trade splitting and
+  every closed cross-range cycle telescope exactly. The payout tree supplies
+  O(log n) in-range/complement peaks needed to compute the true marginal move in
+  `M`; the implementation evaluates the complete before/after liability so
+  fixed-point buffer carries are part of the state difference. *Rejected:* a
+  range-local skew multiplier tied to that range's current
+  probability. Its entry and exit rates can be changed by trading another range,
+  so a cycle that returns the book to its starting state can extract value. Also
+  rejected: live cash/NAV as `B` (trader/pool flows could move the curve under
+  existing positions), uncapped quadratic marginal rates, and treating charges
+  as fee revenue available for pool sweep.
 
 ## Access and operations (recent)
 

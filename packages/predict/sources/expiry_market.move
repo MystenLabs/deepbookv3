@@ -81,7 +81,9 @@ public struct ExpiryMarket has key {
 /// `quantity` is the exact requested quantity or the conservatively budget-sized
 /// fill. `trading_fee` is the post-stake-discount fee before sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
-/// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee`.
+/// `net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
+/// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
+/// fee policy because it is escrowed for risk-reducing live closes.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -90,6 +92,7 @@ public struct MintQuote has copy, drop {
     fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
+    inventory_impact_charge: u64,
     all_in_cost: u64,
 }
 
@@ -137,6 +140,12 @@ public fun rebate_reserve(market: &ExpiryMarket): u64 {
     market.cash.rebate_reserve()
 }
 
+/// Return the isolated inventory-impact escrow for SDK and devInspect state
+/// reads.
+public fun inventory_impact_reserve(market: &ExpiryMarket): u64 {
+    market.cash.inventory_impact_reserve()
+}
+
 /// Return local fee incentives for SDK and devInspect state reads.
 public fun fee_incentive_balance(market: &ExpiryMarket): u64 {
     market.fee_incentive_balance.value()
@@ -178,6 +187,18 @@ public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
 /// against the market's own snapshotted terms rather than the live template.
 public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.no_leverage_window_ms()
+}
+
+/// Return this market's immutable maximum marginal inventory-impact rate for SDK
+/// and devInspect state reads.
+public fun inventory_impact_max_rate(market: &ExpiryMarket): u64 {
+    market.strike_exposure.inventory_impact_max_rate()
+}
+
+/// Return the immutable DUSDC scale of this market's inventory-impact curve for
+/// SDK and devInspect state reads.
+public fun inventory_impact_scale(market: &ExpiryMarket): u64 {
+    market.strike_exposure.inventory_impact_scale()
 }
 
 /// Return the strike tick size for SDK and devInspect range construction. Raw
@@ -396,6 +417,12 @@ public fun builder_fee(quote: &MintQuote): u64 {
 /// Return the quoted EWMA congestion surcharge for SDK and devInspect consumers.
 public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
+}
+
+/// Return the separate inventory-impact charge for SDK and devInspect quote
+/// consumers.
+public fun inventory_impact_charge(quote: &MintQuote): u64 {
+    quote.inventory_impact_charge
 }
 
 /// Return the total quoted account withdrawal for SDK and devInspect consumers.
@@ -755,6 +782,9 @@ public fun try_settle(
     if (spot.is_none()) return false;
     let settlement_price = spot.destroy_some();
     market.strike_exposure.record_settlement(settlement_price);
+    // Live-close rebates are no longer reachable after settlement. Release the
+    // residual inventory-impact escrow so the settled sweep returns it to LPs.
+    market.cash.release_inventory_impact_reserve();
     config_events::emit_market_settled(
         market.id(),
         market.propbook_underlying_id,
@@ -864,6 +894,7 @@ public(package) fun create_and_share(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -882,6 +913,7 @@ public(package) fun create_and_share(
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
+            inventory_impact_scale,
             strike_exposure_config,
             ctx,
         ),
@@ -978,6 +1010,7 @@ fun mint_prepared(
         quote.fee_incentive_subsidy,
         quote.builder_fee,
         quote.penalty_fee,
+        quote.inventory_impact_charge,
         clock.timestamp_ms(),
     );
     minted_order.id()
@@ -999,8 +1032,13 @@ fun compute_mint_quote(
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let net_premium = terms.net_premium();
+    let inventory_impact_charge = terms.inventory_impact_charge();
     let all_in_cost =
-        net_premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee;
+        net_premium
+        + (trading_fee - fee_incentive_subsidy)
+        + builder_fee
+        + penalty_fee
+        + inventory_impact_charge;
 
     MintQuote {
         quantity,
@@ -1010,6 +1048,7 @@ fun compute_mint_quote(
         fee_incentive_subsidy,
         builder_fee,
         penalty_fee,
+        inventory_impact_charge,
         all_in_cost,
     }
 }
@@ -1055,8 +1094,10 @@ fun settle_mint_payment(
     let mut fee_payment = payment.split(trader_fee_amount);
     fee_payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.collect_trade_fee(account, fee_payment, trader_fee_amount, ctx);
-    // Remaining balance is the net premium plus the penalty surplus.
+    // Remaining balance is the net premium plus the penalty and inventory
+    // impact. The impact amount is reserved separately after its cash arrives.
     market.cash.receive(payment);
+    market.cash.credit_inventory_impact_reserve(quote.inventory_impact_charge);
 
     market.assert_cash_backing();
 }
@@ -1163,12 +1204,15 @@ fun redeem(
             close_quantity,
         ).min(redeem_amount - fee_amount);
         let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+        let inventory_impact_rebate = terms.inventory_impact_rebate();
         // Close-side all-in slippage floor: the net credited to the account is
-        // `redeem_amount` minus the fee, builder fee, and penalty just computed —
-        // asserted before the payment applies them. `0` disables. Mirror of mint's
-        // `max_cost`.
+        // `redeem_amount` plus inventory rebate, minus fee, builder fee, and
+        // penalty. `0` disables. Mirror of mint's `max_cost`.
         assert!(
-            redeem_amount - fee_amount - builder_fee_amount - penalty_amount >= min_proceeds,
+            redeem_amount + inventory_impact_rebate
+                - fee_amount
+                - builder_fee_amount
+                - penalty_amount >= min_proceeds,
             ERedeemProceedsBelowMin,
         );
 
@@ -1199,6 +1243,7 @@ fun redeem(
             fee_amount,
             builder_fee_amount,
             penalty_amount,
+            inventory_impact_rebate,
             builder_code_id,
             ctx,
         );
@@ -1217,6 +1262,7 @@ fun redeem(
             fee_amount,
             builder_fee_amount,
             penalty_amount,
+            inventory_impact_rebate,
             clock.timestamp_ms(),
         );
         return (order.id(), replacement_order_id)
@@ -1262,10 +1308,8 @@ fun redeem(
 
 /// Settle a live redeem per an already-computed payment decomposition: pay out
 /// `redeem_amount`, route the fee and builder fee, and credit the account with
-/// the remainder. The caller owns the decomposition (each amount pre-clamped so
-/// the splits below cannot underflow) and the `min_proceeds` guard, and passes
-/// its single `builder_code_id` read so the fee amount and the routing
-/// destination cannot come from different reads.
+/// the remainder plus the isolated inventory-impact rebate. The caller owns the
+/// decomposition and the `min_proceeds` guard.
 ///
 /// The EWMA penalty is withheld from the payout and kept in expiry cash
 /// as surplus.
@@ -1276,11 +1320,13 @@ fun settle_live_redeem_payment(
     fee_amount: u64,
     builder_fee_amount: u64,
     penalty_amount: u64,
+    inventory_impact_rebate: u64,
     builder_code_id: Option<ID>,
     ctx: &mut TxContext,
 ) {
     // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
     let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
+    payout.join(market.cash.pay_inventory_impact_rebate(inventory_impact_rebate));
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     predict_account::record_gross_received_from_expiry(account, market.id(), redeem_amount, ctx);
@@ -1337,4 +1383,8 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     market.cash.assert_backing(market.payout_liability());
+    assert!(
+        market.cash.inventory_impact_reserve()
+            >= market.strike_exposure.inventory_impact_potential(),
+    );
 }

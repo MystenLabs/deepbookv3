@@ -4,8 +4,9 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, liquidation LTV, max admission leverage, backing buffer lambda), the
-/// expiry-cash trading-loss rebate template. Every abort test drives the real
+/// expiry-fee ramp, liquidation LTV, max admission leverage, backing buffer lambda,
+/// inventory-impact max rate), and the expiry-cash trading-loss rebate template.
+/// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
 /// that boundary values round-trip through setter + getter. Codes whose envelope
@@ -226,6 +227,19 @@ fun backing_buffer_lambda_above_max_assert_aborts() {
     abort 999
 }
 
+// === Strike-exposure templates: inventory-impact maximum marginal rate ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidInventoryImpactMaxRate)]
+fun template_inventory_impact_max_rate_above_one_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_inventory_impact_max_rate(
+        &admin_cap,
+        config_constants::max_inventory_impact_max_rate!() + 1,
+    );
+    abort 999
+}
+
 // === Strike-exposure templates: boundary values round-trip ===
 
 #[test]
@@ -265,6 +279,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         &admin_cap,
         config_constants::min_backing_buffer_lambda!(),
     );
+    config.set_template_inventory_impact_max_rate(
+        &admin_cap,
+        config_constants::min_inventory_impact_max_rate!(),
+    );
 
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::min_base_fee!());
@@ -282,6 +300,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.liquidation_ltv(), config_constants::min_liquidation_ltv!());
     assert_eq!(snapshot.max_admission_leverage(), config_constants::min_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::min_backing_buffer_lambda!());
+    assert_eq!(
+        snapshot.inventory_impact_max_rate(),
+        config_constants::min_inventory_impact_max_rate!(),
+    );
     destroy(snapshot);
 
     // Envelope ceilings. max entry probability goes up first so min entry
@@ -315,6 +337,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         &admin_cap,
         config_constants::max_backing_buffer_lambda!(),
     );
+    config.set_template_inventory_impact_max_rate(
+        &admin_cap,
+        config_constants::max_inventory_impact_max_rate!(),
+    );
 
     let snapshot = config.strike_exposure_config_snapshot();
     assert_eq!(snapshot.base_fee(), config_constants::max_base_fee!());
@@ -332,6 +358,10 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     assert_eq!(snapshot.liquidation_ltv(), config_constants::max_liquidation_ltv!());
     assert_eq!(snapshot.max_admission_leverage(), config_constants::max_max_admission_leverage!());
     assert_eq!(snapshot.backing_buffer_lambda(), config_constants::max_backing_buffer_lambda!());
+    assert_eq!(
+        snapshot.inventory_impact_max_rate(),
+        config_constants::max_inventory_impact_max_rate!(),
+    );
     destroy(snapshot);
 
     return_shared(config);
@@ -389,6 +419,29 @@ fun backing_buffer_lambda_market_snapshot_freezes_at_creation() {
     );
     destroy(snapshot);
 
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun inventory_impact_rate_and_scale_snapshot_at_creation() {
+    let mut fx = helpers::setup_market_default();
+    let rate = config_constants::max_inventory_impact_max_rate!();
+    fx.set_template_inventory_impact_max_rate(rate);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+
+    let market = fx.take_market_bundle(expiry_id);
+    assert_eq!(helpers::market(&market).inventory_impact_max_rate(), rate);
+    assert_eq!(
+        helpers::market(&market).inventory_impact_scale(),
+        test_constants::default_max_expiry_allocation(),
+    );
+    helpers::return_market_bundle(market);
+
+    // Later template changes do not retroactively reprice the existing book.
+    fx.set_template_inventory_impact_max_rate(0);
+    let market = fx.take_market_bundle(expiry_id);
+    assert_eq!(helpers::market(&market).inventory_impact_max_rate(), rate);
     helpers::return_market_bundle(market);
     fx.finish();
 }

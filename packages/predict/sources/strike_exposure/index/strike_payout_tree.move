@@ -99,6 +99,53 @@ public(package) fun net_payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64
     (max_net_payout, total_net_payout)
 }
 
+/// Return the highest net-payout prefix reachable inside `(lower_tick,
+/// higher_tick]`. This is the existing payout peak a candidate over the same
+/// range would stack onto.
+public(package) fun range_max_net_payout(
+    tree: &StrikePayoutTree,
+    lower_tick: u64,
+    higher_tick: u64,
+): u64 {
+    // Prefix evaluation folds boundaries with `tick < limit`, so `lower + 1`
+    // includes a start boundary exactly at `lower`. Tick zero is the open-lower
+    // sentinel and lives in `base`, not in the node table.
+    let prefix_at_lower = settlement_prefix_net_payout(
+        &tree.nodes,
+        tree.root,
+        lower_tick + 1,
+        tree.base.net_payout,
+    );
+    let window = window_summary(
+        &tree.nodes,
+        tree.root,
+        lower_tick,
+        higher_tick,
+        0,
+        constants::pos_inf_tick!(),
+    );
+    prefix_at_lower + window.max_net_payout_prefix_gain
+}
+
+/// Return the highest net-payout prefix outside `(lower_tick, higher_tick]`.
+public(package) fun complement_max_net_payout(
+    tree: &StrikePayoutTree,
+    lower_tick: u64,
+    higher_tick: u64,
+): u64 {
+    let left = if (lower_tick == 0) {
+        0
+    } else {
+        tree.range_max_net_payout(0, lower_tick)
+    };
+    let right = if (higher_tick == constants::pos_inf_tick!()) {
+        0
+    } else {
+        tree.range_max_net_payout(higher_tick, constants::pos_inf_tick!())
+    };
+    left.max(right)
+}
+
 /// Evaluate payout liability at one positive normalized settlement price.
 /// Open-lower ranges live in `base`; finite boundaries below
 /// `ceil(settlement / tick_size)` are folded into that prefix.
@@ -428,6 +475,35 @@ fun settlement_prefix_net_payout(
     apply_net_delta(&mut running, node.local_start.net_payout, true);
     apply_net_delta(&mut running, node.local_end.net_payout, false);
     settlement_prefix_net_payout(nodes, node.right, limit_tick, running)
+}
+
+/// Combine every boundary strictly inside `(lower, higher)`. Whole subtrees
+/// contained by the window return their stored summary, keeping the read
+/// logarithmic in tree height rather than scanning the payout surface.
+fun window_summary(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    lower: u64,
+    higher: u64,
+    subtree_low: u64,
+    subtree_high: u64,
+): PayoutSummary {
+    if (root.is_none()) return zero_summary();
+    if (subtree_low >= lower && subtree_high <= higher) return subtree_summary(nodes, root);
+
+    let tick = *root.borrow();
+    let node = nodes[tick];
+    if (tick <= lower) {
+        return window_summary(nodes, node.right, lower, higher, tick, subtree_high)
+    };
+    if (tick >= higher) {
+        return window_summary(nodes, node.left, lower, higher, subtree_low, tick)
+    };
+
+    let left = window_summary(nodes, node.left, lower, higher, subtree_low, tick);
+    let right = window_summary(nodes, node.right, lower, higher, tick, subtree_high);
+    let boundary = boundary_summary(node.local_start, node.local_end);
+    combine_summaries(combine_summaries(left, boundary), right)
 }
 
 /// Accumulate start and end boundary products separately during an in-order walk.

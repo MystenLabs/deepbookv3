@@ -169,6 +169,17 @@ public fun set_template_backing_buffer_lambda(
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
 }
 
+/// Set the maximum marginal inventory-impact rate snapshotted by newly created
+/// expiry markets. `0` (the default) disables both charges and rebates.
+public fun set_template_inventory_impact_max_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
+}
+
 /// Set how much of the DEEP-stake benefit programme newly created expiry markets
 /// run, from `0` (nothing) to `float_scaling` (full strength). Ships at 0, so
 /// markets charge undiscounted fees and pay no stake-scaled loss rebate until this

@@ -277,6 +277,7 @@ fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         fx.expiry() - test_constants::default_cadence_period_ms(),
+        1_000_000_000,
         strike_exposure_config::new(),
         fx.scenario_mut().ctx(),
     );
