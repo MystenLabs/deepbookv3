@@ -590,9 +590,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   admitted quantity is exact and the two can no longer disagree in either
   direction. The sub-lot bound this entry justified via the leverage envelope is
   therefore vacuous rather than merely satisfied.
-- **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
-  dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
-  the BS pricing in the same call.
+- **Risk profile:** not applicable since 2026-08-14 — there is no conservative
+  edge left to size. Search cost is ~32 probes of two u128 ops, unmeasured against
+  the BS pricing in the same call; the search is now invertible in closed form and
+  could be replaced by a single division.
 - **Pinning tests:** `mint_exact_amount_tests.move` —
   `oversized_budget_saturates_at_the_lot_cap_without_aborting` (u64-max budget
   quotes the lot-cap premium, the former abort domain),
@@ -645,65 +646,6 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-24: Guards deleted with leverage — duty inventory (2026-08-14)
-
-- **Trigger state:** not a runtime state. `move.md` requires that deleting or
-  weakening a guard is preceded by an inventory of what it *incidentally* bounded,
-  recorded here rather than only in a commit message. Leverage removal deleted
-  several asserts; this entry is that inventory.
-- **Controller:** protocol (all of these guard protocol-written state).
-- **`order::EInvalidFloorShares` (`floor_shares <= quantity`).** Stated purpose: a
-  floor cannot exceed the max payout. Incidental duty: underflow headroom for four
-  bare subtractions — `payout_terms_from_order`'s `quantity - floor_shares`,
-  `quote_settled_close`'s `quantity - floor_shares`, `process_live_close`'s
-  `floor_shares - remove_floor_shares`, and the per-order non-negativity that
-  `total - max` / `range_max - payout` rely on. The first three expressions are
-  deleted by the same change. The fourth survives, now over raw `quantity`, where
-  non-negativity is unconditional — strictly stronger than the guard it replaces.
-  It was never an encoding dependency: the floor occupied a full 64-bit field, so
-  any `u64` value fit regardless of the bound.
-- **`strike_exposure_config::EInvalidLeverage` (`leverage >= 1x`).** Stated
-  purpose: reject sub-1x leverage. Incidental duty: it was the only thing keeping
-  `div_down(entry_value, leverage)` and `mul_div_down(p, Q, leverage)` from
-  dividing by zero, and the only thing keeping `entry_value - net_premium`
-  non-negative. All three expressions are deleted.
-- **`pricing::ETickNotInPriceMemo`.** Stated purpose: a finite boundary tick must
-  be present in the per-flush cache. Incidental duty: it was a cross-index
-  consistency proof — every active leveraged order's boundary had to be a
-  payout-tree node — so it would also have caught a tree GC that dropped a live
-  boundary. The second index is gone, so the cross-index claim is vacuous; the
-  residual GC-detection duty is carried, one transaction later, by
-  `remove_range`'s underflow abort.
-- **`strike_payout_tree`'s cross-field `net_payout <= quantity` assert in
-  `apply_terms_delta`.** Stated purpose: a desync that under-removes net payout
-  cannot leave a boundary holding phantom payout above zero quantity. With one
-  stored atom there is no cross-field invariant left to violate; the surviving
-  per-boundary `apply_net_delta` underflow still detects over-removal, which is
-  the same direction the deleted assert's sibling covered.
-- **`liquidation_book::EMaxActiveLeveragedOrders` (5,000 per market).** Stated
-  purpose: bound the per-market active leveraged set. Incidental duty: it was the
-  only cap on open *order count* per market, which mattered because the flush
-  iterated that set. Nothing iterates order count now — the flush's per-market cost
-  is `walk_linear` over tree nodes, still capped by
-  `constants::max_payout_tree_nodes` — so the removal does not reopen the
-  liveness-time-bomb class `move.md` describes. Open-order count per market is now
-  deliberately unbounded.
-- **Response:** all of the above are removals of guards whose duties are either
-  deleted alongside them or re-homed strictly stronger. No replacement guard is
-  required. The one guard that was *narrowed* rather than deleted — the
-  non-monotone surface check — is recorded separately in RP-15 and is now enforced
-  at every payout-tree boundary again, pinned by
-  `payout_tree_walk_tests::inversion_on_a_cancelling_last_boundary_still_aborts`.
-- **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is
-  static reachability of the deleted expressions, verified by grep against HEAD.
-- **Pinning tests:** `order_tests.move` — `open_lower_order_packs_to_independent_layout`,
-  `finite_range_order_packs_to_independent_layout`, `every_getter_decodes_its_own_field`,
-  `from_order_id_rejects_bits_above_envelope`, `max_quantity_lots_round_trips_without_truncation`.
-- **Reopen when:** leverage is reintroduced in any form, or a per-order term is
-  added back to the payout tree.
-
----
-
 ## RP-15: Block Scholes guarantees butterfly-free surfaces; active-book inversions fail closed (resolves P-11)
 
 - **Trigger state:** despite the provider's guarantee that every published SVI
@@ -736,11 +678,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   its guarantee with a surface whose inversion intersects the active book. The
   guarantee is not enforced by Predict on chain.
 - **Pinning tests:** `current_nav_flow_tests.move` —
-  `current_nav_rejects_non_monotone_active_book_surface`. The guard moved from
+  `current_nav_rejects_non_monotone_active_book_surface`; and
+  `payout_tree_walk_tests.move` —
+  `inversion_on_a_cancelling_last_boundary_still_aborts`. The guard moved from
   the price memo to `strike_payout_tree::ENonMonotonePrice` when leverage was
-  removed and the memo was deleted; it is now enforced over the contributing
-  boundary subsequence of the linear walk, which is exactly the set the netted
-  aggregate reads.
+  removed and the memo was deleted. It is enforced at EVERY payout-tree boundary,
+  exactly as it was before the move. An intermediate revision of that change
+  enforced it only over the boundaries whose start and end quantities do not
+  cancel; that was wrong — the netted aggregate is unaffected by a cancelling
+  boundary, but live redeem prices each order individually, so an inversion
+  sitting on a cancelling tick let NAV understate liability while the flush
+  succeeded. The second pinning test above is the regression for it.
 - **Reopen when:** Block Scholes changes or violates the surface guarantee,
   Predict accepts another SVI publisher without the same guarantee, the
   active-book guard is removed, NAV valuation gains a safe per-market
@@ -1539,3 +1487,64 @@ worth-fixing.
 - `BEST-GUESS` risk profiles are standing candidates for harness measurement;
   when a campaign measures one, replace the tag with `MEASURED` and link the
   dated findings record under `evidence/`.
+
+## RP-27: Guards deleted with leverage — duty inventory (2026-08-14)
+
+- **Trigger state:** not a runtime state. `move.md` requires that deleting or
+  weakening a guard is preceded by an inventory of what it *incidentally* bounded,
+  recorded here rather than only in a commit message. Leverage removal deleted
+  several asserts; this entry is that inventory.
+- **Controller:** protocol (all of these guard protocol-written state).
+- **`order::EInvalidFloorShares` (`floor_shares <= quantity`).** Stated purpose: a
+  floor cannot exceed the max payout. Incidental duty: underflow headroom for four
+  bare subtractions — `payout_terms_from_order`'s `quantity - floor_shares`,
+  `quote_settled_close`'s `quantity - floor_shares`, `process_live_close`'s
+  `floor_shares - remove_floor_shares`, and the per-order non-negativity that
+  `total - max` / `range_max - payout` rely on. The first three expressions are
+  deleted by the same change. The fourth survives, now over raw `quantity`, where
+  non-negativity is unconditional — strictly stronger than the guard it replaces.
+  It was never an encoding dependency: the floor occupied a full 64-bit field, so
+  any `u64` value fit regardless of the bound.
+- **`strike_exposure_config::EInvalidLeverage` (`leverage >= 1x`).** Stated
+  purpose: reject sub-1x leverage. Incidental duty: it was the only thing keeping
+  `div_down(entry_value, leverage)` and `mul_div_down(p, Q, leverage)` from
+  dividing by zero, and the only thing keeping `entry_value - net_premium`
+  non-negative. All three expressions are deleted.
+- **`pricing::ETickNotInPriceMemo`.** Stated purpose: a finite boundary tick must
+  be present in the per-flush cache. Incidental duty: it was a cross-index
+  consistency proof — every active leveraged order's boundary had to be a
+  payout-tree node — so it would also have caught a tree GC that dropped a live
+  boundary. The second index is gone, so the cross-index claim is vacuous; the
+  residual GC-detection duty is carried, one transaction later, by
+  `remove_range`'s underflow abort.
+- **`strike_payout_tree`'s cross-field `net_payout <= quantity` assert in
+  `apply_terms_delta`.** Stated purpose: a desync that under-removes net payout
+  cannot leave a boundary holding phantom payout above zero quantity. With one
+  stored atom there is no cross-field invariant left to violate; the surviving
+  per-boundary `apply_net_delta` underflow still detects over-removal, which is
+  the same direction the deleted assert's sibling covered.
+- **`liquidation_book::EMaxActiveLeveragedOrders` (5,000 per market).** Stated
+  purpose: bound the per-market active *leveraged* set — `insert_order` returned
+  early for a 1x order, so unleveraged open-order count was already unbounded at
+  `dfc74cb4`. Incidental duty: it bounded the only per-order iteration in the
+  flush (`correction_value`). Nothing iterates orders now — the flush's per-market
+  cost is `walk_linear` over tree nodes, still capped by
+  `constants::max_payout_tree_nodes`, which bounds distinct boundary *ticks* and
+  never bounded order count. So the removal does not reopen the
+  liveness-time-bomb class `move.md` describes; it removes a cap on a set that no
+  longer exists.
+- **Response:** all of the above are removals of guards whose duties are either
+  deleted alongside them or re-homed strictly stronger. No replacement guard is
+  required. The one guard that was *narrowed* rather than deleted — the
+  non-monotone surface check — is recorded separately in RP-15 and is now enforced
+  at every payout-tree boundary again, pinned by
+  `payout_tree_walk_tests::inversion_on_a_cancelling_last_boundary_still_aborts`.
+- **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is
+  static reachability of the deleted expressions, verified by grep against HEAD.
+- **Pinning tests:** `order_tests.move` — `open_lower_order_packs_to_independent_layout`,
+  `finite_range_order_packs_to_independent_layout`, `every_getter_decodes_its_own_field`,
+  `from_order_id_rejects_bits_above_envelope`, `max_quantity_lots_round_trips_without_truncation`.
+- **Reopen when:** leverage is reintroduced in any form, or a per-order term is
+  added back to the payout tree.
+
+---

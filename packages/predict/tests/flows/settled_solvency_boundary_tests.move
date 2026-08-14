@@ -5,7 +5,6 @@
 /// first admitted finite range above min_strike exactly at the money, then partially closed
 /// live. Pins that the close removes the order's entire live terms and reinserts
 /// the exact residual (cancel-and-replace) so liability drops to the surviving
-/// half, that the survivor carries zero floor (a 1x order), and that custody
 /// conserves across the market-cash / account sheets with S1 backing intact.
 ///
 /// The settled-redeem boundary legs are covered by the explicit settlement flow

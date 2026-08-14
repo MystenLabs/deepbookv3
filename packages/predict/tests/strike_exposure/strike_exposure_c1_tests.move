@@ -59,7 +59,6 @@ fun double_partial_close_survivor_reinsertion_stays_backed() {
 // market ~2 minutes from expiry (`short_expiry_ms - now_ms`), well inside the 1h
 // window, and so pin the clock threading itself.
 
-/// Shared 2x-mint prologue + a row's live close schedule + the reachable solvency /
 /// position assertions. Each row is a self-contained fixture lifecycle.
 fun run_live_close_schedule(closes: vector<u64>) {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(

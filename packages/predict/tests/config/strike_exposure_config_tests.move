@@ -28,7 +28,6 @@ use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
-/// p = 0.5: the holder pays the full entry value, so net premium is 500_000_000.
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -178,7 +177,6 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 
 //
 
-// 2x at p = 0.5 clears the 2.714285714x cap far from expiry
 // (`mint_admission_half_probability_two_and_half_x_succeeds` admits even 2.5x).
 // One millisecond inside the window the cap drops to 1x and the same order is
 // refused — the tightest just-inside value for the `<` edge.
@@ -189,7 +187,6 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 
 // Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
 // is admitted far from expiry. Entry value 100_000_000; net premium
-// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares 100_000_000 - 66_666_666.
 
 // The block replaces the curve rather than composing with it: inside the window
 // the cap is 1x even at a probability whose curve cap (1.8x) would have admitted

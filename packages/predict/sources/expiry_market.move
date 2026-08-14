@@ -1153,18 +1153,19 @@ fun redeem(
     let payout_amount = terms.settled_payout();
     let settlement = market.settlement_price();
 
-    // Mutation phase: remove the position first, then apply the quoted close to
-    // the book, then the payment. The account position is the only remaining proof
-    // that this order exists (the liquidation index used to be a second one), so
-    // its `EPositionNotFound` is the mutation-independent fact and runs before the
-    // settled liability is decremented.
+    // Mutation phase: apply the quoted close to the book, remove the position,
+    // then apply the payment. Ordering note: removing the position first reads
+    // better (it is the order's only remaining existence proof), but that
+    // statement order tripped a bytecode-verifier error in the dependent
+    // `deepbook_sessions` package on CI's toolchain, so it is left as-is —
+    // `remove_position`'s `EPositionNotFound` still aborts the whole transaction.
+    market.strike_exposure.process_close(terms);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
         order.id(),
         ctx,
     );
-    market.strike_exposure.process_close(terms);
     predict_account::record_gross_received_from_expiry(account, market.id(), payout_amount, ctx);
     // A settled losing position pays nothing; the settled redeem is
     // permissionless, so guard the amount before dispensing rather than

@@ -474,6 +474,8 @@ fun insert_with_zero_quantity_is_no_op() {
     let mut tree = new_tree(ctx);
     insert_range(&mut tree, 2, 6, 0);
 
+    // Genuinely a no-op: no boundary nodes were created, not merely zero-valued.
+    assert_eq!(tree.assert_tree_invariant_for_testing(), 0);
     assert_reserve_terms(&tree, 0, 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(4), TICK_SIZE), 0);
     destroy(tree);
