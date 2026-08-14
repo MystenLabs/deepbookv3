@@ -49,7 +49,6 @@ import {
 import type { MarketFeeds } from "./tx/trade.js";
 import { mintExactAmount, mintExactQuantity, redeemLive, redeemSettled } from "./tx/trade.js";
 import {
-	leverageToRaw,
 	priceToRaw,
 	probabilityToRaw,
 	rawToProbability,
@@ -78,7 +77,6 @@ export interface MarketDescriptor {
 /** Options for the friendly `mint` (exact payout quantity). */
 export interface MintOptions {
 	quantity: number;
-	leverage?: number;
 	maxCost?: number;
 	maxProbability?: number;
 }
@@ -87,7 +85,6 @@ export interface MintOptions {
 export interface MintAmountOptions {
 	spend: number;
 	minQuantity: number;
-	leverage?: number;
 }
 
 /** Options for `redeem` / `claimSettled`: which order and how much to close. */
@@ -310,7 +307,6 @@ export class PredictClient {
 			lowerTick,
 			higherTick,
 			quantityRaw,
-			leverageRaw: leverageToRaw(opts.leverage ?? 1),
 			maxCostRaw: opts.maxCost != null ? usdcToRaw(opts.maxCost) : undefined,
 			maxProbabilityRaw:
 				opts.maxProbability != null ? probabilityToRaw(opts.maxProbability) : undefined,
@@ -419,8 +415,7 @@ export class PredictClient {
 				higherTick,
 				amountRaw: usdcToRaw(opts.spend),
 				minQuantityRaw,
-				leverageRaw: leverageToRaw(opts.leverage ?? 1),
-				...feeds,
+					...feeds,
 			});
 			return tx;
 		},
@@ -547,7 +542,7 @@ export class PredictClient {
 		quoteMint: async (
 			owner: string,
 			m: MarketDescriptor,
-			opts: Pick<MintOptions, "quantity" | "leverage">,
+			opts: Pick<MintOptions, "quantity">,
 		): Promise<MintQuote> => {
 			const tx = await this.buildMint(owner, m, opts);
 			const events = await simulateWithEvents(this.client, tx, owner);

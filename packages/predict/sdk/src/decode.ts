@@ -45,7 +45,6 @@ const OrderMintedBcs = bcs.struct("OrderMinted", {
 	owner: bcs.Address,
 	lower_tick: bcs.u64(),
 	higher_tick: bcs.u64(),
-	leverage: bcs.u64(),
 	entry_probability: bcs.u64(),
 	quantity: bcs.u64(),
 	net_premium: bcs.u64(),
@@ -202,7 +201,6 @@ export interface MintReceipt {
 	positionRootId: bigint;
 	lowerTick: bigint;
 	higherTick: bigint;
-	leverage: number;
 	/** 0..1 range probability quoted at entry (your fill price per $1 payout). */
 	entryProbability: number;
 	/** Max payout actually minted, in quote units (mintAmount: chain-floored). */
@@ -221,7 +219,6 @@ export interface MintReceipt {
 		builderFee: bigint;
 		penaltyFee: bigint;
 		inventoryImpactCharge: bigint;
-		leverage: bigint;
 		entryProbability: bigint;
 	};
 }
@@ -332,7 +329,6 @@ export function decodeMints(cfg: PredictConfig, result: DecodableTransactionResu
 			positionRootId: BigInt(e.position_root_id),
 			lowerTick: BigInt(e.lower_tick),
 			higherTick: BigInt(e.higher_tick),
-			leverage: fromRaw(BigInt(e.leverage), 9),
 			entryProbability: fromRaw(BigInt(e.entry_probability), 9),
 			quantity: fromRaw(BigInt(e.quantity), 6),
 			netPremium: fromRaw(BigInt(e.net_premium), 6),
@@ -352,7 +348,6 @@ export function decodeMints(cfg: PredictConfig, result: DecodableTransactionResu
 				builderFee: BigInt(e.builder_fee),
 				penaltyFee: BigInt(e.penalty_fee),
 				inventoryImpactCharge: BigInt(e.inventory_impact_charge),
-				leverage: BigInt(e.leverage),
 				entryProbability: BigInt(e.entry_probability),
 			},
 		}),

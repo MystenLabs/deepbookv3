@@ -43,7 +43,3 @@ export function probabilityToRaw(p: number): bigint {
 	return toRaw(p, 9);
 }
 export const rawToProbability = (raw: bigint) => fromRaw(raw, 9);
-export function leverageToRaw(l: number): bigint {
-	if (l < 1) throw new Error(`leverage must be >= 1, got ${l}`);
-	return toRaw(l, 9);
-}

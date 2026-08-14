@@ -29,7 +29,6 @@ export type { PredictConfig, PredictPackages, UnderlyingConfig } from "./config/
 export {
 	U64_MAX,
 	fromRaw,
-	leverageToRaw,
 	priceToRaw,
 	probabilityToRaw,
 	rawToPrice,
