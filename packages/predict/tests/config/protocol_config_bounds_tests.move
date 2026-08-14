@@ -20,6 +20,7 @@ module deepbook_predict::protocol_config_bounds_tests;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     config_constants,
+    constants,
     flow_test_helpers as helpers,
     protocol_config::{Self, ProtocolConfig},
     test_constants
@@ -116,7 +117,7 @@ fun template_expiry_fee_window_below_min_aborts() {
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
-        config_constants::min_expiry_fee_window_ms!() - 1,
+        constants::one_minute_ms!() - 1,
     );
     abort 999
 }
@@ -264,7 +265,7 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
     );
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
-        config_constants::min_expiry_fee_window_ms!(),
+        constants::one_minute_ms!(),
     );
     config.set_template_expiry_fee_max_multiplier(
         &admin_cap,
@@ -292,7 +293,7 @@ fun strike_exposure_template_setters_accept_envelope_boundaries() {
         snapshot.max_entry_probability(),
         config_constants::min_min_entry_probability!() + 1,
     );
-    assert_eq!(snapshot.expiry_fee_window_ms(), config_constants::min_expiry_fee_window_ms!());
+    assert_eq!(snapshot.expiry_fee_window_ms(), constants::one_minute_ms!());
     assert_eq!(
         snapshot.expiry_fee_max_multiplier(),
         config_constants::min_expiry_fee_max_multiplier!(),
