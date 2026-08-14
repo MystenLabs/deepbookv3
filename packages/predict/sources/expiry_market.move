@@ -156,16 +156,6 @@ public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.cash.trading_loss_rebate_rate()
 }
 
-/// Return the snapshotted liquidation LTV for SDK and devInspect reads.
-public fun liquidation_ltv(market: &ExpiryMarket): u64 {
-    market.strike_exposure.liquidation_ltv()
-}
-
-/// Return the snapshotted admission-leverage cap for SDK and devInspect reads.
-public fun max_admission_leverage(market: &ExpiryMarket): u64 {
-    market.strike_exposure.max_admission_leverage()
-}
-
 /// Return the snapshotted backing-buffer lambda for SDK and devInspect reads.
 public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
     market.strike_exposure.backing_buffer_lambda()
@@ -179,14 +169,6 @@ public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
 /// Return the snapshotted fee-ramp multiplier for SDK and devInspect reads.
 public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
-}
-
-/// Return the near-expiry no-leverage window snapshotted for this expiry, in ms.
-/// Within this much time of expiry the market admits no leverage above 1x; `0`
-/// disables the block. Read by devInspect (SDK/UI) to size a leverage selector
-/// against the market's own snapshotted terms rather than the live template.
-public fun no_leverage_window_ms(market: &ExpiryMarket): u64 {
-    market.strike_exposure.no_leverage_window_ms()
 }
 
 /// Return this market's immutable maximum marginal inventory-impact rate for SDK
@@ -235,7 +217,7 @@ public fun required_cash(market: &ExpiryMarket): u64 {
 /// Load a PTB-local live pricing snapshot for this market.
 ///
 /// The returned `Pricer` is bound to `market.id()` and can be passed into live
-/// mint, redeem, liquidation, and NAV functions in the same transaction.
+/// mint, redeem, and NAV functions in the same transaction.
 ///
 /// Aborts `pricing::EOracleWrittenInThisTransaction` when any observation that
 /// feeds the returned forward or SVI was written in this transaction (RP-24).
@@ -278,16 +260,14 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.cash.free_cash().saturating_sub(liability)
 }
 
-/// Return one order's close value before fees. Liquidated or currently
-/// liquidatable orders return zero, live orders return their full-close range
-/// value net of static floor, and settled orders return terminal payout. Live
-/// reads require a market-bound `Pricer`; this function does not prove account
+/// Return one order's close value before fees. Live orders return their
+/// full-close range value and settled orders return terminal payout. Live reads
+/// require a market-bound `Pricer`; this function does not prove account
 /// ownership of `order_id`. Public for SDK and devInspect position valuation.
 public fun order_value(market: &ExpiryMarket, pricer: Option<Pricer>, order_id: u256): u64 {
     if (pricer.is_some()) market.assert_pricer_bound(pricer.borrow());
     let order = order::from_order_id(order_id);
     let terms = market.strike_exposure.quote_close(pricer, &order, order.quantity());
-    if (terms.is_liquidated() || terms.is_liquidatable()) return 0;
     if (terms.is_live()) return terms.redeem_amount();
     terms.settled_payout()
 }
@@ -313,7 +293,6 @@ public fun quote_mint(
     max_premium: u64,
     min_quantity: u64,
     exact_quantity: bool,
-    leverage: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
@@ -327,8 +306,6 @@ public fun quote_mint(
             max_premium,
             min_quantity,
             exact_quantity,
-            leverage,
-            clock,
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
@@ -351,7 +328,6 @@ public fun quote_mint_for_account(
     max_premium: u64,
     min_quantity: u64,
     exact_quantity: bool,
-    leverage: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -368,8 +344,6 @@ public fun quote_mint_for_account(
             max_premium,
             min_quantity,
             exact_quantity,
-            leverage,
-            clock,
         );
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
@@ -435,10 +409,8 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 /// Requires the running package version to be at or above the protocol version
 /// watermark, per-market mint pause to be off, trading globally enabled, valid
 /// owner or authorized-app account auth, a market-bound live `Pricer`, and enough expiry cash to
-/// back the post-mint max payout and rebate reserve. Leverage is continuous (any
-/// `L >= 1`); the derived static barrier `b = floor_shares/quantity` must sit
-/// below the at-entry liquidation threshold so the order is not instantly
-/// knockable. Mint fees are paid by routing a withdraw through the loaded account.
+/// back the post-mint max payout and rebate reserve. Mint fees are paid by
+/// routing a withdraw through the loaded account.
 /// The position's strike range is the tick pair `(lower_tick, higher_tick]`
 /// (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
@@ -455,7 +427,6 @@ public fun mint_exact_quantity(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
     root: &AccumulatorRoot,
@@ -466,14 +437,6 @@ public fun mint_exact_quantity(
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
-
     market.mint_prepared(
         account,
         config,
@@ -484,7 +447,6 @@ public fun mint_exact_quantity(
         0,
         quantity,
         true,
-        leverage,
         max_cost,
         max_probability,
         clock,
@@ -515,7 +477,6 @@ public fun mint_exact_amount(
     higher_tick: u64,
     max_premium: u64,
     min_quantity: u64,
-    leverage: u64,
     max_cost: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
@@ -527,13 +488,6 @@ public fun mint_exact_amount(
     let max_premium = max_premium.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     let active_stake = predict_account::roll_active_stake(account, ctx);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            pricer,
-            config.trade_liquidation_budget(),
-            clock,
-        );
     market.mint_prepared(
         account,
         config,
@@ -544,7 +498,6 @@ public fun mint_exact_amount(
         max_premium,
         min_quantity,
         false,
-        leverage,
         max_cost,
         // `min_quantity` against `max_premium` already bounds the price paid per
         // contract, so the budget shape carries no separate probability cap.
@@ -556,10 +509,8 @@ public fun mint_exact_amount(
 
 /// Redeem a live order you hold account authority over.
 ///
-/// A live order is priced and closed (partial or full), unless it is currently
-/// liquidatable, in which case it is knocked out and fully closed with zero
-/// payout. An already-liquidated order is fully closed with zero payout. Settled
-/// orders must use `redeem_settled`.
+/// A live order is priced and closed (partial or full). Settled orders must use
+/// `redeem_settled`.
 /// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
 /// only when a live partial close leaves quantity open.
 ///
@@ -568,9 +519,7 @@ public fun mint_exact_amount(
 /// quoted per-contract range probability (same units as mint's `max_probability`).
 /// `min_proceeds` floors the all-in net DUSDC credited to the account
 /// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
-/// of mint's all-in `max_cost`. Both only gate the live-priced path — a liquidated
-/// order closes at zero payout regardless, since its value is deterministic,
-/// not market-quoted.
+/// of mint's all-in `max_cost`.
 public fun redeem_live(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -603,8 +552,8 @@ public fun redeem_live(
 
 /// Redeem a settled order you hold account authority over.
 ///
-/// The market must be settled already; this flow does not run live pricing or new
-/// liquidation. Liquidated orders clear with zero payout. Requires a full close.
+/// The market must be settled already; this flow does not run live pricing.
+/// Requires a full close.
 /// Explicit owner auth remains available when Predict app automation is deauthorized;
 /// another authorized app may also supply valid account auth.
 public fun redeem_settled(
@@ -667,43 +616,6 @@ public fun redeem_settled_permissionless(
         clock,
         ctx,
     )
-}
-
-/// Run one bounded liquidation pass over active leveraged orders.
-///
-/// The liquidation book selects up to `budget` candidates and returns the
-/// number of orders liquidated. It does not touch accounts; users clear
-/// their liquidated position later through `redeem_live` or `redeem_settled`,
-/// receiving no payout.
-public fun liquidate(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    budget: u64,
-    clock: &Clock,
-): u64 {
-    market.assert_live_flow_allowed(config, pricer);
-    market.strike_exposure.liquidate_live_orders(pricer, budget, clock)
-}
-
-/// Try to liquidate one active leveraged order by ID, through the close flow:
-/// quote the order's state, and apply the keeper liquidation only on a
-/// liquidatable outcome. Returns whether the order was liquidated.
-public fun liquidate_order(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    pricer: &Pricer,
-    order_id: u256,
-    clock: &Clock,
-): bool {
-    market.assert_live_flow_allowed(config, pricer);
-
-    let order = order::from_order_id(order_id);
-    if (!market.strike_exposure.is_active_order(&order)) return false;
-    let terms = market.strike_exposure.quote_close(option::some(*pricer), &order, order.quantity());
-    if (!terms.is_liquidatable()) return false;
-    market.strike_exposure.process_close(option::some(*pricer), terms, clock);
-    true
 }
 
 /// Set this expiry's reference fine-grid tick from the exact previous-window
@@ -962,7 +874,6 @@ fun mint_prepared(
     max_premium: u64,
     min_quantity: u64,
     exact_quantity: bool,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
     clock: &Clock,
@@ -977,8 +888,6 @@ fun mint_prepared(
             max_premium,
             min_quantity,
             exact_quantity,
-            leverage,
-            clock,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
@@ -993,7 +902,6 @@ fun mint_prepared(
     );
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
 
-    let leverage = terms.leverage();
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
     market.settle_mint_payment(account, &minted_order, &quote, builder_code_id, clock, ctx);
     order_events::emit_order_minted(
@@ -1003,7 +911,6 @@ fun mint_prepared(
         builder_code_id,
         &minted_order,
         pricer,
-        leverage,
         quote.entry_probability,
         quote.net_premium,
         quote.trading_fee,
@@ -1119,12 +1026,6 @@ fun redeem(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
-    // Ambient pass (live only): the bounded liquidation sweep.
-    if (pricer.is_some()) {
-        market
-            .strike_exposure
-            .liquidate_live_orders(pricer.borrow(), config.trade_liquidation_budget(), clock);
-    };
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
@@ -1133,28 +1034,6 @@ fun redeem(
     // close may be partial.
     let terms = market.strike_exposure.quote_close(pricer, &order, close_quantity);
     assert!(terms.is_live() || close_quantity == order.quantity(), EFullCloseRequired);
-
-    // Zero-payout arm (either phase): an already-liquidated order has only its
-    // position left to clear; a liquidatable order is liquidated book-side in
-    // the same breath.
-    if (terms.is_liquidated() || terms.is_liquidatable()) {
-        market.strike_exposure.process_close(pricer, terms, clock);
-        let position_root_id = predict_account::remove_position(
-            account,
-            market.id(),
-            order.id(),
-            ctx,
-        );
-        order_events::emit_liquidated_order_redeemed(
-            market.id(),
-            account.account_id(),
-            account.owner(),
-            &order,
-            position_root_id,
-            clock.timestamp_ms(),
-        );
-        return (order.id(), option::none())
-    };
 
     // Live arm: priced close under fee and slippage policy.
     if (terms.is_live()) {
@@ -1218,7 +1097,7 @@ fun redeem(
 
         // Apply book and account-position mutations only after all close policy
         // checks. Any later abort rolls back the earlier stake and EWMA updates.
-        let replacement_order = market.strike_exposure.process_close(pricer, terms, clock);
+        let replacement_order = market.strike_exposure.process_close(terms);
         let position_root_id = predict_account::remove_position(
             account,
             market.id(),
@@ -1276,7 +1155,7 @@ fun redeem(
 
     // Mutation phase: apply the quoted close to the book, remove the position,
     // then apply the payment.
-    market.strike_exposure.process_close(pricer, terms, clock);
+    market.strike_exposure.process_close(terms);
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),

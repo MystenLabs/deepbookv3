@@ -40,8 +40,6 @@ public struct MarketCreated has copy, drop, store {
     max_expiry_allocation: u64,
     /// Minimum DUSDC cash target snapshotted for this expiry.
     initial_expiry_cash: u64,
-    liquidation_ltv: u64,
-    max_admission_leverage: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,
     min_fee: u64,
@@ -50,7 +48,6 @@ public struct MarketCreated has copy, drop, store {
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     /// Window before expiry within which this market admits no leverage above 1x.
-    no_leverage_window_ms: u64,
     /// Maximum marginal inventory-impact rate snapshotted by this market.
     inventory_impact_max_rate: u64,
     trading_loss_rebate_rate: u64,
@@ -143,8 +140,6 @@ public(package) fun emit_market_created(
         admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
-        liquidation_ltv: strike_exposure_config.liquidation_ltv(),
-        max_admission_leverage: strike_exposure_config.max_admission_leverage(),
         backing_buffer_lambda: strike_exposure_config.backing_buffer_lambda(),
         base_fee: strike_exposure_config.base_fee(),
         min_fee: strike_exposure_config.min_fee(),
@@ -152,7 +147,6 @@ public(package) fun emit_market_created(
         max_entry_probability: strike_exposure_config.max_entry_probability(),
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
-        no_leverage_window_ms: strike_exposure_config.no_leverage_window_ms(),
         inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
         trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
         max_benefit_ratio: stake_config.max_benefit_ratio(),

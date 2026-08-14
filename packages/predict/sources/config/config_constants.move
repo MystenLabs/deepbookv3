@@ -20,23 +20,19 @@ const EInvalidExpiryFeeWindowMs: u64 = 9;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
 const EInvalidLowerBenefitPower: u64 = 11;
 const EInvalidUpperBenefitPower: u64 = 12;
-const EInvalidTradeLiquidationBudget: u64 = 13;
-const EInvalidLiquidationLtv: u64 = 14;
-const EInvalidMarketTickSize: u64 = 15;
-const EInvalidEwmaAlpha: u64 = 16;
-const EInvalidEwmaZScoreThreshold: u64 = 17;
-const EInvalidEwmaPenaltyRate: u64 = 18;
-const EInvalidBackingBufferLambda: u64 = 19;
-const EInvalidMaxAdmissionLeverage: u64 = 20;
-const EInvalidCadenceWindowSize: u64 = 21;
-const EMarketTickSizeTooLarge: u64 = 22;
-const EInvalidNoLeverageWindowMs: u64 = 23;
-const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
-const EInvalidMaxLpPoolValue: u64 = 25;
-const EInvalidPlpSupplyFeeRate: u64 = 26;
-const EInvalidPlpWithdrawFeeRate: u64 = 27;
-const EInvalidMaxBenefitRatio: u64 = 28;
-const EInvalidInventoryImpactMaxRate: u64 = 29;
+const EInvalidMarketTickSize: u64 = 13;
+const EInvalidEwmaAlpha: u64 = 14;
+const EInvalidEwmaZScoreThreshold: u64 = 15;
+const EInvalidEwmaPenaltyRate: u64 = 16;
+const EInvalidBackingBufferLambda: u64 = 17;
+const EInvalidCadenceWindowSize: u64 = 18;
+const EMarketTickSizeTooLarge: u64 = 19;
+const EInvalidLpRequestLimitFlushAttempts: u64 = 20;
+const EInvalidMaxLpPoolValue: u64 = 21;
+const EInvalidPlpSupplyFeeRate: u64 = 22;
+const EInvalidPlpWithdrawFeeRate: u64 = 23;
+const EInvalidMaxBenefitRatio: u64 = 24;
+const EInvalidInventoryImpactMaxRate: u64 = 25;
 
 // === Fees ===
 
@@ -87,23 +83,6 @@ public(package) fun assert_plp_withdraw_fee_rate(value: u64) {
     assert!(
         value >= min_plp_fee_rate!() && value <= max_plp_fee_rate!(),
         EInvalidPlpWithdrawFeeRate,
-    );
-}
-
-// === Trade Liquidation ===
-
-public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
-
-public(package) macro fun min_trade_liquidation_budget(): u64 { 24 }
-
-public(package) macro fun max_trade_liquidation_budget(): u64 {
-    3_000
-}
-
-public(package) fun assert_trade_liquidation_budget(value: u64) {
-    assert!(
-        value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
-        EInvalidTradeLiquidationBudget,
     );
 }
 
@@ -166,68 +145,7 @@ public(package) fun assert_max_lp_pool_value(value: u64) {
     );
 }
 
-// === Backing and Liquidation ===
-
-public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
-
-public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
-
-public(package) macro fun max_liquidation_ltv(): u64 { 950_000_000 }
-
-public(package) fun assert_liquidation_ltv(value: u64) {
-    assert!(
-        value >= min_liquidation_ltv!() && value <= max_liquidation_ltv!(),
-        EInvalidLiquidationLtv,
-    );
-}
-
-/// Global admission-leverage cap snapshotted by newly created expiry markets. Mint
-/// admission scales this cap down for low-probability contracts.
-public(package) macro fun default_max_admission_leverage(): u64 {
-    3 * fixed_math::math::float_scaling!()
-}
-
-public(package) macro fun min_max_admission_leverage(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) macro fun max_max_admission_leverage(): u64 {
-    10 * fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_max_admission_leverage(value: u64) {
-    assert!(
-        value >= min_max_admission_leverage!()
-            && value <= max_max_admission_leverage!(),
-        EInvalidMaxAdmissionLeverage,
-    );
-}
-
-/// Shape parameter for the admission curve:
-/// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
-/// while still approaching the configured cap smoothly as probability rises.
-public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
-
-/// Window before expiry within which mint admission originates no leverage at all:
-/// the cap is exactly 1x. Near expiry a contract's probability can move far in a
-/// single tick, leaping a leveraged order past its knockout before liquidation can
-/// fire and leaving the gap with the LP. `0` disables the block; one hour by default.
-public(package) macro fun default_no_leverage_window_ms(): u64 {
-    deepbook_predict::constants::one_hour_ms!()
-}
-
-public(package) macro fun min_no_leverage_window_ms(): u64 { 0 }
-
-public(package) macro fun max_no_leverage_window_ms(): u64 {
-    deepbook_predict::constants::one_year_ms!()
-}
-
-public(package) fun assert_no_leverage_window_ms(value: u64) {
-    assert!(
-        value >= min_no_leverage_window_ms!() && value <= max_no_leverage_window_ms!(),
-        EInvalidNoLeverageWindowMs,
-    );
-}
+// === Backing ===
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 
