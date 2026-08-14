@@ -290,13 +290,13 @@ public(package) fun assert_min_fee(value: u64) {
 }
 
 /// Window before expiry over which trade fees ramp up to the per-expiry max
-/// multiplier. Five minutes is the shortest admin-tunable window.
+/// multiplier. One minute is the shortest admin-tunable window.
 public(package) macro fun default_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::one_day_ms!()
 }
 
 public(package) macro fun min_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::five_minutes_ms!()
+    deepbook_predict::constants::one_minute_ms!()
 }
 
 public(package) macro fun max_expiry_fee_window_ms(): u64 {
