@@ -24,18 +24,6 @@ public struct ExposureHarness has key {
     exposure: StrikeExposure,
 }
 
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-
-/// A live, unsettled, non-liquidated close is the only outcome that needs the
-/// pricer: the liquidated and settled arms return before the assert, so quoting
-/// this fresh live 2x order with no pricer aborts `EPricerRequired`.
-#[test, expected_failure(abort_code = strike_exposure::EPricerRequired)]
-fun quote_live_close_without_pricer_aborts() {
-    let (_fx, _oracle, harness, order) = live_exposure(LEVERAGE_TWO_X);
-    harness.exposure.quote_close(option::none(), &order, order.quantity());
-    abort 999
-}
-
 /// The close terms carry the exposure book they were quoted on; consuming A's
 /// terms on exposure B aborts `ETermsExposureMismatch` before any book mutation,
 /// so a close can never cross markets.
@@ -70,7 +58,6 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
             0,
             test_constants::mint_quantity(),
             true,
-            test_constants::leverage_one_x(),
             fx.clock(),
         );
     let order = harness_a.exposure.allocate_mint_order(terms_a);
@@ -82,39 +69,6 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
     harness_b.exposure.process_close(option::some(pricer), close_terms, fx.clock());
 
     abort 999
-}
-
-/// The outcome accessors reject the wrong arm: reading the settled payout of a
-/// live close aborts `EWrongCloseOutcome`, so a caller cannot misread a live
-/// close as a settled one.
-#[test, expected_failure(abort_code = strike_exposure::EWrongCloseOutcome)]
-fun settled_payout_of_live_close_terms_aborts() {
-    let (mut fx, oracle, harness, order) = live_exposure(LEVERAGE_TWO_X);
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
-    assert!(terms.is_live());
-    terms.settled_payout();
-    abort 999
-}
-
-/// The derived liquidated state applies only to a *leveraged* order missing from
-/// the active index. A 1x order carries no financed floor, so it is never indexed
-/// (`insert_order`/`contains_active_order` are no-ops for it) — index-absence is
-/// its normal live state, not liquidation. The classifier's leveraged-only guard
-/// keeps it on the live arm.
-#[test]
-fun one_x_order_absent_from_index_stays_live_not_liquidated() {
-    let (mut fx, oracle, harness, order) = live_exposure(test_constants::leverage_one_x());
-
-    assert!(!order.is_leveraged());
-    assert!(!harness.exposure.is_active_order(&order));
-
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
-    assert!(terms.is_live());
-    assert!(!terms.is_liquidated());
-
-    cleanup(fx, oracle, harness);
 }
 
 /// Build a single exposure book and mint one live order at `leverage` through the
@@ -153,6 +107,19 @@ fun live_exposure(leverage: u64): (OracleFixture, OracleBundle, ExposureHarness,
     (fx, oracle, harness, order)
 }
 
+fun fresh_object_id(fx: &mut OracleFixture): ID {
+    let id = object::new(fx.scenario_mut().ctx());
+    let inner = id.to_inner();
+    id.delete();
+    inner
+}
+
+fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
+    return_shared(harness);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
 fun create_and_share_exposure_harness(
     fx: &mut OracleFixture,
     expiry_market_id: ID,
@@ -177,17 +144,4 @@ fun create_and_share_exposure_harness(
     );
     transfer::share_object(ExposureHarness { id, exposure });
     harness_id
-}
-
-fun fresh_object_id(fx: &mut OracleFixture): ID {
-    let id = object::new(fx.scenario_mut().ctx());
-    let inner = id.to_inner();
-    id.delete();
-    inner
-}
-
-fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
-    return_shared(harness);
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
 }

@@ -61,14 +61,6 @@ const EXPECTED_HEIGHT: u64 = 7;
 /// set, against the treap's 1000-deep adversarial worst case.
 const AVL_HEIGHT_BOUND: u64 = 9;
 
-fun insert(tree: &mut StrikePayoutTree, tick: u64) {
-    tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY, FLOOR_SHARES);
-}
-
-fun remove(tree: &mut StrikePayoutTree, tick: u64) {
-    tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY, FLOOR_SHARES);
-}
-
 /// Insert one finite boundary per tick, checking the whole invariant after each —
 /// a mid-sequence corruption that a later rotation happens to repair still fails.
 fun build_checked(ticks: vector<u64>, ctx: &mut TxContext): StrikePayoutTree {
@@ -187,7 +179,7 @@ fun successor_keeps_its_own_right_subtree() {
     tree.assert_tree_invariant_for_testing();
     // Survivors are ticks 1, 3 and 4. Losing tick 4 would report 2 * NET_PAYOUT.
     assert_eq!(settled_above_all(&tree), 3 * NET_PAYOUT);
-    let (max_net_payout, total_net_payout) = tree.net_payout_reserve_terms();
+    let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
     assert_eq!(max_net_payout, 3 * NET_PAYOUT);
     assert_eq!(total_net_payout, 3 * NET_PAYOUT);
 
@@ -224,8 +216,8 @@ fun boundary_gc_preserves_terms_and_balance() {
     // agreement on every evaluator is a real check, not a tautology.
     let rebuilt = build_checked(survivors, &mut ctx);
     assert_eq!(settled_above_all(&tree), settled_above_all(&rebuilt));
-    let (gc_max, gc_total) = tree.net_payout_reserve_terms();
-    let (rebuilt_max, rebuilt_total) = rebuilt.net_payout_reserve_terms();
+    let (gc_max, gc_total) = tree.payout_reserve_terms();
+    let (rebuilt_max, rebuilt_total) = rebuilt.payout_reserve_terms();
     assert_eq!(gc_max, rebuilt_max);
     assert_eq!(gc_total, rebuilt_total);
 
@@ -283,9 +275,17 @@ fun draining_every_boundary_empties_the_tree() {
 
     assert_eq!(tree.assert_tree_invariant_for_testing(), 0);
     assert_eq!(settled_above_all(&tree), 0);
-    let (max_net_payout, total_net_payout) = tree.net_payout_reserve_terms();
+    let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
     assert_eq!(max_net_payout, 0);
     assert_eq!(total_net_payout, 0);
 
     destroy(tree);
+}
+
+fun insert(tree: &mut StrikePayoutTree, tick: u64) {
+    tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY, FLOOR_SHARES);
+}
+
+fun remove(tree: &mut StrikePayoutTree, tick: u64) {
+    tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY, FLOOR_SHARES);
 }

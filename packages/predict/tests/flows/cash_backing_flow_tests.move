@@ -61,7 +61,6 @@ fun cash_sheet_exact_after_every_flow() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability(quote1.entry_probability());
     let mint1_principal = quote1.net_premium();
@@ -71,7 +70,6 @@ fun cash_sheet_exact_after_every_flow() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::check_market_cash_bundle(
         &market,
@@ -101,7 +99,6 @@ fun cash_sheet_exact_after_every_flow() {
         constants::neg_inf!(),
         helpers::strike_tick(),
         DOWN_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     // The complement is exact: both sides are differences of the same UP(K), so
     // the two probabilities sum to 1e9 with no approximation of their own.
@@ -114,7 +111,6 @@ fun cash_sheet_exact_after_every_flow() {
         constants::neg_inf!(),
         helpers::strike_tick(),
         DOWN_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     let cash_after_mints =
         seeded_cash

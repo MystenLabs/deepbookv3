@@ -51,7 +51,6 @@ fun allocating_terms_priced_on_another_exposure_aborts() {
             0,
             test_constants::mint_quantity(),
             true,
-            test_constants::leverage_one_x(),
             fx.clock(),
         );
     harness_b.exposure.allocate_mint_order(terms);

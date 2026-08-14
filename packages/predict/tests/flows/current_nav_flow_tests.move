@@ -38,7 +38,6 @@ use std::unit_test::assert_eq;
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
 /// Leveraged up range, quantity 2e9, 2x: net_premium 5e8, floor_shares 5e8.
 const LEVERAGED_QUANTITY: u64 = 2_000_000_000;
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// Second same-strike up order, quantity 4e9.
 const SECOND_SAME_STRIKE_QUANTITY: u64 = 4_000_000_000;
 /// Deep-OTM forward (well below the 100e9 grid) so the minted up range prices to
@@ -82,7 +81,6 @@ fun single_one_x_up_order() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
 
     check_nav(&mut fx, &market, vector[id], float!());
@@ -106,7 +104,6 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
         constants::neg_inf!(),
         helpers::strike_tick(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
@@ -131,7 +128,6 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     let id2 = fx.mint_bundle(
         &mut market,
@@ -139,178 +135,11 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         SECOND_SAME_STRIKE_QUANTITY,
-        test_constants::leverage_one_x(),
     );
 
     // Both up orders share the strike start boundary -> one tree node priced
     // once at P(strike); the aggregate quantity equals the per-order sum.
     check_nav(&mut fx, &market, vector[id1, id2], float!());
-
-    helpers::return_account_bundle(account);
-
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun single_leveraged_order_above_floor() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        LEVERAGED_QUANTITY,
-        LEVERAGE_TWO_X,
-    );
-
-    // value = mul(0.5, 2e9) = 1e9 > floor = mul(floor_shares 5e8, 1.0) = 5e8, so the
-    // correction min() picks the floor and the order's net liability is 5e8.
-    check_nav(&mut fx, &market, vector[id], float!());
-
-    helpers::return_account_bundle(account);
-
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun single_leveraged_order_underwater_nets_to_zero() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        LEVERAGED_QUANTITY,
-        LEVERAGE_TWO_X,
-    );
-
-    // Drop the forward far below the grid so the up range prices to ~0: value <=
-    // floor, the order's limited-recourse floor zeroes its net liability with NO
-    // liquidation pass, and NAV returns to free cash.
-    fx.prepare_live_oracle_bundle(&mut market, UNDERWATER_FORWARD);
-
-    let expiry_market = helpers::market(&market);
-    let nav = fx.current_nav_bundle(&market);
-    assert_eq!(nav, expiry_market.cash_balance().saturating_sub(expiry_market.rebate_reserve()));
-    check_nav(&mut fx, &market, vector[id], float!());
-
-    helpers::return_account_bundle(account);
-
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun knocked_out_leveraged_order_marks_at_liquidated_value() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        LEVERAGED_QUANTITY,
-        LEVERAGE_TWO_X,
-    );
-
-    // Reprice onto a smooth high-variance surface at a forward below the strike so
-    // the leveraged UP range lands in the knock-out band (floor, floor / ltv]:
-    // worth more than its floor but at or below the liquidation threshold. m = 0
-    // keeps the SVI wing term safely positive.
-    fx.set_clock_for_testing(test_constants::now_ms() + 1);
-    fx.seed_bs_surface_with_svi_bundle(
-        &mut market,
-        test_constants::default_live_price(),
-        KNOCKOUT_BAND_FORWARD,
-        KNOCKOUT_BAND_A,
-        false,
-        test_constants::default_svi_b(),
-        test_constants::default_svi_sigma(),
-        test_constants::default_svi_rho_magnitude(),
-        false,
-        0,
-        false,
-        test_constants::now_ms() + 1,
-    );
-
-    // Precondition: the order really is in the band, or the test is vacuous.
-    let pricer = fx.load_pricer_bundle(&market);
-    let expiry_market = helpers::market(&market);
-    let decoded = order::from_order_id(id);
-    let range_value = math::mul_down(
-        pricer.range_price(
-            range_codec::strike_from_tick(decoded.lower_tick(), expiry_market.tick_size()),
-            range_codec::strike_from_tick(decoded.higher_tick(), expiry_market.tick_size()),
-        ),
-        decoded.quantity(),
-    );
-    let floor = decoded.floor_shares();
-    assert!(range_value > floor, 0);
-    assert!(range_value <= math::div_down(floor, expiry_market.liquidation_ltv()), 1);
-
-    // The knocked-out order is credited its full range value (zero live liability),
-    // so NAV rises to the knock-out-aware reference — above the old floor-capped
-    // mark. `check_nav` asserts `current_nav` equals that independent reference.
-    check_nav(&mut fx, &market, vector[id], float!());
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun mixed_one_x_and_leveraged_book() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let up = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
-    );
-    let down = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        constants::neg_inf!(),
-        helpers::strike_tick(),
-        ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
-    );
-    let leveraged = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        LEVERAGED_QUANTITY,
-        LEVERAGE_TWO_X,
-    );
-
-    // strike now carries start quantity (1x up + leveraged up) and end quantity
-    // (1x down); only the leveraged order is in the correction book.
-    check_nav(
-        &mut fx,
-        &market,
-        vector[up, down, leveraged],
-        float!(),
-    );
 
     helpers::return_account_bundle(account);
 
@@ -335,7 +164,6 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         NON_MONOTONE_LOWER_TICK,
         NON_MONOTONE_HIGHER_TICK,
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     // These SVI values are intentionally extreme: tiny positive `a`, max `b`,
     // min `sigma`, and `rho = -1`. Together they make the model report a higher

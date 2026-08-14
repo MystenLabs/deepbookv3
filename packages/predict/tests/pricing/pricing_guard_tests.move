@@ -144,41 +144,6 @@ const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 // === Abort guards ===
 
-#[test, expected_failure(abort_code = pricing::ETickNotInPriceMemo)]
-fun cached_range_price_with_missing_finite_tick_aborts() {
-    let memo = pricing::new_price_memo();
-    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
-fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        test_constants::default_live_price(),
-        1,
-        false,
-        test_constants::pricing_max_svi_input(),
-        test_constants::pricing_min_svi_sigma(),
-        test_constants::float(),
-        true,
-        0,
-        false,
-    );
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let mut memo = pricing::new_price_memo();
-
-    memo.price_and_cache(&pricer, NON_MONOTONE_LOW_TICK, test_constants::float());
-    memo.price_and_cache(&pricer, NON_MONOTONE_HIGH_TICK, test_constants::float());
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-    abort EUnexpectedSuccess
-}
-
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]
 fun live_quote_with_equal_range_bounds_aborts() {
     let (mut fx, oracle) = setup_live();

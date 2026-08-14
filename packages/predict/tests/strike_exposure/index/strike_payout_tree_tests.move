@@ -50,13 +50,11 @@ fun insert_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    floor_shares: u64,
 ) {
     tree.insert_range(
         lower_tick,
         higher_tick,
         quantity,
-        floor_shares,
     );
 }
 
@@ -65,13 +63,11 @@ fun remove_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    floor_shares: u64,
 ) {
     tree.remove_range(
         lower_tick,
         higher_tick,
         quantity,
-        floor_shares,
     );
 }
 
@@ -80,7 +76,7 @@ fun assert_reserve_terms(
     expected_max_net_payout: u64,
     expected_total_net_payout: u64,
 ) {
-    let (max_net_payout, total_net_payout) = tree.net_payout_reserve_terms();
+    let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
     assert_eq!(max_net_payout, expected_max_net_payout);
     assert_eq!(total_net_payout, expected_total_net_payout);
 }
@@ -110,7 +106,7 @@ fun new_returns_empty_tree() {
     destroy(tree);
 }
 
-// === net_payout_reserve_terms ===
+// === payout_reserve_terms ===
 
 #[test]
 fun insert_open_low_range_returns_backing_at_max_strike() {
@@ -119,7 +115,7 @@ fun insert_open_low_range_returns_backing_at_max_strike() {
     // closes it).
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 0, 5, 100, 0);
+    insert_range(&mut tree, 0, 5, 100);
 
     assert_reserve_terms(&tree, 100, 100);
     destroy(tree);
@@ -141,7 +137,7 @@ fun insert_finite_range_returns_max_backing_in_range() {
     // (tick 2, tick 6]: backing is required across the finite gain side.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 0);
+    insert_range(&mut tree, 2, 6, 50);
 
     assert_reserve_terms(&tree, 50, 50);
     destroy(tree);
@@ -153,8 +149,8 @@ fun two_disjoint_ranges_only_count_max_overlap() {
     // is the single-order backing, not the sum.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 1, 3, 40, 0);
-    insert_range(&mut tree, 5, 7, 30, 0);
+    insert_range(&mut tree, 1, 3, 40);
+    insert_range(&mut tree, 5, 7, 30);
 
     assert_reserve_terms(&tree, 40, 70);
     destroy(tree);
@@ -166,96 +162,14 @@ fun two_overlapping_ranges_sum_backing() {
     // prefix gain is the sum of both backings during the overlap window.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 1, 6, 40, 0);
-    insert_range(&mut tree, 3, 7, 30, 0);
+    insert_range(&mut tree, 1, 6, 40);
+    insert_range(&mut tree, 3, 7, 30);
 
     assert_reserve_terms(&tree, 70, 70);
     destroy(tree);
 }
 
-#[test]
-fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
-    let ctx = &mut tx_context::dummy();
-    let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 0, 1, 200, 0);
-    // Partial-close survivor terms from the C1 gap-one row, now stored as
-    // quantity plus net payout (quantity - floor_shares).
-    insert_range(
-        &mut tree,
-        1,
-        3,
-        PARTIAL_SURVIVOR_QUANTITY,
-        PARTIAL_SURVIVOR_FLOOR_SHARES,
-    );
-    // Leveraged UP terms stored as quantity plus net payout (quantity - floor_shares).
-    insert_range(
-        &mut tree,
-        2,
-        constants::pos_inf_tick!(),
-        LEVERAGED_QUANTITY,
-        LEVERAGED_FLOOR_SHARES,
-    );
-
-    let max_net_payout = PARTIAL_SURVIVOR_NET_PAYOUT + LEVERAGED_NET_PAYOUT;
-    assert_reserve_terms(
-        &tree,
-        max_net_payout,
-        200 + PARTIAL_SURVIVOR_NET_PAYOUT + LEVERAGED_NET_PAYOUT,
-    );
-    assert_settled_at_most_max_net_payout(&tree, settle_at_tick(0), 200, max_net_payout);
-    assert_settled_at_most_max_net_payout(&tree, settle_at_tick(1), 200, max_net_payout);
-    assert_settled_at_most_max_net_payout(
-        &tree,
-        settle_above_tick(1),
-        PARTIAL_SURVIVOR_NET_PAYOUT,
-        max_net_payout,
-    );
-    assert_settled_at_most_max_net_payout(
-        &tree,
-        settle_at_tick(2),
-        PARTIAL_SURVIVOR_NET_PAYOUT,
-        max_net_payout,
-    );
-    assert_settled_at_most_max_net_payout(
-        &tree,
-        settle_above_tick(2),
-        PARTIAL_SURVIVOR_NET_PAYOUT + LEVERAGED_NET_PAYOUT,
-        max_net_payout,
-    );
-    assert_settled_at_most_max_net_payout(
-        &tree,
-        settle_at_tick(3),
-        PARTIAL_SURVIVOR_NET_PAYOUT + LEVERAGED_NET_PAYOUT,
-        max_net_payout,
-    );
-    assert_settled_at_most_max_net_payout(
-        &tree,
-        settle_above_tick(3),
-        LEVERAGED_NET_PAYOUT,
-        max_net_payout,
-    );
-    assert_settled_at_most_max_net_payout(
-        &tree,
-        settle_at_tick(HIGH_SETTLEMENT_TICK),
-        LEVERAGED_NET_PAYOUT,
-        max_net_payout,
-    );
-    destroy(tree);
-}
-
 // === insert_range early-return and abort cases ===
-
-#[test]
-fun insert_with_both_terms_zero_is_no_op() {
-    // The module short-circuits on `quantity == 0 && floor_shares == 0`.
-    let ctx = &mut tx_context::dummy();
-    let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 0, 0);
-
-    assert_reserve_terms(&tree, 0, 0);
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(4), TICK_SIZE), 0);
-    destroy(tree);
-}
 
 #[test, expected_failure(abort_code = strike_payout_tree::EMaxPayoutTreeNodes)]
 fun insert_new_boundary_above_node_cap_aborts() {
@@ -268,7 +182,6 @@ fun insert_new_boundary_above_node_cap_aborts() {
         2,
         constants::pos_inf_tick!(),
         1,
-        0,
     );
     abort 999
 }
@@ -279,20 +192,7 @@ fun insert_finite_range_requiring_two_new_boundaries_above_node_cap_aborts() {
     let mut tree = new_tree(ctx);
     seed_single_boundary_one_slot_below_node_cap(&mut tree);
 
-    insert_range(&mut tree, 2, 3, 1, 0);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutTerms)]
-fun remove_floor_never_inserted_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let mut tree = new_tree(ctx);
-    // Insert an unleveraged slice (floor 0), then remove it as if leveraged
-    // (floor 20). The net payout subtracts cleanly (50 - 30 <= 50) and quantity
-    // reaches zero, but the floor component was never inserted -- so removal must
-    // abort rather than leave the boundary holding a net payout above quantity.
-    insert_range(&mut tree, 2, 6, 50, 0);
-    remove_range(&mut tree, 2, 6, 50, 20);
+    insert_range(&mut tree, 2, 3, 1);
     abort 999
 }
 
@@ -327,7 +227,6 @@ fun removing_boundary_below_node_cap_allows_new_boundary() {
         2,
         constants::pos_inf_tick!(),
         1,
-        0,
     );
     assert_eq!(tree.settled_payout_liability(settle_at_tick(3), TICK_SIZE), 1);
     destroy(tree);
@@ -384,7 +283,7 @@ fun insert_then_remove_restores_empty_state() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
 
-    insert_range(&mut tree, 2, 6, 50, 0);
+    insert_range(&mut tree, 2, 6, 50);
     assert_reserve_terms(&tree, 50, 50);
     // The range opens just above tick 2 and closes at tick 6, pinning both boundaries.
     assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 0);
@@ -392,7 +291,7 @@ fun insert_then_remove_restores_empty_state() {
     assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 50);
     assert_eq!(tree.settled_payout_liability(settle_above_tick(6), TICK_SIZE), 0);
 
-    remove_range(&mut tree, 2, 6, 50, 0);
+    remove_range(&mut tree, 2, 6, 50);
     assert_reserve_terms(&tree, 0, 0);
     assert_eq!(tree.settled_payout_liability(settle_above_tick(2), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 0);
@@ -404,11 +303,11 @@ fun insert_two_then_remove_one_leaves_other() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
 
-    insert_range(&mut tree, 1, 6, 40, 0);
-    insert_range(&mut tree, 3, 7, 30, 0);
+    insert_range(&mut tree, 1, 6, 40);
+    insert_range(&mut tree, 3, 7, 30);
     assert_reserve_terms(&tree, 70, 70);
 
-    remove_range(&mut tree, 3, 7, 30, 0);
+    remove_range(&mut tree, 3, 7, 30);
     // Survivor (1, 6]=40; the reserve dropping 70 -> 40 proves the removed range's terms are gone,
     // and the settlement points pin the survivor's two boundaries.
     assert_reserve_terms(&tree, 40, 40);
@@ -424,10 +323,10 @@ fun remove_adjacent_range_preserves_shared_live_boundary() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
 
-    insert_range(&mut tree, 1, 3, 40, 0);
-    insert_range(&mut tree, 3, 7, 30, 0);
+    insert_range(&mut tree, 1, 3, 40);
+    insert_range(&mut tree, 3, 7, 30);
 
-    remove_range(&mut tree, 1, 3, 40, 0);
+    remove_range(&mut tree, 1, 3, 40);
     assert_reserve_terms(&tree, 30, 30);
     // The shared boundary at tick 3 must survive the remove: (3, 7]=30 still prices correctly
     // (opens just above 3, closes at 7), which is only possible if node 3 was preserved.
@@ -443,8 +342,8 @@ fun remove_adjacent_range_preserves_shared_live_boundary() {
 fun remove_more_than_inserted_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 0);
-    remove_range(&mut tree, 2, 6, 51, 0);
+    insert_range(&mut tree, 2, 6, 50);
+    remove_range(&mut tree, 2, 6, 51);
     abort 999
 }
 
@@ -452,7 +351,7 @@ fun remove_more_than_inserted_aborts() {
 fun remove_from_empty_tree_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    remove_range(&mut tree, 2, 6, 1, 0);
+    remove_range(&mut tree, 2, 6, 1);
     abort 999
 }
 
@@ -466,13 +365,13 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
     // never the evaluators over a GC-mutated structure).
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 8, 100, 0); // R1
-    insert_range(&mut tree, 4, 10, 50, 0); // R2 — removed below; ticks 4,10 are unique to it + interior
-    insert_range(&mut tree, 6, 12, 30, 0); // R3
+    insert_range(&mut tree, 2, 8, 100); // R1
+    insert_range(&mut tree, 4, 10, 50); // R2 — removed below; ticks 4,10 are unique to it + interior
+    insert_range(&mut tree, 6, 12, 30); // R3
 
     // R2's boundaries (ticks 4, 10) GC out via join_subtrees; the settlement points below (e.g.
     // settle_at_tick(10)=30, not 80) and the rebuilt-tree metamorphic prove they left no trace.
-    remove_range(&mut tree, 4, 10, 50, 0);
+    remove_range(&mut tree, 4, 10, 50);
 
     // Survivors: R1 (2,8]=100 and R3 (6,12]=30. A range (L,H] wins at settle_at_tick(T) iff L < T <= H.
     // Hand-computed (independent of the tree implementation):
@@ -488,8 +387,8 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
     // Metamorphic: a clean tree with only the survivor ranges must be bit-identical under the
     // evaluators — proves the GC left no stale boundary terms or subtree summaries behind.
     let mut rebuilt = new_tree(ctx);
-    insert_range(&mut rebuilt, 2, 8, 100, 0);
-    insert_range(&mut rebuilt, 6, 12, 30, 0);
+    insert_range(&mut rebuilt, 2, 8, 100);
+    insert_range(&mut rebuilt, 6, 12, 30);
     assert_eq!(
         tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE),
         rebuilt.settled_payout_liability(settle_at_tick(7), TICK_SIZE),
@@ -498,8 +397,8 @@ fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
         tree.settled_payout_liability(settle_at_tick(11), TICK_SIZE),
         rebuilt.settled_payout_liability(settle_at_tick(11), TICK_SIZE),
     );
-    let (gc_max, gc_total) = tree.net_payout_reserve_terms();
-    let (rebuilt_max, rebuilt_total) = rebuilt.net_payout_reserve_terms();
+    let (gc_max, gc_total) = tree.payout_reserve_terms();
+    let (rebuilt_max, rebuilt_total) = rebuilt.payout_reserve_terms();
     assert_eq!(gc_max, rebuilt_max);
     assert_eq!(gc_total, rebuilt_total);
     destroy(tree);
@@ -513,7 +412,7 @@ fun settled_liability_zero_below_winning_range() {
     // (tick 2, tick 6] only wins for settlement > tick 2.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 0);
+    insert_range(&mut tree, 2, 6, 50);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(1), TICK_SIZE), 0);
@@ -524,7 +423,7 @@ fun settled_liability_zero_below_winning_range() {
 fun settled_liability_owed_inside_winning_range() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 0);
+    insert_range(&mut tree, 2, 6, 50);
 
     // (tick 2, tick 6] wins for settlement in the finite interior up to tick 6.
     assert_eq!(tree.settled_payout_liability(settle_at_tick(3), TICK_SIZE), 50);
@@ -538,7 +437,7 @@ fun settled_liability_zero_above_winning_range() {
     // closes the range out one unit past tick 6.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 0);
+    insert_range(&mut tree, 2, 6, 50);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(HIGH_SETTLEMENT_TICK), TICK_SIZE), 0);
@@ -550,7 +449,7 @@ fun settled_liability_neg_inf_range_owed_until_close() {
     // (neg_inf, tick 5] wins for all settlement <= tick 5.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 0, 5, 100, 0);
+    insert_range(&mut tree, 0, 5, 100);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(0), TICK_SIZE), 100);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 100);
@@ -577,25 +476,12 @@ fun settled_liability_sums_multiple_winners() {
     // the first range wins only the second.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 0);
-    insert_range(&mut tree, 4, 7, 30, 0);
+    insert_range(&mut tree, 2, 6, 50);
+    insert_range(&mut tree, 4, 7, 30);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 80);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(7), TICK_SIZE), 30);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(8), TICK_SIZE), 0);
-    destroy(tree);
-}
-
-#[test]
-fun settled_liability_nets_floor_shares() {
-    // The tree stores quantity and net payout (`quantity - floor_shares`);
-    // settled payout reads that net payout directly.
-    let ctx = &mut tx_context::dummy();
-    let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 2, 6, 50, 20);
-
-    assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 30);
-    assert_reserve_terms(&tree, 30, 30);
     destroy(tree);
 }
 

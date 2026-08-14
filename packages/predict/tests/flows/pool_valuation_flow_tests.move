@@ -349,7 +349,6 @@ fun mint_during_valuation_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
 
     abort 999
@@ -418,7 +417,6 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     assert_eq!(helpers::position_count_bundle(&account, expiry_id), count_before + 1);
 
@@ -612,7 +610,6 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     fx.mint_bundle(
@@ -621,7 +618,6 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -652,7 +648,6 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
             helpers::strike_tick(),
             constants::pos_inf_tick!(),
             UNDERWATER_QUANTITY,
-            test_constants::leverage_one_x(),
         )
         .entry_probability());
     fx.mint_bundle(
@@ -661,7 +656,6 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         UNDERWATER_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     // The knife edge this fixture rests on, stated so it fails loudly rather than
     // drifting: the deep-ITM liability is the full quantity, so a zero NAV needs

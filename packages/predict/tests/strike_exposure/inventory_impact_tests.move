@@ -51,7 +51,6 @@ fun default_zero_rate_is_a_kill_switch() {
             0,
             ONE_ORDER,
             true,
-            test_constants::leverage_one_x(),
             fx.clock(),
         );
 
@@ -273,7 +272,6 @@ fun quote_range_mint(
         0,
         quantity,
         true,
-        test_constants::leverage_one_x(),
         clock,
     )
 }
@@ -294,14 +292,6 @@ fun rounding_harness(): (OracleFixture, OracleBundle, ExposureHarness) {
         impact_config(math::float_scaling!(), ROUNDING_BUFFER_LAMBDA),
         ROUNDING_IMPACT_SCALE,
     )
-}
-
-fun impact_config(max_rate: u64, backing_buffer_lambda: u64): StrikeExposureConfig {
-    let mut config = strike_exposure_config::new();
-    config.set_no_leverage_window_ms(0);
-    config.set_backing_buffer_lambda(backing_buffer_lambda);
-    config.set_inventory_impact_max_rate(max_rate);
-    config
 }
 
 fun new_harness(
@@ -340,4 +330,12 @@ fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
     return_shared(harness);
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+fun impact_config(max_rate: u64, backing_buffer_lambda: u64): StrikeExposureConfig {
+    let mut config = strike_exposure_config::new();
+    config.set_no_leverage_window_ms(0);
+    config.set_backing_buffer_lambda(backing_buffer_lambda);
+    config.set_inventory_impact_max_rate(max_rate);
+    config
 }

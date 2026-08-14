@@ -50,73 +50,7 @@ const HIGH_FLOOR_SHARES: u64 = 20_000;
 
 // === Exact-pack (independent layout) ===
 
-#[test]
-fun leveraged_order_packs_to_independent_layout() {
-    let o = order::new_from_ticks(
-        0,
-        LEV_HIGHER,
-        LEV_FLOOR,
-        LEV_QUANTITY,
-        LEV_SEQ,
-    );
-    assert_eq!(o.id(), LEVERAGED_ID);
-}
-
-#[test]
-fun nonleveraged_order_packs_to_independent_layout() {
-    let o = order::new_from_ticks(
-        NONLEV_LOWER,
-        NONLEV_HIGHER,
-        0,
-        NONLEV_QUANTITY,
-        NONLEV_SEQ,
-    );
-    assert_eq!(o.id(), NONLEV_ID);
-}
-
 // === Decode (getter) coverage + round-trip identity ===
-
-#[test]
-fun from_order_id_decodes_every_leveraged_field() {
-    let o = order::from_order_id(LEVERAGED_ID);
-    assert_eq!(o.id(), LEVERAGED_ID);
-    assert_eq!(o.lower_tick(), 0);
-    assert_eq!(o.higher_tick(), LEV_HIGHER);
-    assert_eq!(o.floor_shares(), LEV_FLOOR);
-    assert_eq!(o.quantity_lots(), LEV_QLOTS);
-    assert_eq!(o.quantity(), LEV_QUANTITY);
-    assert_eq!(o.sequence(), LEV_SEQ);
-    assert!(o.is_leveraged());
-}
-
-#[test]
-fun from_order_id_decodes_every_nonleveraged_field() {
-    let o = order::from_order_id(NONLEV_ID);
-    assert_eq!(o.lower_tick(), NONLEV_LOWER);
-    assert_eq!(o.higher_tick(), NONLEV_HIGHER);
-    assert_eq!(o.floor_shares(), 0);
-    assert_eq!(o.quantity_lots(), NONLEV_QLOTS);
-    assert_eq!(o.quantity(), NONLEV_QUANTITY);
-    assert_eq!(o.sequence(), NONLEV_SEQ);
-    assert!(!o.is_leveraged());
-}
-
-#[test]
-fun finite_leveraged_order_round_trips() {
-    let o = order::new_from_ticks(
-        NONLEV_LOWER,
-        NONLEV_HIGHER,
-        LEV_FLOOR,
-        LEV_QUANTITY,
-        LEV_SEQ,
-    );
-
-    assert_eq!(o.lower_tick(), NONLEV_LOWER);
-    assert_eq!(o.higher_tick(), NONLEV_HIGHER);
-    assert_eq!(o.floor_shares(), LEV_FLOOR);
-    assert_eq!(o.quantity(), LEV_QUANTITY);
-    assert!(o.is_leveraged());
-}
 
 #[test]
 fun max_quantity_lots_round_trips_through_complement_encoding() {
@@ -135,45 +69,7 @@ fun max_quantity_lots_round_trips_through_complement_encoding() {
     assert_eq!(o.quantity(), max_quantity);
 }
 
-#[test]
-fun larger_floor_shares_sort_before_smaller_floor_shares_for_equal_quantity() {
-    let low_floor = order::new_from_ticks(
-        0,
-        PRIORITY_HIGHER_TICK,
-        LOW_FLOOR_SHARES,
-        PRIORITY_QUANTITY,
-        1u64,
-    );
-    let high_floor = order::new_from_ticks(
-        0,
-        PRIORITY_HIGHER_TICK,
-        HIGH_FLOOR_SHARES,
-        PRIORITY_QUANTITY,
-        2u64,
-    );
-
-    assert!(high_floor.id() < low_floor.id());
-    assert_eq!(high_floor.quantity_lots(), PRIORITY_LOTS);
-    assert_eq!(low_floor.quantity_lots(), PRIORITY_LOTS);
-}
-
 // === replacement inherits the original range terms ===
-
-#[test]
-fun replacement_inherits_ticks() {
-    let old = order::from_order_id(LEVERAGED_ID);
-    let repl_quantity = 50_000; // < 70_000
-    let repl_floor = 30_000;
-    let repl_seq = 999;
-    let repl = old.replacement(repl_quantity, repl_floor, repl_seq);
-    // Inherited terms.
-    assert_eq!(repl.lower_tick(), 0);
-    assert_eq!(repl.higher_tick(), LEV_HIGHER);
-    // Replaced terms.
-    assert_eq!(repl.quantity(), repl_quantity);
-    assert_eq!(repl.floor_shares(), repl_floor);
-    assert_eq!(repl.sequence(), repl_seq);
-}
 
 // === Guard coverage (all seven abort codes) ===
 
@@ -206,18 +102,6 @@ fun new_rejects_lower_not_below_higher() {
 #[test, expected_failure(abort_code = order::EInvalidRange)]
 fun new_rejects_full_open_range() {
     order::new_from_ticks(0, constants::pos_inf_tick!(), 0, LEV_QUANTITY, LEV_SEQ);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = order::EInvalidFloorShares)]
-fun new_rejects_floor_shares_above_quantity() {
-    order::new_from_ticks(
-        0,
-        LEV_HIGHER,
-        OVER_FLOOR_SHARES,
-        OVER_FLOOR_QUANTITY,
-        LEV_SEQ,
-    );
     abort 999
 }
 

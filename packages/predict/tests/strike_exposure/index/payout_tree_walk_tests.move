@@ -79,64 +79,6 @@ fun exact_walk_matches_per_order_reference() {
 }
 
 #[test]
-fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
-    let (mut fixture, oracle, pricer) = live_pricer();
-    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
-
-    let (t0, t1, t2) = clustered_ticks();
-    insert_up(&mut tree, t2, Q2);
-    insert_up(&mut tree, t0, Q0);
-    insert_up(&mut tree, t1, Q1);
-
-    // Insertion order is intentionally not sorted. The in-order walk must still
-    // cache ascending ticks, because `cached_range_price` uses binary search.
-    let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
-    assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
-    assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
-    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(raw(0), raw(t0)));
-    assert_eq!(
-        memo.cached_range_price(t2, constants::pos_inf_tick!()),
-        pricer.range_price(raw(t2), raw(constants::pos_inf_tick!())),
-    );
-
-    destroy(tree);
-    cleanup(fixture, oracle);
-}
-
-#[test]
-fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
-    let (mut fixture, oracle, pricer) = live_pricer();
-    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
-
-    let (t0, t1, t2) = clustered_ticks();
-    // Adjacent live ranges with the same quantity leave an equal nonzero start/end
-    // at the shared boundary. The exact walk may skip pricing that boundary because
-    // the two sides cancel.
-    tree.insert_range(t0, t1, ADJACENT_QUANTITY, 0);
-    tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
-
-    let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
-    assert_eq!(
-        walk,
-        range_reference(
-            &pricer,
-            vector[t0, t1],
-            vector[t1, t2],
-            vector[ADJACENT_QUANTITY, ADJACENT_QUANTITY],
-        ),
-    );
-    // The shared boundary has equal start/end quantity and contributes no net
-    // linear value, but it must still be cached for leveraged correction lookups.
-    assert_eq!(memo.cached_range_price(t0, t1), pricer.range_price(raw(t0), raw(t1)));
-    assert_eq!(memo.cached_range_price(t1, t2), pricer.range_price(raw(t1), raw(t2)));
-
-    destroy(tree);
-    cleanup(fixture, oracle);
-}
-
-#[test]
 fun walk_linear_clamps_boundary_aggregation_dust() {
     let (mut fixture, oracle, pricer) = live_pricer_at(FLAT_REGION_FORWARD);
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
@@ -150,8 +92,8 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     // flat tail the end-side floor at the shared boundary aggregates 1 ulp above the
     // two start-side floors (199_999 vs 99_999+99_999), so the raw
     // base+start-end would underflow to -1 and abort. The clamp returns 0.
-    tree.insert_range(lower_a, higher, DUST_QUANTITY, 0);
-    tree.insert_range(lower_b, higher, DUST_QUANTITY, 0);
+    tree.insert_range(lower_a, higher, DUST_QUANTITY);
+    tree.insert_range(lower_b, higher, DUST_QUANTITY);
 
     // Independent per-order reference: both ranges' values round to 0, so true
     // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
@@ -170,17 +112,17 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
-    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
-    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
+    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
+    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
+    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     // Removing the middle range deletes two interior boundary nodes through GC; the walk, settlement,
     // and rebuilt-tree assertions below prove those boundaries left no trace.
-    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
+    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
 
     let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
-    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
-    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
+    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
+    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     let settlement_a_only = GC_SETTLEMENT_A_ONLY_TICK * tick_size();
     let settled_a_only = tree.settled_payout_liability(settlement_a_only, tick_size());
@@ -233,12 +175,6 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 /// Strike for a tick under the default `tick_size` (tick 0 and `pos_inf_tick`
 /// map to the open-ended sentinels).
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
-
-/// Run the exact linear walk with the production price memo.
-fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
-    let mut memo = pricing::new_price_memo();
-    tree.walk_linear(pricer, &mut memo, tick_size())
-}
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
 fun clustered_ticks(): (u64, u64, u64) {
@@ -314,4 +250,9 @@ fun live_pricer_at(forward: u64): (OracleFixture, OracleBundle, Pricer) {
 fun cleanup(fixture: OracleFixture, oracle: OracleBundle) {
     oracle_fixture::return_oracle_bundle(oracle);
     fixture.finish();
+}
+
+/// Run the exact linear walk with the production price memo.
+fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
+    tree.walk_linear(pricer, tick_size())
 }
