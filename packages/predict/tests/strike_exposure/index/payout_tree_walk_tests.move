@@ -3,10 +3,9 @@
 
 /// Unit coverage for `strike_payout_tree::walk_linear` — the NAV linear walk —
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
-/// `current_nav` cannot reach directly: the boundary pricing performed for
-/// the correction walk, the skip-zero-delta path over an equal live start/end
-/// boundary, and the boundary-aggregation dust clamp — the flat-price-tail integer
-/// underflow the ATM `current_nav` fixtures miss.
+/// `current_nav` cannot reach directly: the skip-zero-delta path over an equal
+/// live start/end boundary, and the boundary-aggregation dust clamp — the
+/// flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
 ///
 /// The tree keys boundaries by absolute tick; the walk recovers each raw strike as
 /// `tick * tick_size`. These tests use the default `tick_size` (1e9) so tick `100`
@@ -14,8 +13,7 @@
 ///
 /// References are independent of the walk (unit-tests rule 1): the exact walk is
 /// checked against a per-order `Σ mul(range_price, qty)` sum (a different pricer
-/// path than the walk's `up_price`). Memo lookup checks compare the cached boundary
-/// prices against `range_price` so a mispriced boundary is visible.
+/// path than the walk's `up_price`).
 #[test_only]
 module deepbook_predict::payout_tree_walk_tests;
 
@@ -78,7 +76,7 @@ fun exact_walk_matches_per_order_reference() {
 }
 
 #[test]
-fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
+fun walk_linear_nets_same_total_regardless_of_insertion_order() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 

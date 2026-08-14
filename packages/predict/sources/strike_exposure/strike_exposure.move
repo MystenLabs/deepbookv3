@@ -441,7 +441,7 @@ public(package) fun process_close(exposure: &mut StrikeExposure, terms: CloseTer
     match (outcome) {
         CloseOutcome::Live(live) => exposure.process_live_close(&order, live),
         CloseOutcome::Settled { payout } => {
-            exposure.process_settled_close(&order, payout);
+            exposure.process_settled_close(payout);
             option::none()
         },
     }
@@ -648,7 +648,7 @@ fun quote_live_close(
 
 /// Apply one quoted settled close to the book: release its quoted payout from
 /// the settled liability.
-fun process_settled_close(exposure: &mut StrikeExposure, _order: &Order, payout: u64) {
+fun process_settled_close(exposure: &mut StrikeExposure, payout: u64) {
     // Settlement liability and individual payouts use the same integer quantity
     // atoms, so the subtraction is additive without rounding dust.
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
