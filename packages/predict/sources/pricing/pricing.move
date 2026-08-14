@@ -546,7 +546,7 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     // truncation error. That is why this used to short-circuit to the digital
     // limits 1 and 0 there — a saturation that is only true when total variance is
     // small, and silently wrong when it is not, on a value the mint's entry
-    // probability, the liquidation threshold and the NAV mark all consume.
+    // probability and the NAV mark both consume.
     //
     // `ln` is defined across the whole positive `u64` domain, so the difference is
     // well-conditioned over every representable pair: `|k| <= 44.4` against the

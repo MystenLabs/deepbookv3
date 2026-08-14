@@ -26,7 +26,6 @@ use fixed_math::math::float_scaling as float;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
 
-// Leverage and probability values in FLOAT_SCALING (1e9).
 const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
 /// Time-to-expiry far outside the default 1h no-leverage window (1 week), so the
@@ -107,8 +106,6 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
     scenario.end();
 }
 
-// === Near-expiry no-leverage window (template wiring) ===
-
 // The default seeds a 1h block, and the template setter reaches the snapshot that
 // future expiry markets take.
 
@@ -185,13 +182,7 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
     abort 999
 }
 
-// === Near-expiry no-leverage window (mint admission) ===
 //
-// Independently derived caps for the default config (max admission leverage 3x,
-// curve k = 0.2, cap = 1 + (3 - 1) * p * 1.2 / (p + 0.2)):
-//   p = 0.5 -> 1 + 2 * (0.6 / 0.7)  = 2.714285714x
-//   p = 0.1 -> 1 + 2 * (0.12 / 0.3) = 1.8x
-// Inside the window the cap is exactly 1x regardless of p.
 
 // 2x at p = 0.5 clears the 2.714285714x cap far from expiry
 // (`mint_admission_half_probability_two_and_half_x_succeeds` admits even 2.5x).
@@ -202,16 +193,6 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 // probability-derived cap still applies. Pins the `<` boundary from the outside:
 // 2.5x admits here with the same terms it gets far from expiry.
 
-// The cap inside the window is exactly 1x, not "nearly 1x": one unit of leverage
-// above 1x is already above the cap.
-
-// The window blocks leverage, not trading: an unleveraged mint still succeeds at
-// the deepest point inside it. p = 0.5, quantity 1e9, 1x -> net premium is the
-// full entry value 500_000_000 and the floor is 0.
-
-// A 0 window is the admin escape hatch: the block never engages, so a leveraged
-// mint is admitted even with zero time left.
-
 // Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
 // is admitted far from expiry. Entry value 100_000_000; net premium
 // 100_000_000 / 1.5 = 66_666_666 (floor); floor shares 100_000_000 - 66_666_666.
@@ -220,5 +201,3 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 // the cap is 1x even at a probability whose curve cap (1.8x) would have admitted
 // this order. Paired with the control above, the rejection is attributable to the
 // window alone.
-
-// === EOrderBelowLiquidationThreshold (mint admission) ===

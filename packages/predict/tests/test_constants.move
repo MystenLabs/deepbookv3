@@ -143,9 +143,8 @@ public fun pricing_max_svi_input(): u64 { 100 * math::float_scaling!() }
 // === Shared happy-path flow values (the short-expiry lifecycle tests) ===
 
 /// Short expiry (`now + 120s`) used by the lifecycle/payout flow tests: near
-/// enough for compact lifecycle scenarios. A >1x order carries a real static
-/// floor regardless of expiry. Grid-aligned (`now` + 2 resolution periods) so
-/// exact settlement inserts are representable.
+/// enough for compact lifecycle scenarios. Grid-aligned (`now` + 2 resolution
+/// periods) so exact settlement inserts are representable.
 public fun short_expiry_ms(): u64 { 240_000 }
 
 /// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).
@@ -156,5 +155,5 @@ public fun mint_quantity(): u64 { 1_000_000_000 }
 public fun mint_deposit(): u64 { 1_000_000_000 }
 
 /// Default trader-manager deposit in the composite bring-up; large enough to fund
-/// several leveraged mints plus fees.
+/// several mints plus fees.
 public fun default_manager_deposit(): u64 { 30_000_000_000 }

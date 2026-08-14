@@ -24,8 +24,8 @@ public struct ProtocolFrozenUpdated has copy, drop, store {
 }
 
 /// Emitted when a new expiry market is created, with its cadence terms and
-/// immutable expiry-policy snapshot. Fraction, leverage, fee, probability, and
-/// multiplier fields use FLOAT_SCALING; windows use milliseconds.
+/// immutable expiry-policy snapshot. Fraction, fee, probability, and multiplier
+/// fields use FLOAT_SCALING; windows use milliseconds.
 public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
     pool_vault_id: ID,
@@ -47,7 +47,6 @@ public struct MarketCreated has copy, drop, store {
     max_entry_probability: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
-    /// Window before expiry within which this market admits no leverage above 1x.
     /// Maximum marginal inventory-impact rate snapshotted by this market.
     inventory_impact_max_rate: u64,
     trading_loss_rebate_rate: u64,

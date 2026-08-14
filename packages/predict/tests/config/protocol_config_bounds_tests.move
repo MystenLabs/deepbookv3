@@ -4,7 +4,7 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, liquidation LTV, max admission leverage, backing buffer lambda,
+/// expiry-fee ramp, backing buffer lambda,
 /// inventory-impact max rate), and the expiry-cash trading-loss rebate template.
 /// Every abort test drives the real
 /// admin setter on a shared
@@ -133,9 +133,6 @@ fun template_expiry_fee_window_above_max_aborts() {
     abort 999
 }
 
-// The no-leverage window's minimum is 0 (0 disables the block), so only the
-// upper bound can be violated.
-
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
 fun template_expiry_fee_max_multiplier_below_min_aborts() {
     let (scenario, admin_cap, config_id) = new_shared_config();
@@ -157,10 +154,6 @@ fun template_expiry_fee_max_multiplier_above_max_aborts() {
     );
     abort 999
 }
-
-// === Strike-exposure templates: liquidation LTV ===
-
-// === Strike-exposure templates: max admission leverage ===
 
 // === Strike-exposure templates: backing buffer lambda ===
 

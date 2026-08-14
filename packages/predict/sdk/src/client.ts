@@ -160,8 +160,6 @@ export interface RedeemQuote {
 	inventoryImpactRebate: number;
 	quantityClosed: number;
 	remaining: number;
-	/** True when the position would close as a liquidated tombstone (zero payout). */
-	wouldLiquidate: boolean;
 	raw: {
 		proceeds: bigint;
 		gross: bigint;
@@ -588,7 +586,6 @@ export class PredictClient {
 				inventoryImpactRebate: r.inventoryImpactRebate,
 				quantityClosed: r.quantityClosed,
 				remaining: r.remaining,
-				wouldLiquidate: r.liquidated,
 				raw: {
 					proceeds: r.raw.proceeds,
 					gross: r.raw.gross,

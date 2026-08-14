@@ -29,7 +29,6 @@ use deepbook_predict::{
     test_constants
 };
 
-/// 2x leverage gives a non-zero floor (required for the gap to exist).
 /// 6x is admitted at the ATM default range when the template cap is raised to 7x.
 /// 5M DUSDC, enough for the 6x max-quantity mint premium plus fee.
 /// 30M DUSDC, enough to back the large single-order payout liability.
@@ -54,7 +53,6 @@ fun double_partial_close_survivor_reinsertion_stays_backed() {
     run_live_close_schedule(vector[FIRST_CLOSE, SECOND_CLOSE]);
 }
 
-// === Near-expiry no-leverage window (end-to-end through the real entrypoints) ===
 //
 // The config unit tests pass `time_to_expiry_ms` directly, so they cannot prove the
 // mint flow derives it from the clock. These drive the real entrypoints against a

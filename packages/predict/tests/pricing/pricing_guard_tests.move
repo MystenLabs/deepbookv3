@@ -41,9 +41,9 @@
 /// one millisecond before expiry.
 /// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
-/// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
-/// directly below; active-book non-monotone UP prices are covered by
-/// `ENonMonotonePriceMemo`.
+/// Active-book non-monotone UP prices are guarded by
+/// `strike_payout_tree::ENonMonotonePrice` and covered in
+/// `current_nav_flow_tests`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 

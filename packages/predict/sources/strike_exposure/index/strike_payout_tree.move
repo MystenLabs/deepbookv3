@@ -27,7 +27,8 @@
 /// totals. That holds only while every prefix is non-negative, which a consistent
 /// book guarantees. Under a caller/index desync the settlement walk's underflow
 /// abort depends on which prefixes a given shape happens to visit, so it is not a
-/// desync detector — `apply_terms_delta`'s per-boundary assert is the authority.
+/// desync detector — `apply_net_delta`'s per-boundary underflow abort, applied
+/// through `apply_terms_delta`, is the authority.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};
@@ -159,8 +160,8 @@ public(package) fun settled_payout_liability(
     )
 }
 
-/// Value the quantity-weighted linear liability by pricing each distinct
-/// contributing boundary once.
+/// Value the quantity-weighted linear liability by pricing each distinct boundary
+/// once.
 ///
 /// The start and end sides accumulate as two non-negative totals: a node's net
 /// `local_start - local_end` quantity is signed, so a single running `u64` would
@@ -491,13 +492,15 @@ fun window_summary(
 }
 
 /// Accumulate start and end boundary products separately during an in-order walk.
-/// A boundary whose local start and end quantities cancel contributes
-/// `price * q - price * q = 0` at any price, so it is skipped without being priced:
-/// the aggregate is bit-identical and one pricing evaluation is saved. Monotonicity
-/// is therefore enforced over the contributing subsequence only, which is exactly
-/// what the netting needs — a cancelling tick drops out of the sum entirely, and
-/// every surviving order's `(lower, higher]` pair is still priced in ascending
-/// order.
+///
+/// EVERY node is priced, including one whose local start and end quantities cancel.
+/// Only the arithmetic is skipped there, because such a boundary contributes
+/// `price * q - price * q = 0` to the netted aggregate at any price. The pricing
+/// call itself must not be skipped: it is where monotonicity is observed, and a
+/// cancelling boundary is still the shared edge of two live orders. An inversion
+/// sitting on it does not move this walk's total, but it does move what
+/// `redeem_live` pays per order (`range_price` is evaluated per order, not netted),
+/// so skipping the observation would let NAV understate liability without aborting.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
@@ -517,17 +520,18 @@ fun walk_linear_subtree(
         previous_price,
     );
 
+    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+    // UP price is non-increasing in strike and the in-order walk visits ascending
+    // ticks, so a rising price is a non-monotone surface: the netted aggregate
+    // below would understate the per-order liability the protocol actually honors.
+    if (previous_price.is_some()) {
+        assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+    };
+    *previous_price = option::some(price);
+
     let mut start_total = 0;
     let mut end_total = 0;
     if (node.local_start.quantity != node.local_end.quantity) {
-        let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
-        // UP price is non-increasing in strike and the in-order walk visits
-        // ascending ticks, so a rising price is a non-monotone surface on which the
-        // netted aggregate below would not be exact.
-        if (previous_price.is_some()) {
-            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
-        };
-        *previous_price = option::some(price);
         start_total = math::mul_down(price, node.local_start.quantity);
         end_total = math::mul_down(price, node.local_end.quantity);
     };

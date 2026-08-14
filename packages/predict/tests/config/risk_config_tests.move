@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Validation bounds for two `ProtocolConfig` scalars: the trade liquidation budget
+/// Validation bounds for `ProtocolConfig` scalars:
 /// and the LP request attempt count. Both values are stored on `ProtocolConfig`; their
 /// bounds live in `config_constants` and are asserted by the protocol_config setters.
 #[test_only]

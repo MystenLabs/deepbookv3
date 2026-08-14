@@ -4,8 +4,8 @@
 /// Boundary coverage for the `CloseTerms` token that `quote_close` produces and
 /// `process_close` consumes: the three abort codes on the close path
 /// (`EPricerRequired`, `ETermsExposureMismatch`, `EWrongCloseOutcome`), and the
-/// derived-liquidated-state guard that keeps a never-indexed 1x order — absent
-/// from the active index by construction — off the liquidated arm.
+/// close classifier: a live order is priced, a settled order takes its terminal
+/// payout.
 #[test_only]
 module deepbook_predict::close_terms_boundary_tests;
 

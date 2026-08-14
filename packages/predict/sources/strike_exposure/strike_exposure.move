@@ -191,9 +191,10 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 }
 
 /// Return the live marked liability: every open contract's range-probability
-/// value, priced once per contributing boundary by the payout tree's in-order
-/// walk. Every order is worth `quantity * P(range)` live, so the boundary-linear
-/// aggregate is exact with no per-order correction.
+/// value, priced once per boundary by the payout tree's in-order walk. Every order
+/// is worth `quantity * P(range)` live, so no per-order correction is needed. The
+/// aggregate is netted per boundary rather than per order, so it can differ from
+/// the per-order sum by boundary rounding; it is clamped at zero once, in the walk.
 public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     exposure.payout.walk_linear(pricer, exposure.tick_size)
 }
@@ -333,8 +334,9 @@ public(package) fun inventory_impact(
 }
 
 /// Price a range, choose quantity under the requested bias, and run mint
-/// admission. Exact-quantity mode uses `min_quantity`. Budget mode uses a
-/// conservative lot-rounded premium search, then requires the result to meet
+/// admission. Exact-quantity mode uses `min_quantity`. Budget mode lot-rounds a
+/// premium search whose predicate is the same expression admission charges, so the
+/// largest admitted quantity is exact, then requires the result to meet
 /// `min_quantity`.
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,

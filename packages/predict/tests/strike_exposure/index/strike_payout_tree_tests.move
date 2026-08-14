@@ -331,7 +331,7 @@ fun remove_from_empty_tree_aborts() {
 #[test]
 fun gc_mutated_tree_matches_rebuilt_survivor_tree() {
     // Regression for #c24d8d (payout-tree node GC): removing an interior range must leave the tree
-    // walked IDENTICALLY by the canonical evaluators (settled_payout_liability, net_payout_reserve_
+    // walked IDENTICALLY by the canonical evaluators (settled_payout_liability, payout_reserve_
     // terms). Remove a middle range whose two boundaries are interior nodes so they GC out via
     // join_subtrees, then verify the post-GC tree against independently hand-computed values AND a
     // freshly rebuilt survivor-only tree (the prior remove tests only checked node presence/reserve,

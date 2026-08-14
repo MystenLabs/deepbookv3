@@ -4,21 +4,18 @@
 /// Differential coverage for the exact single-expiry live NAV reader
 /// (`expiry_market::current_nav`). Every test builds protocol state through the
 /// production mint flow, then asserts `current_nav` exactly equals an INDEPENDENT
-/// per-order reference (`reference_nav`): `free_cash - Σ (knocked-out ? 0 :
-/// max(0, qty·P - floor))`, computed straight from each order's atoms and
-/// `pricing::range_price` (a knocked-out leveraged order is marked at its
-/// liquidated worth, RP-17). The
-/// reference reuses NONE of `walk_linear` / `correction_value` /
-/// `exact_live_liability` / `current_nav` / `expiry_cash::free_cash`, so it is a
-/// genuine oracle (unit-tests rule 1): it sums per order, while the contract
-/// decomposes into a boundary-aggregated linear walk minus a leveraged-book
-/// correction walk.
+/// per-order reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed
+/// straight from each order's atoms and `pricing::range_price`. The reference
+/// reuses NONE of `walk_linear` / `exact_live_liability` / `current_nav` /
+/// `expiry_cash::free_cash`, so it is a genuine oracle (unit-tests rule 1): it
+/// sums per order, while the contract nets per boundary.
 ///
 /// All fixtures anchor every finite boundary at `strike_tick` (whose raw strike ==
 /// the seeded forward, so `UP(strike) = Φ(0) = 0.5` exactly with the SVI wing
 /// rounded to zero) and use even quantities, so the boundary-aggregated linear term
-/// equals the per-order sum bit-for-bit and `assert_eq` holds with no rounding dust.
-/// The far default expiry keeps the floor index flat at `1.0`, so `index_now = float!()`.
+/// equals the per-order sum bit-for-bit and `assert_eq` holds with no rounding
+/// dust. Away from that anchoring the two can differ by boundary rounding, which is
+/// why the fixtures pin it rather than relying on the identity in general.
 #[test_only]
 module deepbook_predict::current_nav_flow_tests;
 
