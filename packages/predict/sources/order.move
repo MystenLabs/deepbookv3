@@ -4,35 +4,29 @@
 /// Immutable contract terms encoded in a Predict order ID.
 ///
 /// An `Order` represents the durable contract terms needed after mint: the lower
-/// and higher strike ticks, quantity, the static floor `F` (`floor_shares`),
-/// and the expiry-local sequence. Mint-only inputs such as entry probability,
-/// leverage, net premium, and fee policy intentionally live outside this module.
-/// The packed ID is the single source of truth at protocol boundaries; raw strike
-/// conversion (through the owning market's `tick_size`) is interpreted by
-/// `StrikeExposure`.
+/// and higher strike ticks, quantity, and the expiry-local sequence. Mint-only
+/// inputs such as entry probability, net premium, and fee policy intentionally
+/// live outside this module. The packed ID is the single source of truth at
+/// protocol boundaries; raw strike conversion (through the owning market's
+/// `tick_size`) is interpreted by `StrikeExposure`.
 module deepbook_predict::order;
 
 use deepbook_predict::constants;
 
 const EInvalidOrderId: u64 = 0;
 const EInvalidTick: u64 = 1;
-const EInvalidFloorShares: u64 = 2;
-const EInvalidRange: u64 = 3;
-const EInvalidQuantity: u64 = 4;
-const EInvalidSequence: u64 = 5;
+const EInvalidRange: u64 = 2;
+const EInvalidQuantity: u64 = 3;
+const EInvalidSequence: u64 = 4;
 
 // Fields are dense in the low bits; higher bits are rejected during validation.
-// Quantity and floor are complemented so ascending IDs sort larger quantities,
-// then larger floors, first for liquidation scanning.
-const QUANTITY_LOTS_OFFSET: u8 = 164;
-const FLOOR_SHARES_OFFSET: u8 = 100;
+const QUANTITY_LOTS_OFFSET: u8 = 100;
 const LOWER_TICK_OFFSET: u8 = 70;
 const HIGHER_TICK_OFFSET: u8 = 40;
-const ORDER_ID_BITS: u8 = 196;
+const ORDER_ID_BITS: u8 = 132;
 
 const U32_MASK: u256 = (1u256 << 32) - 1;
 const U40_MASK: u256 = (1u256 << 40) - 1;
-const U64_MASK: u256 = (1u256 << 64) - 1;
 
 /// u256 mask for the `tick_bits!()`-wide tick fields in the packed order id.
 /// Derived from `constants::tick_bits!()` so it can't drift from the tick width.
@@ -72,7 +66,7 @@ public(package) fun higher_tick(order: &Order): u64 {
 
 /// Return the encoded quantity in position lots.
 public(package) fun quantity_lots(order: &Order): u64 {
-    decode_quantity_lots(order.id)
+    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
 }
 
 /// Return the immutable quantity encoded in this order.
@@ -89,34 +83,16 @@ public(package) fun sequence(order: &Order): u64 {
 public(package) fun new_from_ticks(
     lower_tick: u64,
     higher_tick: u64,
-    floor_shares: u64,
     quantity: u64,
     sequence: u64,
 ): Order {
-    new(
-        lower_tick,
-        higher_tick,
-        floor_shares,
-        quantity_lots_from_quantity(quantity),
-        sequence,
-    )
+    new(lower_tick, higher_tick, quantity_lots_from_quantity(quantity), sequence)
 }
 
-/// Construct a lower-quantity order with the same range and new floor and sequence.
-public(package) fun replacement(
-    old_order: &Order,
-    quantity: u64,
-    floor_shares: u64,
-    sequence: u64,
-): Order {
+/// Construct a lower-quantity order with the same range and a new sequence.
+public(package) fun replacement(old_order: &Order, quantity: u64, sequence: u64): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
-    new_from_ticks(
-        old_order.lower_tick(),
-        old_order.higher_tick(),
-        floor_shares,
-        quantity,
-        sequence,
-    )
+    new_from_ticks(old_order.lower_tick(), old_order.higher_tick(), quantity, sequence)
 }
 
 /// Assert that a user-facing position quantity can be encoded in an order.
@@ -130,35 +106,15 @@ public(package) fun max_quantity_lots(): u64 {
     U32_MASK as u64
 }
 
-public(package) fun is_leveraged(order: &Order): bool {
-    order.floor_shares() > 0
-}
-
-/// Return the static floor amount (`floor_shares = F`) encoded in this order.
-public(package) fun floor_shares(order: &Order): u64 {
-    decode_floor_shares(order.id)
-}
-
-fun new(
-    lower_tick: u64,
-    higher_tick: u64,
-    floor_shares: u64,
-    quantity_lots: u64,
-    sequence: u64,
-): Order {
+fun new(lower_tick: u64, higher_tick: u64, quantity_lots: u64, sequence: u64): Order {
     assert!(lower_tick <= tick_mask!() as u64, EInvalidTick);
     assert!(higher_tick <= tick_mask!() as u64, EInvalidTick);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
-    let quantity = quantity_lots * constants::position_lot_size!();
-    assert!(floor_shares <= quantity, EInvalidFloorShares);
     assert_valid_order_shape(lower_tick, higher_tick);
 
-    let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
-    let floor_shares_key = encode_floor_shares_key(floor_shares);
     let id =
-        (quantity_lots_key << QUANTITY_LOTS_OFFSET)
-        | (floor_shares_key << FLOOR_SHARES_OFFSET)
+        ((quantity_lots as u256) << QUANTITY_LOTS_OFFSET)
         | ((lower_tick as u256) << LOWER_TICK_OFFSET)
         | ((higher_tick as u256) << HIGHER_TICK_OFFSET)
         | (sequence as u256);
@@ -172,40 +128,14 @@ fun decode_tick(id: u256, offset: u8): u64 {
     ((id >> offset) & tick_mask!()) as u64
 }
 
-fun decode_u32(id: u256, offset: u8): u64 {
-    ((id >> offset) & U32_MASK) as u64
-}
-
-fun decode_quantity_lots(id: u256): u64 {
-    (U32_MASK as u64) - decode_u32(id, QUANTITY_LOTS_OFFSET)
-}
-
-fun decode_u64(id: u256, offset: u8): u64 {
-    ((id >> offset) & U64_MASK) as u64
-}
-
-fun decode_floor_shares(id: u256): u64 {
-    (U64_MASK as u64) - decode_u64(id, FLOOR_SHARES_OFFSET)
-}
-
 fun quantity_lots_from_quantity(quantity: u64): u64 {
     assert_valid_quantity(quantity);
     quantity / constants::position_lot_size!()
 }
 
-fun encode_quantity_lots_key(quantity_lots: u64): u256 {
-    U32_MASK - (quantity_lots as u256)
-}
-
-fun encode_floor_shares_key(floor_shares: u64): u256 {
-    U64_MASK - (floor_shares as u256)
-}
-
 fun assert_valid(order: &Order) {
-    let quantity_lots = order.quantity_lots();
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
-    assert!(quantity_lots > 0, EInvalidQuantity);
-    assert!(order.floor_shares() <= order.quantity(), EInvalidFloorShares);
+    assert!(order.quantity_lots() > 0, EInvalidQuantity);
     assert_valid_order_shape(order.lower_tick(), order.higher_tick());
 }
 

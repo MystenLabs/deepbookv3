@@ -13,14 +13,13 @@
 /// read anything the caller supplies: rotations are driven by measured subtree
 /// height, which bounds depth at `O(log n)` for *every* tick set rather than in
 /// expectation over a random one. Depth is the cost model that matters — each node
-/// is a dynamic-field child, and `apply_at` and `settlement_prefix_net_payout`
+/// is a dynamic-field child, and `apply_at` and `settlement_prefix_payout`
 /// touch one per level against a per-transaction cached-object ceiling.
 ///
-/// It tracks each order's quantity and its net payout (`Q - F`), converting the
-/// packed static floor once at the write boundary so no aggregate read re-derives
-/// it. Live cash backing is the max-point net payout plus a buffer over the
-/// disjoint-book gap; the tree's max-point term is the floor anchor of that
-/// enforced reserve.
+/// It tracks each order's quantity, which is also its settled payout: a winning
+/// order pays its full quantity. Live cash backing is the max-point payout plus a
+/// buffer over the disjoint-book gap; the tree's max-point term is the floor
+/// anchor of that enforced reserve.
 ///
 /// Shape carries no value for a consistent index: `combine_summaries` is
 /// associative over the in-order sequence, so any arrangement of the same
@@ -31,12 +30,13 @@
 /// desync detector — `apply_terms_delta`'s per-boundary assert is the authority.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, pricing::{Pricer, PriceMemo}, range_codec};
+use deepbook_predict::{constants, pricing::Pricer, range_codec};
 use fixed_math::math;
 use sui::table::{Self, Table};
 
 const EInsufficientPayoutTerms: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
+const ENonMonotonePrice: u64 = 2;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -48,28 +48,24 @@ public struct StrikePayoutTree has store {
 
 /// Atomic payout terms used for boundary deltas and subtree totals.
 public struct PayoutTerms has copy, drop, store {
-    /// Aggregate order quantity over the prefix. Read by the NAV linear walk
-    /// (`walk_linear`), which prices each boundary's start/end quantity.
+    /// Aggregate order quantity over the prefix, which is also the aggregate
+    /// settled payout. Read by the NAV linear walk (`walk_linear`), which prices
+    /// each boundary's start/end quantity, and by the settled-liability and
+    /// max-point reserve reads.
     quantity: u64,
-    /// Aggregate net payout (`Q - F`) over the prefix — the basis for settled
-    /// liability and max-point reserve reads. Stored rather than derived so a
-    /// negative aggregate net payout is unrepresentable instead of relying on the
-    /// per-order `F <= Q` invariant surviving every summation.
-    net_payout: u64,
 }
 
-/// Subtree net-payout totals and max static net-payout prefix gain. No consumer
-/// reads a subtree's aggregate quantity, so only the net terms are summarized.
+/// Subtree payout totals and max static payout prefix gain.
 public struct PayoutSummary has copy, drop, store {
-    net_start: u64,
-    net_end: u64,
-    /// Never exceeds `net_start`, by construction in `boundary_summary` and
+    start: u64,
+    end: u64,
+    /// Never exceeds `start`, by construction in `boundary_summary` and
     /// `combine_summaries`. That bound is what makes `combine_summaries`
     /// associative at u64 scale — and therefore what makes the tree's shape
     /// irrelevant to every value it reports. A summary term that could outgrow
-    /// `net_start` would break shape-independence with no test to catch it, and
+    /// `start` would break shape-independence with no test to catch it, and
     /// would also abort `strike_exposure`'s plain `total - max` subtraction.
-    max_net_payout_prefix_gain: u64,
+    max_payout_prefix_gain: u64,
 }
 
 /// Height-balanced node keyed by finite boundary tick.
@@ -87,22 +83,22 @@ public struct PayoutNode has copy, drop, store {
     summary: PayoutSummary,
 }
 
-/// Return `(max_net_payout, total_net_payout)` for pre-settlement reserve math.
-public(package) fun net_payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64) {
-    let mut max_net_payout = tree.base.net_payout;
-    let mut total_net_payout = tree.base.net_payout;
+/// Return `(max_payout, total_payout)` for pre-settlement reserve math.
+public(package) fun payout_reserve_terms(tree: &StrikePayoutTree): (u64, u64) {
+    let mut max_payout = tree.base.quantity;
+    let mut total_payout = tree.base.quantity;
     if (tree.root.is_some()) {
         let summary = tree.nodes[*tree.root.borrow()].summary;
-        max_net_payout = max_net_payout + summary.max_net_payout_prefix_gain;
-        total_net_payout = total_net_payout + summary.net_start;
+        max_payout = max_payout + summary.max_payout_prefix_gain;
+        total_payout = total_payout + summary.start;
     };
-    (max_net_payout, total_net_payout)
+    (max_payout, total_payout)
 }
 
-/// Return the highest net-payout prefix reachable inside `(lower_tick,
-/// higher_tick]`. This is the existing payout peak a candidate over the same
-/// range would stack onto.
-public(package) fun range_max_net_payout(
+/// Return the highest payout prefix reachable inside `(lower_tick, higher_tick]`.
+/// This is the existing payout peak a candidate over the same range would stack
+/// onto.
+public(package) fun range_max_payout(
     tree: &StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -110,11 +106,11 @@ public(package) fun range_max_net_payout(
     // Prefix evaluation folds boundaries with `tick < limit`, so `lower + 1`
     // includes a start boundary exactly at `lower`. Tick zero is the open-lower
     // sentinel and lives in `base`, not in the node table.
-    let prefix_at_lower = settlement_prefix_net_payout(
+    let prefix_at_lower = settlement_prefix_payout(
         &tree.nodes,
         tree.root,
         lower_tick + 1,
-        tree.base.net_payout,
+        tree.base.quantity,
     );
     let window = window_summary(
         &tree.nodes,
@@ -124,11 +120,11 @@ public(package) fun range_max_net_payout(
         0,
         constants::pos_inf_tick!(),
     );
-    prefix_at_lower + window.max_net_payout_prefix_gain
+    prefix_at_lower + window.max_payout_prefix_gain
 }
 
-/// Return the highest net-payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun complement_max_net_payout(
+/// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
+public(package) fun complement_max_payout(
     tree: &StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
@@ -136,12 +132,12 @@ public(package) fun complement_max_net_payout(
     let left = if (lower_tick == 0) {
         0
     } else {
-        tree.range_max_net_payout(0, lower_tick)
+        tree.range_max_payout(0, lower_tick)
     };
     let right = if (higher_tick == constants::pos_inf_tick!()) {
         0
     } else {
-        tree.range_max_net_payout(higher_tick, constants::pos_inf_tick!())
+        tree.range_max_payout(higher_tick, constants::pos_inf_tick!())
     };
     left.max(right)
 }
@@ -155,17 +151,16 @@ public(package) fun settled_payout_liability(
     tick_size: u64,
 ): u64 {
     let limit_tick = range_codec::prefix_limit_tick(settlement, tick_size);
-    settlement_prefix_net_payout(
+    settlement_prefix_payout(
         &tree.nodes,
         tree.root,
         limit_tick,
-        tree.base.net_payout,
+        tree.base.quantity,
     )
 }
 
-/// Value the quantity-weighted linear liability by pricing each distinct boundary
-/// once. The in-order walk records boundary prices in `memo` for the leveraged
-/// correction scan.
+/// Value the quantity-weighted linear liability by pricing each distinct
+/// contributing boundary once.
 ///
 /// The start and end sides accumulate as two non-negative totals: a node's net
 /// `local_start - local_end` quantity is signed, so a single running `u64` would
@@ -173,18 +168,14 @@ public(package) fun settled_payout_liability(
 /// `base.quantity + start_total - end_total`. `tree.base` is the `P(-inf) = 1`
 /// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
 /// are never stored (`P = 0`).
-public(package) fun walk_linear(
-    tree: &StrikePayoutTree,
-    pricer: &Pricer,
-    memo: &mut PriceMemo,
-    tick_size: u64,
-): u64 {
+public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
+    let mut previous_price = option::none();
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
-        memo,
+        &mut previous_price,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
     // once. This can differ from pricing and flooring each order independently.
@@ -197,7 +188,7 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
         root: option::none(),
         nodes: table::new(ctx),
         node_count: 0,
-        base: payout_terms(0, 0),
+        base: payout_terms(0),
     }
 }
 
@@ -207,9 +198,8 @@ public(package) fun insert_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    floor_shares: u64,
 ) {
-    let terms = payout_terms_from_order(quantity, floor_shares);
+    let terms = payout_terms(quantity);
     if (terms.is_zero_terms()) return;
 
     // Whole-line ranges are rejected by `order`, so this pre-count matches the
@@ -240,14 +230,8 @@ public(package) fun remove_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    floor_shares: u64,
 ) {
-    tree.apply_range(
-        lower_tick,
-        higher_tick,
-        payout_terms_from_order(quantity, floor_shares),
-        false,
-    );
+    tree.apply_range(lower_tick, higher_tick, payout_terms(quantity), false);
 }
 
 fun apply_range(
@@ -342,9 +326,9 @@ fun apply_at(
 
 fun new_leaf(terms: PayoutTerms, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
-        (terms, payout_terms(0, 0))
+        (terms, payout_terms(0))
     } else {
-        (payout_terms(0, 0), terms)
+        (payout_terms(0), terms)
     };
 
     PayoutNode {
@@ -453,7 +437,7 @@ fun rebalance(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNod
     }
 }
 
-fun settlement_prefix_net_payout(
+fun settlement_prefix_payout(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     limit_tick: u64,
@@ -465,16 +449,16 @@ fun settlement_prefix_net_payout(
     // A boundary is active in the prefix iff `tick < limit_tick`
     // (`tick * tick_size < settlement`); otherwise exclude it and its right subtree.
     if (limit_tick <= tick) {
-        return settlement_prefix_net_payout(nodes, node.left, limit_tick, running)
+        return settlement_prefix_payout(nodes, node.left, limit_tick, running)
     };
 
     let mut running = running;
     let left_summary = subtree_summary(nodes, node.left);
-    apply_net_delta(&mut running, left_summary.net_start, true);
-    apply_net_delta(&mut running, left_summary.net_end, false);
-    apply_net_delta(&mut running, node.local_start.net_payout, true);
-    apply_net_delta(&mut running, node.local_end.net_payout, false);
-    settlement_prefix_net_payout(nodes, node.right, limit_tick, running)
+    apply_net_delta(&mut running, left_summary.start, true);
+    apply_net_delta(&mut running, left_summary.end, false);
+    apply_net_delta(&mut running, node.local_start.quantity, true);
+    apply_net_delta(&mut running, node.local_end.quantity, false);
+    settlement_prefix_payout(nodes, node.right, limit_tick, running)
 }
 
 /// Combine every boundary strictly inside `(lower, higher)`. Whole subtrees
@@ -507,30 +491,54 @@ fun window_summary(
 }
 
 /// Accumulate start and end boundary products separately during an in-order walk.
-/// Every node is cached even when its equal local start and end quantities cancel,
-/// because leveraged-order correction lookups require every finite boundary.
+/// A boundary whose local start and end quantities cancel contributes
+/// `price * q - price * q = 0` at any price, so it is skipped without being priced:
+/// the aggregate is bit-identical and one pricing evaluation is saved. Monotonicity
+/// is therefore enforced over the contributing subsequence only, which is exactly
+/// what the netting needs — a cancelling tick drops out of the sum entirely, and
+/// every surviving order's `(lower, higher]` pair is still priced in ascending
+/// order.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
     tick_size: u64,
-    memo: &mut PriceMemo,
+    previous_price: &mut Option<u64>,
 ): (u64, u64) {
     if (root.is_none()) return (0, 0);
     let tick = *root.borrow();
     let node = nodes[tick];
 
-    let (left_start, left_end) = walk_linear_subtree(nodes, node.left, pricer, tick_size, memo);
+    let (left_start, left_end) = walk_linear_subtree(
+        nodes,
+        node.left,
+        pricer,
+        tick_size,
+        previous_price,
+    );
 
-    let price = memo.price_and_cache(pricer, tick, tick_size);
     let mut start_total = 0;
     let mut end_total = 0;
     if (node.local_start.quantity != node.local_end.quantity) {
+        let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+        // UP price is non-increasing in strike and the in-order walk visits
+        // ascending ticks, so a rising price is a non-monotone surface on which the
+        // netted aggregate below would not be exact.
+        if (previous_price.is_some()) {
+            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+        };
+        *previous_price = option::some(price);
         start_total = math::mul_down(price, node.local_start.quantity);
         end_total = math::mul_down(price, node.local_end.quantity);
     };
 
-    let (right_start, right_end) = walk_linear_subtree(nodes, node.right, pricer, tick_size, memo);
+    let (right_start, right_end) = walk_linear_subtree(
+        nodes,
+        node.right,
+        pricer,
+        tick_size,
+        previous_price,
+    );
     (start_total + left_start + right_start, end_total + left_end + right_end)
 }
 
@@ -564,31 +572,31 @@ fun subtree_height(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
 
 fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
     PayoutSummary {
-        net_start: start.net_payout,
-        net_end: end.net_payout,
-        max_net_payout_prefix_gain: positive_net_delta(start.net_payout, end.net_payout, 0),
+        start: start.quantity,
+        end: end.quantity,
+        max_payout_prefix_gain: positive_net_delta(start.quantity, end.quantity, 0),
     }
 }
 
 fun zero_summary(): PayoutSummary {
     PayoutSummary {
-        net_start: 0,
-        net_end: 0,
-        max_net_payout_prefix_gain: 0,
+        start: 0,
+        end: 0,
+        max_payout_prefix_gain: 0,
     }
 }
 
 fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary {
     let right_gain_after_left = positive_net_delta(
-        left.net_start,
-        left.net_end,
-        right.max_net_payout_prefix_gain,
+        left.start,
+        left.end,
+        right.max_payout_prefix_gain,
     );
 
     PayoutSummary {
-        net_start: left.net_start + right.net_start,
-        net_end: left.net_end + right.net_end,
-        max_net_payout_prefix_gain: left.max_net_payout_prefix_gain.max(right_gain_after_left),
+        start: left.start + right.start,
+        end: left.end + right.end,
+        max_payout_prefix_gain: left.max_payout_prefix_gain.max(right_gain_after_left),
     }
 }
 
@@ -596,18 +604,12 @@ fun positive_net_delta(start: u64, end: u64, gain: u64): u64 {
     (start + gain).saturating_sub(end)
 }
 
-/// Convert the packed order atoms into stored terms. `order::assert_valid` is the
-/// `F <= Q` authority, so this is the one site where a floor becomes a net payout.
-fun payout_terms_from_order(quantity: u64, floor_shares: u64): PayoutTerms {
-    PayoutTerms { quantity, net_payout: quantity - floor_shares }
-}
-
-fun payout_terms(quantity: u64, net_payout: u64): PayoutTerms {
-    PayoutTerms { quantity, net_payout }
+fun payout_terms(quantity: u64): PayoutTerms {
+    PayoutTerms { quantity }
 }
 
 fun is_zero_terms(terms: PayoutTerms): bool {
-    terms.quantity == 0 && terms.net_payout == 0
+    terms.quantity == 0
 }
 
 fun is_empty_node(node: PayoutNode): bool {
@@ -616,12 +618,6 @@ fun is_empty_node(node: PayoutNode): bool {
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
     apply_net_delta(&mut value.quantity, delta.quantity, add);
-    apply_net_delta(&mut value.net_payout, delta.net_payout, add);
-    // Net payout can never exceed quantity (floor_shares = quantity - net_payout
-    // >= 0). A remove that breaks this subtracted a floor component that was never
-    // inserted -- a caller/index desync -- so abort rather than leave the boundary
-    // holding a phantom net payout above zero quantity.
-    assert!(value.net_payout <= value.quantity, EInsufficientPayoutTerms);
 }
 
 fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
@@ -700,9 +696,9 @@ fun assert_subtree_invariant(
 
     let boundary = boundary_summary(node.local_start, node.local_end);
     let summary = combine_summaries(combine_summaries(left_summary, boundary), right_summary);
-    assert!(node.summary.net_start == summary.net_start);
-    assert!(node.summary.net_end == summary.net_end);
-    assert!(node.summary.max_net_payout_prefix_gain == summary.max_net_payout_prefix_gain);
+    assert!(node.summary.start == summary.start);
+    assert!(node.summary.end == summary.end);
+    assert!(node.summary.max_payout_prefix_gain == summary.max_payout_prefix_gain);
 
     (1 + taller, summary, left_count + right_count + 1)
 }
