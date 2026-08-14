@@ -435,10 +435,7 @@ public(package) fun quote_close(
 /// one quote, and the market identity assert rejects terms quoted on another
 /// exposure book. Returns the replacement order a partial live close leaves
 /// behind.
-public(package) fun process_close(
-    exposure: &mut StrikeExposure,
-    terms: CloseTerms,
-): Option<Order> {
+public(package) fun process_close(exposure: &mut StrikeExposure, terms: CloseTerms): Option<Order> {
     let CloseTerms { expiry_market_id, order, outcome } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
     match (outcome) {
@@ -667,9 +664,7 @@ fun process_live_close(
 ): Option<Order> {
     let LiveCloseTerms { close_quantity, .. } = terms;
 
-    exposure
-        .payout
-        .remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
+    exposure.payout.remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
 
     let remaining_quantity = order.quantity() - close_quantity;
     if (remaining_quantity == 0) {

@@ -51,7 +51,6 @@ fun default_zero_rate_is_a_kill_switch() {
             0,
             ONE_ORDER,
             true,
-            fx.clock(),
         );
 
     assert_eq!(terms.inventory_impact_charge(), 0);
@@ -87,13 +86,13 @@ fun quadratic_below_scale_and_linear_above_scale() {
         .exposure
         .quote_close(option::some(pricer), &second_order, second_order.quantity());
     assert_eq!(second_close.inventory_impact_rebate(), 375_000_000);
-    harness.exposure.process_close(option::some(pricer), second_close, fx.clock());
+    harness.exposure.process_close(second_close);
 
     let first_close = harness
         .exposure
         .quote_close(option::some(pricer), &first_order, first_order.quantity());
     assert_eq!(first_close.inventory_impact_rebate(), 225_000_000);
-    harness.exposure.process_close(option::some(pricer), first_close, fx.clock());
+    harness.exposure.process_close(first_close);
     assert_eq!(harness.exposure.inventory_impact_potential(), 0);
 
     cleanup(fx, oracle, harness);
@@ -130,12 +129,12 @@ fun cross_range_cycle_cannot_extract_inventory_escrow() {
     let close_a = harness.exposure.quote_close(option::some(pricer), &order_a, order_a.quantity());
     let rebate_a = close_a.inventory_impact_rebate();
     assert_eq!(rebate_a, 31_250_000);
-    harness.exposure.process_close(option::some(pricer), close_a, fx.clock());
+    harness.exposure.process_close(close_a);
 
     let close_b = harness.exposure.quote_close(option::some(pricer), &order_b, order_b.quantity());
     let rebate_b = close_b.inventory_impact_rebate();
     assert_eq!(rebate_b, 25_000_000);
-    harness.exposure.process_close(option::some(pricer), close_b, fx.clock());
+    harness.exposure.process_close(close_b);
 
     assert_eq!(charge_a + charge_b, rebate_a + rebate_b);
     assert_eq!(harness.exposure.inventory_impact_potential(), 0);
@@ -152,16 +151,13 @@ fun partial_close_schedule_telescopes_without_rounding_dust() {
 
     let first_close = harness.exposure.quote_close(option::some(pricer), &order, 400_000_000);
     let first_rebate = first_close.inventory_impact_rebate();
-    let survivor = harness
-        .exposure
-        .process_close(option::some(pricer), first_close, fx.clock())
-        .destroy_some();
+    let survivor = harness.exposure.process_close(first_close).destroy_some();
 
     let final_close = harness
         .exposure
         .quote_close(option::some(pricer), &survivor, survivor.quantity());
     let final_rebate = final_close.inventory_impact_rebate();
-    harness.exposure.process_close(option::some(pricer), final_close, fx.clock());
+    harness.exposure.process_close(final_close);
 
     assert_eq!(charge, first_rebate + final_rebate);
     assert_eq!(harness.exposure.inventory_impact_potential(), 0);
@@ -219,7 +215,7 @@ fun buffered_liability_carry_is_included_in_charge_and_rebate() {
             carried_order.quantity(),
         );
     assert_eq!(close.inventory_impact_rebate(), 10_000_000);
-    harness.exposure.process_close(option::some(pricer), close, fx.clock());
+    harness.exposure.process_close(close);
     assert_eq!(harness.exposure.inventory_impact_potential(), ROUNDING_BEFORE_POTENTIAL);
 
     cleanup(fx, oracle, harness);
@@ -263,7 +259,7 @@ fun quote_range_mint(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    clock: &Clock,
+    _clock: &Clock,
 ): deepbook_predict::strike_exposure::MintTerms {
     exposure.quote_mint_terms(
         pricer,
@@ -272,7 +268,6 @@ fun quote_range_mint(
         0,
         quantity,
         true,
-        clock,
     )
 }
 
@@ -334,7 +329,6 @@ fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
 
 fun impact_config(max_rate: u64, backing_buffer_lambda: u64): StrikeExposureConfig {
     let mut config = strike_exposure_config::new();
-    config.set_no_leverage_window_ms(0);
     config.set_backing_buffer_lambda(backing_buffer_lambda);
     config.set_inventory_impact_max_rate(max_rate);
     config

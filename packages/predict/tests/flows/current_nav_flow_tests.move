@@ -29,6 +29,7 @@ use deepbook_predict::{
     order,
     pricing::{Self, Pricer},
     range_codec,
+    strike_payout_tree,
     test_constants
 };
 use fixed_math::math::{Self, float_scaling as float};
@@ -37,12 +38,10 @@ use std::unit_test::assert_eq;
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
 /// Leveraged up range, quantity 2e9, 2x: net_premium 5e8, floor_shares 5e8.
-const LEVERAGED_QUANTITY: u64 = 2_000_000_000;
 /// Second same-strike up order, quantity 4e9.
 const SECOND_SAME_STRIKE_QUANTITY: u64 = 4_000_000_000;
 /// Deep-OTM forward (well below the 100e9 grid) so the minted up range prices to
 /// ~0, driving the leveraged order underwater (value <= floor).
-const UNDERWATER_FORWARD: u64 = 10_000_000_000;
 const NON_MONOTONE_A_MAGNITUDE: u64 = 1;
 const NON_MONOTONE_LOWER_TICK: u64 = 90;
 const NON_MONOTONE_HIGHER_TICK: u64 = 100;
@@ -50,8 +49,6 @@ const NON_MONOTONE_HIGHER_TICK: u64 = 100;
 /// strike that lands the 2x `LEVERAGED_QUANTITY` UP range in the knock-out band
 /// `(floor, floor / liquidation_ltv]` — worth more than its 5e8 floor but at or
 /// below the ~5.88e8 liquidation threshold (`up_price ≈ 0.27` → range ≈ 5.4e8).
-const KNOCKOUT_BAND_A: u64 = 100_000_000;
-const KNOCKOUT_BAND_FORWARD: u64 = 86_600_000_000;
 
 #[test]
 fun empty_live_market_values_at_free_cash() {
@@ -147,7 +144,7 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
 fun current_nav_rejects_non_monotone_active_book_surface() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -201,41 +198,28 @@ fun check_nav(
     fx: &mut helpers::Fixture,
     market: &helpers::MarketBundle,
     order_ids: vector<u256>,
-    index_now: u64,
+    _index_now: u64,
 ) {
     let pricer = fx.load_pricer_bundle(market);
     let nav = fx.current_nav_bundle(market);
     let expiry_market = helpers::market(market);
-    assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids, index_now));
+    assert_eq!(nav, reference_nav(expiry_market, &pricer, &order_ids));
     helpers::assert_market_backed(expiry_market);
 }
 
 /// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ contribution` per
-/// open order, using only order atoms and `pricing::range_price`. A knocked-out
-/// leveraged order (live gross at or below `floor / liquidation_ltv`) contributes
-/// zero — it will be liquidated by the sweep and owes nothing above its reserved
-/// floor, mirroring the flush's read-only correction (RP-17); every other order
-/// contributes `max(0, qty·P - floor)`. The order's ticks are converted to raw
-/// strikes through the same `range_codec` boundary the contract uses (the codec
-/// is the pricing boundary, not the NAV math under test).
-fun reference_nav(
-    market: &ExpiryMarket,
-    pricer: &Pricer,
-    order_ids: &vector<u256>,
-    index_now: u64,
-): u64 {
+/// open order, using only order atoms and `pricing::range_price`. Every order is
+/// worth `qty·P(range)` live, so each contributes exactly that. The order's ticks
+/// are converted to raw strikes through the same `range_codec` boundary the
+/// contract uses (the codec is the pricing boundary, not the NAV math under test).
+fun reference_nav(market: &ExpiryMarket, pricer: &Pricer, order_ids: &vector<u256>): u64 {
     let mut liability = 0;
     order_ids.do_ref!(|id| {
         let decoded = order::from_order_id(*id);
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
-        let range_value = math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
-        let floor_value = math::mul_down(decoded.floor_shares(), index_now);
-        let knocked_out =
-            decoded.floor_shares() > 0
-                && range_value <= math::div_down(decoded.floor_shares(), market.liquidation_ltv());
-        let contribution = if (knocked_out) 0 else range_value.saturating_sub(floor_value);
-        liability = liability + contribution;
+        liability =
+            liability + math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
     });
     let free_cash = market.cash_balance().saturating_sub(market.rebate_reserve());
     free_cash.saturating_sub(liability)

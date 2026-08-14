@@ -28,23 +28,14 @@ use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 // Leverage and probability values in FLOAT_SCALING (1e9).
 const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
-const ENTRY_PROBABILITY_LOW: u64 = 100_000_000;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
-const HALF_PROBABILITY_TWO_AND_HALF_X_NET_PREMIUM: u64 = 200_000_000;
-const HALF_PROBABILITY_TWO_AND_HALF_X_FLOOR_SHARES: u64 = 300_000_000;
-const UNLEVERAGED_FLOOR_SHARES: u64 = 0;
 /// Time-to-expiry far outside the default 1h no-leverage window (1 week), so the
 /// block is inactive and admission runs at the full probability-derived cap.
-const FAR_FROM_EXPIRY_MS: u64 = 604_800_000;
 /// Expiry itself: zero time left, the deepest point inside the window.
-const AT_EXPIRY_MS: u64 = 0;
 /// Smallest leverage strictly above 1x; inside the window even this is refused.
 /// p = 0.5 at 1x: net premium is the full entry value 500_000_000, floor 0.
-const HALF_PROBABILITY_ONE_X_NET_PREMIUM: u64 = 500_000_000;
 /// p = 0.1, 1.5x, quantity 1e9: entry value 100_000_000; net premium
 /// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares the 33_333_334 remainder.
-const LOW_PROBABILITY_ONE_POINT_FIVE_X_NET_PREMIUM: u64 = 66_666_666;
-const LOW_PROBABILITY_ONE_POINT_FIVE_X_FLOOR_SHARES: u64 = 33_333_334;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -163,7 +154,6 @@ fun mint_admission_probability_one_above_max_entry_probability_aborts() {
     config.assert_mint_admission(
         float!(),
         test_constants::mint_quantity(),
-        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -177,21 +167,6 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
     config.assert_mint_admission(
         ENTRY_PROBABILITY_BELOW_MIN,
         test_constants::mint_quantity(),
-        FAR_FROM_EXPIRY_MS,
-    );
-    abort 999
-}
-
-// === EInvalidLeverage / ELeverageAboveAdmissionCap (mint admission) ===
-
-#[test, expected_failure(abort_code = strike_exposure_config::ELeverageAboveAdmissionCap)]
-fun mint_admission_low_probability_two_x_above_curve_aborts() {
-    let config = strike_exposure_config::new();
-    // With default max leverage 3x and k = 0.2, p = 0.1 gives cap 1.8x.
-    config.assert_mint_admission(
-        ENTRY_PROBABILITY_LOW,
-        test_constants::mint_quantity(),
-        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -201,12 +176,11 @@ fun mint_admission_low_probability_two_x_above_curve_aborts() {
 #[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBelowMinimum)]
 fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
     let config = strike_exposure_config::new();
-    // At p = 0.5 and 1x leverage, quantity 1_990_000 gives net premium
+    // At p = 0.5, quantity 1_990_000 gives net premium
     // 995_000, one position lot below the 1_000_000 minimum.
     config.assert_mint_admission(
         ENTRY_PROBABILITY_HALF,
         2 * constants::min_net_premium!() - constants::position_lot_size!(),
-        FAR_FROM_EXPIRY_MS,
     );
     abort 999
 }
@@ -248,4 +222,3 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 // window alone.
 
 // === EOrderBelowLiquidationThreshold (mint admission) ===
-

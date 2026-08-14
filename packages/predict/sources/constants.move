@@ -69,7 +69,6 @@ public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
 public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
 
-
 // === Time Constants ===
 
 public(package) macro fun one_minute_ms(): u64 { 60_000 }

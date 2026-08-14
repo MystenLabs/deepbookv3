@@ -56,13 +56,13 @@ fun shared_boundaries_and_removal_refresh_peaks() {
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);
     tree.insert_range(1, 4, 40);
-    tree.insert_range(1, 4, 25, 5); // net payout 20 on the same boundaries
+    tree.insert_range(1, 4, 25); // stacks on the same boundaries
     tree.insert_range(4, 7, 30);
 
-    assert_eq!(tree.range_max_payout(1, 4), 60);
+    assert_eq!(tree.range_max_payout(1, 4), 65);
     assert_eq!(tree.complement_max_payout(1, 4), 30);
 
-    tree.remove_range(1, 4, 25, 5);
+    tree.remove_range(1, 4, 25);
     assert_eq!(tree.range_max_payout(1, 4), 40);
     assert_eq!(tree.complement_max_payout(1, 4), 30);
 

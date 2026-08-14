@@ -24,10 +24,6 @@ use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::assert_eq;
 
 const QUANTITY: u64 = 1_000_000_000;
-const LEVERAGED_QUANTITY: u64 = 2_000_000_000;
-const REBATE_AFTER_ONE_MINT: u64 = 2_500_000;
-const REBATE_AFTER_DOWN_AND_LEVERAGED_MINTS: u64 = 7_500_000;
-
 const DISJOINT_MAX_LIVE: u64 = QUANTITY;
 const DISJOINT_GAP: u64 = QUANTITY;
 const OVERLAPPING_RESERVE: u64 = 2 * QUANTITY;
@@ -38,11 +34,9 @@ const OVERLAPPING_RESERVE: u64 = 2 * QUANTITY;
 /// therefore creates with zero cash, quotes both mints (pricing does not depend
 /// on market cash), pins the quoted probability against the independent
 /// reference, and only then seeds the difference. Nothing here restates a price.
-const FIRST_ORDER_REQUIRED_CASH: u64 = QUANTITY + REBATE_AFTER_ONE_MINT;
 /// A cash level strictly between the buffered reserve and the old summed one —
 /// the window the capital-efficiency change opened. The gap is ~750e6 wide, so
 /// this sits far from either edge.
-const CAPITAL_EFFICIENT_POST_MINT_CASH: u64 = 1_800_000_000;
 
 #[test]
 fun disjoint_range_book_uses_default_gap_buffer() {
@@ -127,38 +121,6 @@ fun mint_up(
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-    )
-}
-
-/// All-in cost of a mint, which is exactly what it adds to expiry cash: the
-/// premium plus the trading fee, with no builder, subsidy or penalty component in
-/// these fixtures.
-fun quoted_mint_cost(
-    fx: &mut helpers::Fixture,
-    market: &helpers::MarketBundle,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    leverage: u64,
-    complement: bool,
-): u64 {
-    let quote = fx.quote_mint_bundle(market, lower_tick, higher_tick, quantity, leverage);
-    if (complement) {
-        helpers::assert_atm_complement_entry_probability(quote.entry_probability())
-    } else {
-        helpers::assert_atm_entry_probability(quote.entry_probability())
-    };
-    quote.all_in_cost()
-}
-
-fun down_mint_cost(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64 {
-    quoted_mint_cost(
-        fx,
-        market,
-        constants::neg_inf!(),
-        helpers::strike_tick(),
-        QUANTITY,
-        true,
     )
 }
 

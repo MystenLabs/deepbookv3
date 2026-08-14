@@ -19,12 +19,6 @@ const TICK_SIZE: u64 = 10_000;
 /// A tick comfortably above every key inserted in these tests, used where the old
 /// grid tests settled at `max_strike()`.
 const HIGH_SETTLEMENT_TICK: u64 = 10;
-const PARTIAL_SURVIVOR_QUANTITY: u64 = 599_990_000;
-const PARTIAL_SURVIVOR_FLOOR_SHARES: u64 = 124_998_049;
-const PARTIAL_SURVIVOR_NET_PAYOUT: u64 = 474_991_951;
-const LEVERAGED_QUANTITY: u64 = 1_000_000_000;
-const LEVERAGED_FLOOR_SHARES: u64 = 249_999_999;
-const LEVERAGED_NET_PAYOUT: u64 = 750_000_001;
 /// Node count for the real-accumulation test — enough to prove multi-node accumulation without the
 /// ~1000-insert timeout that forces the exact cap-boundary tests to seed the count.
 const ACCUMULATION_NODES: u64 = 64;
@@ -45,12 +39,7 @@ fun new_tree(ctx: &mut TxContext): StrikePayoutTree {
     strike_payout_tree::new(ctx)
 }
 
-fun insert_range(
-    tree: &mut StrikePayoutTree,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-) {
+fun insert_range(tree: &mut StrikePayoutTree, lower_tick: u64, higher_tick: u64, quantity: u64) {
     tree.insert_range(
         lower_tick,
         higher_tick,
@@ -58,12 +47,7 @@ fun insert_range(
     );
 }
 
-fun remove_range(
-    tree: &mut StrikePayoutTree,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-) {
+fun remove_range(tree: &mut StrikePayoutTree, lower_tick: u64, higher_tick: u64, quantity: u64) {
     tree.remove_range(
         lower_tick,
         higher_tick,
@@ -79,17 +63,6 @@ fun assert_reserve_terms(
     let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
     assert_eq!(max_net_payout, expected_max_net_payout);
     assert_eq!(total_net_payout, expected_total_net_payout);
-}
-
-fun assert_settled_at_most_max_net_payout(
-    tree: &StrikePayoutTree,
-    settlement: u64,
-    expected_settled: u64,
-    max_net_payout: u64,
-) {
-    let settled = tree.settled_payout_liability(settlement, TICK_SIZE);
-    assert_eq!(settled, expected_settled);
-    assert!(settled <= max_net_payout);
 }
 
 // === Constructor ===
@@ -126,7 +99,7 @@ fun insert_open_high_range_returns_max_backing() {
     // (tick 5, pos_inf]: backing accrues at tick 5 and never closes.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 5, constants::pos_inf_tick!(), 100, 0);
+    insert_range(&mut tree, 5, constants::pos_inf_tick!(), 100);
 
     assert_reserve_terms(&tree, 100, 100);
     destroy(tree);
@@ -204,7 +177,7 @@ fun insert_existing_boundary_at_node_cap_succeeds() {
 
     // Re-inserting the existing boundary adds no node, so the cap check (max + 0 <= max)
     // passes rather than aborting; the added terms accumulate on the shared boundary.
-    insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+    insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(2), TICK_SIZE), 2);
     destroy(tree);
@@ -216,7 +189,7 @@ fun removing_boundary_below_node_cap_allows_new_boundary() {
     let mut tree = new_tree(ctx);
     seed_single_boundary_at_node_cap(&mut tree);
 
-    remove_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+    remove_range(&mut tree, 1, constants::pos_inf_tick!(), 1);
     // The removed boundary is gone.
     assert_eq!(tree.settled_payout_liability(settle_above_tick(1), TICK_SIZE), 0);
 
@@ -242,7 +215,7 @@ fun real_boundary_accumulation_walks_correctly() {
     let n = ACCUMULATION_NODES;
     let mut i = 1;
     while (i <= n) {
-        insert_range(&mut tree, i, constants::pos_inf_tick!(), 1, 0); // one new boundary node at tick i
+        insert_range(&mut tree, i, constants::pos_inf_tick!(), 1); // one new boundary node at tick i
         i = i + 1;
     };
 
@@ -262,17 +235,17 @@ fun real_inserts_accumulate_into_node_cap() {
     // not feed the same counter the cap reads, no abort would occur.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1, 0);
+    insert_range(&mut tree, 1, constants::pos_inf_tick!(), 1);
     tree.set_node_count_for_testing(constants::max_payout_tree_nodes!() - 5);
 
     let mut i = 2;
     while (i <= 6) {
         // ticks 2..6 = five new boundary nodes, bringing the counter to exactly the cap
-        insert_range(&mut tree, i, constants::pos_inf_tick!(), 1, 0);
+        insert_range(&mut tree, i, constants::pos_inf_tick!(), 1);
         i = i + 1;
     };
 
-    insert_range(&mut tree, 7, constants::pos_inf_tick!(), 1, 0);
+    insert_range(&mut tree, 7, constants::pos_inf_tick!(), 1);
     abort 999
 }
 
@@ -462,7 +435,7 @@ fun settled_liability_pos_inf_range_owed_from_lower() {
     // (tick 5, pos_inf] wins for all settlement > tick 5.
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
-    insert_range(&mut tree, 5, constants::pos_inf_tick!(), 100, 0);
+    insert_range(&mut tree, 5, constants::pos_inf_tick!(), 100);
 
     assert_eq!(tree.settled_payout_liability(settle_at_tick(5), TICK_SIZE), 0);
     assert_eq!(tree.settled_payout_liability(settle_at_tick(6), TICK_SIZE), 100);
@@ -486,11 +459,11 @@ fun settled_liability_sums_multiple_winners() {
 }
 
 fun seed_single_boundary_at_node_cap(tree: &mut StrikePayoutTree) {
-    insert_range(tree, 1, constants::pos_inf_tick!(), 1, 0);
+    insert_range(tree, 1, constants::pos_inf_tick!(), 1);
     tree.set_node_count_for_testing(constants::max_payout_tree_nodes!());
 }
 
 fun seed_single_boundary_one_slot_below_node_cap(tree: &mut StrikePayoutTree) {
-    insert_range(tree, 1, constants::pos_inf_tick!(), 1, 0);
+    insert_range(tree, 1, constants::pos_inf_tick!(), 1);
     tree.set_node_count_for_testing(constants::max_payout_tree_nodes!() - 1);
 }

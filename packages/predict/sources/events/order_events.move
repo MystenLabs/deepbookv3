@@ -205,4 +205,3 @@ public(package) fun emit_settled_order_redeemed(
         redeemed_at_ms,
     });
 }
-

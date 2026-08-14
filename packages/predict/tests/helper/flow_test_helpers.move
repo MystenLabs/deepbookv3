@@ -220,7 +220,7 @@ public fun setup_market(tick: u64): Fixture {
         pyth_id,
     );
     let mut registry = scenario.take_shared<Registry>();
-    let mut config = scenario.take_shared<ProtocolConfig>();
+    let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,

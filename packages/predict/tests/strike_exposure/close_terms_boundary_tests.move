@@ -17,7 +17,7 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use sui::{object::{Self, UID}, test_scenario::return_shared};
+use sui::object::{Self, UID};
 
 public struct ExposureHarness has key {
     id: UID,
@@ -58,7 +58,6 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
             0,
             test_constants::mint_quantity(),
             true,
-            fx.clock(),
         );
     let order = harness_a.exposure.allocate_mint_order(terms_a);
     let close_terms = harness_a
@@ -66,45 +65,9 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
         .quote_close(option::some(pricer), &order, order.quantity());
 
     // Consuming A's close terms on exposure B must abort.
-    harness_b.exposure.process_close(option::some(pricer), close_terms, fx.clock());
+    harness_b.exposure.process_close(close_terms);
 
     abort 999
-}
-
-/// Build a single exposure book and mint one live order at `leverage` through the
-/// real quote/allocate path, returning the fixture, oracle bundle, shared harness,
-/// and the minted order.
-fun live_exposure(leverage: u64): (OracleFixture, OracleBundle, ExposureHarness, Order) {
-    let mut fx = oracle_fixture::setup_oracle(
-        test_constants::default_live_price(),
-        test_constants::default_tick_size(),
-        test_constants::short_expiry_ms(),
-    );
-    let expiry_id = fx.expiry_id();
-    let expiry_ms = fx.expiry();
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let harness_id = create_and_share_exposure_harness(&mut fx, expiry_id, expiry_ms);
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
-
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let terms = harness
-        .exposure
-        .quote_mint_terms(
-            &pricer,
-            test_constants::default_strike_tick(),
-            constants::pos_inf_tick!(),
-            0,
-            test_constants::mint_quantity(),
-            true,
-            leverage,
-            fx.clock(),
-        );
-    let order = harness.exposure.allocate_mint_order(terms);
-
-    (fx, oracle, harness, order)
 }
 
 fun fresh_object_id(fx: &mut OracleFixture): ID {
@@ -114,12 +77,6 @@ fun fresh_object_id(fx: &mut OracleFixture): ID {
     inner
 }
 
-fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
-    return_shared(harness);
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-}
-
 fun create_and_share_exposure_harness(
     fx: &mut OracleFixture,
     expiry_market_id: ID,
@@ -127,11 +84,7 @@ fun create_and_share_exposure_harness(
 ): ID {
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
-    // The leveraged fixtures mint on a short-lived market that sits inside the
-    // default no-leverage window; disable the block (a valid `window == 0`
-    // config) so these exercise the close classifier rather than mint admission.
-    let mut config = strike_exposure_config::new();
-    config.set_no_leverage_window_ms(0);
+    let config = strike_exposure_config::new();
     let exposure = strike_exposure::new(
         expiry_market_id,
         expiry_ms,

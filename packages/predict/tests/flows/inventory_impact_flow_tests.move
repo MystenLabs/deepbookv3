@@ -16,7 +16,6 @@ const IMPACT_MAX_RATE: u64 = 200_000_000; // 20%
 const BACKING_BUFFER_LAMBDA: u64 = 500_000_000;
 const EXPECTED_SINGLE_ORDER_CHARGE: u64 = 10_000_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
-const DROPPED_SPOT: u64 = 99_000_000_000;
 
 #[test]
 fun mint_charge_and_live_close_rebate_use_isolated_escrow() {

@@ -28,15 +28,11 @@ use deepbook_predict::{
     strike_exposure_config,
     test_constants
 };
-use std::unit_test::assert_eq;
 
 /// 2x leverage gives a non-zero floor (required for the gap to exist).
 /// 6x is admitted at the ATM default range when the template cap is raised to 7x.
-const ADMISSION_CAP_SEVEN_X: u64 = 7_000_000_000;
 /// 5M DUSDC, enough for the 6x max-quantity mint premium plus fee.
-const LARGE_TRADER_DEPOSIT: u64 = 5_000_000_000_000;
 /// 30M DUSDC, enough to back the large single-order payout liability.
-const LARGE_MARKET_CASH: u64 = 30_000_000_000_000;
 /// Single close row for survivor reinsertion coverage.
 const SINGLE_CLOSE: u64 = 400_000_000;
 

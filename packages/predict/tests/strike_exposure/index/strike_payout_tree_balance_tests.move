@@ -24,9 +24,6 @@ use deepbook_predict::{constants, strike_payout_tree::{Self, StrikePayoutTree}};
 use std::unit_test::{assert_eq, destroy};
 
 const QUANTITY: u64 = 1_000_000;
-const FLOOR_SHARES: u64 = 250_000;
-/// `QUANTITY - FLOOR_SHARES`, the net payout each boundary contributes.
-const NET_PAYOUT: u64 = 750_000;
 const NODES: u64 = 100;
 const GC_STRIDE: u64 = 3;
 
@@ -61,6 +58,14 @@ const EXPECTED_HEIGHT: u64 = 7;
 /// set, against the treap's 1000-deep adversarial worst case.
 const AVL_HEIGHT_BOUND: u64 = 9;
 
+fun insert(tree: &mut StrikePayoutTree, tick: u64) {
+    tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY);
+}
+
+fun remove(tree: &mut StrikePayoutTree, tick: u64) {
+    tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY);
+}
+
 /// Insert one finite boundary per tick, checking the whole invariant after each —
 /// a mid-sequence corruption that a later rotation happens to repair still fails.
 fun build_checked(ticks: vector<u64>, ctx: &mut TxContext): StrikePayoutTree {
@@ -73,7 +78,7 @@ fun build_checked(ticks: vector<u64>, ctx: &mut TxContext): StrikePayoutTree {
 }
 
 /// Settlement above every boundary: every `(tick, +inf]` range is in the money, so
-/// the liability is one `NET_PAYOUT` per surviving boundary.
+/// the liability is one `QUANTITY` per surviving boundary.
 fun settled_above_all(tree: &StrikePayoutTree): u64 {
     tree.settled_payout_liability(constants::pos_inf_tick!() - 1, 1)
 }
@@ -86,7 +91,7 @@ fun chosen_ticks_cannot_force_a_deep_tree() {
 
     assert_eq!(tree.assert_tree_invariant_for_testing(), EXPECTED_HEIGHT);
     assert!(EXPECTED_HEIGHT <= AVL_HEIGHT_BOUND);
-    assert_eq!(settled_above_all(&tree), NODES * NET_PAYOUT);
+    assert_eq!(settled_above_all(&tree), NODES * QUANTITY);
 
     destroy(tree);
 }
@@ -101,7 +106,7 @@ fun descending_inserts_stay_balanced() {
     let tree = build_checked(ticks, &mut ctx);
 
     assert_eq!(tree.assert_tree_invariant_for_testing(), EXPECTED_HEIGHT);
-    assert_eq!(settled_above_all(&tree), NODES * NET_PAYOUT);
+    assert_eq!(settled_above_all(&tree), NODES * QUANTITY);
 
     destroy(tree);
 }
@@ -125,7 +130,7 @@ fun outside_in_inserts_stay_balanced() {
 
     let tree = build_checked(zigzag, &mut ctx);
     assert!(tree.assert_tree_invariant_for_testing() <= AVL_HEIGHT_BOUND);
-    assert_eq!(settled_above_all(&tree), NODES * NET_PAYOUT);
+    assert_eq!(settled_above_all(&tree), NODES * QUANTITY);
 
     destroy(tree);
 }
@@ -147,7 +152,7 @@ fun delete_induced_height_tie_takes_the_single_rotation() {
 
     // Under `>=` this leaves a node with subtree heights 0 and 2.
     assert_eq!(tree.assert_tree_invariant_for_testing(), 4);
-    assert_eq!(settled_above_all(&tree), 7 * NET_PAYOUT);
+    assert_eq!(settled_above_all(&tree), 7 * QUANTITY);
 
     // The mirror image, so both the left-heavy and right-heavy inner conditions
     // are pinned. Removing the largest tick leans the tree the other way.
@@ -158,7 +163,7 @@ fun delete_induced_height_tie_takes_the_single_rotation() {
     remove(&mut mirrored, 8);
 
     assert_eq!(mirrored.assert_tree_invariant_for_testing(), 4);
-    assert_eq!(settled_above_all(&mirrored), 7 * NET_PAYOUT);
+    assert_eq!(settled_above_all(&mirrored), 7 * QUANTITY);
 
     destroy(tree);
     destroy(mirrored);
@@ -177,11 +182,11 @@ fun successor_keeps_its_own_right_subtree() {
     remove(&mut tree, 2);
 
     tree.assert_tree_invariant_for_testing();
-    // Survivors are ticks 1, 3 and 4. Losing tick 4 would report 2 * NET_PAYOUT.
-    assert_eq!(settled_above_all(&tree), 3 * NET_PAYOUT);
+    // Survivors are ticks 1, 3 and 4. Losing tick 4 would report 2 * QUANTITY.
+    assert_eq!(settled_above_all(&tree), 3 * QUANTITY);
     let (max_net_payout, total_net_payout) = tree.payout_reserve_terms();
-    assert_eq!(max_net_payout, 3 * NET_PAYOUT);
-    assert_eq!(total_net_payout, 3 * NET_PAYOUT);
+    assert_eq!(max_net_payout, 3 * QUANTITY);
+    assert_eq!(total_net_payout, 3 * QUANTITY);
 
     destroy(tree);
 }
@@ -209,7 +214,7 @@ fun boundary_gc_preserves_terms_and_balance() {
 
     // 100 ticks, every third removed -> 34 removed, 66 survive.
     assert_eq!(survivors.length(), 66);
-    assert_eq!(settled_above_all(&tree), 66 * NET_PAYOUT);
+    assert_eq!(settled_above_all(&tree), 66 * QUANTITY);
 
     // Metamorphic: a tree built from the survivors alone has a DIFFERENT shape
     // (the GC'd tree carries rotation history the rebuilt one never saw), so
@@ -254,7 +259,7 @@ fun interleaved_churn_preserves_the_invariant() {
         tree.assert_tree_invariant_for_testing();
     });
 
-    assert_eq!(settled_above_all(&tree), live.length() * NET_PAYOUT);
+    assert_eq!(settled_above_all(&tree), live.length() * QUANTITY);
     assert!(tree.assert_tree_invariant_for_testing() <= AVL_HEIGHT_BOUND);
 
     destroy(tree);
@@ -280,12 +285,4 @@ fun draining_every_boundary_empties_the_tree() {
     assert_eq!(total_net_payout, 0);
 
     destroy(tree);
-}
-
-fun insert(tree: &mut StrikePayoutTree, tick: u64) {
-    tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY, FLOOR_SHARES);
-}
-
-fun remove(tree: &mut StrikePayoutTree, tick: u64) {
-    tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY, FLOOR_SHARES);
 }

@@ -88,7 +88,6 @@ const HIGH_VARIANCE_RHO_MAGNITUDE: u64 = 900_000_000;
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
-const PRICE_MEMO_MISSING_TICK: u64 = 100;
 const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
 const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
 const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
@@ -134,8 +133,6 @@ const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
 const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
-const NON_MONOTONE_LOW_TICK: u64 = 90;
-const NON_MONOTONE_HIGH_TICK: u64 = 95;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_A: u64 = 1;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_B: u64 = 0;
 const ROLL_DOWN_CLOCK_ADVANCE_MS: u64 = 1;
