@@ -582,17 +582,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   leverage` and `entry_value * scaling` u64 intermediates; those expressions
   were deleted with the inverse, and no downstream consumer read its raw
   (pre-lot-cap) result. Nothing else was incidentally bounded.
-- **Accepted inaccuracy:** the search probes the single-floor fused premium
-  `mul_div_down(p, Q, L)`, which over-estimates admission's two-floor charge by
-  at most one premium unit, so sizing is conservative: the charged premium
-  never exceeds the budget, and the fill is at most one lot short of the exact
-  maximum. The lot bound is envelope-dependent, not intrinsic: one premium unit
-  spans `leverage / entry_probability` raw quantity units, so it stays sub-lot
-  only because `config_constants::min_min_entry_probability` floors the
-  admissible entry band at 1% (worst reachable case ~152 raw units against the
-  10_000-unit lot, at the 1% floor under the probability-scaled cap of the 10x
-  template-leverage envelope). The probe >= charge dependency is one-sided and
-  documented at the probe site in `strike_exposure::quote_mint_terms`.
+- **Accepted inaccuracy: none as of 2026-08-14.** This entry previously recorded
+  a one-premium-unit conservative edge, because the search probed the fused
+  `mul_div_down(p, Q, L)` while admission charged a two-floor expression. With
+  leverage removed there is no division by `L`: the probe and the charge are both
+  `mul_down(entry_probability, quantity)` on the same operands, so the largest
+  admitted quantity is exact and the two can no longer disagree in either
+  direction. The sub-lot bound this entry justified via the leverage envelope is
+  therefore vacuous rather than merely satisfied.
 - **Risk profile:** `BEST-GUESS` — the conservative edge is sub-lot-premium
   dust per mint; search cost is ~32 probes of two u128 ops, unmeasured against
   the BS pricing in the same call.
@@ -645,6 +642,65 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
   normalization semantics, or Predict begins using the exact product across a
   delayed boundary that requires update-time metadata.
+
+---
+
+## RP-24: Guards deleted with leverage — duty inventory (2026-08-14)
+
+- **Trigger state:** not a runtime state. `move.md` requires that deleting or
+  weakening a guard is preceded by an inventory of what it *incidentally* bounded,
+  recorded here rather than only in a commit message. Leverage removal deleted
+  several asserts; this entry is that inventory.
+- **Controller:** protocol (all of these guard protocol-written state).
+- **`order::EInvalidFloorShares` (`floor_shares <= quantity`).** Stated purpose: a
+  floor cannot exceed the max payout. Incidental duty: underflow headroom for four
+  bare subtractions — `payout_terms_from_order`'s `quantity - floor_shares`,
+  `quote_settled_close`'s `quantity - floor_shares`, `process_live_close`'s
+  `floor_shares - remove_floor_shares`, and the per-order non-negativity that
+  `total - max` / `range_max - payout` rely on. The first three expressions are
+  deleted by the same change. The fourth survives, now over raw `quantity`, where
+  non-negativity is unconditional — strictly stronger than the guard it replaces.
+  It was never an encoding dependency: the floor occupied a full 64-bit field, so
+  any `u64` value fit regardless of the bound.
+- **`strike_exposure_config::EInvalidLeverage` (`leverage >= 1x`).** Stated
+  purpose: reject sub-1x leverage. Incidental duty: it was the only thing keeping
+  `div_down(entry_value, leverage)` and `mul_div_down(p, Q, leverage)` from
+  dividing by zero, and the only thing keeping `entry_value - net_premium`
+  non-negative. All three expressions are deleted.
+- **`pricing::ETickNotInPriceMemo`.** Stated purpose: a finite boundary tick must
+  be present in the per-flush cache. Incidental duty: it was a cross-index
+  consistency proof — every active leveraged order's boundary had to be a
+  payout-tree node — so it would also have caught a tree GC that dropped a live
+  boundary. The second index is gone, so the cross-index claim is vacuous; the
+  residual GC-detection duty is carried, one transaction later, by
+  `remove_range`'s underflow abort.
+- **`strike_payout_tree`'s cross-field `net_payout <= quantity` assert in
+  `apply_terms_delta`.** Stated purpose: a desync that under-removes net payout
+  cannot leave a boundary holding phantom payout above zero quantity. With one
+  stored atom there is no cross-field invariant left to violate; the surviving
+  per-boundary `apply_net_delta` underflow still detects over-removal, which is
+  the same direction the deleted assert's sibling covered.
+- **`liquidation_book::EMaxActiveLeveragedOrders` (5,000 per market).** Stated
+  purpose: bound the per-market active leveraged set. Incidental duty: it was the
+  only cap on open *order count* per market, which mattered because the flush
+  iterated that set. Nothing iterates order count now — the flush's per-market cost
+  is `walk_linear` over tree nodes, still capped by
+  `constants::max_payout_tree_nodes` — so the removal does not reopen the
+  liveness-time-bomb class `move.md` describes. Open-order count per market is now
+  deliberately unbounded.
+- **Response:** all of the above are removals of guards whose duties are either
+  deleted alongside them or re-homed strictly stronger. No replacement guard is
+  required. The one guard that was *narrowed* rather than deleted — the
+  non-monotone surface check — is recorded separately in RP-15 and is now enforced
+  at every payout-tree boundary again, pinned by
+  `payout_tree_walk_tests::inversion_on_a_cancelling_last_boundary_still_aborts`.
+- **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is
+  static reachability of the deleted expressions, verified by grep against HEAD.
+- **Pinning tests:** `order_tests.move` — `open_lower_order_packs_to_independent_layout`,
+  `finite_range_order_packs_to_independent_layout`, `every_getter_decodes_its_own_field`,
+  `from_order_id_rejects_bits_above_envelope`, `max_quantity_lots_round_trips_without_truncation`.
+- **Reopen when:** leverage is reintroduced in any form, or a per-order term is
+  added back to the payout tree.
 
 ---
 

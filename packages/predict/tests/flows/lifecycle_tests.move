@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// One-flow-many-assertions lifecycle test for the 1x (un-leveraged) live happy
+/// One-flow-many-assertions lifecycle test for the live happy
 /// path: one order is walked fund -> mint with a full state-sheet
 /// (`check_manager`) re-asserted after each action. Terminal settlement coverage
 /// lives in `settlement_flow_tests`.

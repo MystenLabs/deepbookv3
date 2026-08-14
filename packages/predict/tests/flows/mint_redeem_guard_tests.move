@@ -22,7 +22,6 @@ use std::unit_test::assert_eq;
 
 /// Lot-aligned position size minted in both tests.
 const QUANTITY: u64 = 840_000_000;
-/// 1x leverage in 1e9 fixed point: no floor, so no liquidation interaction.
 /// One second past the fixture's `now_ms()` open time — distinct timestamp, still
 /// inside the oracle freshness window.
 const REDEEM_MS: u64 = 121_000;

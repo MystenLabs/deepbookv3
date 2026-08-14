@@ -914,3 +914,40 @@ fun fund_empty_market(fx: &mut helpers::Fixture, expiry_id: ID) {
     fx.rebalance_expiry_cash_bundle(&mut market);
     helpers::return_market_bundle(market);
 }
+
+/// A settled order is valued through the same classifier with NO pricer: a
+/// `Pricer` is live-only, so once the market has settled this `none` path is the
+/// only way to read `order_value`, and it returns the exact terminal payout a
+/// settled redeem would pay. Regression for the settled `order_value` branch,
+/// which is unreachable while the reader forces a (live-only) `Pricer`.
+#[test]
+fun order_value_reads_settled_winner_terminal_payout() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_inside_default_finite_range());
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    assert_eq!(
+        helpers::settled_order_value_bundle(&market, order_id),
+        test_constants::mint_quantity(),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}

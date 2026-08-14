@@ -688,7 +688,7 @@ fun deep_itm_up_price_saturates_to_one() {
 /// returned the exact digital limit `1e9` — certainty, against a true probability
 /// of ~0 — for every admissible surface, because the branch never read the surface
 /// at all. Every consumer of `range_price` inherited it: the mint's entry
-/// probability, the liquidation threshold, and the NAV mark.
+/// probability and the NAV mark.
 #[test]
 fun deep_itm_up_price_follows_the_surface_not_the_strike_ratio() {
     let mut fx = oracle_fixture::setup_oracle_default();

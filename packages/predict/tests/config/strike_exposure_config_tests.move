@@ -28,13 +28,7 @@ use sui::test_scenario::{Self as test, Scenario, return_shared};
 
 const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
-/// Time-to-expiry far outside the default 1h no-leverage window (1 week), so the
-/// block is inactive and admission runs at the full probability-derived cap.
-/// Expiry itself: zero time left, the deepest point inside the window.
-/// Smallest leverage strictly above 1x; inside the window even this is refused.
-/// p = 0.5 at 1x: net premium is the full entry value 500_000_000, floor 0.
-/// p = 0.1, 1.5x, quantity 1e9: entry value 100_000_000; net premium
-/// 100_000_000 / 1.5 = 66_666_666 (floor); floor shares the 33_333_334 remainder.
+/// p = 0.5: the holder pays the full entry value, so net premium is 500_000_000.
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -201,3 +195,15 @@ fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
 // the cap is 1x even at a probability whose curve cap (1.8x) would have admitted
 // this order. Paired with the control above, the rejection is attributable to the
 // window alone.
+
+#[test]
+fun mint_admission_net_premium_at_minimum_succeeds() {
+    let config = strike_exposure_config::new();
+
+    let admission = config.assert_mint_admission(
+        ENTRY_PROBABILITY_HALF,
+        2 * constants::min_net_premium!(),
+    );
+    assert_eq!(admission.net_premium(), constants::min_net_premium!());
+    destroy(config);
+}

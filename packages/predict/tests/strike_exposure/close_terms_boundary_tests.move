@@ -98,3 +98,44 @@ fun create_and_share_exposure_harness(
     transfer::share_object(ExposureHarness { id, exposure });
     harness_id
 }
+
+/// The outcome accessors reject the wrong arm: reading the settled payout of a
+/// live close aborts `EWrongCloseOutcome`, so a caller cannot misread a live
+/// close as a settled one.
+#[test, expected_failure(abort_code = strike_exposure::EWrongCloseOutcome)]
+fun settled_payout_of_live_close_terms_aborts() {
+    let mut fx = oracle_fixture::setup_oracle(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        test_constants::short_expiry_ms(),
+    );
+    let expiry_id = fx.expiry_id();
+    let expiry_ms = fx.expiry();
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let harness_id = create_and_share_exposure_harness(&mut fx, expiry_id, expiry_ms);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    let mint_terms = harness
+        .exposure
+        .quote_mint_terms(
+            &pricer,
+            test_constants::default_strike_tick(),
+            constants::pos_inf_tick!(),
+            0,
+            test_constants::mint_quantity(),
+            true,
+        );
+    let order = harness.exposure.allocate_mint_order(mint_terms);
+    let terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
+    assert!(terms.is_live());
+
+    // Reading the settled arm of a live close must abort.
+    terms.settled_payout();
+
+    abort 999
+}

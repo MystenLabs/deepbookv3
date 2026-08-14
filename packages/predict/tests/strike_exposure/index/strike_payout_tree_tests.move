@@ -467,3 +467,14 @@ fun seed_single_boundary_one_slot_below_node_cap(tree: &mut StrikePayoutTree) {
     insert_range(tree, 1, constants::pos_inf_tick!(), 1);
     tree.set_node_count_for_testing(constants::max_payout_tree_nodes!() - 1);
 }
+
+#[test]
+fun insert_with_zero_quantity_is_no_op() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = new_tree(ctx);
+    insert_range(&mut tree, 2, 6, 0);
+
+    assert_reserve_terms(&tree, 0, 0);
+    assert_eq!(tree.settled_payout_liability(settle_at_tick(4), TICK_SIZE), 0);
+    destroy(tree);
+}

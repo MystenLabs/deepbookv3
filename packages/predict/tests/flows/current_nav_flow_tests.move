@@ -34,18 +34,11 @@ use std::unit_test::assert_eq;
 
 /// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
 const ONE_X_QUANTITY: u64 = 2_000_000_000;
-/// Leveraged up range, quantity 2e9, 2x: net_premium 5e8, floor_shares 5e8.
 /// Second same-strike up order, quantity 4e9.
 const SECOND_SAME_STRIKE_QUANTITY: u64 = 4_000_000_000;
-/// Deep-OTM forward (well below the 100e9 grid) so the minted up range prices to
-/// ~0, driving the leveraged order underwater (value <= floor).
 const NON_MONOTONE_A_MAGNITUDE: u64 = 1;
 const NON_MONOTONE_LOWER_TICK: u64 = 90;
 const NON_MONOTONE_HIGHER_TICK: u64 = 100;
-/// High base variance (0.1) so prices are smooth, plus a forward below the 100e9
-/// strike that lands the 2x `LEVERAGED_QUANTITY` UP range in the knock-out band
-/// `(floor, floor / liquidation_ltv]` — worth more than its 5e8 floor but at or
-/// below the ~5.88e8 liquidation threshold (`up_price ≈ 0.27` → range ≈ 5.4e8).
 
 #[test]
 fun empty_live_market_values_at_free_cash() {

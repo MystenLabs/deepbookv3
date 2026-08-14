@@ -55,6 +55,38 @@ const GC_SURVIVOR_C_QUANTITY: u64 = 300_000_000;
 const GC_SETTLEMENT_A_ONLY_TICK: u64 = 100;
 const GC_SETTLEMENT_OVERLAP_TICK: u64 = 103;
 const GC_SETTLEMENT_C_ONLY_TICK: u64 = 106;
+/// Two adjacent equal-quantity ranges sharing one boundary, the second open-ended.
+/// The shared tick's start and end cancel AND it is the last node in the tree, so
+/// no later boundary can re-observe an inversion sitting on it.
+const CANCEL_LOWER_TICK: u64 = 90;
+const CANCEL_SHARED_TICK: u64 = 100;
+const CANCEL_QUANTITY: u64 = 3_000_000;
+
+/// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
+///
+/// Regression for the boundary-skip bug: `walk_linear` once skipped pricing a node
+/// whose start and end quantities cancel, which silently disarmed the monotonicity
+/// guard for any inversion sitting on such a node. The construction below is the
+/// one that distinguishes the two behaviours — the cancelling tick is the LAST
+/// node (the second range is open-ended, so `pos_inf` is never stored), so there is
+/// no later boundary whose own comparison would catch the inversion anyway.
+/// Skipping the observation here lets NAV understate liability by the inverted
+/// segment while the flush completes.
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun inversion_on_a_cancelling_last_boundary_still_aborts() {
+    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    // A = (90, 100], B = (100, +inf], equal quantity: tick 100's start and end
+    // cancel, and it is the only node after 90.
+    tree.insert_range(CANCEL_LOWER_TICK, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
+    insert_up(&mut tree, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
+
+    tree.walk_linear(&pricer, tick_size());
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
 
 #[test]
 fun exact_walk_matches_per_order_reference() {
@@ -260,6 +292,30 @@ fun live_pricer_at(forward: u64): (OracleFixture, OracleBundle, Pricer) {
         test_constants::default_svi_rho_magnitude(),
         false,
         test_constants::default_svi_m(),
+        false,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+    (fixture, oracle, pricer)
+}
+
+/// A surface whose UP price RISES with strike over the active ticks — impossible
+/// for a valid curve, and what `ENonMonotonePrice` exists to reject. Same extreme
+/// SVI parametrisation the deleted price-memo guard test used: tiny positive `a`,
+/// max `b`, min `sigma`, `rho = -1`.
+fun non_monotone_pricer(): (OracleFixture, OracleBundle, Pricer) {
+    let mut fixture = oracle_fixture::setup_oracle_default();
+    let mut oracle = fixture.take_oracle_bundle();
+    fixture.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        1,
+        false,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
+        test_constants::float(),
+        true,
+        0,
         false,
     );
     let pricer = fixture.load_pricer_bundle(&oracle);

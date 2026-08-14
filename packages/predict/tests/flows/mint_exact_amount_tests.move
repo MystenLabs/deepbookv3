@@ -9,8 +9,6 @@
 /// read from a quantity quote at the size in question rather than hardcoded: a
 /// budget threshold IS the next lot's premium, and `pricing_exact_tests` owns
 /// whether that premium is itself correct.
-/// Not covered here: the one-lot-conservative probe edge at fractional leverage,
-/// where the per-lot product rounds and the probe can diverge from the charge.
 #[test_only]
 module deepbook_predict::mint_exact_amount_tests;
 
