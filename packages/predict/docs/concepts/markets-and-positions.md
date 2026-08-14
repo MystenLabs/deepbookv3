@@ -21,7 +21,7 @@ The `Registry` enforces uniqueness, admin approval, and cadence policy:
 3. **Compute expiry and snapshot config.** The market manager picks the next missing expiry from the cadence watermark and current clock, then the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig`, stores `propbook_underlying_id`, and snapshots the cadence `tick_size`. Pool accounting snapshots the cadence `max_expiry_allocation` and `initial_expiry_cash`; the market also freezes `max_expiry_allocation` as the inventory-impact scale. Creation needs **no live spot** — strikes are absolute ticks, so there is no grid to center on a price.
 4. **Create, share, and register.** The `ExpiryMarket` is shared, registered with the pool vault as an active-expiry accounting row, and indexed by expiry in the registry.
 
-The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and the immutable policy snapshot applied to that expiry (`liquidation_ltv`, `max_admission_leverage`, `backing_buffer_lambda`, fee bounds, entry-probability bounds, expiry-fee ramp terms, `inventory_impact_max_rate`, and `trading_loss_rebate_rate`). The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`. The event also carries the immutable per-expiry pool allocation cap/impact scale, initial cash target, and policy because the cadence and protocol template configs that produced them can change later.
+The new `ExpiryMarket` starts with **zero DUSDC cash** and is **not mintable** until pool capital funds it through PLP rebalancing (see [liquidity and NAV](./liquidity-and-nav.md)). On success the protocol emits `MarketCreated`, carrying the expiry market id, pool vault id, `propbook_underlying_id`, expiry, `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and the immutable policy snapshot applied to that expiry (`backing_buffer_lambda`, fee bounds, entry-probability bounds, expiry-fee ramp terms, `inventory_impact_max_rate`, and `trading_loss_rebate_rate`). The event carries `tick_size` — **not** a min/max strike — because the strike domain is the absolute tick ladder; indexers and SDKs derive raw strikes as `tick × tick_size`. The event also carries the immutable per-expiry pool allocation cap/impact scale, initial cash target, and policy because the cadence and protocol template configs that produced them can change later.
 
 ```mermaid
 flowchart TD
@@ -38,7 +38,7 @@ flowchart TD
 
 Predict has **one canonical strike interpretation across the entire protocol: an absolute integer tick from zero, where `raw_strike = tick × tick_size`.** There is no second representation — no centered grid, no fixed-width band around spot, no boundary indices relative to a per-market origin. The tick `0` and the maximum tick are reserved as the open-ended sentinels; every other tick is a concrete strike.
 
-This single interpretation is what lets the same tick mean the same price everywhere — at the public entrypoint, in the events, in the payout tree, in the liquidation book, and at settlement — without a per-market origin to translate against.
+This single interpretation is what lets the same tick mean the same price everywhere — at the public entrypoint, in the events, in the payout tree, and at settlement — without a per-market origin to translate against.
 
 ### Ticks and the ±infinity sentinels
 
@@ -52,24 +52,23 @@ The sentinels live at the ends of the 30-bit tick domain:
 
 Raw strikes are recovered from ticks only at the pricing and settlement boundary, through `range_codec::strikes_from_ticks`, which applies the sentinel mapping and the `tick × tick_size` multiplication. The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k", i.e. plain digital calls and puts — without inventing artificial outer strikes. Settlement payout is determined by whether the settlement price falls inside `(lower, higher]`: an order pays zero when `settlement ≤ lower || settlement > higher`.
 
-Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 30-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders) and leverage and the floor (removed).
+Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 30-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders).
 
 ## Positions (orders)
 
-A position is identified by a single packed `u256` **order ID**. It is an opaque handle: integrators pass it back to redeem, liquidate, or query a position, and treat it as a token. Internally the protocol decodes it into an `Order` view, the durable contract terms needed after mint:
+A position is identified by a single packed `u256` **order ID**. It is an opaque handle: integrators pass it back to redeem or query a position, and treat it as a token. Internally the protocol decodes it into an `Order` view, the durable contract terms needed after mint:
 
 | Encoded term | Meaning |
 | --- | --- |
 | `quantity` | Position size in DUSDC base units. Stored as a count of lots, so `position_lot_size` sets the granularity and the packed lot field bounds the maximum size. |
-| `floor_shares` | Normalized leverage floor coverage. Zero for a 1x (unleveraged) order, positive for a leveraged one. See leverage and the floor (removed). |
 | `lower_tick`, `higher_tick` | The position's strike range, as two absolute ticks (`0` = `neg_inf` lower, `pos_inf_tick` = `pos_inf` higher). |
 | `sequence` | An expiry-local monotonic counter that makes each order ID unique within its market. |
 
-The packed ID is the single source of truth at protocol boundaries; the bit layout is an implementation detail and is not part of the contract surface. Mint-only inputs that do not survive into the contract terms — entry probability, leverage multiplier, net premium, and fee policy — are deliberately **not** encoded. This separation matters for upgrades: mint-admission policy lives in config and validation, not in order decoding, so tightening admission policy in a later version can never retroactively invalidate an existing packed order ID.
+The packed ID is the single source of truth at protocol boundaries; the bit layout is an implementation detail and is not part of the contract surface. Mint-only inputs that do not survive into the contract terms — entry probability, net premium, and fee policy — are deliberately **not** encoded. This separation matters for upgrades: mint-admission policy lives in config and validation, not in order decoding, so tightening admission policy in a later version can never retroactively invalidate an existing packed order ID.
 
 Order IDs are scoped to their market: an ID alone does not carry expiry or market identity. A position is bound to a market only through the `(expiry_market_id, order_id)` key in the holder's Predict app data on their account. Do not infer market facts from an order ID.
 
-What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is its range probability value minus its static floor -- the financed share of the entry premium that leverage embeds -- floored at zero; a 1x order is the special case with a zero floor. Leverage is continuous at 1e9 scale and is admitted by a probability-sensitive cap at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in leverage and the floor (removed); pricing and oracle inputs in [pricing and oracles](./pricing-and-oracles.md).
+What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is `quantity × range_probability`; a winning position settles for its full `quantity`. Mint admission is gated by an entry-probability band and a minimum net premium. Pricing and oracle inputs are covered in [pricing and oracles](./pricing-and-oracles.md).
 
 ### Where positions are tracked
 
@@ -79,22 +78,20 @@ Trading and capital movement are mediated by `AccountWrapper` plus account `Auth
 
 ## Position lifecycle
 
-A position moves through mint, an optional live redeem (full or partial), and a terminal redeem or liquidation. Settlement is recorded explicitly through `try_settle` before settled consumers run (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
+A position moves through mint, an optional live redeem (full or partial), and a terminal redeem. Settlement is recorded explicitly through `try_settle` before settled consumers run (see [Settlement](#settlement-recorded)). Each transition emits exactly one order-domain event, keyed by `order_id` and joined to the position via `position_root_id`.
 
 ```mermaid
 stateDiagram-v2
   [*] --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>cancel + replace (LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
-  Live --> Liquidated: liquidate (OrderLiquidated)
   Live --> Settled: exact expiry spot recorded
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
-  Liquidated --> [*]: clear liquidated (LiquidatedOrderRedeemed)
 ```
 
 ### Mint
 
-`mint_exact_quantity` creates a live position for a fixed quantity. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, no pool valuation in progress, valid account owner auth, current canonical Propbook feeds with fresh BS price/SVI inputs, and enough expiry cash to back the post-mint payout liability plus both reserves. Leveraged mints additionally must satisfy the probability-sensitive admission cap and sit above the liquidation threshold at entry. The flow takes the `(lower_tick, higher_tick)` pair, quotes the entry range probability, derives the net premium and floor shares, allocates an `Order` (assigning the next expiry-local sequence), inserts it into the strike-exposure and liquidation indexes, and settles payment (net premium + ordinary fees + isolated inventory-impact charge). Its `max_cost` argument is an all-in slippage cap on that payment, and `max_probability` caps the quoted per-contract probability before fees; pass `std::u64::max_value!()` for either uncapped guard. It emits **`OrderMinted`** with the separate `inventory_impact_charge` and returns the order ID. The event carries each pricing input's own economic clock — the timestamp its freshness was validated against (`pyth_spot_source_timestamp_ms` is Pyth's source time; the three `block_scholes_*_source_timestamp_ms` fields are each observation's batch publish time, and the SVI one is also the roll-down anchor); the provider's calibration times are recoverable from the store's `BlockScholesObservationRecorded` ingestion events. `LiveOrderRedeemed` and `OrderLiquidated` expose the same pricing provenance. Mint gating (feed freshness, mint pause, range validity) connects to [pricing and oracles](./pricing-and-oracles.md).
+`mint_exact_quantity` creates a live position for a fixed quantity. It requires: the package version allowed for the market, per-market minting not paused, global trading enabled, no pool valuation in progress, valid account owner auth, current canonical Propbook feeds with fresh BS price/SVI inputs, and enough expiry cash to back the post-mint payout liability plus both reserves. The flow takes the `(lower_tick, higher_tick)` pair, quotes the entry range probability, derives the net premium (the contract's full entry value), allocates an `Order` (assigning the next expiry-local sequence), inserts it into the strike-exposure index, and settles payment (net premium + ordinary fees + isolated inventory-impact charge). Its `max_cost` argument is an all-in slippage cap on that payment, and `max_probability` caps the quoted per-contract probability before fees; pass `std::u64::max_value!()` for either uncapped guard. It emits **`OrderMinted`** with the separate `inventory_impact_charge` and returns the order ID. The event carries each pricing input's own economic clock — the timestamp its freshness was validated against (`pyth_spot_source_timestamp_ms` is Pyth's source time; the three `block_scholes_*_source_timestamp_ms` fields are each observation's batch publish time, and the SVI one is also the roll-down anchor); the provider's calibration times are recoverable from the store's `BlockScholesObservationRecorded` ingestion events. `LiveOrderRedeemed` exposes the same pricing provenance. Mint gating (feed freshness, mint pause, range validity) connects to [pricing and oracles](./pricing-and-oracles.md).
 
 `mint_exact_amount` is the fixed-amount variant. Instead of fixing `quantity`, the caller fixes the net premium budget; the market caps that budget to the account's available DUSDC, computes the largest lot-rounded quantity whose `net_premium` fits it, then aborts if it is below `min_quantity`. Trading fee, optional builder fee, and EWMA congestion penalty are still charged on top of the premium budget, so this variant also takes `max_cost` as the all-in cap on the total withdrawal. Unlike `mint_exact_quantity`'s guards, `max_cost` here is required: zero aborts, and there is no value that disables it. It carries no `max_probability` argument, because `min_quantity` against the premium budget already bounds the price paid per contract.
 
@@ -105,7 +102,7 @@ While the market is active, `redeem_live` closes a position the caller has trade
 - **Full close** (`close_quantity == quantity`): the order's full live-index terms are removed, the redeem amount is quoted at the current range probability net of the floor, fees and penalty are deducted, and the payout is deposited to the account. No replacement is produced.
 - **Partial close** (`close_quantity < quantity`): the protocol removes the closed slice from the live indexes and creates a **replacement** order for the remaining quantity with proportionally reduced static floor shares and a new sequence.
 
-Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_quantity`, `replacement_order_id` when present, and the separate `inventory_impact_rebate`). `min_proceeds` applies to the final credited amount: gross redeem plus inventory rebate minus ordinary fees. `redeem_live` first runs a bounded liquidation pass; if the targeted order was itself liquidated in that pass, it is cleared instead with no inventory rebate (see below). Live redeem requires `account::Auth` (owner auth, or app-auth via the account registry).
+Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_quantity`, `replacement_order_id` when present, and the separate `inventory_impact_rebate`). `min_proceeds` applies to the final credited amount: gross redeem plus inventory rebate minus ordinary fees. Live redeem requires `account::Auth` (owner auth, or app-auth via the account registry).
 
 ### Settlement recorded
 
@@ -113,11 +110,7 @@ Settlement records the exact normalized Pyth spot at the market's expiry timesta
 
 ### Settled redeem
 
-After settlement, a position is closed for its settled payout. `redeem_settled` is the owner-auth path; `redeem_settled_permissionless` is the keeper path that generates Predict app-auth through the account registry. Both require a full close. Payout is `quantity − floor_shares`, credited to the order's account and zero when the settlement price lies outside `(lower, higher]`. They emit **`SettledOrderRedeemed`** with the settlement price and payout. Closing live (unsettled) risk through either settled path aborts. Deauthorizing `PredictApp` disables the permissionless automation path but does not prevent owners from redeeming their own settled positions.
-
-### Liquidation
-
-While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the current Propbook `PythFeed` plus the BS value and SVI stores, which `pricing::load_live_pricer` validates against Propbook's canonical bindings for the market's underlying and expiry. Liquidation is permissionless, removes the order from live indexes, and **does not touch any account** — it emits **`OrderLiquidated`** (with no owner/account fields, since they are unknown to the pass) and leaves only the holder's account position as the order's remaining record. The holder later clears the liquidated position through owner-auth `redeem_live` while the market is live, or through a settled redeem path after settlement; cleanup removes the account position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in leverage and the floor (removed), liquidation (removed), and [risks](../risks.md).
+After settlement, a position is closed for its settled payout. `redeem_settled` is the owner-auth path; `redeem_settled_permissionless` is the keeper path that generates Predict app-auth through the account registry. Both require a full close. Payout is the full `quantity`, credited to the order's account and zero when the settlement price lies outside `(lower, higher]`. They emit **`SettledOrderRedeemed`** with the settlement price and payout. Closing live (unsettled) risk through either settled path aborts. Deauthorizing `PredictApp` disables the permissionless automation path but does not prevent owners from redeeming their own settled positions.
 
 ## Object relationships at a glance
 
@@ -130,4 +123,4 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 | `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_and_share_expiry_market` (one per underlying and expiry) | shared |
 | `AccountWrapper` / `Account` | Account-package custody plus Predict positions keyed by `(expiry_market_id, order_id)` | `account_registry::new` / `new_self_owned` | shared wrapper |
 
-For the capability model and trade authority, see [architecture](../design/architecture.md). For tunable parameters (tick size, admission leverage cap, liquidation LTV, fee policy), see [configuration](../design/configuration.md).
+For the capability model and trade authority, see [architecture](../design/architecture.md). For tunable parameters (tick size, entry-probability band, fee policy), see [configuration](../design/configuration.md).

@@ -53,7 +53,7 @@ never re-implemented per site.
   can write/assert it? Is a formula re-expressed at a second call site instead of calling the canonical
   evaluator? For aggregate insert/remove/recompute, do all sites call the SAME function?
 - **Signatures:** a helper chain that only shuttles a derived value; a formula duplicated across mint-insert
-  and settlement-recompute; a lossy repack of `quantity`/`floor_shares` through the packed
+  and settlement-recompute; a lossy repack of `quantity` through the packed
   order id.
 - **Input shape corollary:** signature shape is part of ownership. Pass a domain object when the callee needs
   that object's identity, authority, current state, invariants, or several facts owned by that object. Pass a

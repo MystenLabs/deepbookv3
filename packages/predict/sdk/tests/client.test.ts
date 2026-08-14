@@ -46,7 +46,6 @@ const MINTED_EVENT = {
 			owner: bcs.Address,
 			lower_tick: bcs.u64(),
 			higher_tick: bcs.u64(),
-			leverage: bcs.u64(),
 			entry_probability: bcs.u64(),
 			quantity: bcs.u64(),
 			net_premium: bcs.u64(),
@@ -65,7 +64,6 @@ const MINTED_EVENT = {
 			owner: OWNER,
 			lower_tick: 10_500_000n,
 			higher_tick: (1n << 30n) - 1n,
-			leverage: 1_000_000_000n,
 			entry_probability: 340_000_000n, // 0.34
 			quantity: 50_000_000n, // $50
 			net_premium: 17_000_000n, // $17
@@ -230,24 +228,23 @@ describe("tx.deposit / tx.withdraw", () => {
 });
 
 describe("tx.mint (market resolution + unit conversion)", () => {
-	test("converts quantity, leverage, ticks against a resolved market", async () => {
+	test("converts quantity and ticks against a resolved market", async () => {
 		const { client } = mockClient();
 		const pc = new PredictClient({ network: "testnet", client });
 		const tx = await pc.tx.mint(
 			OWNER,
 			{ underlying: "BTC", expiryMs: EXPIRY, strike: 105_000, side: "up" },
-			{ quantity: 50, leverage: 2 },
+			{ quantity: 50 },
 		);
 		expect(targets(tx)).toEqual([
 			`${cfg.packages.predict}::expiry_market::load_live_pricer`,
 			`${cfg.packages.account}::account::generate_auth`,
 			`${cfg.packages.predict}::expiry_market::mint_exact_quantity`,
 		]);
-		// mint args: [market, wrapper, auth, config, pricer, lower, higher, quantity, leverage, ...]
+		// mint args: [market, wrapper, auth, config, pricer, lower, higher, quantity, ...]
 		expect(argPureBytes(tx, 2, 5)).toBe(b64(10_500_000n)); // lower tick = strike/tickSize
 		expect(argPureBytes(tx, 2, 6)).toBe(b64(POS_INF_TICK)); // higher tick (up)
 		expect(argPureBytes(tx, 2, 7)).toBe(b64(50_000_000n)); // quantity 50 → 1e6
-		expect(argPureBytes(tx, 2, 8)).toBe(b64(2_000_000_000n)); // leverage 2 → 1e9
 	});
 
 	test("unknown market → PredictInputError /no market/", async () => {
@@ -432,7 +429,6 @@ describe("tx.mint (market resolution + unit conversion)", () => {
 		expect(q.inventoryImpactRebate).toBe(0.01);
 		expect(q.raw.inventoryImpactRebate).toBe(10_000n);
 		expect(q.proceeds).toBe(5.96);
-		expect(q.wouldLiquidate).toBe(false);
 		expect(q.remaining).toBe(30);
 		expect(q.feesExact).toBe(true);
 	});

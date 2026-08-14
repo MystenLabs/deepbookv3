@@ -9,6 +9,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Economic model
 
+> **RETIRED 2026-08-14 — leverage removed.** The bullets below describe the pre-removal floor/knock-out design. Every position is now 1x; there is no floor, no financed amount, and no liquidation. Kept for the decision record — see "Leverage removal" at the end of this document.
+
 - **Leverage is a deterministic floor, not a debt overlay.** A position is one
   binary (digital) contract whose live value is `range-probability value − a
   static floor`, floored at 0 (1× = zero floor); the floor is
@@ -67,6 +69,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **`admin` is a dependency-leaf capability module.** *Rejected:* folding
   `admin`/`AdminCap` into `registry` — it creates a Move import cycle
   (`registry → protocol_config → admin`).
+> **RETIRED 2026-08-14 — leverage removed.** The liquidation book is deleted; only the payout tree remains. Kept for the decision record.
+
 - **Two sparse strike indexes, both tick-keyed.** A sparse height-balanced (AVL)
   payout tree and a flat liquidation book coexist; the exact live NAV is read by
   decomposing the per-order liability across the two (`Σ qty·P` over the tree
@@ -490,6 +494,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Near-expiry leverage block (recent)
 
+> **RETIRED 2026-08-14 — leverage removed.** There is no leverage to originate or block; every position is 1x regardless of time to expiry. Kept for the decision record.
+
 - **Leverage origination stops entirely inside a window before expiry.** Within the
   expiry's snapshotted `no_leverage_window_ms` the mint-admission cap is exactly 1x,
   regardless of entry probability. Near expiry a contract's probability can move far
@@ -592,3 +598,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   but lets a later envelope roll a series' model data back; the envelope floor
   keeps the model-first ordering and accepts first-writer-wins for the degenerate
   publish-stream-regression case instead).
+
+## Leverage removal (2026-08-14)
+
+- **Leverage, the static floor, and knock-out liquidation are removed entirely.** Every position is 1x: live value is `quantity × range_probability`, and a winning position settles for its full `quantity`. There is no floor, no financed amount, no liquidation book, no knock-out threshold, and no near-expiry leverage-admission window. *Rationale:* leverage's risk surface — the liquidation book, the NAV floor correction, the bounded liquidation sweep folded into mint and live redeem, the probability-sensitive admission cap, and the near-expiry block — was disproportionate to its value pre-launch; removing it collapses NAV to a single boundary-linear walk and deletes an entire class of keeper-timeliness risk. *Superseded:* every leverage/floor/knock-out decision above in "Economic model", "Data structures", and "Near-expiry leverage block", retired in place rather than deleted, per the response-policy register's RETIRED convention (RP-17).
+- **Mint admission is an entry-probability band plus a minimum net premium.** `strike_exposure_config::assert_mint_admission` requires `entry_probability` inside `[min_entry_probability, max_entry_probability]` and `net_premium = entry_probability × quantity >= min_net_premium`; the holder pays the contract's full entry value, so net premium equals entry value. *Rejected:* keeping the admission machinery as a dead 1x-only code path — deleting it removes the liquidation book's guard surface entirely rather than leaving it unreachable.
+- **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
+
+See `predeploy/response-policies.md` RP-24 for the guard-duty inventory this removal required.

@@ -51,7 +51,7 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 - `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
 - `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions, per-expiry summaries, DEEP stake mirror; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
-- `order.move` — packs immutable position terms (absolute boundary ticks, quantity, floor_shares, sequence) into a u256 order id; validates shape.
+- `order.move` — packs immutable position terms (absolute boundary ticks, quantity, sequence) into a u256 order id (132 dense bits); validates shape.
 - `expiry_market.move` — per-expiry risk engine; mint / live redeem / settled redeem / passive liquidation / settlement / compaction state machine; routes DUSDC; produces per-expiry `current_nav`.
 - `expiry_cash.move` — raw DUSDC custody arithmetic; enforces `cash_balance >= payout_liability + rebate_reserve`.
 - `ewma.move` — gas-congestion surcharge ("EWMA penalty") added to trade fees.
@@ -65,7 +65,6 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 - `strike_exposure/strike_exposure.move` — exposure accounting engine for one strike grid (mint insert / partial-close / remove / settlement recompute; `strike_payout_tree::payout_terms_from_order` is the canonical bit-equal term evaluator).
 - `strike_exposure/range_codec.move` — absolute-tick ⟷ raw conversion, settlement prefix, sentinels (`raw = tick * tick_size`; no centered grid, no boundary indices).
 - `strike_exposure/index/strike_payout_tree.move` — payout-liability + max-live-backing index (treap; `walk_linear`).
-- `strike_exposure/index/liquidation_book.move` — paged, priority-sorted liquidation candidate index + passive-watermark scan.
 - `events/` — `order_events`, `vault_events`, `builder_code_events`, `config_events` (structs only).
 
 ### `propbook` (6 modules — the extracted oracle)
@@ -88,7 +87,7 @@ donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 `market_manager` cadence config → `create_and_share_expiry_market` (reads no live spot; absolute ticks snapshotted from cadence) → seed propbook Pyth + BS data for the emitted expiry → `mint` → live trade/redeem (partial or full close) → permissionless passive liquidation (budgeted, folded into mint/redeem/supply/withdraw) → **passive settlement** (terminal spot = the exact post-expiry Pyth print from propbook minute history; if absent, the market stays unsettled and live valuation aborts) → settled redeem → compaction (free storage). Full-pool valuation: a transaction-local `PoolValuation` snapshots active expiries, values each once under the valuation lock; the **privileged** flush prices PLP supply AND withdraw at one exact `current_nav` mark.
 
 ## Glossary (neutral)
-absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` = open-ended-range sentinels. floor_shares = the **static** deterministic floor `F` of a leveraged position (the LP-funded leverage portion); winner payout = `Q − F`. terminal vs live (backing) payout: under the static floor the winner's `Q - F` is exact at settlement, and the only pre-settlement conservatism is the aggregate disjoint-backing λ buffer (D030). payout_liability / settled_payout_liability = cash the market must back. rebate_reserve = reserve from collected-but-unresolved trading fees for loss rebates. EWMA penalty = gas-congestion fee surcharge. basis = forward/spot from BS pushes. SVI = volatility-surface parameterization for the binary tail. NAV = pool value pricing PLP shares; the flush mark is the **exact** `current_nav` (tree `walk_linear` − leveraged `correction_value`, floored), no conservative band. float_scaling = 1e9 fixed-point.
+absolute tick = strike unit; `raw = tick * tick_size`. `pos_inf_tick`/`neg_inf` = open-ended-range sentinels. winner payout = the full `Q` (leverage was removed 2026-08-14; there is no floor). The only pre-settlement conservatism is the aggregate disjoint-backing λ buffer (D030). payout_liability / settled_payout_liability = cash the market must back. rebate_reserve = reserve from collected-but-unresolved trading fees for loss rebates. EWMA penalty = gas-congestion fee surcharge. basis = forward/spot from BS pushes. SVI = volatility-surface parameterization for the binary tail. NAV = pool value pricing PLP shares; the flush mark is the **exact** `current_nav` (tree `walk_linear`, floored), no conservative band. float_scaling = 1e9 fixed-point.
 
 ## Prior-awareness (mandatory)
 Before raising anything, read and apply the [Predict development-system authority order](../../../packages/predict/predeploy/README.md#authority-order). Do not duplicate an existing open item or re-litigate a rejected direction unless its recorded revisit condition is met.
@@ -99,7 +98,7 @@ Prior-awareness cuts BOTH ways: a register or ledger entry that no longer matche
 `packages/predict/simulations/` is a real localnet + Python economic harness:
 - `cd packages/predict && python3 -m harness parity --source /path/to/scenario_dataset.csv --max-rows N` — fresh **localnet** plus the independent Python mirror and exact economic parity comparison. **Localnet runs only in the main loop**.
 - `python_replay.py` and ad-hoc Python simulations written to the scratchpad are subagent-safe when they do not start a localnet.
-- `python_indexes/` mirrors the Move `strike_payout_tree` + `liquidation_book`; `python_replay.py` mirrors mint admission / pricing / NAV. Reuse these to write **new adversarial scenarios** and property/fuzz checks (randomized mint/redeem/liquidate/supply/withdraw sequences asserting solvency, NAV supply/withdraw symmetry, rounding direction, no-underflow). The existing harness is a *parity* harness (one vault/market/manager, happy-path rows) — to find bugs you must author new stress scenarios, not just rerun it.
+- `python_indexes/` mirrors the Move `strike_payout_tree`; `python_replay.py` mirrors mint admission / pricing / NAV. NOTE: both still model the removed leverage economics and have not been migrated — treat them as stale until they are. Reuse them to write **new adversarial scenarios** and property/fuzz checks (randomized mint/redeem/supply/withdraw sequences asserting solvency, NAV supply/withdraw symmetry, rounding direction, no-underflow). The existing harness is a *parity* harness (one vault/market/manager, happy-path rows) — to find bugs you must author new stress scenarios, not just rerun it.
 Write all temp sims/scripts to the session scratchpad, never into the package.
 
 ## Method — use your full toolset

@@ -1,6 +1,6 @@
 # Overview
 
-Predict is an on-chain protocol for European cash-settled binary options (digitals) on the Sui blockchain. Trading is organized into independent per-expiry markets: each market settles once, at one timestamp, against one price feed, and every position is a range digital — a contract that pays a fixed notional if the feed's price lands at expiry inside a chosen strike range, and zero otherwise. Leverage is built into each contract as embedded premium financing — a static floor — plus a knock-out, rather than as separate debt, and a single LP-backed pool writes every contract.
+Predict is an on-chain protocol for European cash-settled binary options (digitals) on the Sui blockchain. Trading is organized into independent per-expiry markets: each market settles once, at one timestamp, against one price feed, and every position is a range digital — a contract that pays a fixed notional if the feed's price lands at expiry inside a chosen strike range, and zero otherwise. Every position is 1x — quantity is the notional, quantity is the maximum payout — and a single LP-backed pool writes every contract.
 
 This page gives the whole mental model fast and routes onward. For one-line technical definitions of every term, see the [glossary](./glossary.md); for the trust assumptions and known limitations behind every claim here, read [risks](./risks.md).
 
@@ -8,13 +8,9 @@ This page gives the whole mental model fast and routes onward. For one-line tech
 
 A Predict position is a **European cash-or-nothing binary option** on whether the settlement price lands inside a strike range `(lower, higher]` — a *range digital*, equivalent to a digital call spread (long a digital call struck at `lower`, short one struck at `higher`); the open-ended ranges are plain digital calls and puts. A plain (1x) position pays its full `quantity` — its notional — if settlement is inside the range and `0` otherwise. Its mark value before settlement is the range's model probability times its notional: for a digital, the price per unit notional *is* the risk-neutral probability of the event.
 
-Leverage transforms that same contract with two modifications: embedded premium financing and a sold knock-out. The holder pays only the net premium (`full premium / leverage`) upfront; the unpaid remainder is financed by the pool and embedded in the payoff as a static **floor** the contract must cover before the holder owns anything above it. The contract is extinguished — knocked out, with zero order payout — if its value decays to the floor-derived knock-out level. Economically a leveraged position is a down-and-out digital structured like a turbo warrant. A 1x order is the special case where the floor is zero, recovering the plain range payoff exactly.
-
-This is *limited-recourse* financing. A leveraged order's floor can only ever consume that one order's own value or payout, capped at it. There is no margin call against the holder's other assets and no shared debt pool. An order that falls to or below its floor is simply worth zero to its holder and is knocked out (liquidated); it never produces a negative balance the protocol must chase.
-
 ### Strikes are absolute integer ticks
 
-There is **one canonical strike representation across the whole protocol — absolute integer ticks**. A strike is an integer `tick`, and its raw price is always `raw_strike = tick × tick_size`, where `tick_size` is fixed per expiry. There is no second representation: no centered grid and no boundary indices. The public API, order IDs, the payout tree, the liquidation book, and the exposure index all operate over ticks; raw strikes are reconstructed only at the pricing/settlement boundary. A range is the tick pair `(lower_tick, higher_tick)`, carried directly at public entrypoints and events; the open-ended ends are the two sentinel ticks (`lower_tick = 0` is `−∞`, `higher_tick = pos_inf_tick` is `+∞`). Only the durable order ID packs the two ticks into one integer.
+There is **one canonical strike representation across the whole protocol — absolute integer ticks**. A strike is an integer `tick`, and its raw price is always `raw_strike = tick × tick_size`, where `tick_size` is fixed per expiry. There is no second representation: no centered grid and no boundary indices. The public API, order IDs, the payout tree, and the exposure index all operate over ticks; raw strikes are reconstructed only at the pricing/settlement boundary. A range is the tick pair `(lower_tick, higher_tick)`, carried directly at public entrypoints and events; the open-ended ends are the two sentinel ticks (`lower_tick = 0` is `−∞`, `higher_tick = pos_inf_tick` is `+∞`). Only the durable order ID packs the two ticks into one integer.
 
 Because the tick domain is absolute and fixed in advance, **market creation reads no live spot** — a new expiry market just records its `tick_size` and snapshots the future-market policy from `ProtocolConfig` (the `MarketCreated` event carries `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and the immutable policy snapshot, not a min/max strike). The pricing math saturates instead of aborting in the deep tails: a strike far below the forward prices to ~1.0 and far above to 0, so no live quote ever fails on an extreme strike.
 
@@ -45,7 +41,7 @@ Capabilities are owned objects: `AdminCap` (global policy, plus genesis-bootstra
 
 ## Market and position lifecycle
 
-An admin registers a Propbook underlying, and a lifecycle-cap holder creates one `ExpiryMarket` per underlying and expiry. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and either knock-out (liquidation) or terminal settlement. Each transition emits one order-domain event.
+An admin registers a Propbook underlying, and a lifecycle-cap holder creates one `ExpiryMarket` per underlying and expiry. The market opens with zero cash; pool capital enters only later through the rebalancer during a flush. A position moves through mint, optional live redeem, and terminal settlement. Each transition emits one order-domain event.
 
 ```mermaid
 stateDiagram-v2
@@ -53,16 +49,13 @@ stateDiagram-v2
   MarketCreated --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
-  Live --> Liquidated: leveraged order falls to/below floor (OrderLiquidated)
-  Liquidated --> [*]: holder/keeper clears the position (LiquidatedOrderRedeemed, zero payout)
   Live --> Settled: try_settle records exact expiry spot + liability
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 
-- **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium and static floor, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the tick pair `(lower_tick, higher_tick)`. Leveraged mints must satisfy the probability-sensitive admission cap and sit above the liquidation threshold at entry.
-- **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability, net of the floor on the closed slice. A partial close removes the closed slice from the payout index and creates a replacement order with the remaining quantity and floor.
-- **Liquidation** removes a leveraged order whose live value has decayed to or below its floor-derived knock-out level. It is a permissionless, bounded-budget knock-out with zero order payout that touches no account; only the holder's account position remains, later cleared for zero payout. The later trading-loss rebate, if any, is still resolved through the normal expiry-level PnL and fee-basis claim.
-- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position `quantity − floor_shares` and zero otherwise. Anyone may call `try_settle`; ordinary settled consumers require that transition to have succeeded already.
+- **Mint** is the pool writing a new contract to the buyer: it creates a live position, quotes the entry probability (the premium per unit notional), derives the net premium, and settles payment (net premium + trading fee + optional builder fee + optional congestion surcharge). The buyer's range is the tick pair `(lower_tick, higher_tick)`.
+- **Live redeem** is a sell-to-close at the current mark: it closes some or all of a position at the current range probability. A partial close removes the closed slice from the payout index and creates a replacement order with the remaining quantity.
+- **Settlement and settled redeem** are the terminal, irreversible transition — paying a winning (in-range) position its full `quantity` and zero otherwise. Anyone may call `try_settle`; ordinary settled consumers require that transition to have succeeded already.
 - **Settled sweep** deactivates a settled market from the pool's active set, returns free LP cash to idle, and materializes terminal profit.
 
 ## Liquidity is asynchronous
@@ -74,10 +67,9 @@ Liquidity providers do not transact against a live pool price. They **queue** re
 These properties are designed in and hold by construction; their boundaries are detailed in [risks](./risks.md).
 
 - **Cash always backs payouts and rebates.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its unresolved trading-loss rebate reserve. Surplus above that line is the only cash the pool may sweep. An expiry can always pay both its winners and its owed rebates.
-- **Leverage floors are limited-recourse.** A floor offsets only its own order's value or payout, capped at it. There is no shared debt and no recourse to a holder's other assets; a leveraged order that breaches its floor is worth zero, never negative.
-- **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the per-expiry backing reserve use reserve-favoring rounding, so sub-unit dust accrues to the protocol rather than against its solvency. Reserve and payout reads derive from the same quantity/floor atoms, so a payout can never exceed the cash reserved to back it.
+- **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the per-expiry backing reserve use reserve-favoring rounding, so sub-unit dust accrues to the protocol rather than against its solvency. Reserve and payout reads derive from the same quantity atom, so a payout can never exceed the cash reserved to back it.
 - **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, and only a privileged operator can start a flush. A supplier can never over-mint and dilute incumbents, and the mark cannot be timed against a manipulated oracle.
-- **Live valuation is exact even with uncleared exhausted orders.** Each market's `current_nav` subtracts the leveraged book's per-order floor correction from the range value, capped per order, so an underwater leveraged order nets to zero instead of overstating NAV. Liquidation clears exhausted positions for holder/index hygiene; it is not a valuation precondition. See liquidation (removed) and [risks](./risks.md).
+- **Live valuation is exact.** Each market's `current_nav` is the payout tree's boundary-linear walk (`Σ quantity × P(range)`), with no per-order correction needed, since every position is worth exactly its quantity times its range probability. See [risks](./risks.md).
 
 ## Where to go next
 
@@ -85,10 +77,8 @@ These properties are designed in and hold by construction; their boundaries are 
 
 - [Glossary](./glossary.md) — every term technically defined and mapped to its standard options / structured-product name and code identifier.
 - [Markets and positions](./concepts/markets-and-positions.md) — per-expiry markets, the absolute tick grid and ±infinity sentinels, what an order is, and the full lifecycle.
-- Leverage and the floor (removed) — the financing-plus-knock-out structure, the floor index and floor shares, mint admission, and settlement payout.
 - [Pricing and oracles](./concepts/pricing-and-oracles.md) — the propbook Pyth and Block Scholes feeds, range-probability derivation, freshness, and the forward fallback.
 - [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, staking discount, and loss rebate.
-- Liquidation (removed) — the trigger condition, the priority-encoded liquidation book, bounded scan budgets, and what they imply for LPs.
 - [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, profit materialization, and DEEP staking custody.
 
 **Design — how the protocol is built:**
@@ -98,4 +88,4 @@ These properties are designed in and hold by construction; their boundaries are 
 
 **Risks:**
 
-- [Risks and limitations](./risks.md) — the privileged-flush trust assumption, exact timestamp settlement liveness, propbook feed trust, LP risk, rounding, bounded-liquidation keeper dependence, and pre-deployment maturity caveats.
+- [Risks and limitations](./risks.md) — the privileged-flush trust assumption, exact timestamp settlement liveness, propbook feed trust, LP risk, rounding, and pre-deployment maturity caveats.

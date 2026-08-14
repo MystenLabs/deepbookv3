@@ -1153,15 +1153,18 @@ fun redeem(
     let payout_amount = terms.settled_payout();
     let settlement = market.settlement_price();
 
-    // Mutation phase: apply the quoted close to the book, remove the position,
-    // then apply the payment.
-    market.strike_exposure.process_close(terms);
+    // Mutation phase: remove the position first, then apply the quoted close to
+    // the book, then the payment. The account position is the only remaining proof
+    // that this order exists (the liquidation index used to be a second one), so
+    // its `EPositionNotFound` is the mutation-independent fact and runs before the
+    // settled liability is decremented.
     let position_root_id = predict_account::remove_position(
         account,
         market.id(),
         order.id(),
         ctx,
     );
+    market.strike_exposure.process_close(terms);
     predict_account::record_gross_received_from_expiry(account, market.id(), payout_amount, ctx);
     // A settled losing position pays nothing; the settled redeem is
     // permissionless, so guard the amount before dispensing rather than

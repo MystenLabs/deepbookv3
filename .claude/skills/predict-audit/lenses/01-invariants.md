@@ -41,7 +41,7 @@ Produce:
   (mint, redeem, liquidation, settlement, compaction, flush rebalance).
 - The relationship between the pre-settlement live backing (the exact `quantity - floor_shares` plus the aggregate λ buffer, D030) and the exact
   settled liability — what guarantees the former bounds the latter for every order.
-- The exact `current_nav` mark (payout-tree `walk_linear` − leveraged `correction_value`, floored) and the
+- The exact `current_nav` mark (payout-tree `walk_linear`, floored) and the
   precondition it rests on (every order whose gross value crossed its knock-out level (`floor_amount / liquidation_ltv`) has been liquidated before valuation — the
   aggregate-floor precondition; see move.md NAV rules + the C3 note in `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)`).
 - PLP share-pricing symmetry: supply and withdraw priced at the SAME frozen `current_nav` in `finish_flush` /
@@ -55,7 +55,7 @@ Produce:
 
 ## Empirical mandate (required — do not skip)
 Back the load-bearing invariants with a sim, written to the scratchpad:
-- Reuse `packages/predict/simulations/python_indexes/` (the Move `strike_payout_tree` + `liquidation_book`
+- Reuse `packages/predict/simulations/python_indexes/` (the Move `strike_payout_tree`
   mirrors) and `python_replay.py` (mint admission / pricing / NAV mirror) to drive **randomized sequences**
   of mint/redeem/liquidate/supply/withdraw, asserting after each step: cash-backing holds, NAV supply==withdraw,
   no negative balances, conservation of DUSDC across the trader/LP/protocol/builder split, and rounding favors

@@ -160,7 +160,7 @@ eligible_rebate  = max(0, resolved_reserve − gross_profit)
 rebate_amount    = eligible_rebate * benefit_ratio(active_stake)
 ```
 
-The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Because the rebate rides that one curve, it is zero for every account in a market whose snapshotted benefit ratio is zero, which is how the protocol ships. Resolution can happen once **all** of an account's positions in the expiry are closed. Liquidated orders clear with zero order payout, but they are not excluded from this expiry-level rebate calculation; their trader-paid fees and gross cash paid remain part of the account's normal settled PnL and fee basis.
+The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Because the rebate rides that one curve, it is zero for every account in a market whose snapshotted benefit ratio is zero, which is how the protocol ships. Resolution can happen once **all** of an account's positions in the expiry are closed.
 
 If `rebate_amount` is less than `resolved_reserve`, the residual reserve is returned to PLP idle and may materialize as terminal expiry profit, split between the protocol reserve and LPs by the configured protocol profit share. Zero-owed claims are allowed so a keeper can sweep accounts without reverting a batch just because one account has nothing to claim.
 
@@ -173,7 +173,7 @@ Inventory impact is an optional, path-independent transfer layered **on top of**
 Let:
 
 - `M` be the largest summed net payout at any one settlement price;
-- `T` be the sum of every live order's net payout (`quantity - floor_shares`);
+- `T` be the sum of every live order's payout (`quantity`);
 - `lambda` be `backing_buffer_lambda`.
 
 The existing live reserve liability is:
@@ -204,7 +204,7 @@ live-close rebate = phi(L_before) - phi(L_after)
 
 This state-function construction is the key safety property. Splitting a trade, closing it in pieces, or cycling through ranges only creates intermediate terms that cancel. For any sequence that returns the book to the same state, total inventory charges equal total inventory rebates exactly, including integer rounding. A probability-local multiplier would not have this property: changing another range could change the price/rate used on exit and make a cross-range cycle profitable.
 
-Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_reserve`. Required cash includes the earmark and free cash/NAV excludes it. A live close can spend only this reserve. Liquidation reduces risk but pays no inventory rebate, because it is an involuntary zero-payout transition; the resulting escrow surplus stays reserved until settlement. Settlement releases whatever remains into ordinary expiry surplus, because no live close can occur afterward.
+Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_reserve`. Required cash includes the earmark and free cash/NAV excludes it. A live close can spend only this reserve. Settlement releases whatever remains into ordinary expiry surplus, because no live close can occur afterward.
 
 This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
 

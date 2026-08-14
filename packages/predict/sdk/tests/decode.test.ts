@@ -34,7 +34,6 @@ const OrderMintedBcs = bcs.struct("OrderMinted", {
 	owner: bcs.Address,
 	lower_tick: bcs.u64(),
 	higher_tick: bcs.u64(),
-	leverage: bcs.u64(),
 	entry_probability: bcs.u64(),
 	quantity: bcs.u64(),
 	net_premium: bcs.u64(),
@@ -57,7 +56,6 @@ function mintedEvent(orderId: bigint, overrides: Record<string, unknown> = {}): 
 			owner: OWNER,
 			lower_tick: 10_500_000n,
 			higher_tick: (1n << 30n) - 1n,
-			leverage: 2_000_000_000n,
 			entry_probability: 300_000_000n,
 			quantity: 50_000_000n,
 			net_premium: 12_500_000n,
@@ -81,7 +79,6 @@ describe("decodeMints", () => {
 		expect(r.quantity).toBe(50); // $50 payout
 		expect(r.netPremium).toBe(12.5);
 		expect(r.entryProbability).toBeCloseTo(0.3);
-		expect(r.leverage).toBe(2);
 		expect(r.fees).toEqual({ trading: 0.1, subsidy: 0.02, builder: 0.03, penalty: 0.005 });
 		expect(r.inventoryImpactCharge).toBe(0.04);
 		expect(r.raw.inventoryImpactCharge).toBe(40_000n);

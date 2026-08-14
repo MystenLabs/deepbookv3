@@ -470,7 +470,7 @@ trust coupling.
 **Severity:** Medium / must be accepted or fixed before deployment.
 
 The flush values every active market in one PTB. Current independent caps
-(`24` live markets, `1000` payout nodes, `5000` leveraged orders per market) do
+(`24` live markets, `1000` payout nodes) do
 not compose into a single-PTB budget — and the binding limit is object-count,
 not compute (corrected 2026-07-07; see the model below). The NAV price memo
 removed the single-market pre-cap OOG; the remaining deploy blocker is the
@@ -482,8 +482,8 @@ another isolated per-market cap.
 - The binding wall for the pool total is the Sui **object-runtime cached-objects
   limit: 1,000 dynamic-field child objects per transaction**
   (`object_runtime_max_num_cached_objects`; a protocol constant, taken as
-  network-invariant). The flush loads each market's payout-tree nodes and
-  liquidation-book pages as dynamic-field children, and the object-runtime cache
+  network-invariant). The flush loads each market's payout-tree nodes as
+  dynamic-field children, and the object-runtime cache
   **accumulates across every `value_expiry` command in the one PTB**. On overflow
   it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object` —
   a framework error whose true cause is this limit. It binds at 16–50% of the 5M
@@ -493,7 +493,6 @@ another isolated per-market cap.
   distinct strike tick, and `walk_linear` loads every node. Node count = distinct
   ticks, NOT order count (the tree aggregates by boundary) — which is why
   single-market runs at narrow strikes never reached it despite large books.
-  Liquidation-book pages (`ceil(leveraged_orders / 64)`) are a minor contributor.
 - Confirmed cumulative, not per-command: two 1× markets at 586 nodes each —
   neither near 1,000 — abort the flush at ~1,172 combined; a single 1× market
   crosses at ~982 nodes (`evidence/c1-object-cache-flush-2026-07-07.md`).
@@ -515,9 +514,15 @@ another isolated per-market cap.
   `value_expiry`/sweep, so the flush's active tail is not bounded by the
   live-market creation cap.
 - Capacity law:
-  `sum_over_active_markets(distinct_ticks + ceil(leveraged_orders / 64) + base_children)
+  `sum_over_active_markets(distinct_ticks + base_children)
   < 1,000 dynamic-field children per flush PTB` — a joint sum across all active
   markets, dominated by distinct strike ticks.
+- Leverage removal (2026-08-14) deleted the `ceil(leveraged_orders / 64)`
+  liquidation-book term from this law and the 5,000-order cap that bounded it.
+  Every measured threshold above was taken with leveraged orders present, so the
+  numbers are now conservative for the object wall and stale for compute; they
+  must be re-measured against the 1x-only footprint before this item is closed.
+  The benchmark cannot do that until the simulation parity model is updated.
 
 **Fix options (reframed for the object-count wall):** shrink the per-market
 NAV-walk child footprint (e.g. cache tree aggregates so `walk_linear` need not
@@ -600,7 +605,6 @@ correctness today.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further.
-- Public `liquidate()` takes an unbounded caller budget — low-priority self-DoS
   probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
 
 ### H-7: Test-coverage gaps from the PR #1097 review
