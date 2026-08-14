@@ -77,7 +77,7 @@ These properties are designed in and hold by construction; their boundaries are 
 - **Leverage floors are limited-recourse.** A floor offsets only its own order's value or payout, capped at it. There is no shared debt and no recourse to a holder's other assets; a leveraged order that breaches its floor is worth zero, never negative.
 - **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the per-expiry backing reserve use reserve-favoring rounding, so sub-unit dust accrues to the protocol rather than against its solvency. Reserve and payout reads derive from the same quantity/floor atoms, so a payout can never exceed the cash reserved to back it.
 - **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, and only a privileged operator can start a flush. A supplier can never over-mint and dilute incumbents, and the mark cannot be timed against a manipulated oracle.
-- **Live valuation is exact even with uncleared exhausted orders.** Each market's `current_nav` subtracts the leveraged book's per-order floor correction from the range value, capped per order, so an underwater leveraged order nets to zero instead of overstating NAV. Liquidation clears exhausted positions for holder/index hygiene; it is not a valuation precondition. See [liquidation](./concepts/liquidation.md) and [risks](./risks.md).
+- **Live valuation is exact even with uncleared exhausted orders.** Each market's `current_nav` subtracts the leveraged book's per-order floor correction from the range value, capped per order, so an underwater leveraged order nets to zero instead of overstating NAV. Liquidation clears exhausted positions for holder/index hygiene; it is not a valuation precondition. See liquidation (removed) and [risks](./risks.md).
 
 ## Where to go next
 
@@ -85,10 +85,10 @@ These properties are designed in and hold by construction; their boundaries are 
 
 - [Glossary](./glossary.md) — every term technically defined and mapped to its standard options / structured-product name and code identifier.
 - [Markets and positions](./concepts/markets-and-positions.md) — per-expiry markets, the absolute tick grid and ±infinity sentinels, what an order is, and the full lifecycle.
-- [Leverage and the floor](./concepts/leverage-and-floor.md) — the financing-plus-knock-out structure, the floor index and floor shares, mint admission, and settlement payout.
+- Leverage and the floor (removed) — the financing-plus-knock-out structure, the floor index and floor shares, mint admission, and settlement payout.
 - [Pricing and oracles](./concepts/pricing-and-oracles.md) — the propbook Pyth and Block Scholes feeds, range-probability derivation, freshness, and the forward fallback.
 - [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, staking discount, and loss rebate.
-- [Liquidation](./concepts/liquidation.md) — the trigger condition, the priority-encoded liquidation book, bounded scan budgets, and what they imply for LPs.
+- Liquidation (removed) — the trigger condition, the priority-encoded liquidation book, bounded scan budgets, and what they imply for LPs.
 - [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, profit materialization, and DEEP staking custody.
 
 **Design — how the protocol is built:**

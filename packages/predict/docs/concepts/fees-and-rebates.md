@@ -276,8 +276,6 @@ The fee is deliberately separate from the mark. The mark stays the exact pool-wi
 ## Related reading
 
 - [pricing-and-oracles.md](./pricing-and-oracles.md) — how the range probability `p` that drives the base fee is formed.
-- [leverage-and-floor.md](./leverage-and-floor.md) — why trading and builder fees are transaction costs, not part of the contract floor.
 - [liquidity-and-nav.md](./liquidity-and-nav.md) — the cash-backing invariant that holds the rebate reserve, and how fee revenue reaches LPs.
-- [liquidation.md](./liquidation.md) — how a leveraged order is closed when it falls below its floor.
 - [../design/configuration.md](../design/configuration.md) — the configured fee rates, ramp window, builder and congestion parameters, stake thresholds, and rebate rate.
 - [../design/architecture.md](../design/architecture.md) — the `BuilderCode` object and accumulator-address fund custody.

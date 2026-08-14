@@ -120,7 +120,7 @@ Predict reads it but does not own it.
 A leveraged Predict contract is a vanilla range digital plus two
 modifications: embedded premium financing and a sold knock-out. Economically
 it is a **down-and-out digital structured like a turbo warrant / knock-out
-certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
+certificate**. See leverage and the floor (removed).
 
 - **Financed amount** — the slice of the full premium the pool funds at mint,
   `full premium − net premium`; code `financed_amount`. The structured-product
@@ -160,7 +160,7 @@ certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
 - **Discretely monitored barrier** — the knock-out is enforced by bounded,
   permissionless keeper passes, not continuous monitoring; between checks a
   breached contract can remain in the book. See
-  [liquidation](./concepts/liquidation.md) and [risks](./risks.md).
+  liquidation (removed) and [risks](./risks.md).
 
 ## Fees
 

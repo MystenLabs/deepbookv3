@@ -679,10 +679,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   butterfly freedom, and reachability requires the trusted publisher to violate
   its guarantee with a surface whose inversion intersects the active book. The
   guarantee is not enforced by Predict on chain.
-- **Pinning tests:** `pricing_guard_tests.move` —
-  `price_memo_rejects_non_monotone_surface_over_active_ticks`; and
-  `current_nav_flow_tests.move` —
-  `current_nav_rejects_non_monotone_active_book_surface`.
+- **Pinning tests:** `current_nav_flow_tests.move` —
+  `current_nav_rejects_non_monotone_active_book_surface`. The guard moved from
+  the price memo to `strike_payout_tree::ENonMonotonePrice` when leverage was
+  removed and the memo was deleted; it is now enforced over the contributing
+  boundary subsequence of the linear walk, which is exactly the set the netted
+  aggregate reads.
 - **Reopen when:** Block Scholes changes or violates the surface guarantee,
   Predict accepts another SVI publisher without the same guarantee, the
   active-book guard is removed, NAV valuation gains a safe per-market
@@ -755,6 +757,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ## RP-17: The NAV mark values a knocked-out order at its liquidated worth (resolves P-10)
 
+> **RETIRED 2026-08-14 — trigger state unreachable.** Leverage was removed from
+> Predict, so no order carries a floor, there is no knock-out threshold, and the
+> NAV correction this entry governs no longer exists. `exact_live_liability` is
+> now the payout-tree linear walk alone. The entry is kept for the decision
+> record; its pinning tests were removed with the leveraged NAV correction.
+
 - **Trigger state:** at the valuation prices, an active leveraged order's live
   gross value is at or below its knock-out threshold
   (`gross <= floor_shares / liquidation_ltv`) — the liquidatable band
@@ -797,19 +805,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   leveraged set that `correction_value` already walks on every valuation; no tree
   mutation, event, or extra traversal enters the C-1 budget, so the worst case is
   cost-identical to a healthy flush.
-- **Pinning tests:** `current_nav_flow_tests.move` —
-  `single_leveraged_order_above_floor` (a survivor above the band keeps the floor
-  cap, so the correction is unchanged) and
-  `single_leveraged_order_underwater_nets_to_zero` (the deep-underwater tail,
-  which both formulas zero) constrain the endpoints. The band case `(floor,
-  floor/ltv]`, where the credit differs from the old floor cap, still needs a
-  dedicated pin on a high-variance surface (a leveraged order priced into the
-  band marks at zero live liability, raising NAV above the floor-capped value);
-  tracked as the follow-up test for this policy.
-- **Reopen when:** the LP flush stops using one shared mark for both queues; or a
-  product decision requires the book to be liquidated in-pass rather than by the
-  sweep (reintroducing the mutation and its gas profile); or the P-13
-  boundary-aggregation residual is closed and the credit must become exact.
+- **Pinning tests:** untested — the entry is retired and governs no live code
+  path. The two leveraged NAV tests that pinned it were removed with the
+  correction they exercised, and the band between the floor and the knock-out
+  threshold never got its dedicated pin before retirement. (`check.py` has no
+  RETIRED state; `untested` is the closest sanctioned value.)
+- **Reopen when:** leverage is reintroduced in any form. This entry is the
+  starting point for that design: the knock-out mark, not the floor cap, is the
+  decision that was settled here.
 
 ---
 

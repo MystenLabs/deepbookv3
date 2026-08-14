@@ -2,7 +2,7 @@
 
 This page is an honest account of the trust assumptions, economic risks, and known limitations of the Predict protocol. It is intended for anyone deciding whether and how to use the protocol — traders taking leveraged range positions, liquidity providers supplying the pool, and evaluators reading the contracts. Predict is in development and not yet deployed; some behaviour described here is still changing, and several limitations are properties of the current implementation rather than permanent design choices. Where a value is tunable, the mechanism is described and the magnitude is governed by [configuration](./design/configuration.md).
 
-For the mechanisms this page evaluates, see [pricing and oracles](./concepts/pricing-and-oracles.md), [leverage and the floor](./concepts/leverage-and-floor.md), [liquidation](./concepts/liquidation.md), [liquidity and NAV](./concepts/liquidity-and-nav.md), and the object/capability model in [architecture](./design/architecture.md).
+For the mechanisms this page evaluates, see [pricing and oracles](./concepts/pricing-and-oracles.md), leverage and the floor (removed), liquidation (removed), [liquidity and NAV](./concepts/liquidity-and-nav.md), and the object/capability model in [architecture](./design/architecture.md).
 
 ## Trust model at a glance
 
@@ -97,7 +97,7 @@ The honest framing: admin trust is real but bounded. The funds-custody boundary 
 
 ## Holder and leverage risk
 
-Leverage in Predict is not a separate loan; it is a static **floor** baked into the contract's terms (see [leverage and the floor](./concepts/leverage-and-floor.md)). A leveraged order's live value is its range probability value minus `floor_shares`, clamped at zero. The risks that follow from this:
+Leverage in Predict is not a separate loan; it is a static **floor** baked into the contract's terms (see leverage and the floor (removed)). A leveraged order's live value is its range probability value minus `floor_shares`, clamped at zero. The risks that follow from this:
 
 - **Range value can decay to the floor.** A position that is comfortably above water at mint can fall below its liquidation threshold if the live range probability reprices lower.
 - **Liquidation can take the position to zero.** A leveraged order is liquidatable once its live gross value falls to or below `floor_shares / liquidation_ltv`. When that condition is met the order is removed from the live indexes and the holder's recoverable value for that order is effectively wiped — leverage is full-recourse to the order's own value, capped at it. The floor can offset only that order's value or payout, never more.
@@ -179,8 +179,8 @@ None of these are reasons the design is unsound; they are the difference between
 ## Related reading
 
 - [Pricing and oracles](./concepts/pricing-and-oracles.md) — how spot, BS forward, and SVI form live prices, and the forward fallback.
-- [Leverage and the floor](./concepts/leverage-and-floor.md) — the floor model behind holder/leverage risk.
-- [Liquidation](./concepts/liquidation.md) — the trigger condition and what the holder receives.
+- Leverage and the floor (removed) — the floor model behind holder/leverage risk.
+- Liquidation (removed) — the trigger condition and what the holder receives.
 - [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the async queues, the privileged flush, and how pool NAV and PLP shares are computed.
 - [Architecture](./design/architecture.md) — objects, capital ownership, and the capability model.
 - [Configuration](./design/configuration.md) — every tunable value and who can change it.

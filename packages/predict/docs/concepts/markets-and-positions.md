@@ -52,7 +52,7 @@ The sentinels live at the ends of the 30-bit tick domain:
 
 Raw strikes are recovered from ticks only at the pricing and settlement boundary, through `range_codec::strikes_from_ticks`, which applies the sentinel mapping and the `tick × tick_size` multiplication. The ±infinity sentinels let a position express open-ended ranges — "price ends above 50k" or "price ends at or below 30k", i.e. plain digital calls and puts — without inventing artificial outer strikes. Settlement payout is determined by whether the settlement price falls inside `(lower, higher]`: an order pays zero when `settlement ≤ lower || settlement > higher`.
 
-Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 30-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders) and [leverage and the floor](./leverage-and-floor.md).
+Cadence `tick_size` is validated when admin sets cadence config: it must be positive and inside the protocol tick-size bounds. Those bounds also keep the raw-strike multiplication (`tick × tick_size`) from overflowing given the 30-bit tick ceiling. The `order` module enforces range shape (`lower_tick < higher_tick`, non-empty, no fully-open `(−∞, +∞]` span) when the ticks are packed into an order ID — see [Positions](#positions-orders) and leverage and the floor (removed).
 
 ## Positions (orders)
 
@@ -61,7 +61,7 @@ A position is identified by a single packed `u256` **order ID**. It is an opaque
 | Encoded term | Meaning |
 | --- | --- |
 | `quantity` | Position size in DUSDC base units. Stored as a count of lots, so `position_lot_size` sets the granularity and the packed lot field bounds the maximum size. |
-| `floor_shares` | Normalized leverage floor coverage. Zero for a 1x (unleveraged) order, positive for a leveraged one. See [leverage and the floor](./leverage-and-floor.md). |
+| `floor_shares` | Normalized leverage floor coverage. Zero for a 1x (unleveraged) order, positive for a leveraged one. See leverage and the floor (removed). |
 | `lower_tick`, `higher_tick` | The position's strike range, as two absolute ticks (`0` = `neg_inf` lower, `pos_inf_tick` = `pos_inf` higher). |
 | `sequence` | An expiry-local monotonic counter that makes each order ID unique within its market. |
 
@@ -69,7 +69,7 @@ The packed ID is the single source of truth at protocol boundaries; the bit layo
 
 Order IDs are scoped to their market: an ID alone does not carry expiry or market identity. A position is bound to a market only through the `(expiry_market_id, order_id)` key in the holder's Predict app data on their account. Do not infer market facts from an order ID.
 
-What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is its range probability value minus its static floor -- the financed share of the entry premium that leverage embeds -- floored at zero; a 1x order is the special case with a zero floor. Leverage is continuous at 1e9 scale and is admitted by a probability-sensitive cap at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in [leverage and the floor](./leverage-and-floor.md); pricing and oracle inputs in [pricing and oracles](./pricing-and-oracles.md).
+What an order represents economically: each position is one European cash-or-nothing range digital written by the pool. A contract's live (mark) value is its range probability value minus its static floor -- the financed share of the entry premium that leverage embeds -- floored at zero; a 1x order is the special case with a zero floor. Leverage is continuous at 1e9 scale and is admitted by a probability-sensitive cap at mint. The structural relationship between leverage, floor, payout, and liquidation is covered in leverage and the floor (removed); pricing and oracle inputs in [pricing and oracles](./pricing-and-oracles.md).
 
 ### Where positions are tracked
 
@@ -117,7 +117,7 @@ After settlement, a position is closed for its settled payout. `redeem_settled` 
 
 ### Liquidation
 
-While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the current Propbook `PythFeed` plus the BS value and SVI stores, which `pricing::load_live_pricer` validates against Propbook's canonical bindings for the market's underlying and expiry. Liquidation is permissionless, removes the order from live indexes, and **does not touch any account** — it emits **`OrderLiquidated`** (with no owner/account fields, since they are unknown to the pass) and leaves only the holder's account position as the order's remaining record. The holder later clears the liquidated position through owner-auth `redeem_live` while the market is live, or through a settled redeem path after settlement; cleanup removes the account position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in [leverage and the floor](./leverage-and-floor.md), [liquidation](./liquidation.md), and [risks](../risks.md).
+While the market is active, leveraged positions are subject to liquidation. `liquidate` runs a bounded pass over candidates (and `liquidate_order` targets one order); a position is liquidated when its probability-weighted gross value falls at or below its floor-derived threshold (`floor_amount / liquidation_ltv`). Both entrypoints take the current Propbook `PythFeed` plus the BS value and SVI stores, which `pricing::load_live_pricer` validates against Propbook's canonical bindings for the market's underlying and expiry. Liquidation is permissionless, removes the order from live indexes, and **does not touch any account** — it emits **`OrderLiquidated`** (with no owner/account fields, since they are unknown to the pass) and leaves only the holder's account position as the order's remaining record. The holder later clears the liquidated position through owner-auth `redeem_live` while the market is live, or through a settled redeem path after settlement; cleanup removes the account position and emits **`LiquidatedOrderRedeemed`** with **zero payout**. Liquidation mechanics and thresholds are detailed in leverage and the floor (removed), liquidation (removed), and [risks](../risks.md).
 
 ## Object relationships at a glance
 

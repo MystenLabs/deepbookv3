@@ -1,6 +1,6 @@
 # Configuration
 
-Predict's tunable policy lives in a small set of configuration structs, a single shared `ProtocolConfig` object, and a `Registry`. This document describes how a parameter change reaches the code that consumes it, why some parameters are frozen into per-expiry objects at creation while others are read live, and which authority can change what. It documents the configuration mechanism; it is not a function reference. For the protocol mechanics these parameters govern, see [../overview.md](../overview.md), [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md), and [../risks.md](../risks.md).
+Predict's tunable policy lives in a small set of configuration structs, a single shared `ProtocolConfig` object, and a `Registry`. This document describes how a parameter change reaches the code that consumes it, why some parameters are frozen into per-expiry objects at creation while others are read live, and which authority can change what. It documents the configuration mechanism; it is not a function reference. For the protocol mechanics these parameters govern, see [../overview.md](../overview.md), leverage and the floor (removed), and [../risks.md](../risks.md).
 
 ## Two layers: admin-tunable values vs. upgrade-required constants
 
@@ -125,6 +125,6 @@ All admin setters route through their owning module: global protocol policy thro
 ## Related reading
 
 - [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how the `PricingConfig` freshness thresholds enter live probability resolution from the propbook feeds.
-- [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the static floor, liquidation LTV, and dynamic admission cap that `StrikeExposureConfig` governs.
+- leverage and the floor (removed) — the static floor, liquidation LTV, and dynamic admission cap that `StrikeExposureConfig` governs.
 - [./architecture.md](./architecture.md) — object model, the oracle extraction, and the async NAV/LP layer.
 - [../risks.md](../risks.md) — operational and governance risk, including pause/version handling.
