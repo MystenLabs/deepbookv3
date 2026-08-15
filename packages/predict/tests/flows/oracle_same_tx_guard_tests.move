@@ -163,7 +163,7 @@ fun variant_c_write_then_redeem_seasoned_position_aborts() {
         FRESHER_PRICE,
         FRESHER_SOURCE_TS,
     );
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,

@@ -23,7 +23,7 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
-/// Independent fee components for the at-the-money `mint_quantity()` (1e9) 1x
+/// Independent fee components for the at-the-money `mint_quantity()` (1e9)
 /// mint. The premium is read from the quote rather than written down as a
 /// literal — the exact integer a Cody rational approximation lands on cannot be
 /// derived independently, and a hand-written one encoded a rounding artifact as
@@ -91,8 +91,8 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    // A 1x order fronts its full premium, and `mint_quantity()` is exactly one
-    // contract, so the premium is the entry probability with nothing to round.
+    // `mint_quantity()` is exactly one contract, so the premium is the entry
+    // probability with nothing to round.
     let premium = quote.premium();
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(premium, quote.entry_probability());

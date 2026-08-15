@@ -57,7 +57,7 @@ fun redeem_in_mint_timestamp_aborts() {
     );
 
     // Same fixture clock as the mint: the guard must reject this redeem.
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
@@ -234,7 +234,7 @@ fun redeem_below_min_probability_aborts() {
         REDEEM_SOURCE_TS,
     );
 
-    fx.redeem_bundle_with_limits(
+    fx.redeem_live_bundle_with_limits(
         &mut market,
         &mut account,
         order,
@@ -271,7 +271,7 @@ fun redeem_below_min_proceeds_aborts() {
         REDEEM_SOURCE_TS,
     );
 
-    fx.redeem_bundle_with_limits(
+    fx.redeem_live_bundle_with_limits(
         &mut market,
         &mut account,
         order,
@@ -311,14 +311,13 @@ fun redeem_after_clock_advances_succeeds() {
         REDEEM_SOURCE_TS,
     );
 
-    let (closed, replacement) = fx.redeem_bundle(
+    let replacement = fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
         QUANTITY,
     );
 
-    assert_eq!(closed, order);
     assert!(replacement.is_none());
     assert!(!helpers::has_position_bundle(&account, expiry_id, order));
 

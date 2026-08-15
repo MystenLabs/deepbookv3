@@ -1,8 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Cross-exposure boundary coverage for the phase-specific live and settled
-/// close terms tokens.
+/// Cross-exposure boundary coverage for live close terms.
 #[test_only]
 module deepbook_predict::close_terms_boundary_tests;
 
@@ -45,7 +44,7 @@ fun process_live_close_of_terms_quoted_on_another_exposure_aborts() {
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    // Mint a 1x order on A and quote its live close: the terms carry A's market id.
+    // Mint an order on A and quote its live close: the terms carry A's market id.
     let terms_a = harness_a
         .exposure
         .quote_mint_terms(
@@ -82,7 +81,6 @@ fun create_and_share_exposure_harness(
     let config = strike_exposure_config::new();
     let exposure = strike_exposure::new(
         expiry_market_id,
-        expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
@@ -92,50 +90,4 @@ fun create_and_share_exposure_harness(
     );
     transfer::share_object(ExposureHarness { id, exposure });
     harness_id
-}
-
-/// Settled terms retain the exposure identity after the market records its
-/// terminal price, so terminal liability cannot be released from another book.
-#[test, expected_failure(abort_code = strike_exposure::ETermsExposureMismatch)]
-fun process_settled_close_of_terms_quoted_on_another_exposure_aborts() {
-    let mut fx = oracle_fixture::setup_oracle(
-        test_constants::default_live_price(),
-        test_constants::default_tick_size(),
-        test_constants::short_expiry_ms(),
-    );
-    let expiry_id = fx.expiry_id();
-    let expiry_ms = fx.expiry();
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let harness_a_id = create_and_share_exposure_harness(&mut fx, expiry_id, expiry_ms);
-    let other_market_id = fresh_object_id(&mut fx);
-    let harness_b_id = create_and_share_exposure_harness(&mut fx, other_market_id, expiry_ms);
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut harness_a = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_a_id);
-    let mut harness_b = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_b_id);
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    let mint_terms = harness_a
-        .exposure
-        .quote_mint_terms(
-            &pricer,
-            test_constants::default_strike_tick(),
-            constants::pos_inf_tick!(),
-            0,
-            test_constants::mint_quantity(),
-            true,
-        );
-    let order = harness_a.exposure.allocate_mint_order(mint_terms);
-    let settlement_price =
-        (test_constants::default_strike_tick() + 1)
-        * test_constants::default_tick_size();
-    harness_a.exposure.record_settlement(settlement_price);
-    harness_b.exposure.record_settlement(settlement_price);
-    let close_terms = harness_a.exposure.quote_settled_close(&order);
-
-    harness_b.exposure.process_settled_close(close_terms);
-
-    abort 999
 }

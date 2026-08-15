@@ -224,7 +224,6 @@ fun zero_inventory_impact_scale_aborts() {
     let ctx = &mut tx_context::dummy();
     let _exposure = strike_exposure::new(
         object::id_from_address(@0xCAFE),
-        test_constants::short_expiry_ms(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         0,
@@ -303,7 +302,6 @@ fun new_harness(
     let harness_id = id.to_inner();
     let exposure = strike_exposure::new(
         expiry_id,
-        expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),

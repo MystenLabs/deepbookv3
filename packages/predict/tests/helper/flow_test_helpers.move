@@ -1664,9 +1664,9 @@ public fun mint_exact_amount(
     )
 }
 
-/// Close (or partially close) a live order with owner auth. Returns
-/// `(closed_id, replacement_id)`.
-public fun redeem(
+/// Close (or partially close) a live order with owner auth. Returns a
+/// replacement ID only when quantity remains open.
+public fun redeem_live(
     self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
@@ -1679,7 +1679,7 @@ public fun redeem(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
-): (u256, Option<u256>) {
+): Option<u256> {
     let auth = account::generate_auth(self.scenario.ctx());
     let pricer = market.load_live_pricer(
         config,
@@ -1707,15 +1707,15 @@ public fun redeem(
 
 /// Close a live order through a market/account bundle while substituting an
 /// explicit Pyth feed for binding-guard tests.
-public fun redeem_bundle_with_pyth(
+public fun redeem_live_bundle_with_pyth(
     self: &mut Fixture,
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
-): (u256, Option<u256>) {
-    self.redeem(
+): Option<u256> {
+    self.redeem_live(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1731,14 +1731,14 @@ public fun redeem_bundle_with_pyth(
 }
 
 /// Close a live order through a market/account bundle.
-public fun redeem_bundle(
+public fun redeem_live_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
     close_quantity: u64,
-): (u256, Option<u256>) {
-    self.redeem(
+): Option<u256> {
+    self.redeem_live(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1755,7 +1755,7 @@ public fun redeem_bundle(
 
 /// Close a live order through a market/account bundle with explicit close-side
 /// probability and proceeds floors.
-public fun redeem_bundle_with_limits(
+public fun redeem_live_bundle_with_limits(
     self: &mut Fixture,
     market: &mut MarketBundle,
     account: &mut AccountBundle,
@@ -1763,8 +1763,8 @@ public fun redeem_bundle_with_limits(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
-): (u256, Option<u256>) {
-    self.redeem(
+): Option<u256> {
+    self.redeem_live(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1789,9 +1789,9 @@ public fun redeem_settled(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     order_id: u256,
-): u256 {
+) {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    let closed_id = market.redeem_settled_permissionless(
+    market.redeem_settled_permissionless(
         &account_registry,
         wrapper,
         config,
@@ -1801,7 +1801,6 @@ public fun redeem_settled(
         self.scenario.ctx(),
     );
     return_shared(account_registry);
-    closed_id
 }
 
 /// Owner-authorized settled redeem: clears a settled order using the current
@@ -1813,7 +1812,7 @@ public fun redeem_settled_with_owner_auth(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     order_id: u256,
-): u256 {
+) {
     let auth = account::generate_auth(self.scenario.ctx());
     market.redeem_settled(
         wrapper,
@@ -1832,7 +1831,7 @@ public fun redeem_settled_bundle(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
-): u256 {
+) {
     self.redeem_settled(
         &market.config,
         &mut account.wrapper,
@@ -1848,7 +1847,7 @@ public fun redeem_settled_with_owner_auth_bundle(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
-): u256 {
+) {
     self.redeem_settled_with_owner_auth(
         &market.config,
         &mut account.wrapper,

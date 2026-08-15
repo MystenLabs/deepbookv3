@@ -35,7 +35,7 @@ const NEXT_LOT_QUANTITY: u64 = 100_010_000;
 /// * lot 10_000.
 const LOT_CAP_QUANTITY: u64 = 42_949_672_950_000;
 
-/// The anonymous 1x quantity quote at the fixture's at-the-money strike, the
+/// The anonymous quantity quote at the fixture's at-the-money strike, the
 /// reference every budget threshold and expected debit below is read from.
 fun atm_quote(fx: &mut helpers::Fixture, market: &helpers::MarketBundle, quantity: u64): MintQuote {
     fx.quote_mint_bundle(

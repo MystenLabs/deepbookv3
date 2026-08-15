@@ -671,7 +671,7 @@ fun cash_after_rebate_claim(premium: u64): u64 {
     cash_after_losing_redeem(premium) - REBATE_AFTER_MINT
 }
 
-/// Premium for the fixture's finite-range 1x mint, from the anonymous quote.
+/// Premium for the fixture's finite-range mint, from the anonymous quote.
 fun finite_range_premium(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64 {
     let quote = fx.quote_mint_bundle(
         market,

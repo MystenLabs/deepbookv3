@@ -115,7 +115,7 @@ fun redeem_with_wrong_pyth_feed_aborts() {
     );
     // Redeem on the real market but pass an unrelated Pyth feed: the live-pricing
     // binding check rejects it after decoding the valid order id.
-    fx.redeem_bundle_with_pyth(
+    fx.redeem_live_bundle_with_pyth(
         &mut market,
         &mut account,
         &wrong_pyth,

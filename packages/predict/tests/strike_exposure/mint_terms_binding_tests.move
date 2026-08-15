@@ -66,7 +66,6 @@ fun create_and_share_exposure_harness(
     let harness_id = id.to_inner();
     let exposure = strike_exposure::new(
         expiry_market_id,
-        expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),

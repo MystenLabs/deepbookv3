@@ -175,24 +175,6 @@ fun mint_admission_premium_one_lot_below_minimum_aborts() {
     abort 999
 }
 
-//
-
-// (`mint_admission_half_probability_two_and_half_x_succeeds` admits even 2.5x).
-// One millisecond inside the window the cap drops to 1x and the same order is
-// refused — the tightest just-inside value for the `<` edge.
-
-// The block is `time_to_expiry < window`, so at exactly the window edge the full
-// probability-derived cap still applies. Pins the `<` boundary from the outside:
-// 2.5x admits here with the same terms it gets far from expiry.
-
-// Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
-// is admitted far from expiry. Entry value 100_000_000; premium
-
-// The block replaces the curve rather than composing with it: inside the window
-// the cap is 1x even at a probability whose curve cap (1.8x) would have admitted
-// this order. Paired with the control above, the rejection is attributable to the
-// window alone.
-
 #[test]
 fun mint_admission_premium_at_minimum_succeeds() {
     let config = strike_exposure_config::new();

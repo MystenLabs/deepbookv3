@@ -27,8 +27,8 @@
 /// totals. That holds only while every prefix is non-negative, which a consistent
 /// book guarantees. Under a caller/index desync the settlement walk's underflow
 /// abort depends on which prefixes a given shape happens to visit, so it is not a
-/// desync detector — `apply_net_delta`'s per-boundary underflow abort, applied
-/// through `apply_net_delta`, is the authority.
+/// desync detector — the per-boundary underflow in `apply_net_delta` is the
+/// authority.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};

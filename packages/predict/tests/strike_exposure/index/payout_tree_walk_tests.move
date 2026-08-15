@@ -233,8 +233,8 @@ fun clustered_ticks(): (u64, u64, u64) {
     (t0, t0 + 1, t0 + 2)
 }
 
-/// Insert a one-sided up range `(tick, pos_inf]` carrying `quantity` (1x-shaped
-/// terms; `walk_linear` reads only the quantity).
+/// Insert a one-sided up range `(tick, pos_inf]` carrying `quantity`;
+/// `walk_linear` reads only the quantity.
 fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
     tree.insert_range(tick, constants::pos_inf_tick!(), quantity);
 }

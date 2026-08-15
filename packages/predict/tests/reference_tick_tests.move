@@ -265,7 +265,6 @@ fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
     let harness_id = id.to_inner();
     let exposure = strike_exposure::new(
         fx.expiry_id(),
-        fx.expiry(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         fx.expiry() - test_constants::default_cadence_period_ms(),
