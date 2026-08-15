@@ -81,11 +81,11 @@ fun create_and_share_exposure_harness(
     let config = strike_exposure_config::new();
     let exposure = strike_exposure::new(
         expiry_market_id,
+        config,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
         1_000_000_000,
-        config,
         fx.scenario_mut().ctx(),
     );
     transfer::share_object(ExposureHarness { id, exposure });

@@ -655,7 +655,7 @@ fun post_settled_redeem_balance(premium: u64): u64 {
     post_mint_balance(premium) + test_constants::mint_quantity()
 }
 
-/// Seeded expiry cash plus the mint principal and fee; a losing settled redeem
+/// Seeded expiry cash plus the mint premium and fee; a losing settled redeem
 /// pays zero, so the cash is unchanged by the redeem itself.
 fun cash_after_losing_redeem(premium: u64): u64 {
     test_constants::default_seeded_expiry_cash() + premium + MINT_MIN_FEE

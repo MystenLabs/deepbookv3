@@ -2292,6 +2292,10 @@ public fun account_balance_bundle<T>(self: &Fixture, account: &AccountBundle): u
     self.account_balance<T>(&account.wrapper, &account.root)
 }
 
+public fun account_id_bundle(account: &AccountBundle): ID {
+    account.wrapper.load_account().account_id()
+}
+
 /// Whether the bundled account holds an open position.
 public fun has_position_bundle(account: &AccountBundle, expiry_id: ID, order_id: u256): bool {
     has_position(&account.wrapper, expiry_id, order_id)

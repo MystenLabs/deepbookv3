@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Sizing coverage for the budget-bias mint request (`mint_exact_amount` and the
-/// budget-bias quote): the flow mints the largest lot-rounded quantity whose net
+/// budget-bias quote): the flow mints the largest lot-rounded quantity whose
 /// premium fits the budget, never charges past the budget, saturates at the lot
 /// cap instead of aborting on oversized budgets (the DBU-566 regression), and
 /// enforces `min_quantity` as the fill floor. Budgets and expected debits are

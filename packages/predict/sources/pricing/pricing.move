@@ -209,8 +209,8 @@ public(package) fun load_live_pricer(
 }
 
 /// Validate the canonical Pyth binding and read its normalized spot at exactly
-/// `source_timestamp_ms`. The product preserves absence so the reference-tick
-/// and settlement flows can retain their distinct missing-data policies.
+/// `source_timestamp_ms`. The returned option preserves absence so the
+/// reference-tick and settlement flows can retain distinct missing-data policies.
 public(package) fun load_exact_spot(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,

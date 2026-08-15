@@ -118,10 +118,6 @@ fun decode_tick(id: u256, offset: u8): u64 {
     ((id >> offset) & tick_mask!()) as u64
 }
 
-fun quantity_lots(order: &Order): u64 {
-    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
-}
-
 fun quantity_lots_from_quantity(quantity: u64): u64 {
     assert_valid_quantity(quantity);
     quantity / constants::position_lot_size!()
@@ -131,6 +127,10 @@ fun assert_valid(order: &Order) {
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
     assert!(order.quantity_lots() > 0, EInvalidQuantity);
     assert_valid_order_shape(order.lower_tick(), order.higher_tick());
+}
+
+fun quantity_lots(order: &Order): u64 {
+    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
 }
 
 fun assert_valid_order_shape(lower_tick: u64, higher_tick: u64) {

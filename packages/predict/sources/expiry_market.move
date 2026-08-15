@@ -810,11 +810,11 @@ public(package) fun create_and_share(
         fee_incentive_balance: balance::zero(),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
+            strike_exposure_config,
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
             inventory_impact_scale,
-            strike_exposure_config,
             ctx,
         ),
         ewma: ewma::new(ctx),

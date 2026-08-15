@@ -443,11 +443,11 @@ public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64)
 /// Create a strike exposure book for one expiry market.
 public(package) fun new(
     expiry_market_id: ID,
+    config: StrikeExposureConfig,
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
     inventory_impact_scale: u64,
-    config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
     assert!(inventory_impact_scale > 0, EInvalidInventoryImpactScale);
