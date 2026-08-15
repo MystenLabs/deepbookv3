@@ -6,7 +6,7 @@
 /// production mint flow, then asserts `current_nav` exactly equals an INDEPENDENT
 /// per-order reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed
 /// straight from each order's atoms and `pricing::range_price`. The reference
-/// reuses NONE of `walk_linear` / `exact_live_liability` / `current_nav` /
+/// reuses NONE of `walk_linear` / `live_marked_liability` / `current_nav` /
 /// `expiry_cash::free_cash`, so it is a genuine oracle (unit-tests rule 1): it
 /// sums per order, while the contract nets per boundary.
 ///

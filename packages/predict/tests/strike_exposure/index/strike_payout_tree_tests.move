@@ -311,7 +311,7 @@ fun remove_adjacent_range_preserves_shared_live_boundary() {
     destroy(tree);
 }
 
-#[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutTerms)]
+#[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutQuantity)]
 fun remove_more_than_inserted_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);
@@ -320,7 +320,7 @@ fun remove_more_than_inserted_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutTerms)]
+#[test, expected_failure(abort_code = strike_payout_tree::EInsufficientPayoutQuantity)]
 fun remove_from_empty_tree_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut tree = new_tree(ctx);

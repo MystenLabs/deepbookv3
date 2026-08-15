@@ -65,7 +65,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
         test_constants::mint_quantity(),
     );
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
-    let premium = quote.net_premium();
+    let premium = quote.premium();
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,

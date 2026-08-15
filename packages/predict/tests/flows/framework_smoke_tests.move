@@ -45,7 +45,7 @@ fun setup_everything_check_manager_bundle_return_smoke() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     assert_eq!(helpers::position_count_bundle(&account, expiry_id), 1);
-    // A mint charges a non-zero fee and a non-zero net_premium, so the free balance
+    // A mint charges a non-zero fee and a non-zero premium, so the free balance
     // strictly decreases.
     assert!(helpers::fees_paid_bundle(&account, expiry_id) > 0);
     assert!(fx.account_balance_bundle<DUSDC>(&account) < test_constants::default_manager_deposit());

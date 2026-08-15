@@ -37,7 +37,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     assert_eq!(quote.inventory_impact_charge(), EXPECTED_SINGLE_ORDER_CHARGE);
     assert_eq!(
         quote.all_in_cost(),
-        quote.net_premium()
+        quote.premium()
             + (quote.trading_fee() - quote.fee_incentive_subsidy())
             + quote.builder_fee()
             + quote.penalty_fee()
@@ -63,7 +63,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     assert_eq!(
         helpers::market(&market).cash_balance(),
         cash_before_mint
-            + quote.net_premium()
+            + quote.premium()
             + quote.trading_fee()
             + quote.penalty_fee()
             + EXPECTED_SINGLE_ORDER_CHARGE,
@@ -75,7 +75,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     // liability reduction returns the exact charge independently of the normal
     // close fee.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    let gross = fx.order_value_bundle(&market, order_id);
+    let gross = fx.live_order_value_bundle(&market, order_id);
     let balance_before_close = fx.account_balance_bundle<DUSDC>(&account);
     fx.redeem_bundle(
         &mut market,

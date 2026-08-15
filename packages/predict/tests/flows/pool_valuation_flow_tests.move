@@ -621,7 +621,7 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
     );
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
-    quote.net_premium()
+    quote.premium()
 }
 
 /// Build a production-created market whose full pool allocation is deployed into

@@ -1441,7 +1441,7 @@ public fun quote_mint_bundle(
 }
 
 /// Anonymous read-only budget-bias mint quote through a market bundle: quotes
-/// the largest lot-rounded quantity whose net premium fits `max_premium`.
+/// the largest lot-rounded quantity whose premium fits `max_premium`.
 public fun quote_mint_amount_bundle(
     self: &mut Fixture,
     market: &MarketBundle,
@@ -1594,7 +1594,7 @@ public fun mint_exact_quantity(
     )
 }
 
-/// Mint the largest lot-rounded order through bundles for an explicit net-premium
+/// Mint the largest lot-rounded order through bundles for an explicit premium
 /// amount, minimum quantity, and all-in cost cap.
 public fun mint_exact_amount_bundle(
     self: &mut Fixture,
@@ -1622,7 +1622,7 @@ public fun mint_exact_amount_bundle(
     )
 }
 
-/// Mint the largest lot-rounded order that fits inside a fixed net premium amount.
+/// Mint the largest lot-rounded order that fits inside a fixed premium amount.
 public fun mint_exact_amount(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -1789,21 +1789,19 @@ public fun redeem_settled(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+): u256 {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    let (closed_id, replacement_id) = market.redeem_settled_permissionless(
+    let closed_id = market.redeem_settled_permissionless(
         &account_registry,
         wrapper,
         config,
         order_id,
-        close_quantity,
         root,
         &self.clock,
         self.scenario.ctx(),
     );
     return_shared(account_registry);
-    (closed_id, replacement_id)
+    closed_id
 }
 
 /// Owner-authorized settled redeem: clears a settled order using the current
@@ -1815,15 +1813,13 @@ public fun redeem_settled_with_owner_auth(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
     market.redeem_settled(
         wrapper,
         auth,
         config,
         order_id,
-        close_quantity,
         root,
         &self.clock,
         self.scenario.ctx(),
@@ -1836,15 +1832,13 @@ public fun redeem_settled_bundle(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+): u256 {
     self.redeem_settled(
         &market.config,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
         order_id,
-        close_quantity,
     )
 }
 
@@ -1854,15 +1848,13 @@ public fun redeem_settled_with_owner_auth_bundle(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+): u256 {
     self.redeem_settled_with_owner_auth(
         &market.config,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
         order_id,
-        close_quantity,
     )
 }
 
@@ -2074,16 +2066,14 @@ public fun current_nav_bundle(self: &mut Fixture, market: &MarketBundle): u64 {
 }
 
 /// Read one order's gross-of-fees live holder value through a market bundle.
-public fun order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
+public fun live_order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.order_value(option::some(pricer), order_id)
+    market.market.live_order_value(&pricer, order_id)
 }
 
-/// Read one settled or already-closed order's terminal holder value with no
-/// pricer — the only way to value an order once the market has settled, since no
-/// `Pricer` can be constructed post-expiry.
-public fun settled_order_value_bundle(market: &MarketBundle, order_id: u256): u64 {
-    market.market.order_value(option::none(), order_id)
+/// Read one settled order's terminal holder payout.
+public fun settled_order_payout_bundle(market: &MarketBundle, order_id: u256): u64 {
+    market.market.settled_order_payout(order_id)
 }
 
 public fun load_pricer(

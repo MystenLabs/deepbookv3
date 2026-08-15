@@ -71,12 +71,11 @@ fun redeem_settled_on_live_order_aborts() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    // Full close, but no proof and the order is live.
+    // No settlement transition has run, so the settled-only path rejects it.
     fx.redeem_settled_bundle(
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
 
     helpers::return_account_bundle(account);

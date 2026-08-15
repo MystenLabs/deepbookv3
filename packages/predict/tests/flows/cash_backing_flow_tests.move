@@ -4,7 +4,7 @@
 /// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability,
 /// rebate_reserve) triple after EVERY cash-mutating LIVE operation of a two-sided
 /// 1x book on the far expiry — mint, mint, partial live redeem. Pins that mint
-/// net_premium AND fee land in expiry cash, and that disjoint live liability is
+/// premium AND fee land in expiry cash, and that disjoint live liability is
 /// the max settlement floor plus the default gap buffer. Terminal settlement
 /// coverage lives in `settlement_flow_tests`.
 #[test_only]
@@ -63,7 +63,7 @@ fun cash_sheet_exact_after_every_flow() {
         test_constants::mint_quantity(),
     );
     helpers::assert_atm_entry_probability(quote1.entry_probability());
-    let mint1_principal = quote1.net_premium();
+    let mint1_principal = quote1.premium();
     let order1 = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -104,7 +104,7 @@ fun cash_sheet_exact_after_every_flow() {
     // the two probabilities sum to 1e9 with no approximation of their own.
     helpers::assert_atm_complement_entry_probability(quote2.entry_probability());
     assert_eq!(quote1.entry_probability() + quote2.entry_probability(), float!());
-    let mint2_principal = quote2.net_premium();
+    let mint2_principal = quote2.premium();
     let order2 = fx.mint_bundle(
         &mut market,
         &mut account,

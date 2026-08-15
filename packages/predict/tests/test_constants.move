@@ -151,7 +151,7 @@ public fun short_expiry_ms(): u64 { 240_000 }
 public fun mint_quantity(): u64 { 1_000_000_000 }
 
 /// Standard trader deposit for the short-expiry flow tests (covers one mint's
-/// net_premium + fee, with room for the winning payout).
+/// premium + fee, with room for the winning payout).
 public fun mint_deposit(): u64 { 1_000_000_000 }
 
 /// Default trader-manager deposit in the composite bring-up; large enough to fund

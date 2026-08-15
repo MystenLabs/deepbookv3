@@ -93,7 +93,7 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
     );
     // A 1x order fronts its full premium, and `mint_quantity()` is exactly one
     // contract, so the premium is the entry probability with nothing to round.
-    let premium = quote.net_premium();
+    let premium = quote.premium();
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(premium, quote.entry_probability());
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
@@ -150,13 +150,13 @@ fun account_quote_matches_anonymous_without_stake_or_builder() {
     );
 
     assert_eq!(for_account.entry_probability(), anonymous.entry_probability());
-    assert_eq!(for_account.net_premium(), anonymous.net_premium());
+    assert_eq!(for_account.premium(), anonymous.premium());
     assert_eq!(for_account.trading_fee(), anonymous.trading_fee());
     assert_eq!(for_account.fee_incentive_subsidy(), anonymous.fee_incentive_subsidy());
     assert_eq!(for_account.builder_fee(), anonymous.builder_fee());
     helpers::assert_atm_entry_probability(anonymous.entry_probability());
     assert_eq!(for_account.penalty_fee(), anonymous.penalty_fee());
-    assert_eq!(for_account.all_in_cost(), anonymous.net_premium() + MIN_TRADING_FEE);
+    assert_eq!(for_account.all_in_cost(), anonymous.premium() + MIN_TRADING_FEE);
     assert_eq!(for_account.all_in_cost(), anonymous.all_in_cost());
 
     helpers::return_account_bundle(account);
@@ -187,7 +187,7 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_RATE_CAP);
-    let with_subsidy = quote.net_premium() + MIN_TRADING_FEE - SUBSIDY_AT_RATE_CAP;
+    let with_subsidy = quote.premium() + MIN_TRADING_FEE - SUBSIDY_AT_RATE_CAP;
     assert_eq!(quote.all_in_cost(), with_subsidy);
 
     let order = fx.mint_exact_quantity_bundle(
@@ -230,7 +230,7 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    let premium = anonymous.net_premium();
+    let premium = anonymous.premium();
     helpers::assert_atm_entry_probability(anonymous.entry_probability());
     assert_eq!(anonymous.builder_fee(), 0);
     assert_eq!(anonymous.all_in_cost(), premium + MIN_TRADING_FEE);
@@ -306,7 +306,7 @@ fun raising_the_stake_benefit_template_cannot_discount_an_existing_market() {
     );
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
 
-    let premium = quote.net_premium();
+    let premium = quote.premium();
     fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -355,7 +355,7 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
     );
     helpers::assert_atm_entry_probability(same_epoch.entry_probability());
     assert_eq!(same_epoch.trading_fee(), MIN_TRADING_FEE);
-    assert_eq!(same_epoch.all_in_cost(), same_epoch.net_premium() + MIN_TRADING_FEE);
+    assert_eq!(same_epoch.all_in_cost(), same_epoch.premium() + MIN_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -372,7 +372,7 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    let premium = stale.net_premium();
+    let premium = stale.premium();
     assert_eq!(stale.all_in_cost(), premium + MIN_TRADING_FEE);
 
     // The mint rolls the stake first, so the stale quote as max_cost cannot
@@ -402,7 +402,7 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         test_constants::mint_quantity(),
     );
     assert_eq!(rolled.trading_fee(), DISCOUNTED_TRADING_FEE);
-    assert_eq!(rolled.all_in_cost(), rolled.net_premium() + DISCOUNTED_TRADING_FEE);
+    assert_eq!(rolled.all_in_cost(), rolled.premium() + DISCOUNTED_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -474,7 +474,7 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.penalty_fee(), EWMA_PENALTY_FLAT);
-    let with_penalty = quote.net_premium() + MIN_TRADING_FEE + EWMA_PENALTY_FLAT;
+    let with_penalty = quote.premium() + MIN_TRADING_FEE + EWMA_PENALTY_FLAT;
     assert_eq!(quote.all_in_cost(), with_penalty);
 
     let order = fx.mint_exact_quantity_bundle(

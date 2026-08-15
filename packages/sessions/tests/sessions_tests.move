@@ -423,19 +423,17 @@ fun unapproved_session_cannot_use_predict_wrapper() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    let closed_order_id = sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
-    destroy(replacement_order_id);
 
     abort EUnexpectedSuccess
 }
@@ -557,19 +555,17 @@ fun session_at_exact_expiration_cannot_use_predict_wrapper() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    let closed_order_id = sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
-    destroy(replacement_order_id);
 
     abort EUnexpectedSuccess
 }
@@ -589,19 +585,17 @@ fun revoked_session_cannot_use_predict_wrapper() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    let closed_order_id = sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
-    destroy(replacement_order_id);
 
     abort EUnexpectedSuccess
 }
@@ -620,19 +614,17 @@ fun another_signer_cannot_use_an_approved_session() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    let closed_order_id = sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
     destroy(closed_order_id);
-    destroy(replacement_order_id);
 
     abort EUnexpectedSuccess
 }
@@ -708,7 +700,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
     } = begin_live_tx(&mut fixture, SESSION);
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
-    let gross_value = market.order_value(option::some(copy pricer), order_id);
+    let gross_value = market.live_order_value(&pricer, order_id);
     let (closed_order_id, replacement_order_id) = sessions::redeem_live(
         &mut market,
         &account_registry,
@@ -788,7 +780,7 @@ fun session_mints_exact_amount() {
     );
     predict_helpers::assert_atm_entry_probability(expected_quote.entry_probability());
     // One raw unit below the next lot's premium must size exactly ten thousand lots.
-    let budget = next_lot_quote.net_premium() - ONE_RAW_UNIT;
+    let budget = next_lot_quote.premium() - ONE_RAW_UNIT;
     let order_id = sessions::mint_exact_amount(
         &mut market,
         &account_registry,
@@ -890,20 +882,18 @@ fun session_redeems_settled_order() {
     } = begin_settled_tx(&mut fixture, SESSION);
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
-    assert_eq!(market.order_value(option::none(), order_id), test_constants::mint_quantity());
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    assert_eq!(market.settled_order_payout(order_id), test_constants::mint_quantity());
+    let closed_order_id = sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         order_id,
-        test_constants::mint_quantity(),
         &root,
         clock,
         scenario.ctx(),
     );
     assert_eq!(closed_order_id, order_id);
-    assert!(replacement_order_id.is_none());
     assert_eq!(
         wrapper.load_account().balance<DUSDC>(&root, clock),
         post_mint_balance + test_constants::mint_quantity(),

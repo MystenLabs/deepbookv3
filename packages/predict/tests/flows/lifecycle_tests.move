@@ -13,7 +13,7 @@ use std::unit_test::assert_eq;
 
 /// Per-trade fee floors at `min_fee` (base_fee floored to 1 in the fixture).
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// The post-mint free balance is `mint_deposit - net_premium - fee`. The premium
+/// The post-mint free balance is `mint_deposit - premium - fee`. The premium
 /// is read from the quote the mint pays rather than written down: a 1x order
 /// fronts its full premium, `quote_mint_tests` owns that composition, and
 /// `pricing_exact_tests` owns the at-the-money digital behind it.
@@ -46,7 +46,7 @@ fun one_x_lifecycle_fund_mint() {
         test_constants::mint_quantity(),
     );
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
-    let premium = quote.net_premium();
+    let premium = quote.premium();
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
