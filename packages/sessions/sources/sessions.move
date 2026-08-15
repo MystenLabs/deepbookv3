@@ -290,7 +290,7 @@ public fun redeem_live(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u256, Option<u256>) {
+): Option<u256> {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
     market.redeem_live(
         wrapper,
@@ -317,7 +317,7 @@ public fun redeem_settled(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): u256 {
+) {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
     market.redeem_settled(
         wrapper,

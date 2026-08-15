@@ -261,18 +261,20 @@ public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
 
 /// Return one live order's full-close range value before fees. Requires a
 /// market-bound `Pricer` and does not prove account ownership of `order_id`.
+/// Public for SDK, PTB, and devInspect position valuation.
 public fun live_order_value(market: &ExpiryMarket, pricer: &Pricer, order_id: u256): u64 {
     market.assert_pricer_bound(pricer);
     let order = order::from_order_id(order_id);
-    market.strike_exposure.quote_live_close(pricer, &order, order.quantity()).redeem_amount()
+    market.strike_exposure.live_order_value(pricer, &order)
 }
 
 /// Return one settled order's terminal payout. This function does not prove
-/// account ownership of `order_id`.
+/// account ownership of `order_id`. Public for SDK, PTB, and devInspect position
+/// valuation.
 public fun settled_order_payout(market: &ExpiryMarket, order_id: u256): u64 {
     assert!(market.is_settled(), EMarketNotSettled);
     let order = order::from_order_id(order_id);
-    market.strike_exposure.quote_settled_close(&order).payout()
+    market.strike_exposure.settled_order_payout(&order)
 }
 
 /// Return the market mint-pause state for SDK and devInspect reads.
@@ -514,8 +516,7 @@ public fun mint_exact_amount(
 ///
 /// A live order is priced and closed (partial or full). Settled orders must use
 /// `redeem_settled`.
-/// Returns `(closed_order_id, replacement_order_id)`; a replacement is present
-/// only when a live partial close leaves quantity open.
+/// Returns a replacement order ID only when a partial close leaves quantity open.
 ///
 /// Two close-side slippage floors, the mirror of mint's `max_probability` /
 /// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
@@ -536,7 +537,7 @@ public fun redeem_live(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u256, Option<u256>) {
+): Option<u256> {
     market.assert_live_flow_allowed(config, pricer);
     market.redeem_live_with_auth(
         wrapper,
@@ -567,7 +568,7 @@ public fun redeem_settled(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): u256 {
+) {
     market.assert_settled_flow_allowed(config);
     market.redeem_settled_with_auth(
         wrapper,
@@ -593,7 +594,7 @@ public fun redeem_settled_permissionless(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): u256 {
+) {
     market.assert_settled_flow_allowed(config);
     let auth = predict_account::generate_auth_as_app(account_registry);
     market.redeem_settled_with_auth(
@@ -621,12 +622,12 @@ public fun set_reference_tick(
     config.assert_not_valuation_in_progress();
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
-    let spot = pricing::load_exact_spot_read(
+    let spot = pricing::load_exact_spot(
         propbook_registry,
         pyth,
         market.propbook_underlying_id,
         source_timestamp_ms,
-    ).into_spot();
+    );
     assert!(spot.is_some(), EReferenceTickObservationMissing);
 
     let spot = spot.destroy_some();
@@ -673,12 +674,12 @@ public fun try_settle(
     if (market.is_settled()) return true;
     if (clock.timestamp_ms() < market.expiry) return false;
 
-    let spot = pricing::load_exact_spot_read(
+    let spot = pricing::load_exact_spot(
         propbook_registry,
         pyth,
         market.propbook_underlying_id,
         market.expiry,
-    ).into_spot();
+    );
     if (spot.is_none()) return false;
     let settlement_price = spot.destroy_some();
     market.strike_exposure.record_settlement(settlement_price);
@@ -809,7 +810,6 @@ public(package) fun create_and_share(
         fee_incentive_balance: balance::zero(),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
-            expiry,
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
@@ -922,7 +922,9 @@ fun compute_mint_quote(
 ): MintQuote {
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
-    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
+    let raw_fee_amount = market
+        .strike_exposure
+        .trading_fee(market.expiry, entry_probability, quantity, clock);
     let trading_fee = market.stake_config.fee_amount_after_discount(raw_fee_amount, active_stake);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
@@ -1011,7 +1013,7 @@ fun redeem_live_with_auth(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u256, Option<u256>) {
+): Option<u256> {
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
@@ -1044,6 +1046,7 @@ fun redeem_live_with_auth(
     let fee_amount = market
         .strike_exposure
         .trading_fee(
+            market.expiry,
             range_probability,
             close_quantity,
             clock,
@@ -1124,7 +1127,7 @@ fun redeem_live_with_auth(
         inventory_impact_rebate,
         clock.timestamp_ms(),
     );
-    (order.id(), replacement_order_id)
+    replacement_order_id
 }
 
 fun redeem_settled_with_auth(
@@ -1135,13 +1138,10 @@ fun redeem_settled_with_auth(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): u256 {
+) {
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
-    let terms = market.strike_exposure.quote_settled_close(&order);
-    let payout_amount = terms.payout();
-    let settlement = market.settlement_price();
 
     let position_root_id = predict_account::remove_position(
         account,
@@ -1149,7 +1149,7 @@ fun redeem_settled_with_auth(
         order.id(),
         ctx,
     );
-    market.strike_exposure.process_settled_close(terms);
+    let payout_amount = market.strike_exposure.process_settled_close(&order);
     predict_account::record_gross_received_from_expiry(account, market.id(), payout_amount, ctx);
     // A settled losing position pays nothing; the settled redeem is
     // permissionless, so guard the amount before dispensing rather than
@@ -1166,11 +1166,9 @@ fun redeem_settled_with_auth(
         account.owner(),
         &order,
         position_root_id,
-        settlement,
         payout_amount,
         clock.timestamp_ms(),
     );
-    order.id()
 }
 
 /// Settle a live redeem per an already-computed payment decomposition: pay out

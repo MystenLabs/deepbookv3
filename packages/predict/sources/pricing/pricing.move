@@ -72,13 +72,6 @@ public struct PricingSVI has copy, drop {
     sigma: u64,
 }
 
-/// Canonical normalized Pyth spot read at one exact source timestamp.
-/// Constructed only by `load_exact_spot_read`; consumers decide whether an
-/// absent exact-history row is a no-op or an abort.
-public struct ExactSpotRead has drop {
-    spot: Option<u64>,
-}
-
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const ENonPositiveVariance: u64 = 2;
@@ -172,11 +165,6 @@ public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_
     scaled as u128
 }
 
-public(package) fun into_spot(read: ExactSpotRead): Option<u64> {
-    let ExactSpotRead { spot } = read;
-    spot
-}
-
 /// Validate the current live pricing boundary and snapshot oracle inputs for
 /// one market's repeated quote calculations.
 ///
@@ -223,20 +211,19 @@ public(package) fun load_live_pricer(
 /// Validate the canonical Pyth binding and read its normalized spot at exactly
 /// `source_timestamp_ms`. The product preserves absence so the reference-tick
 /// and settlement flows can retain their distinct missing-data policies.
-public(package) fun load_exact_spot_read(
+public(package) fun load_exact_spot(
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
     propbook_underlying_id: u32,
     source_timestamp_ms: u64,
-): ExactSpotRead {
+): Option<u64> {
     assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
     let read = pyth.normalized_spot_at(source_timestamp_ms);
-    let spot = if (read.is_some()) {
+    if (read.is_some()) {
         option::some(read.destroy_some().read_value())
     } else {
         option::none()
-    };
-    ExactSpotRead { spot }
+    }
 }
 
 // === Private Functions ===

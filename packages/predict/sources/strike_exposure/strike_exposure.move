@@ -34,8 +34,6 @@ const EInvalidInventoryImpactScale: u64 = 6;
 public struct StrikeExposure has store {
     /// Expiry market that owns this exposure book.
     expiry_market_id: ID,
-    /// Terminal timestamp used by fee and settlement math.
-    expiry_ms: u64,
     /// Raw-price-per-tick conversion factor; `raw_strike = tick * tick_size`.
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
@@ -90,14 +88,6 @@ public struct LiveCloseTerms has drop {
     inventory_impact_rebate: u64,
 }
 
-/// Compute-once terms for one full settled close. Built only by
-/// `quote_settled_close` and consumed by value in `process_settled_close`.
-public struct SettledCloseTerms has drop {
-    expiry_market_id: ID,
-    order: Order,
-    payout: u64,
-}
-
 public(package) fun entry_probability(terms: &MintTerms): u64 {
     terms.entry_probability
 }
@@ -124,10 +114,6 @@ public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
 
 public(package) fun inventory_impact_rebate(terms: &LiveCloseTerms): u64 {
     terms.inventory_impact_rebate
-}
-
-public(package) fun payout(terms: &SettledCloseTerms): u64 {
-    terms.payout
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -165,6 +151,32 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// the per-order sum by boundary rounding; it is clamped at zero once, in the walk.
 public(package) fun live_marked_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     exposure.payout.walk_linear(pricer, exposure.tick_size)
+}
+
+/// Return one live order's full-close range value without consulting book state.
+public(package) fun live_order_value(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): u64 {
+    math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
+}
+
+/// Return one settled order's full terminal payout.
+public(package) fun settled_order_payout(exposure: &StrikeExposure, order: &Order): u64 {
+    let settlement_price = exposure.settlement_price();
+    if (
+        range_codec::settlement_in_range(
+            order.lower_tick(),
+            order.higher_tick(),
+            settlement_price,
+            exposure.tick_size,
+        )
+    ) {
+        order.quantity()
+    } else {
+        0
+    }
 }
 
 /// Return the backing-buffer lambda snapshotted for this exposure book.
@@ -210,6 +222,7 @@ public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
 /// snapshotted config needed to price it.
 public(package) fun trading_fee(
     exposure: &StrikeExposure,
+    expiry_ms: u64,
     probability: u64,
     quantity: u64,
     clock: &Clock,
@@ -217,7 +230,7 @@ public(package) fun trading_fee(
     exposure
         .config
         .trading_fee(
-            exposure.expiry_ms,
+            expiry_ms,
             probability,
             quantity,
             clock.timestamp_ms(),
@@ -240,37 +253,6 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     // disabled markets do not perform a second payout-tree read here.
     if (exposure.is_settled() || exposure.config.inventory_impact_max_rate() == 0) return 0;
     exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
-}
-
-/// Return how much live payout liability `payout` over `(lower_tick,
-/// higher_tick]` would add or remove.
-///
-/// With current point maximum `M`, total `T`, peak in the range `R`, peak in its
-/// complement `C`, and backing buffer `lambda`, the max-point movement is:
-///
-/// - add:    `g = max(M, R + N) - M`
-/// - remove: `g = M - max(R - N, C)`
-///
-/// In real arithmetic, `delta L = lambda*N + (1-lambda)*g`. On chain this
-/// function evaluates the complete before/after liabilities instead, preserving
-/// the fixed-point carry from the book's existing `T-M` gap. Cold, disjoint
-/// exposure moves only the buffered part; exposure that raises the worst
-/// settlement point moves close to its full net payout.
-public(package) fun marginal_payout_liability(
-    exposure: &StrikeExposure,
-    lower_tick: u64,
-    higher_tick: u64,
-    payout: u64,
-    adding: bool,
-): u64 {
-    if (payout == 0) return 0;
-    let (before, after) = exposure.payout_liabilities_after_change(
-        lower_tick,
-        higher_tick,
-        payout,
-        adding,
-    );
-    if (adding) after - before else before - after
 }
 
 /// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
@@ -424,33 +406,13 @@ public(package) fun process_live_close(
     option::some(replacement_order)
 }
 
-/// Quote one settled order's full terminal payout against the recorded
-/// settlement: `quantity` for a win, zero for a loss.
-public(package) fun quote_settled_close(
-    exposure: &StrikeExposure,
-    order: &Order,
-): SettledCloseTerms {
-    let settlement_price = exposure.settlement_price();
-    let won = range_codec::settlement_in_range(
-        order.lower_tick(),
-        order.higher_tick(),
-        settlement_price,
-        exposure.tick_size,
-    );
-    SettledCloseTerms {
-        expiry_market_id: exposure.expiry_market_id,
-        order: *order,
-        payout: if (won) order.quantity() else 0,
-    }
-}
-
-/// Release one quoted full terminal payout from settled liability.
-public(package) fun process_settled_close(exposure: &mut StrikeExposure, terms: SettledCloseTerms) {
-    let SettledCloseTerms { expiry_market_id, payout, .. } = terms;
-    assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
+/// Release one order's full terminal payout from settled liability and return it.
+public(package) fun process_settled_close(exposure: &mut StrikeExposure, order: &Order): u64 {
+    let payout = exposure.settled_order_payout(order);
     // Settlement liability and individual payouts use the same integer quantity
     // atoms, so the subtraction is additive without rounding dust.
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
+    payout
 }
 
 /// Enter the settled phase by recording the terminal price and aggregate payout
@@ -481,7 +443,6 @@ public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64)
 /// Create a strike exposure book for one expiry market.
 public(package) fun new(
     expiry_market_id: ID,
-    expiry_ms: u64,
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
@@ -492,7 +453,6 @@ public(package) fun new(
     assert!(inventory_impact_scale > 0, EInvalidInventoryImpactScale);
     StrikeExposure {
         expiry_market_id,
-        expiry_ms,
         tick_size,
         admission_tick_size,
         reference_tick_source_timestamp_ms,

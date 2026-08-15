@@ -64,19 +64,9 @@ public(package) fun higher_tick(order: &Order): u64 {
     decode_tick(order.id, HIGHER_TICK_OFFSET)
 }
 
-/// Return the encoded quantity in position lots.
-public(package) fun quantity_lots(order: &Order): u64 {
-    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
-}
-
 /// Return the immutable quantity encoded in this order.
 public(package) fun quantity(order: &Order): u64 {
     order.quantity_lots() * constants::position_lot_size!()
-}
-
-/// Return the expiry-local sequence encoded in this order.
-public(package) fun sequence(order: &Order): u64 {
-    (order.id & U40_MASK) as u64
 }
 
 /// Construct an order ID from validated strike ticks.
@@ -126,6 +116,10 @@ fun new(lower_tick: u64, higher_tick: u64, quantity_lots: u64, sequence: u64): O
 
 fun decode_tick(id: u256, offset: u8): u64 {
     ((id >> offset) & tick_mask!()) as u64
+}
+
+fun quantity_lots(order: &Order): u64 {
+    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
 }
 
 fun quantity_lots_from_quantity(quantity: u64): u64 {
