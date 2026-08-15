@@ -1,8 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// End-to-end coverage for consecutive partial live closes. Each close replaces
-/// the account position and preserves market backing for the remaining quantity.
+/// End-to-end coverage for live partial-close replacement chains and their
+/// terminal settlement. Pins position replacement, market backing, terminal
+/// liability release, and stable-root event attribution.
 #[test_only]
 module deepbook_predict::partial_close_flow_tests;
 
@@ -15,6 +16,7 @@ const FIRST_CLOSE: u64 = 300_000_000;
 const SECOND_CLOSE: u64 = 200_000_000;
 const REMAINING_AFTER_FIRST_CLOSE: u64 = 700_000_000;
 const ONE_EVENT: u64 = 1;
+const ZERO_LIABILITY: u64 = 0;
 
 public struct ExpectedSettledOrderRedeemed has copy, drop {
     expiry_market_id: ID,
@@ -111,7 +113,7 @@ fun partial_close_replacement_redeems_settled_under_original_root() {
         fx.account_balance_bundle<DUSDC>(&account),
         balance_before_redeem + REMAINING_AFTER_FIRST_CLOSE,
     );
-    assert_eq!(helpers::market(&market).payout_liability(), 0);
+    assert_eq!(helpers::market(&market).payout_liability(), ZERO_LIABILITY);
     assert!(!helpers::has_position_bundle(&account, expiry_id, replacement_order_id));
 
     let events = event::events_by_type<order_events::SettledOrderRedeemed>();
