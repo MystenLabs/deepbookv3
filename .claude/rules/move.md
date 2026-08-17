@@ -48,7 +48,7 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
   Exceptions: `init` and its init-only private helpers come early (after struct definitions); constant-like `macro fun`s (no parameters, literal or derived-constant bodies) live in the constants section near the top of the module and are exempt from visibility-group ordering.
 
   Flow exceptions (selective — not a general license to arrange by flow; the default ordering above dominates):
-  - **Terms-token pairs stay adjacent**: a function returning a by-value terms value and the single function that consumes it (`quote_mint_terms`/`allocate_mint_order`, `quote_close`/`process_close`) order as a pair at the consumer's (write) position — a quote and its consumer are one lifecycle, not an independent read and write.
+  - **Terms-token pairs stay adjacent**: a function returning a by-value terms value and the single function that consumes it (`quote_mint_terms`/`allocate_mint_order`, `quote_live_close`/`process_live_close`) order as a pair at the consumer's (write) position — a quote and its consumer are one lifecycle, not an independent read and write.
   - **A callee never appears above any of its callers** within the private section; helpers called from more than one flow therefore sit below their last caller (which naturally forms a shared tail and documents cross-flow reach).
 
 - Module error constants are declared in ascending order with no gaps. Pre-deploy, deleting a code means renumbering the survivors to close the gap in the same change. Post-deploy, codes are frozen surface (see immutable-deploy below): never renumber a shipped constant — deletions leave permanent gaps, and new codes append past the highest ever used.

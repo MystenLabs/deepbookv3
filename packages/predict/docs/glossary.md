@@ -3,7 +3,7 @@
 Technical definitions for the terms the Predict docs and code use, with the
 established options / structured-product term each one maps to and the code
 identifier it corresponds to. Mint-economics identifiers (`entry_value`,
-`net_premium`) match these terms directly.
+`premium`) match these terms directly.
 
 ## The product
 
@@ -67,7 +67,7 @@ grid, no boundary indices).
 - **Full premium** — the contract's complete entry value,
   `entry_probability × quantity`; code `entry_value`.
 - **Net premium** — what the buyer pays upfront, equal to the full premium
-  (`entry_probability × quantity`); code `net_premium`. The remainder is
+  (`entry_probability × quantity`); code `premium`. The remainder is
   financed (see below). Fees are charged on top and are never part of the
   contract's terms.
 - **Mark value (live value)** — the contract's current model value,

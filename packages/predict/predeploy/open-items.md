@@ -298,7 +298,7 @@ true of the generator but not of the committed data.
 with an unbounded consequence. Launch blocker before listing a session-traded
 asset.
 
-Settlement reads one exact key. `try_settle` calls `load_exact_spot_read` at
+Settlement reads one exact key. `try_settle` calls `load_exact_spot` at
 `market.expiry`, and the only way to fill that key is
 `pyth_feed::insert_at`, which requires an envelope stamped at exactly that
 millisecond carrying a price generated no more than

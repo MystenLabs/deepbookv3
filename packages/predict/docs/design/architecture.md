@@ -157,7 +157,7 @@ A priced trade composes an `ExpiryMarket`, Propbook's `OracleRegistry`, the curr
 - **Market → pool.** `create_and_share_expiry_market` registers the new expiry in `PoolVault`'s active-expiry ledger as a zero-cash accounting row. The market is not mintable until `plp::rebalance_expiry_cash` funds it from idle; the expiry never pulls from the pool itself.
 - **Account → market.** Positions are keyed by `(expiry_market_id, order_id)` inside Predict account data, so an order minted by one expiry can only be redeemed against that same expiry's market. Owner auth or Predict app-auth controls who can load the account for the flow; the position key controls which market/order pair the loaded account may mutate.
 
-`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or exact-history `ExactSpotRead`; the propbook oracle objects own their stored payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
+`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or an exact-history spot read; the propbook oracle objects own their stored payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
 
 ## Oracle feeds (external, in `propbook`)
 

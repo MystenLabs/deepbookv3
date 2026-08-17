@@ -1,4 +1,4 @@
-// Strategy 2: mixed churn — leveraged mints, partial + full redeems, random expiries, plus
+// Strategy 2: mixed churn — mints, partial + full redeems, random expiries, plus
 // LP supply/withdraw. Exercises the broad trade + LP surface. One op per tick (≥1s apart) so
 // open+close never land in the same Clock ms.
 import { type Instruction } from "../resolver.js";
@@ -35,13 +35,12 @@ const mixedChurn: Strategy = {
       }
       return ctx.redeem(h, close);
     }
-    // else: a leveraged mint into a random expiry.
-    const market = ctx.randomLeveragedExpiry();
+    // else: a mint into a random expiry.
+    const market = ctx.randomExpiry();
     if (!market) return null;
     const p = ctx.rand(0.1, 0.9);
     const inst: Instruction = {
       direction: ctx.pick(["UP", "DN"]) as "UP" | "DN",
-      leverage: ctx.rand(1, ctx.leverageCap(p)),
       targetProbability: p,
       spendUsd: ctx.rand(20, 200),
     };

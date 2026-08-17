@@ -62,7 +62,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## NAV and valuation
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  free_cash − exact_live_liability`, floored at zero, where `free_cash =
+  free_cash − live_marked_liability`, floored at zero, where `free_cash =
   cash − rebate_reserve − inventory_impact_reserve` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
@@ -115,7 +115,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Raw `entry_probability` must lie in `[min_entry_probability,
   max_entry_probability]`; fees are not included in this admission bound.
-- `net_premium = entry_probability × quantity ≥ min_net_premium`; the holder
+- `premium = entry_probability × quantity ≥ min_premium`; the holder
   pays this in full — there is no financed remainder.
 
 ## Order encoding
@@ -199,7 +199,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Cross-module returns carry owned facts, not a consumer's policy.** A module
   returns quantities it is the source of truth for (an exposure book returns its raw
   live liability; the pool returns its profit basis), never a value pre-shaped for a
-  caller's mark, haircut, or stance. `strike_exposure::exact_live_liability` returns
+  caller's mark, haircut, or stance. `strike_exposure::live_marked_liability` returns
   the liability fact; `expiry_market::current_nav` owns the NAV cash floor.
 - **Each economic quantity is clamped exactly once, at the policy owner.** A lossy
   transform (clamp at zero, `min`/`max`, saturating subtraction, rounding) is applied

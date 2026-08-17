@@ -621,7 +621,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Blast radius:** reference-tick selection for one expiry market. Settlement
   already consumed the same exact lookup without repeating the timestamp check.
 - **Response:** proceed — Predict trusts the Propbook exact-read contract and
-  pricing's opaque `ExactSpotRead` retains only the optional normalized value.
+  pricing's exact-spot read returns only the optional normalized value.
 - **Reasoning:** `oracle_lane::insert_at` keys `exact_reads` by the inserted
   read's `source_timestamp_ms`; `read_at(timestamp)` can return only the value
   stored under that exact key; and `pyth_feed::normalized_spot_from_read`
@@ -630,7 +630,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Duty inventory (guard removal):** the deleted assert only re-checked that
   exact-key invariant. It did not bound spot value, arithmetic headroom,
   freshness, landing time, grid alignment, or market identity. Canonical-feed
-  identity remains checked by `pricing::load_exact_spot_read`; missing or
+  identity remains checked by `pricing::load_exact_spot`; missing or
   unnormalizable history remains `Option::none`; and no consumer used the
   discarded update timestamp.
 - **Risk profile:** `BEST-GUESS` — unreachable by construction at current
@@ -763,7 +763,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 > **RETIRED 2026-08-14 — trigger state unreachable.** Leverage was removed from
 > Predict, so no order carries a floor, there is no knock-out threshold, and the
-> NAV correction this entry governs no longer exists. `exact_live_liability` is
+> NAV correction this entry governs no longer exists. `live_marked_liability` is
 > now the payout-tree linear walk alone. The entry is kept for the decision
 > record; its pinning tests were removed with the leveraged NAV correction.
 
@@ -876,7 +876,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   between build and execution, and neither is caller-controlled.
 - **Blast radius:** one caller's own mint. No protocol-side or cross-user effect.
 - **Response:** `abort` (user-recoverable single-user action). The entrypoint
-  takes `max_cost`, the all-in ceiling on `net_premium + trader-paid fee +
+  takes `max_cost`, the all-in ceiling on `premium + trader-paid fee +
   builder_fee + EWMA penalty`, and aborts `EMintCostAboveMax` when the fill would
   breach it. The cap is **required**: zero aborts `EMintCostCapRequired`, and no
   value disables it — the budget shape exists to bound spend, so a caller opting
@@ -1257,7 +1257,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (outside this package's test tree).
 - **Reopen when:** a ΔP surcharge or similar cross-tx oracle-move fee lands; the
   redundant `EMintRedeemSameTimestamp` guard is removed as a follow-up; or
-  `load_exact_spot_read` (settlement / reference-tick exact history) is brought
+  `load_exact_spot` (settlement / reference-tick exact history) is brought
   under a same-tx policy after an explicit threat-model review (different path:
   `insert_at` already bounds carry via `ESettlementCarryExceedsWindow`).
 - **Layout note:** adding `writer_digest` to `OracleRead` / `BsRead` changes

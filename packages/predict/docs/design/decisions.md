@@ -295,7 +295,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
   `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
   oracle object IDs. `pricing` validates passed feeds against Propbook's current
-  canonical binding and issues either an exact-history `ExactSpotRead` for reference
+  canonical binding and issues either an exact-history spot read for reference
   tick and settlement or a live `Pricer` after applying liveness, freshness, and the
   pricing-safe envelope. *Rationale:* Propbook owns source identity and canonical
   binding; Predict pricing owns the only conversion from Propbook objects into
@@ -386,9 +386,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
   a trustless on-chain crank), a multi-tx crank, and a flush that pauses trading.
 - **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
-  `current_nav = free_cash − exact_per_order_liability`, floored at zero, where the
-  liability is the payout-tree linear walk minus the leveraged-book floor correction;
-  an underwater leveraged order nets to zero with no liquidation pass. The flush
+  `current_nav = free_cash − live_marked_liability`, floored at zero, where the
+  liability is the payout tree's boundary-linear walk alone, with no per-order
+  correction (leverage was removed — see "Leverage removal" below). The flush
   prices supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of
   the pending-protocol-profit exclusion). *Rationale (audit L10):* one mark used in
   both directions must equal true recoverable value, so it must be exact — a
@@ -602,7 +602,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Leverage removal (2026-08-14)
 
 - **Leverage, the static floor, and knock-out liquidation are removed entirely.** Every position is 1x: live value is `quantity × range_probability`, and a winning position settles for its full `quantity`. There is no floor, no financed amount, no liquidation book, no knock-out threshold, and no near-expiry leverage-admission window. *Rationale:* leverage's risk surface — the liquidation book, the NAV floor correction, the bounded liquidation sweep folded into mint and live redeem, the probability-sensitive admission cap, and the near-expiry block — was disproportionate to its value pre-launch; removing it collapses NAV to a single boundary-linear walk and deletes an entire class of keeper-timeliness risk. *Superseded:* every leverage/floor/knock-out decision above in "Economic model", "Data structures", and "Near-expiry leverage block", retired in place rather than deleted, per the response-policy register's RETIRED convention (RP-17).
-- **Mint admission is an entry-probability band plus a minimum net premium.** `strike_exposure_config::assert_mint_admission` requires `entry_probability` inside `[min_entry_probability, max_entry_probability]` and `net_premium = entry_probability × quantity >= min_net_premium`; the holder pays the contract's full entry value, so net premium equals entry value. *Rejected:* keeping the admission machinery as a dead 1x-only code path — deleting it removes the liquidation book's guard surface entirely rather than leaving it unreachable.
+- **Mint admission is an entry-probability band plus a minimum premium.** `strike_exposure_config::assert_mint_admission` requires `entry_probability` inside `[min_entry_probability, max_entry_probability]` and `premium = entry_probability × quantity >= min_premium`; the holder pays the contract's full entry value, so premium equals entry value. *Rejected:* keeping the admission machinery as a dead 1x-only code path — deleting it removes the liquidation book's guard surface entirely rather than leaving it unreachable.
 - **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
 
 See `predeploy/response-policies.md` RP-27 for the guard-duty inventory this removal required.

@@ -13,7 +13,6 @@ export type CapacityProfile = "single" | "pool" | "tree";
 interface CapacityConfig {
   profile: CapacityProfile;
   batchSize: number;
-  leverage: number;
   probability: [number, number];
 }
 
@@ -21,19 +20,16 @@ const CONFIG: Record<CapacityProfile, CapacityConfig> = {
   single: {
     profile: "single",
     batchSize: 40,
-    leverage: 1.1,
     probability: [0.45, 0.6],
   },
   pool: {
     profile: "pool",
     batchSize: 40,
-    leverage: 1.1,
     probability: [0.45, 0.6],
   },
   tree: {
     profile: "tree",
     batchSize: 12,
-    leverage: 1,
     probability: [0.02, 0.98],
   },
 };
@@ -50,13 +46,11 @@ function farMarket(ctx: StrategyCtx): Mkt | null {
 function mintLeg(
   ctx: StrategyCtx,
   market: Mkt,
-  leverage: number,
   probability: number,
   isUp = true,
 ): MintLeg | null {
   const instruction: Instruction = {
     direction: isUp ? "UP" : "DN",
-    leverage,
     targetProbability: probability,
     spendUsd: ctx.rand(5, 10),
   };
@@ -66,7 +60,6 @@ function mintLeg(
     strike1e9: BigInt(Math.round(resolved.strikeUsd)) * SCALE,
     isUp,
     quantity: resolved.quantity,
-    leverage1e9: resolved.leverage1e9,
     maxCost: resolved.maxCost,
     maxProbability: resolved.maxProbability1e9,
   };
@@ -112,7 +105,7 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
     while (probabilityCursor > config.probability[0]) {
       const probability = probabilityCursor;
       probabilityCursor -= 0.00045;
-      const leg = mintLeg(ctx, market, config.leverage, probability);
+      const leg = mintLeg(ctx, market, probability);
       if (!leg) continue;
       const strike = Number(leg.strike1e9 / SCALE);
       if (usedStrikes.has(strike)) continue;
@@ -154,7 +147,6 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
             : mintLeg(
                 ctx,
                 market,
-                config.leverage,
                 ctx.rand(minimum, maximum),
               );
         if (leg) legs.push(leg);

@@ -50,7 +50,7 @@ Produce:
   basis / loss watermarks / funding caps / `pending_protocol_profit` deferred-carry.
 - Any accumulator using unchecked arithmetic; the partial-close → reinsert path keeping the
   exposure/payout-tree/accounting machines in lockstep.
-- Event-VALUE correctness (not naming/hygiene — that's the rule-sweep): are the amounts emitted by money events (`OrderMinted` net_premium/financed_amount, vault/fill events) the REAL economic quantities, and do they suffice + round-trip for an off-chain solvency/PnL reconstruction? A wrong-but-well-named field misprices every downstream consumer and is invisible to the hygiene sweep.
+- Event-VALUE correctness (not naming/hygiene — that's the rule-sweep): are the amounts emitted by money events (`OrderMinted` premium, vault/fill events) the REAL economic quantities, and do they suffice + round-trip for an off-chain solvency/PnL reconstruction? A wrong-but-well-named field misprices every downstream consumer and is invisible to the hygiene sweep.
 - Sibling-package internal invariants (NOT just the trust boundary lens 08 owns): propbook's `oracle_lane` exact-timestamp/latest store + feed accept/no-op conditions, and `account`'s deposit/withdraw/settle balance conservation, each have their OWN solvency/consistency invariants — audit them first-class, not only through "what predict trusts them for."
 
 ## Empirical mandate (required — do not skip)

@@ -47,7 +47,6 @@ export const BOOTSTRAP_SUPPLY = 10_000_000_000_000n;
 export const RESOLVER_MARKET: MarketParams = {
   tickSize: 0.01,
   admissionTickSize: 1,
-  maxAdmissionLeverage: 3, // default_max_admission_leverage
   minEntryProbability: 0.01,
   maxEntryProbability: 0.99,
   liquidationLtv: 0.85,
