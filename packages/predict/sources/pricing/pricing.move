@@ -11,7 +11,7 @@
 /// directly. Exact-history reads do not apply live freshness policy.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, pricing_config::PricingConfig, range_codec::{Self, Strike}};
+use deepbook_predict::{pricing_config::PricingConfig, range_codec::Strike};
 use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},

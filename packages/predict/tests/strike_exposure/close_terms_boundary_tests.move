@@ -7,8 +7,7 @@ module deepbook_predict::close_terms_boundary_tests;
 
 use deepbook_predict::{
     constants,
-    oracle_fixture::{Self, OracleBundle, OracleFixture},
-    order::Order,
+    oracle_fixture::{Self, OracleFixture},
     strike_exposure::{Self, StrikeExposure},
     strike_exposure_config,
     test_constants

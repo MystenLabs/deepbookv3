@@ -99,8 +99,8 @@ stateDiagram-v2
 
 While the market is active, `redeem_live` closes a position the caller has trade authority over, with a `close_quantity`:
 
-- **Full close** (`close_quantity == quantity`): the order's full live-index terms are removed, the redeem amount is quoted at the current range probability net of the floor, fees and penalty are deducted, and the payout is deposited to the account. No replacement is produced.
-- **Partial close** (`close_quantity < quantity`): the protocol removes the closed slice from the live indexes and creates a **replacement** order for the remaining quantity with proportionally reduced static floor shares and a new sequence.
+- **Full close** (`close_quantity == quantity`): the order's full live-index terms are removed, the redeem amount is quoted at the current range probability, fees and penalty are deducted, and the payout is deposited to the account. No replacement is produced.
+- **Partial close** (`close_quantity < quantity`): the protocol removes the closed slice from the live indexes and creates a **replacement** order for the remaining quantity with a new sequence.
 
 Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_quantity`, `replacement_order_id` when present, and the separate `inventory_impact_rebate`). `min_proceeds` applies to the final credited amount: gross redeem plus inventory rebate minus ordinary fees. Live redeem requires `account::Auth` (owner auth, or app-auth via the account registry).
 

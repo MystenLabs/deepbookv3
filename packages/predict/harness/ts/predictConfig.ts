@@ -37,7 +37,6 @@ export const CADENCES: Record<number, CadenceConfig> = {
   2: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 1_000_000_000_000n, initialExpiryCash: 200_000_000_000n, windowSize: 3n },
 };
 
-export const NO_LEVERAGE_WINDOW_MS = 3_600_000;
 
 // Genesis bootstrap supply: 10M DUSDC (lock_capital mints min_bootstrap_liquidity itself).
 export const BOOTSTRAP_SUPPLY = 10_000_000_000_000n;
@@ -49,6 +48,5 @@ export const RESOLVER_MARKET: MarketParams = {
   admissionTickSize: 1,
   minEntryProbability: 0.01,
   maxEntryProbability: 0.99,
-  liquidationLtv: 0.85,
   lotSize: 10_000, // constants::position_lot_size
 };

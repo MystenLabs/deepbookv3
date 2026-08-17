@@ -2,8 +2,8 @@
 
 Technical definitions for the terms the Predict docs and code use, with the
 established options / structured-product term each one maps to and the code
-identifier it corresponds to. Mint-economics identifiers (`entry_value`,
-`premium`) match these terms directly.
+identifier it corresponds to. The mint-economics identifier `premium` matches
+these terms directly.
 
 ## The product
 
@@ -26,7 +26,7 @@ identifier it corresponds to. Mint-economics identifiers (`entry_value`,
 - **Writer** — the seller of an option, who owes its payout. The pool
   (`PoolVault` plus each expiry's `ExpiryCash`) is the writer of record for
   every Predict contract and fully collateralizes its written payouts (code:
-  `payout_liability`, `net_payout`).
+  `payout_liability`).
 - **Expiry market** — all contracts sharing one `(feed, expiry)` pair; code
   `ExpiryMarket`. Its tick grid is the expiry's option chain.
 
@@ -64,12 +64,10 @@ grid, no boundary indices).
   premium per unit notional **equals the risk-neutral probability** of the
   payout event; Predict quotes and stores that probability directly in 1e9
   fixed point (code `entry_probability`, `range_probability`).
-- **Full premium** — the contract's complete entry value,
-  `entry_probability × quantity`; code `entry_value`.
-- **Net premium** — what the buyer pays upfront, equal to the full premium
-  (`entry_probability × quantity`); code `premium`. The remainder is
-  financed (see below). Fees are charged on top and are never part of the
-  contract's terms.
+- **Premium** — the contract's complete entry value, `entry_probability ×
+  quantity`, paid upfront in full; code `premium`, floored at
+  `constants::min_premium`. Nothing is financed. Fees are charged on top and are
+  never part of the contract's terms.
 - **Mark value (live value)** — the contract's current model value,
   `quantity × range_probability`. "Live value" in these docs always means this
   mark-to-model value, not a traded price.

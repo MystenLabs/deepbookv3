@@ -9,7 +9,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Economic model
 
-> **RETIRED 2026-08-14 — leverage removed.** The bullets below describe the pre-removal floor/knock-out design. Every position is now 1x; there is no floor, no financed amount, and no liquidation. Kept for the decision record — see "Leverage removal" at the end of this document.
+> **PARTIALLY RETIRED 2026-08-14 — leverage removed.** Retired: the first three bullets (deterministic floor, static per-order floor, pure knock-out liquidation) and "v1 scope exclusions". They describe the pre-removal floor/knock-out design; every position is now 1x, with no floor, no financed amount, and no liquidation. Kept for the decision record — see "Leverage removal" at the end of this document. **Still live:** D025 (mint-only ask band) and the adjusted-digital clamp decision, which is RP-15's design record.
 
 - **Leverage is a deterministic floor, not a debt overlay.** A position is one
   binary (digital) contract whose live value is `range-probability value − a
@@ -55,21 +55,29 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Data structures
 
+> **PARTIALLY RETIRED 2026-08-14 — leverage removed.** The liquidation book is deleted; only the payout tree remains, and the packed order id no longer carries floor shares or serves as a sort key. Retired: the "Two sparse strike indexes" bullet below, and the floor/sort-key clauses of the order-id bullets. Kept for the decision record.
+
 - **The order id is a packed `u256` — the single on-chain term store.** It packs
   the durable post-mint terms (quantity, floor shares, two strike ticks,
   sequence); there is no separate order table. It is self-authenticating,
   costs zero per-order storage, and doubles as the liquidation sort key.
   *Rejected:* unpacking to a sequence + `Table<u64, Order>`.
+  > *2026-08-14:* the layout is now 132 dense bits — quantity lots, two strike
+  > ticks, sequence. `floor_shares` is gone and there is no liquidation sort key.
+  > The rest of the decision (packed id as the single term store) still holds.
 - **Mint-admission policy is kept out of the order id.** Admission caps and price
   thresholds live in config, not in order decoding, so a future policy change can
   never retroactively invalidate an existing packed id. *Rejected:* also packing the
   entry price (`entry_probability` / `leverage_rank`) into the id — `floor_shares`
   reconstructs everything needed; revisit only if a flow needs the lossless entry
   price on-chain.
+  > *2026-08-14:* the rejection still stands, but its reason no longer does —
+  > `floor_shares` is gone, so nothing in the id reconstructs an entry price.
+  > Admission policy stays out of the id because a policy change must never
+  > retroactively invalidate an existing packed id.
 - **`admin` is a dependency-leaf capability module.** *Rejected:* folding
   `admin`/`AdminCap` into `registry` — it creates a Move import cycle
   (`registry → protocol_config → admin`).
-> **RETIRED 2026-08-14 — leverage removed.** The liquidation book is deleted; only the payout tree remains. Kept for the decision record.
 
 - **Two sparse strike indexes, both tick-keyed.** A sparse height-balanced (AVL)
   payout tree and a flat liquidation book coexist; the exact live NAV is read by

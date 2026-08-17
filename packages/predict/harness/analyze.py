@@ -86,8 +86,7 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
             "direction",
             "moneyness",
             "prob",
-            "leverage",
-            "netPremium",
+            "premium",
             "gas",
         },
         set(),
@@ -117,7 +116,7 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         set(),
     ),
     "cleanout": (
-        {"strategy", "n", "nLiquidated", "nSettled", *_GAS_BREAKDOWN_FIELDS},
+        {"strategy", "n", "nSettled", *_GAS_BREAKDOWN_FIELDS},
         set(),
     ),
     "redeemAll": ({"strategy", "n", *_GAS_BREAKDOWN_FIELDS}, set()),
@@ -189,10 +188,9 @@ _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
 _NONNEGATIVE_NUMBER_TRACE_FIELDS = {
     "activeNav",
     "amount",
-    "leverage",
     "moneyness",
-    "netPremium",
     "poolValue",
+    "premium",
     "prob",
 }
 _SIGNED_NUMBER_TRACE_FIELDS = {"gas", "net"}

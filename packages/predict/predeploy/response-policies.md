@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-08-04. This is the tracked register of **settled response-policy
+Updated 2026-08-17. This is the tracked register of **settled response-policy
 decisions**: for each degenerate or adversarial state the protocol can reach,
 the behavior someone deliberately chose, why, and the tests that pin it.
 
@@ -206,7 +206,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   source timestamp is older than the Block Scholes spot observation's publish
   time.
 - **Controller:** external (oracle operator).
-- **Blast radius:** every live price — entry prices, NAV marks, and liquidation.
+- **Blast radius:** every live price — entry prices and NAV marks.
   The same load sits inside mandatory `plp::value_expiry`, so one over-wide
   observation for any active market also aborts the pool-wide flush and blocks
   queued LP fills until the observation is replaced.
@@ -379,7 +379,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   multi-command PTBs generally.
 - **Risk profile:** `MEASURED` on localnet (two replicated runs, harness E4):
   ~110–150 leveraged mints/PTB atomic ceiling; a 100-mint PTB ≈ 68% of the
-  wall. Findings: `evidence/c3-mint-batch-2026-07-01.md`. Magnitude is
+  wall. ⚠ 2026-08-14: measured with leveraged mints, which no longer exist. The
+  mechanism is transaction-level metering, so the ceiling is not expected to
+  move, but the figure is unverified post-removal and the simulation parity
+  model has not been migrated to re-measure it (open-items C-1).
+  Findings: `evidence/c3-mint-batch-2026-07-01.md`. Magnitude is
   book- and transaction-shape-dependent — localnet gives mechanism and
   direction, not a permanent production multiplier; flows designed near the
   ceiling should measure, not assume.
@@ -452,10 +456,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
   is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
   Audit provenance: finding 8b5d5f.
-- **Reopen when:** the tombstone removal (DBU-592) ships — re-run `cleanup-liquidated` to re-measure
-  the liquidated-account cleanout net gas under the derived-state model (the order's book storage is
-  now freed at liquidation, not at cleanout, so the prior liquidated fit above no longer describes
-  the shipped model); OR a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
+- **Reopen when:** ⚠ 2026-08-14: the liquidated arm of this entry is moot — leverage removal deleted
+  liquidation and the `cleanup-liquidated` harness profile, so the two-marginal
+  `nLiquidated`/`nSurvived` fit can never be re-run and only the survivor marginal describes the
+  shipped model. Re-measure the survivor cleanout under the derived-state model instead;
+  OR a market with life ≥ ~1 Sui epoch (a long-dated / multi-epoch option) ships
   (re-measure the late-stake exposure; reconsider snapshotting benefit-relevant stake at mint); OR
   the settled-redeem storage footprint shrinks / Sui storage pricing drops enough that the cleanout
   net gas turns positive (re-run the sweep; apply the E3 up-front-fee formula); OR
@@ -602,13 +607,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   sides at the exact ATM probability),
   `budget_fill_below_min_quantity_aborts` (fill floor);
   `mint_redeem_guard_tests::mint_exact_amount_below_min_quantity_aborts`
-  (dust budget rejects on the floor). Untested — gap: the one-lot-conservative
-  edge needs a rounding-lossy probability no current fixture pins.
+  (dust budget rejects on the floor). The former "untested one-lot-conservative
+  edge" gap is closed by deletion, not by a test: with no division by leverage
+  the probe and the charge are the same expression, so the edge cannot occur.
 - **Reopen when:** the premium relation changes shape (a fee folded into the
   budget, a rounding flip — the probe must move with it or the one-sided bound
-  breaks), the `min_min_entry_probability` envelope floor is lowered (the
-  one-lot fill bound dies with it), a measured gas profile shows the search
-  matters, or a consumer needs the exact maximum fill at fractional leverage.
+  breaks), a measured gas profile shows the search matters, or a future change
+  reintroduces a divisor between the probe and the charge.
 
 ---
 
@@ -915,7 +920,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   markets legitimately carry `w ~ 1e-8`; no on-chain check can forbid a small but
   genuine variance.
 - **Blast radius:** every priced path on the affected market — mint, live close,
-  liquidation threshold, and the NAV mark the pool-wide flush consumes. The
+  and the NAV mark the pool-wide flush consumes. The
   aborting form is therefore a flush-liveness risk, not a single-user one.
 - **Response:** the two guards keep their error codes but now evaluate in the
   1e18 domain the variance path computes in.
@@ -971,7 +976,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Controller:** external × protocol clock — the publisher controls the
   series values, model timestamps, and envelope cadence; elapsed time is
   objective on-chain state.
-- **Blast radius:** every live quote, mint, redeem, liquidation, and NAV read
+- **Blast radius:** every live quote, mint, redeem, and NAV read
   that consumes the series. A stale spot affects every market on the
   underlying; a stale forward or SVI affects its expiry. Because a flush must
   value every active market, any one stale required series blocks the pool-wide
@@ -1209,7 +1214,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `ValueBatch`, `SviBatch`). A trader running their own Pyth Lazer subscription
   can obtain such a payload.
 - **Blast radius:** every live-pricing path that loads a pricer
-  (`mint_*`, `redeem_live`, `liquidate`, `plp::value_expiry`). One push
+  (`mint_*`, `redeem_live`, `plp::value_expiry`). One push
   re-anchors every live market on that underlying.
 - **Response:** **abort** at `pricing::resolve_live_pricer` with
   `EOracleWrittenInThisTransaction` when any observation that feeds the returned
@@ -1224,7 +1229,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   PTB. `EMintRedeemSameTimestamp` only partially covers mint→redeem of a
   freshly opened order and does not cover cross-leg minting or seasoned
   redeems. Rejected alternatives: mint-path-only guard (reroutable through
-  redeem/liquidate/second market); clock-timestamp comparison (Sui's `Clock`
+  redeem/second market); clock-timestamp comparison (Sui's `Clock`
   advances per checkpoint, so honest trades sharing a checkpoint with the
   updater would false-positive); `ctx.sender()` (cannot distinguish a router);
   EWMA/smoothed oracle (`oracle_lane::update` no-ops on non-advancing
@@ -1322,9 +1327,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `strike/forward` alone, so neither the Block Scholes publisher nor a trader had to
   do anything unusual; the surface determined whether the returned limit was true.
 - **Blast radius:** every consumer of `range_price` on the affected market, all
-  reading the same wrong number — the mint's entry probability, the liquidation
-  threshold `gross_value <= floor_amount / liquidation_ltv`, and the NAV mark the
-  pool-wide flush consumes. Both directions existed: two saturating boundaries
+  reading the same wrong number — the mint's entry probability and the NAV mark
+  the pool-wide flush consumes. Both directions existed: two saturating boundaries
   collapse a range to zero, one saturating boundary against a finite one inflates it
   toward 1.0. Nothing downstream caught either — a constant `1e9` across ticks is
   monotone non-increasing, so `ENonMonotonePriceMemo` did not fire.
@@ -1429,13 +1433,13 @@ terms exactly, so tree reserve equals settled payout with no dust buffer.
 Protocol reserve realization: never bare-split a balance for an amount
 recognized earlier if the backing cash can be redeployed before the split —
 realize `min(pending, available)`, carry the remainder, keep it out of LP
-value (RP-8). NAV and floor correction: round floor correction so it cannot
-overstate recoverable value; one-unit dust biases toward incumbents/the
-protocol, never toward overpaying a withdrawal.
+value (RP-8). NAV: round so it cannot overstate recoverable value; one-unit
+dust biases toward incumbents/the protocol, never toward overpaying a
+withdrawal.
 
 **Audit obligation.** Every money flow is checked against R1 and R2 — mint
-contribution, live redeem, settled payout, liquidation, fees and discounts,
-rebate reserve, LP supply/withdraw pricing, NAV floor correction. If a flow
+contribution, live redeem, settled payout, fees and discounts,
+rebate reserve, LP supply/withdraw pricing, NAV. If a flow
 can underflow or round toward the user, fix it or document the accepted
 tradeoff explicitly.
 

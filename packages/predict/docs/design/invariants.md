@@ -28,7 +28,7 @@ and contributors. For *how* each mechanism works, follow the links into
   cross-range reorderings.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed payout at any *single* settlement price, read
-  from `StrikePayoutTree::net_payout_reserve_terms`; the buffer is
+  from `StrikePayoutTree::payout_reserve_terms`; the buffer is
   `backing_buffer_lambda × (Σ payout − floor)`, with both terms derived from
   the payout tree's aggregate payout terms (each order's `quantity`). Because exactly one
   settlement price resolves a market, the floor alone covers every settlement
@@ -95,8 +95,7 @@ and contributors. For *how* each mechanism works, follow the links into
   expiry timestamp and exact terminal payout liability atomically; otherwise it
   returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays its full `quantity` if the settlement price is in
-  `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
-  applied by `strike_exposure::process_close`).
+  `(lower, higher]`, else 0 (`strike_exposure::process_settled_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
   prices against tick boundaries through one threshold tick, `prefix_limit_tick =
   ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is
@@ -131,7 +130,7 @@ and contributors. For *how* each mechanism works, follow the links into
   entrypoints and the payout tree, so an order's strike
   range is bit-identical whether read from the id, the tree, or the event. A lossy
   repack would be an accounting bug, not a precision nit.
-- Mint-admission policy (the entry-probability band, minimum net premium) is
+- Mint-admission policy (the entry-probability band, minimum premium) is
   **not** part of
   order decoding or structural validation — a future policy change must never
   invalidate an existing packed id.

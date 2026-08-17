@@ -271,7 +271,9 @@ public(package) fun assert_cadence_window_size(value: u64) {
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
 
-// The 1% hard floor keeps the budget-to-quantity inverse's rounding undershoot below one position lot.
+// Envelope floor for the admin-tunable minimum entry probability. The budget-to-quantity
+// rounding rationale this floor once carried died with leverage (RP-13): the search probe and
+// the admission charge are now the same expression, so no undershoot can arise.
 public(package) macro fun min_min_entry_probability(): u64 { 10_000_000 }
 
 public(package) macro fun max_min_entry_probability(): u64 {

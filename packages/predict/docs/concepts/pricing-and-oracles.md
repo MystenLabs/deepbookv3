@@ -153,7 +153,7 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 ## Settlement
 
-Terminal settlement uses Propbook's exact Pyth timestamp history, not a Predict-side sampling buffer. The market stores no settlement sample itself before expiry; the permissionless `expiry_market::try_settle` transition asks `pricing::load_exact_spot_read` to validate the supplied Pyth feed against Propbook's current canonical binding and issue an the exact-spot read for the market's expiry.
+Terminal settlement uses Propbook's exact Pyth timestamp history, not a Predict-side sampling buffer. The market stores no settlement sample itself before expiry; the permissionless `expiry_market::try_settle` transition asks `pricing::load_exact_spot` to validate the supplied Pyth feed against Propbook's current canonical binding and issue the exact-spot read for the market's expiry.
 
 If that exact normalized spot exists, `try_settle` passes it to `StrikeExposure::record_settlement`, which records the terminal price and exact remaining payout liability together. If it does not, `try_settle` returns false and the market remains unsettled. Settled redeem, rebate claim, and pool sweep consume only the recorded state; a past-expiry live valuation still aborts rather than substituting an approximate mark. That liveness boundary is documented in [liquidity and NAV](./liquidity-and-nav.md).
 

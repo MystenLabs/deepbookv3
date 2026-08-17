@@ -60,8 +60,8 @@ never re-implemented per site.
   narrow value when the callee is a pure formula and should not know the broader object/config concept. A run
   of same-typed primitive fields from one owner is a transposition risk; prefer the owner or a named summary
   unless the primitive signature is deliberately preserving a pure math/test-oracle boundary.
-- **Intentional exceptions:** `strike_payout_tree::payout_terms_from_order` IS the one canonical evaluator — every
-  site calling it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
+- **Intentional exceptions:** the packed order id IS the one canonical source of the stored `quantity` atom — every
+  site decoding it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
   above a loop) is not "should compute at use"; values returned because the caller genuinely cannot derive
   them (order ids, payouts, fees, event data) or that must be sampled once (expensive / must stay identical
   across a local flow).

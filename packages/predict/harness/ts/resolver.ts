@@ -19,7 +19,6 @@ export interface MarketParams {
   admissionTickSize: number; // USD; order ticks must sit on this coarser grid
   minEntryProbability: number; // e.g. 0.01
   maxEntryProbability: number; // e.g. 0.99
-  liquidationLtv: number; // e.g. 0.9
   lotSize: number; // raw quantity lot (constants::position_lot_size = 10_000)
 }
 
@@ -79,7 +78,6 @@ export function resolveMint(inst: Instruction, snap: Snapshot, mkt: MarketParams
   const reasons: string[] = [];
   if (p < mkt.minEntryProbability || p > mkt.maxEntryProbability)
     reasons.push(`p=${p.toFixed(4)} outside [${mkt.minEntryProbability}, ${mkt.maxEntryProbability}]`);
-  const ltvCap = 1 / (1 - mkt.liquidationLtv);
 
   // quantity (DUSDC max-payout units) = spend / p; lot-round down so
   // net_premium <= spend. DUSDC-scaled (1e6), matching the on-chain payout/cash unit.

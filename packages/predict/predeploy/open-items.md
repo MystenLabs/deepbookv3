@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-17. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -605,7 +605,6 @@ correctness today.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further.
-  probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 

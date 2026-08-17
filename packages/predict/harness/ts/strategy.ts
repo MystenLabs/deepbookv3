@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 
 import { rollDownSvi } from "./pricer.js";
-import { NO_LEVERAGE_WINDOW_MS, RESOLVER_MARKET } from "./predictConfig.js";
+import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
@@ -31,7 +31,6 @@ import {
 } from "../../devtools/ts/runtime.js";
 
 const SCALE = 1_000_000_000n;
-const ADMISSION_K = 0.2;
 const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1", "predict_account:2"]);
 
 export interface Mkt {
@@ -99,7 +98,7 @@ export interface StrategyCtx {
   // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
   // position on THIS account then claims its rebate, and return + trace the full gas breakdown
   // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
-  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
+  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nSettled: number }>;
   // Cleanup claim profile: redeemAll = the N redeems WITHOUT the claim (leaves an
   // unresolved summary); claimRebate = the claim ALONE (once positions are closed). Diffing them
   // isolates whether a searcher's marginal cost of adding the claim is a refund (bundles it) or a
@@ -335,18 +334,14 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
         "cleanout",
       );
       const g = gasBreakdownOf(res);
-      // Split by redeem path: a LIQUIDATED position had its book state (payout-tree node +
-      // active-index entry) removed at liquidation time (apply_liquidation), so its cleanout frees
-      // only the account position; a SETTLED (surviving) one's cleanout also removes its active-index
-      // entry (process_settled_close removes the index entry and adjusts cached liability; the
-      // payout-tree node persists under the settled-liability model). The per-position gas profiles
-      // differ, so the fit counts each. NB: the P-9/RP-11 gas figures predate the tombstone removal
-      // (DBU-592) — the per-position rebate structure needs re-measurement under the derived-state model.
+      // A settled position's cleanout removes its active-index entry and adjusts cached liability
+      // (process_settled_close); the payout-tree node persists under the settled-liability model.
+      // NB: the P-9/RP-11 gas figures predate the tombstone removal (DBU-592) — the per-position
+      // rebate structure needs re-measurement under the derived-state model.
       const evs = (res.events ?? []) as any[];
-      const nLiquidated = evs.filter((e) => e.type?.includes("LiquidatedOrderRedeemed")).length;
       const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;
-      ctx.trace({ type: "cleanout", n: positions.length, nLiquidated, nSettled, ...g });
-      return { ...g, nLiquidated, nSettled };
+      ctx.trace({ type: "cleanout", n: positions.length, nSettled, ...g });
+      return { ...g, nSettled };
     },
     async redeemAll(marketId, positions) {
       const res = await deps.submit(
