@@ -255,6 +255,47 @@ fun settled_order_payout_of_live_market_aborts() {
     abort 999
 }
 
+/// A settled order can be redeemed exactly once.
+///
+/// With the settled close-terms token gone, `predict_account::remove_position` is the
+/// SOLE mechanism preventing a second redeem from releasing the same payout liability
+/// twice. It also runs before the liability is decremented, so the second attempt
+/// aborts before touching any accounting.
+#[test, expected_failure(abort_code = predict_account::EPositionNotFound)]
+fun settled_redeem_twice_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(
+        &mut market,
+        settlement_inside_default_finite_range(),
+    );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+
+    // The position is gone; a replay must abort rather than release the payout again.
+    // A fresh transaction is required for the shared registry to be takeable again.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+
+    abort 999
+}
+
 #[test]
 fun explicitly_settled_redeem_pays_terminal_payout() {
     let settlement_price = settlement_inside_default_finite_range();
