@@ -232,16 +232,24 @@ sizing: budget roughly half a step of lumpiness — ~0.2c below 15s TTE, ~0.1c
 at 60s, negligible above 5 minutes. Sizing lives with the fee/spread
 configuration, not in this change.
 
-## Open question: behavior below the 5s validity floor
+## Settled: below the 5s validity floor, follow the formula to the clip
 
 The research validates 5 seconds to 2 hours; live markets trade through the
-final seconds regardless, where the formula rides the 0.4 clip floor. Two
-candidate policies differ only below ~5s: follow the formula down to the floor
-(current plan), or freeze `B` at its 5s value for smaller TTEs. An empirical
-pass over the archive at sub-5s coordinates decides this — pending; if the
-archive's spot cadence cannot resolve sub-5s outcomes cleanly, the policy is
-chosen on robustness grounds and the replay gates cover the regime reachable
-by data.
+final seconds regardless, where the formula rides the 0.4 clip floor. The two
+candidate policies — follow the formula down to the floor, or freeze `B` at
+its 5s value for smaller TTEs — were compared empirically on the archive's 1s
+and 2s expiry coordinates (432k priceable quotes, Feb–Jun 2026), repricing the
+raw surfaces through the family and scoring integrated Brier against realized
+outcomes. The trend continues below the floor: score improves monotonically as
+`B` falls at both coordinates, the floor value 0.4 is the best member tested
+(beating the normal by ~20% at 1s and ~15% at 2s, and the freeze policy's
+`B ≈ 0.61` by ~4% and ~2% relative), and no candidate produced a single
+clamped or non-monotone repriced surface. Follow-the-floor stands; the clip at
+0.4 is near-optimal exactly where it engages. Caveat carried forward: sub-5s
+realized outcomes inherit the spot series' ~1s cadence, so some measured
+tail-fatness at these coordinates is alignment noise; the policy comparison is
+unaffected (both candidates face the same data), and the fixed-point replay
+gates re-verify the regime.
 
 ## Test and evidence plan
 
