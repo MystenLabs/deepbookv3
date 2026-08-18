@@ -220,18 +220,12 @@ public fun setup_market(tick: u64): Fixture {
         pyth_id,
     );
     let mut registry = scenario.take_shared<Registry>();
-    let mut config = scenario.take_shared<ProtocolConfig>();
+    let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
     );
-    // Flow fixtures exercise leverage / close / liquidation mechanics on short-lived
-    // markets, which sit inside the default 1h no-leverage window and so could not
-    // mint leveraged orders at all. Disable the block by default (a valid
-    // `window == 0` admin config); it is covered by the config unit tests and by
-    // dedicated flow tests that re-enable it.
-    config.set_template_no_leverage_window_ms(&admin_cap, 0);
     return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
@@ -359,10 +353,6 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
     expiry_id
-}
-
-public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolConfig, budget: u64) {
-    config.set_trade_liquidation_budget(&self.admin_cap, budget);
 }
 
 /// Set the PLP supply-leg fee rate through the real admin path.
@@ -551,24 +541,6 @@ public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
-    return_shared(config);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_max_admission_leverage(&self.admin_cap, value);
-    return_shared(config);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-/// Re-enable the near-expiry no-leverage block that `setup_market` disables. Call
-/// before creating the expiry that should snapshot it.
-public fun set_template_no_leverage_window_ms(self: &mut Fixture, window_ms: u64) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_no_leverage_window_ms(&self.admin_cap, window_ms);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -1339,7 +1311,6 @@ public fun mint(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): u256 {
     self.mint_exact_quantity(
         config,
@@ -1352,7 +1323,6 @@ public fun mint(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         std::u64::max_value!(),
         std::u64::max_value!(),
     )
@@ -1367,7 +1337,6 @@ public fun mint_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): u256 {
     self.mint(
         &market.config,
@@ -1380,7 +1349,6 @@ public fun mint_bundle(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
     )
 }
 
@@ -1394,7 +1362,6 @@ public fun mint_bundle_with_bs(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): u256 {
     self.mint(
         &market.config,
@@ -1407,7 +1374,6 @@ public fun mint_bundle_with_bs(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
     )
 }
 
@@ -1420,7 +1386,6 @@ public fun mint_exact_quantity_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
 ): u256 {
@@ -1435,7 +1400,6 @@ public fun mint_exact_quantity_bundle(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         max_cost,
         max_probability,
     )
@@ -1449,7 +1413,6 @@ public fun quote_mint_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1472,7 +1435,6 @@ public fun quote_mint_bundle(
             0,
             quantity,
             true,
-            leverage,
             &self.clock,
             self.scenario.ctx(),
         )
@@ -1487,7 +1449,6 @@ public fun quote_mint_amount_bundle(
     higher_tick: u64,
     max_premium: u64,
     min_quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1510,7 +1471,6 @@ public fun quote_mint_amount_bundle(
             max_premium,
             min_quantity,
             false,
-            leverage,
             &self.clock,
             self.scenario.ctx(),
         )
@@ -1524,7 +1484,6 @@ public fun quote_mint_for_account_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1548,7 +1507,6 @@ public fun quote_mint_for_account_bundle(
             0,
             quantity,
             true,
-            leverage,
             &account.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1565,7 +1523,6 @@ public fun quote_mint_for_account_amount_bundle(
     higher_tick: u64,
     max_premium: u64,
     min_quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1589,7 +1546,6 @@ public fun quote_mint_for_account_amount_bundle(
             max_premium,
             min_quantity,
             false,
-            leverage,
             &account.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1609,7 +1565,6 @@ public fun mint_exact_quantity(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
 ): u256 {
@@ -1631,7 +1586,6 @@ public fun mint_exact_quantity(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         max_cost,
         max_probability,
         root,
@@ -1650,7 +1604,6 @@ public fun mint_exact_amount_bundle(
     higher_tick: u64,
     amount: u64,
     min_quantity: u64,
-    leverage: u64,
     max_cost: u64,
 ): u256 {
     self.mint_exact_amount(
@@ -1665,7 +1618,6 @@ public fun mint_exact_amount_bundle(
         higher_tick,
         amount,
         min_quantity,
-        leverage,
         max_cost,
     )
 }
@@ -1684,7 +1636,6 @@ public fun mint_exact_amount(
     higher_tick: u64,
     amount: u64,
     min_quantity: u64,
-    leverage: u64,
     max_cost: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
@@ -1706,7 +1657,6 @@ public fun mint_exact_amount(
         higher_tick,
         amount,
         min_quantity,
-        leverage,
         max_cost,
         root,
         &self.clock,
@@ -1950,85 +1900,6 @@ public fun try_settle_bundle_with_pyth(
         &market.config,
         &market.oracle_registry,
         pyth,
-    )
-}
-
-/// Run a budgeted liquidation pass over the market's active leveraged orders.
-/// Returns the number of orders liquidated.
-public fun liquidate(
-    self: &mut Fixture,
-    config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    market: &mut ExpiryMarket,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    budget: u64,
-): u64 {
-    let pricer = market.load_live_pricer(
-        config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    market.liquidate(config, &pricer, budget, &self.clock)
-}
-
-/// Run a budgeted liquidation pass through a market bundle.
-public fun liquidate_bundle(self: &mut Fixture, market: &mut MarketBundle, budget: u64): u64 {
-    self.liquidate(
-        &market.config,
-        &market.oracle_registry,
-        &mut market.market,
-        &market.pyth,
-        &market.bs,
-        budget,
-    )
-}
-
-/// Try to liquidate one active leveraged order by ID. Returns whether it was
-/// liquidated.
-public fun liquidate_order(
-    self: &mut Fixture,
-    config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    market: &mut ExpiryMarket,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    order_id: u256,
-): bool {
-    let pricer = market.load_live_pricer(
-        config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    market.liquidate_order(
-        config,
-        &pricer,
-        order_id,
-        &self.clock,
-    )
-}
-
-/// Try to liquidate one bundled active leveraged order by ID.
-public fun liquidate_order_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    order_id: u256,
-): bool {
-    self.liquidate_order(
-        &market.config,
-        &market.oracle_registry,
-        &mut market.market,
-        &market.pyth,
-        &market.bs,
-        order_id,
     )
 }
 
@@ -2302,7 +2173,7 @@ public fun finish_flush_bundle(
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
 /// liability plus the unresolved rebate reserve. Assert after every cash-mutating
-/// flow (mint / redeem / liquidate / sync / rebate).
+/// flow (mint / redeem / sync / rebate).
 public fun assert_market_backed(market: &ExpiryMarket) {
     assert!(market.cash_balance() >= market.payout_liability() + market.rebate_reserve());
 }

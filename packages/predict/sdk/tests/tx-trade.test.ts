@@ -49,7 +49,7 @@ test("loadLivePricer: 8 args to expiry_market::load_live_pricer", () => {
 	expect(call(tx, 0).arguments).toHaveLength(8);
 });
 
-test("mintExactQuantity: pricer → auth → mint, 13 args", () => {
+test("mintExactQuantity: pricer → auth → mint, 12 args", () => {
 	const tx = new Transaction();
 	mintExactQuantity(cfg, tx, {
 		expiryMarketId: "0xabc",
@@ -57,7 +57,6 @@ test("mintExactQuantity: pricer → auth → mint, 13 args", () => {
 		lowerTick: 10n,
 		higherTick: 20n,
 		quantityRaw: 1_000_000n,
-		leverageRaw: 1_000_000_000n,
 		...feeds,
 	});
 	expect(targets(tx)).toEqual([
@@ -66,14 +65,14 @@ test("mintExactQuantity: pricer → auth → mint, 13 args", () => {
 		`${cfg.packages.predict}::expiry_market::mint_exact_quantity`,
 	]);
 	const mint = call(tx, 2);
-	expect(mint.arguments).toHaveLength(13);
+	expect(mint.arguments).toHaveLength(12);
 	// arg order: [market, wrapper, auth(Result), config, pricer(Result), lower, higher,
-	//             quantity, leverage, maxCost, maxProbability, root, clock]
+	//             quantity, maxCost, maxProbability, root, clock]
 	expect(mint.arguments[2].$kind).toBe("Result"); // auth
 	expect(mint.arguments[4].$kind).toBe("Result"); // pricer
-	// defaults: maxCost (idx 9) and maxProbability (idx 10) = U64_MAX
+	// defaults: maxCost (idx 8) and maxProbability (idx 9) = U64_MAX
+	expect(argPureBytes(tx, 2, 8)).toBe(U64_MAX_B64);
 	expect(argPureBytes(tx, 2, 9)).toBe(U64_MAX_B64);
-	expect(argPureBytes(tx, 2, 10)).toBe(U64_MAX_B64);
 });
 
 test("mintExactQuantity: explicit maxCost/maxProbability override defaults", () => {
@@ -84,21 +83,20 @@ test("mintExactQuantity: explicit maxCost/maxProbability override defaults", () 
 		lowerTick: 10n,
 		higherTick: 20n,
 		quantityRaw: 1_000_000n,
-		leverageRaw: 1_000_000_000n,
 		maxCostRaw: 5_000_000n,
 		maxProbabilityRaw: 900_000_000n,
 		...feeds,
 	});
-	expect(argPureBytes(tx, 2, 9)).toBe(
+	expect(argPureBytes(tx, 2, 8)).toBe(
 		Buffer.from(bcs.u64().serialize(5_000_000n).toBytes()).toString("base64"),
 	);
-	expect(argPureBytes(tx, 2, 10)).toBe(
+	expect(argPureBytes(tx, 2, 9)).toBe(
 		Buffer.from(bcs.u64().serialize(900_000_000n).toBytes()).toString("base64"),
 	);
-	expect(argPureBytes(tx, 2, 9)).not.toBe(U64_MAX_B64);
+	expect(argPureBytes(tx, 2, 8)).not.toBe(U64_MAX_B64);
 });
 
-test("mintExactAmount: pricer → auth → mint, 12 args", () => {
+test("mintExactAmount: pricer → auth → mint, 11 args", () => {
 	const tx = new Transaction();
 	mintExactAmount(cfg, tx, {
 		expiryMarketId: "0xabc",
@@ -107,7 +105,6 @@ test("mintExactAmount: pricer → auth → mint, 12 args", () => {
 		higherTick: 20n,
 		amountRaw: 5_000_000n,
 		minQuantityRaw: 1_000_000n,
-		leverageRaw: 1_000_000_000n,
 		...feeds,
 	});
 	expect(targets(tx)).toEqual([
@@ -116,7 +113,7 @@ test("mintExactAmount: pricer → auth → mint, 12 args", () => {
 		`${cfg.packages.predict}::expiry_market::mint_exact_amount`,
 	]);
 	const mint = call(tx, 2);
-	expect(mint.arguments).toHaveLength(12);
+	expect(mint.arguments).toHaveLength(11);
 	expect(mint.arguments[2].$kind).toBe("Result"); // auth
 	expect(mint.arguments[4].$kind).toBe("Result"); // pricer
 });

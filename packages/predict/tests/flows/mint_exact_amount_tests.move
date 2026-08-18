@@ -9,8 +9,6 @@
 /// read from a quantity quote at the size in question rather than hardcoded: a
 /// budget threshold IS the next lot's premium, and `pricing_exact_tests` owns
 /// whether that premium is itself correct.
-/// Not covered here: the one-lot-conservative probe edge at fractional leverage,
-/// where the per-lot product rounds and the probe can diverge from the charge.
 #[test_only]
 module deepbook_predict::mint_exact_amount_tests;
 
@@ -45,7 +43,6 @@ fun atm_quote(fx: &mut helpers::Fixture, market: &helpers::MarketBundle, quantit
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         quantity,
-        test_constants::leverage_one_x(),
     )
 }
 
@@ -91,7 +88,6 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
         constants::pos_inf_tick!(),
         budget,
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
         std::u64::max_value!(),
     );
 
@@ -124,7 +120,6 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
         constants::pos_inf_tick!(),
         next_lot.net_premium(),
         NEXT_LOT_QUANTITY,
-        test_constants::leverage_one_x(),
         std::u64::max_value!(),
     );
 
@@ -157,34 +152,6 @@ fun budget_fill_below_min_quantity_aborts() {
         constants::pos_inf_tick!(),
         budget,
         TEN_THOUSAND_LOTS + constants::position_lot_size!(),
-        test_constants::leverage_one_x(),
-        std::u64::max_value!(),
-    );
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure_config::EInvalidLeverage)]
-fun budget_mint_with_leverage_below_one_x_aborts_with_domain_code() {
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    // Policy runs before the sizing search, so an invalid leverage aborts with
-    // its domain code — never the math module's zero-input abort.
-    let budget = budget_below_next_lot(&mut fx, &market);
-    fx.mint_exact_amount_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        budget,
-        TEN_THOUSAND_LOTS,
-        999_999_999,
         std::u64::max_value!(),
     );
 
@@ -213,7 +180,6 @@ fun budget_mint_at_exact_all_in_cost_cap_succeeds() {
         constants::pos_inf_tick!(),
         budget,
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
         expected_debit,
     );
 
@@ -248,7 +214,6 @@ fun budget_mint_one_unit_over_all_in_cost_cap_aborts() {
         constants::pos_inf_tick!(),
         budget,
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
         expected_debit - 1,
     );
 
@@ -275,7 +240,6 @@ fun budget_mint_without_an_all_in_cost_cap_aborts() {
         constants::pos_inf_tick!(),
         budget,
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
         0,
     );
 
@@ -300,7 +264,6 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
         constants::pos_inf_tick!(),
         std::u64::max_value!(),
         LOT_CAP_QUANTITY,
-        test_constants::leverage_one_x(),
     );
 
     assert_eq!(quote.quantity(), LOT_CAP_QUANTITY);
@@ -333,7 +296,6 @@ fun account_quote_caps_the_budget_to_the_account_balance() {
         constants::pos_inf_tick!(),
         std::u64::max_value!(),
         constants::position_lot_size!(),
-        test_constants::leverage_one_x(),
     );
 
     assert!(quote.net_premium() <= test_constants::mint_deposit());
@@ -363,14 +325,12 @@ fun budget_quote_matches_quantity_quote_for_the_sized_fill() {
         constants::pos_inf_tick!(),
         budget,
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
     );
     let quantity_quote = fx.quote_mint_bundle(
         &market,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
     );
 
     assert_eq!(budget_quote.quantity(), TEN_THOUSAND_LOTS);

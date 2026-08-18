@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// One-flow-many-assertions lifecycle test for the 1x (un-leveraged) live happy
+/// One-flow-many-assertions lifecycle test for the live happy
 /// path: one order is walked fund -> mint with a full state-sheet
 /// (`check_manager`) re-asserted after each action. Terminal settlement coverage
 /// lives in `settlement_flow_tests`.
@@ -44,7 +44,6 @@ fun one_x_lifecycle_fund_mint() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
     let premium = quote.net_premium();
@@ -54,7 +53,6 @@ fun one_x_lifecycle_fund_mint() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     expected =

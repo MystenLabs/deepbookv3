@@ -15,8 +15,6 @@ use std::unit_test::assert_eq;
 
 /// Lot-aligned position size used across the mint/redeem scenarios.
 const QUANTITY: u64 = 840_000_000;
-/// 1x leverage in 1e9 fixed point: no floor, so no liquidation interaction.
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 /// Later source stamp used when rewriting the surface mid-test. Must be ≥ the
 /// fixture clock so Block Scholes `published_at <= recorded_at` accepts the batch.
 const FRESHER_SOURCE_TS: u64 = 121_000;
@@ -53,7 +51,6 @@ fun write_feed_then_load_pricer_same_tx_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     abort 999
@@ -87,7 +84,6 @@ fun write_feed_then_mint_next_tx_succeeds() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
 
@@ -113,7 +109,6 @@ fun variant_a_mint_update_mint_aborts_on_second_pricer() {
         0,
         helpers::strike_tick(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     // Push a fresher surface, then try to load a second pricer for the complement.
@@ -129,7 +124,6 @@ fun variant_a_mint_update_mint_aborts_on_second_pricer() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     abort 999
@@ -151,7 +145,6 @@ fun variant_c_write_then_redeem_seasoned_position_aborts() {
             helpers::strike_tick(),
             constants::pos_inf_tick!(),
             QUANTITY,
-            LEVERAGE_ONE_X,
         );
         helpers::return_account_bundle(account);
         helpers::return_market_bundle(market);
@@ -196,7 +189,6 @@ fun ordinary_mint_without_oracle_write_succeeds() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
 
@@ -223,7 +215,6 @@ fun multi_leg_mints_share_one_pricer_without_oracle_write() {
         0,
         helpers::strike_tick(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     let order_b = fx.mint_bundle(
         &mut market,
@@ -231,7 +222,6 @@ fun multi_leg_mints_share_one_pricer_without_oracle_write() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_a));
     assert!(helpers::has_position_bundle(&account, expiry_id, order_b));
@@ -264,7 +254,6 @@ fun write_bs_forward_only_then_load_pricer_same_tx_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     abort 999
@@ -288,7 +277,6 @@ fun write_bs_svi_only_then_load_pricer_same_tx_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     abort 999
@@ -319,7 +307,6 @@ fun write_fresh_pyth_only_then_load_pricer_same_tx_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     abort 999
@@ -350,7 +337,6 @@ fun pyth_write_same_tx_succeeds_when_reanchor_disabled() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
 
@@ -386,7 +372,6 @@ fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
@@ -424,7 +409,6 @@ fun price_then_write_same_tx_is_permitted() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     let value_at_stale_mark = fx.order_value_bundle(&market, order);
     fx.set_clock_for_testing(FRESHER_SOURCE_TS);

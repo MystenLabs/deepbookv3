@@ -41,9 +41,9 @@
 /// one millisecond before expiry.
 /// `ECannotBeNegative` inside `compute_nd2` remains a defensive backstop after
 /// the load-time envelope: no production input is known to reach it.
-/// `ETickNotInPriceMemo` is a package-level cache contract guard and is covered
-/// directly below; active-book non-monotone UP prices are covered by
-/// `ENonMonotonePriceMemo`.
+/// Active-book non-monotone UP prices are guarded by
+/// `strike_payout_tree::ENonMonotonePrice` and covered in
+/// `current_nav_flow_tests`.
 #[test_only]
 module deepbook_predict::pricing_guard_tests;
 
@@ -88,7 +88,6 @@ const HIGH_VARIANCE_RHO_MAGNITUDE: u64 = 900_000_000;
 // are module-private, so the bounds are reproduced here from the source, not read).
 // The basis ceiling (100 * 1e9) is exercised by computing `spot * 101` directly.
 const MAX_PRICING_SPOT: u64 = 184_467_440_737_095_516; // u64::MAX / 100
-const PRICE_MEMO_MISSING_TICK: u64 = 100;
 const NEGATIVE_SVI_A_MAG: u64 = 1_000_000;
 const POSITIVE_MIN_VARIANCE_SVI_B: u64 = 10_000_000;
 const POSITIVE_MIN_VARIANCE_SIGMA: u64 = 500_000_000;
@@ -134,8 +133,6 @@ const PER_STRIKE_NONPOSITIVE_A_MAG: u64 = 99_494;
 const PER_STRIKE_NONPOSITIVE_B: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_RHO: u64 = 100_000_000;
 const PER_STRIKE_NONPOSITIVE_M: u64 = 100_498;
-const NON_MONOTONE_LOW_TICK: u64 = 90;
-const NON_MONOTONE_HIGH_TICK: u64 = 95;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_A: u64 = 1;
 const ROLL_DOWN_ZERO_VARIANCE_RAW_B: u64 = 0;
 const ROLL_DOWN_CLOCK_ADVANCE_MS: u64 = 1;
@@ -143,41 +140,6 @@ const TERMINAL_ROLL_DOWN_REMAINING_MS: u64 = 1;
 const ZERO_SVI_SHAPE_PARAM: u64 = 0;
 
 // === Abort guards ===
-
-#[test, expected_failure(abort_code = pricing::ETickNotInPriceMemo)]
-fun cached_range_price_with_missing_finite_tick_aborts() {
-    let memo = pricing::new_price_memo();
-    memo.cached_range_price(PRICE_MEMO_MISSING_TICK, constants::pos_inf_tick!());
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
-fun price_memo_rejects_non_monotone_surface_over_active_ticks() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_real_oracle_bundle(
-        &mut oracle,
-        test_constants::default_live_price(),
-        test_constants::default_live_price(),
-        1,
-        false,
-        test_constants::pricing_max_svi_input(),
-        test_constants::pricing_min_svi_sigma(),
-        test_constants::float(),
-        true,
-        0,
-        false,
-    );
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let mut memo = pricing::new_price_memo();
-
-    memo.price_and_cache(&pricer, NON_MONOTONE_LOW_TICK, test_constants::float());
-    memo.price_and_cache(&pricer, NON_MONOTONE_HIGH_TICK, test_constants::float());
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
-    abort EUnexpectedSuccess
-}
 
 #[test, expected_failure(abort_code = pricing::EInvalidRange)]
 fun live_quote_with_equal_range_bounds_aborts() {
@@ -726,7 +688,7 @@ fun deep_itm_up_price_saturates_to_one() {
 /// returned the exact digital limit `1e9` — certainty, against a true probability
 /// of ~0 — for every admissible surface, because the branch never read the surface
 /// at all. Every consumer of `range_price` inherited it: the mint's entry
-/// probability, the liquidation threshold, and the NAV mark.
+/// probability and the NAV mark.
 #[test]
 fun deep_itm_up_price_follows_the_surface_not_the_strike_ratio() {
     let mut fx = oracle_fixture::setup_oracle_default();

@@ -45,7 +45,6 @@ const OrderMintedBcs = bcs.struct("OrderMinted", {
 	owner: bcs.Address,
 	lower_tick: bcs.u64(),
 	higher_tick: bcs.u64(),
-	leverage: bcs.u64(),
 	entry_probability: bcs.u64(),
 	quantity: bcs.u64(),
 	net_premium: bcs.u64(),
@@ -72,15 +71,6 @@ const LiveOrderRedeemedBcs = bcs.struct("LiveOrderRedeemed", {
 	penalty_fee: bcs.u64(),
 	inventory_impact_rebate: bcs.u64(),
 	builder_code_id: bcs.option(bcs.Address),
-});
-
-const LiquidatedOrderRedeemedBcs = bcs.struct("LiquidatedOrderRedeemed", {
-	expiry_market_id: bcs.Address,
-	account_id: bcs.Address,
-	order_id: bcs.u256(),
-	position_root_id: bcs.u256(),
-	owner: bcs.Address,
-	quantity_closed: bcs.u64(),
 });
 
 const SettledOrderRedeemedBcs = bcs.struct("SettledOrderRedeemed", {
@@ -202,7 +192,6 @@ export interface MintReceipt {
 	positionRootId: bigint;
 	lowerTick: bigint;
 	higherTick: bigint;
-	leverage: number;
 	/** 0..1 range probability quoted at entry (your fill price per $1 payout). */
 	entryProbability: number;
 	/** Max payout actually minted, in quote units (mintAmount: chain-floored). */
@@ -221,7 +210,6 @@ export interface MintReceipt {
 		builderFee: bigint;
 		penaltyFee: bigint;
 		inventoryImpactCharge: bigint;
-		leverage: bigint;
 		entryProbability: bigint;
 	};
 }
@@ -243,7 +231,6 @@ export interface RedeemReceipt {
 	proceeds: number;
 	/** Gross close value before fees (the event's redeem_amount). */
 	gross: number;
-	liquidated: boolean;
 	fees: { trading: number; builder: number; penalty: number };
 	/** Separate inventory-impact rebate credited to the account. */
 	inventoryImpactRebate: number;
@@ -332,7 +319,6 @@ export function decodeMints(cfg: PredictConfig, result: DecodableTransactionResu
 			positionRootId: BigInt(e.position_root_id),
 			lowerTick: BigInt(e.lower_tick),
 			higherTick: BigInt(e.higher_tick),
-			leverage: fromRaw(BigInt(e.leverage), 9),
 			entryProbability: fromRaw(BigInt(e.entry_probability), 9),
 			quantity: fromRaw(BigInt(e.quantity), 6),
 			netPremium: fromRaw(BigInt(e.net_premium), 6),
@@ -352,7 +338,6 @@ export function decodeMints(cfg: PredictConfig, result: DecodableTransactionResu
 				builderFee: BigInt(e.builder_fee),
 				penaltyFee: BigInt(e.penalty_fee),
 				inventoryImpactCharge: BigInt(e.inventory_impact_charge),
-				leverage: BigInt(e.leverage),
 				entryProbability: BigInt(e.entry_probability),
 			},
 		}),
@@ -400,7 +385,6 @@ export function decodeRedeems(
 			// Gross plus inventory-impact rebate, minus all ordinary fee components.
 			proceeds: fromRaw(liveProceedsRaw(e), 6),
 			gross: fromRaw(BigInt(e.redeem_amount), 6),
-			liquidated: false,
 			fees: {
 				trading: fromRaw(BigInt(e.trading_fee), 6),
 				builder: fromRaw(BigInt(e.builder_fee), 6),
@@ -420,41 +404,7 @@ export function decodeRedeems(
 			},
 		}),
 	);
-	const liquidated = decodeAll(
-		result,
-		pkg,
-		"order_events",
-		"LiquidatedOrderRedeemed",
-		LiquidatedOrderRedeemedBcs,
-	).map(
-		(e): RedeemReceipt => ({
-			marketId: normalizeSuiAddress(e.expiry_market_id),
-			accountId: normalizeSuiAddress(e.account_id),
-			owner: normalizeSuiAddress(e.owner),
-			orderId: BigInt(e.order_id),
-			positionRootId: BigInt(e.position_root_id),
-			quantityClosed: fromRaw(BigInt(e.quantity_closed), 6),
-			remaining: 0,
-			replacementOrderId: null,
-			proceeds: 0,
-			gross: 0,
-			liquidated: true,
-			fees: { trading: 0, builder: 0, penalty: 0 },
-			inventoryImpactRebate: 0,
-			builderCodeId: null,
-			raw: {
-				quantityClosed: BigInt(e.quantity_closed),
-				remaining: 0n,
-				proceeds: 0n,
-				gross: 0n,
-				tradingFee: 0n,
-				builderFee: 0n,
-				penaltyFee: 0n,
-				inventoryImpactRebate: 0n,
-			},
-		}),
-	);
-	return [...live, ...liquidated];
+	return live;
 }
 
 export function decodeClaims(

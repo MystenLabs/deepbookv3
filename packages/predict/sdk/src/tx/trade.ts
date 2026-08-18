@@ -58,7 +58,6 @@ export function mintExactQuantity(
 		lowerTick: bigint;
 		higherTick: bigint;
 		quantityRaw: bigint;
-		leverageRaw: bigint;
 		maxCostRaw?: bigint;
 		maxProbabilityRaw?: bigint;
 	} & MarketFeeds,
@@ -76,7 +75,6 @@ export function mintExactQuantity(
 			tx.pure.u64(args.lowerTick),
 			tx.pure.u64(args.higherTick),
 			tx.pure.u64(args.quantityRaw),
-			tx.pure.u64(args.leverageRaw),
 			tx.pure.u64(args.maxCostRaw ?? U64_MAX),
 			tx.pure.u64(args.maxProbabilityRaw ?? U64_MAX),
 			tx.object(ACCUMULATOR_ROOT_ID),
@@ -99,7 +97,6 @@ export function mintExactAmount(
 		higherTick: bigint;
 		amountRaw: bigint;
 		minQuantityRaw: bigint;
-		leverageRaw: bigint;
 	} & MarketFeeds,
 ): TransactionResult {
 	const pricer = loadLivePricer(cfg, tx, args);
@@ -116,7 +113,6 @@ export function mintExactAmount(
 			tx.pure.u64(args.higherTick),
 			tx.pure.u64(args.amountRaw),
 			tx.pure.u64(args.minQuantityRaw),
-			tx.pure.u64(args.leverageRaw),
 			tx.object(ACCUMULATOR_ROOT_ID),
 			tx.object(CLOCK_ID),
 		],

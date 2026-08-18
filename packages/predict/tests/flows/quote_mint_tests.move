@@ -90,7 +90,6 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     // A 1x order fronts its full premium, and `mint_quantity()` is exactly one
     // contract, so the premium is the entry probability with nothing to round.
@@ -111,7 +110,6 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -142,7 +140,6 @@ fun account_quote_matches_anonymous_without_stake_or_builder() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     let for_account = fx.quote_mint_for_account_bundle(
         &market,
@@ -150,7 +147,6 @@ fun account_quote_matches_anonymous_without_stake_or_builder() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     assert_eq!(for_account.entry_probability(), anonymous.entry_probability());
@@ -186,7 +182,6 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     // The expiry still collects the full fee; the sponsor covers the subsidy.
     helpers::assert_atm_entry_probability(quote.entry_probability());
@@ -201,7 +196,6 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -235,7 +229,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     let premium = anonymous.net_premium();
     helpers::assert_atm_entry_probability(anonymous.entry_probability());
@@ -248,7 +241,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(for_account.builder_fee(), BUILDER_FEE_ATM);
     let with_builder = premium + MIN_TRADING_FEE + BUILDER_FEE_ATM;
@@ -260,7 +252,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         for_account.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -312,7 +303,6 @@ fun raising_the_stake_benefit_template_cannot_discount_an_existing_market() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
 
@@ -323,7 +313,6 @@ fun raising_the_stake_benefit_template_cannot_discount_an_existing_market() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -363,7 +352,6 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability(same_epoch.entry_probability());
     assert_eq!(same_epoch.trading_fee(), MIN_TRADING_FEE);
@@ -383,7 +371,6 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     let premium = stale.net_premium();
     assert_eq!(stale.all_in_cost(), premium + MIN_TRADING_FEE);
@@ -396,7 +383,6 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         stale.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -414,7 +400,6 @@ fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(rolled.trading_fee(), DISCOUNTED_TRADING_FEE);
     assert_eq!(rolled.all_in_cost(), rolled.net_premium() + DISCOUNTED_TRADING_FEE);
@@ -456,7 +441,6 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         VARIANCE_SEED_QUANTITY,
-        test_constants::leverage_one_x(),
         std::u64::max_value!(),
         std::u64::max_value!(),
     );
@@ -487,7 +471,6 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.penalty_fee(), EWMA_PENALTY_FLAT);
@@ -500,7 +483,6 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -528,7 +510,6 @@ fun quote_mint_on_paused_market_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     abort 999
@@ -550,7 +531,6 @@ fun quote_mint_non_lot_quantity_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity() + 1,
-        test_constants::leverage_one_x(),
     );
 
     abort 999

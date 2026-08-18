@@ -5,7 +5,6 @@
 /// first admitted finite range above min_strike exactly at the money, then partially closed
 /// live. Pins that the close removes the order's entire live terms and reinserts
 /// the exact residual (cancel-and-replace) so liability drops to the surviving
-/// half, that the survivor carries zero floor (a 1x order), and that custody
 /// conserves across the market-cash / account sheets with S1 backing intact.
 ///
 /// The settled-redeem boundary legs are covered by the explicit settlement flow
@@ -64,7 +63,6 @@ fun finite_range_partial_close_preserves_live_solvency() {
         helpers::strike_tick(),
         helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
     let premium = quote.net_premium();
@@ -74,7 +72,6 @@ fun finite_range_partial_close_preserves_live_solvency() {
         helpers::strike_tick(),
         helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::check_market_cash_bundle(
         &market,
@@ -112,7 +109,6 @@ fun finite_range_partial_close_preserves_live_solvency() {
     let survivor_id = replacement.destroy_some();
     let survivor = order::from_order_id(survivor_id);
     assert_eq!(survivor.quantity(), HALF_CLOSE);
-    assert_eq!(survivor.floor_shares(), 0);
     // Solvency: every unit that left expiry cash landed in the manager's balance.
     // The close moves value between the two sheets, it never creates or destroys.
     let close_net_payout = fx.account_balance_bundle<DUSDC>(&account) - balance_before_close;

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Validation bounds for two `ProtocolConfig` scalars: the trade liquidation budget
+/// Validation bounds for `ProtocolConfig` scalars:
 /// and the LP request attempt count. Both values are stored on `ProtocolConfig`; their
 /// bounds live in `config_constants` and are asserted by the protocol_config setters.
 #[test_only]
@@ -15,32 +15,6 @@ use std::unit_test::assert_eq;
 /// three is the widest head-of-line window RP-12 accounts for.
 const MIN_LP_REQUEST_ATTEMPTS: u64 = 1;
 const MAX_LP_REQUEST_ATTEMPTS: u64 = 3;
-
-#[test]
-fun trade_budget_accepts_endpoints() {
-    config_constants::assert_trade_liquidation_budget(
-        config_constants::min_trade_liquidation_budget!(),
-    );
-    config_constants::assert_trade_liquidation_budget(
-        config_constants::max_trade_liquidation_budget!(),
-    );
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidTradeLiquidationBudget)]
-fun trade_budget_below_min_aborts() {
-    config_constants::assert_trade_liquidation_budget(
-        config_constants::min_trade_liquidation_budget!() - 1,
-    );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidTradeLiquidationBudget)]
-fun trade_budget_above_max_aborts() {
-    config_constants::assert_trade_liquidation_budget(
-        config_constants::max_trade_liquidation_budget!() + 1,
-    );
-    abort 999
-}
 
 /// Predict ships fill-or-kill: one attempt, so a limit miss refunds at the flush that
 /// reaches it and no request can hold the queue head. The shipped value is asserted

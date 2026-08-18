@@ -45,7 +45,6 @@ fun mint_after_expiry_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);
@@ -71,7 +70,6 @@ fun redeem_settled_on_live_order_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     // Full close, but no proof and the order is live.
     fx.redeem_settled_bundle(
@@ -115,7 +113,6 @@ fun redeem_with_wrong_pyth_feed_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     // Redeem on the real market but pass an unrelated Pyth feed: the live-pricing
     // binding check rejects it after decoding the valid order id.
@@ -164,7 +161,6 @@ fun mint_with_another_underlyings_block_scholes_stores_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);
@@ -191,7 +187,6 @@ fun mint_while_expiry_mint_paused_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);
@@ -216,7 +211,6 @@ fun mint_while_trading_paused_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);

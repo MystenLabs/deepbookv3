@@ -3,8 +3,7 @@
 Technical definitions for the terms the Predict docs and code use, with the
 established options / structured-product term each one maps to and the code
 identifier it corresponds to. Mint-economics identifiers (`entry_value`,
-`net_premium`, `financed_amount`) match these terms directly; the floor amount
-keeps its payoff-oriented code name (`floor_shares`), bridged here.
+`net_premium`) match these terms directly.
 
 ## The product
 
@@ -39,7 +38,7 @@ absolute integer ticks** — and a raw strike is always recovered the same way,
 grid, no boundary indices).
 
 - **Tick** — an integer strike index. The public API, order IDs, the payout
-  tree, the liquidation book, and the exposure index all carry ticks; raw
+  tree and the exposure index all carry ticks; raw
   strikes are reconstructed only at the pricing/settlement boundary. Code
   `lower_tick`, `higher_tick` (two `u30`s per order).
 - **`tick_size`** — the fixed raw-price-per-tick factor snapshotted per expiry,
@@ -67,15 +66,13 @@ grid, no boundary indices).
   fixed point (code `entry_probability`, `range_probability`).
 - **Full premium** — the contract's complete entry value,
   `entry_probability × quantity`; code `entry_value`.
-- **Net premium** — what a leveraged buyer pays upfront,
-  `full premium / leverage`; code `net_premium`. The unpaid remainder is
+- **Net premium** — what the buyer pays upfront, equal to the full premium
+  (`entry_probability × quantity`); code `net_premium`. The remainder is
   financed (see below). Fees are charged on top and are never part of the
   contract's terms.
 - **Mark value (live value)** — the contract's current model value,
-  `quantity × range_probability − floor`, clamped at zero. "Live value" in
-  these docs always means this mark-to-model value, not a traded price. The
-  pre-floor product `quantity × range_probability` is the **gross value**
-  (code `gross_value`) — the collateral value securing the financing.
+  `quantity × range_probability`. "Live value" in these docs always means this
+  mark-to-model value, not a traded price.
 - **Forward** — the model's forecast of the underlying at expiry, the input the
   range probability is differenced off. The admin setting
   `use_pyth_spot_for_forward` picks its source: on (the default) Predict builds
@@ -115,53 +112,6 @@ Predict reads it but does not own it.
   (`i64`) math package both Predict and propbook depend on (formerly
   `predict_math`). Code package/address `fixed_math`.
 
-## Leverage and financing
-
-A leveraged Predict contract is a vanilla range digital plus two
-modifications: embedded premium financing and a sold knock-out. Economically
-it is a **down-and-out digital structured like a turbo warrant / knock-out
-certificate**. See [leverage and the floor](./concepts/leverage-and-floor.md).
-
-- **Financed amount** — the slice of the full premium the pool funds at mint,
-  `full premium − net premium`; code `financed_amount`. The structured-product
-  analogue is a turbo warrant's financing level at issuance.
-- **Floor (financing balance)** — the static financed amount the contract must
-  cover before the holder owns anything above it. It enters the payoff itself
-  (`payout = quantity − floor_shares` for a winner), so it is part of the
-  contract, not a separable debt position. Code `floor_shares`.
-- **Limited recourse** — the financing is secured by its own contract only: the
-  floor can consume that one order's value or payout, capped at it, and never
-  creates a claim on the holder's other assets.
-- **Leverage** — premium leverage: full premium over net premium, represented as
-  a 1e9-scaled multiplier and admitted by a probability-sensitive cap. This is
-  financing leverage on the premium, on top of the high gearing a digital already
-  has relative to the underlying. (The symbol λ is reserved in these docs for
-  `backing_buffer_lambda`.)
-
-## Knock-out (liquidation)
-
-- **Knock-out** — the extinguishing of a leveraged contract once its gross
-  value reaches the knock-out level. Code and event vocabulary: liquidation,
-  `OrderLiquidated`. Predict's knock-out pays **zero order payout**: the holder
-  receives nothing from the knocked-out order, and the account position
-  remains until cleared for zero payout. The separate settled trading-loss rebate still follows the normal
-  expiry-level PnL and fee-basis rules.
-- **Knock-out level** — `floor_amount / liquidation_ltv`, the gross value at
-  which the contract is extinguished. It sits above the financing balance by
-  the LTV buffer; that gap is the pool's recovery margin against gap risk.
-- **Knock-out probability** — the same barrier in probability space:
-  `p* = floor_amount / (liquidation_ltv × quantity)`. The contract knocks
-  out when its range probability falls to `p*`. The floor is static, so `p*`
-  is constant for the life of the order — knock-out requires the range
-  probability to fall (a price or vol move), never time alone.
-- **Liquidation LTV** — the loan-to-value bound that `floor / gross value` may
-  reach before knock-out; code `liquidation_ltv`, snapshotted per expiry. A
-  smaller value knocks out earlier.
-- **Discretely monitored barrier** — the knock-out is enforced by bounded,
-  permissionless keeper passes, not continuous monitoring; between checks a
-  breached contract can remain in the book. See
-  [liquidation](./concepts/liquidation.md) and [risks](./risks.md).
-
 ## Fees
 
 - **Trading fee** — the variance-based per-trade fee,
@@ -186,8 +136,9 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   filled supply and burned on a filled withdraw; its value tracks pool NAV. The
   fungible claim on `PoolVault`. Code `PLP`.
 - **`current_nav`** — an `ExpiryMarket`'s **exact** live NAV: free cash minus the
-  exact per-order live liability (payout-tree `walk_linear` minus the leveraged
-  book's `correction_value`), floored at zero. There is no approximation or
+  live liability (the payout tree's boundary-linear walk
+  `strike_payout_tree::walk_linear`, `Σ quantity × P(range)`, with no per-order
+  correction), floored at zero. There is no approximation or
   uncertainty band — it is the true per-expiry recoverable value at the
   valuation instant. Code `current_nav`.
 - **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush
@@ -221,6 +172,5 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | Code verb | Options term | Meaning |
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
-| `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark, net of the floor on the closed slice. |
-| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records the exact Propbook Pyth expiry spot and terminal payout liability; `redeem_settled` then pays `notional − floor_shares` in range and zero out of range without reading an oracle. |
-| `liquidate` | knock-out | An under-threshold leveraged contract is extinguished with zero order payout. |
+| `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark. |
+| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records the exact Propbook Pyth expiry spot and terminal payout liability; `redeem_settled` then pays the full `notional` in range and zero out of range without reading an oracle. |

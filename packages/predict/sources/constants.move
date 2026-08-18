@@ -69,9 +69,6 @@ public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
 public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
 
-/// Maximum active leveraged orders one expiry market may carry into NAV.
-public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
-
 // === Time Constants ===
 
 public(package) macro fun one_minute_ms(): u64 { 60_000 }
@@ -99,12 +96,6 @@ public macro fun deep_decimals(): u64 { 1_000_000 }
 /// The loss rebate has no staking-side cap — its size is governed by the
 /// per-expiry `trading_loss_rebate_rate` in `expiry_cash_config`.
 public(package) macro fun max_fee_discount(): u64 { 500_000_000 }
-
-// === Liquidation ===
-
-/// Divisor for the passive tail slice of each liquidation candidate budget; the
-/// head-priority slice takes the remainder. Divisor 3 => 1/3 tail, 2/3 head.
-public(package) macro fun liquidation_tail_scan_divisor(): u64 { 3 }
 
 // === Builder Fees ===
 

@@ -31,26 +31,6 @@ fun current_nav_rejects_pricer_loaded_for_another_market() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = expiry_market::EWrongPricer)]
-fun liquidate_rejects_pricer_loaded_for_another_market() {
-    let mut fx = oracle_fixture::setup_oracle_default();
-
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
-    let wrong_pricer = fx.load_pricer_bound_to(
-        oracle_fixture::config(&oracle),
-        oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle),
-        oracle_fixture::bs(&oracle).values(),
-        oracle_fixture::bs(&oracle).svi(),
-        oracle_fixture::pyth(&oracle).id(),
-    );
-
-    let mut market = fx.take_expiry_market();
-    market.liquidate(oracle_fixture::config(&oracle), &wrong_pricer, 1, fx.clock());
-    abort 999
-}
-
 #[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
 fun load_live_pricer_rejects_old_feeds_after_propbook_rebind() {
     let mut fx = oracle_fixture::setup_oracle_default();

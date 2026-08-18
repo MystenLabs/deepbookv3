@@ -16,8 +16,6 @@ const IMPACT_MAX_RATE: u64 = 200_000_000; // 20%
 const BACKING_BUFFER_LAMBDA: u64 = 500_000_000;
 const EXPECTED_SINGLE_ORDER_CHARGE: u64 = 10_000_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-const DROPPED_SPOT: u64 = 99_000_000_000;
 
 #[test]
 fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
@@ -35,7 +33,6 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(quote.inventory_impact_charge(), EXPECTED_SINGLE_ORDER_CHARGE);
     assert_eq!(
@@ -55,7 +52,6 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -117,7 +113,6 @@ fun settlement_releases_unused_inventory_escrow_to_pool_surplus() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), EXPECTED_SINGLE_ORDER_CHARGE);
     let cash_before_settlement = helpers::market(&market).cash_balance();
@@ -130,57 +125,6 @@ fun settlement_releases_unused_inventory_escrow_to_pool_surplus() {
     // later close can claim an inventory rebate.
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), 0);
     assert_eq!(helpers::market(&market).cash_balance(), cash_before_settlement);
-    helpers::assert_market_backed_bundle(&market);
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun liquidation_reduces_risk_without_paying_an_inventory_rebate() {
-    let (mut fx, expiry_id, trader) = setup_enabled_market();
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.seed_market_cash(
-        helpers::market_mut(&mut market),
-        test_constants::default_seeded_expiry_cash(),
-    );
-
-    let quote = fx.quote_mint_bundle(
-        &market,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        LEVERAGE_TWO_X,
-    );
-    assert!(quote.inventory_impact_charge() > 0);
-    let order_id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        LEVERAGE_TWO_X,
-    );
-    let reserve_after_mint = helpers::market(&market).inventory_impact_reserve();
-    let balance_after_mint = fx.account_balance_bundle<DUSDC>(&account);
-
-    // One tick below the lower strike makes the UP digital worthless in the
-    // fixture and sends the leveraged order through the zero-payout liquidation
-    // arm. Risk falls, but only a voluntary live close earns a rebate.
-    fx.advance_live_oracle_bundle(&mut market, DROPPED_SPOT);
-    fx.redeem_bundle(
-        &mut market,
-        &mut account,
-        order_id,
-        test_constants::mint_quantity(),
-    );
-
-    assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_after_mint);
-    assert_eq!(helpers::market(&market).inventory_impact_reserve(), reserve_after_mint);
-    assert_eq!(helpers::market(&market).payout_liability(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);

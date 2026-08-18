@@ -79,25 +79,6 @@ public struct ExactSpotRead has drop {
     spot: Option<u64>,
 }
 
-/// Per-flush cache of `up_price` results keyed by finite boundary tick, ascending
-/// and non-increasing in price.
-///
-/// The NAV linear walk (`strike_payout_tree::walk_linear`) fills it once per node
-/// as it prices the payout tree in-order; the correction walk
-/// (`liquidation_book::correction_value`) then reads each leveraged order's boundary
-/// prices back by binary search instead of re-pricing every order. Every active
-/// leveraged order's finite boundary ticks are payout-tree nodes, so every finite
-/// lookup MUST hit: a miss is a broken exposure index, not a cache fallback, and
-/// `cached_range_price` aborts `ETickNotInPriceMemo` rather than silently repricing.
-/// The same cache rejects non-monotone UP prices during NAV valuation, because
-/// `walk_linear` tree-wide netting is exact only on a monotone active surface.
-public struct PriceMemo has drop {
-    /// Finite boundary ticks in ascending order (the in-order walk appends them).
-    ticks: vector<u64>,
-    /// `up_price(ticks[i] * tick_size)`, parallel to `ticks`.
-    prices: vector<u64>,
-}
-
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const ENonPositiveVariance: u64 = 2;
@@ -110,17 +91,15 @@ const EWrongBlockScholesValueStore: u64 = 8;
 const ELivePricingExpired: u64 = 9;
 const EBlockScholesSVIStale: u64 = 10;
 const EWrongBlockScholesSVIStore: u64 = 11;
-const ETickNotInPriceMemo: u64 = 12;
-const EBlockScholesPriceUnavailable: u64 = 13;
-const EBlockScholesSVIUnavailable: u64 = 14;
-const EBlockScholesMinVarianceInvalid: u64 = 15;
-const ENonMonotonePriceMemo: u64 = 16;
+const EBlockScholesPriceUnavailable: u64 = 12;
+const EBlockScholesSVIUnavailable: u64 = 13;
+const EBlockScholesMinVarianceInvalid: u64 = 14;
 /// A live pricer may not be built from an oracle observation written in this
 /// transaction. Named for the observation's provenance (`writer_digest` vs
 /// `tx_context::digest()`), not sender identity — not every read of a same-tx
 /// write is prohibited (Pyth is checked only on the re-anchor branch).
-const EOracleWrittenInThisTransaction: u64 = 17;
-const EBlockScholesInputTooWide: u64 = 18;
+const EOracleWrittenInThisTransaction: u64 = 15;
+const EBlockScholesInputTooWide: u64 = 16;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -260,60 +239,7 @@ public(package) fun load_exact_spot_read(
     ExactSpotRead { spot }
 }
 
-/// Create an empty per-flush price cache (see `PriceMemo`).
-public(package) fun new_price_memo(): PriceMemo {
-    PriceMemo { ticks: vector[], prices: vector[] }
-}
-
-/// Read the cached range price `up_price(lower) - up_price(higher)` for one order's
-/// tick range, mirroring `range_price`'s infinity sentinels and saturating floor.
-/// Both finite boundaries must have been cached by the linear walk; a finite miss
-/// aborts (the order's tick is not a payout-tree node — a broken index, not dust).
-public(package) fun cached_range_price(memo: &PriceMemo, lower_tick: u64, higher_tick: u64): u64 {
-    memo.cached_up_price(lower_tick).saturating_sub(memo.cached_up_price(higher_tick))
-}
-
-/// Price `tick` through `pricer` and append it to the cache. Called once per node by
-/// the in-order linear walk, so `ticks` stays ascending for `cached_up_price`'s
-/// binary search. Only finite ticks are stored (the tree never holds inf boundaries).
-public(package) fun price_and_cache(
-    memo: &mut PriceMemo,
-    pricer: &Pricer,
-    tick: u64,
-    tick_size: u64,
-): u64 {
-    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
-    if (!memo.prices.is_empty()) {
-        let previous = memo.prices[memo.prices.length() - 1];
-        // Higher strikes should not have higher UP prices. NAV's linear tree walk
-        // relies on that order; an inverted surface can overstate pool value.
-        assert!(price <= previous, ENonMonotonePriceMemo);
-    };
-    memo.ticks.push_back(tick);
-    memo.prices.push_back(price);
-    price
-}
-
 // === Private Functions ===
-
-/// Look up a boundary tick's cached UP price. Infinity boundaries are never tree
-/// nodes, so they short-circuit to `compute_up_price`'s sentinels (`P(-inf) = 1`,
-/// `P(+inf) = 0`); every finite tick must be present or the exposure index is broken.
-fun cached_up_price(memo: &PriceMemo, tick: u64): u64 {
-    if (tick == 0) return math::float_scaling!(); // tick 0 is the neg-inf sentinel
-    if (tick == constants::pos_inf_tick!()) return 0;
-
-    let ticks = &memo.ticks;
-    let mut lo = 0;
-    let mut hi = ticks.length();
-    while (lo < hi) {
-        let mid = lo + (hi - lo) / 2;
-        let mid_tick = ticks[mid];
-        if (mid_tick == tick) return memo.prices[mid];
-        if (mid_tick < tick) lo = mid + 1 else hi = mid;
-    };
-    abort ETickNotInPriceMemo
-}
 
 /// Validate all supplied feed objects against Propbook's canonical bindings.
 fun assert_current_oracles(
@@ -620,7 +546,7 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     // truncation error. That is why this used to short-circuit to the digital
     // limits 1 and 0 there — a saturation that is only true when total variance is
     // small, and silently wrong when it is not, on a value the mint's entry
-    // probability, the liquidation threshold and the NAV mark all consume.
+    // probability and the NAV mark both consume.
     //
     // `ln` is defined across the whole positive `u64` domain, so the difference is
     // well-conditioned over every representable pair: `|k| <= 44.4` against the

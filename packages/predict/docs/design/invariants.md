@@ -19,7 +19,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Inventory-impact escrow covers the current potential.** While live,
   `inventory_impact_reserve ≥ phi(payout_liability)`. Mints credit exactly the
   potential increase and voluntary live closes may withdraw only the potential
-  decrease. Liquidation pays no rebate and can only create reserve surplus;
+  decrease;
   settlement releases the residual earmark when live closes become impossible.
 - **Inventory cycles telescope.** Inventory charge/rebate is always the signed
   difference between two evaluations of the same deterministic integer state
@@ -27,10 +27,10 @@ and contributors. For *how* each mechanism works, follow the links into
   state has exactly zero net inventory transfer, including rounding and
   cross-range reorderings.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
-  floor is the maximum summed net payout at any *single* settlement price, read
+  floor is the maximum summed payout at any *single* settlement price, read
   from `StrikePayoutTree::net_payout_reserve_terms`; the buffer is
-  `backing_buffer_lambda × (Σ net payout − floor)`, with both terms derived from
-  the payout tree's aggregate net-payout terms (each `quantity − floor_shares`). Because exactly one
+  `backing_buffer_lambda × (Σ payout − floor)`, with both terms derived from
+  the payout tree's aggregate payout terms (each order's `quantity`). Because exactly one
   settlement price resolves a market, the floor alone covers every settlement
   outcome in full (`settled_liability(p) ≤ floor` for every `p`); the buffer
   governs how much pre-settlement exit demand beyond the floor is funded. A
@@ -54,31 +54,18 @@ and contributors. For *how* each mechanism works, follow the links into
   reserve accumulates the protocol's profit share and is excluded from PLP
   redemption.
 
-## Floor and leverage
+## Position value
 
-- Predict sells one binary (digital) contract with a static per-order floor;
-  leverage changes the floor amount, not a separate debt overlay.
-- Live value = range-probability value − static floor, floored at 0. A 1× order
-  has zero floor.
-- The floor is **limited-recourse per order**: it offsets only its own order's
-  value/payout, capped at that value. Aggregate floor exceeding aggregate
-  liability is not positive NAV.
-- **Mint creation invariant:** leveraged orders start above the knock-out line:
-  `entry_probability × quantity > floor_shares / liquidation_ltv`. Fees are
-  transaction costs, not floor value.
-- `floor_shares = financed_amount = entry_value − net_premium` is the durable
-  per-order static floor amount.
+- **Live value.** `range_probability × quantity`; no floor and no per-order clamp beyond the payout tree's own zero floor.
+- **Settled payout.** The full `quantity` for a winning position (settlement price inside `(lower, higher]`), zero otherwise.
 
 ## NAV and valuation
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  free_cash − exact_per_order_liability`, floored at zero, where `free_cash =
-  cash − rebate_reserve − inventory_impact_reserve` and the liability is the payout-tree linear walk
-  (`strike_payout_tree::walk_linear`, `Σ qty·P`, caching boundary prices for the
-  same valuation) minus the leveraged-book floor correction
-  (`liquidation_book::correction_value`, reading order range prices from that
-  cache). An underwater leveraged order
-  nets to zero by the per-order floor cap, so the read needs no liquidation pass.
+  free_cash − exact_live_liability`, floored at zero, where `free_cash =
+  cash − rebate_reserve − inventory_impact_reserve` and the liability is the
+  payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
+  `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
   reserve and proven on every trade); the `saturating_sub` cash floor marks a
   degenerate (underwater) market at 0, the correct per-market limited-recourse
@@ -107,7 +94,7 @@ and contributors. For *how* each mechanism works, follow the links into
   settlement-price writer. It records the exact normalized Pyth spot at the market's
   expiry timestamp and exact terminal payout liability atomically; otherwise it
   returns false without changing the market. Settled consumers read no oracle.
-- A settled order pays `quantity − floor_shares` if the settlement price is in
+- A settled order pays its full `quantity` if the settlement price is in
   `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
   applied by `strike_exposure::process_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
@@ -124,59 +111,27 @@ and contributors. For *how* each mechanism works, follow the links into
   discriminator, and its cached liability decreases as settled winners redeem.
   Live indexes survive until the settled-market sweep deactivates the expiry.
 
-## Liquidation
-
-- An order is liquidatable when `range_probability × quantity ≤ floor_shares /
-  liquidation_ltv`. Only leveraged orders (`floor_shares > 0`) are ever
-  liquidatable.
-- Liquidation is **permissionless and bounded** per call by a candidate budget.
-  Liquidation removes all of the order's book state; the holder's account
-  position is the only remaining record until it is redeemed for zero payout.
-  The liquidated state is derived, not stored: every flow that removes an order
-  from the active index also removes its position in the same transaction,
-  except liquidation — so a leveraged order absent from the index while its
-  position exists is liquidated. This derivation replaces the former
-  `liquidated_orders` tombstone table and its `ELiquidatedOrderAlreadyExists` /
-  `ELiquidatedOrderNotFound` guards, which prevented double-insert / double-clear
-  of that table. With the table gone, the invariant is protected instead by
-  monotonic per-expiry sequence allocation: order ids are never reused, so a
-  liquidated order's id can never be re-inserted into the active index to flip
-  its derived state back to live.
-- Liquidation **priority is encoded in the order-id high bits**: the packed
-  quantity field stores the complement (`U32_MASK − quantity_lots`), so an
-  ascending `u256` sort over raw order ids liquidates larger quantities first,
-  then by floor shares. The book never decodes a field.
-
 ## Mint admission
 
 - Raw `entry_probability` must lie in `[min_entry_probability,
   max_entry_probability]`; fees are not included in this admission bound.
-- Leverage is continuous at 1e9 scale: any requested `leverage ≥ 1×` is allowed
-  only if it is no greater than the dynamic admission cap derived from entry
-  probability, time to expiry, the expiry's snapshotted `max_admission_leverage`,
-  and the upgrade-required curve-shape constant.
-- Within the expiry's snapshotted `no_leverage_window_ms` of expiry the admission
-  cap is exactly 1×, regardless of entry probability; a `0` window disables the
-  block. This bounds origination only — an order opened before the window keeps its
-  leverage into expiry.
-- `net_premium = entry_probability × quantity / leverage ≥
-  min_net_premium`; the pool seeds the remainder (`financed_amount`).
+- `net_premium = entry_probability × quantity ≥ min_net_premium`; the holder
+  pays this in full — there is no financed remainder.
 
 ## Order encoding
 
-- The order id packs, in 196 dense low bits: quantity lots (u32), floor shares
-  (u64), lower and higher strike **tick** (u30 each), and an expiry-local sequence
-  (u40). Unused bits are leading bits and are rejected by decode validation. The
-  quantity and floor fields store complements, so an ascending sort is
-  larger-first. A finite strike is `tick · tick_size`; lower tick `0` is the
+- The order id packs, in 132 dense low bits: quantity lots (u32), lower and
+  higher strike **tick** (u30 each), and an expiry-local sequence (u40). Unused
+  bits are leading bits and are rejected by decode validation. Every field stores
+  its raw value — the complement encoding went away with the liquidation scan that
+  needed the ordering. A finite strike is `tick · tick_size`; lower tick `0` is the
   `neg_inf` sentinel and higher tick `pos_inf_tick` is the `pos_inf` sentinel.
 - **Lossless tick round-trip.** Every atom the canonical evaluator reads —
-  quantity, floor shares, and both ticks — round-trips through the packed id with
-  no loss. The two `u30` tick fields encode the *same* absolute ticks used at the
-  entrypoints, the payout tree, and the liquidation book, so an order's strike
+  quantity and both ticks — round-trips through the packed id with no loss. The two `u30` tick fields encode the *same* absolute ticks used at the
+  entrypoints and the payout tree, so an order's strike
   range is bit-identical whether read from the id, the tree, or the event. A lossy
   repack would be an accounting bug, not a precision nit.
-- Mint-admission policy (max leverage cap, admission curve, price thresholds) is
+- Mint-admission policy (the entry-probability band, minimum net premium) is
   **not** part of
   order decoding or structural validation — a future policy change must never
   invalidate an existing packed id.
@@ -257,8 +212,8 @@ and contributors. For *how* each mechanism works, follow the links into
 - All fixed-point math is at 1e9 scale; `math::mul_down` and `math::div_down` round **down**
   uniformly.
 - **Solvency rests on bit-identical pairing:** where a reserve and a payout derive
-  from the same quantity/floor atoms, they use the same net-payout calculation
-  (`quantity − floor_shares`), so a reserve can never be short of the payout it
+  from the same quantity atom, they use the same payout calculation, so a
+  reserve can never be short of the payout it
   backs.
 - Dust is biased to the protocol/LP pool, never against solvency: payouts round
   down (the holder absorbs ≤1 unit). The exact NAV walk floors at zero with

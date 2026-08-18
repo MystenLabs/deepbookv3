@@ -45,8 +45,6 @@ public struct ProtocolConfig has key {
     /// who stay. Both rates are read once per flush into the frozen mark, so every
     /// fill in one flush is charged the same pair.
     plp_withdraw_fee_rate: u64,
-    /// Total liquidation candidates checked before mint and redeem flows.
-    trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
     /// protocol cancels and refunds it. `1` (the default) is fill-or-kill; above
     /// that a missing request rests at the queue head and stops that queue for the
@@ -127,36 +125,6 @@ public fun set_template_expiry_fee_max_multiplier(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
-}
-
-/// Set the near-expiry no-leverage window snapshotted by newly created expiry markets.
-public fun set_template_no_leverage_window_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    window_ms: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_no_leverage_window_ms(window_ms);
-}
-
-/// Set the liquidation LTV snapshotted by newly created expiry markets.
-public fun set_template_liquidation_ltv(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_liquidation_ltv(value);
-}
-
-/// Set the max admission leverage snapshotted by newly created expiry markets.
-public fun set_template_max_admission_leverage(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_max_admission_leverage(value);
 }
 
 /// Set the backing-buffer lambda snapshotted by newly created expiry markets.
@@ -280,17 +248,6 @@ public fun set_template_trading_loss_rebate_rate(
 ) {
     config.assert_version();
     config.expiry_cash_template_config.set_trading_loss_rebate_rate(value);
-}
-
-/// Set the total liquidation candidate budget used before mint and redeem flows.
-public fun set_trade_liquidation_budget(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    budget: u64,
-) {
-    config.assert_version();
-    config_constants::assert_trade_liquidation_budget(budget);
-    config.trade_liquidation_budget = budget;
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets before it is
@@ -425,10 +382,6 @@ public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 
     config.protocol_reserve_profit_share
 }
 
-public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
-    config.trade_liquidation_budget
-}
-
 public(package) fun lp_request_limit_flush_attempts(config: &ProtocolConfig): u64 {
     config.lp_request_limit_flush_attempts
 }
@@ -550,7 +503,6 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         plp_supply_fee_rate: config_constants::default_plp_supply_fee_rate!(),
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
-        trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
         expiry_cash_template_config: expiry_cash_config::new(),

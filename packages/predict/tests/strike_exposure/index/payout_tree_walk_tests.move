@@ -3,10 +3,9 @@
 
 /// Unit coverage for `strike_payout_tree::walk_linear` — the NAV linear walk —
 /// driven by a real live `Pricer` over standalone trees. These exercise paths
-/// `current_nav` cannot reach directly: the per-flush price memo populated for
-/// the correction walk, the skip-zero-delta path over an equal live start/end
-/// boundary, and the boundary-aggregation dust clamp — the flat-price-tail integer
-/// underflow the ATM `current_nav` fixtures miss.
+/// `current_nav` cannot reach directly: the skip-zero-delta path over an equal
+/// live start/end boundary, and the boundary-aggregation dust clamp — the
+/// flat-price-tail integer underflow the ATM `current_nav` fixtures miss.
 ///
 /// The tree keys boundaries by absolute tick; the walk recovers each raw strike as
 /// `tick * tick_size`. These tests use the default `tick_size` (1e9) so tick `100`
@@ -14,8 +13,7 @@
 ///
 /// References are independent of the walk (unit-tests rule 1): the exact walk is
 /// checked against a per-order `Σ mul(range_price, qty)` sum (a different pricer
-/// path than the walk's `up_price`). Memo lookup checks compare the cached boundary
-/// prices against `range_price` so a stale or missing memo entry is visible.
+/// path than the walk's `up_price`).
 #[test_only]
 module deepbook_predict::payout_tree_walk_tests;
 
@@ -37,7 +35,6 @@ const HIGH_VARIANCE_A: u64 = 100_000_000;
 const Q0: u64 = 10_000_000_000;
 const Q1: u64 = 2_000_000_000;
 const Q2: u64 = 2_000_000_000;
-const ADJACENT_QUANTITY: u64 = 5_000_000_000;
 /// Forward far above the grid so low strikes sit in the deep-ITM flat price tail
 /// where adjacent ticks price within a floor bucket — the dust-underflow regime.
 const FLAT_REGION_FORWARD: u64 = 435_000_000_000;
@@ -58,6 +55,38 @@ const GC_SURVIVOR_C_QUANTITY: u64 = 300_000_000;
 const GC_SETTLEMENT_A_ONLY_TICK: u64 = 100;
 const GC_SETTLEMENT_OVERLAP_TICK: u64 = 103;
 const GC_SETTLEMENT_C_ONLY_TICK: u64 = 106;
+/// Two adjacent equal-quantity ranges sharing one boundary, the second open-ended.
+/// The shared tick's start and end cancel AND it is the last node in the tree, so
+/// no later boundary can re-observe an inversion sitting on it.
+const CANCEL_LOWER_TICK: u64 = 90;
+const CANCEL_SHARED_TICK: u64 = 100;
+const CANCEL_QUANTITY: u64 = 3_000_000;
+
+/// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
+///
+/// Regression for the boundary-skip bug: `walk_linear` once skipped pricing a node
+/// whose start and end quantities cancel, which silently disarmed the monotonicity
+/// guard for any inversion sitting on such a node. The construction below is the
+/// one that distinguishes the two behaviours — the cancelling tick is the LAST
+/// node (the second range is open-ended, so `pos_inf` is never stored), so there is
+/// no later boundary whose own comparison would catch the inversion anyway.
+/// Skipping the observation here lets NAV understate liability by the inverted
+/// segment while the flush completes.
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun inversion_on_a_cancelling_last_boundary_still_aborts() {
+    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    // A = (90, 100], B = (100, +inf], equal quantity: tick 100's start and end
+    // cancel, and it is the only node after 90.
+    tree.insert_range(CANCEL_LOWER_TICK, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
+    insert_up(&mut tree, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
+
+    tree.walk_linear(&pricer, tick_size());
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
 
 #[test]
 fun exact_walk_matches_per_order_reference() {
@@ -79,7 +108,7 @@ fun exact_walk_matches_per_order_reference() {
 }
 
 #[test]
-fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
+fun walk_linear_nets_same_total_regardless_of_insertion_order() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
@@ -87,51 +116,10 @@ fun walk_linear_caches_boundaries_in_tick_order_for_range_lookup() {
     insert_up(&mut tree, t2, Q2);
     insert_up(&mut tree, t0, Q0);
     insert_up(&mut tree, t1, Q1);
-
-    // Insertion order is intentionally not sorted. The in-order walk must still
-    // cache ascending ticks, because `cached_range_price` uses binary search.
-    let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
+    // Insertion order is intentionally not sorted; the in-order walk must still
+    // net the same total.
+    let walk = tree.walk_linear(&pricer, tick_size());
     assert_eq!(walk, up_reference(&pricer, vector[t0, t1, t2], vector[Q0, Q1, Q2]));
-    assert_eq!(memo.cached_range_price(t0, t2), pricer.range_price(raw(t0), raw(t2)));
-    assert_eq!(memo.cached_range_price(0, t0), pricer.range_price(raw(0), raw(t0)));
-    assert_eq!(
-        memo.cached_range_price(t2, constants::pos_inf_tick!()),
-        pricer.range_price(raw(t2), raw(constants::pos_inf_tick!())),
-    );
-
-    destroy(tree);
-    cleanup(fixture, oracle);
-}
-
-#[test]
-fun skip_zero_delta_keeps_adjacent_live_ranges_exact() {
-    let (mut fixture, oracle, pricer) = live_pricer();
-    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
-
-    let (t0, t1, t2) = clustered_ticks();
-    // Adjacent live ranges with the same quantity leave an equal nonzero start/end
-    // at the shared boundary. The exact walk may skip pricing that boundary because
-    // the two sides cancel.
-    tree.insert_range(t0, t1, ADJACENT_QUANTITY, 0);
-    tree.insert_range(t1, t2, ADJACENT_QUANTITY, 0);
-
-    let mut memo = pricing::new_price_memo();
-    let walk = tree.walk_linear(&pricer, &mut memo, tick_size());
-    assert_eq!(
-        walk,
-        range_reference(
-            &pricer,
-            vector[t0, t1],
-            vector[t1, t2],
-            vector[ADJACENT_QUANTITY, ADJACENT_QUANTITY],
-        ),
-    );
-    // The shared boundary has equal start/end quantity and contributes no net
-    // linear value, but it must still be cached for leveraged correction lookups.
-    assert_eq!(memo.cached_range_price(t0, t1), pricer.range_price(raw(t0), raw(t1)));
-    assert_eq!(memo.cached_range_price(t1, t2), pricer.range_price(raw(t1), raw(t2)));
-
     destroy(tree);
     cleanup(fixture, oracle);
 }
@@ -150,8 +138,8 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     // flat tail the end-side floor at the shared boundary aggregates 1 ulp above the
     // two start-side floors (199_999 vs 99_999+99_999), so the raw
     // base+start-end would underflow to -1 and abort. The clamp returns 0.
-    tree.insert_range(lower_a, higher, DUST_QUANTITY, 0);
-    tree.insert_range(lower_b, higher, DUST_QUANTITY, 0);
+    tree.insert_range(lower_a, higher, DUST_QUANTITY);
+    tree.insert_range(lower_b, higher, DUST_QUANTITY);
 
     // Independent per-order reference: both ranges' values round to 0, so true
     // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
@@ -170,17 +158,17 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
-    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
-    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
+    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
+    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
+    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     // Removing the middle range deletes two interior boundary nodes through GC; the walk, settlement,
     // and rebuilt-tree assertions below prove those boundaries left no trace.
-    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0);
+    tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
 
     let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
-    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0);
-    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0);
+    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
+    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     let settlement_a_only = GC_SETTLEMENT_A_ONLY_TICK * tick_size();
     let settled_a_only = tree.settled_payout_liability(settlement_a_only, tick_size());
@@ -234,10 +222,9 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 /// map to the open-ended sentinels).
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 
-/// Run the exact linear walk with the production price memo.
+/// Run the exact linear walk.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {
-    let mut memo = pricing::new_price_memo();
-    tree.walk_linear(pricer, &mut memo, tick_size())
+    tree.walk_linear(pricer, tick_size())
 }
 
 /// Three adjacent finite ticks around the canonical finite strike (100, 101, 102).
@@ -249,7 +236,7 @@ fun clustered_ticks(): (u64, u64, u64) {
 /// Insert a one-sided up range `(tick, pos_inf]` carrying `quantity` (1x-shaped
 /// terms; `walk_linear` reads only the quantity).
 fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
-    tree.insert_range(tick, constants::pos_inf_tick!(), quantity, 0);
+    tree.insert_range(tick, constants::pos_inf_tick!(), quantity);
 }
 
 /// Independent linear reference: `Σ mul(range_price(tick·ts, +inf), quantity)`.
@@ -305,6 +292,30 @@ fun live_pricer_at(forward: u64): (OracleFixture, OracleBundle, Pricer) {
         test_constants::default_svi_rho_magnitude(),
         false,
         test_constants::default_svi_m(),
+        false,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+    (fixture, oracle, pricer)
+}
+
+/// A surface whose UP price RISES with strike over the active ticks — impossible
+/// for a valid curve, and what `ENonMonotonePrice` exists to reject. Same extreme
+/// SVI parametrisation the deleted price-memo guard test used: tiny positive `a`,
+/// max `b`, min `sigma`, `rho = -1`.
+fun non_monotone_pricer(): (OracleFixture, OracleBundle, Pricer) {
+    let mut fixture = oracle_fixture::setup_oracle_default();
+    let mut oracle = fixture.take_oracle_bundle();
+    fixture.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        1,
+        false,
+        test_constants::pricing_max_svi_input(),
+        test_constants::pricing_min_svi_sigma(),
+        test_constants::float(),
+        true,
+        0,
         false,
     );
     let pricer = fixture.load_pricer_bundle(&oracle);

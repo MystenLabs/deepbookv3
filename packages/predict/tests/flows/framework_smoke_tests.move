@@ -41,7 +41,6 @@ fun setup_everything_check_manager_bundle_return_smoke() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
