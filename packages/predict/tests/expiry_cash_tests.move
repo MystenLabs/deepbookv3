@@ -14,6 +14,8 @@ const REQUIRED_PAYOUT_LIABILITY: u64 = 101;
 const FEE_AMOUNT: u64 = 40;
 const INVENTORY_IMPACT_CHARGE: u64 = 30;
 const INVENTORY_IMPACT_REBATE: u64 = 12;
+/// Cash left after paying out past the earmark (5 < escrow 30).
+const CASH_BELOW_ESCROW: u64 = 5;
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun assert_backing_underfunded_aborts() {
@@ -58,14 +60,12 @@ fun free_cash_nets_out_the_impact_escrow_and_floors_at_zero() {
     cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
     assert_eq!(cash.free_cash(), FEE_AMOUNT - INVENTORY_IMPACT_CHARGE);
 
-    // Pay the escrowed rebate down to 28 cash against a 18 escrow, then drain the
-    // rest: free cash floors at zero rather than underflowing.
-    let rebate = cash.pay_inventory_impact_rebate(INVENTORY_IMPACT_REBATE);
-    let drained = cash.pay_authorized(FEE_AMOUNT - INVENTORY_IMPACT_CHARGE);
-    assert_eq!(cash.balance(), INVENTORY_IMPACT_CHARGE - INVENTORY_IMPACT_REBATE);
+    // Pay out past the earmark — 5 cash against a 30 escrow. Free cash floors at
+    // zero instead of underflowing the subtraction.
+    let drained = cash.pay_authorized(FEE_AMOUNT - CASH_BELOW_ESCROW);
+    assert_eq!(cash.balance(), CASH_BELOW_ESCROW);
     assert_eq!(cash.free_cash(), 0);
 
-    destroy(rebate);
     destroy(drained);
     destroy(cash);
 }
