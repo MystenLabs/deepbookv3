@@ -23,7 +23,7 @@ Exploit a discontinuity between the pre-settlement (live/backing) value and the 
 ## Rounding-direction abuse
 Accumulate dust by driving many operations whose rounding favors the user.
 - Predict: mint contribution/fee, redeem payout, floor split on partial close, LP share/withdraw pricing,
-  rebate reserve. R2 says dust → protocol; find any site that rounds the wrong way at scale.
+  inventory-impact escrow. R2 says dust → protocol; find any site that rounds the wrong way at scale.
 
 ## Fee / penalty / builder interactions
 Game the fee model: avoid a fee, double-collect, or shift cost.

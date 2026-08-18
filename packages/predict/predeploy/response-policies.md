@@ -398,6 +398,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (resolves P-9)
 
+> **RETIRED 2026-08-18 — the trading-loss rebate and DEEP staking were removed.** The trigger state (a settled market with unresolved rebates priced at claim-time `active_stake`) is unreachable: there is no rebate reserve, no `ExpiryTradingSummary`, and no claim. P-9 stays resolved — this entry remains its tombstone — and the settled-market cleanout survives as `redeem_settled_permissionless` alone, whose own gas incentive is the surviving half of the measurements below. The entry is kept verbatim for the decision record; nothing in it describes shipped behavior. Removal record: `docs/design/decisions.md` § "Staking and the trading-loss rebate removal".
+
 - **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
   settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
   `active_stake` read at CLAIM time (`expiry_market::claim_trading_loss_rebate`), and expiry cash stays reserved
@@ -448,16 +450,17 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   cleanout leaves an account's reserve in the expiry — self-correcting, not a loss. Findings:
   `evidence/p9-cleanout-gas-2026-07-07.md`, `evidence/p9-cleanout-gas-liquidated-2026-07-08.md`,
   `evidence/p9-claim-marginal-2026-07-08.md`, `evidence/p9-stake-abuse-2026-07-07.md`.
-- **Pinning tests:** `settlement_flow_tests.move` — `rebate_claim_requires_settled_market` (:477)
-  and `rebate_claim_with_open_position_aborts` (:496) pin the claim preconditions (settled market,
-  no open positions); `deauthorized_predict_app_blocks_permissionless_rebate_claim` (:320) and
-  `owner_auth_rebate_claim_survives_predict_app_deauth` (:334) pin the app-auth gate. Those two run
-  over the setup fixture `prepare_settled_loss_with_inactive_rebate_stake` (:567), which stages the
-  inactive-rebate-stake state but asserts nothing itself. The claim-time-stake *pricing* (active
-  stake read at claim, `expiry_market::claim_trading_loss_rebate`) is not pinned by a dedicated Move assertion — it
-  rests on the analytical bound (`evidence/p9-stake-abuse-2026-07-07.md`); likewise the gas-incentive
-  is platform metering (like RP-10), pinned by the harness evidence above, not a Move unit test.
-  Audit provenance: finding 8b5d5f.
+- **Pinning tests:** untested — the entry is retired and governs no live code path. Its four
+  Move pins (`rebate_claim_requires_settled_market`, `rebate_claim_with_open_position_aborts`,
+  `deauthorized_predict_app_blocks_permissionless_rebate_claim`,
+  `owner_auth_rebate_claim_survives_predict_app_deauth`) and their
+  `prepare_settled_loss_with_inactive_rebate_stake` fixture were removed with the claim they
+  exercised; the app-auth gate they shared with settled redeem stays pinned by
+  `deauthorized_predict_app_blocks_permissionless_settled_redeem` and
+  `owner_auth_settled_redeem_survives_predict_app_deauth`. The claim-time-stake pricing was never
+  pinned by a dedicated Move assertion, and the gas incentive is platform metering pinned by the
+  harness evidence above. Audit provenance: finding 8b5d5f. (`check.py` has no RETIRED state;
+  `untested` is the closest sanctioned value.)
 - **Reopen when:** ⚠ 2026-08-14: the liquidated arm of this entry is moot — leverage removal deleted
   liquidation and the `cleanup-liquidated` harness profile, so the two-marginal
   `nLiquidated`/`nSurvived` fit can never be re-run and only the survivor marginal describes the
@@ -710,7 +713,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 - **Trigger state:** an expiry materializes terminal profit
   (`pool_accounting::materialize_expiry_profit`, reached from a settled-market
-  sweep or a settled rebate-claim residual return); the protocol's share (`protocol_reserve_profit_share`) is split from
+  sweep); the protocol's share (`protocol_reserve_profit_share`) is split from
   idle into `PoolVault.protocol_reserve_balance`, which has no
   split/withdraw/claim entrypoint in the scoped packages. Separately,
   cross-market sweep order is permissionless (`plp::rebalance_expiry_cash`), so
@@ -1418,7 +1421,7 @@ solution.
 
 When a rounding choice exists, the protocol or LP pool keeps the dust; the
 user or LP counterparty receives at most one unit less. Concretely:
-user-facing outflows round down (redeem, withdraw, payout, rebate);
+user-facing outflows round down (redeem, withdraw, payout);
 protocol-held reserves and liabilities are greater than or equal to the
 corresponding outflow; use bit-equal reserve/payout pairing where possible,
 otherwise round reserves up. Net result: dust accrues to the pool, is never
@@ -1443,7 +1446,7 @@ withdrawal.
 
 **Audit obligation.** Every money flow is checked against R1 and R2 — mint
 contribution, live redeem, settled payout, fees,
-rebate reserve, LP supply/withdraw pricing, NAV. If a flow
+LP supply/withdraw pricing, NAV. If a flow
 can underflow or round toward the user, fix it or document the accepted
 tradeoff explicitly.
 
@@ -1554,5 +1557,25 @@ worth-fixing.
   `from_order_id_rejects_bits_above_envelope`, `max_quantity_lots_round_trips_without_truncation`.
 - **Reopen when:** leverage is reintroduced in any form, or a per-order term is
   added back to the payout tree.
+
+---
+
+
+## RP-28: Guards deleted with staking and the trading-loss rebate — duty inventory (2026-08-18)
+
+- **Trigger state:** not a runtime state. `move.md` requires that deleting or weakening a guard is preceded by an inventory of what it *incidentally* bounded, recorded here rather than only in a commit message. Removing DEEP staking and the trading-loss rebate deleted one solvency term and ten error constants; this entry is that inventory.
+- **Controller:** protocol (all of these guard protocol-written state).
+- **The `+ rebate_reserve` term in `expiry_cash::required_cash` (and its mirror in `free_cash`).** Stated purpose: an expiry must hold cash for rebates it may owe on top of its payout liability. Incidental duty: it made expiry cash *strictly* conservative — the reserve was cash the market could not sweep, so it also absorbed any rounding gap between the payout liability and the actual settled payout, and it kept the settled sweep from returning cash that a later claim would need. Both duties die with the claim: no flow pays out of that reserve any more, the settled payout is derived from the same packed atoms as the liability (R1 bit-equal pairing, unchanged), and the surviving `assert_backing` still requires `balance >= payout_liability + inventory_impact_reserve` after every cash movement. The removal *loosens* what the market may sweep by exactly the amount that used to fund rebates, which is the intended behavior change; it does not loosen what backs a winner's payout.
+- **`expiry_cash::ERebateBasisExceedsFee` (`rebate_fee_basis <= fee.value()`).** Stated purpose: the caller cannot designate more rebate basis than the cash it is delivering. Incidental duty: it was the trust boundary on the one two-argument fee-collection call — the only place a caller could inflate a liability without delivering the cash to back it. The two-argument form is gone; fee cash now joins through `receive`, which takes only the balance, so the inflatable argument no longer exists.
+- **`expiry_cash::EUnresolvedTradingFeesUnderflow` (`unresolved_trading_fees_paid >= trading_fees_paid`).** Stated purpose: a claim cannot resolve more fee basis than the expiry has unresolved. Incidental duty: it was the cross-object consistency proof between the account's per-expiry summary and the market's running basis — a double-resolve or a summary/market drift aborted here. Both sides of that pair are deleted.
+- **`predict_account::EExpirySummaryHasOpenPositions`.** Stated purpose: an account's rebate resolves only once every position in that expiry is closed. Incidental duty: it was the ordering gate that made the claim's fee basis final. The claim is gone; nothing else reads a per-expiry aggregate.
+- **`predict_account::EInsufficientPosition` (`open_position_count > 0` on remove).** Stated purpose: the per-expiry counter cannot underflow. Incidental duty: it was a second, independent existence check on a position being removed. That duty is unconditionally carried by `EPositionNotFound`, which the same function asserts against the `positions` table one line earlier — the counter was the derived copy, the table is the source of truth.
+- **`stake_config::EInvalidBenefitPowers` (`upper > 2 * lower`).** Stated purpose: reject a benefit curve whose segments are not ordered. Incidental duty, named in its own source comment: it was the only thing keeping the upper-segment denominator (`upper_benefit_power - lower_benefit_power`) positive in `stake_curve`. Both the divisor and the curve are deleted, so the duty has no surviving expression — this is the one deleted guard that carried a documented incidental duty, and it dies with its arithmetic.
+- **`plp::EMarketNotSettled`.** Stated purpose: a rebate claim requires a settled market. Incidental duty: none — it was the pool-side half of a check `expiry_market::claim_trading_loss_rebate` also made. The name survives in `expiry_market`, where the settled-redeem path still enforces the same lifecycle precondition.
+- **The four `config_constants` validators** (`EInvalidTradingLossRebateRate`, `EInvalidMaxBenefitRatio`, `EInvalidLowerBenefitPower`, `EInvalidUpperBenefitPower`). Stated purpose: bound the admin setters for the rebate rate and the benefit curve. Incidental duty: none beyond their stated ranges — each is a pure `min <= v <= max` check over a config field that no longer exists, and no runtime expression read those bounds. Their admin entrypoints are deleted in the same change, so no setter is left unbounded.
+- **Response:** every guard above is removed with the state it guarded, or its duty is carried by a surviving check that is at least as strong. No replacement guard is required. The one behavior change worth stating plainly: a settled market now returns all cash above payout liability and the impact escrow in the settled sweep, instead of holding a per-account reserve until a keeper resolved it, so an expiry no longer strands cash waiting on a cleanout.
+- **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is static reachability of the deleted expressions, verified by grep against HEAD plus the cash-sheet flow tests below.
+- **Pinning tests:** `cash_backing_flow_tests.move` — `cash_sheet_exact_after_every_flow` (exact expiry cash and payout liability after every LIVE cash-mutating step — mint, mint, partial close — with `assert_market_backed` on each; the settled sweep is covered by the two tests below, not by this one); `settlement_flow_tests.move` — `explicit_settlement_then_standalone_rebalance_sweeps_market`; `protocol_profit_deferral_tests.move` — `settled_sweep_defers_protocol_cut_then_drains_on_later_sweep`.
+- **Reopen when:** a loss rebate, a fee-basis reserve, or any other per-account liability funded out of expiry cash is reintroduced — the backing term and its resolve-side underflow guard come back together, and the settled sweep must hold the reserve back again.
 
 ---

@@ -4,15 +4,14 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, backing buffer lambda,
-/// inventory-impact max rate), and the expiry-cash trading-loss rebate template.
+/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate).
 /// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
 /// that boundary values round-trip through setter + getter. Codes whose envelope
 /// floor is 0
-/// (`EInvalidMinFee`, `EInvalidMinEntryProbability`, `EInvalidMaxEntryProbability`,
-/// `EInvalidTradingLossRebateRate`) have no reachable below-min case for a
+/// (`EInvalidMinFee`, `EInvalidMinEntryProbability`, `EInvalidMaxEntryProbability`)
+/// have no reachable below-min case for a
 /// `u64`, so only the above-max side is exercised.
 #[test_only]
 module deepbook_predict::protocol_config_bounds_tests;
@@ -236,51 +235,6 @@ fun inventory_impact_rate_and_scale_snapshot_at_creation() {
     assert_eq!(helpers::market(&market).inventory_impact_max_rate(), rate);
     helpers::return_market_bundle(market);
     fx.finish();
-}
-
-// === Expiry-cash template: trading-loss rebate rate ===
-
-#[test, expected_failure(abort_code = config_constants::EInvalidTradingLossRebateRate)]
-fun template_trading_loss_rebate_rate_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_trading_loss_rebate_rate(
-        &admin_cap,
-        config_constants::max_trading_loss_rebate_rate!() + 1,
-    );
-    abort 999
-}
-
-#[test]
-fun template_trading_loss_rebate_rate_accepts_boundaries() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
-    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-
-    config.set_template_trading_loss_rebate_rate(
-        &admin_cap,
-        config_constants::min_trading_loss_rebate_rate!(),
-    );
-    let snapshot = config.expiry_cash_config_snapshot();
-    assert_eq!(
-        snapshot.trading_loss_rebate_rate(),
-        config_constants::min_trading_loss_rebate_rate!(),
-    );
-    destroy(snapshot);
-
-    config.set_template_trading_loss_rebate_rate(
-        &admin_cap,
-        config_constants::max_trading_loss_rebate_rate!(),
-    );
-    let snapshot = config.expiry_cash_config_snapshot();
-    assert_eq!(
-        snapshot.trading_loss_rebate_rate(),
-        config_constants::max_trading_loss_rebate_rate!(),
-    );
-    destroy(snapshot);
-
-    return_shared(config);
-    destroy(admin_cap);
-    scenario.end();
 }
 
 // === PLP supply/withdraw fee ===

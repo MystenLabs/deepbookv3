@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability,
-/// rebate_reserve) triple after EVERY cash-mutating LIVE operation of a two-sided
+/// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability)
+/// pair after EVERY cash-mutating LIVE operation of a two-sided
 /// book on the far expiry — mint, mint, partial live redeem. Pins that mint
 /// premium AND fee land in expiry cash, and that disjoint live liability is
 /// the max settlement floor plus the default gap buffer. Terminal settlement
@@ -29,11 +29,6 @@ const MINT2_FEE: u64 = 10_000_000;
 /// measured from the manager's balance and cross-checked against expiry cash:
 /// the close moves value between the two sheets, it never creates or destroys.
 const HALF_CLOSE: u64 = 500_000_000;
-const CLOSE_FEE: u64 = 2_500_000;
-/// Rebate reserve = floor(cumulative fee basis * 0.5 default rebate rate).
-const REBATE_AFTER_MINT1: u64 = 2_500_000;
-const REBATE_AFTER_MINT2: u64 = 7_500_000;
-const REBATE_AFTER_CLOSE: u64 = 8_750_000;
 
 #[test]
 fun cash_sheet_exact_after_every_flow() {
@@ -46,12 +41,8 @@ fun cash_sheet_exact_after_every_flow() {
     // funding is absent.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
     let deposit = test_constants::default_manager_deposit();
-    helpers::check_market_cash_bundle(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
-    fx.check_manager_bundle(
-        &account,
-        expiry_id,
-        helpers::expected_manager_state(deposit, 0, 0, 0, 0),
-    );
+    helpers::check_market_cash_bundle(&market, helpers::expected_market_cash(seeded_cash, 0));
+    fx.check_manager_bundle(&account, helpers::expected_manager_state(deposit));
 
     // --- Mint 1: ATM UP range (min_strike, +inf], quantity 1e9. Premium and
     // fee both land in expiry cash; the order contributes its full quantity
@@ -76,19 +67,11 @@ fun cash_sheet_exact_after_every_flow() {
         helpers::expected_market_cash(
             seeded_cash + mint1_principal + MINT1_FEE,
             test_constants::mint_quantity(),
-            REBATE_AFTER_MINT1,
         ),
     );
     fx.check_manager_bundle(
         &account,
-        expiry_id,
-        helpers::expected_manager_state(
-            deposit - mint1_principal - MINT1_FEE,
-            MINT1_FEE,
-            1,
-            0,
-            0,
-        ),
+        helpers::expected_manager_state(deposit - mint1_principal - MINT1_FEE),
     );
 
     // --- Mint 2: DOWN complement (-inf, min_strike], quantity 2e9.
@@ -124,21 +107,10 @@ fun cash_sheet_exact_after_every_flow() {
             cash_after_mints,
             // λ_default = 0.25, so the gap buffer is mint_quantity / 4.
             DOWN_QUANTITY + test_constants::mint_quantity() / 4,
-            REBATE_AFTER_MINT2,
         ),
     );
     let balance_after_mints = deposit - mint1_principal - MINT1_FEE - mint2_principal - MINT2_FEE;
-    fx.check_manager_bundle(
-        &account,
-        expiry_id,
-        helpers::expected_manager_state(
-            balance_after_mints,
-            MINT1_FEE + MINT2_FEE,
-            2,
-            0,
-            0,
-        ),
-    );
+    fx.check_manager_bundle(&account, helpers::expected_manager_state(balance_after_mints));
 
     // --- Partial live close of half of order 1 at the unchanged ATM quote.
     // Cash pays only the net redeem (the fee is withheld in expiry cash and
@@ -159,24 +131,10 @@ fun cash_sheet_exact_after_every_flow() {
     let liability_after_close = DOWN_QUANTITY + HALF_CLOSE / 4;
     helpers::check_market_cash_bundle(
         &market,
-        helpers::expected_market_cash(
-            cash_after_close,
-            liability_after_close,
-            REBATE_AFTER_CLOSE,
-        ),
+        helpers::expected_market_cash(cash_after_close, liability_after_close),
     );
     let balance_after_close = balance_after_mints + close_net_payout;
-    fx.check_manager_bundle(
-        &account,
-        expiry_id,
-        helpers::expected_manager_state(
-            balance_after_close,
-            MINT1_FEE + MINT2_FEE + CLOSE_FEE,
-            2,
-            0,
-            0,
-        ),
-    );
+    fx.check_manager_bundle(&account, helpers::expected_manager_state(balance_after_close));
     assert!(helpers::has_position_bundle(&account, expiry_id, order1b));
     assert!(helpers::has_position_bundle(&account, expiry_id, order2));
 

@@ -35,14 +35,13 @@ const STANDARD_QUANTITY: u64 = 2_000_000_000;
 /// Idle seed large enough to fund several markets to the cash floor.
 const IDLE_SEED: u64 = 1_200_000_000_000;
 /// `value_expiry` sweeps each minted market back to its 10e9 cash target, so each
-/// market's NAV is that target less its live liability and rebate reserve, and the
+/// market's NAV is that target less its live liability, and the
 /// swept premium plus fees land in idle. Both markets are identical, so the two
 /// sides of the aggregation are pinned against each other and the pool mark is
 /// pinned against the ledger fields — none of it restates the digital, which is
 /// checked independently at each mint.
 const MARKET_CASH_TARGET: u64 = 10_000_000_000;
 const MINT_MIN_FEE: u64 = 10_000_000;
-const REBATE_AFTER_MINT: u64 = 5_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
 /// that mark is a very low but executable fair PLP price.
 const BELOW_MIN_PRICE_IDLE: u64 = 1_000_000_000;
@@ -109,9 +108,8 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     // mint time — nothing is read back out of the vault to predict itself.
     //
     // An order's live worth is the same product as its premium, so a swept
-    // market holds its cash target less that worth and less the rebate withheld
-    // from the fee.
-    let expected_nav = MARKET_CASH_TARGET - premium - REBATE_AFTER_MINT;
+    // market holds its cash target less that worth.
+    let expected_nav = MARKET_CASH_TARGET - premium;
     let mint_cost = premium + MINT_MIN_FEE;
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
@@ -410,15 +408,14 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     // Lock released by finish: the same mint that would have aborted mid-flow now
     // succeeds, adding a position.
     let expiry_id = helpers::market(&market).id();
-    let count_before = helpers::position_count_bundle(&account, expiry_id);
-    fx.mint_bundle(
+    let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         STANDARD_QUANTITY,
     );
-    assert_eq!(helpers::position_count_bundle(&account, expiry_id), count_before + 1);
+    assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

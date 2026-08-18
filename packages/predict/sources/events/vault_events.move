@@ -1,15 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault events for staking, expiry cash and profit, fee incentives, and the
+/// Pool-vault events for expiry cash and profit, fee incentives, and the
 /// queued LP request lifecycle. A flush records the frozen pool mark used by fills.
 module deepbook_predict::vault_events;
 
 use sui::event;
 
-/// Emitted when expiry-local cash returns to pool idle: either settled free cash
-/// during the terminal sweep, or residual rebate reserve returned by a settled
-/// rebate claim.
+/// Emitted when expiry-local cash returns to pool idle during the terminal sweep.
 public struct ExpiryCashReceived has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -42,35 +40,6 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
     pending_protocol_profit_after: u64,
-}
-
-/// Emitted when a keeper resolves one account's settled trading-loss rebate.
-public struct TradingLossRebateClaimed has copy, drop, store {
-    pool_vault_id: ID,
-    expiry_market_id: ID,
-    account_id: ID,
-    rebate_amount: u64,
-    residual_returned: u64,
-    trading_fees_paid: u64,
-    gross_profit: u64,
-}
-
-/// Emitted when an account stakes DEEP for trading benefits.
-public struct DeepStaked has copy, drop, store {
-    pool_vault_id: ID,
-    account_id: ID,
-    amount: u64,
-    /// Account active/inactive stake after the deposit. Freshly staked DEEP is
-    /// inactive until it rolls active in a later epoch, so both are reported.
-    active_stake_after: u64,
-    inactive_stake_after: u64,
-}
-
-/// Emitted when an account unstakes all of its DEEP (active and inactive).
-public struct DeepUnstaked has copy, drop, store {
-    pool_vault_id: ID,
-    account_id: ID,
-    amount: u64,
 }
 
 /// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
@@ -297,50 +266,6 @@ public(package) fun emit_expiry_profit_materialized(
         protocol_reserve_balance_after,
         profit_basis_after,
         pending_protocol_profit_after,
-    });
-}
-
-public(package) fun emit_trading_loss_rebate_claimed(
-    pool_vault_id: ID,
-    expiry_market_id: ID,
-    account_id: ID,
-    rebate_amount: u64,
-    residual_returned: u64,
-    trading_fees_paid: u64,
-    gross_profit: u64,
-) {
-    event::emit(TradingLossRebateClaimed {
-        pool_vault_id,
-        expiry_market_id,
-        account_id,
-        rebate_amount,
-        residual_returned,
-        trading_fees_paid,
-        gross_profit,
-    });
-}
-
-public(package) fun emit_deep_staked(
-    pool_vault_id: ID,
-    account_id: ID,
-    amount: u64,
-    active_stake_after: u64,
-    inactive_stake_after: u64,
-) {
-    event::emit(DeepStaked {
-        pool_vault_id,
-        account_id,
-        amount,
-        active_stake_after,
-        inactive_stake_after,
-    });
-}
-
-public(package) fun emit_deep_unstaked(pool_vault_id: ID, account_id: ID, amount: u64) {
-    event::emit(DeepUnstaked {
-        pool_vault_id,
-        account_id,
-        amount,
     });
 }
 

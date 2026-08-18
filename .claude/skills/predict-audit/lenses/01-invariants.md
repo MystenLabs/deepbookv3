@@ -17,12 +17,12 @@ Produce:
    it (solvency / accounting-consistency / ordering / conservation); judge whether the code maintains it
    across ALL touching flows. Give special weight to **cross-module and cross-package** invariants — a
    property established in one module/package and silently relied on in another (e.g. `expiry_cash`'s
-   `cash_balance >= payout_liability + rebate_reserve`; the exact `current_nav` mark used identically for PLP
+   `cash_balance >= payout_liability + inventory_impact_reserve`; the exact `current_nav` mark used identically for PLP
    supply and withdraw; the packed-order-ID `quantity` round-trip — mint insert must add bit-equal what remove subtracts).
 
-2. **ECONOMIC FLOW MAP** — trace every path where value (DUSDC, DEEP, SUI, PLP) enters, moves, or leaves:
-   mint, live redeem, settled redeem, rebate claim, async supply/withdraw + privileged
-   flush, fee / builder-fee / EWMA-penalty routing, incentive vesting, stake/unstake, protocol-profit
+2. **ECONOMIC FLOW MAP** — trace every path where value (DUSDC, PLP) enters, moves, or leaves:
+   mint, live redeem, settled redeem, async supply/withdraw + privileged
+   flush, fee / builder-fee / EWMA-penalty routing, incentive vesting, protocol-profit
    materialization (`pending_protocol_profit`, D033). For each: what is conserved, what is created/destroyed,
    and who is the counterparty to every gain and loss (trader / LP / protocol / builder).
 
@@ -47,7 +47,7 @@ Produce:
   see move.md NAV rules + the C3 note in `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)`.
 - PLP share-pricing symmetry: supply and withdraw priced at the SAME frozen `current_nav` in `finish_flush` /
   `drain_lp_requests`; confirm `supply_NAV = TRUE = withdraw_NAV` at the valuation boundary (no over/under-count).
-- The rebate-reserve lifecycle (growth from fees, resolution, residual handling) and `pool_accounting` profit
+- The inventory-impact escrow lifecycle (growth from mint charges, live-close rebates, settlement release) and `pool_accounting` profit
   basis / loss watermarks / funding caps / `pending_protocol_profit` deferred-carry.
 - Any accumulator using unchecked arithmetic; the partial-close → reinsert path keeping the
   exposure/payout-tree/accounting machines in lockstep.

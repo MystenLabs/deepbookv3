@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Defines Predict's upgrade-required scales, hard limits, time units, and event discriminators.
-/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, DEEP, and contract quantities use six decimal base units unless stated otherwise.
+/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, and contract quantities use six decimal base units unless stated otherwise.
 module deepbook_predict::constants;
 
 // === Package Versioning ===
@@ -86,11 +86,6 @@ public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
 
 /// Milliseconds in a fixed 365-day year.
 public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
-
-// === Staking ===
-
-/// Raw units in one whole DEEP (DEEP uses 6 decimals).
-public macro fun deep_decimals(): u64 { 1_000_000 }
 
 // === Builder Fees ===
 

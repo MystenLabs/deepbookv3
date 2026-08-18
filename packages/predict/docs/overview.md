@@ -20,9 +20,9 @@ Live prices come from standalone, Predict-unaware feeds in the **propbook** pack
 
 ### Settlement is explicit
 
-Terminal settlement is one permissionless public transition, `expiry_market::try_settle`. It records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history and immediately caches the corresponding terminal payout liability. Settled redeem, rebate claim, pool cash rebalance, and flush valuation consume the recorded state without reading an oracle; transaction builders call `try_settle` first when settlement may be due. If the exact expiry spot is not present yet, `try_settle` returns false, standalone rebalance moves no cash, and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
+Terminal settlement is one permissionless public transition, `expiry_market::try_settle`. It records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history and immediately caches the corresponding terminal payout liability. Settled redeem, pool cash rebalance, and flush valuation consume the recorded state without reading an oracle; transaction builders call `try_settle` first when settlement may be due. If the exact expiry spot is not present yet, `try_settle` returns false, standalone rebalance moves no cash, and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
 
-The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability plus its trading-loss rebate reserve.
+The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability.
 
 ## Core on-chain objects
 
@@ -30,9 +30,9 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 | --- | --- | --- |
 | `Registry` | Feed/expiry uniqueness, cadence deployment configs, pause + lifecycle caps, creation entrypoints (versioning lives on `ProtocolConfig.version_watermark`) | shared |
 | `ProtocolConfig` | Admin-tunable config, `trading_paused`, the valuation lock, per-expiry runtime controls | shared |
-| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, staked-DEEP custody, expiry ledger, the LP supply/withdraw queues | shared |
+| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, expiry ledger, the LP supply/withdraw queues | shared |
 | `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` DUSDC, exact `current_nav`, cleanup | shared, one per expiry |
-| `AccountWrapper` / `Account` | Account-package custody plus Predict app data: positions, stake mirror, builder attribution | shared wrapper |
+| `AccountWrapper` / `Account` | Account-package custody plus Predict app data: positions, builder attribution | shared wrapper |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
 Oracle data is **not** a Predict object: the `PythFeed`, `BlockScholesValueStore`, and `BlockScholesSVIStore` shared objects are owned by the separate `propbook` package. Predict markets store a Propbook underlying ID; live pricing validates passed oracle objects against Propbook's current canonical bindings for that underlying and then reads the expiry's forward and SVI series from the stores.
@@ -66,7 +66,7 @@ Liquidity providers do not transact against a live pool price. They **queue** re
 
 These properties are designed in and hold by construction; their boundaries are detailed in [risks](./risks.md).
 
-- **Cash always backs payouts and rebates.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its unresolved trading-loss rebate reserve. Surplus above that line is the only cash the pool may sweep. An expiry can always pay both its winners and its owed rebates.
+- **Cash always backs payouts.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its inventory-impact escrow. Surplus above that line is the only cash the pool may sweep. An expiry can always pay its winners.
 - **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the per-expiry backing reserve use reserve-favoring rounding, so sub-unit dust accrues to the protocol rather than against its solvency. Reserve and payout reads derive from the same quantity atom, so a payout can never exceed the cash reserved to back it.
 - **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, and only a privileged operator can start a flush. A supplier can never over-mint and dilute incumbents, and the mark cannot be timed against a manipulated oracle.
 - **Live valuation is exact.** Each market's `current_nav` is the payout tree's boundary-linear walk (`Σ quantity × P(range)`), with no per-order correction needed, since every position is worth exactly its quantity times its range probability. See [risks](./risks.md).
@@ -78,8 +78,8 @@ These properties are designed in and hold by construction; their boundaries are 
 - [Glossary](./glossary.md) — every term technically defined and mapped to its standard options / structured-product name and code identifier.
 - [Markets and positions](./concepts/markets-and-positions.md) — per-expiry markets, the absolute tick grid and ±infinity sentinels, what an order is, and the full lifecycle.
 - [Pricing and oracles](./concepts/pricing-and-oracles.md) — the propbook Pyth and Block Scholes feeds, range-probability derivation, freshness, and the forward fallback.
-- [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, DEEP-stake benefit curve, and loss rebate.
-- [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, profit materialization, and DEEP staking custody.
+- [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, and the isolated inventory-impact charge and rebate.
+- [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, and profit materialization.
 
 **Design — how the protocol is built:**
 

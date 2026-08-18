@@ -23,13 +23,6 @@ const MINT_MIN_FEE: u64 = 5_000_000;
 /// preservation actually asserts. `pricing_exact_tests` owns the price itself.
 /// Half the minted quantity (a whole number of 10_000-unit lots).
 const HALF_CLOSE: u64 = 500_000_000;
-/// Live close fee on the closed slice: 5e6 * 5e8 / 1e9 (fee basis is the
-/// closed quantity, not the original order quantity).
-const CLOSE_FEE: u64 = 2_500_000;
-/// Rebate reserve = floor(cumulative fees * 0.5 default rebate rate):
-/// after the mint floor(5e6 * 0.5), after the close floor(7.5e6 * 0.5).
-const REBATE_AFTER_MINT: u64 = 2_500_000;
-const REBATE_AFTER_CLOSE: u64 = 3_750_000;
 
 #[test]
 fun finite_range_partial_close_preserves_live_solvency() {
@@ -44,11 +37,10 @@ fun finite_range_partial_close_preserves_live_solvency() {
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent; nothing owed, nothing spent.
     let seeded_cash = test_constants::default_seeded_expiry_cash();
-    helpers::check_market_cash_bundle(&market, helpers::expected_market_cash(seeded_cash, 0, 0));
+    helpers::check_market_cash_bundle(&market, helpers::expected_market_cash(seeded_cash, 0));
     fx.check_manager_bundle(
         &account,
-        expiry_id,
-        helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0),
+        helpers::expected_manager_state(test_constants::mint_deposit()),
     );
     // --- Mint one order on the first admitted finite range above min_strike,
     // exactly at the money. Premium + fee land in expiry cash; the order
@@ -73,19 +65,11 @@ fun finite_range_partial_close_preserves_live_solvency() {
         helpers::expected_market_cash(
             seeded_cash + premium + MINT_MIN_FEE,
             test_constants::mint_quantity(),
-            REBATE_AFTER_MINT,
         ),
     );
     fx.check_manager_bundle(
         &account,
-        expiry_id,
-        helpers::expected_manager_state(
-            test_constants::mint_deposit() - premium - MINT_MIN_FEE,
-            MINT_MIN_FEE,
-            1,
-            0,
-            0,
-        ),
+        helpers::expected_manager_state(test_constants::mint_deposit() - premium - MINT_MIN_FEE),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
@@ -111,18 +95,11 @@ fun finite_range_partial_close_preserves_live_solvency() {
     assert_eq!(cash_after_close, seeded_cash + premium + MINT_MIN_FEE - close_net_payout);
     helpers::check_market_cash_bundle(
         &market,
-        helpers::expected_market_cash(cash_after_close, HALF_CLOSE, REBATE_AFTER_CLOSE),
+        helpers::expected_market_cash(cash_after_close, HALF_CLOSE),
     );
     fx.check_manager_bundle(
         &account,
-        expiry_id,
-        helpers::expected_manager_state(
-            balance_before_close + close_net_payout,
-            MINT_MIN_FEE + CLOSE_FEE,
-            1,
-            0,
-            0,
-        ),
+        helpers::expected_manager_state(balance_before_close + close_net_payout),
     );
     assert!(!helpers::has_position_bundle(&account, expiry_id, order_id));
     assert!(helpers::has_position_bundle(&account, expiry_id, survivor_id));

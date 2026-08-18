@@ -120,9 +120,6 @@ Predict reads it but does not own it.
   EWMA flags abnormal congestion. Code keeps DeepBook core's penalty
   vocabulary: the charged amount is `penalty_fee` (event field), the tunable
   per-unit rate is `penalty_rate`.
-- **Trading-loss rebate** — a configured fraction of paid trading fees returned
-  to a net-losing trader once all their positions in an expiry are closed; code
-  `trading_loss_rebate_rate`, backed by the expiry's `rebate_reserve`.
 
 ## Liquidity, NAV, and the flush
 

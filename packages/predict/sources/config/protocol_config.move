@@ -15,9 +15,7 @@ use deepbook_predict::{
     config_events,
     constants,
     ewma_config::{Self, EwmaConfig},
-    expiry_cash_config::{Self, ExpiryCashConfig},
     pricing_config::{Self, PricingConfig},
-    stake_config::{Self, StakeConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
 
@@ -54,9 +52,7 @@ public struct ProtocolConfig has key {
     /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
     /// the pool is uncapped until an operator sets a figure (RP-23).
     max_lp_pool_value: u64,
-    expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
-    stake_config: StakeConfig,
     ewma_config: EwmaConfig,
     /// Minimum package version permitted to run version-gated flows. Monotonic;
     /// `bump_version_watermark` advances it to the running `current_version!()`,
@@ -148,32 +144,6 @@ public fun set_template_inventory_impact_max_rate(
     config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
 }
 
-/// Set how much of the DEEP-stake benefit programme newly created expiry markets
-/// run, from `0` (nothing) to `float_scaling` (full strength). Ships at 0, so
-/// markets pay no stake-scaled loss rebate until this is raised. Existing markets
-/// keep the value they snapshotted.
-public fun set_template_max_benefit_ratio(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.stake_config.set_max_benefit_ratio(value);
-}
-
-/// Set the staking benefit thresholds snapshotted by newly created expiry markets:
-/// `lower` (half of max benefits) and `upper` (full benefits). Validated as a pair
-/// (`upper > 2 * lower`). Existing markets keep the curve they snapshotted.
-public fun set_template_benefit_powers(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    lower: u64,
-    upper: u64,
-) {
-    config.assert_version();
-    config.stake_config.set_benefit_powers(lower, upper);
-}
-
 /// Set the minimum raw entry probability snapshotted by newly created expiry markets.
 public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,
@@ -238,16 +208,6 @@ public fun set_block_scholes_svi_freshness_ms(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
-}
-
-/// Set the trading loss rebate rate snapshotted by newly created expiry markets.
-public fun set_template_trading_loss_rebate_rate(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.expiry_cash_template_config.set_trading_loss_rebate_rate(value);
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets before it is
@@ -390,31 +350,14 @@ public(package) fun max_lp_pool_value(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
-public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
-    &config.expiry_cash_template_config
-}
-
 public(package) fun strike_exposure_template_config(
     config: &ProtocolConfig,
 ): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 
-public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {
-    expiry_cash_config::snapshot(&config.expiry_cash_template_config)
-}
-
 public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
-}
-
-public(package) fun stake_template_config(config: &ProtocolConfig): &StakeConfig {
-    &config.stake_config
-}
-
-/// Benefit policy a newly created expiry market snapshots as its own.
-public(package) fun stake_config_snapshot(config: &ProtocolConfig): StakeConfig {
-    stake_config::snapshot(&config.stake_config)
 }
 
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
@@ -505,9 +448,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
-        expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),
-        stake_config: stake_config::new(),
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),
         trading_paused: false,

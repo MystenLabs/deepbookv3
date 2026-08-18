@@ -6,7 +6,7 @@ import { errorTag } from "../trace.js";
 const SCALE = 1_000_000_000n;
 const RETRIES = 8;
 
-export type CleanupProfile = "survivor" | "claim";
+export type CleanupProfile = "survivor";
 
 interface CleanupConfig {
   sizes: number[];
@@ -20,14 +20,9 @@ const CONFIG: Record<CleanupProfile, CleanupConfig> = {
     fund: 40_000_000_000_000n,
     maxWaitTicks: 60,
   },
-  claim: {
-    sizes: [3, 10],
-    fund: 40_000_000_000_000n,
-    maxWaitTicks: 60,
-  },
 };
 
-type Phase = "mint" | "wait" | "claim" | "done";
+type Phase = "mint" | "wait" | "done";
 
 function targetMarket(ctx: StrategyCtx): Mkt | null {
   const market = ctx.nearestExpiry();
@@ -179,64 +174,6 @@ export function createCleanupStrategy(profile: CleanupProfile): Strategy {
           );
         }
         return null;
-      }
-
-      if (profile === "claim") {
-        if (phase === "wait") {
-          try {
-            await ctx.redeemAll(target.marketId, target.positions);
-            retries = 0;
-            phase = "claim";
-            return "redeem";
-          } catch (error) {
-            retries += 1;
-            if (retries > RETRIES) {
-              fail(
-                ctx,
-                `redeem n=${currentSize()}: ${errorTag(error)}`,
-                "redeem-all",
-                errorTag(error),
-              );
-            } else {
-              ctx.trace({
-                type: "cleanupRetry",
-                family: "cleanup-economics",
-                profile,
-                phase: "redeem-all",
-                attempt: retries,
-                tag: errorTag(error),
-                n: currentSize(),
-              });
-            }
-            return null;
-          }
-        }
-        try {
-          await ctx.claimRebate(target.marketId);
-          advance();
-          return "redeem";
-        } catch (error) {
-          retries += 1;
-          if (retries > RETRIES) {
-            fail(
-              ctx,
-              `claim n=${currentSize()}: ${errorTag(error)}`,
-              "claim",
-              errorTag(error),
-            );
-          } else {
-            ctx.trace({
-              type: "cleanupRetry",
-              family: "cleanup-economics",
-              profile,
-              phase: "claim",
-              attempt: retries,
-              tag: errorTag(error),
-              n: currentSize(),
-            });
-          }
-          return null;
-        }
       }
 
       try {

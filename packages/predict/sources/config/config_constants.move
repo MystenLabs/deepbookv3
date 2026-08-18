@@ -14,25 +14,21 @@ const EInvalidMaxEntryProbability: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesPriceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
-const EInvalidTradingLossRebateRate: u64 = 7;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
-const EInvalidExpiryFeeWindowMs: u64 = 9;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
-const EInvalidLowerBenefitPower: u64 = 11;
-const EInvalidUpperBenefitPower: u64 = 12;
-const EInvalidMarketTickSize: u64 = 13;
-const EInvalidEwmaAlpha: u64 = 14;
-const EInvalidEwmaZScoreThreshold: u64 = 15;
-const EInvalidEwmaPenaltyRate: u64 = 16;
-const EInvalidBackingBufferLambda: u64 = 17;
-const EInvalidCadenceWindowSize: u64 = 18;
-const EMarketTickSizeTooLarge: u64 = 19;
-const EInvalidLpRequestLimitFlushAttempts: u64 = 20;
-const EInvalidMaxLpPoolValue: u64 = 21;
-const EInvalidPlpSupplyFeeRate: u64 = 22;
-const EInvalidPlpWithdrawFeeRate: u64 = 23;
-const EInvalidMaxBenefitRatio: u64 = 24;
-const EInvalidInventoryImpactMaxRate: u64 = 25;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
+const EInvalidExpiryFeeWindowMs: u64 = 8;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 9;
+const EInvalidMarketTickSize: u64 = 10;
+const EInvalidEwmaAlpha: u64 = 11;
+const EInvalidEwmaZScoreThreshold: u64 = 12;
+const EInvalidEwmaPenaltyRate: u64 = 13;
+const EInvalidBackingBufferLambda: u64 = 14;
+const EInvalidCadenceWindowSize: u64 = 15;
+const EMarketTickSizeTooLarge: u64 = 16;
+const EInvalidLpRequestLimitFlushAttempts: u64 = 17;
+const EInvalidMaxLpPoolValue: u64 = 18;
+const EInvalidPlpSupplyFeeRate: u64 = 19;
+const EInvalidPlpWithdrawFeeRate: u64 = 20;
+const EInvalidInventoryImpactMaxRate: u64 = 21;
 
 // === Fees ===
 
@@ -400,89 +396,5 @@ public(package) fun assert_ewma_penalty_rate(value: u64) {
     assert!(
         value >= min_ewma_penalty_rate!() && value <= max_ewma_penalty_rate!(),
         EInvalidEwmaPenaltyRate,
-    );
-}
-
-// === Fees ===
-
-public(package) macro fun default_trading_loss_rebate_rate(): u64 {
-    500_000_000
-}
-
-public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
-
-public(package) macro fun max_trading_loss_rebate_rate(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_trading_loss_rebate_rate(value: u64) {
-    assert!(
-        value >= min_trading_loss_rebate_rate!()
-            && value <= max_trading_loss_rebate_rate!(),
-        EInvalidTradingLossRebateRate,
-    );
-}
-
-// === Staking ===
-
-/// Ceiling on the DEEP-stake benefit ratio, in FLOAT_SCALING. The stake curve is
-/// scaled by this, so it sets how much of the programme runs: `0` pays nothing at
-/// any stake, `float_scaling` runs it at full strength, and values between phase
-/// it in. Ships at **0**, so a market created from the shipped template pays no
-/// stake-scaled loss rebate.
-public(package) macro fun default_max_benefit_ratio(): u64 { 0 }
-
-public(package) macro fun min_max_benefit_ratio(): u64 { 0 }
-
-public(package) macro fun max_max_benefit_ratio(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_max_benefit_ratio(value: u64) {
-    assert!(
-        value >= min_max_benefit_ratio!() && value <= max_max_benefit_ratio!(),
-        EInvalidMaxBenefitRatio,
-    );
-}
-
-/// Active stake at the benefit-curve kink: half of max benefits. Default 100k
-/// DEEP, admin-tunable 10k..1M.
-public(package) macro fun default_lower_benefit_power(): u64 {
-    100_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun min_lower_benefit_power(): u64 {
-    10_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun max_lower_benefit_power(): u64 {
-    1_000_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-/// Active stake for full (max) benefits. Default 1.1M DEEP, admin-tunable
-/// 100k..50M.
-public(package) macro fun default_upper_benefit_power(): u64 {
-    1_100_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun min_upper_benefit_power(): u64 {
-    100_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun max_upper_benefit_power(): u64 {
-    50_000_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) fun assert_lower_benefit_power(value: u64) {
-    assert!(
-        value >= min_lower_benefit_power!() && value <= max_lower_benefit_power!(),
-        EInvalidLowerBenefitPower,
-    );
-}
-
-public(package) fun assert_upper_benefit_power(value: u64) {
-    assert!(
-        value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
-        EInvalidUpperBenefitPower,
     );
 }

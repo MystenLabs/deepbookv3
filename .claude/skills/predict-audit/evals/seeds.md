@@ -29,12 +29,12 @@ verify panel refuted a real bug. Record misses; they are the highest-signal inpu
 - Bug: a supplier now mints ≥ fair shares (rounds UP), diluting incumbent LPs — a ROUNDING_POLICY R2 violation
   (user-facing outflows/shares must round in the protocol's favor). Expect the invariants lens (R2) to flag it.
 
-### S2 — solvency guard dropped (rebate reserve unbacked) · lens 01 / lens 06 · expect High/Critical
+### S2 — solvency guard dropped (impact escrow unbacked) · lens 01 / lens 06 · expect High/Critical
 - File: `packages/predict/sources/expiry_cash.move`, `assert_backing`.
-- Replace `cash.required_cash(payout_liability)` with `payout_liability` (drops the `+ rebate_reserve` term).
-- Bug: backing now covers payout but NOT the unresolved rebate reserve, so cash can fall below
-  `payout_liability + rebate_reserve` — the exact `cash >= payout_liability + rebate_reserve` invariant this
-  module documents. Expect a solvency/assertion finding.
+- Replace `cash.required_cash(payout_liability)` with `payout_liability` (drops the `+ inventory_impact_reserve` term).
+- Bug: backing now covers payout but NOT the isolated inventory-impact escrow, so cash can fall below
+  `payout_liability + inventory_impact_reserve` — the exact invariant this module documents, and a live close
+  can then be paid out of cash that backs a winner. Expect a solvency/assertion finding.
 
 ### S3 — removed version gate on a state mutator · lens 04 access-control · expect High
 - File: `packages/predict/sources/expiry_market.move`, `assert_live_mint_allowed`.
@@ -47,7 +47,7 @@ verify panel refuted a real bug. Record misses; they are the highest-signal inpu
 - In the reader that consumes `pending_protocol_profit` (grep it), replace the field read with a literal `0`
   (e.g. `self.pending_protocol_profit` → `0` at its sole live reader), leaving the writer intact.
 - Bug: `pending_protocol_profit` becomes write-only — accrued but never subtracted from LP pricing (the D033
-  carry silently stops applying). This is the canonical rebate-reserve bug class the `dead-field-liveness`
+  carry silently stops applying). This is the canonical write-only-reserve bug class the `dead-field-liveness`
   rule sweep exists to catch. Run the **rule-sweep** harness (`rules: ['dead-field-liveness']`) for this one.
 
 > Add a seed whenever a real bug slips past a run — the seed that would have caught it becomes a permanent

@@ -14,7 +14,7 @@ machine and each public entry as a transition.
 
 1. **PER-OBJECT LIFECYCLE** — for `ExpiryMarket`, `PoolVault`, `predict_account`, the propbook feeds, and the
    `account::Account`, draw the state machine: states (created → active → settled → compacted;
-   trading-enabled/paused; valuation-locked/unlocked; stake-epoch states) and per transition: entry
+   trading-enabled/paused; valuation-locked/unlocked) and per transition: entry
    function(s), precondition gates (phase, pause, version, valuation lock), postconditions it must establish.
    Flag any transition whose precondition set is incomplete or whose postcondition isn't guaranteed on every
    path (including early returns and abort-after-partial-mutation).

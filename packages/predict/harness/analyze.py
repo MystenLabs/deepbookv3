@@ -119,8 +119,6 @@ _TRADER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         {"strategy", "n", "nSettled", *_GAS_BREAKDOWN_FIELDS},
         set(),
     ),
-    "redeemAll": ({"strategy", "n", *_GAS_BREAKDOWN_FIELDS}, set()),
-    "claimRebate": ({"strategy", *_GAS_BREAKDOWN_FIELDS}, set()),
     "cleanupRetry": (
         {"strategy", "family", "profile", "phase", "attempt", "tag", "n"},
         set(),
@@ -136,8 +134,6 @@ _STRATEGY_PROGRESS_TYPES = {
     "book",
     "nodes",
     "cleanout",
-    "redeemAll",
-    "claimRebate",
     "adversarial-accepted",
 }
 _STRING_TRACE_FIELDS = {

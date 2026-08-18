@@ -719,7 +719,7 @@ export async function readActiveMarketIds(): Promise<string[]> {
 }
 
 // On-chain settlement flag for one market (devInspect `expiry_market::is_settled`). The
-// cleanout measurement waits on this: `redeem_settled` / `claim_trading_loss_rebate` both
+// cleanout measurement waits on this: `redeem_settled` and the settled sweep both
 // require a settled market, and a settled market drops out of `active_expiry_markets`, so a
 // settled-but-still-present read is the safe "ready to clean out" signal. BCS bool = 1 byte.
 export async function readIsSettled(marketId: string): Promise<boolean> {
@@ -1352,12 +1352,11 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
     });
 }
 
-// === Account cleanout (rebate gas-incentive measurement, E1) ===
-// One PTB that redeems every settled position on `wrapper` (permissionless full-close) then
-// claims its trading-loss rebate (permissionless). This is the maximally-incentivized keeper
-// /MEV cleanout: it deletes the N position dynamic-field entries + the ExpiryTradingSummary
-// entry, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
-// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoints derive
+// === Account cleanout (settled-redeem gas measurement, E1) ===
+// One PTB that redeems every settled position on `wrapper` (permissionless full-close). This is
+// the maximally-incentivized keeper/MEV cleanout: it deletes the N position dynamic-field
+// entries, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
+// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoint derives
 // PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
 // account's wrapper — the actual on-chain keeper surface, priced as-is.
 export interface CleanoutPosition {
@@ -1391,29 +1390,6 @@ function addRedeemSettledPermissionless(
     });
 }
 
-function addClaimRebatePermissionless(
-    tx: Transaction,
-    p: { expiryMarketId: string; wrapperId: string },
-): void {
-    // claim_trading_loss_rebate_permissionless(vault, market, wrapper, account_registry, config,
-    //   root, clock, ctx). resolve_expiry_summary asserts open_position_count == 0, so this
-    // MUST follow the redeems in the same PTB.
-    tx.moveCall({
-        target: target("plp", "claim_trading_loss_rebate_permissionless"),
-        arguments: [
-            tx.object(POOL_VAULT_ID),
-            tx.object(p.expiryMarketId),
-            tx.object(p.wrapperId),
-            tx.object(ACCOUNT_REGISTRY_ID),
-            tx.object(PROTOCOL_CONFIG_ID),
-            tx.object(ACCUMULATOR_ROOT_ID),
-            tx.object(CLOCK_ID),
-        ],
-    });
-}
-
-// N settled-redeems (drive open_position_count -> 0) THEN one rebate claim, in ONE PTB whose
-// single gas summary is the measurement. Order matters (claim asserts count == 0).
 export function cleanoutAccountTx(params: CleanoutParams): Transaction {
     const tx = new Transaction();
     for (const pos of params.positions) {
@@ -1423,34 +1399,6 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
             orderId: pos.orderId,
         });
     }
-    addClaimRebatePermissionless(tx, {
-        expiryMarketId: params.expiryMarketId,
-        wrapperId: params.wrapperId,
-    });
-    return tx;
-}
-
-// The cleanout split into its two halves, to measure the rebate claim's OWN economics (P-9 /
-// RP-11 follow-up): a gas-maximizing searcher includes the claim in its redeem PTB only if the
-// claim's MARGINAL net gas is <= 0. `redeemSettledAllTx` is the N redeems WITHOUT the claim (it
-// drives open_position_count -> 0, leaving an unresolved summary); `claimRebateOnlyTx` is the
-// claim ALONE (removes only the summary), runnable once positions are closed. Measuring both
-// isolates: standalone-claim net = claimRebateOnly; in-bundle marginal = cleanout - redeemSettledAll.
-export function redeemSettledAllTx(params: CleanoutParams): Transaction {
-    const tx = new Transaction();
-    for (const pos of params.positions) {
-        addRedeemSettledPermissionless(tx, {
-            expiryMarketId: params.expiryMarketId,
-            wrapperId: params.wrapperId,
-            orderId: pos.orderId,
-        });
-    }
-    return tx;
-}
-
-export function claimRebateOnlyTx(params: { expiryMarketId: string; wrapperId: string }): Transaction {
-    const tx = new Transaction();
-    addClaimRebatePermissionless(tx, params);
     return tx;
 }
 
