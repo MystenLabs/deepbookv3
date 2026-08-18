@@ -15,7 +15,7 @@ use fixed_math::math;
 const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
-const ENetPremiumBelowMinimum: u64 = 3;
+const EPremiumBelowMinimum: u64 = 3;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -38,11 +38,6 @@ public struct StrikeExposureConfig has store {
     /// Maximum marginal rate of the path-independent inventory-impact curve, in
     /// FLOAT_SCALING. `0` disables both charges and rebates.
     inventory_impact_max_rate: u64,
-}
-
-/// Mint admission outcome: the net premium charged for the order.
-public struct MintAdmission has drop {
-    net_premium: u64,
 }
 
 // === Public-Package Functions ===
@@ -109,24 +104,18 @@ public(package) fun assert_mint_probability_policy(
     );
 }
 
-/// Assert entry-probability and net-premium policy; return a `MintAdmission`
-/// carrying the net premium. The holder pays the contract's full entry value, so
-/// the net premium is the entry value.
+/// Assert entry-probability and premium policy; return the premium. The holder
+/// pays the contract's full entry value, so no gross distinction remains.
 public(package) fun assert_mint_admission(
     config: &StrikeExposureConfig,
     entry_probability: u64,
     quantity: u64,
-): MintAdmission {
+): u64 {
     config.assert_mint_probability_policy(entry_probability);
 
-    let net_premium = math::mul_down(entry_probability, quantity);
-    assert!(net_premium >= constants::min_net_premium!(), ENetPremiumBelowMinimum);
-
-    MintAdmission { net_premium }
-}
-
-public(package) fun net_premium(admission: &MintAdmission): u64 {
-    admission.net_premium
+    let premium = math::mul_down(entry_probability, quantity);
+    assert!(premium >= constants::min_premium!(), EPremiumBelowMinimum);
+    premium
 }
 
 public(package) fun new(): StrikeExposureConfig {

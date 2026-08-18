@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Sizing coverage for the budget-bias mint request (`mint_exact_amount` and the
-/// budget-bias quote): the flow mints the largest lot-rounded quantity whose net
+/// budget-bias quote): the flow mints the largest lot-rounded quantity whose
 /// premium fits the budget, never charges past the budget, saturates at the lot
 /// cap instead of aborting on oversized budgets (the DBU-566 regression), and
 /// enforces `min_quantity` as the fill floor. Budgets and expected debits are
@@ -35,7 +35,7 @@ const NEXT_LOT_QUANTITY: u64 = 100_010_000;
 /// * lot 10_000.
 const LOT_CAP_QUANTITY: u64 = 42_949_672_950_000;
 
-/// The anonymous 1x quantity quote at the fixture's at-the-money strike, the
+/// The anonymous quantity quote at the fixture's at-the-money strike, the
 /// reference every budget threshold and expected debit below is read from.
 fun atm_quote(fx: &mut helpers::Fixture, market: &helpers::MarketBundle, quantity: u64): MintQuote {
     fx.quote_mint_bundle(
@@ -62,7 +62,7 @@ fun atm_quote_checked(
 /// The largest budget that still sizes exactly `TEN_THOUSAND_LOTS`: one unit
 /// below what the next lot up would cost.
 fun budget_below_next_lot(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64 {
-    atm_quote_checked(fx, market, NEXT_LOT_QUANTITY).net_premium() - 1
+    atm_quote_checked(fx, market, NEXT_LOT_QUANTITY).premium() - 1
 }
 
 #[test]
@@ -79,7 +79,7 @@ fun budget_mints_largest_fitting_quantity_and_debits_its_exact_cost() {
     // sizes 10_000 lots. min_quantity equal to the expected fill pins sizing from
     // below (one lot fewer aborts on the fill floor) while the exact debit pins
     // it from above (one lot more would debit the next lot's total).
-    let budget = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY).net_premium() - 1;
+    let budget = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY).premium() - 1;
     let expected_debit = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS).all_in_cost();
     fx.mint_exact_amount_bundle(
         &mut market,
@@ -118,7 +118,7 @@ fun budget_at_next_lot_premium_mints_the_next_lot() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        next_lot.net_premium(),
+        next_lot.premium(),
         NEXT_LOT_QUANTITY,
         std::u64::max_value!(),
     );
@@ -255,9 +255,8 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let market = fx.take_market_bundle(expiry_id);
 
-    // The read-only quote has no balance cap, so a u64-max budget exercises the
-    // former ENetPremiumBudgetTooHigh domain: sizing saturates at the lot cap
-    // and quotes its exact premium instead of aborting.
+    // The read-only quote has no balance cap, so a u64-max budget saturates at
+    // the lot cap and quotes its exact premium instead of aborting.
     let quote = fx.quote_mint_amount_bundle(
         &market,
         helpers::strike_tick(),
@@ -267,10 +266,7 @@ fun oversized_budget_saturates_at_the_lot_cap_without_aborting() {
     );
 
     assert_eq!(quote.quantity(), LOT_CAP_QUANTITY);
-    assert_eq!(
-        quote.net_premium(),
-        atm_quote_checked(&mut fx, &market, LOT_CAP_QUANTITY).net_premium(),
-    );
+    assert_eq!(quote.premium(), atm_quote_checked(&mut fx, &market, LOT_CAP_QUANTITY).premium());
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -298,10 +294,10 @@ fun account_quote_caps_the_budget_to_the_account_balance() {
         constants::position_lot_size!(),
     );
 
-    assert!(quote.net_premium() <= test_constants::mint_deposit());
+    assert!(quote.premium() <= test_constants::mint_deposit());
     let one_more_lot = quote.quantity() + constants::position_lot_size!();
     assert!(
-        atm_quote_checked(&mut fx, &market, one_more_lot).net_premium() > test_constants::mint_deposit(),
+        atm_quote_checked(&mut fx, &market, one_more_lot).premium() > test_constants::mint_deposit(),
     );
 
     helpers::return_account_bundle(account);
@@ -334,7 +330,7 @@ fun budget_quote_matches_quantity_quote_for_the_sized_fill() {
     );
 
     assert_eq!(budget_quote.quantity(), TEN_THOUSAND_LOTS);
-    assert_eq!(budget_quote.net_premium(), quantity_quote.net_premium());
+    assert_eq!(budget_quote.premium(), quantity_quote.premium());
     assert_eq!(budget_quote.all_in_cost(), quantity_quote.all_in_cost());
     assert_eq!(budget_quote.entry_probability(), quantity_quote.entry_probability());
 

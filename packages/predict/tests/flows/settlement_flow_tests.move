@@ -10,13 +10,11 @@ use account::account_registry;
 use deepbook_predict::{
     config_constants,
     config_events,
-    constants,
     expiry_market,
     flow_test_helpers as helpers,
     plp,
     predict_account,
     pricing,
-    strike_exposure,
     test_constants
 };
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
@@ -63,7 +61,6 @@ fun settled_redeem_requires_explicit_settlement() {
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
 
     abort 999
@@ -205,10 +202,9 @@ fun try_settle_materializes_exact_terminal_liability() {
     fx.finish();
 }
 
-/// A settled loser (settlement below its range) is worth zero through the same
-/// pricer-free read.
+/// A settled loser (settlement below its range) has zero terminal payout.
 #[test]
-fun order_value_reads_settled_loser_as_zero() {
+fun settled_order_payout_reads_loser_as_zero() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
@@ -229,18 +225,16 @@ fun order_value_reads_settled_loser_as_zero() {
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_below_default_finite_range());
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 
-    assert_eq!(helpers::settled_order_value_bundle(&market, order_id), 0);
+    assert_eq!(helpers::settled_order_payout_bundle(&market, order_id), 0);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
 }
 
-/// The pricer-free read is settled-only: valuing a LIVE order with `none` aborts
-/// `EPricerRequired`, since the live classification needs the live price. This
-/// pins the phase contract of the `Option<Pricer>` reader.
-#[test, expected_failure(abort_code = strike_exposure::EPricerRequired)]
-fun order_value_of_live_order_without_pricer_aborts() {
+/// The settled payout reader rejects a live market before decoding its order.
+#[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
+fun settled_order_payout_of_live_market_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
@@ -257,7 +251,7 @@ fun order_value_of_live_order_without_pricer_aborts() {
         test_constants::mint_quantity(),
     );
 
-    helpers::settled_order_value_bundle(&market, order_id);
+    helpers::settled_order_payout_bundle(&market, order_id);
     abort 999
 }
 
@@ -294,7 +288,6 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
     fx.check_manager_bundle(
         &account,
@@ -315,38 +308,6 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
-}
-
-#[test, expected_failure(abort_code = expiry_market::EFullCloseRequired)]
-fun settled_redeem_partial_close_aborts() {
-    let settlement_price = settlement_inside_default_finite_range();
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::short_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let order_id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        helpers::strike_tick() + 10,
-        test_constants::mint_quantity(),
-    );
-    fx.set_clock_for_testing(test_constants::short_expiry_ms());
-    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
-    assert_eq!(fx.try_settle_bundle(&mut market), true);
-
-    fx.redeem_settled_bundle(
-        &mut market,
-        &mut account,
-        order_id,
-        test_constants::mint_quantity() - constants::position_lot_size!(),
-    );
-
-    abort 999
 }
 
 #[test, expected_failure(abort_code = account_registry::EAppNotAuthorized)]
@@ -382,7 +343,6 @@ fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
 
     abort 999
@@ -422,7 +382,6 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
     fx.check_manager_bundle(
         &account,
@@ -585,7 +544,6 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
     fx.check_manager_bundle(
         &account,
@@ -684,7 +642,7 @@ fun expired_unsettled_standalone_rebalance_moves_no_cash() {
     fx.finish();
 }
 
-/// Balances and market cash below are stated relative to the mint's net premium,
+/// Balances and market cash below are stated relative to the mint's premium,
 /// read from the quote the mint pays. `quote_mint_tests` owns whether that cost
 /// composes correctly and `pricing_exact_tests` owns the price behind it; this
 /// file owns settlement, so it should not restate either as a literal.
@@ -697,7 +655,7 @@ fun post_settled_redeem_balance(premium: u64): u64 {
     post_mint_balance(premium) + test_constants::mint_quantity()
 }
 
-/// Seeded expiry cash plus the mint principal and fee; a losing settled redeem
+/// Seeded expiry cash plus the mint premium and fee; a losing settled redeem
 /// pays zero, so the cash is unchanged by the redeem itself.
 fun cash_after_losing_redeem(premium: u64): u64 {
     test_constants::default_seeded_expiry_cash() + premium + MINT_MIN_FEE
@@ -713,7 +671,7 @@ fun cash_after_rebate_claim(premium: u64): u64 {
     cash_after_losing_redeem(premium) - REBATE_AFTER_MINT
 }
 
-/// Net premium for the fixture's finite-range 1x mint, from the anonymous quote.
+/// Premium for the fixture's finite-range mint, from the anonymous quote.
 fun finite_range_premium(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64 {
     let quote = fx.quote_mint_bundle(
         market,
@@ -724,7 +682,7 @@ fun finite_range_premium(fx: &mut helpers::Fixture, market: &helpers::MarketBund
     // The upper boundary is ~315 sigma out and clamps to zero, so this finite
     // range prices as the at-the-money digital itself.
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
-    quote.net_premium()
+    quote.premium()
 }
 
 fun settlement_inside_default_finite_range(): u64 {
@@ -865,7 +823,6 @@ fun prepare_settled_loss_with_inactive_rebate_stake(): (
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
     fx.check_manager_bundle(
         &account,
@@ -915,13 +872,10 @@ fun fund_empty_market(fx: &mut helpers::Fixture, expiry_id: ID) {
     helpers::return_market_bundle(market);
 }
 
-/// A settled order is valued through the same classifier with NO pricer: a
-/// `Pricer` is live-only, so once the market has settled this `none` path is the
-/// only way to read `order_value`, and it returns the exact terminal payout a
-/// settled redeem would pay. Regression for the settled `order_value` branch,
-/// which is unreachable while the reader forces a (live-only) `Pricer`.
+/// A settled winner's payout reader returns the full quantity that redemption
+/// will pay.
 #[test]
-fun order_value_reads_settled_winner_terminal_payout() {
+fun settled_order_payout_reads_winner_terminal_payout() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
@@ -943,7 +897,7 @@ fun order_value_reads_settled_winner_terminal_payout() {
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     assert_eq!(
-        helpers::settled_order_value_bundle(&market, order_id),
+        helpers::settled_order_payout_bundle(&market, order_id),
         test_constants::mint_quantity(),
     );
 

@@ -28,8 +28,8 @@ public struct OrderMinted has copy, drop, store {
     /// 1e9-scaled range probability quoted at entry.
     entry_probability: u64,
     quantity: u64,
-    /// Net premium the user paid into LP backing, in DUSDC base units.
-    net_premium: u64,
+    /// Premium the user paid into LP backing, in DUSDC base units.
+    premium: u64,
     /// Full trading fee collected by the expiry, including any sponsor-paid subsidy.
     trading_fee: u64,
     /// Portion of `trading_fee` paid from expiry-local fee incentives.
@@ -94,8 +94,6 @@ public struct SettledOrderRedeemed has copy, drop, store {
     /// Stable economic-position handle, constant across the replacement chain.
     position_root_id: u256,
     owner: address,
-    quantity_closed: u64,
-    settlement_price: u64,
     payout_amount: u64,
     redeemed_at_ms: u64,
 }
@@ -110,7 +108,7 @@ public(package) fun emit_order_minted(
     order: &Order,
     pricer: &Pricer,
     entry_probability: u64,
-    net_premium: u64,
+    premium: u64,
     trading_fee: u64,
     fee_incentive_subsidy: u64,
     builder_fee: u64,
@@ -128,7 +126,7 @@ public(package) fun emit_order_minted(
         higher_tick: order.higher_tick(),
         entry_probability,
         quantity: order.quantity(),
-        net_premium,
+        premium,
         trading_fee,
         fee_incentive_subsidy,
         builder_fee,
@@ -189,7 +187,6 @@ public(package) fun emit_settled_order_redeemed(
     owner: address,
     order: &Order,
     position_root_id: u256,
-    settlement_price: u64,
     payout_amount: u64,
     redeemed_at_ms: u64,
 ) {
@@ -199,8 +196,6 @@ public(package) fun emit_settled_order_redeemed(
         order_id: order.id(),
         position_root_id,
         owner,
-        quantity_closed: order.quantity(),
-        settlement_price,
         payout_amount,
         redeemed_at_ms,
     });

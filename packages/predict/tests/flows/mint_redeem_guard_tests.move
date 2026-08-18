@@ -33,7 +33,7 @@ const MAX_COST_BELOW_QUOTE: u64 = 1;
 // driving both sides from the quote states the claim directly. The quote's own
 // decomposition into premium and fee components is pinned in `quote_mint_tests`.
 const MAX_PROBABILITY_ZERO: u64 = 0;
-const ZERO_NET_PREMIUM_AMOUNT: u64 = 0;
+const ZERO_PREMIUM_AMOUNT: u64 = 0;
 const MIN_PROBABILITY_CERTAIN: u64 = 1_000_000_000;
 const MIN_PROBABILITY_DISABLED: u64 = 0;
 const MIN_PROCEEDS_DISABLED: u64 = 0;
@@ -57,7 +57,7 @@ fun redeem_in_mint_timestamp_aborts() {
     );
 
     // Same fixture clock as the mint: the guard must reject this redeem.
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
@@ -201,7 +201,7 @@ fun mint_exact_amount_below_min_quantity_aborts() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ZERO_NET_PREMIUM_AMOUNT,
+        ZERO_PREMIUM_AMOUNT,
         constants::position_lot_size!(),
         std::u64::max_value!(),
     );
@@ -234,7 +234,7 @@ fun redeem_below_min_probability_aborts() {
         REDEEM_SOURCE_TS,
     );
 
-    fx.redeem_bundle_with_limits(
+    fx.redeem_live_bundle_with_limits(
         &mut market,
         &mut account,
         order,
@@ -271,7 +271,7 @@ fun redeem_below_min_proceeds_aborts() {
         REDEEM_SOURCE_TS,
     );
 
-    fx.redeem_bundle_with_limits(
+    fx.redeem_live_bundle_with_limits(
         &mut market,
         &mut account,
         order,
@@ -311,14 +311,13 @@ fun redeem_after_clock_advances_succeeds() {
         REDEEM_SOURCE_TS,
     );
 
-    let (closed, replacement) = fx.redeem_bundle(
+    let replacement = fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
         QUANTITY,
     );
 
-    assert_eq!(closed, order);
     assert!(replacement.is_none());
     assert!(!helpers::has_position_bundle(&account, expiry_id, order));
 

@@ -1,11 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Boundary coverage for the `CloseTerms` token that `quote_close` produces and
-/// `process_close` consumes: the three abort codes on the close path
-/// (`EPricerRequired`, `ETermsExposureMismatch`, `EWrongCloseOutcome`), and the
-/// close classifier: a live order is priced, a settled order takes its terminal
-/// payout.
+/// Cross-exposure boundary coverage for live close terms.
 #[test_only]
 module deepbook_predict::close_terms_boundary_tests;
 
@@ -28,7 +24,7 @@ public struct ExposureHarness has key {
 /// terms on exposure B aborts `ETermsExposureMismatch` before any book mutation,
 /// so a close can never cross markets.
 #[test, expected_failure(abort_code = strike_exposure::ETermsExposureMismatch)]
-fun process_close_of_terms_quoted_on_another_exposure_aborts() {
+fun process_live_close_of_terms_quoted_on_another_exposure_aborts() {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -48,7 +44,7 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    // Mint a 1x order on A and quote its live close: the terms carry A's market id.
+    // Mint an order on A and quote its live close: the terms carry A's market id.
     let terms_a = harness_a
         .exposure
         .quote_mint_terms(
@@ -60,12 +56,10 @@ fun process_close_of_terms_quoted_on_another_exposure_aborts() {
             true,
         );
     let order = harness_a.exposure.allocate_mint_order(terms_a);
-    let close_terms = harness_a
-        .exposure
-        .quote_close(option::some(pricer), &order, order.quantity());
+    let close_terms = harness_a.exposure.quote_live_close(&pricer, &order, order.quantity());
 
     // Consuming A's close terms on exposure B must abort.
-    harness_b.exposure.process_close(close_terms);
+    harness_b.exposure.process_live_close(close_terms);
 
     abort 999
 }
@@ -87,55 +81,13 @@ fun create_and_share_exposure_harness(
     let config = strike_exposure_config::new();
     let exposure = strike_exposure::new(
         expiry_market_id,
-        expiry_ms,
+        config,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
         1_000_000_000,
-        config,
         fx.scenario_mut().ctx(),
     );
     transfer::share_object(ExposureHarness { id, exposure });
     harness_id
-}
-
-/// The outcome accessors reject the wrong arm: reading the settled payout of a
-/// live close aborts `EWrongCloseOutcome`, so a caller cannot misread a live
-/// close as a settled one.
-#[test, expected_failure(abort_code = strike_exposure::EWrongCloseOutcome)]
-fun settled_payout_of_live_close_terms_aborts() {
-    let mut fx = oracle_fixture::setup_oracle(
-        test_constants::default_live_price(),
-        test_constants::default_tick_size(),
-        test_constants::short_expiry_ms(),
-    );
-    let expiry_id = fx.expiry_id();
-    let expiry_ms = fx.expiry();
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let harness_id = create_and_share_exposure_harness(&mut fx, expiry_id, expiry_ms);
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
-    let mut oracle = fx.take_oracle_bundle();
-    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
-    let pricer = fx.load_pricer_bundle(&oracle);
-
-    let mint_terms = harness
-        .exposure
-        .quote_mint_terms(
-            &pricer,
-            test_constants::default_strike_tick(),
-            constants::pos_inf_tick!(),
-            0,
-            test_constants::mint_quantity(),
-            true,
-        );
-    let order = harness.exposure.allocate_mint_order(mint_terms);
-    let terms = harness.exposure.quote_close(option::some(pricer), &order, order.quantity());
-    assert!(terms.is_live());
-
-    // Reading the settled arm of a live close must abort.
-    terms.settled_payout();
-
-    abort 999
 }

@@ -25,8 +25,8 @@ public macro fun dusdc_decimals(): u8 { 6 }
 /// Minimum position quantity increment.
 public macro fun position_lot_size(): u64 { 10_000 }
 
-/// Minimum mint-time net premium, excluding trading and builder fees.
-public macro fun min_net_premium(): u64 { 1_000_000 }
+/// Minimum mint-time premium, excluding trading and builder fees.
+public macro fun min_premium(): u64 { 1_000_000 }
 
 // === Pool Funding ===
 

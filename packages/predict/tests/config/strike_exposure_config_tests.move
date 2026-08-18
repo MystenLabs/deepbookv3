@@ -161,46 +161,28 @@ fun mint_admission_probability_below_min_entry_probability_aborts() {
     abort 999
 }
 
-// === ENetPremiumBelowMinimum (mint admission) ===
+// === EPremiumBelowMinimum (mint admission) ===
 
-#[test, expected_failure(abort_code = strike_exposure_config::ENetPremiumBelowMinimum)]
-fun mint_admission_net_premium_one_lot_below_minimum_aborts() {
+#[test, expected_failure(abort_code = strike_exposure_config::EPremiumBelowMinimum)]
+fun mint_admission_premium_one_lot_below_minimum_aborts() {
     let config = strike_exposure_config::new();
-    // At p = 0.5, quantity 1_990_000 gives net premium
+    // At p = 0.5, quantity 1_990_000 gives premium
     // 995_000, one position lot below the 1_000_000 minimum.
     config.assert_mint_admission(
         ENTRY_PROBABILITY_HALF,
-        2 * constants::min_net_premium!() - constants::position_lot_size!(),
+        2 * constants::min_premium!() - constants::position_lot_size!(),
     );
     abort 999
 }
 
-//
-
-// (`mint_admission_half_probability_two_and_half_x_succeeds` admits even 2.5x).
-// One millisecond inside the window the cap drops to 1x and the same order is
-// refused — the tightest just-inside value for the `<` edge.
-
-// The block is `time_to_expiry < window`, so at exactly the window edge the full
-// probability-derived cap still applies. Pins the `<` boundary from the outside:
-// 2.5x admits here with the same terms it gets far from expiry.
-
-// Control for the next test: at p = 0.1 the curve caps admission at 1.8x, so 1.5x
-// is admitted far from expiry. Entry value 100_000_000; net premium
-
-// The block replaces the curve rather than composing with it: inside the window
-// the cap is 1x even at a probability whose curve cap (1.8x) would have admitted
-// this order. Paired with the control above, the rejection is attributable to the
-// window alone.
-
 #[test]
-fun mint_admission_net_premium_at_minimum_succeeds() {
+fun mint_admission_premium_at_minimum_succeeds() {
     let config = strike_exposure_config::new();
 
-    let admission = config.assert_mint_admission(
+    let premium = config.assert_mint_admission(
         ENTRY_PROBABILITY_HALF,
-        2 * constants::min_net_premium!(),
+        2 * constants::min_premium!(),
     );
-    assert_eq!(admission.net_premium(), constants::min_net_premium!());
+    assert_eq!(premium, constants::min_premium!());
     destroy(config);
 }

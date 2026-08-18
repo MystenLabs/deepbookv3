@@ -28,16 +28,12 @@ const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
-const EWrongCloseOutcome: u64 = 6;
-const EPricerRequired: u64 = 7;
-const EInvalidInventoryImpactScale: u64 = 8;
+const EInvalidInventoryImpactScale: u64 = 6;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
     /// Expiry market that owns this exposure book.
     expiry_market_id: ID,
-    /// Terminal timestamp used by fee and settlement math.
-    expiry_ms: u64,
     /// Raw-price-per-tick conversion factor; `raw_strike = tick * tick_size`.
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
@@ -73,42 +69,18 @@ public struct MintTerms has drop {
     higher_tick: u64,
     quantity: u64,
     entry_probability: u64,
-    net_premium: u64,
+    premium: u64,
     /// Separate inventory-impact charge, sampled against the pre-mint book.
     inventory_impact_charge: u64,
 }
 
-/// Compute-once terms for one prospective close of `order`. Built only by
-/// `quote_close` and consumed by value in `process_close`, so one terms value
-/// backs at most one close and the book mutation can only apply exactly the
-/// quoted outcome. Terms carry the pricing exposure's market identity; the
-/// consumer asserts it, so terms cannot cross exposure books. `order` names the
-/// book entry the close removes (its atoms decode from the packed id); the
-/// outcome payload holds the values the quote computed.
-public struct CloseTerms has drop {
-    expiry_market_id: ID,
-    /// Which book entry the close removes.
-    order: Order,
-    outcome: CloseOutcome,
-}
-
-/// Every outcome of one prospective close: a priced live close, or the settled
-/// terminal payout (zero for a loss). Enums match only inside their defining
-/// module, so flows branch via the `is_*` accessors and `process_close` owns the
-/// dispatch.
-public enum CloseOutcome has drop {
-    Live(LiveCloseTerms),
-    Settled { payout: u64 },
-}
-
-/// Live-close payload: the closed slice the mutation must remove and the
-/// priced facts flow policy reads. Built only by `quote_live_close` and
-/// consumed by value in `process_live_close`, so one terms value backs at most
-/// one close and the book mutation can only apply exactly the quoted slice.
-/// Carries only the removed side; the survivor's quantity is derived by
-/// conservation (`total - removed`) at the mutation, so the split cannot
-/// un-conserve quantity.
+/// Compute-once terms for one prospective live close. Built only by
+/// `quote_live_close` and consumed by value in `process_live_close`, so one terms
+/// value backs at most one mutation. The survivor's quantity is derived by
+/// conservation (`total - removed`) at the mutation.
 public struct LiveCloseTerms has drop {
+    expiry_market_id: ID,
+    order: Order,
     close_quantity: u64,
     redeem_amount: u64,
     range_probability: u64,
@@ -120,8 +92,8 @@ public(package) fun entry_probability(terms: &MintTerms): u64 {
     terms.entry_probability
 }
 
-public(package) fun net_premium(terms: &MintTerms): u64 {
-    terms.net_premium
+public(package) fun premium(terms: &MintTerms): u64 {
+    terms.premium
 }
 
 public(package) fun quantity(terms: &MintTerms): u64 {
@@ -132,34 +104,16 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
     terms.inventory_impact_charge
 }
 
-public(package) fun is_live(terms: &CloseTerms): bool {
-    match (&terms.outcome) {
-        CloseOutcome::Live(_) => true,
-        _ => false,
-    }
+public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
+    terms.redeem_amount
 }
 
-/// Terminal payout for the account credit and event: exact for a settled win,
-/// zero for a settled loss; aborts unless the outcome is `Settled`.
-public(package) fun settled_payout(terms: &CloseTerms): u64 {
-    match (&terms.outcome) {
-        CloseOutcome::Settled { payout } => *payout,
-        _ => abort EWrongCloseOutcome,
-    }
+public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
+    terms.range_probability
 }
 
-/// Live-arm reads for flow policy and the payment decomposition; abort unless
-/// the outcome is `Live`.
-public(package) fun redeem_amount(terms: &CloseTerms): u64 {
-    terms.live_terms().redeem_amount
-}
-
-public(package) fun range_probability(terms: &CloseTerms): u64 {
-    terms.live_terms().range_probability
-}
-
-public(package) fun inventory_impact_rebate(terms: &CloseTerms): u64 {
-    terms.live_terms().inventory_impact_rebate
+public(package) fun inventory_impact_rebate(terms: &LiveCloseTerms): u64 {
+    terms.inventory_impact_rebate
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -195,8 +149,34 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 /// is worth `quantity * P(range)` live, so no per-order correction is needed. The
 /// aggregate is netted per boundary rather than per order, so it can differ from
 /// the per-order sum by boundary rounding; it is clamped at zero once, in the walk.
-public(package) fun exact_live_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
+public(package) fun live_marked_liability(exposure: &StrikeExposure, pricer: &Pricer): u64 {
     exposure.payout.walk_linear(pricer, exposure.tick_size)
+}
+
+/// Return one live order's full-close range value without consulting book state.
+public(package) fun live_order_value(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    order: &Order,
+): u64 {
+    math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
+}
+
+/// Return one settled order's full terminal payout.
+public(package) fun settled_order_payout(exposure: &StrikeExposure, order: &Order): u64 {
+    let settlement_price = exposure.settlement_price();
+    if (
+        range_codec::settlement_in_range(
+            order.lower_tick(),
+            order.higher_tick(),
+            settlement_price,
+            exposure.tick_size,
+        )
+    ) {
+        order.quantity()
+    } else {
+        0
+    }
 }
 
 /// Return the backing-buffer lambda snapshotted for this exposure book.
@@ -242,6 +222,7 @@ public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
 /// snapshotted config needed to price it.
 public(package) fun trading_fee(
     exposure: &StrikeExposure,
+    expiry_ms: u64,
     probability: u64,
     quantity: u64,
     clock: &Clock,
@@ -249,7 +230,7 @@ public(package) fun trading_fee(
     exposure
         .config
         .trading_fee(
-            exposure.expiry_ms,
+            expiry_ms,
             probability,
             quantity,
             clock.timestamp_ms(),
@@ -272,37 +253,6 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     // disabled markets do not perform a second payout-tree read here.
     if (exposure.is_settled() || exposure.config.inventory_impact_max_rate() == 0) return 0;
     exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
-}
-
-/// Return how much live payout liability `payout` over `(lower_tick,
-/// higher_tick]` would add or remove.
-///
-/// With current point maximum `M`, total `T`, peak in the range `R`, peak in its
-/// complement `C`, and backing buffer `lambda`, the max-point movement is:
-///
-/// - add:    `g = max(M, R + N) - M`
-/// - remove: `g = M - max(R - N, C)`
-///
-/// In real arithmetic, `delta L = lambda*N + (1-lambda)*g`. On chain this
-/// function evaluates the complete before/after liabilities instead, preserving
-/// the fixed-point carry from the book's existing `T-M` gap. Cold, disjoint
-/// exposure moves only the buffered part; exposure that raises the worst
-/// settlement point moves close to its full net payout.
-public(package) fun marginal_payout_liability(
-    exposure: &StrikeExposure,
-    lower_tick: u64,
-    higher_tick: u64,
-    payout: u64,
-    adding: bool,
-): u64 {
-    if (payout == 0) return 0;
-    let (before, after) = exposure.payout_liabilities_after_change(
-        lower_tick,
-        higher_tick,
-        payout,
-        adding,
-    );
-    if (adding) after - before else before - after
 }
 
 /// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
@@ -368,7 +318,7 @@ public(package) fun quote_mint_terms(
     };
     assert!(quantity >= min_quantity, EMintQuantityBelowMin);
 
-    let admission = exposure.config.assert_mint_admission(entry_probability, quantity);
+    let premium = exposure.config.assert_mint_admission(entry_probability, quantity);
     // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
     MintTerms {
@@ -377,7 +327,7 @@ public(package) fun quote_mint_terms(
         higher_tick,
         quantity,
         entry_probability,
-        net_premium: admission.net_premium(),
+        premium,
         inventory_impact_charge: exposure.inventory_impact(
             lower_tick,
             higher_tick,
@@ -405,48 +355,64 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
     allocated_order
 }
 
-/// Quote the close of `order` in ANY state as compute-once close terms: the
-/// single classifier for every close flow. Outcome precedence: the settled
-/// terminal payout from the recorded settlement, then a priced live close — the
-/// only outcome that needs the pricer.
-///
-/// A `Pricer` is a live-phase capability: it is only constructible before
-/// expiry and settlement is only recordable after it, so a caller holding one
-/// proves the market is unsettled — the `Settled` arm is totality for
-/// pricer-carrying callers, not a reachable branch.
-public(package) fun quote_close(
+/// Quote one prospective live close as pure terms, touching neither the book nor
+/// the oracle after the supplied `Pricer` snapshot. The trade fee is recovered
+/// from the returned range probability.
+public(package) fun quote_live_close(
     exposure: &StrikeExposure,
-    pricer: Option<Pricer>,
+    pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
-): CloseTerms {
-    if (exposure.is_settled()) {
-        let payout = exposure.quote_settled_close(order);
-        return exposure.close_terms(order, CloseOutcome::Settled { payout })
-    };
-    assert!(pricer.is_some(), EPricerRequired);
-    let range_probability = exposure.order_range_price(pricer.borrow(), order);
-    exposure.close_terms(
-        order,
-        CloseOutcome::Live(exposure.quote_live_close(order, close_quantity, range_probability)),
-    )
+): LiveCloseTerms {
+    order::assert_valid_quantity(close_quantity);
+    assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
+
+    let range_probability = exposure.order_range_price(pricer, order);
+    LiveCloseTerms {
+        expiry_market_id: exposure.expiry_market_id,
+        order: *order,
+        close_quantity,
+        redeem_amount: math::mul_down(range_probability, close_quantity),
+        range_probability,
+        inventory_impact_rebate: exposure.inventory_impact(
+            order.lower_tick(),
+            order.higher_tick(),
+            close_quantity,
+            false,
+        ),
+    }
 }
 
-/// Apply one quoted close to the book — the single close mutator, total over
-/// every outcome. Consuming `terms` by value ties each application to exactly
-/// one quote, and the market identity assert rejects terms quoted on another
-/// exposure book. Returns the replacement order a partial live close leaves
-/// behind.
-public(package) fun process_close(exposure: &mut StrikeExposure, terms: CloseTerms): Option<Order> {
-    let CloseTerms { expiry_market_id, order, outcome } = terms;
+/// Apply one quoted live close to the book and return the replacement order a
+/// partial close leaves behind.
+public(package) fun process_live_close(
+    exposure: &mut StrikeExposure,
+    terms: LiveCloseTerms,
+): Option<Order> {
+    let LiveCloseTerms { expiry_market_id, order, close_quantity, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
-    match (outcome) {
-        CloseOutcome::Live(live) => exposure.process_live_close(&order, live),
-        CloseOutcome::Settled { payout } => {
-            exposure.process_settled_close(payout);
-            option::none()
-        },
-    }
+
+    exposure.payout.remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
+
+    let remaining_quantity = order.quantity() - close_quantity;
+    if (remaining_quantity == 0) return option::none();
+
+    let replacement_order = order::replacement(
+        &order,
+        remaining_quantity,
+        exposure.next_order_sequence,
+    );
+    exposure.next_order_sequence = exposure.next_order_sequence + 1;
+    option::some(replacement_order)
+}
+
+/// Release one order's full terminal payout from settled liability and return it.
+public(package) fun process_settled_close(exposure: &mut StrikeExposure, order: &Order): u64 {
+    let payout = exposure.settled_order_payout(order);
+    // Settlement liability and individual payouts use the same integer quantity
+    // atoms, so the subtraction is additive without rounding dust.
+    exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
+    payout
 }
 
 /// Enter the settled phase by recording the terminal price and aggregate payout
@@ -477,18 +443,16 @@ public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64)
 /// Create a strike exposure book for one expiry market.
 public(package) fun new(
     expiry_market_id: ID,
-    expiry_ms: u64,
+    config: StrikeExposureConfig,
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
     inventory_impact_scale: u64,
-    config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
     assert!(inventory_impact_scale > 0, EInvalidInventoryImpactScale);
     StrikeExposure {
         expiry_market_id,
-        expiry_ms,
         tick_size,
         admission_tick_size,
         reference_tick_source_timestamp_ms,
@@ -590,97 +554,6 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
             || exposure.reference_tick.contains(&higher_tick),
         EInvalidAdmissionTick,
     );
-}
-
-fun live_terms(terms: &CloseTerms): &LiveCloseTerms {
-    match (&terms.outcome) {
-        CloseOutcome::Live(live) => live,
-        _ => abort EWrongCloseOutcome,
-    }
-}
-
-fun close_terms(exposure: &StrikeExposure, order: &Order, outcome: CloseOutcome): CloseTerms {
-    CloseTerms { expiry_market_id: exposure.expiry_market_id, order: *order, outcome }
-}
-
-/// Quote one settled order's terminal payout against the recorded settlement:
-/// the full `quantity` for a win, zero for a loss. A pure read; aborts while the
-/// exposure is live.
-fun quote_settled_close(exposure: &StrikeExposure, order: &Order): u64 {
-    let settlement_price = exposure.settlement_price();
-    let won = range_codec::settlement_in_range(
-        order.lower_tick(),
-        order.higher_tick(),
-        settlement_price,
-        exposure.tick_size,
-    );
-    if (!won) {
-        return 0
-    };
-    order.quantity()
-}
-
-/// Quote one prospective live close as pure terms from the already-priced
-/// range probability, touching neither the book nor the oracle. The trade fee is
-/// recovered via `trading_fee` from the returned `range_probability`.
-fun quote_live_close(
-    exposure: &StrikeExposure,
-    order: &Order,
-    close_quantity: u64,
-    range_probability: u64,
-): LiveCloseTerms {
-    order::assert_valid_quantity(close_quantity);
-    assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
-
-    let redeem_amount = math::mul_down(range_probability, close_quantity);
-    let inventory_impact_rebate = exposure.inventory_impact(
-        order.lower_tick(),
-        order.higher_tick(),
-        close_quantity,
-        false,
-    );
-
-    LiveCloseTerms {
-        close_quantity,
-        redeem_amount,
-        range_probability,
-        inventory_impact_rebate,
-    }
-}
-
-/// Apply one quoted settled close to the book: release its quoted payout from
-/// the settled liability.
-fun process_settled_close(exposure: &mut StrikeExposure, payout: u64) {
-    // Settlement liability and individual payouts use the same integer quantity
-    // atoms, so the subtraction is additive without rounding dust.
-    exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
-}
-
-/// Apply one quoted live close to the book: remove the closed slice from the
-/// payout index and, for a partial close, insert and return the replacement
-/// order that remains.
-fun process_live_close(
-    exposure: &mut StrikeExposure,
-    order: &Order,
-    terms: LiveCloseTerms,
-): Option<Order> {
-    let LiveCloseTerms { close_quantity, .. } = terms;
-
-    exposure.payout.remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
-
-    let remaining_quantity = order.quantity() - close_quantity;
-    if (remaining_quantity == 0) {
-        return option::none()
-    };
-
-    let replacement_order = order::replacement(
-        order,
-        remaining_quantity,
-        exposure.next_order_sequence,
-    );
-    exposure.next_order_sequence = exposure.next_order_sequence + 1;
-
-    option::some(replacement_order)
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {

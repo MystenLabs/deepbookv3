@@ -6,7 +6,7 @@
 /// production mint flow, then asserts `current_nav` exactly equals an INDEPENDENT
 /// per-order reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed
 /// straight from each order's atoms and `pricing::range_price`. The reference
-/// reuses NONE of `walk_linear` / `exact_live_liability` / `current_nav` /
+/// reuses NONE of `walk_linear` / `live_marked_liability` / `current_nav` /
 /// `expiry_cash::free_cash`, so it is a genuine oracle (unit-tests rule 1): it
 /// sums per order, while the contract nets per boundary.
 ///
@@ -32,8 +32,8 @@ use deepbook_predict::{
 use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::assert_eq;
 
-/// 1x ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
-const ONE_X_QUANTITY: u64 = 2_000_000_000;
+/// ATM up range, quantity 2e9: priced 0.5 -> 1e9 liability.
+const ATM_QUANTITY: u64 = 2_000_000_000;
 /// Second same-strike up order, quantity 4e9.
 const SECOND_SAME_STRIKE_QUANTITY: u64 = 4_000_000_000;
 const NON_MONOTONE_A_MAGNITUDE: u64 = 1;
@@ -56,7 +56,7 @@ fun empty_live_market_values_at_free_cash() {
 }
 
 #[test]
-fun single_one_x_up_order() {
+fun single_atm_up_order() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -67,7 +67,7 @@ fun single_one_x_up_order() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
+        ATM_QUANTITY,
     );
 
     check_nav(&mut fx, &market, vector[id], float!());
@@ -79,7 +79,7 @@ fun single_one_x_up_order() {
 }
 
 #[test]
-fun single_one_x_down_order_anchored_at_neg_inf() {
+fun single_atm_down_order_anchored_at_neg_inf() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -90,7 +90,7 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
         &mut account,
         constants::neg_inf!(),
         helpers::strike_tick(),
-        ONE_X_QUANTITY,
+        ATM_QUANTITY,
     );
 
     // The (-inf, strike] range exercises the `tree.base` (P(-inf) = 1) anchor.
@@ -103,7 +103,7 @@ fun single_one_x_down_order_anchored_at_neg_inf() {
 }
 
 #[test]
-fun two_one_x_orders_same_strike_collapse_to_one_node() {
+fun two_atm_orders_same_strike_collapse_to_one_node() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -114,7 +114,7 @@ fun two_one_x_orders_same_strike_collapse_to_one_node() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
+        ATM_QUANTITY,
     );
     let id2 = fx.mint_bundle(
         &mut market,
@@ -150,7 +150,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         &mut account,
         NON_MONOTONE_LOWER_TICK,
         NON_MONOTONE_HIGHER_TICK,
-        ONE_X_QUANTITY,
+        ATM_QUANTITY,
     );
     // These SVI values are intentionally extreme: tiny positive `a`, max `b`,
     // min `sigma`, and `rho = -1`. Together they make the model report a higher

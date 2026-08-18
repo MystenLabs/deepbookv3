@@ -163,7 +163,7 @@ fun variant_c_write_then_redeem_seasoned_position_aborts() {
         FRESHER_PRICE,
         FRESHER_SOURCE_TS,
     );
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
@@ -410,7 +410,7 @@ fun price_then_write_same_tx_is_permitted() {
         constants::pos_inf_tick!(),
         QUANTITY,
     );
-    let value_at_stale_mark = fx.order_value_bundle(&market, order);
+    let value_at_stale_mark = fx.live_order_value_bundle(&market, order);
     fx.set_clock_for_testing(FRESHER_SOURCE_TS);
     fx.write_live_oracle_in_current_tx_bundle(
         &mut market,
@@ -428,7 +428,7 @@ fun price_then_write_same_tx_is_permitted() {
     // once spot sits 20% above the strike, and never more than its max payout.
     fx.scenario_mut().next_tx(test_constants::alice());
     let market = fx.take_market_bundle(expiry_id);
-    let value_at_pushed_mark = fx.order_value_bundle(&market, order);
+    let value_at_pushed_mark = fx.live_order_value_bundle(&market, order);
     assert!(value_at_pushed_mark > value_at_stale_mark);
     assert!(value_at_pushed_mark <= QUANTITY);
 

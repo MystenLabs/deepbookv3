@@ -3,8 +3,8 @@
 
 /// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability,
 /// rebate_reserve) triple after EVERY cash-mutating LIVE operation of a two-sided
-/// 1x book on the far expiry — mint, mint, partial live redeem. Pins that mint
-/// net_premium AND fee land in expiry cash, and that disjoint live liability is
+/// book on the far expiry — mint, mint, partial live redeem. Pins that mint
+/// premium AND fee land in expiry cash, and that disjoint live liability is
 /// the max settlement floor plus the default gap buffer. Terminal settlement
 /// coverage lives in `settlement_flow_tests`.
 #[test_only]
@@ -19,7 +19,7 @@ use std::unit_test::assert_eq;
 /// prices the complement range through the UP(neg_inf) = 1.0 sentinel. Each
 /// premium is read from that order's own quote rather than written down, since
 /// this file owns the cash sheet and `pricing_exact_tests` owns the price.
-/// Second order: 1x DOWN complement (-inf, min_strike], quantity 2e9.
+/// Second order: DOWN complement (-inf, min_strike], quantity 2e9.
 const DOWN_QUANTITY: u64 = 2_000_000_000;
 /// Fees floor at min_fee = 5e6 per 1e9 of quantity (fixture base_fee = 1 makes
 /// the raw Bernoulli fee round to 0; the default ramp multiplier is exactly 1.0).
@@ -53,9 +53,9 @@ fun cash_sheet_exact_after_every_flow() {
         helpers::expected_manager_state(deposit, 0, 0, 0, 0),
     );
 
-    // --- Mint 1: 1x ATM UP range (min_strike, +inf], quantity 1e9. Principal
-    // and fee both land in expiry cash; backing for a zero-floor 1x order is
-    // its full quantity.
+    // --- Mint 1: ATM UP range (min_strike, +inf], quantity 1e9. Premium and
+    // fee both land in expiry cash; the order contributes its full quantity
+    // to payout backing.
     let quote1 = fx.quote_mint_bundle(
         &market,
         helpers::strike_tick(),
@@ -63,7 +63,7 @@ fun cash_sheet_exact_after_every_flow() {
         test_constants::mint_quantity(),
     );
     helpers::assert_atm_entry_probability(quote1.entry_probability());
-    let mint1_principal = quote1.net_premium();
+    let mint1_principal = quote1.premium();
     let order1 = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -91,7 +91,7 @@ fun cash_sheet_exact_after_every_flow() {
         ),
     );
 
-    // --- Mint 2: 1x DOWN complement (-inf, min_strike], quantity 2e9.
+    // --- Mint 2: DOWN complement (-inf, min_strike], quantity 2e9.
     // The two ranges are disjoint: M = max(1e9, 2e9) = 2e9, Σ = 3e9,
     // gap = 1e9, default buffer = 250e6, reserve = 2.25e9.
     let quote2 = fx.quote_mint_bundle(
@@ -104,7 +104,7 @@ fun cash_sheet_exact_after_every_flow() {
     // the two probabilities sum to 1e9 with no approximation of their own.
     helpers::assert_atm_complement_entry_probability(quote2.entry_probability());
     assert_eq!(quote1.entry_probability() + quote2.entry_probability(), float!());
-    let mint2_principal = quote2.net_premium();
+    let mint2_principal = quote2.premium();
     let order2 = fx.mint_bundle(
         &mut market,
         &mut account,
@@ -146,7 +146,7 @@ fun cash_sheet_exact_after_every_flow() {
     // surviving UP backing 0.5e9, so default reserve = 2.125e9. The
     // replacement keeps the position count at 2.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    let (_closed_id, replacement) = fx.redeem_bundle(
+    let replacement = fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order1,

@@ -22,7 +22,7 @@ use std::unit_test::assert_eq;
 fun setup_everything_check_manager_bundle_return_smoke() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
 
-    // Mint one 1x in-range order through the fixture; the account owner (alice) is
+    // Mint one in-range order through the fixture; the account owner (alice) is
     // the current sender after `create_funded_manager`, but `setup_everything`
     // left the sender at admin — re-establish alice for the owner auth.
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -45,7 +45,7 @@ fun setup_everything_check_manager_bundle_return_smoke() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     assert_eq!(helpers::position_count_bundle(&account, expiry_id), 1);
-    // A mint charges a non-zero fee and a non-zero net_premium, so the free balance
+    // A mint charges a non-zero fee and a non-zero premium, so the free balance
     // strictly decreases.
     assert!(helpers::fees_paid_bundle(&account, expiry_id) > 0);
     assert!(fx.account_balance_bundle<DUSDC>(&account) < test_constants::default_manager_deposit());

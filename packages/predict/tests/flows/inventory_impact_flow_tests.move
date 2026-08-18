@@ -7,7 +7,7 @@
 #[test_only]
 module deepbook_predict::inventory_impact_flow_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
@@ -37,7 +37,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     assert_eq!(quote.inventory_impact_charge(), EXPECTED_SINGLE_ORDER_CHARGE);
     assert_eq!(
         quote.all_in_cost(),
-        quote.net_premium()
+        quote.premium()
             + (quote.trading_fee() - quote.fee_incentive_subsidy())
             + quote.builder_fee()
             + quote.penalty_fee()
@@ -63,7 +63,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     assert_eq!(
         helpers::market(&market).cash_balance(),
         cash_before_mint
-            + quote.net_premium()
+            + quote.premium()
             + quote.trading_fee()
             + quote.penalty_fee()
             + EXPECTED_SINGLE_ORDER_CHARGE,
@@ -75,9 +75,9 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     // liability reduction returns the exact charge independently of the normal
     // close fee.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    let gross = fx.order_value_bundle(&market, order_id);
+    let gross = fx.live_order_value_bundle(&market, order_id);
     let balance_before_close = fx.account_balance_bundle<DUSDC>(&account);
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order_id,
@@ -128,6 +128,28 @@ fun settlement_releases_unused_inventory_escrow_to_pool_surplus() {
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun live_order_value_does_not_require_book_membership() {
+    let (mut fx, expiry_id, _) = setup_enabled_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+
+    let hypothetical = order::new_from_ticks(
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        0,
+    );
+    let value = fx.live_order_value_bundle(&market, hypothetical.id());
+    // `mint_quantity()` is exactly the 1e9 fixed-point scale, so the range value
+    // has the same integer representation as the independently generated
+    // short-expiry ATM probability.
+    helpers::assert_atm_entry_probability_short_expiry(value);
+
     helpers::return_market_bundle(market);
     fx.finish();
 }

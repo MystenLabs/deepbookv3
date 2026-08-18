@@ -5,7 +5,7 @@
 ///
 /// An `Order` represents the durable contract terms needed after mint: the lower
 /// and higher strike ticks, quantity, and the expiry-local sequence. Mint-only
-/// inputs such as entry probability, net premium, and fee policy intentionally
+/// inputs such as entry probability, premium, and fee policy intentionally
 /// live outside this module. The packed ID is the single source of truth at
 /// protocol boundaries; raw strike conversion (through the owning market's
 /// `tick_size`) is interpreted by `StrikeExposure`.
@@ -64,19 +64,9 @@ public(package) fun higher_tick(order: &Order): u64 {
     decode_tick(order.id, HIGHER_TICK_OFFSET)
 }
 
-/// Return the encoded quantity in position lots.
-public(package) fun quantity_lots(order: &Order): u64 {
-    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
-}
-
 /// Return the immutable quantity encoded in this order.
 public(package) fun quantity(order: &Order): u64 {
     order.quantity_lots() * constants::position_lot_size!()
-}
-
-/// Return the expiry-local sequence encoded in this order.
-public(package) fun sequence(order: &Order): u64 {
-    (order.id & U40_MASK) as u64
 }
 
 /// Construct an order ID from validated strike ticks.
@@ -137,6 +127,10 @@ fun assert_valid(order: &Order) {
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
     assert!(order.quantity_lots() > 0, EInvalidQuantity);
     assert_valid_order_shape(order.lower_tick(), order.higher_tick());
+}
+
+fun quantity_lots(order: &Order): u64 {
+    ((order.id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
 }
 
 fun assert_valid_order_shape(lower_tick: u64, higher_tick: u64) {
