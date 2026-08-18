@@ -719,7 +719,7 @@ export async function readActiveMarketIds(): Promise<string[]> {
 }
 
 // On-chain settlement flag for one market (devInspect `expiry_market::is_settled`). The
-// cleanout measurement waits on this: `redeem_settled` / `claim_trading_loss_rebate` both
+// cleanout measurement waits on this: `redeem_settled` and the settled sweep both
 // require a settled market, and a settled market drops out of `active_expiry_markets`, so a
 // settled-but-still-present read is the safe "ready to clean out" signal. BCS bool = 1 byte.
 export async function readIsSettled(marketId: string): Promise<boolean> {

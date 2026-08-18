@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault events for staking, expiry cash and profit, fee incentives, and the
+/// Pool-vault events for expiry cash and profit, fee incentives, and the
 /// queued LP request lifecycle. A flush records the frozen pool mark used by fills.
 module deepbook_predict::vault_events;
 

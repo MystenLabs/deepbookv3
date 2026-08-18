@@ -8,9 +8,9 @@
 /// attribution. DUSDC/PLP custody lives in `Account`. The `PredictApp` witness
 /// namespaces this slot, so only Predict writes it.
 ///
-/// Position mutations are package-internal. Builder-code
-/// configuration accepts an account `Auth`; the account package decides which
-/// owner or authorized application may obtain that mutable borrow.
+/// Position mutations are package-internal. Builder-code configuration accepts an
+/// account `Auth`; the account package decides which owner or authorized
+/// application may obtain that mutable borrow.
 module deepbook_predict::predict_account;
 
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};

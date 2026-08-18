@@ -2000,9 +2000,11 @@ public fun finish_flush_bundle(
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
-/// liability. Assert after every cash-mutating flow (mint / redeem / sync).
+/// liability plus its isolated inventory-impact escrow, mirroring the contract's
+/// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
+/// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
-    assert!(market.cash_balance() >= market.payout_liability());
+    assert!(market.cash_balance() >= market.payout_liability() + market.inventory_impact_reserve());
 }
 
 /// S1 backing assertion for a market bundle.
@@ -2010,8 +2012,9 @@ public fun assert_market_backed_bundle(market: &MarketBundle) {
     assert_market_backed(&market.market);
 }
 
-/// Expected snapshot of one expiry market's cash-side accounting, asserted in one
-/// call by `check_market_cash`.
+/// Expected snapshot of one expiry market's cash and payout backing, asserted in
+/// one call by `check_market_cash`. The isolated inventory-impact escrow is not a
+/// field here — it ships at a zero rate, and `assert_market_backed` covers it.
 public struct ExpectedMarketCash has copy, drop {
     /// DUSDC held by the expiry (`market.cash_balance()`).
     cash_balance: u64,
@@ -2023,8 +2026,8 @@ public fun expected_market_cash(cash_balance: u64, payout_liability: u64): Expec
     ExpectedMarketCash { cash_balance, payout_liability }
 }
 
-/// Assert an expiry market's full cash sheet. Each field is an exact `assert_eq!`,
-/// and the S1 backing inequality is checked on top.
+/// Assert an expiry market's cash and payout backing. Each field is an exact
+/// `assert_eq!`, and the S1 backing inequality is checked on top.
 public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash) {
     assert_eq!(market.cash_balance(), expected.cash_balance);
     assert_eq!(market.payout_liability(), expected.payout_liability);

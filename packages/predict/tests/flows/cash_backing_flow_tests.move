@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability,
-/// rebate_reserve) triple after EVERY cash-mutating LIVE operation of a two-sided
+/// S1/S2 expiry-cash sheet: asserts the exact (cash_balance, payout_liability)
+/// pair after EVERY cash-mutating LIVE operation of a two-sided
 /// book on the far expiry — mint, mint, partial live redeem. Pins that mint
 /// premium AND fee land in expiry cash, and that disjoint live liability is
 /// the max settlement floor plus the default gap buffer. Terminal settlement

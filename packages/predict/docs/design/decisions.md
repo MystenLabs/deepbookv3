@@ -250,7 +250,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   accounts then costs N stakes. *Accepted limit:* stake is a refundable, plutocratic
   gate, porous to correlated/directional bundling; genuinely reaching unstaked retail
   would need off-chain identity (out of contract scope).
-- **Stake benefit is applied twice, by design.** `benefit_ratio(active_stake)` scales
+- **Stake benefit was applied twice, by design.** `benefit_ratio(active_stake)` scales
   both the mint-time fee discount (`× max_fee_discount`) and the settled loss rebate
   (`× trading_loss_rebate_rate`), which are independent config knobs sharing the one
   benefit curve. A high staker pays a small net fee — intended loyalty compounding, not
@@ -272,7 +272,6 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **`stake_deep` / `unstake_deep` carry no valuation-lock gate.** Staked DEEP is
   excluded from `lp_pool_value`, so neither can move the flush mark; gating them would
   add lock contention for no solvency benefit.
-
 
 ## Oracle extraction (recent)
 

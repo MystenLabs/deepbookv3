@@ -8,11 +8,9 @@ module deepbook_predict::settlement_flow_tests;
 
 use account::account_registry;
 use deepbook_predict::{
-    config_constants,
     config_events,
     expiry_market,
     flow_test_helpers as helpers,
-    plp,
     predict_account,
     pricing,
     test_constants

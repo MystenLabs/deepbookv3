@@ -29,7 +29,7 @@ import {
 } from "../../devtools/ts/runtime.js";
 
 const SCALE = 1_000_000_000n;
-const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1", "predict_account:2"]);
+const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1"]);
 
 export interface Mkt {
   id: string;

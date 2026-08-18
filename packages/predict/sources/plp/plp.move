@@ -14,7 +14,7 @@
 /// delivering fills to each account via the balance accumulator.
 module deepbook_predict::plp;
 
-use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::account::{AccountWrapper, Auth};
 use deepbook_predict::{
     admin::AdminCap,
     constants,
@@ -22,7 +22,6 @@ use deepbook_predict::{
     lp_book::{Self, LpBook},
     market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
-    predict_account,
     protocol_config::ProtocolConfig,
     vault_events
 };

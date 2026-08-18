@@ -23,7 +23,8 @@ builder_fee     = min( trading_fee * builder_fee_multiplier , quantity * max_bui
 congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
 ```
 
-The base trading fee and the expiry ramp together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from that fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. 
+The base trading fee and the expiry ramp together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from that fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability.
+
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
 A range contract settling inside or outside its range is a Bernoulli outcome with success probability `p`. The variance of that outcome is `p · (1 − p)`, and its standard deviation is `sqrt(p · (1 − p))`. The base fee is proportional to that standard deviation:

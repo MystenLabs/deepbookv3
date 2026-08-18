@@ -70,7 +70,7 @@ public struct ExpiryMarket has key {
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
 /// `quantity` is the exact requested quantity or the conservatively budget-sized
-/// fill. `trading_fee` is the trading fee before sponsor subsidy, and
+/// fill. `trading_fee` is the trading fee before the sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
@@ -387,9 +387,9 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 ///
 /// Requires the running package version to be at or above the protocol version
 /// watermark, per-market mint pause to be off, trading globally enabled, valid
-/// owner or authorized-app account auth, a market-bound live `Pricer`, and enough expiry cash to
-/// back the post-mint max payout. Mint fees are paid by
-/// routing a withdraw through the loaded account.
+/// owner or authorized-app account auth, a market-bound live `Pricer`, and enough
+/// expiry cash to back the post-mint max payout. Mint fees are paid by routing a
+/// withdraw through the loaded account.
 /// The position's strike range is the tick pair `(lower_tick, higher_tick]`
 /// (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
@@ -895,8 +895,6 @@ fun settle_mint_payment(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let trader_fee_amount = quote.trading_fee - quote.fee_incentive_subsidy;
-
     predict_account::add_position(
         account,
         market.id(),
@@ -908,11 +906,10 @@ fun settle_mint_payment(
     let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
-    let mut fee_payment = payment.split(trader_fee_amount);
-    fee_payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
-    market.cash.receive(fee_payment);
-    // Remaining balance is the premium plus the penalty and inventory
-    // impact. The impact amount is reserved separately after its cash arrives.
+    // The fee, its sponsor-funded subsidy, the premium, the penalty and the
+    // inventory impact all land in the same custody; the impact amount is
+    // earmarked separately once its cash has arrived.
+    payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.cash.receive(payment);
     market.cash.credit_inventory_impact_reserve(quote.inventory_impact_charge);
 
