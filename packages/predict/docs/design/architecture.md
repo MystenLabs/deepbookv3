@@ -140,7 +140,7 @@ graph TD
     PAUSE -->|one-way mint pause| EM
 
     AW <-->|DUSDC trade flows| EM
-    AW <-->|LP requests / staking| VAULT
+    AW <-->|LP requests| VAULT
     VAULT <-->|funding / settled cash| EM
     VAULT -->|LP fill via accumulator| AW
     EM -->|builder fee via accumulator| BC
