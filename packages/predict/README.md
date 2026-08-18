@@ -11,6 +11,8 @@ price lands inside the trader's chosen strike range, and zero otherwise. A share
 > describes how the protocol works and is designed; it is not an integration or
 > SDK guide.
 
+The TypeScript client is [`@mysten/deepbook-predict`](https://github.com/MystenLabs/ts-sdks/tree/main/packages/deepbook-predict), maintained in `MystenLabs/ts-sdks`.
+
 ## Documentation
 
 Protocol documentation lives in [`docs/`](./docs/README.md). Start with the
