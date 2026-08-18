@@ -22,9 +22,18 @@ improvement grows as expiry approaches: the best-fitting `B` falls as
 time-to-expiry shrinks. At `B = 2` the family is exactly the standard normal,
 so it strictly contains today's pricing.
 
-This plan makes the distribution a configured choice instead of a hardcoded
-one: a grid of `B` values from 0.1 to 2.0 in 0.1 steps, selected at quote time
-from remaining time-to-expiry through an admin-settable schedule.
+The research locked the schedule as a formula with one tunable level:
+
+```
+B(tte) = clip(a0 + 0.183 * ln(tte_seconds), 0.4, 2.0)
+```
+
+with slope and clip bounds frozen and `a0` the only tunable (research default
+0.314; fitted level varies roughly 0.18–0.46 by regime). This plan implements
+that formula on-chain: a generated grid of 100 `B` values on `[0.4, 2.0]`
+carries the per-shape constants, the formula resolves remaining time-to-expiry
+to the nearest grid row at quote time, and `a0` is the admin-tunable
+configuration value.
 
 ## What changes and what does not
 
@@ -57,15 +66,26 @@ rebuilt per transaction, so threading one value through it covers every flow
 whole-transaction consistency for free:
 
 ```
-ProtocolConfig.pricing_config        schedule lives here (admin-settable)
+ProtocolConfig.pricing_config        a0 lives here (admin-settable)
         |
-pricing::load_live_pricer            resolves B from remaining TTE, stamps it
-        |                            into the transaction-local Pricer
+pricing::load_live_pricer            resolves B(tte) from the locked formula,
+        |                            snaps to the nearest grid row, stamps the
+        |                            row into the transaction-local Pricer
 Pricer.up_price / range_price
         |
 compute_nd2                          two call sites swap:
-        |-- normal_cdf(d2)  ->  gen_normal::cdf(b, d2)
-        |-- normal_pdf(d2)  ->  gen_normal::pdf(b, d2)
+        |-- normal_cdf(d2)  ->  gen_normal::cdf(row, d2)
+        |-- normal_pdf(d2)  ->  gen_normal::pdf(row, d2)
+```
+
+Resolution at `load_live_pricer` is one `ln` call plus a clip and a rounded
+division:
+
+```
+tte_s = max(remaining_ms, 1) scaled to seconds     (1e9 fixed point)
+b_raw = a0 + 0.183 * ln(tte_s)                     (ln of sub-second tte is
+b     = clip(b_raw, 0.4, 2.0)                       negative; the clip floor
+row   = round((b - 0.4) * 99 / 1.6)                 absorbs it)
 ```
 
 One additional touch point: `variance_sqrt_and_d2` caps `|d2|` at 8, which
@@ -75,29 +95,38 @@ below), so the cap becomes per-`B` data owned by the math layer, and the
 pricing-side check keeps only a wide universal bound guarding the `u128 -> u64`
 narrowing.
 
-## Configuration: the TTE schedule
+## Configuration: one tunable level, `a0`
 
-`PricingConfig` gains a schedule mapping remaining time-to-expiry to `B`:
+The formula's slope (0.183) and clip bounds (0.4, 2.0) are frozen constants,
+matching the research lock; changing them is deliberately a package upgrade.
+The only configuration is the level:
 
-- **Shape:** ordered rows `(min_tte_ms, b)`, thresholds strictly descending,
-  terminal row `min_tte_ms = 0` so every TTE resolves. Resolution walks the
-  rows and takes the first whose threshold is at or below the remaining time.
-- **Encoding:** `B` is stored as a 1e9-scaled `u64` (the house fixed-point
-  convention), validated on set to be one of the twenty grid values
-  `100_000_000 * i, i in 1..=20`.
+- **Field:** `distribution_a0: Option<u64>` on `PricingConfig`, 1e9-scaled.
+  `None` disables the schedule entirely — `B = 2.0` at every TTE, today's
+  pricing bit-for-bit — and is both the publish default and the kill switch.
+- **Bounds:** `Some(a0)` is validated to `[0.10, 0.80]` at 1e9 scale — the
+  fitted regime range (0.18–0.46) with headroom on both sides. `a0` enters the
+  formula linearly, so no per-`a0` constants exist and the value is genuinely
+  continuous; vetting of candidate levels is replay evidence before the admin
+  transaction, not an on-chain enumeration.
 - **Setter:** `AdminCap`-gated, version-gated, and guarded by
   `assert_not_valuation_in_progress` like the other pricing setters — a
   distribution change may not land inside a valuation window.
-- **Event:** schedule updates emit a config event carrying the full new
-  schedule, so indexers and off-chain mirrors can track the active
-  distribution (pricing setters are silent today; this one is not, because it
-  moves every quoted price).
+- **Event:** `a0` updates emit a config event carrying the new value, so
+  indexers and off-chain mirrors can track the active distribution (pricing
+  setters are silent today; this one is not, because it moves every quoted
+  price).
 - **Scope:** protocol-global. Markets differ only through their remaining TTE.
-- **Default:** the single row `(0, B = 2.0)` — current behavior at every TTE. A
-  fresh publish prices exactly as today until the schedule is deliberately set
-  by admin transaction. Initial schedule values are estimates and will be
-  updated by admin transaction as tuning continues; no publish is needed to
-  retune.
+
+Tuning semantics worth knowing: `a0` is a pure time-rescaling of the schedule —
+raising it by `d` multiplies every grid-row boundary's TTE by `exp(-d / 0.183)`
+(a +0.01 nudge slides all boundaries ~5.3% toward shorter TTE). At any fixed
+TTE, a nudge of `da0` moves the snapped row by at most
+`ceil(da0 / 0.016162)` steps, so a sub-step nudge moves some TTEs by one row
+and others not at all, bounded by one grid step of price movement — the same
+lumpiness the spread already absorbs (below). Large retunes (many steps)
+re-mark every market at the admin transaction and follow the same gating
+discipline as enabling the schedule.
 
 ## New `fixed_math` atoms, and what is reused
 
@@ -117,13 +146,15 @@ New atoms:
   one genuinely new numeric engine. Series branch for `y < s + 1` and a Lentz
   continued fraction otherwise, both at fixed iteration counts, `u128`
   internals — structurally a sibling of the existing `exp` Taylor loop and the
-  Cody small/medium split. `s = 1/B` spans 0.5 to 10 across the grid.
-- **`gen_normal` module** — a generated constants table, one row per grid
-  value: `(s, ln_alpha, ln_gamma_s, pdf_norm, saturation_cap)`, plus the
-  assembly functions `cdf`, `pdf`, and `saturation_cap` keyed by `B`. Row
-  `B = 2.0` delegates to `normal_cdf` / `normal_pdf`. The table, the golden
-  test vectors, and the off-chain replay mirror are all emitted by one
-  checked-in Python generator (the `pricing_reference_data` pattern); the
+  Cody small/medium split. `s = 1/B` spans 0.5 to 2.5 across the grid (the
+  formula's 0.4 clip floor is what keeps the engine domain this small).
+- **`gen_normal` module** — a generated constants table of 100 rows, `B`
+  uniform on `[0.4, 2.0]` (step `1.6/99 ≈ 0.01616`), each row
+  `(s, ln_alpha, ln_gamma_s, pdf_norm, saturation_cap)`, plus the assembly
+  functions `cdf`, `pdf`, and `saturation_cap` keyed by row index. Row 99
+  (`B = 2.0` exactly) delegates to `normal_cdf` / `normal_pdf`. The table, the
+  golden test vectors, and the off-chain replay mirror are all emitted by one
+  checked-in Python generator (the `pricing_reference_data` pattern); the five
   hundred constants are never hand-typed.
 
 Reused as-is: `i64` as the signed carrier, `ln`/`exp` as the workhorses (2–4
@@ -159,11 +190,14 @@ by scale:
 
 ## The low-`B` landscape (computed, unit variance)
 
+The grid floor of 0.4 keeps the family's numerics tame; the in-domain schedule
+stays at `B >= 0.6` and the floor is reached only below ~1.6s of remaining TTE.
+
 | B | pdf(0) | tail mass beyond x = 8 | cap for < 1e-9 truncation |
-|-----|----------|------------------------|---------------------------|
-| 0.1 | 680,132 | 4.3e-4 | ~3,250 |
-| 0.2 | 251 | 1.1e-3 | ~512 |
+|-----|--------|------------------------|---------------------------|
+| 0.4 | 5.64 | 7.5e-4 | ~86 |
 | 0.5 | 2.74 | 4.5e-4 | ~52 |
+| 0.6 | 1.71 | 2.4e-4 | ~36 |
 | 1.0 | 0.71 | 6.1e-6 | ~15 |
 | 1.6 | 0.45 | 2.1e-10 | ~8 |
 | 2.0 | 0.40 | 6.2e-16 | ~6 |
@@ -183,14 +217,31 @@ Consequences the design carries:
   (`ENonMonotonePriceMemo`). Low-`B` members must prove themselves in
   fixed-point replay before the schedule points at them.
 
-## Open question: schedule-boundary jumps
+## Grid-step movement (settled: absorbed by the spread)
 
-`B` steps at schedule thresholds, so a market's quotes jump when its remaining
-TTE crosses a boundary (order sub-cent to ~a cent between adjacent grid values,
-largest in the tails). Options, deliberately not decided yet: accept the steps
-(the 0.1 grid is fine-grained; thresholds can be dense), or blend the two
-adjacent members' prices near a boundary (twice the evaluation cost, no new
-math). Start with steps, measure on replay, revisit if product needs it.
+`B` snaps to the grid, so a market's quotes step when its remaining TTE crosses
+a row boundary. Measured on the 100-row grid: the worst single-step price jump
+over all strikes is ~0.42c near `B = 0.6` (the 5s operating point), ~0.18c at
+`B ≈ 1.06` (60s), and ~0.08c by `B = 1.6`; boundaries are crossed roughly every
+`0.088 * tte` (5.3s of wall clock at 60s TTE, 27s at 5 minutes). The grid does
+not add movement — it lumps the continuous drift the schedule itself demands
+(~0.03c/s at 60s TTE) into one-step quanta. These bounds sit well below the
+model error the schedule removes (raw miscalibration up to ~12c at 5–10s;
+residual after the fix under ~3c), so the movement is absorbed by spread
+sizing: budget roughly half a step of lumpiness — ~0.2c below 15s TTE, ~0.1c
+at 60s, negligible above 5 minutes. Sizing lives with the fee/spread
+configuration, not in this change.
+
+## Open question: behavior below the 5s validity floor
+
+The research validates 5 seconds to 2 hours; live markets trade through the
+final seconds regardless, where the formula rides the 0.4 clip floor. Two
+candidate policies differ only below ~5s: follow the formula down to the floor
+(current plan), or freeze `B` at its 5s value for smaller TTEs. An empirical
+pass over the archive at sub-5s coordinates decides this — pending; if the
+archive's spot cadence cannot resolve sub-5s outcomes cleanly, the policy is
+chosen on robustness grounds and the replay gates cover the regime reachable
+by data.
 
 ## Test and evidence plan
 
@@ -201,8 +252,9 @@ math). Start with steps, measure on replay, revisit if product needs it.
   monotonicity, saturation-boundary behavior, `gammainc` engine accuracy over
   the `(s, y)` domain, and bit-equality of the `B = 2.0` member with
   `normal_cdf` / `normal_pdf`.
-- **Predict tests:** schedule validation and resolution (thresholds, terminal
-  row, grid membership), config default = current behavior, distribution
+- **Predict tests:** `a0` bounds validation, formula resolution and grid snap
+  (clip edges, sub-second TTE, rounding), config default = current behavior,
+  distribution
   actually changing the price, and regenerated `pricing_reference_data`
   fixtures with per-`B` tolerance derivations.
 - **Fixed-point replay gates (per grid value, before live enablement):**
@@ -215,11 +267,11 @@ math). Start with steps, measure on replay, revisit if product needs it.
 
 Testnet deployments are fresh publishes, so the config ships in the package
 layout with no migration; `Pricer` is transaction-local and never stored.
-Publish defaults to current behavior; the estimated schedule is applied by
-admin transaction after the replay gates pass for every member it references.
-Landing the schedule in the config layout before any mainnet publish exists is
-deliberate: Sui upgrades freeze struct layouts, and this avoids ever needing a
-config-migration path for it.
+Publish defaults to disabled (`a0 = None`, current behavior); a vetted `a0` is
+applied by admin transaction after the replay gates pass for the grid rows the
+schedule reaches at that level. Landing the field in the config layout before
+any mainnet publish exists is deliberate: Sui upgrades freeze struct layouts,
+and this avoids ever needing a config-migration path for it.
 
 ## Phases
 
@@ -227,9 +279,9 @@ config-migration path for it.
    constants module it emits.
 2. **`fixed_math` engine** — `gammainc_lower_reg`, the `gen_normal` assembly,
    1e18 input path, tests, per-`B` budgets. The long pole.
-3. **Predict plumbing** — schedule config + setter + event, `Pricer` stamping,
-   `compute_nd2` branch, per-`B` caps, tests, regenerated fixtures.
-4. **Replay gates** — fixed-point mirror runs per grid value and for the
-   candidate schedule; recorded verdicts.
-5. **Review and publish** — behavior-preserving publish, then admin-set the
-   schedule.
+3. **Predict plumbing** — `a0` config + setter + event, formula resolution and
+   grid snap in `load_live_pricer`, `Pricer` stamping, `compute_nd2` branch,
+   per-`B` caps, tests, regenerated fixtures.
+4. **Replay gates** — fixed-point mirror runs per reachable grid row and for
+   candidate `a0` levels, including the sub-5s regime; recorded verdicts.
+5. **Review and publish** — behavior-preserving publish, then admin-set `a0`.
