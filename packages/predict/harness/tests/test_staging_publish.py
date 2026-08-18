@@ -819,10 +819,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(error, "--timeout is required for unbounded strategies: fuzz")
         self.assertIsNone(
             live._campaign_validation_error(
-                ["cleanup-claim"],
+                ["cleanup-survivor"],
                 timeout=0,
                 strat_meta={
-                    "cleanup-claim": {
+                    "cleanup-survivor": {
                         "maxOps": 0,
                         "requiresTimeout": False,
                     }

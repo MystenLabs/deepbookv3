@@ -12,10 +12,7 @@ const capacity = [
   createCapacityStrategy("pool"),
   createCapacityStrategy("tree"),
 ];
-const cleanup = [
-  createCleanupStrategy("survivor"),
-  createCleanupStrategy("claim"),
-];
+const cleanup = [createCleanupStrategy("survivor")];
 
 export const STRATEGIES: Record<string, Strategy> = {
   [fuzz.name]: fuzz,

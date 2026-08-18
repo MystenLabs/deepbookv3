@@ -1,6 +1,6 @@
 # Liquidity and NAV
 
-The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's exact net asset value (NAV) is computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged daily flush prices and fills those requests at a single frozen mark, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability plus its rebate reserve.
+The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's exact net asset value (NAV) is computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged daily flush prices and fills those requests at a single frozen mark, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability.
 
 For how markets, orders, and absolute ticks work, see [markets and positions](./markets-and-positions.md). For tunable values, see [configuration](../design/configuration.md). For trust assumptions and known caveats, see [risks](../risks.md).
 
@@ -11,7 +11,6 @@ The pool is a single shared object, `PoolVault`. It owns:
 - **idle DUSDC** (custodied in the accounting ledger) — LP-owned cash available for withdrawal fills and for funding expiries;
 - a **protocol reserve** of DUSDC, excluded from PLP redemption (the protocol's share of materialized profit accumulates here);
 - the **PLP treasury cap**, which mints PLP on supply fills and burns it on withdrawal fills during the flush;
-- **staked DEEP** held in custody on behalf of accounts (custodial, not LP-owned, not redeemable as PLP);
 - the **expiry accounting ledger** (`Ledger`), which custodies idle DUSDC, records the active-expiry set, the cash flow to and from each expiry, and the aggregate profit basis;
 - the **async LP request queues** — a supply queue escrowing DUSDC and a withdraw queue escrowing PLP — drained by the flush.
 
@@ -19,7 +18,7 @@ The pool does **not** own expiry-local state. Each `ExpiryMarket` owns its own t
 
 PLP is registered as a 6-decimal currency, matching DUSDC's 6 decimals. Fixed-point ratios throughout Predict use 1e9 scaling (`float_scaling`).
 
-> Reward incentives are **not** part of the pool. They moved to a separate staking contract; the `PoolVault` carries no SUI/DEEP incentive balance and no vesting state, and supply/withdraw pricing involves no incentive component. The DEEP held by the vault is purely the custodial trading stake described under [DEEP staking custody](#deep-staking-custody).
+> Reward incentives are **not** part of the pool. They moved to a separate staking contract; the `PoolVault` carries no SUI/DEEP balance and no vesting state, and supply/withdraw pricing involves no incentive component.
 
 ## Async supply and withdraw
 
@@ -166,13 +165,11 @@ The floor is `max_net_payout` — the maximum summed net payout at any *single* 
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
-The `rebate_reserve` is `unresolved_trading_fees_paid × trading_loss_rebate_rate` — cash set aside for the trading-loss rebate (see [fees and rebates](./fees-and-rebates.md)). Because backing always includes both the payout liability and the rebate reserve, an expiry can always pay both its winners and unresolved rebate claims. A claim first shrinks the unresolved basis for the resolved account, then pays the rebate and returns any residual reserve; no flow lets cash drop below the post-claim backing line.
-
 The independent `inventory_impact_reserve` is the cumulative inventory potential collected from mints minus rebates paid to voluntary live closes. It is excluded from NAV and pool sweeps, and the market additionally asserts `inventory_impact_reserve ≥ phi(current payout_liability)`. Exact state-function differences make equality hold for ordinary mint/close paths; liquidations can only leave a surplus. Settlement releases that residual earmark because the live-rebate path is no longer reachable. See [fees and rebates](./fees-and-rebates.md#inventory-impact-charge-and-rebate).
 
 ## Profit materialization at settlement
 
-Profit is recognized only when it is **cash-backed and irreversible** — when terminal cash actually flows back to the pool from a settled expiry, either during the settled sweep or as residual reserve from a rebate claim — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
+Profit is recognized only when it is **cash-backed and irreversible** — when terminal cash actually flows back to the pool from a settled expiry during the settled sweep — not while a position is merely marked at a favorable price. Marked (unmaterialized) profit is reflected in NAV but its protocol share is held out via the unmaterialized-profit exclusion until terminal materialization.
 
 The ledger tracks profit per expiry against a **watermark**:
 
@@ -187,12 +184,3 @@ lp_profit       = profit − protocol_profit
 ```
 
 LP profit stays in idle DUSDC (raising NAV for all holders). The protocol cut is realized from idle into the protocol reserve — but only up to the idle actually available. The cash backing a cut may have been swept to idle earlier and redeployed to fund other active markets, so the cut can exceed idle at the instant of settlement; the realizable portion moves immediately and any remainder is carried in `pending_protocol_profit`, drained on a later sweep that refills idle (a settled-market sweep, or a live market returning surplus). Carrying it keeps the settled sweep — and the pool flush that drives it — from ever aborting on the cash move, and the carried amount stays excluded from LP value (above) until it is moved, so LPs are neither over- nor under-credited. Realization is also subordinate to funding: a top-up that backs trader payouts is never starved to pay the protocol. The reserve is excluded from PLP redemption. The cross-expiry `net_losses_to_fill` netting means the protocol only takes a cut of *aggregate* profit after prior losses are recovered — protocol revenue does not accrue while the pool is underwater on net.
-
-## DEEP staking custody
-
-Accounts stake DEEP for a share of the trading-loss rebate — see [fees and rebates](./fees-and-rebates.md). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
-
-- Staking records the amount as inactive on the account; it activates on the next epoch (lazily rolled by the stake and claim flows).
-- Unstaking returns all staked DEEP (active and inactive) at any time with no penalty.
-
-This is the only DEEP the vault holds; there is no LP-owned DEEP incentive balance (incentives moved to a separate staking contract).

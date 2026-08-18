@@ -13,7 +13,7 @@ Every protocol parameter falls into one of two layers.
 
 Some structural constants are real and stable enough to state directly:
 
-- **1e9 fixed-point scaling** (`float_scaling`): `500_000_000` is 50%, `1_000_000_000` is 100%. Prices, probabilities, fee rates, ratios, and benefit fractions all use this scale.
+- **1e9 fixed-point scaling** (`float_scaling`): `500_000_000` is 50%, `1_000_000_000` is 100%. Prices, probabilities, fee rates, and ratios all use this scale.
 - **DUSDC settlement asset has 6 decimals**; contract quantities are 6-decimal quote units, so `1_000_000` is one contract.
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
 - **The minimum per-expiry allocation cap** is an upgrade-required floor. The actual per-expiry cap is admin-tuned per cadence and snapshotted into pool accounting when a market is created.
@@ -29,19 +29,15 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 | Template (on `ProtocolConfig`) | Snapshotted into | Governs |
 | --- | --- | --- |
 | `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Entry-probability admission band, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds, and `inventory_impact_max_rate` (maximum marginal rate of the isolated inventory potential) |
-| `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
-| `StakeConfig` | `ExpiryMarket` directly | DEEP-stake benefit policy: `max_benefit_ratio` (how much of the programme pays out; ships at `0`) and the curve thresholds `lower_benefit_power` / `upper_benefit_power` |
 
 When `create_and_share_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
 
-All three are **contract-term** templates: their snapshots have no per-object admin setter, so once a market is created its fee schedule, entry-probability admission band, backing-buffer lambda, inventory-impact max rate, rebate rate, and stake-benefit policy are fixed for the life of the contract. The inventory-impact curve also freezes the cadence's `max_expiry_allocation` as its scale `B`; the rate ships at `0` (disabled) and is bounded to `0..1_000_000_000` (0–100%). Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_min_entry_probability`, `set_template_inventory_impact_max_rate`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
+It is a **contract-term** template: its snapshot has no per-object admin setter, so once a market is created its fee schedule, entry-probability admission band, backing-buffer lambda, and inventory-impact max rate are fixed for the life of the contract. The inventory-impact curve also freezes the cadence's `max_expiry_allocation` as its scale `B`; the rate ships at `0` (disabled) and is bounded to `0..1_000_000_000` (0–100%). Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The setters are named with `template` (for example `set_template_base_fee`, `set_template_min_entry_probability`, `set_template_inventory_impact_max_rate`) to make this "future-only" effect explicit at the call site. There is no template-class value an admin can move on a live market — the former settlement-freshness exception went away with the oracle extraction (settlement freshness now lives in the external feeds, not in a Predict template).
 
 ```mermaid
 flowchart LR
     subgraph PC[ProtocolConfig template]
       SEC[StrikeExposureConfig]
-      ECC[ExpiryCashConfig]
-      STC[StakeConfig]
     end
     PC -- snapshot at create_and_share_expiry_market --> M1[Expiry market #1 objects]
     PC -- snapshot at create_and_share_expiry_market --> M2[Expiry market #2 objects]
@@ -109,7 +105,7 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 
 | Authority | Can change |
 | --- | --- |
-| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`), `protocol_reserve_profit_share`, `plp_supply_fee_rate` / `plp_withdraw_fee_rate`, the LP-queue liveness knob `lp_request_limit_flush_attempts` (`set_lp_request_limit_flush_attempts`; ships at `1`, fill-or-kill — RP-12), the LP pool-value ceiling `max_lp_pool_value` (`set_max_lp_pool_value`; ships uncapped — RP-23), the DEEP-stake benefit policy snapshotted by future markets (`set_template_max_benefit_ratio`, ships at `0`; `set_template_benefit_powers`), global `trading_paused`, the emergency `frozen` switch (`set_frozen`), the version watermark (`bump_version_watermark`) |
+| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`), `protocol_reserve_profit_share`, `plp_supply_fee_rate` / `plp_withdraw_fee_rate`, the LP-queue liveness knob `lp_request_limit_flush_attempts` (`set_lp_request_limit_flush_attempts`; ships at `1`, fill-or-kill — RP-12), the LP pool-value ceiling `max_lp_pool_value` (`set_max_lp_pool_value`; ships uncapped — RP-23), global `trading_paused`, the emergency `frozen` switch (`set_frozen`), the version watermark (`bump_version_watermark`) |
 | `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
 | `AdminCap` (on `Registry`) | Register a Propbook underlying, set cadence deployment configs, PauseCap mint/revoke, market-lifecycle-cap mint/revoke |
 | `AdminCap` (on `PoolVault`) | Genesis-bootstrap the pool (`lock_capital`) |

@@ -133,7 +133,7 @@ responsibility smeared across modules — two places that both think they own it
 and sole reader live in different modules with no clear owner of the lifecycle? A write-only field (sole
 consumer removed) and a read-only mirror are ownership-clarity failures.
 - **Why:** unclear ownership is where the next bug hides — nobody is responsible for the invariant, so it
-  drifts (the trading-loss rebate reserve became write-only when its consumer was deleted: the field's
+  drifts (a reserve field becomes write-only when its consumer is deleted: the field's
   lifecycle had no owner).
 - **Per-function check:** does this write a field nothing reads, or read a mirror nothing maintains? Is the
   policy this enforces owned here, or borrowed from a module that should own it?

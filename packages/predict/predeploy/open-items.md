@@ -625,5 +625,3 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   boundaries are tested only on the aborting side; the all-in `max_cost` boundary
   pair (from the now-resolved H-2 fix) pins only a 2-of-4-component decomposition
   (zero builder fee / subsidy). Strengthen each to assert the passing boundary.
-  (`unstake_deep` receiving-side assertion — that the account received the DEEP —
-  added on PR #1106.)

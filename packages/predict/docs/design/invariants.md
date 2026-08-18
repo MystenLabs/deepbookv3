@@ -141,8 +141,6 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
   min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
-- The builder fee and the gas-congestion surcharge are add-ons; both are excluded
-  from the trading-loss rebate fee basis (only the trade fee counts).
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
   `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the DUSDC leg
   **outside** the mark and retained by the pool, so it accrues to remaining

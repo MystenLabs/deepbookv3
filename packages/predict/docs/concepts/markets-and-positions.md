@@ -72,9 +72,9 @@ What an order represents economically: each position is one European cash-or-not
 
 ### Where positions are tracked
 
-Positions live in Predict's app-data slot on the holder's account-package `Account`. The `AccountWrapper` is the shared object passed into Predict entrypoints; once an `Auth` hot potato opens the wrapped account, Predict stores its local `PredictData` under the `PredictApp` namespace. That data keeps a `positions` table keyed by `PositionKey { expiry_market_id, order_id }`; the stored value is the position's **root order ID** — the original mint's ID, carried forward unchanged across partial-close replacements so one economic position keeps a single stable handle even though its current order ID changes. The account data also keeps a per-expiry `ExpiryTradingSummary` (open-position count and trading-fees-paid) used for trading-loss-rebate resolution once all positions in an expiry are closed.
+Positions live in Predict's app-data slot on the holder's account-package `Account`. The `AccountWrapper` is the shared object passed into Predict entrypoints; once an `Auth` hot potato opens the wrapped account, Predict stores its local `PredictData` under the `PredictApp` namespace. That data keeps a `positions` table keyed by `PositionKey { expiry_market_id, order_id }`; the stored value is the position's **root order ID** — the original mint's ID, carried forward unchanged across partial-close replacements so one economic position keeps a single stable handle even though its current order ID changes.
 
-Trading and capital movement are mediated by `AccountWrapper` plus account `Auth`. Minting, live redemption, LP request/cancel flows, staking, builder-code config, and the owner-auth settled/rebate paths consume owner auth. Keeper-style settled automation uses Predict app-auth generated through the account registry, so `deauthorize_app<PredictApp>` disables that automation while the owner-auth exit paths remain available. The full account and authorization model is documented in [architecture](../design/architecture.md).
+Trading and capital movement are mediated by `AccountWrapper` plus account `Auth`. Minting, live redemption, LP request/cancel flows, builder-code config, and the owner-auth settled exit consume owner auth. Keeper-style settled automation uses Predict app-auth generated through the account registry, so `deauthorize_app<PredictApp>` disables that automation while the owner-auth exit path remains available. The full account and authorization model is documented in [architecture](../design/architecture.md).
 
 ## Position lifecycle
 
@@ -106,7 +106,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). `try_settle` is the single permissionless transition: it records the price and terminal payout liability together. `redeem_settled`, `redeem_settled_permissionless`, rebate claim, pool rebalance, and pool valuation only consume the current phase, so transaction builders compose `try_settle` before them when settlement may be due. If the exact expiry spot is missing, the market remains unsettled, standalone rebalance moves no cash, and live pricing rejects the past-expiry market.
+Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). `try_settle` is the single permissionless transition: it records the price and terminal payout liability together. `redeem_settled`, `redeem_settled_permissionless`, pool rebalance, and pool valuation only consume the current phase, so transaction builders compose `try_settle` before them when settlement may be due. If the exact expiry spot is missing, the market remains unsettled, standalone rebalance moves no cash, and live pricing rejects the past-expiry market.
 
 ### Settled redeem
 

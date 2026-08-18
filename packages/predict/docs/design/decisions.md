@@ -173,9 +173,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   change of a convex potential whose marginal rate rises linearly to
   `inventory_impact_max_rate` at `B = max_expiry_allocation`, then remains capped.
   The rate snapshots at market creation, ships at zero, and cannot exceed 1.0.
-  Charges sit in an isolated escrow excluded from NAV and every ordinary fee or
-  loss-rebate basis; liquidation earns no rebate, and settlement releases the
-  residual. One deterministic integer state function makes trade splitting and
+  Charges sit in an isolated escrow excluded from NAV and every ordinary fee
+  basis, and settlement releases the residual. One deterministic integer state function makes trade splitting and
   every closed cross-range cycle telescope exactly. The payout tree supplies
   O(log n) in-range/complement peaks needed to compute the true marginal move in
   `M`; the implementation evaluates the complete before/after liability so
@@ -189,17 +188,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Access and operations (recent)
 
-- **Trading-loss-rebate claims have owner and keeper paths.**
-  `claim_trading_loss_rebate` consumes owner auth; `claim_trading_loss_rebate_permissionless`
-  uses Predict app-auth so a keeper cron can resolve accounts after settlement.
-  Intentional: post-settlement cleanout must not depend on each user acting, but
-  deauthorizing `PredictApp` should stop keeper automation without blocking owner
-  claims. *Accepted residual (now measured — predeploy RP-11):* a keeper resolves at
-  the claim-time active-stake snapshot, but the ~24h stake-activation gate makes
-  gaming that snapshot structurally unreachable on the sub-epoch cadences (1m/5m/1h),
-  and the permissionless cleanout is self-incentivized (negative net gas — a searcher
-  is paid the storage rebate to run the redeems and the claim, standalone or bundled),
-  so accounts resolve without relying on a protocol cron.
+- **Trading-loss-rebate claims have owner and keeper paths.** *RETIRED 2026-08-18 —
+  the rebate was removed; see "Staking and the trading-loss rebate removal" below.*
+  `claim_trading_loss_rebate` consumed owner auth and `claim_trading_loss_rebate_permissionless`
+  Predict app-auth, so a keeper cron could resolve accounts after settlement without
+  blocking owner claims when `PredictApp` was deauthorized. The surviving instance of
+  that pattern is `redeem_settled` / `redeem_settled_permissionless`.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
   protocol profit and exposes no admin withdrawal path. Decided (2026-07-21,
   predeploy RP-16): no withdraw entrypoint ships in this package — the reserve's
@@ -217,6 +211,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   cross-app liquidation).
 
 ## Fees, staking, and rebates (recent)
+
+> **RETIRED 2026-08-18 — DEEP staking and the trading-loss rebate were removed.** Every bullet in this section describes the stake-scaled loss rebate, its reserve, or the stake that gated it. None of that machinery exists: there is no `StakeConfig`, no rebate reserve, and no claim. Kept for the decision record — see "Staking and the trading-loss rebate removal" at the end of this document.
 
 - **The staking programme ships at a zero benefit ratio, and each market freezes its whole
   benefit policy at creation.** `StakeConfig.max_benefit_ratio` scales the stake curve and
@@ -276,6 +272,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **`stake_deep` / `unstake_deep` carry no valuation-lock gate.** Staked DEEP is
   excluded from `lp_pool_value`, so neither can move the flush mark; gating them would
   add lock contention for no solvency benefit.
+
 
 ## Oracle extraction (recent)
 
@@ -429,7 +426,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   consumes pricing's canonical exact-history read and calls
   `StrikeExposure::record_settlement`, which stores the terminal price and exact
   remaining payout liability together. The exposure's settlement-price option is
-  the phase discriminator; settled redeem, rebate claim, pool rebalance, and valuation
+  the phase discriminator; settled redeem, pool rebalance, and valuation
   consume only that recorded phase. Keepers compose settlement first in the same PTB
   when needed. *Rationale:* one writer makes the market phase transition atomic,
   keeps price and book liability under one owner, and removes oracle ingress from
@@ -622,3 +619,12 @@ See `predeploy/response-policies.md` RP-27 for the guard-duty inventory this rem
 - **The fee-side pinning tests were dropped, not migrated.** `quote_mint_tests` lost the two tests whose subject was the discount (the mint-side snapshot freeze and the stale-quote/rolled-quote pair); the market-snapshot freeze remains pinned on the rebate side by `settlement_flow_tests::retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`, and `stake_config_tests` now exercises the curve through `rebate_amount`.
 
 RP-11's late-stake reasoning changed with this removal — the rebate is now the whole of staking's value rather than half of it, so the epoch activation gate is the only bound left on the late-stake leak. The register entry carries the updated reasoning and reopen condition.
+
+## Staking and the trading-loss rebate removal (2026-08-18)
+
+- **DEEP staking and the trading-loss rebate are removed entirely.** `stake_deep` / `unstake_deep`, the pool's `staked_deep` custody, the account's active/inactive stake split and its lazy epoch roll, `StakeConfig` and its two template setters, the rebate reserve and its `trading_loss_rebate_rate` (with the whole `ExpiryCashConfig` it was the only field of), both rebate-claim entrypoints, and the `DeepStaked` / `DeepUnstaked` / `TradingLossRebateClaimed` events are all deleted. *Rationale:* the rebate was the last surviving staking benefit after the fee discount went (see "Stake fee-discount removal"), and it is a mechanism the protocol ships disabled — `max_benefit_ratio` is `0`, so no market pays it. What it did cost, unconditionally, was solvency-critical surface: a second term in the expiry cash-backing invariant, a per-account per-expiry summary table with a claim as its only reaper, a permissionless claim flow whose economics needed their own gas measurements, and a one-shot claim whose ordering against settlement, unstaking, and the settled sweep had to be reasoned about. Removing it is the largest single reduction in tail-state surface available before the deploy freezes the ABI. *Rejected:* keeping the rebate without stake scaling — the stake was the sybil gate that made an aggregate-net-loss rebate targetable at all (a rebate paid at the flat rate to every address is farmable one address per order), so an unstaked rebate is a different and worse mechanism, not a smaller one.
+- **The expiry cash-backing invariant is now payout liability plus the inventory-impact escrow.** `required_cash = payout_liability + inventory_impact_reserve`; `free_cash` nets out the escrow alone. The settled sweep therefore returns all free cash at settlement instead of holding a per-account reserve back until a keeper resolves it, and an expiry no longer strands cash waiting on a cleanout.
+- **`ExpiryTradingSummary` is deleted with the rebate, not kept for its position count.** The summary's other three fields (fees paid, gross paid, gross received) existed only to price a rebate, and its open-position count only gated the claim. Its row was created lazily per account per expiry and removed by the claim, so keeping the table without the claim would leak one row per account per expiry forever. Position state is the `positions` table, which is complete on its own. *Consequence:* `expiry_position_count` and `trading_fees_paid` are gone from the public read surface.
+- **`MarketCreated` no longer carries `trading_loss_rebate_rate`, `max_benefit_ratio`, or the two `*_benefit_power` thresholds.** The market policy snapshot keeps the strike-exposure terms only. Off-chain consumers of those four fields must be updated with this change.
+
+`predeploy/response-policies.md` RP-11 is retired by this removal; the register carries the retirement note.

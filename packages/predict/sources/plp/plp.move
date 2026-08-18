@@ -3,7 +3,7 @@
 
 /// PLP token and pool vault.
 ///
-/// PoolVault owns the PLP treasury cap, the pooled DEEP staked by accounts, idle
+/// PoolVault owns the PLP treasury cap, idle
 /// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
 /// accounting, and the queued LP supply/withdraw requests. It coordinates the
 /// full-pool NAV valuation (a hot-potato aggregation over every active market) and
@@ -11,8 +11,7 @@
 /// settled-market sweep with terminal profit materialization). LPs queue
 /// supply/withdraw requests routed through a loaded Account; each flush
 /// (`finish_flush`) drains them at the frozen pool NAV, minting/burning PLP and
-/// delivering fills to each account via the balance accumulator. DEEP held here
-/// provides account trading benefits and is not part of PLP share value.
+/// delivering fills to each account via the balance accumulator.
 module deepbook_predict::plp;
 
 use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
@@ -41,7 +40,6 @@ use sui::{
     coin::{Coin, TreasuryCap},
     coin_registry::{Self, MetadataCap}
 };
-use token::deep::DEEP;
 
 const EExpiryMarketNotActive: u64 = 0;
 const EExpiryMarketAlreadyValued: u64 = 1;
@@ -51,8 +49,7 @@ const ENotBootstrapped: u64 = 4;
 const EAlreadyBootstrapped: u64 = 5;
 const EBelowMinBootstrapLiquidity: u64 = 6;
 const EBelowMinFeeIncentiveSponsorship: u64 = 7;
-const EMarketNotSettled: u64 = 8;
-const EMaxLiveExpiryMarketsExceeded: u64 = 9;
+const EMaxLiveExpiryMarketsExceeded: u64 = 8;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -65,9 +62,6 @@ public struct PoolVault has key {
     protocol_reserve_balance: Balance<DUSDC>,
     /// Sponsor-funded DUSDC reserved for taker fee sponsorship, excluded from PLP NAV.
     fee_incentive_reserve: Balance<DUSDC>,
-    /// Pooled DEEP staked by all accounts for trading benefits. Per-account
-    /// active/inactive amounts are mirrored in Predict account data.
-    staked_deep: Balance<DEEP>,
     /// PLP share issuance plus queued supply/withdraw escrow.
     lp: LpBook<PLP>,
     /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
@@ -124,7 +118,6 @@ fun create_and_share_vault(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext):
         id: object::new(ctx),
         protocol_reserve_balance: balance::zero(),
         fee_incentive_reserve: balance::zero(),
-        staked_deep: balance::zero(),
         lp: lp_book::new(treasury_cap, ctx),
         expiry_accounting: pool_accounting::new(ctx),
     };
@@ -138,11 +131,6 @@ fun create_and_share_vault(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext):
 /// Return the pool vault object ID for external discovery and PTB construction.
 public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
-}
-
-/// Return pooled DEEP custody for SDK and devInspect state reads.
-public fun staked_deep(vault: &PoolVault): u64 {
-    vault.staked_deep.value()
 }
 
 /// Return idle DUSDC for SDK and devInspect state reads.
@@ -358,57 +346,6 @@ public fun finish_flush(
     pool_nav
 }
 
-/// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the new
-/// amount is recorded as inactive and becomes eligible after the next epoch
-/// boundary. It moves to active only when a later stake or rebate-claim flow calls
-/// `predict_account::roll_active_stake`. Callable anytime, any number of times.
-public fun stake_deep(
-    vault: &mut PoolVault,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    amount: u64,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    config.assert_version();
-    wrapper.settle<DEEP>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    let deep = account.withdraw<DEEP>(amount, ctx);
-    predict_account::roll_active_stake(account, ctx);
-    predict_account::add_inactive_stake(account, amount, ctx);
-    vault.staked_deep.join(deep.into_balance());
-    vault_events::emit_deep_staked(
-        vault.id(),
-        account.account_id(),
-        amount,
-        predict_account::active_stake(account),
-        predict_account::inactive_stake(account),
-    );
-}
-
-/// Withdraw all staked DEEP (active and inactive) at any time, no penalty.
-public fun unstake_deep(
-    vault: &mut PoolVault,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    config.assert_version();
-    wrapper.settle<DEEP>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    let amount = predict_account::remove_all_stake(account, ctx);
-    if (amount > 0) {
-        let deep = vault.staked_deep.split(amount).into_coin(ctx);
-        account.deposit<DEEP>(deep);
-    };
-    vault_events::emit_deep_unstaked(vault.id(), account.account_id(), amount);
-}
-
 /// Move cash between pool idle liquidity and one expiry market.
 ///
 /// Permissionless and standalone: anyone may call it at any cadence. Handles all
@@ -432,45 +369,6 @@ public fun rebalance_expiry_cash(
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     vault.sweep_or_rebalance_expiry(market, config, clock);
-}
-
-/// Resolve a settled trading-loss rebate using valid account authority.
-public fun claim_trading_loss_rebate(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    auth: Auth,
-    config: &ProtocolConfig,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    wrapper.settle<DUSDC>(root, clock);
-    let account = wrapper.load_account_mut(auth);
-    vault.claim_trading_loss_rebate_internal(market, account, config, ctx);
-}
-
-/// Permissionlessly resolve one account's settled trading-loss rebate using Predict
-/// app auth. `deauthorize_app<PredictApp>` disables this automation; owners can
-/// still use `claim_trading_loss_rebate` with owner auth.
-public fun claim_trading_loss_rebate_permissionless(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    wrapper: &mut AccountWrapper,
-    account_registry: &AccountRegistry,
-    config: &ProtocolConfig,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-    wrapper.settle<DUSDC>(root, clock);
-    let auth = predict_account::generate_auth_as_app(account_registry);
-    let account = wrapper.load_account_mut(auth);
-    vault.claim_trading_loss_rebate_internal(market, account, config, ctx);
 }
 
 /// Sponsor taker fee incentives with DUSDC. Anyone may contribute; the payment
@@ -700,50 +598,6 @@ public(package) fun register_expiry(
 }
 
 // === Private Functions ===
-
-fun claim_trading_loss_rebate_internal(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    account: &mut Account,
-    config: &ProtocolConfig,
-    ctx: &mut TxContext,
-) {
-    let vault_id = vault.id();
-    let expiry_market_id = market.id();
-    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
-    assert!(market.is_settled(), EMarketNotSettled);
-    let settlement_price = market.settlement_price();
-    let account_id = account.account_id();
-    let summary = predict_account::resolve_expiry_summary(account, expiry_market_id);
-    let trading_fees_paid = summary.fees_paid();
-    let gross_profit = summary.gross_profit();
-    let (residual_cash, rebate_amount) = market.claim_trading_loss_rebate(
-        account,
-        &summary,
-        ctx,
-    );
-    let returned_cash_amount = vault
-        .expiry_accounting
-        .receive_expiry_cash(residual_cash, expiry_market_id);
-    if (returned_cash_amount > 0) {
-        vault_events::emit_expiry_cash_received(
-            vault_id,
-            expiry_market_id,
-            settlement_price,
-            returned_cash_amount,
-        );
-        vault.materialize_expiry_profit(config, expiry_market_id);
-    };
-    vault_events::emit_trading_loss_rebate_claimed(
-        vault_id,
-        expiry_market_id,
-        account_id,
-        rebate_amount,
-        returned_cash_amount,
-        trading_fees_paid,
-        gross_profit,
-    );
-}
 
 /// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
 ///

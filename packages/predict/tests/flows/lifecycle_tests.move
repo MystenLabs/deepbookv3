@@ -35,8 +35,8 @@ fun live_lifecycle_fund_mint() {
     );
 
     // Pre-trade state sheet: only the deposit has moved.
-    let mut expected = helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0);
-    fx.check_manager_bundle(&account, expiry_id, expected);
+    let mut expected = helpers::expected_manager_state(test_constants::mint_deposit());
+    fx.check_manager_bundle(&account, expected);
 
     // --- Mint one in-range order.
     let quote = fx.quote_mint_bundle(
@@ -56,14 +56,8 @@ fun live_lifecycle_fund_mint() {
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     expected =
-        helpers::expected_manager_state(
-            test_constants::mint_deposit() - premium - MINT_MIN_FEE,
-            MINT_MIN_FEE,
-            1,
-            0,
-            0,
-        );
-    fx.check_manager_bundle(&account, expiry_id, expected);
+        helpers::expected_manager_state(test_constants::mint_deposit() - premium - MINT_MIN_FEE);
+    fx.check_manager_bundle(&account, expected);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

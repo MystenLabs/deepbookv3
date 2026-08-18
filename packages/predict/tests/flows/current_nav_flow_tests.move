@@ -211,6 +211,6 @@ fun reference_nav(market: &ExpiryMarket, pricer: &Pricer, order_ids: &vector<u25
         liability =
             liability + math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
     });
-    let free_cash = market.cash_balance().saturating_sub(market.rebate_reserve());
+    let free_cash = market.cash_balance();
     free_cash.saturating_sub(liability)
 }
