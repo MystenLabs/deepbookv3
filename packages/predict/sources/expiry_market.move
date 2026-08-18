@@ -77,7 +77,7 @@ public struct ExpiryMarket has key {
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
 /// `quantity` is the exact requested quantity or the conservatively budget-sized
-/// fill. `trading_fee` is the post-stake-discount fee before sponsor subsidy, and
+/// fill. `trading_fee` is the trading fee before sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
@@ -281,8 +281,8 @@ public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
 }
 
-/// Quote the all-in cost of a mint request for an anonymous taker (no
-/// stake discount, no builder code) without mutating any market state.
+/// Quote the all-in cost of a mint request for an anonymous taker (no builder
+/// code) without mutating any market state.
 /// Exact-quantity mode uses `min_quantity`; budget mode conservatively sizes a
 /// lot-rounded fill under `max_premium`. The quote applies live-mint and admission
 /// gates but does not preflight account balance, slippage caps, or exposure-index
@@ -369,7 +369,7 @@ public fun premium(quote: &MintQuote): u64 {
     quote.premium
 }
 
-/// Return the quoted post-stake trading fee before subsidy for SDK and devInspect consumers.
+/// Return the quoted trading fee before subsidy for SDK and devInspect consumers.
 public fun trading_fee(quote: &MintQuote): u64 {
     quote.trading_fee
 }
@@ -1054,7 +1054,7 @@ fun redeem_live_with_auth(
     );
 
     // Apply book and account-position mutations only after all close policy
-    // checks. Any later abort rolls back the earlier stake and EWMA updates.
+    // checks. Any later abort rolls back the earlier EWMA update.
     let replacement_order = market.strike_exposure.process_live_close(terms);
     let position_root_id = predict_account::remove_position(
         account,
