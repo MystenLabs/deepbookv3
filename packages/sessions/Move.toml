@@ -11,8 +11,9 @@ deepbook = { local = "../deepbook" }
 propbook = { local = "../propbook" }
 fixed_math = { local = "../fixed_math" }
 dusdc = { local = "../dusdc" }
-# Predict consumes the in-tree token package while the spot wrapper pins the
-# byte-identical release source. Resolve both through the published in-tree identity.
+# The spot wrapper reaches DeepBook core, which pins the released `token` source by
+# git; resolve it through the byte-identical in-tree copy so one identity publishes.
+# (Predict no longer depends on `token` at all — DEEP staking was removed.)
 token = { local = "../token", override = true }
 # This publishable root repeats Predict's direct Pyth source so the testnet
 # replacement identities below apply to the transitive Pyth/Wormhole graph.
