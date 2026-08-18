@@ -53,6 +53,9 @@ How the protocol is built:
   settlement, rounding).
 - **[Design decisions](./design/decisions.md)** — the significant design choices
   and the alternatives that were rejected, with rationale.
+- **[Pricing distribution plan](./design/pricing-distribution-plan.md)** — the
+  in-flight plan for making the pricing distribution a TTE-scheduled
+  generalized-normal family (DBU-721); a plan, not shipped behavior.
 
 ## Risks
 
