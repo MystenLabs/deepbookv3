@@ -68,11 +68,10 @@ public struct ExpiryMarket has key {
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
     /// DEEP-stake benefit policy for this market, snapshotted at creation from the
-    /// protocol template and immutable thereafter. Frozen because both benefits
-    /// resolve after the trade that earned them — the fee discount at mint, the
-    /// loss rebate at a post-settlement claim — so reading live policy would let an
-    /// admin reprice contracts already written, and shrink or erase a rebate
-    /// already earned (the claim is one-shot).
+    /// protocol template and immutable thereafter. Frozen because the loss rebate
+    /// resolves after the trade that earned it, at a post-settlement claim, so
+    /// reading live policy would let an admin shrink or erase a rebate already
+    /// earned (the claim is one-shot).
     stake_config: StakeConfig,
 }
 
@@ -314,14 +313,12 @@ public fun quote_mint(
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(&terms, 0, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
 }
 
 /// Quote the all-in cost of a mint request for one account, reading the
-/// account's builder code and current `active_stake` without rolling epochs. If
-/// inactive stake is eligible to roll, the executing mint receives a larger
-/// discount than this quote reflects. Budget mode caps premium by total account
-/// balance, including unsettled accumulator funds. Public for SDK and devInspect
+/// account's builder code. Budget mode caps premium by total account balance,
+/// including unsettled accumulator funds. Public for SDK and devInspect
 /// pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
@@ -352,13 +349,7 @@ public fun quote_mint_for_account(
         );
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(
-        &terms,
-        predict_account::active_stake(account),
-        &builder_code_id,
-        penalty_fee,
-        clock,
-    )
+    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
 }
 
 // === MintQuote Getters ===
@@ -441,12 +432,10 @@ public fun mint_exact_quantity(
     market.assert_live_mint_allowed(config, pricer);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::roll_active_stake(account, ctx);
     market.mint_prepared(
         account,
         config,
         pricer,
-        active_stake,
         lower_tick,
         higher_tick,
         0,
@@ -492,12 +481,10 @@ public fun mint_exact_amount(
     wrapper.settle<DUSDC>(root, clock);
     let max_premium = max_premium.min(wrapper.load_account().balance<DUSDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
-    let active_stake = predict_account::roll_active_stake(account, ctx);
     market.mint_prepared(
         account,
         config,
         pricer,
-        active_stake,
         lower_tick,
         higher_tick,
         max_premium,
@@ -856,7 +843,6 @@ fun mint_prepared(
     account: &mut Account,
     config: &ProtocolConfig,
     pricer: &Pricer,
-    active_stake: u64,
     lower_tick: u64,
     higher_tick: u64,
     max_premium: u64,
@@ -881,13 +867,7 @@ fun mint_prepared(
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
-    let quote = market.compute_mint_quote(
-        &terms,
-        active_stake,
-        &builder_code_id,
-        penalty_amount,
-        clock,
-    );
+    let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
 
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
@@ -915,17 +895,15 @@ fun mint_prepared(
 fun compute_mint_quote(
     market: &ExpiryMarket,
     terms: &MintTerms,
-    active_stake: u64,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
     clock: &Clock,
 ): MintQuote {
     let entry_probability = terms.entry_probability();
     let quantity = terms.quantity();
-    let raw_fee_amount = market
+    let trading_fee = market
         .strike_exposure
         .trading_fee(market.expiry, entry_probability, quantity, clock);
-    let trading_fee = market.stake_config.fee_amount_after_discount(raw_fee_amount, active_stake);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let premium = terms.premium();
@@ -1030,7 +1008,6 @@ fun redeem_live_with_auth(
         order.id(),
     );
     assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
-    let active_stake = predict_account::roll_active_stake(account, ctx);
     // Charge against the pre-trade EWMA distribution, then fold this gas price.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
@@ -1039,10 +1016,9 @@ fun redeem_live_with_auth(
     // Close-side slippage floor: reject if the quoted per-contract probability
     // has slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
-    // Clamp before discount: the raw fee is capped at the redeem first, so
-    // the stake discount always leaves a discounted staker a positive net
-    // even when the raw fee exceeds the payout (discount-then-clamp could
-    // net them exactly zero).
+    // Cap the fee at the payout it is charged against: an expiry-ramped fee can
+    // exceed a deep out-of-the-money redeem, and a close must never cost more
+    // than it releases.
     let fee_amount = market
         .strike_exposure
         .trading_fee(
@@ -1052,7 +1028,6 @@ fun redeem_live_with_auth(
             clock,
         )
         .min(redeem_amount);
-    let fee_amount = market.stake_config.fee_amount_after_discount(fee_amount, active_stake);
 
     // The redeem payment decomposition, computed in full before any cash moves:
     // builder fee and penalty are each clamped at the payout remaining after the

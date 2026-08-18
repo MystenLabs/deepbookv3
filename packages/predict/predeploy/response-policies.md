@@ -416,9 +416,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   - The claim-time-stake leak (P-9, now resolved) is structurally unreachable for every current-cadence market:
     lazy stake activation (`roll_active_stake`, one epoch) means stake added mid-market cannot
     activate before the promptly-swept claim inside a sub-epoch (1m/5m/1h) market. Even in a
-    hypothetical multi-epoch option the leak is bounded by `rate × fees`, captures at most the
-    discount half of staking (`rate = max_fee_discount = 0.5`), and needs a genuine 100k+ DEEP
-    commitment (retail-excluded). The permissionless claim-to-deny grief has zero payoff under the
+    hypothetical multi-epoch option the leak is bounded by `rate × fees` and needs a genuine 100k+
+    DEEP commitment (retail-excluded). ⚠ 2026-08-18: the stake fee discount was removed, so the
+    rebate is now the whole of staking's value rather than half of it — a late staker forgoes
+    nothing by waiting, and the epoch activation gate is the only thing that still makes the leak
+    unreachable. The size bound (`rate × fees`) and the response are unchanged. The permissionless claim-to-deny grief has zero payoff under the
     same gate. `evidence/p9-stake-abuse-2026-07-07.md` (analytical, config-derived).
   - The cleanout is self-incentivized: MEASURED on localnet, the one-PTB cleanout net gas is
     negative at every account size (−6.3M MIST at N=1 → −66M MIST at N=20; `net(N) ≈ −3.43M −
@@ -464,7 +466,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (re-measure the late-stake exposure; reconsider snapshotting benefit-relevant stake at mint); OR
   the settled-redeem storage footprint shrinks / Sui storage pricing drops enough that the cleanout
   net gas turns positive (re-run the sweep; apply the E3 up-front-fee formula); OR
-  `trading_loss_rebate_rate` is set materially above `max_fee_discount`.
+  `trading_loss_rebate_rate` is raised materially (the leak scales linearly with it, and the
+  up-front-staker comparison that used to bound it against `max_fee_discount` is gone with the
+  fee discount).
 
 ---
 
@@ -1438,7 +1442,7 @@ dust biases toward incumbents/the protocol, never toward overpaying a
 withdrawal.
 
 **Audit obligation.** Every money flow is checked against R1 and R2 — mint
-contribution, live redeem, settled payout, fees and discounts,
+contribution, live redeem, settled payout, fees,
 rebate reserve, LP supply/withdraw pricing, NAV. If a flow
 can underflow or round toward the user, fix it or document the accepted
 tradeoff explicitly.

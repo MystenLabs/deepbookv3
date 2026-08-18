@@ -190,9 +190,9 @@ LP profit stays in idle DUSDC (raising NAV for all holders). The protocol cut is
 
 ## DEEP staking custody
 
-Accounts stake DEEP for trading benefits (fee discounts and a higher rebate share — see [fees and rebates](./fees-and-rebates.md)). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
+Accounts stake DEEP for a share of the trading-loss rebate — see [fees and rebates](./fees-and-rebates.md). The staked DEEP is held in custody by the pool, but it is **not** LP-owned and **not** part of NAV:
 
-- Staking records the amount as inactive on the account; it activates on the next epoch (lazily rolled by the trade/claim flows).
+- Staking records the amount as inactive on the account; it activates on the next epoch (lazily rolled by the stake and claim flows).
 - Unstaking returns all staked DEEP (active and inactive) at any time with no penalty.
 
 This is the only DEEP the vault holds; there is no LP-owned DEEP incentive balance (incentives moved to a separate staking contract).

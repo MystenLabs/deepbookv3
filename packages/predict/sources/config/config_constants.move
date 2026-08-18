@@ -428,8 +428,8 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
 /// Ceiling on the DEEP-stake benefit ratio, in FLOAT_SCALING. The stake curve is
 /// scaled by this, so it sets how much of the programme runs: `0` pays nothing at
 /// any stake, `float_scaling` runs it at full strength, and values between phase
-/// it in. Ships at **0**, so a market created from the shipped template charges
-/// every trader the undiscounted fee and pays no stake-scaled loss rebate.
+/// it in. Ships at **0**, so a market created from the shipped template pays no
+/// stake-scaled loss rebate.
 public(package) macro fun default_max_benefit_ratio(): u64 { 0 }
 
 public(package) macro fun min_max_benefit_ratio(): u64 { 0 }

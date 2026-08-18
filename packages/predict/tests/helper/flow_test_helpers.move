@@ -264,7 +264,7 @@ public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Tra
 }
 
 /// `setup_live_market` whose market snapshots the DEEP-stake benefit programme at
-/// FULL strength. Needed by any flow test asserting a staking discount or rebate,
+/// FULL strength. Needed by any flow test asserting a stake-scaled loss rebate,
 /// because the policy is frozen at market creation and cannot be raised afterwards.
 public fun setup_live_market_with_stake_benefits(
     expiry_ms: u64,
@@ -435,9 +435,8 @@ public fun set_pyth_spot_freshness_bundle(
 
 /// Set how much of the DEEP-stake benefit programme markets created from here on
 /// will run, through the real admin path. Markets snapshot this at creation, so a
-/// test asserting a staking fee discount or a stake-scaled loss rebate must call
-/// this BEFORE `create_expiry`; changing it afterwards cannot reach an existing
-/// market.
+/// test asserting a stake-scaled loss rebate must call this BEFORE
+/// `create_expiry`; changing it afterwards cannot reach an existing market.
 public fun set_template_max_benefit_ratio(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
