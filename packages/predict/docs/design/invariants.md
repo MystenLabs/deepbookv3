@@ -28,7 +28,7 @@ and contributors. For *how* each mechanism works, follow the links into
   cross-range reorderings.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed payout at any *single* settlement price, read
-  from `StrikePayoutTree::net_payout_reserve_terms`; the buffer is
+  from `StrikePayoutTree::payout_reserve_terms`; the buffer is
   `backing_buffer_lambda × (Σ payout − floor)`, with both terms derived from
   the payout tree's aggregate payout terms (each order's `quantity`). Because exactly one
   settlement price resolves a market, the floor alone covers every settlement
@@ -62,7 +62,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## NAV and valuation
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  free_cash − exact_live_liability`, floored at zero, where `free_cash =
+  free_cash − live_marked_liability`, floored at zero, where `free_cash =
   cash − rebate_reserve − inventory_impact_reserve` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
@@ -95,8 +95,7 @@ and contributors. For *how* each mechanism works, follow the links into
   expiry timestamp and exact terminal payout liability atomically; otherwise it
   returns false without changing the market. Settled consumers read no oracle.
 - A settled order pays its full `quantity` if the settlement price is in
-  `(lower, higher]`, else 0 (`strike_exposure::quote_close` settled outcome,
-  applied by `strike_exposure::process_close`).
+  `(lower, higher]`, else 0 (`strike_exposure::process_settled_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
   prices against tick boundaries through one threshold tick, `prefix_limit_tick =
   ceil(settlement / tick_size)` (`range_codec`): a finite boundary at tick `t` is
@@ -115,7 +114,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Raw `entry_probability` must lie in `[min_entry_probability,
   max_entry_probability]`; fees are not included in this admission bound.
-- `net_premium = entry_probability × quantity ≥ min_net_premium`; the holder
+- `premium = entry_probability × quantity ≥ min_premium`; the holder
   pays this in full — there is no financed remainder.
 
 ## Order encoding
@@ -131,7 +130,7 @@ and contributors. For *how* each mechanism works, follow the links into
   entrypoints and the payout tree, so an order's strike
   range is bit-identical whether read from the id, the tree, or the event. A lossy
   repack would be an accounting bug, not a precision nit.
-- Mint-admission policy (the entry-probability band, minimum net premium) is
+- Mint-admission policy (the entry-probability band, minimum premium) is
   **not** part of
   order decoding or structural validation — a future policy change must never
   invalidate an existing packed id.
@@ -199,7 +198,7 @@ and contributors. For *how* each mechanism works, follow the links into
 - **Cross-module returns carry owned facts, not a consumer's policy.** A module
   returns quantities it is the source of truth for (an exposure book returns its raw
   live liability; the pool returns its profit basis), never a value pre-shaped for a
-  caller's mark, haircut, or stance. `strike_exposure::exact_live_liability` returns
+  caller's mark, haircut, or stance. `strike_exposure::live_marked_liability` returns
   the liability fact; `expiry_market::current_nav` owns the NAV cash floor.
 - **Each economic quantity is clamped exactly once, at the policy owner.** A lossy
   transform (clamp at zero, `min`/`max`, saturating subtraction, rounding) is applied

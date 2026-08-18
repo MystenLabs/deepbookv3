@@ -15,7 +15,7 @@ import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
-import { bigintEnv, budgetLadder, definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
+import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
@@ -24,12 +24,10 @@ import {
   executeAndWait,
   fundAddressDusdcTx,
   keeperFlushTx,
-  keeperLiquidateTx,
   keeperSettleTx,
   readActiveMarketIds,
   readMarketExpiry,
   rebalanceExpiryCashTx,
-  setTradeLiquidationBudgetTx,
 } from "../../devtools/ts/runtime.js";
 
 // Prod testnet cadence set: 1m / 5m / 1h (deployment.testnet.json @ predict-testnet-6-24). The
@@ -43,23 +41,6 @@ const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
 const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
-// Budget the KEEPER spends on its own permissionless `liquidate()` lane. Distinct from the on-chain
-// `trade_liquidation_budget` the TRADE path spends, which the ladder below drives. Parsed through
-// `bigintEnv` so a typo names the variable rather than throwing a bare SyntaxError at module load —
-// which would kill the keeper before it wrote any trace, surfacing as `no-keeper-trace`. Set 0
-// deliberately for the liq-budget adverse probe, which needs liquidatable orders to survive long
-// enough for a mint's ambient pass to meet them.
-const LIQ_BUDGET = bigintEnv("KEEPER_LIQ_BUDGET", 24n);
-// Ladder for the on-chain ambient-pass budget, measured from keeper start. Unset (the default)
-// never touches the config, so every existing run keeps the contract default.
-const TRADE_LIQ_BUDGET_STAGES = budgetLadder(process.env.TRADE_LIQ_BUDGET_STAGES || "");
-let nextBudgetStage = 0;
-let budgetStageFailures = 0;
-// A rung that cannot be applied is retried, but not forever: an out-of-range value aborts every
-// tick, and `protocol_config` is a GUARD module, so the repeated failures classify as expected
-// preconditions and the run would exit 0 having swept nothing. Give up after a few attempts rather
-// than mirror the contract's bounds here (they are the contract's to own).
-const MAX_BUDGET_STAGE_FAILURES = 3;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -170,27 +151,12 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     }
   }
 
-  // 2. Liquidate LIVE markets, re-filtered against a FRESH clock so a market that expired
-  //    during step 1 isn't passed to load_live_pricer (pricing:9). Isolated.
+  // Re-filter against a FRESH clock so a market that expired during step 1 is not passed to
+  // `load_live_pricer` (pricing:9) by the funding or roll lanes below.
   const liveClock = Number(await clockTimestampMs());
   const live = active.filter((m) => m.expiryMs > liveClock);
-  if (live.length && LIQ_BUDGET > 0n) {
-    try {
-      const lr = await executeAndWait(
-        keeperLiquidateTx({ feeds, markets: live.map((m) => m.id), protocolConfigId: PROTOCOL_CONFIG_ID, budget: LIQ_BUDGET }),
-        "liquidate",
-      );
-      // `budget` is traced so the analysis can tell whether this lane was competing with a
-      // liq-budget probe: the probe nets only its OWN transactions' knockouts, so a keeper sweeping
-      // alongside it leaves the probe's book over-counted — and that overstates the ceiling.
-      appendTrace("keeper", { type: "liquidate", markets: live.length, gas: gasOf(lr), budget: Number(LIQ_BUDGET) });
-    } catch (e) {
-      appendTrace("keeper", { type: "fail", tag: errorTag(e) });
-      console.warn(`[keeper] liquidate skipped: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
-    }
-  }
 
-  // 3. Fund: rebalance every active market not yet confirmed funded (retries a roll whose
+  // 2. Fund: rebalance every active market not yet confirmed funded (retries a roll whose
   //    rebalance failed, or a market picked up from chain after a restart). Isolated per market.
   for (const m of live) {
     if (funded.has(m.id)) continue;
@@ -206,7 +172,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     }
   }
 
-  // 4. Roll: keep each cadence's window of live markets ahead of now. The market is ADVERTISED
+  // 3. Roll: keep each cadence's window of live markets ahead of now. The market is ADVERTISED
   //    (pushed to `live`) only AFTER its rebalance succeeds — so traders never see an unfunded
   //    market. GATED on settledOk: during a settlement outage the flush defers, so minting more
   //    markets would grow the active set past the single-PTB flush gas wall and brick it.
@@ -238,54 +204,6 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
   atomicWriteFile(MARKETS_PATH, JSON.stringify(live.filter((m) => funded.has(m.id)).map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
 }
 
-// Apply every due rung of the trade-liquidation-budget ladder. Isolated like the other lanes: a
-// failed set defers to the next tick, and the stage is consumed only on success so the sweep cannot
-// skip a rung it never applied.
-//
-// This runs BEFORE tick() inside the same try, so it must never throw: doing so would skip
-// settlement, flush, rebalance and roll on every subsequent iteration — one bad rung bricking every
-// other keeper lane, against the per-step isolation invariant. On give-up it abandons the ladder
-// and marks the trace fatal, which fails the run in `analyze` while leaving the other lanes alone.
-//
-// The ladder is in-memory, so a keeper restart replays it from the first rung and walks the budget
-// back DOWN before climbing again. That costs run time, not correctness: every rung is traced, and
-// the analysis joins each probe to the rung in force at its own timestamp.
-async function applyBudgetStages(startedAt: number) {
-  const elapsed = Date.now() - startedAt;
-  while (nextBudgetStage < TRADE_LIQ_BUDGET_STAGES.length && TRADE_LIQ_BUDGET_STAGES[nextBudgetStage].atMs <= elapsed) {
-    const { budget } = TRADE_LIQ_BUDGET_STAGES[nextBudgetStage];
-    // Stamped BEFORE the tx. A probe between the request and the trace record ran under an unknown
-    // budget — the set may already have landed — so the analysis discards that window rather than
-    // attribute it to either rung; crediting it to the older, lower rung understates the slope and
-    // overstates the ceiling, which is the unsafe direction.
-    const requestedAtMs = Date.now();
-    try {
-      await executeAndWait(setTradeLiquidationBudgetTx(PROTOCOL_CONFIG_ID, budget), "trade-liq-budget");
-      appendTrace("keeper", { type: "liqBudget", budget: Number(budget), elapsedMs: elapsed, requestedAtMs });
-      console.log(`[keeper] trade_liquidation_budget -> ${budget} (t+${Math.round(elapsed / 1000)}s)`);
-      nextBudgetStage++;
-      budgetStageFailures = 0;
-    } catch (e) {
-      appendTrace("keeper", { type: "fail", lane: "liqBudget", tag: errorTag(e) });
-      budgetStageFailures++;
-      if (budgetStageFailures >= MAX_BUDGET_STAGE_FAILURES) {
-        nextBudgetStage = TRADE_LIQ_BUDGET_STAGES.length;
-        appendTrace("keeper", {
-          type: "fail", lane: "liqBudget", fatal: true,
-          tag: `budget-ladder-abandoned:rung=${budget}:${errorTag(e)}`,
-        });
-        console.error(
-          `[keeper] TRADE_LIQ_BUDGET_STAGES: rung ${budget} failed ${budgetStageFailures}x — abandoning the ladder; ` +
-            `the sweep will collect nothing further (last: ${e instanceof Error ? e.message.slice(0, 160) : e})`,
-        );
-        return;
-      }
-      console.warn(`[keeper] trade_liquidation_budget deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
-      return; // retry this rung next tick; do not run ahead to a later one
-    }
-  }
-}
-
 async function main() {
   console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
   const { feeds, lifecycleCapId } = await setupFeedsAndConfig(CADENCE_IDS);
@@ -299,7 +217,6 @@ async function main() {
   const deadline = DURATION_MS > 0 ? startedAt + DURATION_MS : 0;
   for (;;) {
     try {
-      await applyBudgetStages(startedAt);
       await tick(feeds, lifecycleCapId);
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });

@@ -825,7 +825,6 @@ interface MintParams extends OracleFeedIds {
     strike: bigint;
     isUp: boolean;
     quantity: bigint;
-    leverage: bigint;
     tickSize?: bigint; // cadence tick size; live harness default is $0.01
     maxCost?: bigint; // all-in DUSDC withdrawal cap; U64_MAX (uncapped) if omitted
     maxProbability?: bigint; // per-contract probability cap (1e9); U64_MAX if omitted
@@ -1312,7 +1311,6 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.pure.u64(lowerTick),
             tx.pure.u64(higherTick),
             tx.pure.u64(params.quantity),
-            tx.pure.u64(params.leverage),
             tx.pure.u64(params.maxCost ?? U64_MAX),
             tx.pure.u64(params.maxProbability ?? U64_MAX),
             // `mint_exact_quantity` loads the account and ambient-settles it
@@ -1364,7 +1362,6 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
 // account's wrapper — the actual on-chain keeper surface, priced as-is.
 export interface CleanoutPosition {
     orderId: string;
-    quantity: bigint; // redeem_settled requires close_quantity == the position's full quantity
 }
 export interface CleanoutParams {
     expiryMarketId: string;
@@ -1374,11 +1371,12 @@ export interface CleanoutParams {
 
 function addRedeemSettledPermissionless(
     tx: Transaction,
-    p: { expiryMarketId: string; wrapperId: string; orderId: string; quantity: bigint },
+    p: { expiryMarketId: string; wrapperId: string; orderId: string },
 ): void {
     // redeem_settled_permissionless(market, account_registry, wrapper, config, order_id,
-    //   close_quantity, root, clock, ctx). Settlement is a separate PTB transition; this
-    // consumer needs no oracle objects or live pricer.
+    //   root, clock, ctx). A settled close is always full — the entrypoint takes no
+    //   quantity. Settlement is a separate PTB transition; this consumer needs no
+    //   oracle objects or live pricer.
     tx.moveCall({
         target: target("expiry_market", "redeem_settled_permissionless"),
         arguments: [
@@ -1387,7 +1385,6 @@ function addRedeemSettledPermissionless(
             tx.object(p.wrapperId),
             tx.object(PROTOCOL_CONFIG_ID),
             tx.pure.u256(BigInt(p.orderId)),
-            tx.pure.u64(p.quantity),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1424,7 +1421,6 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
             expiryMarketId: params.expiryMarketId,
             wrapperId: params.wrapperId,
             orderId: pos.orderId,
-            quantity: pos.quantity,
         });
     }
     addClaimRebatePermissionless(tx, {
@@ -1447,7 +1443,6 @@ export function redeemSettledAllTx(params: CleanoutParams): Transaction {
             expiryMarketId: params.expiryMarketId,
             wrapperId: params.wrapperId,
             orderId: pos.orderId,
-            quantity: pos.quantity,
         });
     }
     return tx;
@@ -1582,39 +1577,6 @@ export function setTemplateExpiryFeeConfigTx(
             tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u64(expiryFeeMaxMultiplier),
-        ],
-    });
-    return tx;
-}
-
-export function setTemplateMaxAdmissionLeverageTx(
-    protocolConfigId: string,
-    maxAdmissionLeverage: bigint,
-): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: target("protocol_config", "set_template_max_admission_leverage"),
-        arguments: [
-            tx.object(protocolConfigId),
-            tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(maxAdmissionLeverage),
-        ],
-    });
-    return tx;
-}
-
-// Set the ambient liquidation-pass budget spent before every mint and every live redeem
-// (`ProtocolConfig::trade_liquidation_budget`). Contract bounds are [24, 3000]; outside them the
-// call aborts `EInvalidTradeLiquidationBudget`. The keeper drives this from a ladder
-// (TRADE_LIQ_BUDGET_STAGES) so one run can sweep the budget without republishing.
-export function setTradeLiquidationBudgetTx(protocolConfigId: string, budget: bigint): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: target("protocol_config", "set_trade_liquidation_budget"),
-        arguments: [
-            tx.object(protocolConfigId),
-            tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(budget),
         ],
     });
     return tx;
@@ -1958,31 +1920,6 @@ export function keeperSettleTx(params: {
     return tx;
 }
 
-// One bounded liquidation pass over each live market. Reads the updater-maintained
-// fresh feed via load_live_pricer (no self-refresh).
-export function keeperLiquidateTx(params: {
-    feeds: OracleFeedIds;
-    markets: string[];
-    protocolConfigId: string;
-    budget: bigint;
-}): Transaction {
-    const tx = new Transaction();
-    for (const marketId of params.markets) {
-        const pricer = loadLivePricer(tx, { expiryMarketId: marketId, protocolConfigId: params.protocolConfigId, ...params.feeds });
-        tx.moveCall({
-            target: target("expiry_market", "liquidate"),
-            arguments: [
-                tx.object(marketId),
-                tx.object(params.protocolConfigId),
-                pricer,
-                tx.pure.u64(params.budget),
-                tx.object(CLOCK_ID),
-            ],
-        });
-    }
-    return tx;
-}
-
 // Create the sender's canonical derived account wrapper and share it. `new` derives
 // the wrapper at a deterministic address (see `deriveAccountWrapperId`); `share`
 // publishes the shared object the trade flows borrow against.
@@ -2098,9 +2035,9 @@ export function mintTx(params: MintParams): Transaction {
 
 // Batched mint-only PTB: N `mint_exact_quantity` calls in ONE transaction, each pricing against the
 // updater-maintained fresh feed (no oracle refresh, like `mintTx`). The whole PTB reports ONE
-// `computationCost` — the `#cap-mintbatch` measurement vehicle: a batched leveraged mint amplifies
-// the per-op liquidation scan ~45× vs a standalone mint (mechanism under test, NOT yet proven). Vary
-// N and the per-leg leverage mix (e.g. K×lev1 + 1×lev2) to isolate the cause via the total cost.
+// `computationCost` — the `#cap-mintbatch` measurement vehicle: a batched mint is amplified
+// by transaction-level metering versus a standalone mint (see RP-10). Vary N to isolate the
+// cause via the total cost.
 export function mintBatchTx(mints: MintParams[]): Transaction {
     if (mints.length === 0) throw new Error("mintBatchTx requires at least one mint");
     const tx = new Transaction();

@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-17. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -298,7 +298,7 @@ true of the generator but not of the committed data.
 with an unbounded consequence. Launch blocker before listing a session-traded
 asset.
 
-Settlement reads one exact key. `try_settle` calls `load_exact_spot_read` at
+Settlement reads one exact key. `try_settle` calls `load_exact_spot` at
 `market.expiry`, and the only way to fill that key is
 `pyth_feed::insert_at`, which requires an envelope stamped at exactly that
 millisecond carrying a price generated no more than
@@ -605,7 +605,6 @@ correctness today.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further.
-  probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 

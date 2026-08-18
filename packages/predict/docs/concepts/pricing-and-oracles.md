@@ -128,8 +128,8 @@ Note the asymmetry: the Block Scholes forward/SVI source set is mandatory and ga
 
 Resolving a price touches three facts — *are these the current canonical Propbook feeds for this market's underlying and expiry*, *is this market still live for live pricing*, and *are the required feed reads fresh* — and they are owned by different modules:
 
-- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing` for a live `Pricer` or an exact-history `ExactSpotRead` before consuming oracle-derived facts.
-- **`pricing` owns the oracle-read boundary.** It checks passed Propbook feed objects against the current canonical bindings, issues `ExactSpotRead` for reference-tick and settlement lookups, and issues `Pricer` for live flows after enforcing pre-expiry liveness, freshness, and Predict's pricing-safe envelope.
+- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing` for a live `Pricer` or an exact-history the exact-spot read before consuming oracle-derived facts.
+- **`pricing` owns the oracle-read boundary.** It checks passed Propbook feed objects against the current canonical bindings, issues the exact-spot read for reference-tick and settlement lookups, and issues `Pricer` for live flows after enforcing pre-expiry liveness, freshness, and Predict's pricing-safe envelope.
 
 This split keeps each guard with the module whose contract depends on it: the market owns the flow and market facts, while pricing is the only path from Propbook oracle objects into Predict business logic.
 
@@ -153,7 +153,7 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 ## Settlement
 
-Terminal settlement uses Propbook's exact Pyth timestamp history, not a Predict-side sampling buffer. The market stores no settlement sample itself before expiry; the permissionless `expiry_market::try_settle` transition asks `pricing::load_exact_spot_read` to validate the supplied Pyth feed against Propbook's current canonical binding and issue an `ExactSpotRead` for the market's expiry.
+Terminal settlement uses Propbook's exact Pyth timestamp history, not a Predict-side sampling buffer. The market stores no settlement sample itself before expiry; the permissionless `expiry_market::try_settle` transition asks `pricing::load_exact_spot` to validate the supplied Pyth feed against Propbook's current canonical binding and issue the exact-spot read for the market's expiry.
 
 If that exact normalized spot exists, `try_settle` passes it to `StrikeExposure::record_settlement`, which records the terminal price and exact remaining payout liability together. If it does not, `try_settle` returns false and the market remains unsettled. Settled redeem, rebate claim, and pool sweep consume only the recorded state; a past-expiry live valuation still aborts rather than substituting an approximate mark. That liveness boundary is documented in [liquidity and NAV](./liquidity-and-nav.md).
 

@@ -2,7 +2,7 @@
 
 The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's exact net asset value (NAV) is computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged daily flush prices and fills those requests at a single frozen mark, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability plus its rebate reserve.
 
-For how markets, orders, and absolute ticks work, see [markets and positions](./markets-and-positions.md). For the leverage floor that drives both pricing and NAV, see leverage and the floor (removed). For tunable values, see [configuration](../design/configuration.md). For trust assumptions and known caveats, see [risks](../risks.md).
+For how markets, orders, and absolute ticks work, see [markets and positions](./markets-and-positions.md). For tunable values, see [configuration](../design/configuration.md). For trust assumptions and known caveats, see [risks](../risks.md).
 
 ## The pool vault
 
@@ -105,17 +105,15 @@ The pool NAV above is just `idle + Σ current_nav`. The substance is `current_na
 `current_nav` is a pure read: free cash minus the exact per-order live liability, floored at zero.
 
 ```
-current_nav = max(0, free_cash − exact_live_liability)
+current_nav = max(0, free_cash − live_marked_liability)
 ```
 
 where:
 
 - **`free_cash = cash_balance − rebate_reserve − inventory_impact_reserve`** — the expiry's DUSDC net of both isolated obligations it still owes. Inventory-impact escrow is not LP value while live.
-- **`exact_live_liability = walk_linear − correction_value`**, floored at zero, is the exact mark-to-model liability of every open order:
-  - **`walk_linear`** is `Σ_orders quantity × P(strike)` — the full payout-tree walk, pricing each distinct boundary tick exactly through the resolved pricer and caching those boundary prices in a transaction-local memo.
-  - **`correction_value`** is `Σ_(leveraged orders) min(quantity × range_price, floor_shares)` — the floor offset, scanned exactly over the active leveraged book using the memo populated by `walk_linear`.
+- **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so there is no per-order correction term.
 
-Subtracting `correction_value` is the leveraged contracts' floor offset, applied per order: each leveraged order's floor offsets only its own range value, capped at it (limited recourse), so the floor of an exhausted order can never spill over to inflate another order's value. The leftover after the floor is the order's recoverable equity, and `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
+The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding; it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 
 `current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
 
