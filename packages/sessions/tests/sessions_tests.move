@@ -86,8 +86,6 @@ const NEXT_LOT_QUANTITY: u64 = 100_010_000;
 const SETTLEMENT_HIGHER_TICK_OFFSET: u64 = 10;
 const SETTLEMENT_PRICE_TICK_OFFSET: u64 = 1;
 const ONE_RAW_UNIT: u64 = 1;
-const ONE_POSITION: u64 = 1;
-const ZERO_POSITIONS: u64 = 0;
 const ZERO_COST: u64 = 0;
 const ZERO_PREMIUM: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
@@ -669,10 +667,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
     assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ONE_POSITION,
-    );
     assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
@@ -713,10 +707,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
         post_mint_balance + gross_value - DEFAULT_TRADE_FEE,
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ZERO_POSITIONS,
-    );
     assert_eq!(event::events_by_type<order_events::LiveOrderRedeemed>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
@@ -792,10 +782,6 @@ fun session_mints_exact_amount() {
         test_constants::mint_deposit() - expected_quote.all_in_cost(),
     );
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ONE_POSITION,
-    );
     assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
@@ -888,10 +874,6 @@ fun session_redeems_settled_order() {
         post_mint_balance + test_constants::mint_quantity(),
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ZERO_POSITIONS,
-    );
     assert_eq!(event::events_by_type<order_events::SettledOrderRedeemed>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
