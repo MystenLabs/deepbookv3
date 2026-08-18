@@ -11,6 +11,11 @@
 build
 Pub.*.toml
 
+# Deliberately untracked: a local toolchain regenerates it against a different
+# framework rev than CI's pinned one (.claude/rules/move.md), and it has been
+# committed by accident twice.
+packages/sessions/Move.lock
+
 # Node.js
 node_modules
 package-lock.json
