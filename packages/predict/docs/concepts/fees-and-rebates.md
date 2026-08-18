@@ -1,8 +1,8 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp and, when the market's DEEP-stake benefit ratio is above zero, reduced by a staking discount. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. A portion of trader-paid trading fees is held on-chain as a trading-loss **rebate reserve** — part of the expiry's cash-backing invariant — and settled rebates are resolved through owner-auth or app-auth keeper claim flows. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
-The staking programme ships at a **zero benefit ratio**: as shipped, no trader receives a fee discount and no trader receives a loss rebate. An admin raises it for markets created from that point on — each market freezes its benefit policy at creation, so the change never reaches a market already trading. See [the staking fee discount](#5-staking-fee-discount) below.
+DEEP stake buys one thing: a share of that loss rebate. It never discounts the trading fee — every trader pays the same fee for the same contract. The staking programme ships at a **zero benefit ratio**, so as shipped no trader receives a rebate either. An admin raises it for markets created from that point on — each market freezes its benefit policy at creation, so the change never reaches a market already trading. See [the DEEP-stake benefit curve](#5-deep-stake-benefit-curve) below.
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
@@ -19,12 +19,11 @@ base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
 ramped_rate     = base_fee_rate * expiry_fee_multiplier(time_to_expiry)   (>= base_fee_rate)
 trading_fee     = ramped_rate * quantity
 
-fee_after_disc  = trading_fee - trading_fee * (benefit_ratio * max_fee_discount)   (staking)
-builder_fee     = min( fee_after_disc * builder_fee_multiplier , quantity * max_builder_fee_rate )
+builder_fee     = min( trading_fee * builder_fee_multiplier , quantity * max_builder_fee_rate )
 congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
 ```
 
-The base trading fee, the expiry ramp, and the staking discount together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from the (post-discount) fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
+The base trading fee and the expiry ramp together set the **fee rate** a trader pays. The builder fee is an **add-on** computed from that fee. The congestion surcharge is a separate per-unit add-on driven by network state, not by the contract's probability. The trading-loss rebate is funded out of trader-paid trading fees and paid back later, so it lowers a losing trader's *net* cost without changing what is charged at trade time.
 
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
@@ -65,10 +64,10 @@ The ramp applies identically to mints and live redeems, since both create or unw
 Front-ends and aggregators that route order flow to Predict can attach a **builder code** to a Predict account. When an account carries a builder code, each of its trades pays an additional builder fee on top of the trading fee:
 
 ```text
-builder_fee = min( fee_after_discount * builder_fee_multiplier , quantity * max_builder_fee_rate )
+builder_fee = min( trading_fee * builder_fee_multiplier , quantity * max_builder_fee_rate )
 ```
 
-The builder fee is a fixed multiple (`builder_fee_multiplier`) of the trader's actual trading fee — the fee *after* the staking discount, so a discounted trade also pays a proportionally smaller builder fee. It is capped at `max_builder_fee_rate · quantity` so that a high variance fee cannot push the builder cut to an unbounded share of notional. An account with no builder code pays no builder fee.
+The builder fee is a fixed multiple (`builder_fee_multiplier`) of the trader's trading fee. It is capped at `max_builder_fee_rate · quantity` so that a high variance fee cannot push the builder cut to an unbounded share of notional. An account with no builder code pays no builder fee.
 
 The builder fee is split off the trader's payment and routed to the builder code's own object address using Sui's accumulator-based fund custody on the `BuilderCode` object — the DUSDC accumulates against the code object's address balance, and the code's owner can later claim all settled builder fees in a single call. The owner is fixed at creation and is the only address that can claim. For the object model and custody mechanism, see [../design/architecture.md](../design/architecture.md).
 
@@ -98,9 +97,9 @@ One accepted weakness: because the first observation seeds the variance directly
 
 The congestion surcharge is handled differently from the trading fee in the cash flow. It is withdrawn from the trader (at mint) or withheld from the payout (at redeem), but it then rides into the expiry's cash as **surplus**: it is not part of the rebate fee basis, it earns no builder cut, and it is excluded from the trader's recorded gross-paid. It compensates liquidity providers for transacting during congestion rather than being a fee on the contract itself.
 
-## 5. Staking fee discount
+## 5. DEEP-stake benefit curve
 
-Holding active DEEP stake on a Predict account earns a discount on the trading fee. The discount scales with stake along a two-segment benefit curve defined in `StakeConfig`:
+Holding active DEEP stake on a Predict account earns a share of the trading-loss rebate described in [§6](#6-trading-loss-rebate). That share scales with stake along a two-segment benefit curve defined in `StakeConfig`:
 
 ```text
 benefit_ratio rises linearly 0 -> 0.5 over   active_stake in [0, lower_benefit_power]
@@ -108,22 +107,15 @@ benefit_ratio rises linearly 0.5 -> 1.0 over active_stake in [lower_benefit_powe
 benefit_ratio = 1.0                          for active_stake >= upper_benefit_power
 ```
 
-`benefit_ratio` is a fraction in `[0, 1]`. The fee discount is that ratio applied to a fixed maximum discount cap:
-
-```text
-discount_fraction = benefit_ratio * max_fee_discount
-fee_after_discount = trading_fee - trading_fee * discount_fraction
-```
-
-`max_fee_discount` is an upgrade-required constant (a fixed cap on how much of the fee can be discounted); the two `*_benefit_power` thresholds are admin-tunable. At full stake the discount reaches the cap; below `upper_benefit_power` it is proportionally smaller. The discount applies to the **trading fee** (already including the expiry ramp), and because the builder fee is computed from the post-discount fee, staking also shrinks the builder fee. The congestion surcharge is not discounted.
+`benefit_ratio` is a fraction in `[0, 1]`, and the two `*_benefit_power` thresholds are admin-tunable. The rebate is the only thing the ratio scales: stake does not reduce the trading fee, the builder fee computed from it, or the congestion surcharge.
 
 ### The programme ships at zero, and each market freezes its own policy
 
-The stake curve above is scaled by `max_benefit_ratio`, which ships at **0**. There is no separate on/off switch: `benefit_ratio = stake_curve(active_stake) * max_benefit_ratio`, so a zero ratio pays nothing at any stake and the curve is inert — every trader pays the undiscounted fee and no account earns a stake-scaled loss rebate. An `AdminCap` holder raises it with `set_template_max_benefit_ratio`, anywhere in `0..float_scaling`, so the programme can also run at partial strength (a half ratio halves both benefits). Both benefits move together — there is no setting that discounts fees while withholding the rebate, or the reverse.
+The stake curve above is scaled by `max_benefit_ratio`, which ships at **0**. There is no separate on/off switch: `benefit_ratio = stake_curve(active_stake) * max_benefit_ratio`, so a zero ratio pays nothing at any stake and the curve is inert — no account earns a stake-scaled loss rebate. An `AdminCap` holder raises it with `set_template_max_benefit_ratio`, anywhere in `0..float_scaling`, so the programme can also run at partial strength (a half ratio halves the rebate).
 
-Every `ExpiryMarket` snapshots the whole `StakeConfig` — ratio and both thresholds — at creation and prices against its own copy. Nothing is read live, because both benefits resolve *after* the trade that earned them: the fee discount at mint, the loss rebate at a post-settlement claim. Live policy would let an admin reprice contracts already written, and shrink or erase a rebate a trader had already earned — the claim is one-shot, so restoring the old policy could not recover it. Freezing at creation makes that unrepresentable in both directions:
+Every `ExpiryMarket` snapshots the whole `StakeConfig` — ratio and both thresholds — at creation and prices against its own copy. Nothing is read live, because the rebate resolves *after* the trade that earned it, at a post-settlement claim. Live policy would let an admin shrink or erase a rebate a trader had already earned — the claim is one-shot, so restoring the old policy could not recover it. Freezing at creation makes that unrepresentable in both directions:
 
-- **Raising** the ratio does not reach markets already created; benefits begin with the next market created, so at the 1m/5m/1h cadences the live book turns over within about one cadence period.
+- **Raising** the ratio does not reach markets already created; the rebate begins with the next market created, so at the 1m/5m/1h cadences the live book turns over within about one cadence period.
 - **Lowering** it, including to zero, does not reach them either; a market written under a paying policy honours it through settlement and rebate claim.
 - **Retuning the thresholds** likewise binds only future markets, so a curve change cannot reprice a rebate already earned.
 
@@ -133,7 +125,7 @@ While a market's snapshotted ratio is zero, its rebate reserve still accrues at 
 
 ### Lazy epoch rollover
 
-Newly staked DEEP becomes `inactive_stake` and only counts as `active_stake` in a later epoch. The rollover is **lazy**: `roll_active_stake` moves inactive into active the first time the account is touched in a new epoch, guarded so it is a no-op within the same epoch. Every fee- or rebate-bearing flow (mint, live redeem, rebate claim) rolls stake before reading `active_stake`, so the discount always reflects stake that has been active since the start of the current epoch. Stake added this epoch does not earn a same-epoch discount.
+Newly staked DEEP becomes `inactive_stake` and only counts as `active_stake` in a later epoch. The rollover is **lazy**: `roll_active_stake` moves inactive into active the first time the account is touched in a new epoch, guarded so it is a no-op within the same epoch. The rebate claim rolls stake before reading `active_stake`, so a rebate always prices against stake that has been active since the start of the current epoch. Stake added this epoch earns no same-epoch benefit.
 
 ## 6. Trading-loss rebate
 
@@ -160,13 +152,13 @@ eligible_rebate  = max(0, resolved_reserve − gross_profit)
 rebate_amount    = eligible_rebate * benefit_ratio(active_stake)
 ```
 
-The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the same benefit curve that drives the fee discount, but with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Because the rebate rides that one curve, it is zero for every account in a market whose snapshotted benefit ratio is zero, which is how the protocol ships. Resolution can happen once **all** of an account's positions in the expiry are closed.
+The rebate is offset by any profit, so only net-losing traders are eligible: a profitable trader has `gross_profit ≥ resolved_reserve`, so `eligible_rebate` is zero. A losing trader is owed a portion of the fees they paid, scaled by their active-stake benefit ratio — the curve in [§5](#5-deep-stake-benefit-curve), with **no separate staking cap** (the rebate's size is bounded entirely by `trading_loss_rebate_rate`). Because the rebate rides that curve, it is zero for every account in a market whose snapshotted benefit ratio is zero, which is how the protocol ships. Resolution can happen once **all** of an account's positions in the expiry are closed.
 
 If `rebate_amount` is less than `resolved_reserve`, the residual reserve is returned to PLP idle and may materialize as terminal expiry profit, split between the protocol reserve and LPs by the configured protocol profit share. Zero-owed claims are allowed so a keeper can sweep accounts without reverting a batch just because one account has nothing to claim.
 
 ## Inventory-impact charge and rebate
 
-Inventory impact is an optional, path-independent transfer layered **on top of** the normal fee system. It is not trading-fee revenue, is not discounted by stake, does not earn a builder cut, does not enter the trading-loss rebate basis, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and uses its cadence `max_expiry_allocation` as the immutable impact scale `B`; changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
+Inventory impact is an optional, path-independent transfer layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, does not enter the trading-loss rebate basis, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and uses its cadence `max_expiry_allocation` as the immutable impact scale `B`; changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
 
 ### Step 1: measure the book's payout liability
 
@@ -217,11 +209,9 @@ flowchart TD
     P[Range probability p] --> BF["Base fee: max(base_fee * sqrt(p(1-p)), min_fee)"]
     BF --> RAMP["x expiry ramp multiplier (>= 1)"]
     RAMP --> FEE[trading fee = rate x quantity]
-    FEE --> DISC["- staking discount (benefit_ratio x max_fee_discount)"]
-    DISC --> NETFEE[fee after discount]
-    NETFEE --> BUILD["builder fee = min(fee x builder_mult, quantity x max_builder_rate)"]
+    FEE --> BUILD["builder fee = min(fee x builder_mult, quantity x max_builder_rate)"]
     GAS[Gas-price EWMA z-score] --> CONG["congestion surcharge = penalty_rate x quantity (if outlier)"]
-    NETFEE --> COLLECT[fee -> expiry cash, basis += trader-paid fee]
+    FEE --> COLLECT[fee -> expiry cash, basis += trader-paid fee]
     BUILD --> BUILDER[builder fee -> builder code address]
     CONG --> SURPLUS[surcharge -> expiry cash surplus]
     L[Book payout liability L] --> PHI["inventory potential phi(L)"]
@@ -236,7 +226,6 @@ Cash routing at trade time:
 | Component | Charged on | Destination | In rebate basis? | Earns builder cut? |
 |---|---|---|---|---|
 | Trading fee | mint price / redeem payout | expiry cash (LP + protocol) | Trader-paid portion | — |
-| Staking discount | reduces the trading fee | (reduces what is charged) | — | — |
 | Builder fee | add-on to trading fee | builder code address | No | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No | No |
 | Trading-loss rebate | funded from trader-paid trading fees | reserved on-chain; claimed on-chain after settlement | (drawn from reserve) | No |

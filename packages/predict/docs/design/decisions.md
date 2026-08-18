@@ -220,17 +220,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **The staking programme ships at a zero benefit ratio, and each market freezes its whole
   benefit policy at creation.** `StakeConfig.max_benefit_ratio` scales the stake curve and
-  defaults to `0`, so a market created from the shipped template charges every trader the
-  undiscounted fee and pays no stake-scaled loss rebate. There is deliberately no boolean
+  defaults to `0`, so a market created from the shipped template pays no stake-scaled loss
+  rebate. There is deliberately no boolean
   switch: "off" is just `0`, which also lets the programme run at partial strength on the way
   up. Every `ExpiryMarket` snapshots the whole config — ratio and both thresholds — at
-  creation, and prices both benefits against its own copy; `set_template_max_benefit_ratio`
+  creation, and prices the rebate against its own copy; `set_template_max_benefit_ratio`
   and `set_template_benefit_powers` bind only markets created afterwards. *Why a scaled ratio
   and not tuned thresholds:* the `*_benefit_power` envelope has no setting that yields a zero
-  benefit — the lowest admissible `lower_benefit_power` still pays a proportional discount —
+  benefit — the lowest admissible `lower_benefit_power` still pays a proportional rebate —
   so zero was otherwise unreachable for an admin. *Why snapshotted rather than read live:*
-  both benefits resolve after the trade that earned them (the discount at mint, the rebate at
-  a post-settlement claim), so live policy would reprice contracts already written, and a
+  the rebate resolves after the trade that earned it, at a post-settlement claim, so a
   retune would shrink or erase an already-earned rebate — measured at 2_500_000 -> 1_252_551
   for a full staker when the thresholds were widened post-trade, and the claim removes the
   account's expiry summary, so nothing could recover it. Freezing makes that unrepresentable
@@ -238,7 +237,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   which is already snapshotted per expiry for the same reason. The cost is accepted: raising
   the ratio likewise does not reach live markets, so the programme phases in over about one
   cadence period. Pinned by `settlement_flow_tests::
-  retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`. *Rejected:* making
+  retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`. *Rejected (moot since
+  the fee discount was removed — see "Stake fee-discount removal" below):* making
   `max_fee_discount` admin-tunable at zero, which would silence the fee side while leaving the
   uncapped rebate live, and would move an upgrade-required constant into tunable config.
   *Consequence:* while a market's ratio is zero, its rebate reserve still accrues at that
@@ -258,11 +258,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   both the mint-time fee discount (`× max_fee_discount`) and the settled loss rebate
   (`× trading_loss_rebate_rate`), which are independent config knobs sharing the one
   benefit curve. A high staker pays a small net fee — intended loyalty compounding, not
-  a double-count bug.
-- **Stake is account-global, not per-expiry.** One `active_stake` scales benefits
-  across all of an account's concurrent expiries; it is a discount multiplier, not a
-  per-market budget. It amortizes the sybil-gate cost across markets — accepted, same
-  as the fee discount.
+  a double-count bug. *Superseded 2026-08-18:* the fee discount was removed, so the curve
+  now scales the loss rebate alone — see "Stake fee-discount removal" below.
+- **Stake is account-global, not per-expiry.** One `active_stake` scales the rebate
+  across all of an account's concurrent expiries; it is a rebate multiplier, not a
+  per-market budget. It amortizes the sybil-gate cost across markets — accepted.
 - **The rebate reserve is conservative by construction, and intrinsically so.** During
   a market's life the full `unresolved_trading_fees_paid × trading_loss_rebate_rate` is
   held out of NAV, because "did this trader net a loss" is unknowable until settlement,
@@ -614,3 +614,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
 
 See `predeploy/response-policies.md` RP-27 for the guard-duty inventory this removal required.
+
+## Stake fee-discount removal (2026-08-18)
+
+- **DEEP stake no longer discounts the trading fee.** `stake_config::fee_amount_after_discount` and the `constants::max_fee_discount` cap are deleted; mint and live redeem charge the fee `StrikeExposureConfig` computes, and neither path reads `active_stake` any more. *Rationale:* the discount was the half of the staking programme that had to be priced into every trade — it made the trading fee account-dependent, so the quote surface had to expose an account-aware variant whose answer went stale on an epoch boundary, and it forced the redeem path to clamp the fee before discounting so a discounted staker could not net exactly zero. Both benefits shipped at `max_benefit_ratio = 0`, so removing the fee side costs no live behavior and leaves one benefit to reason about. *Rejected:* keeping the discount at a zero cap — an unreachable multiplier through the hottest path in the protocol is still surface a reader and an auditor must clear.
+- **`benefit_ratio` survives, scaling the settled loss rebate alone.** `StakeConfig`, its two-segment curve, the per-market snapshot, and the template setters are unchanged; only the fee consumer is gone. Stake, the epoch rollover, and the rebate claim behave exactly as before. *Consequence:* a fee quote is now the same for every account holding the same builder-code state, and `quote_mint_for_account` differs from the anonymous quote only by the builder fee.
+- **The fee-side pinning tests were dropped, not migrated.** `quote_mint_tests` lost the two tests whose subject was the discount (the mint-side snapshot freeze and the stale-quote/rolled-quote pair); the market-snapshot freeze remains pinned on the rebate side by `settlement_flow_tests::retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`, and `stake_config_tests` now exercises the curve through `rebate_amount`.
+
+RP-11's late-stake reasoning changed with this removal — the rebate is now the whole of staking's value rather than half of it, so the epoch activation gate is the only bound left on the late-stake leak. The register entry carries the updated reasoning and reopen condition.

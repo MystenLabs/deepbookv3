@@ -3,24 +3,22 @@
 
 /// DEEP staking benefit policy: the stake curve and how much of it pays out.
 ///
-/// Benefits scale with active stake along a two-segment curve: the curve rises
-/// linearly from 0 to half of max over `0..lower_benefit_power`, then from half to
-/// full over `lower_benefit_power..upper_benefit_power`, capped at full above.
+/// The settled trading-loss rebate scales with active stake along a two-segment
+/// curve: the curve rises linearly from 0 to half of max over
+/// `0..lower_benefit_power`, then from half to full over
+/// `lower_benefit_power..upper_benefit_power`, capped at full above.
 /// `max_benefit_ratio` then scales that curve, so it sets how much of the
 /// programme runs — `0` pays nothing at any stake, `float_scaling` runs it at full
-/// strength. The resulting benefit ratio scales the fixed
-/// `constants::max_fee_discount` for fees, and applies directly to settled
-/// trading-loss rebates.
+/// strength. The resulting benefit ratio applies directly to the rebate.
 ///
-/// Each `ExpiryMarket` snapshots this whole config at creation and prices both
-/// benefits against its own copy; the one on `ProtocolConfig` is only the template
-/// future markets will snapshot. Nothing here is read live, because both benefits
-/// resolve after the trade that earned them — the fee discount at mint, the rebate
-/// at a post-settlement claim — so a live value would let an admin reprice
-/// contracts already written and shrink a rebate already earned.
+/// Each `ExpiryMarket` snapshots this whole config at creation and prices the
+/// rebate against its own copy; the one on `ProtocolConfig` is only the template
+/// future markets will snapshot. Nothing here is read live, because the rebate
+/// resolves after the trade that earned it — at a post-settlement claim — so a
+/// live value would let an admin shrink a rebate already earned.
 module deepbook_predict::stake_config;
 
-use deepbook_predict::{config_constants, constants};
+use deepbook_predict::config_constants;
 use fixed_math::math;
 
 const EInvalidBenefitPowers: u64 = 0;
@@ -32,25 +30,12 @@ public struct StakeConfig has store {
     /// Active stake for full (max) benefits, in raw DEEP units.
     upper_benefit_power: u64,
     /// Ceiling on the benefit ratio, in FLOAT_SCALING. Scales the whole curve, so
-    /// `0` disables every staking benefit and `float_scaling` runs the programme
-    /// at full strength. Ships at 0.
+    /// `0` pays no rebate at any stake and `float_scaling` runs the programme at
+    /// full strength. Ships at 0.
     max_benefit_ratio: u64,
 }
 
 // === Public-Package Functions ===
-
-/// Fee remaining after the active-stake discount, with the discount rounded down.
-public(package) fun fee_amount_after_discount(
-    config: &StakeConfig,
-    amount: u64,
-    active_stake: u64,
-): u64 {
-    let discount_fraction = math::mul_down(
-        config.benefit_ratio(active_stake),
-        constants::max_fee_discount!(),
-    );
-    amount - math::mul_down(amount, discount_fraction)
-}
 
 /// Trading-loss rebate earned for an active stake, rounded down.
 public(package) fun rebate_amount(

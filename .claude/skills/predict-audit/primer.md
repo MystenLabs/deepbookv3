@@ -41,7 +41,7 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - **Account admin** — holds `account::AccountAdminCap`; authorizes/deauthorizes apps (e.g. `PredictApp`) on the custody layer.
 
 ## Assets
-DUSDC (settlement/custody for all trading + payouts), DEEP (staked for fee discounts / loss rebates; also a
+DUSDC (settlement/custody for all trading + payouts), DEEP (staked for a share of the loss rebate; also a
 donatable incentive), SUI (donatable incentive), PLP (LP vault share token).
 
 ## Module map (CURRENT)

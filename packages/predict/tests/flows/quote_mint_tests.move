@@ -4,8 +4,8 @@
 /// Flow coverage for the public mint quote surface: a quote's `all_in_cost` is
 /// the exact account debit of a same-state mint (quotes and settlement consume
 /// one shared computation) — pinned with every fee component at zero AND with
-/// each component nonzero (sponsor subsidy, builder fee, stake discount, EWMA
-/// congestion penalty); the account-aware quote diverges from the anonymous
+/// each component nonzero (sponsor subsidy, builder fee, EWMA congestion
+/// penalty); the account-aware quote diverges from the anonymous
 /// quote in the right direction per component; quotes share the mint path's
 /// gates and admission aborts; and the settlement readers answer without
 /// aborting on a live market.
@@ -50,11 +50,6 @@ const SUBSIDY_AT_RATE_CAP: u64 = 1_000_000;
 /// min(500_000, 5_000_000) = 500_000, paid on top of the anonymous cost.
 const BUILDER_FEE_ATM: u64 = 500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
-
-/// Full-benefit stake (>= upper_benefit_power) earns the max fee discount:
-/// benefit_ratio = 1.0, discount_fraction = max_fee_discount (0.5), so the fee
-/// halves to 2_500_000 and the all-in cost drops by the same 2_500_000.
-const DISCOUNTED_TRADING_FEE: u64 = 2_500_000;
 
 /// The congestion surcharge is flat once it fires: default_ewma_penalty_rate
 /// (0.001) * quantity (1e9) = 1_000_000, independent of the z-score magnitude.
@@ -261,148 +256,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         fx.account_balance_bundle<DUSDC>(&account),
         test_constants::mint_deposit() - with_builder,
     );
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun raising_the_stake_benefit_template_cannot_discount_an_existing_market() {
-    // The mint-side twin of the rebate regression in `settlement_flow_tests`. The
-    // market below is created while the template pays nothing, so its snapshot is
-    // zero; raising the template afterwards must not reach it. Were the fee path
-    // reading live policy, this fully-staked mint would be charged the discounted
-    // fee and the balance assertion would fail.
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.set_template_max_benefit_ratio(fixed_math::math::float_scaling!());
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
-    fx.stake_deep_bundle(
-        &mut market,
-        &mut account,
-        config_constants::default_upper_benefit_power!(),
-    );
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    // Roll the stake so it is active: the undiscounted fee below is the market's
-    // snapshot, not an inactive-stake artifact.
-    fx.scenario_mut().next_epoch(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let quote = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-    assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
-
-    let premium = quote.premium();
-    fx.mint_exact_quantity_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        quote.all_in_cost(),
-        std::u64::max_value!(),
-    );
-    assert_eq!(
-        fx.account_balance_bundle<dusdc::dusdc::DUSDC>(&account),
-        test_constants::mint_deposit() - (premium + MIN_TRADING_FEE),
-    );
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
-    // Benefits ship disabled and freeze at market creation; this test is about the
-    // discount, so the market must snapshot them on.
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market_with_stake_benefits(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
-    fx.stake_deep_bundle(
-        &mut market,
-        &mut account,
-        config_constants::default_upper_benefit_power!(),
-    );
-
-    // Same-epoch stake is inactive; the as-is quote stays undiscounted.
-    let same_epoch = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-    helpers::assert_atm_entry_probability(same_epoch.entry_probability());
-    assert_eq!(same_epoch.trading_fee(), MIN_TRADING_FEE);
-    assert_eq!(same_epoch.all_in_cost(), same_epoch.premium() + MIN_TRADING_FEE);
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.scenario_mut().next_epoch(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    // The stake is now rollable but un-rolled; the quote reads active_stake
-    // as-is, so it still shows the full cost — it can only overstate.
-    let stale = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-    let premium = stale.premium();
-    assert_eq!(stale.all_in_cost(), premium + MIN_TRADING_FEE);
-
-    // The mint rolls the stake first, so the stale quote as max_cost cannot
-    // abort and the actual debit is the discounted total.
-    let order = fx.mint_exact_quantity_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        stale.all_in_cost(),
-        std::u64::max_value!(),
-    );
-    assert!(helpers::has_position_bundle(&account, expiry_id, order));
-    assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - (premium + DISCOUNTED_TRADING_FEE),
-    );
-
-    // Post-roll, the account quote reads the active stake and matches the
-    // discounted charge exactly, now below the anonymous quote.
-    let rolled = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-    assert_eq!(rolled.trading_fee(), DISCOUNTED_TRADING_FEE);
-    assert_eq!(rolled.all_in_cost(), rolled.premium() + DISCOUNTED_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

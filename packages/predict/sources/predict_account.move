@@ -71,7 +71,7 @@ public struct PredictData has store {
     /// pooled in `PoolVault`; this is this account's active share.
     active_stake: u64,
     /// DEEP staked this epoch, not yet active; rolls into `active_stake` on the
-    /// first discount-bearing interaction in a later epoch (`roll_active_stake`).
+    /// first benefit-bearing interaction in a later epoch (`roll_active_stake`).
     inactive_stake: u64,
     /// Epoch the active/inactive split was last reconciled in.
     stake_epoch: u64,
@@ -293,7 +293,7 @@ public(package) fun gross_profit(summary: &ResolvedExpirySummary): u64 {
 }
 
 /// Roll inactive stake into active if needed, then return the active amount for
-/// protocol execution paths that apply stake discounts.
+/// the rebate claim that prices against it.
 public(package) fun roll_active_stake(account: &mut Account, ctx: &mut TxContext): u64 {
     let epoch = ctx.epoch();
     let d = data_mut(account, ctx);

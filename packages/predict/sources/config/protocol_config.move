@@ -150,8 +150,8 @@ public fun set_template_inventory_impact_max_rate(
 
 /// Set how much of the DEEP-stake benefit programme newly created expiry markets
 /// run, from `0` (nothing) to `float_scaling` (full strength). Ships at 0, so
-/// markets charge undiscounted fees and pay no stake-scaled loss rebate until this
-/// is raised. Existing markets keep the value they snapshotted.
+/// markets pay no stake-scaled loss rebate until this is raised. Existing markets
+/// keep the value they snapshotted.
 public fun set_template_max_benefit_ratio(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

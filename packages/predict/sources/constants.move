@@ -92,11 +92,6 @@ public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).
 public macro fun deep_decimals(): u64 { 1_000_000 }
 
-/// Trading-fee discount at full active stake, in FLOAT_SCALING (fixed 50% cap).
-/// The loss rebate has no staking-side cap — its size is governed by the
-/// per-expiry `trading_loss_rebate_rate` in `expiry_cash_config`.
-public(package) macro fun max_fee_discount(): u64 { 500_000_000 }
-
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.
@@ -107,7 +102,7 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
 
-/// Fraction of the post-staking trading fee paid by sponsor-funded incentives.
+/// Fraction of the trading fee paid by sponsor-funded incentives.
 public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
 
 /// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.
