@@ -240,12 +240,16 @@ candidate policies — follow the formula down to the floor, or freeze `B` at
 its 5s value for smaller TTEs — were compared empirically on the archive's 1s
 and 2s expiry coordinates (432k priceable quotes, Feb–Jun 2026), repricing the
 raw surfaces through the family and scoring integrated Brier against realized
-outcomes. The trend continues below the floor: score improves monotonically as
-`B` falls at both coordinates, the floor value 0.4 is the best member tested
-(beating the normal by ~20% at 1s and ~15% at 2s, and the freeze policy's
-`B ≈ 0.61` by ~4% and ~2% relative), and no candidate produced a single
-clamped or non-monotone repriced surface. Follow-the-floor stands; the clip at
-0.4 is near-optimal exactly where it engages. Caveat carried forward: sub-5s
+outcomes. The trend continues below the validity floor and then turns exactly
+where the clip sits: sweeping `B` from 0.15 to 2.0, the score bowl bottoms at
+`B = 0.40` at 2s and `B ≈ 0.35` at 1s (worth only ~0.4% relative over the 0.4
+floor there, the coordinate where outcome noise is largest); the floor beats
+the normal by ~20% at 1s and ~15% at 2s and the freeze policy's `B ≈ 0.61` by
+~4% and ~2% relative, and no candidate anywhere in the sweep produced a single
+clamped or non-monotone repriced surface. Above the floor the one-lever line
+is equally tight: at every coordinate from 5s to 5m the locked formula scores
+within 0.17% relative of that coordinate's per-`B` optimum. Follow-the-floor
+stands; the clip at 0.4 is empirically the turn of the curve, not a fallback. Caveat carried forward: sub-5s
 realized outcomes inherit the spot series' ~1s cadence, so some measured
 tail-fatness at these coordinates is alignment noise; the policy comparison is
 unaffected (both candidates face the same data), and the fixed-point replay
