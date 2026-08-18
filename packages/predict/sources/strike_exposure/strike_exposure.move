@@ -7,8 +7,8 @@
 /// recovering raw strikes from order ticks only at the pricing/settlement boundary.
 /// It owns the payout-liability view of the active contracts used for cash backing.
 /// Order accounting is static and needs no clock: a winning order pays its full
-/// quantity. Expiry-market cash custody, rebate accounting, account positions, and
-/// payout movement stay outside this module.
+/// quantity. Expiry-market cash custody, account positions, and payout movement
+/// stay outside this module.
 module deepbook_predict::strike_exposure;
 
 use deepbook_predict::{

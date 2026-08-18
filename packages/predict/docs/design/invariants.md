@@ -11,9 +11,9 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Solvency and custody
 
-- **Cash backing.** Every expiry's DUSDC cash always covers its payout liability,
-  unresolved trading-loss rebate reserve, and isolated inventory-impact reserve
-  (`cash ≥ payout_liability + rebate_reserve + inventory_impact_reserve`),
+- **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
+  and isolated inventory-impact reserve
+  (`cash ≥ payout_liability + inventory_impact_reserve`),
   re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
 - **Inventory-impact escrow covers the current potential.** While live,
@@ -63,7 +63,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
   free_cash − live_marked_liability`, floored at zero, where `free_cash =
-  cash − rebate_reserve − inventory_impact_reserve` and the liability is the
+  cash − inventory_impact_reserve` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
