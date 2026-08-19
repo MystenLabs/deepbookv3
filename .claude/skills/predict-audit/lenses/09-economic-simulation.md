@@ -12,14 +12,14 @@ happy-path harness (one vault, one market, one manager, generated normal rows). 
 new adversarial scenarios and property/fuzz tests.**
 
 **The toolbox (and where each runs):**
-- `python_indexes/strike_payout_tree.py`, `python_indexes/liquidation_book.py` — Move index mirrors.
+- `python_indexes/strike_payout_tree.py` — Move index mirror. NOTE: the Python mirrors still model the removed leverage economics and are stale until migrated.
 - `python_replay.py` — mint-admission / pricing / NAV mirror.
 - `cd packages/predict && python3 -m harness parity --source <dataset> --max-rows N` — full **localnet** parity (main-loop only). If you need a localnet PoC, write the scenario and exact command and hand it back to the main loop.
 - Ad-hoc Python written to the scratchpad is subagent-safe when it does not start a localnet.
 
 **Required campaigns (write new scenarios; assert invariants after every step):**
 1. **Solvency / conservation fuzz.** Randomized sequences of mint / redeem / liquidate / supply / withdraw over
-   the python mirrors. After each op assert: cash-backing (`balance >= payout_liability + rebate_reserve`),
+   the python mirrors. After each op assert: cash-backing (`balance >= payout_liability + inventory_impact_reserve`),
    no negative balances, DUSDC conserved across the trader/LP/protocol/builder split, rounding favors the
    protocol (never the user). Report any breaking seed + the minimal reproducing sequence.
 2. **NAV mark symmetry / timing.** Drive supply and withdraw across a flush at a moving mark; confirm

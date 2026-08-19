@@ -45,7 +45,6 @@ fun mint_after_expiry_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);
@@ -71,14 +70,12 @@ fun redeem_settled_on_live_order_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
-    // Full close, but no proof and the order is live.
+    // No settlement transition has run, so the settled-only path rejects it.
     fx.redeem_settled_bundle(
         &mut market,
         &mut account,
         order_id,
-        test_constants::mint_quantity(),
     );
 
     helpers::return_account_bundle(account);
@@ -115,11 +112,10 @@ fun redeem_with_wrong_pyth_feed_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     // Redeem on the real market but pass an unrelated Pyth feed: the live-pricing
     // binding check rejects it after decoding the valid order id.
-    fx.redeem_bundle_with_pyth(
+    fx.redeem_live_bundle_with_pyth(
         &mut market,
         &mut account,
         &wrong_pyth,
@@ -164,7 +160,6 @@ fun mint_with_another_underlyings_block_scholes_stores_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);
@@ -191,7 +186,6 @@ fun mint_while_expiry_mint_paused_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);
@@ -216,7 +210,6 @@ fun mint_while_trading_paused_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     helpers::return_account_bundle(account);

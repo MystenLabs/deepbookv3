@@ -22,10 +22,9 @@ fun redeem_above_order_quantity_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order_id,

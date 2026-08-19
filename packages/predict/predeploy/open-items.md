@@ -1,6 +1,6 @@
 # Predict Predeploy Open Items
 
-Updated 2026-08-05. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
+Updated 2026-08-17. This is the live work register governed by the [predeploy lifecycle and update rules](./README.md#lifecycle).
 
 ## Deploy Gates
 
@@ -347,7 +347,7 @@ true of the generator but not of the committed data.
 with an unbounded consequence. Launch blocker before listing a session-traded
 asset.
 
-Settlement reads one exact key. `try_settle` calls `load_exact_spot_read` at
+Settlement reads one exact key. `try_settle` calls `load_exact_spot` at
 `market.expiry`, and the only way to fill that key is
 `pyth_feed::insert_at`, which requires an envelope stamped at exactly that
 millisecond carrying a price generated no more than
@@ -518,11 +518,14 @@ trust coupling.
 
 **Severity:** Low / tighten before deployment; the unsafe case is already closed.
 
-RP-27 removed the *joint* flush budget, and RP-28 closed the *per-market* one by
+RP-29 removed the *joint* flush budget, and RP-30 closed the *per-market* one by
 deriving `max_payout_tree_nodes` from the transaction budget rather than choosing it:
-`object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()`
-= 1,000 − 157 − 40 = **803**. A single `value_expiry` therefore fits by construction,
-and `valuation_capacity_tests.move` fails if a future edit breaks that.
+`object_cache_budget!() - valuation_base_children_reserve!()` = 1,000 − 40 = **960**.
+A single `value_expiry` therefore fits by construction. The derivation carried a third
+term until 2026-08-14 — `max_liquidation_pages`, 157 children — which leverage removal
+deleted along with the book it counted; the cap rose from 803 to 960 as a result, and
+`valuation_capacity_tests.move` now pins only what a future edit can still break, the
+usable floor of the derived cap.
 
 What remains is the reserve's *size*, not its existence. 40 is deliberately generous:
 source inspection of a lone `value_expiry` puts the real per-market base at **1-2**
@@ -534,14 +537,69 @@ the LP-queue drain and several other markets, so it is not a per-market figure. 
 reserve is therefore likely ~20× larger than needed, and every unit of it is a strike
 boundary markets cannot use.
 
-**Plan (decision rule pre-registered):** run `ts/strategies/capacity.ts` on its `tree`
-profile against the resumable flush, filling ONE market and valuing it in its own
-transaction, and read the base children off the abort boundary — the node count at
-which a single `value_expiry` aborts, minus the pages present. If the measured base
-is below 40, lower `valuation_base_children_reserve` to the measured figure plus a
-stated margin and follow with one run that reaches the new boundary. If it is above
-40, that is a correctness finding on RP-28, not a tuning result: raise the reserve
-and re-derive.
+**Plan (decision rule pre-registered).** Every threshold in the capacity model below
+was measured with leveraged orders present and DEEP staking live; both are gone, so the
+figures are conservative for the object wall and stale for compute, and none of them
+has been retaken. One localnet capacity campaign settles both this item and P-30.
+
+Run `ts/strategies/capacity.ts` on its `tree` profile against the resumable flush,
+filling ONE market and valuing it in its own transaction, and read the base children off
+the abort boundary: the node count at which a single `value_expiry` aborts is
+`object_cache_budget - base_children`, so the base falls out of the measurement directly.
+Run the `pool` profile alongside it to refresh the compute figure P-30 flags as one
+`ln` behind.
+
+Decision rule, fixed before the run: if the measured base is below 40, lower
+`valuation_base_children_reserve` to the measured figure plus a stated margin and follow
+with one run that reaches the new boundary. If it is above 40, that is a correctness
+finding on RP-30, not a tuning result — raise the reserve and re-derive. If the refreshed
+compute figure at a full book exceeds 70% of the 5M wall, open a new item rather than
+folding it into this one.
+
+- The binding wall for the pool total is the Sui **object-runtime cached-objects
+  limit: 1,000 dynamic-field child objects per transaction**
+  (`object_runtime_max_num_cached_objects`; a protocol constant, taken as
+  network-invariant). The flush loads each market's payout-tree nodes as
+  dynamic-field children, and the object-runtime cache
+  **accumulates across every `value_expiry` command in the one PTB**. On overflow
+  it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object` —
+  a framework error whose true cause is this limit. It binds at 16–50% of the 5M
+  compute cap, so the pool flush is object-count-bound, not computation-bound
+  (`evidence/c1-object-cache-flush-2026-07-07.md`).
+- Driver = distinct payout-tree nodes: one `Table<tick,PayoutNode>` child per
+  distinct strike tick, and `walk_linear` loads every node. Node count = distinct
+  ticks, NOT order count (the tree aggregates by boundary) — which is why
+  single-market runs at narrow strikes never reached it despite large books.
+- Confirmed cumulative, not per-command: two 1× markets at 586 nodes each —
+  neither near 1,000 — abort the flush at ~1,172 combined; a single 1× market
+  crosses at ~982 nodes (`evidence/c1-object-cache-flush-2026-07-07.md`).
+- Superseded conclusion: the 2026-07-01 model called the flush
+  computation-bound. That holds for the SINGLE market (a full 5,000-order book
+  values at ~47–54% of the compute cap, `evidence/c1-price-memo-2026-07-01.md`;
+  pre-memo that single market OOG'd at ~4,580 orders,
+  `evidence/c1-nav-stress-2026-06-30.md`) but not the pool total. Earlier
+  pool-total runs hit
+  `expiry_cash::EInsufficientCash` (capital) at ~92% compute before reaching the
+  object wall; raising the allocation cap removed that mask and exposed the
+  1,000-child limit.
+- Skew-adjusted pricing re-measured the single-market compute cost on 2026-07-09:
+  the per-order flush slope rose 2.2% (~480K → ~491K computation units) and a
+  full 5,000-order book used 51% of the compute wall. This does not change the
+  pool-total conclusion above: the object-cache limit binds first
+  (`evidence/c1-skew-gas-2026-07-09.md`).
+- Expired-unswept markets leave the active set only inside a successful
+  `value_expiry`/sweep, so the flush's active tail is not bounded by the
+  live-market creation cap.
+- Capacity law:
+  `sum_over_active_markets(distinct_ticks + base_children)
+  < 1,000 dynamic-field children per flush PTB` — a joint sum across all active
+  markets, dominated by distinct strike ticks.
+- Leverage removal (2026-08-14) deleted the `ceil(leveraged_orders / 64)`
+  liquidation-book term from this law and the 5,000-order cap that bounded it.
+  Every measured threshold above was taken with leveraged orders present, so the
+  numbers are now conservative for the object wall and stale for compute; they
+  must be re-measured against the 1x-only footprint before this item is closed.
+  The benchmark cannot do that until the simulation parity model is updated.
 
 The run must carry **leveraged** orders, not the 1x-only book the superseded
 `treeNodeSweep` strategy used (`evidence/c1-object-cache-flush-2026-07-07.md`): 1x
@@ -617,8 +675,6 @@ correctness today.
 - `expiry_market` god-module decomposition (trade sequencing / fee decomposition
   / payment settlement / lifecycle in one 1170-line module) — decide a seam or
   consciously accept before the codebase grows further.
-- Public `liquidate()` takes an unbounded caller budget — low-priority self-DoS
-  probe; needs a raw liquidate builder (`ctx.submitLiquidate`) in the harness.
 
 ### H-7: Test-coverage gaps from the PR #1097 review
 
@@ -639,5 +695,3 @@ From the 2026-07-02 full-PR review (all Low; strengthenings, not blockers).
   boundaries are tested only on the aborting side; the all-in `max_cost` boundary
   pair (from the now-resolved H-2 fix) pins only a 2-of-4-component decomposition
   (zero builder fee / subsidy). Strengthen each to assert the passing boundary.
-  (`unstake_deep` receiving-side assertion — that the account received the DEEP —
-  added on PR #1106.)

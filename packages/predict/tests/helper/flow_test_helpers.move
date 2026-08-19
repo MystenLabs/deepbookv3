@@ -58,7 +58,6 @@ use sui::{
     test_scenario::{Self as test, Scenario, return_shared},
     tx_context::{Self, TxContext}
 };
-use token::deep::DEEP;
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 
@@ -220,18 +219,12 @@ public fun setup_market(tick: u64): Fixture {
         pyth_id,
     );
     let mut registry = scenario.take_shared<Registry>();
-    let mut config = scenario.take_shared<ProtocolConfig>();
+    let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
     );
-    // Flow fixtures exercise leverage / close / liquidation mechanics on short-lived
-    // markets, which sit inside the default 1h no-leverage window and so could not
-    // mint leveraged orders at all. Disable the block by default (a valid
-    // `window == 0` admin config); it is covered by the config unit tests and by
-    // dedicated flow tests that re-enable it.
-    config.set_template_no_leverage_window_ms(&admin_cap, 0);
     return_shared(config);
     return_shared(registry);
     let vault = scenario.take_shared<PoolVault>();
@@ -266,17 +259,7 @@ public fun setup_market_default(): Fixture {
 /// line. The market objects are returned to the shared pool; the caller
 /// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
-    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), false)
-}
-
-/// `setup_live_market` whose market snapshots the DEEP-stake benefit programme at
-/// FULL strength. Needed by any flow test asserting a staking discount or rebate,
-/// because the policy is frozen at market creation and cannot be raised afterwards.
-public fun setup_live_market_with_stake_benefits(
-    expiry_ms: u64,
-    live_price: u64,
-): (Fixture, ID, Trader) {
-    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), true)
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
@@ -286,19 +269,11 @@ public fun setup_everything(): (Fixture, ID, Trader) {
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
         test_constants::default_manager_deposit(),
-        false,
     )
 }
 
-fun setup_funded_live_market(
-    expiry_ms: u64,
-    live_price: u64,
-    deposit: u64,
-    stake_benefits: bool,
-): (Fixture, ID, Trader) {
+fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
-    // Must precede `create_expiry`: the market snapshots the switch at creation.
-    if (stake_benefits) fx.set_template_max_benefit_ratio(fixed_math::math::float_scaling!());
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -359,10 +334,6 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     return_shared(vault);
     self.scenario.next_tx(test_constants::admin());
     expiry_id
-}
-
-public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolConfig, budget: u64) {
-    config.set_trade_liquidation_budget(&self.admin_cap, budget);
 }
 
 /// Set the PLP supply-leg fee rate through the real admin path.
@@ -441,29 +412,6 @@ public fun set_pyth_spot_freshness_bundle(
     freshness_ms: u64,
 ) {
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
-}
-
-/// Set how much of the DEEP-stake benefit programme markets created from here on
-/// will run, through the real admin path. Markets snapshot this at creation, so a
-/// test asserting a staking fee discount or a stake-scaled loss rebate must call
-/// this BEFORE `create_expiry`; changing it afterwards cannot reach an existing
-/// market.
-public fun set_template_max_benefit_ratio(self: &mut Fixture, value: u64) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_max_benefit_ratio(&self.admin_cap, value);
-    return_shared(config);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-/// Retune the benefit-curve thresholds on the template, through the real admin
-/// path. Like the ratio above, this only reaches markets created afterwards.
-public fun set_template_benefit_powers(self: &mut Fixture, lower: u64, upper: u64) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_benefit_powers(&self.admin_cap, lower, upper);
-    return_shared(config);
-    self.scenario.next_tx(test_constants::admin());
 }
 
 /// Enable the EWMA congestion penalty with explicit parameters through the
@@ -551,24 +499,6 @@ public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
-    return_shared(config);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-public fun set_template_max_admission_leverage(self: &mut Fixture, value: u64) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_max_admission_leverage(&self.admin_cap, value);
-    return_shared(config);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-/// Re-enable the near-expiry no-leverage block that `setup_market` disables. Call
-/// before creating the expiry that should snapshot it.
-public fun set_template_no_leverage_window_ms(self: &mut Fixture, window_ms: u64) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_no_leverage_window_ms(&self.admin_cap, window_ms);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -773,44 +703,6 @@ public fun account_balance<T>(
     root: &AccumulatorRoot,
 ): u64 {
     wrapper.load_account().balance<T>(root, &self.clock)
-}
-
-/// Open position count for the trader's account in `expiry_id`.
-public fun position_count(wrapper: &AccountWrapper, expiry_id: ID): u64 {
-    predict_account::expiry_position_count(wrapper.load_account(), expiry_id)
-}
-
-/// Open position count for a bundled account in `expiry_id`.
-public fun position_count_bundle(account: &AccountBundle, expiry_id: ID): u64 {
-    position_count(&account.wrapper, expiry_id)
-}
-
-/// Cumulative trading fees the trader's account paid into `expiry_id`.
-public fun fees_paid(wrapper: &AccountWrapper, expiry_id: ID): u64 {
-    predict_account::trading_fees_paid(wrapper.load_account(), expiry_id)
-}
-
-/// Cumulative trading fees paid by a bundled account into `expiry_id`.
-public fun fees_paid_bundle(account: &AccountBundle, expiry_id: ID): u64 {
-    fees_paid(&account.wrapper, expiry_id)
-}
-
-/// Active (this-epoch-effective) DEEP stake on the trader's account.
-public fun active_stake(wrapper: &AccountWrapper): u64 {
-    predict_account::active_stake(wrapper.load_account())
-}
-
-/// Inactive (next-epoch) DEEP stake on the trader's account.
-public fun inactive_stake(wrapper: &AccountWrapper): u64 {
-    predict_account::inactive_stake(wrapper.load_account())
-}
-
-/// Deposit test DEEP into a bundled account's stored balance.
-public fun fund_deep_bundle(self: &mut Fixture, account_bundle: &mut AccountBundle, amount: u64) {
-    let auth = account::generate_auth(self.scenario.ctx());
-    let deep = coin::mint_for_testing<DEEP>(amount, self.scenario.ctx());
-    let account = account_bundle.wrapper.load_account_mut(auth);
-    account.deposit<DEEP>(deep);
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
@@ -1339,7 +1231,6 @@ public fun mint(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): u256 {
     self.mint_exact_quantity(
         config,
@@ -1352,7 +1243,6 @@ public fun mint(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         std::u64::max_value!(),
         std::u64::max_value!(),
     )
@@ -1367,7 +1257,6 @@ public fun mint_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): u256 {
     self.mint(
         &market.config,
@@ -1380,7 +1269,6 @@ public fun mint_bundle(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
     )
 }
 
@@ -1394,7 +1282,6 @@ public fun mint_bundle_with_bs(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): u256 {
     self.mint(
         &market.config,
@@ -1407,7 +1294,6 @@ public fun mint_bundle_with_bs(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
     )
 }
 
@@ -1420,7 +1306,6 @@ public fun mint_exact_quantity_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
 ): u256 {
@@ -1435,7 +1320,6 @@ public fun mint_exact_quantity_bundle(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         max_cost,
         max_probability,
     )
@@ -1449,7 +1333,6 @@ public fun quote_mint_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1472,14 +1355,13 @@ public fun quote_mint_bundle(
             0,
             quantity,
             true,
-            leverage,
             &self.clock,
             self.scenario.ctx(),
         )
 }
 
 /// Anonymous read-only budget-bias mint quote through a market bundle: quotes
-/// the largest lot-rounded quantity whose net premium fits `max_premium`.
+/// the largest lot-rounded quantity whose premium fits `max_premium`.
 public fun quote_mint_amount_bundle(
     self: &mut Fixture,
     market: &MarketBundle,
@@ -1487,7 +1369,6 @@ public fun quote_mint_amount_bundle(
     higher_tick: u64,
     max_premium: u64,
     min_quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1510,7 +1391,6 @@ public fun quote_mint_amount_bundle(
             max_premium,
             min_quantity,
             false,
-            leverage,
             &self.clock,
             self.scenario.ctx(),
         )
@@ -1524,7 +1404,6 @@ public fun quote_mint_for_account_bundle(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1548,7 +1427,6 @@ public fun quote_mint_for_account_bundle(
             0,
             quantity,
             true,
-            leverage,
             &account.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1565,7 +1443,6 @@ public fun quote_mint_for_account_amount_bundle(
     higher_tick: u64,
     max_premium: u64,
     min_quantity: u64,
-    leverage: u64,
 ): MintQuote {
     let pricer = market
         .market
@@ -1589,7 +1466,6 @@ public fun quote_mint_for_account_amount_bundle(
             max_premium,
             min_quantity,
             false,
-            leverage,
             &account.root,
             &self.clock,
             self.scenario.ctx(),
@@ -1609,7 +1485,6 @@ public fun mint_exact_quantity(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
 ): u256 {
@@ -1631,7 +1506,6 @@ public fun mint_exact_quantity(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         max_cost,
         max_probability,
         root,
@@ -1640,7 +1514,7 @@ public fun mint_exact_quantity(
     )
 }
 
-/// Mint the largest lot-rounded order through bundles for an explicit net-premium
+/// Mint the largest lot-rounded order through bundles for an explicit premium
 /// amount, minimum quantity, and all-in cost cap.
 public fun mint_exact_amount_bundle(
     self: &mut Fixture,
@@ -1650,7 +1524,6 @@ public fun mint_exact_amount_bundle(
     higher_tick: u64,
     amount: u64,
     min_quantity: u64,
-    leverage: u64,
     max_cost: u64,
 ): u256 {
     self.mint_exact_amount(
@@ -1665,12 +1538,11 @@ public fun mint_exact_amount_bundle(
         higher_tick,
         amount,
         min_quantity,
-        leverage,
         max_cost,
     )
 }
 
-/// Mint the largest lot-rounded order that fits inside a fixed net premium amount.
+/// Mint the largest lot-rounded order that fits inside a fixed premium amount.
 public fun mint_exact_amount(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -1684,7 +1556,6 @@ public fun mint_exact_amount(
     higher_tick: u64,
     amount: u64,
     min_quantity: u64,
-    leverage: u64,
     max_cost: u64,
 ): u256 {
     let auth = account::generate_auth(self.scenario.ctx());
@@ -1706,7 +1577,6 @@ public fun mint_exact_amount(
         higher_tick,
         amount,
         min_quantity,
-        leverage,
         max_cost,
         root,
         &self.clock,
@@ -1714,9 +1584,9 @@ public fun mint_exact_amount(
     )
 }
 
-/// Close (or partially close) a live order with owner auth. Returns
-/// `(closed_id, replacement_id)`.
-public fun redeem(
+/// Close (or partially close) a live order with owner auth. Returns a
+/// replacement ID only when quantity remains open.
+public fun redeem_live(
     self: &mut Fixture,
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
@@ -1729,7 +1599,7 @@ public fun redeem(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
-): (u256, Option<u256>) {
+): Option<u256> {
     let auth = account::generate_auth(self.scenario.ctx());
     let pricer = market.load_live_pricer(
         config,
@@ -1757,15 +1627,15 @@ public fun redeem(
 
 /// Close a live order through a market/account bundle while substituting an
 /// explicit Pyth feed for binding-guard tests.
-public fun redeem_bundle_with_pyth(
+public fun redeem_live_bundle_with_pyth(
     self: &mut Fixture,
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     pyth: &PythFeed,
     order_id: u256,
     close_quantity: u64,
-): (u256, Option<u256>) {
-    self.redeem(
+): Option<u256> {
+    self.redeem_live(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1781,14 +1651,14 @@ public fun redeem_bundle_with_pyth(
 }
 
 /// Close a live order through a market/account bundle.
-public fun redeem_bundle(
+public fun redeem_live_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
     close_quantity: u64,
-): (u256, Option<u256>) {
-    self.redeem(
+): Option<u256> {
+    self.redeem_live(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1805,7 +1675,7 @@ public fun redeem_bundle(
 
 /// Close a live order through a market/account bundle with explicit close-side
 /// probability and proceeds floors.
-public fun redeem_bundle_with_limits(
+public fun redeem_live_bundle_with_limits(
     self: &mut Fixture,
     market: &mut MarketBundle,
     account: &mut AccountBundle,
@@ -1813,8 +1683,8 @@ public fun redeem_bundle_with_limits(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
-): (u256, Option<u256>) {
-    self.redeem(
+): Option<u256> {
+    self.redeem_live(
         &market.config,
         &market.oracle_registry,
         &mut account.wrapper,
@@ -1839,21 +1709,18 @@ public fun redeem_settled(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+) {
     let account_registry = self.scenario.take_shared<AccountRegistry>();
-    let (closed_id, replacement_id) = market.redeem_settled_permissionless(
+    market.redeem_settled_permissionless(
         &account_registry,
         wrapper,
         config,
         order_id,
-        close_quantity,
         root,
         &self.clock,
         self.scenario.ctx(),
     );
     return_shared(account_registry);
-    (closed_id, replacement_id)
 }
 
 /// Owner-authorized settled redeem: clears a settled order using the current
@@ -1865,15 +1732,13 @@ public fun redeem_settled_with_owner_auth(
     root: &AccumulatorRoot,
     market: &mut ExpiryMarket,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+) {
     let auth = account::generate_auth(self.scenario.ctx());
     market.redeem_settled(
         wrapper,
         auth,
         config,
         order_id,
-        close_quantity,
         root,
         &self.clock,
         self.scenario.ctx(),
@@ -1886,15 +1751,13 @@ public fun redeem_settled_bundle(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+) {
     self.redeem_settled(
         &market.config,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
         order_id,
-        close_quantity,
     )
 }
 
@@ -1904,15 +1767,13 @@ public fun redeem_settled_with_owner_auth_bundle(
     market: &mut MarketBundle,
     account: &mut AccountBundle,
     order_id: u256,
-    close_quantity: u64,
-): (u256, Option<u256>) {
+) {
     self.redeem_settled_with_owner_auth(
         &market.config,
         &mut account.wrapper,
         &account.root,
         &mut market.market,
         order_id,
-        close_quantity,
     )
 }
 
@@ -1950,85 +1811,6 @@ public fun try_settle_bundle_with_pyth(
         &market.config,
         &market.oracle_registry,
         pyth,
-    )
-}
-
-/// Run a budgeted liquidation pass over the market's active leveraged orders.
-/// Returns the number of orders liquidated.
-public fun liquidate(
-    self: &mut Fixture,
-    config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    market: &mut ExpiryMarket,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    budget: u64,
-): u64 {
-    let pricer = market.load_live_pricer(
-        config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    market.liquidate(config, &pricer, budget, &self.clock)
-}
-
-/// Run a budgeted liquidation pass through a market bundle.
-public fun liquidate_bundle(self: &mut Fixture, market: &mut MarketBundle, budget: u64): u64 {
-    self.liquidate(
-        &market.config,
-        &market.oracle_registry,
-        &mut market.market,
-        &market.pyth,
-        &market.bs,
-        budget,
-    )
-}
-
-/// Try to liquidate one active leveraged order by ID. Returns whether it was
-/// liquidated.
-public fun liquidate_order(
-    self: &mut Fixture,
-    config: &ProtocolConfig,
-    oracle_registry: &OracleRegistry,
-    market: &mut ExpiryMarket,
-    pyth: &PythFeed,
-    bs: &BlockScholesFeed,
-    order_id: u256,
-): bool {
-    let pricer = market.load_live_pricer(
-        config,
-        oracle_registry,
-        pyth,
-        bs.values(),
-        bs.svi(),
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    market.liquidate_order(
-        config,
-        &pricer,
-        order_id,
-        &self.clock,
-    )
-}
-
-/// Try to liquidate one bundled active leveraged order by ID.
-public fun liquidate_order_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    order_id: u256,
-): bool {
-    self.liquidate_order(
-        &market.config,
-        &market.oracle_registry,
-        &mut market.market,
-        &market.pyth,
-        &market.bs,
-        order_id,
     )
 }
 
@@ -2115,87 +1897,6 @@ public fun rebalance_expiry_cash_bundle(self: &Fixture, market: &mut MarketBundl
     );
 }
 
-/// Stake DEEP through the production PLP vault path using account owner auth.
-public fun stake_deep_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    account_bundle: &mut AccountBundle,
-    amount: u64,
-) {
-    let auth = account::generate_auth(self.scenario.ctx());
-    market
-        .vault
-        .stake_deep(
-            &mut account_bundle.wrapper,
-            auth,
-            &market.config,
-            amount,
-            &account_bundle.root,
-            &self.clock,
-            self.scenario.ctx(),
-        );
-}
-
-/// Withdraw all staked DEEP back to the account through the production PLP path.
-public fun unstake_deep_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    account_bundle: &mut AccountBundle,
-) {
-    let auth = account::generate_auth(self.scenario.ctx());
-    market
-        .vault
-        .unstake_deep(
-            &mut account_bundle.wrapper,
-            auth,
-            &market.config,
-            &account_bundle.root,
-            &self.clock,
-            self.scenario.ctx(),
-        );
-}
-
-/// Claim a settled trading-loss rebate through owner auth.
-public fun claim_trading_loss_rebate_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    account_bundle: &mut AccountBundle,
-) {
-    let auth = account::generate_auth(self.scenario.ctx());
-    market
-        .vault
-        .claim_trading_loss_rebate(
-            &mut market.market,
-            &mut account_bundle.wrapper,
-            auth,
-            &market.config,
-            &account_bundle.root,
-            &self.clock,
-            self.scenario.ctx(),
-        );
-}
-
-/// Claim a settled trading-loss rebate through Predict app-auth automation.
-public fun claim_trading_loss_rebate_permissionless_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    account_bundle: &mut AccountBundle,
-) {
-    let account_registry = self.scenario.take_shared<AccountRegistry>();
-    market
-        .vault
-        .claim_trading_loss_rebate_permissionless(
-            &mut market.market,
-            &mut account_bundle.wrapper,
-            &account_registry,
-            &market.config,
-            &account_bundle.root,
-            &self.clock,
-            self.scenario.ctx(),
-        );
-    return_shared(account_registry);
-}
-
 public fun current_nav(
     self: &mut Fixture,
     market: &ExpiryMarket,
@@ -2228,16 +1929,14 @@ public fun current_nav_bundle(self: &mut Fixture, market: &MarketBundle): u64 {
 }
 
 /// Read one order's gross-of-fees live holder value through a market bundle.
-public fun order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
+public fun live_order_value_bundle(self: &mut Fixture, market: &MarketBundle, order_id: u256): u64 {
     let pricer = self.load_pricer_bundle(market);
-    market.market.order_value(option::some(pricer), order_id)
+    market.market.live_order_value(&pricer, order_id)
 }
 
-/// Read one settled or already-closed order's terminal holder value with no
-/// pricer — the only way to value an order once the market has settled, since no
-/// `Pricer` can be constructed post-expiry.
-public fun settled_order_value_bundle(market: &MarketBundle, order_id: u256): u64 {
-    market.market.order_value(option::none(), order_id)
+/// Read one settled order's terminal holder payout.
+public fun settled_order_payout_bundle(market: &MarketBundle, order_id: u256): u64 {
+    market.market.settled_order_payout(order_id)
 }
 
 public fun load_pricer(
@@ -2390,10 +2089,11 @@ public fun finish_flush_bundle(
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
-/// liability plus the unresolved rebate reserve. Assert after every cash-mutating
-/// flow (mint / redeem / liquidate / sync / rebate).
+/// liability plus its isolated inventory-impact escrow, mirroring the contract's
+/// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
+/// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
-    assert!(market.cash_balance() >= market.payout_liability() + market.rebate_reserve());
+    assert!(market.cash_balance() >= market.payout_liability() + market.inventory_impact_reserve());
 }
 
 /// S1 backing assertion for a market bundle.
@@ -2401,31 +2101,25 @@ public fun assert_market_backed_bundle(market: &MarketBundle) {
     assert_market_backed(&market.market);
 }
 
-/// Expected snapshot of one expiry market's cash-side accounting, asserted in one
-/// call by `check_market_cash`.
+/// Expected snapshot of one expiry market's cash and payout backing, asserted in
+/// one call by `check_market_cash`. The isolated inventory-impact escrow is not a
+/// field here — it ships at a zero rate, and `assert_market_backed` covers it.
 public struct ExpectedMarketCash has copy, drop {
     /// DUSDC held by the expiry (`market.cash_balance()`).
     cash_balance: u64,
     /// Conservative payout backing owed to open + settled orders.
     payout_liability: u64,
-    /// Cash reserved for unresolved trading-loss rebates.
-    rebate_reserve: u64,
 }
 
-public fun expected_market_cash(
-    cash_balance: u64,
-    payout_liability: u64,
-    rebate_reserve: u64,
-): ExpectedMarketCash {
-    ExpectedMarketCash { cash_balance, payout_liability, rebate_reserve }
+public fun expected_market_cash(cash_balance: u64, payout_liability: u64): ExpectedMarketCash {
+    ExpectedMarketCash { cash_balance, payout_liability }
 }
 
-/// Assert an expiry market's full cash sheet. Each field is an exact `assert_eq!`,
-/// and the S1 backing inequality is checked on top.
+/// Assert an expiry market's cash and payout backing. Each field is an exact
+/// `assert_eq!`, and the S1 backing inequality is checked on top.
 public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash) {
     assert_eq!(market.cash_balance(), expected.cash_balance);
     assert_eq!(market.payout_liability(), expected.payout_liability);
-    assert_eq!(market.rebate_reserve(), expected.rebate_reserve);
     assert_market_backed(market);
 }
 
@@ -2436,57 +2130,37 @@ public fun check_market_cash_bundle(market: &MarketBundle, expected: ExpectedMar
 
 // === Account state-sheet assertions ===
 
-/// A full expected snapshot of one account's scalar state plus its per-expiry
-/// trading state, asserted in one call by `check_manager`.
+/// A full expected snapshot of one account's scalar state, asserted in one call
+/// by `check_manager`.
 public struct ExpectedManagerState has copy, drop {
     /// Free DUSDC balance (`account.balance<DUSDC>`).
     balance: u64,
-    /// Cumulative trading fees paid into the checked expiry.
-    fees_paid: u64,
-    /// Open position count in the checked expiry.
-    position_count: u64,
-    /// Active (this-epoch-effective) DEEP stake.
-    active_stake: u64,
-    /// Inactive (next-epoch) DEEP stake.
-    inactive_stake: u64,
 }
 
-public fun expected_manager_state(
-    balance: u64,
-    fees_paid: u64,
-    position_count: u64,
-    active_stake: u64,
-    inactive_stake: u64,
-): ExpectedManagerState {
-    ExpectedManagerState { balance, fees_paid, position_count, active_stake, inactive_stake }
+public fun expected_manager_state(balance: u64): ExpectedManagerState {
+    ExpectedManagerState { balance }
 }
 
-/// Assert an account's full state sheet against `expected` for `expiry_id`. The DUSDC
-/// balance read includes unsettled accumulator funds (zero with the empty test root,
-/// so it equals stored free balance).
+/// Assert an account's state sheet against `expected`. The DUSDC balance read
+/// includes unsettled accumulator funds (zero with the empty test root, so it
+/// equals stored free balance).
 public fun check_manager(
     self: &Fixture,
     wrapper: &AccountWrapper,
     root: &AccumulatorRoot,
-    expiry_id: ID,
     expected: ExpectedManagerState,
 ) {
     let account = wrapper.load_account();
     assert_eq!(account.balance<DUSDC>(root, &self.clock), expected.balance);
-    assert_eq!(predict_account::trading_fees_paid(account, expiry_id), expected.fees_paid);
-    assert_eq!(predict_account::expiry_position_count(account, expiry_id), expected.position_count);
-    assert_eq!(predict_account::active_stake(account), expected.active_stake);
-    assert_eq!(predict_account::inactive_stake(account), expected.inactive_stake);
 }
 
-/// Assert a bundled account's full state sheet.
+/// Assert a bundled account's state sheet.
 public fun check_manager_bundle(
     self: &Fixture,
     account: &AccountBundle,
-    expiry_id: ID,
     expected: ExpectedManagerState,
 ) {
-    self.check_manager(&account.wrapper, &account.root, expiry_id, expected);
+    self.check_manager(&account.wrapper, &account.root, expected);
 }
 
 // === Accessors ===
@@ -2519,6 +2193,10 @@ public fun begin_valuation(bundle: &mut MarketBundle) {
 /// Account balance through an account bundle.
 public fun account_balance_bundle<T>(self: &Fixture, account: &AccountBundle): u64 {
     self.account_balance<T>(&account.wrapper, &account.root)
+}
+
+public fun account_id_bundle(account: &AccountBundle): ID {
+    account.wrapper.load_account().account_id()
 }
 
 /// Whether the bundled account holds an open position.

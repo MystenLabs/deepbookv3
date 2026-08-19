@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Defines Predict's upgrade-required scales, hard limits, time units, and event discriminators.
-/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, DEEP, and contract quantities use six decimal base units unless stated otherwise.
+/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, and contract quantities use six decimal base units unless stated otherwise.
 module deepbook_predict::constants;
 
 // === Package Versioning ===
@@ -25,8 +25,8 @@ public macro fun dusdc_decimals(): u8 { 6 }
 /// Minimum position quantity increment.
 public macro fun position_lot_size(): u64 { 10_000 }
 
-/// Minimum mint-time net premium, excluding trading and builder fees.
-public macro fun min_net_premium(): u64 { 1_000_000 }
+/// Minimum mint-time premium, excluding trading and builder fees.
+public macro fun min_premium(): u64 { 1_000_000 }
 
 // === Pool Funding ===
 
@@ -72,31 +72,8 @@ public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 /// Exceeding it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object`.
 public(package) macro fun object_cache_budget(): u64 { 1_000 }
 
-/// Orders one `liquidation_book` page holds before it splits. Single-homed here so the
-/// capacity derivation below and the book itself cannot drift apart.
-public(package) macro fun liquidation_page_capacity(): u64 { 64 }
-
-/// Liquidation-book pages one market can carry. `correction_value` scans every page
-/// during valuation, so these compete with payout-tree nodes for the same
-/// per-transaction budget.
-///
-/// The divisor is **half** the page capacity, not the capacity. `insert_active_order_id`
-/// splits an over-full page at its midpoint, leaving 32 and 33 — never 64 — and
-/// `merge_page_if_small` declines to merge exactly when the neighbour is full. Ascending
-/// order ids (a bot minting a monotone strike ladder at constant size and floor) always
-/// land in the last page, so each page splits once and is never revisited, and occupancy
-/// settles at the split floor. Dividing by the full capacity would describe a perfectly
-/// packed book: the best case, not the bound.
-public(package) macro fun liquidation_orders_per_page_worst_case(): u64 {
-    liquidation_page_capacity!() / 2
-}
-
-public(package) macro fun max_liquidation_pages(): u64 {
-    max_active_leveraged_orders!().div_ceil(liquidation_orders_per_page_worst_case!())
-}
-
-/// Headroom for the children a single `plp::value_expiry` loads besides the payout tree
-/// and the liquidation book — chiefly the registered-expiry row. Source inspection puts
+/// Headroom for the children a single `plp::value_expiry` loads besides the payout
+/// tree — chiefly the registered-expiry row. Source inspection puts
 /// the real figure at 1-2: Predict uses `sui::table` only, so each row is one child, and
 /// a `Table` stored inline in its parent is not itself a cached child. UNMEASURED, and
 /// set far above that estimate because running out is a pool-wide LP freeze rather than
@@ -107,9 +84,9 @@ public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 ///
 /// **Derived, not chosen.** `plp::value_expiry` walks every node of one market's tree
 /// in a single transaction, so the cap has to leave room for everything else that
-/// transaction loads. Deriving it means the two caps cannot drift apart: raising
-/// `max_active_leveraged_orders` shrinks this automatically instead of silently
-/// pushing the flush over the ceiling. A cap above the budget is not a tuning mistake
+/// transaction loads. Deriving it keeps the cap tied to the budget it must fit inside
+/// rather than to a number someone chose once. A cap above the budget is not a tuning
+/// mistake
 /// — it makes a market permanently un-valuable, and `finish_flush` requires every
 /// snapshotted market valued, so one such market freezes LP supply and withdraw
 /// pool-wide until it expires. No operator lever shortens that: a live market's tree
@@ -119,13 +96,10 @@ public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 /// **Precondition:** one `value_expiry` per transaction, never batched with another
 /// market's or with `finish_flush` (whose queue drain walks its own pages). The
 /// derivation bounds ONE market's valuation; batching re-creates the joint budget this
-/// exists to remove. See RP-28.
+/// exists to remove. See RP-30.
 public(package) macro fun max_payout_tree_nodes(): u64 {
-    object_cache_budget!() - max_liquidation_pages!() - valuation_base_children_reserve!()
+    object_cache_budget!() - valuation_base_children_reserve!()
 }
-
-/// Maximum active leveraged orders one expiry market may carry into NAV.
-public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
 
 // === Time Constants ===
 
@@ -145,22 +119,6 @@ public(package) macro fun one_month_ms(): u64 { 30 * one_day_ms!() }
 /// Milliseconds in a fixed 365-day year.
 public(package) macro fun one_year_ms(): u64 { 365 * one_day_ms!() }
 
-// === Staking ===
-
-/// Raw units in one whole DEEP (DEEP uses 6 decimals).
-public macro fun deep_decimals(): u64 { 1_000_000 }
-
-/// Trading-fee discount at full active stake, in FLOAT_SCALING (fixed 50% cap).
-/// The loss rebate has no staking-side cap — its size is governed by the
-/// per-expiry `trading_loss_rebate_rate` in `expiry_cash_config`.
-public(package) macro fun max_fee_discount(): u64 { 500_000_000 }
-
-// === Liquidation ===
-
-/// Divisor for the passive tail slice of each liquidation candidate budget; the
-/// head-priority slice takes the remainder. Divisor 3 => 1/3 tail, 2/3 head.
-public(package) macro fun liquidation_tail_scan_divisor(): u64 { 3 }
-
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.
@@ -171,7 +129,7 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
 
-/// Fraction of the post-staking trading fee paid by sponsor-funded incentives.
+/// Fraction of the trading fee paid by sponsor-funded incentives.
 public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
 
 /// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.

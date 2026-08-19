@@ -4,8 +4,8 @@
 /// Flow coverage for the public mint quote surface: a quote's `all_in_cost` is
 /// the exact account debit of a same-state mint (quotes and settlement consume
 /// one shared computation) — pinned with every fee component at zero AND with
-/// each component nonzero (sponsor subsidy, builder fee, stake discount, EWMA
-/// congestion penalty); the account-aware quote diverges from the anonymous
+/// each component nonzero (sponsor subsidy, builder fee, EWMA congestion
+/// penalty); the account-aware quote diverges from the anonymous
 /// quote in the right direction per component; quotes share the mint path's
 /// gates and admission aborts; and the settlement readers answer without
 /// aborting on a live market.
@@ -23,7 +23,7 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
-/// Independent fee components for the at-the-money `mint_quantity()` (1e9) 1x
+/// Independent fee components for the at-the-money `mint_quantity()` (1e9)
 /// mint. The premium is read from the quote rather than written down as a
 /// literal — the exact integer a Cody rational approximation lands on cannot be
 /// derived independently, and a hand-written one encoded a rounding artifact as
@@ -50,11 +50,6 @@ const SUBSIDY_AT_RATE_CAP: u64 = 1_000_000;
 /// min(500_000, 5_000_000) = 500_000, paid on top of the anonymous cost.
 const BUILDER_FEE_ATM: u64 = 500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
-
-/// Full-benefit stake (>= upper_benefit_power) earns the max fee discount:
-/// benefit_ratio = 1.0, discount_fraction = max_fee_discount (0.5), so the fee
-/// halves to 2_500_000 and the all-in cost drops by the same 2_500_000.
-const DISCOUNTED_TRADING_FEE: u64 = 2_500_000;
 
 /// The congestion surcharge is flat once it fires: default_ewma_penalty_rate
 /// (0.001) * quantity (1e9) = 1_000_000, independent of the z-score magnitude.
@@ -90,11 +85,10 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
-    // A 1x order fronts its full premium, and `mint_quantity()` is exactly one
-    // contract, so the premium is the entry probability with nothing to round.
-    let premium = quote.net_premium();
+    // `mint_quantity()` is exactly one contract, so the premium is the entry
+    // probability with nothing to round.
+    let premium = quote.premium();
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(premium, quote.entry_probability());
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
@@ -111,7 +105,6 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -142,7 +135,6 @@ fun account_quote_matches_anonymous_without_stake_or_builder() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     let for_account = fx.quote_mint_for_account_bundle(
         &market,
@@ -150,17 +142,16 @@ fun account_quote_matches_anonymous_without_stake_or_builder() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     assert_eq!(for_account.entry_probability(), anonymous.entry_probability());
-    assert_eq!(for_account.net_premium(), anonymous.net_premium());
+    assert_eq!(for_account.premium(), anonymous.premium());
     assert_eq!(for_account.trading_fee(), anonymous.trading_fee());
     assert_eq!(for_account.fee_incentive_subsidy(), anonymous.fee_incentive_subsidy());
     assert_eq!(for_account.builder_fee(), anonymous.builder_fee());
     helpers::assert_atm_entry_probability(anonymous.entry_probability());
     assert_eq!(for_account.penalty_fee(), anonymous.penalty_fee());
-    assert_eq!(for_account.all_in_cost(), anonymous.net_premium() + MIN_TRADING_FEE);
+    assert_eq!(for_account.all_in_cost(), anonymous.premium() + MIN_TRADING_FEE);
     assert_eq!(for_account.all_in_cost(), anonymous.all_in_cost());
 
     helpers::return_account_bundle(account);
@@ -186,13 +177,12 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     // The expiry still collects the full fee; the sponsor covers the subsidy.
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_RATE_CAP);
-    let with_subsidy = quote.net_premium() + MIN_TRADING_FEE - SUBSIDY_AT_RATE_CAP;
+    let with_subsidy = quote.premium() + MIN_TRADING_FEE - SUBSIDY_AT_RATE_CAP;
     assert_eq!(quote.all_in_cost(), with_subsidy);
 
     let order = fx.mint_exact_quantity_bundle(
@@ -201,7 +191,6 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -235,9 +224,8 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
-    let premium = anonymous.net_premium();
+    let premium = anonymous.premium();
     helpers::assert_atm_entry_probability(anonymous.entry_probability());
     assert_eq!(anonymous.builder_fee(), 0);
     assert_eq!(anonymous.all_in_cost(), premium + MIN_TRADING_FEE);
@@ -248,7 +236,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(for_account.builder_fee(), BUILDER_FEE_ATM);
     let with_builder = premium + MIN_TRADING_FEE + BUILDER_FEE_ATM;
@@ -260,7 +247,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         for_account.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -270,154 +256,6 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
         fx.account_balance_bundle<DUSDC>(&account),
         test_constants::mint_deposit() - with_builder,
     );
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun raising_the_stake_benefit_template_cannot_discount_an_existing_market() {
-    // The mint-side twin of the rebate regression in `settlement_flow_tests`. The
-    // market below is created while the template pays nothing, so its snapshot is
-    // zero; raising the template afterwards must not reach it. Were the fee path
-    // reading live policy, this fully-staked mint would be charged the discounted
-    // fee and the balance assertion would fail.
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.set_template_max_benefit_ratio(fixed_math::math::float_scaling!());
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
-    fx.stake_deep_bundle(
-        &mut market,
-        &mut account,
-        config_constants::default_upper_benefit_power!(),
-    );
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    // Roll the stake so it is active: the undiscounted fee below is the market's
-    // snapshot, not an inactive-stake artifact.
-    fx.scenario_mut().next_epoch(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let quote = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-    );
-    assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
-
-    let premium = quote.net_premium();
-    fx.mint_exact_quantity_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-        quote.all_in_cost(),
-        std::u64::max_value!(),
-    );
-    assert_eq!(
-        fx.account_balance_bundle<dusdc::dusdc::DUSDC>(&account),
-        test_constants::mint_deposit() - (premium + MIN_TRADING_FEE),
-    );
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test]
-fun stale_stake_quote_overstates_and_rolled_quote_matches_discounted_debit() {
-    // Benefits ship disabled and freeze at market creation; this test is about the
-    // discount, so the market must snapshot them on.
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market_with_stake_benefits(
-        test_constants::default_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    fx.fund_deep_bundle(&mut account, config_constants::default_upper_benefit_power!());
-    fx.stake_deep_bundle(
-        &mut market,
-        &mut account,
-        config_constants::default_upper_benefit_power!(),
-    );
-
-    // Same-epoch stake is inactive; the as-is quote stays undiscounted.
-    let same_epoch = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-    );
-    helpers::assert_atm_entry_probability(same_epoch.entry_probability());
-    assert_eq!(same_epoch.trading_fee(), MIN_TRADING_FEE);
-    assert_eq!(same_epoch.all_in_cost(), same_epoch.net_premium() + MIN_TRADING_FEE);
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.scenario_mut().next_epoch(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    // The stake is now rollable but un-rolled; the quote reads active_stake
-    // as-is, so it still shows the full cost — it can only overstate.
-    let stale = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-    );
-    let premium = stale.net_premium();
-    assert_eq!(stale.all_in_cost(), premium + MIN_TRADING_FEE);
-
-    // The mint rolls the stake first, so the stale quote as max_cost cannot
-    // abort and the actual debit is the discounted total.
-    let order = fx.mint_exact_quantity_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-        stale.all_in_cost(),
-        std::u64::max_value!(),
-    );
-    assert!(helpers::has_position_bundle(&account, expiry_id, order));
-    assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
-        test_constants::mint_deposit() - (premium + DISCOUNTED_TRADING_FEE),
-    );
-
-    // Post-roll, the account quote reads the active stake and matches the
-    // discounted charge exactly, now below the anonymous quote.
-    let rolled = fx.quote_mint_for_account_bundle(
-        &market,
-        &account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
-    );
-    assert_eq!(rolled.trading_fee(), DISCOUNTED_TRADING_FEE);
-    assert_eq!(rolled.all_in_cost(), rolled.net_premium() + DISCOUNTED_TRADING_FEE);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -456,7 +294,6 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         VARIANCE_SEED_QUANTITY,
-        test_constants::leverage_one_x(),
         std::u64::max_value!(),
         std::u64::max_value!(),
     );
@@ -487,11 +324,10 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     assert_eq!(quote.penalty_fee(), EWMA_PENALTY_FLAT);
-    let with_penalty = quote.net_premium() + MIN_TRADING_FEE + EWMA_PENALTY_FLAT;
+    let with_penalty = quote.premium() + MIN_TRADING_FEE + EWMA_PENALTY_FLAT;
     assert_eq!(quote.all_in_cost(), with_penalty);
 
     let order = fx.mint_exact_quantity_bundle(
@@ -500,7 +336,6 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -528,7 +363,6 @@ fun quote_mint_on_paused_market_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
 
     abort 999
@@ -550,7 +384,6 @@ fun quote_mint_non_lot_quantity_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity() + 1,
-        test_constants::leverage_one_x(),
     );
 
     abort 999

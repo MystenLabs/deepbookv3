@@ -7,7 +7,7 @@
 #[test_only]
 module deepbook_predict::inventory_impact_flow_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{constants, flow_test_helpers as helpers, order, test_constants};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
@@ -16,8 +16,6 @@ const IMPACT_MAX_RATE: u64 = 200_000_000; // 20%
 const BACKING_BUFFER_LAMBDA: u64 = 500_000_000;
 const EXPECTED_SINGLE_ORDER_CHARGE: u64 = 10_000_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-const DROPPED_SPOT: u64 = 99_000_000_000;
 
 #[test]
 fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
@@ -35,12 +33,11 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(quote.inventory_impact_charge(), EXPECTED_SINGLE_ORDER_CHARGE);
     assert_eq!(
         quote.all_in_cost(),
-        quote.net_premium()
+        quote.premium()
             + (quote.trading_fee() - quote.fee_incentive_subsidy())
             + quote.builder_fee()
             + quote.penalty_fee()
@@ -55,7 +52,6 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
@@ -67,7 +63,7 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     assert_eq!(
         helpers::market(&market).cash_balance(),
         cash_before_mint
-            + quote.net_premium()
+            + quote.premium()
             + quote.trading_fee()
             + quote.penalty_fee()
             + EXPECTED_SINGLE_ORDER_CHARGE,
@@ -79,9 +75,9 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
     // liability reduction returns the exact charge independently of the normal
     // close fee.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    let gross = fx.order_value_bundle(&market, order_id);
+    let gross = fx.live_order_value_bundle(&market, order_id);
     let balance_before_close = fx.account_balance_bundle<DUSDC>(&account);
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order_id,
@@ -117,7 +113,6 @@ fun settlement_releases_unused_inventory_escrow_to_pool_surplus() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), EXPECTED_SINGLE_ORDER_CHARGE);
     let cash_before_settlement = helpers::market(&market).cash_balance();
@@ -138,52 +133,23 @@ fun settlement_releases_unused_inventory_escrow_to_pool_surplus() {
 }
 
 #[test]
-fun liquidation_reduces_risk_without_paying_an_inventory_rebate() {
-    let (mut fx, expiry_id, trader) = setup_enabled_market();
+fun live_order_value_does_not_require_book_membership() {
+    let (mut fx, expiry_id, _) = setup_enabled_market();
     let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.seed_market_cash(
-        helpers::market_mut(&mut market),
-        test_constants::default_seeded_expiry_cash(),
-    );
 
-    let quote = fx.quote_mint_bundle(
-        &market,
+    let hypothetical = order::new_from_ticks(
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        LEVERAGE_TWO_X,
+        0,
     );
-    assert!(quote.inventory_impact_charge() > 0);
-    let order_id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        LEVERAGE_TWO_X,
-    );
-    let reserve_after_mint = helpers::market(&market).inventory_impact_reserve();
-    let balance_after_mint = fx.account_balance_bundle<DUSDC>(&account);
+    let value = fx.live_order_value_bundle(&market, hypothetical.id());
+    // `mint_quantity()` is exactly the 1e9 fixed-point scale, so the range value
+    // has the same integer representation as the independently generated
+    // short-expiry ATM probability.
+    helpers::assert_atm_entry_probability_short_expiry(value);
 
-    // One tick below the lower strike makes the UP digital worthless in the
-    // fixture and sends the leveraged order through the zero-payout liquidation
-    // arm. Risk falls, but only a voluntary live close earns a rebate.
-    fx.advance_live_oracle_bundle(&mut market, DROPPED_SPOT);
-    fx.redeem_bundle(
-        &mut market,
-        &mut account,
-        order_id,
-        test_constants::mint_quantity(),
-    );
-
-    assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_after_mint);
-    assert_eq!(helpers::market(&market).inventory_impact_reserve(), reserve_after_mint);
-    assert_eq!(helpers::market(&market).payout_liability(), 0);
-    helpers::assert_market_backed_bundle(&market);
-
-    helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
 }

@@ -9,6 +9,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Economic model
 
+> **PARTIALLY RETIRED 2026-08-14 — leverage removed.** Retired: the first three bullets (deterministic floor, static per-order floor, pure knock-out liquidation) and "v1 scope exclusions". They describe the pre-removal floor/knock-out design; every position is now 1x, with no floor, no financed amount, and no liquidation. Kept for the decision record — see "Leverage removal" at the end of this document. **Still live:** D025 (mint-only ask band) and the adjusted-digital clamp decision, which is RP-15's design record.
+
 - **Leverage is a deterministic floor, not a debt overlay.** A position is one
   binary (digital) contract whose live value is `range-probability value − a
   static floor`, floored at 0 (1× = zero floor); the floor is
@@ -53,20 +55,30 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Data structures
 
+> **PARTIALLY RETIRED 2026-08-14 — leverage removed.** The liquidation book is deleted; only the payout tree remains, and the packed order id no longer carries floor shares or serves as a sort key. Retired: the "Two sparse strike indexes" bullet below, and the floor/sort-key clauses of the order-id bullets. Kept for the decision record.
+
 - **The order id is a packed `u256` — the single on-chain term store.** It packs
   the durable post-mint terms (quantity, floor shares, two strike ticks,
   sequence); there is no separate order table. It is self-authenticating,
   costs zero per-order storage, and doubles as the liquidation sort key.
   *Rejected:* unpacking to a sequence + `Table<u64, Order>`.
+  > *2026-08-14:* the layout is now 132 dense bits — quantity lots, two strike
+  > ticks, sequence. `floor_shares` is gone and there is no liquidation sort key.
+  > The rest of the decision (packed id as the single term store) still holds.
 - **Mint-admission policy is kept out of the order id.** Admission caps and price
   thresholds live in config, not in order decoding, so a future policy change can
   never retroactively invalidate an existing packed id. *Rejected:* also packing the
   entry price (`entry_probability` / `leverage_rank`) into the id — `floor_shares`
   reconstructs everything needed; revisit only if a flow needs the lossless entry
   price on-chain.
+  > *2026-08-14:* the rejection still stands, but its reason no longer does —
+  > `floor_shares` is gone, so nothing in the id reconstructs an entry price.
+  > Admission policy stays out of the id because a policy change must never
+  > retroactively invalidate an existing packed id.
 - **`admin` is a dependency-leaf capability module.** *Rejected:* folding
   `admin`/`AdminCap` into `registry` — it creates a Move import cycle
   (`registry → protocol_config → admin`).
+
 - **Two sparse strike indexes, both tick-keyed.** A sparse height-balanced (AVL)
   payout tree and a flat liquidation book coexist; the exact live NAV is read by
   decomposing the per-order liability across the two (`Σ qty·P` over the tree
@@ -161,9 +173,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   change of a convex potential whose marginal rate rises linearly to
   `inventory_impact_max_rate` at `B = max_expiry_allocation`, then remains capped.
   The rate snapshots at market creation, ships at zero, and cannot exceed 1.0.
-  Charges sit in an isolated escrow excluded from NAV and every ordinary fee or
-  loss-rebate basis; liquidation earns no rebate, and settlement releases the
-  residual. One deterministic integer state function makes trade splitting and
+  Charges sit in an isolated escrow excluded from NAV and every ordinary fee
+  basis, and settlement releases the residual. One deterministic integer state function makes trade splitting and
   every closed cross-range cycle telescope exactly. The payout tree supplies
   O(log n) in-range/complement peaks needed to compute the true marginal move in
   `M`; the implementation evaluates the complete before/after liability so
@@ -177,17 +188,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Access and operations (recent)
 
-- **Trading-loss-rebate claims have owner and keeper paths.**
-  `claim_trading_loss_rebate` consumes owner auth; `claim_trading_loss_rebate_permissionless`
-  uses Predict app-auth so a keeper cron can resolve accounts after settlement.
-  Intentional: post-settlement cleanout must not depend on each user acting, but
-  deauthorizing `PredictApp` should stop keeper automation without blocking owner
-  claims. *Accepted residual (now measured — predeploy RP-11):* a keeper resolves at
-  the claim-time active-stake snapshot, but the ~24h stake-activation gate makes
-  gaming that snapshot structurally unreachable on the sub-epoch cadences (1m/5m/1h),
-  and the permissionless cleanout is self-incentivized (negative net gas — a searcher
-  is paid the storage rebate to run the redeems and the claim, standalone or bundled),
-  so accounts resolve without relying on a protocol cron.
+- **Trading-loss-rebate claims have owner and keeper paths.** *RETIRED 2026-08-18 —
+  the rebate was removed; see "Staking and the trading-loss rebate removal" below.*
+  `claim_trading_loss_rebate` consumed owner auth and `claim_trading_loss_rebate_permissionless`
+  Predict app-auth, so a keeper cron could resolve accounts after settlement without
+  blocking owner claims when `PredictApp` was deauthorized. The surviving instance of
+  that pattern is `redeem_settled` / `redeem_settled_permissionless`.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
   protocol profit and exposes no admin withdrawal path. Decided (2026-07-21,
   predeploy RP-16): no withdraw entrypoint ships in this package — the reserve's
@@ -206,19 +212,20 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Fees, staking, and rebates (recent)
 
+> **RETIRED 2026-08-18 — DEEP staking and the trading-loss rebate were removed.** Every bullet in this section describes the stake-scaled loss rebate, its reserve, or the stake that gated it. None of that machinery exists: there is no `StakeConfig`, no rebate reserve, and no claim. Kept for the decision record — see "Staking and the trading-loss rebate removal" at the end of this document.
+
 - **The staking programme ships at a zero benefit ratio, and each market freezes its whole
   benefit policy at creation.** `StakeConfig.max_benefit_ratio` scales the stake curve and
-  defaults to `0`, so a market created from the shipped template charges every trader the
-  undiscounted fee and pays no stake-scaled loss rebate. There is deliberately no boolean
+  defaults to `0`, so a market created from the shipped template pays no stake-scaled loss
+  rebate. There is deliberately no boolean
   switch: "off" is just `0`, which also lets the programme run at partial strength on the way
   up. Every `ExpiryMarket` snapshots the whole config — ratio and both thresholds — at
-  creation, and prices both benefits against its own copy; `set_template_max_benefit_ratio`
+  creation, and prices the rebate against its own copy; `set_template_max_benefit_ratio`
   and `set_template_benefit_powers` bind only markets created afterwards. *Why a scaled ratio
   and not tuned thresholds:* the `*_benefit_power` envelope has no setting that yields a zero
-  benefit — the lowest admissible `lower_benefit_power` still pays a proportional discount —
+  benefit — the lowest admissible `lower_benefit_power` still pays a proportional rebate —
   so zero was otherwise unreachable for an admin. *Why snapshotted rather than read live:*
-  both benefits resolve after the trade that earned them (the discount at mint, the rebate at
-  a post-settlement claim), so live policy would reprice contracts already written, and a
+  the rebate resolves after the trade that earned it, at a post-settlement claim, so a
   retune would shrink or erase an already-earned rebate — measured at 2_500_000 -> 1_252_551
   for a full staker when the thresholds were widened post-trade, and the claim removes the
   account's expiry summary, so nothing could recover it. Freezing makes that unrepresentable
@@ -226,7 +233,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   which is already snapshotted per expiry for the same reason. The cost is accepted: raising
   the ratio likewise does not reach live markets, so the programme phases in over about one
   cadence period. Pinned by `settlement_flow_tests::
-  retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`. *Rejected:* making
+  retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`. *Rejected (moot since
+  the fee discount was removed — see "Stake fee-discount removal" below):* making
   `max_fee_discount` admin-tunable at zero, which would silence the fee side while leaving the
   uncapped rebate live, and would move an upgrade-required constant into tunable config.
   *Consequence:* while a market's ratio is zero, its rebate reserve still accrues at that
@@ -242,15 +250,15 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   accounts then costs N stakes. *Accepted limit:* stake is a refundable, plutocratic
   gate, porous to correlated/directional bundling; genuinely reaching unstaked retail
   would need off-chain identity (out of contract scope).
-- **Stake benefit is applied twice, by design.** `benefit_ratio(active_stake)` scales
+- **Stake benefit was applied twice, by design.** `benefit_ratio(active_stake)` scales
   both the mint-time fee discount (`× max_fee_discount`) and the settled loss rebate
   (`× trading_loss_rebate_rate`), which are independent config knobs sharing the one
   benefit curve. A high staker pays a small net fee — intended loyalty compounding, not
-  a double-count bug.
-- **Stake is account-global, not per-expiry.** One `active_stake` scales benefits
-  across all of an account's concurrent expiries; it is a discount multiplier, not a
-  per-market budget. It amortizes the sybil-gate cost across markets — accepted, same
-  as the fee discount.
+  a double-count bug. *Superseded 2026-08-18:* the fee discount was removed, so the curve
+  now scales the loss rebate alone — see "Stake fee-discount removal" below.
+- **Stake is account-global, not per-expiry.** One `active_stake` scales the rebate
+  across all of an account's concurrent expiries; it is a rebate multiplier, not a
+  per-market budget. It amortizes the sybil-gate cost across markets — accepted.
 - **The rebate reserve is conservative by construction, and intrinsically so.** During
   a market's life the full `unresolved_trading_fees_paid × trading_loss_rebate_rate` is
   held out of NAV, because "did this trader net a loss" is unknowable until settlement,
@@ -291,7 +299,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Ownership split: the market owns flow state, `pricing` owns oracle ingress.**
   `ExpiryMarket` stores `propbook_underlying_id` and tick size, not the current
   oracle object IDs. `pricing` validates passed feeds against Propbook's current
-  canonical binding and issues either an exact-history `ExactSpotRead` for reference
+  canonical binding and issues either an exact-history spot read for reference
   tick and settlement or a live `Pricer` after applying liveness, freshness, and the
   pricing-safe envelope. *Rationale:* Propbook owns source identity and canonical
   binding; Predict pricing owns the only conversion from Propbook objects into
@@ -382,7 +390,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
   a trustless on-chain crank) and a flush that pauses trading.
 - **Valuation is resumable across transactions; the mark is frozen atomically
-  (overturns the rejected multi-tx crank; RP-27 resolves C-1).** The flush splits
+  (overturns the rejected multi-tx crank; RP-29 resolves C-1).** The flush splits
   into an atomic snapshot stage that freezes one `Pricer` per active market, and a
   valuation stage that may span any number of transactions and reads no oracle and
   no clock. *Rationale:* the single-PTB flush was bounded by Sui's 1,000
@@ -394,9 +402,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the oracle per valuation transaction, which would mix instants and break the
   one-mark-in-both-directions invariant (audit L10).
 - **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
-  `current_nav = free_cash − exact_per_order_liability`, floored at zero, where the
-  liability is the payout-tree linear walk minus the leveraged-book floor correction;
-  an underwater leveraged order nets to zero with no liquidation pass. The flush
+  `current_nav = free_cash − live_marked_liability`, floored at zero, where the
+  liability is the payout tree's boundary-linear walk alone, with no per-order
+  correction (leverage was removed — see "Leverage removal" below). The flush
   prices supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of
   the pending-protocol-profit exclusion). *Rationale (audit L10):* one mark used in
   both directions must equal true recoverable value, so it must be exact — a
@@ -429,7 +437,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   consumes pricing's canonical exact-history read and calls
   `StrikeExposure::record_settlement`, which stores the terminal price and exact
   remaining payout liability together. The exposure's settlement-price option is
-  the phase discriminator; settled redeem, rebate claim, pool rebalance, and valuation
+  the phase discriminator; settled redeem, pool rebalance, and valuation
   consume only that recorded phase. Keepers compose settlement first in the same PTB
   when needed. *Rationale:* one writer makes the market phase transition atomic,
   keeps price and book liability under one owner, and removes oracle ingress from
@@ -501,6 +509,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   can exist when it runs.
 
 ## Near-expiry leverage block (recent)
+
+> **RETIRED 2026-08-14 — leverage removed.** There is no leverage to originate or block; every position is 1x regardless of time to expiry. Kept for the decision record.
 
 - **Leverage origination stops entirely inside a window before expiry.** Within the
   expiry's snapshotted `no_leverage_window_ms` the mint-admission cap is exactly 1x,
@@ -604,3 +614,28 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   but lets a later envelope roll a series' model data back; the envelope floor
   keeps the model-first ordering and accepts first-writer-wins for the degenerate
   publish-stream-regression case instead).
+
+## Leverage removal (2026-08-14)
+
+- **Leverage, the static floor, and knock-out liquidation are removed entirely.** Every position is 1x: live value is `quantity × range_probability`, and a winning position settles for its full `quantity`. There is no floor, no financed amount, no liquidation book, no knock-out threshold, and no near-expiry leverage-admission window. *Rationale:* leverage's risk surface — the liquidation book, the NAV floor correction, the bounded liquidation sweep folded into mint and live redeem, the probability-sensitive admission cap, and the near-expiry block — was disproportionate to its value pre-launch; removing it collapses NAV to a single boundary-linear walk and deletes an entire class of keeper-timeliness risk. *Superseded:* every leverage/floor/knock-out decision above in "Economic model", "Data structures", and "Near-expiry leverage block", retired in place rather than deleted, per the response-policy register's RETIRED convention (RP-17).
+- **Mint admission is an entry-probability band plus a minimum premium.** `strike_exposure_config::assert_mint_admission` requires `entry_probability` inside `[min_entry_probability, max_entry_probability]` and `premium = entry_probability × quantity >= min_premium`; the holder pays the contract's full entry value, so premium equals entry value. *Rejected:* keeping the admission machinery as a dead 1x-only code path — deleting it removes the liquidation book's guard surface entirely rather than leaving it unreachable.
+- **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
+
+See `predeploy/response-policies.md` RP-27 for the guard-duty inventory this removal required.
+
+## Stake fee-discount removal (2026-08-18)
+
+- **DEEP stake no longer discounts the trading fee.** `stake_config::fee_amount_after_discount` and the `constants::max_fee_discount` cap are deleted; mint and live redeem charge the fee `StrikeExposureConfig` computes, and neither path reads `active_stake` any more. *Rationale:* the discount was the half of the staking programme that had to be priced into every trade — it made the trading fee account-dependent, so the quote surface had to expose an account-aware variant whose answer went stale on an epoch boundary, and it forced the redeem path to clamp the fee before discounting so a discounted staker could not net exactly zero. Both benefits shipped at `max_benefit_ratio = 0`, so removing the fee side costs no live behavior and leaves one benefit to reason about. *Rejected:* keeping the discount at a zero cap — an unreachable multiplier through the hottest path in the protocol is still surface a reader and an auditor must clear.
+- **`benefit_ratio` survives, scaling the settled loss rebate alone.** `StakeConfig`, its two-segment curve, the per-market snapshot, and the template setters are unchanged; only the fee consumer is gone. Stake, the epoch rollover, and the rebate claim behave exactly as before. *Consequence:* a fee quote is now the same for every account holding the same builder-code state, and `quote_mint_for_account` differs from the anonymous quote only by the builder fee. *Superseded 2026-08-18:* staking and the rebate were then removed entirely — see "Staking and the trading-loss rebate removal" below.
+- **The fee-side pinning tests were dropped, not migrated.** `quote_mint_tests` lost the two tests whose subject was the discount (the mint-side snapshot freeze and the stale-quote/rolled-quote pair); the market-snapshot freeze remains pinned on the rebate side by `settlement_flow_tests::retuning_the_stake_benefit_template_cannot_reprice_an_earned_rebate`, and `stake_config_tests` now exercises the curve through `rebate_amount`. *Superseded 2026-08-18:* both surviving pins were deleted with the rebate itself — see "Staking and the trading-loss rebate removal" below.
+
+RP-11's late-stake reasoning changed with this removal — the rebate is now the whole of staking's value rather than half of it, so the epoch activation gate is the only bound left on the late-stake leak. The register entry carries the updated reasoning and reopen condition.
+
+## Staking and the trading-loss rebate removal (2026-08-18)
+
+- **DEEP staking and the trading-loss rebate are removed entirely.** `stake_deep` / `unstake_deep`, the pool's `staked_deep` custody, the account's active/inactive stake split and its lazy epoch roll, `StakeConfig` and its two template setters, the rebate reserve and its `trading_loss_rebate_rate` (with the whole `ExpiryCashConfig` it was the only field of), both rebate-claim entrypoints, and the `DeepStaked` / `DeepUnstaked` / `TradingLossRebateClaimed` events are all deleted. *Rationale:* the rebate was the last surviving staking benefit after the fee discount went (see "Stake fee-discount removal"), and it is a mechanism the protocol ships disabled — `max_benefit_ratio` is `0`, so no market pays it. What it did cost, unconditionally, was solvency-critical surface: a second term in the expiry cash-backing invariant, a per-account per-expiry summary table with a claim as its only reaper, a permissionless claim flow whose economics needed their own gas measurements, and a one-shot claim whose ordering against settlement, unstaking, and the settled sweep had to be reasoned about. Removing it is the largest single reduction in tail-state surface available before the deploy freezes the ABI. *Rejected:* keeping the rebate without stake scaling — the stake was the sybil gate that made an aggregate-net-loss rebate targetable at all (a rebate paid at the flat rate to every address is farmable one address per order), so an unstaked rebate is a different and worse mechanism, not a smaller one.
+- **The expiry cash-backing invariant is now payout liability plus the inventory-impact escrow.** `required_cash = payout_liability + inventory_impact_reserve`; `free_cash` nets out the escrow alone. The settled sweep therefore returns all free cash at settlement instead of holding a per-account reserve back until a keeper resolves it, and an expiry no longer strands cash waiting on a cleanout.
+- **`ExpiryTradingSummary` is deleted with the rebate, not kept for its position count.** The summary's other three fields (fees paid, gross paid, gross received) existed only to price a rebate, and its open-position count only gated the claim. Its row was created lazily per account per expiry and removed by the claim, so keeping the table without the claim would leak one row per account per expiry forever. Position state is the `positions` table, which is complete on its own. *Consequence:* `expiry_position_count` and `trading_fees_paid` are gone from the public read surface.
+- **`MarketCreated` no longer carries `trading_loss_rebate_rate`, `max_benefit_ratio`, or the two `*_benefit_power` thresholds.** The market policy snapshot keeps the strike-exposure terms only. Off-chain consumers of those four fields must be updated with this change.
+
+`predeploy/response-policies.md` RP-11 is retired by this removal; the register carries the retirement note.

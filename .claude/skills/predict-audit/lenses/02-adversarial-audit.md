@@ -33,7 +33,7 @@ someone else?":
 - Authorization bypass: any custody/payout move without the right auth (owner `account::Auth` / app `Permit<PredictApp>`); auth reuse,
   forged-by-construction, or aimed at the wrong manager/market/expiry; the `account` app-auth boundary.
 - Cross-object confusion: mismatched market ↔ propbook feed ↔ underlying ↔ manager bindings; passing one
-  expiry's object into another's flow; stale mirrored state (versions, stake epoch).
+  expiry's object into another's flow; stale mirrored state (versions, cached liability).
 - Sequencing/atomicity in one PTB: interleave mint/redeem/liquidate/sync/supply/withdraw to force an
   intermediate state the code assumes impossible; can the valuation lock be entered/left so shares price
   against a partial NAV?

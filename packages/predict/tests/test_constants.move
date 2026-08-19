@@ -140,24 +140,20 @@ public fun pricing_min_svi_sigma(): u64 { default_svi_sigma() }
 /// seed envelope-edge surfaces.
 public fun pricing_max_svi_input(): u64 { 100 * math::float_scaling!() }
 
-/// Default trader-manager deposit in the composite bring-up; large enough to fund
-/// several leveraged mints plus fees.
-public fun default_manager_deposit(): u64 { 30_000_000_000 }
-
 // === Shared happy-path flow values (the short-expiry lifecycle tests) ===
 
-/// 1x leverage in FLOAT_SCALING (zero financed amount => zero floor shares).
-public fun leverage_one_x(): u64 { math::float_scaling!() }
-
 /// Short expiry (`now + 120s`) used by the lifecycle/payout flow tests: near
-/// enough for compact lifecycle scenarios. A >1x order carries a real static
-/// floor regardless of expiry. Grid-aligned (`now` + 2 resolution periods) so
-/// exact settlement inserts are representable.
+/// enough for compact lifecycle scenarios. Grid-aligned (`now` + 2 resolution
+/// periods) so exact settlement inserts are representable.
 public fun short_expiry_ms(): u64 { 240_000 }
 
 /// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).
 public fun mint_quantity(): u64 { 1_000_000_000 }
 
 /// Standard trader deposit for the short-expiry flow tests (covers one mint's
-/// net_premium + fee, with room for the winning payout).
+/// premium + fee, with room for the winning payout).
 public fun mint_deposit(): u64 { 1_000_000_000 }
+
+/// Default trader-manager deposit in the composite bring-up; large enough to fund
+/// several mints plus fees.
+public fun default_manager_deposit(): u64 { 30_000_000_000 }

@@ -13,7 +13,6 @@ const mintOnly: Strategy = {
     if (!market || !ctx.snapshot()) return null;
     const inst: Instruction = {
       direction: ctx.pick(["UP", "DN"]) as "UP" | "DN",
-      leverage: 1,
       targetProbability: ctx.rand(0.2, 0.8),
       spendUsd: ctx.rand(10, 50),
     };

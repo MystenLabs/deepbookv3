@@ -53,15 +53,15 @@ never re-implemented per site.
   can write/assert it? Is a formula re-expressed at a second call site instead of calling the canonical
   evaluator? For aggregate insert/remove/recompute, do all sites call the SAME function?
 - **Signatures:** a helper chain that only shuttles a derived value; a formula duplicated across mint-insert
-  and settlement-recompute; a lossy repack of `quantity`/`floor_shares` through the packed
+  and settlement-recompute; a lossy repack of `quantity` through the packed
   order id.
 - **Input shape corollary:** signature shape is part of ownership. Pass a domain object when the callee needs
   that object's identity, authority, current state, invariants, or several facts owned by that object. Pass a
   narrow value when the callee is a pure formula and should not know the broader object/config concept. A run
   of same-typed primitive fields from one owner is a transposition risk; prefer the owner or a named summary
   unless the primitive signature is deliberately preserving a pure math/test-oracle boundary.
-- **Intentional exceptions:** `strike_payout_tree::payout_terms_from_order` IS the one canonical evaluator — every
-  site calling it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
+- **Intentional exceptions:** the packed order id IS the one canonical source of the stored `quantity` atom — every
+  site decoding it is the rule working, not a violation; a deliberate loop-invariant hoist (computed once
   above a loop) is not "should compute at use"; values returned because the caller genuinely cannot derive
   them (order ids, payouts, fees, event data) or that must be sampled once (expensive / must stay identical
   across a local flow).
@@ -133,7 +133,7 @@ responsibility smeared across modules — two places that both think they own it
 and sole reader live in different modules with no clear owner of the lifecycle? A write-only field (sole
 consumer removed) and a read-only mirror are ownership-clarity failures.
 - **Why:** unclear ownership is where the next bug hides — nobody is responsible for the invariant, so it
-  drifts (the trading-loss rebate reserve became write-only when its consumer was deleted: the field's
+  drifts (a reserve field becomes write-only when its consumer is deleted: the field's
   lifecycle had no owner).
 - **Per-function check:** does this write a field nothing reads, or read a mirror nothing maintains? Is the
   policy this enforces owned here, or borrowed from a module that should own it?

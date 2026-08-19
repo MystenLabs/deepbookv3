@@ -3,37 +3,29 @@
 
 /// Expiry-local DUSDC custody and isolated reserve accounting.
 ///
-/// This leaf owns cash balance arithmetic, the trading-fee basis used to reserve
-/// cash for loss rebates, and the separate inventory-impact escrow used only for
-/// live-close rebates. It does not decide payment eligibility, pool allocation,
-/// or market phase sequencing; `ExpiryMarket` owns those policies.
+/// This leaf owns cash balance arithmetic and the inventory-impact escrow used
+/// only for live-close rebates. It does not decide payment eligibility, pool
+/// allocation, or market phase sequencing; `ExpiryMarket` owns those policies.
 module deepbook_predict::expiry_cash;
 
-use deepbook_predict::expiry_cash_config::ExpiryCashConfig;
 use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
 
 const EInsufficientCash: u64 = 0;
-const EUnresolvedTradingFeesUnderflow: u64 = 1;
-const ERebateBasisExceedsFee: u64 = 2;
-const EInventoryImpactRebateExceedsReserve: u64 = 3;
+const EInventoryImpactRebateExceedsReserve: u64 = 1;
 
-/// Cash and unresolved rebate basis for one expiry market.
+/// Cash custody for one expiry market.
 public struct ExpiryCash has store {
     cash_balance: Balance<DUSDC>,
-    unresolved_trading_fees_paid: u64,
     /// Collected inventory-impact charges still reserved for live-close rebates.
     inventory_impact_reserve: u64,
-    config: ExpiryCashConfig,
 }
 
-/// Create zero-cash expiry custody with a frozen rebate rate.
-public(package) fun new(config: ExpiryCashConfig): ExpiryCash {
+/// Create zero-cash expiry custody.
+public(package) fun new(): ExpiryCash {
     ExpiryCash {
         cash_balance: balance::zero(),
-        unresolved_trading_fees_paid: 0,
         inventory_impact_reserve: 0,
-        config,
     }
 }
 
@@ -41,30 +33,22 @@ public(package) fun balance(cash: &ExpiryCash): u64 {
     cash.cash_balance.value()
 }
 
-public(package) fun trading_loss_rebate_rate(cash: &ExpiryCash): u64 {
-    cash.config.trading_loss_rebate_rate()
-}
-
-public(package) fun rebate_reserve(cash: &ExpiryCash): u64 {
-    cash.config.rebate_reserve_for_fee_basis(cash.unresolved_trading_fees_paid)
-}
-
 public(package) fun inventory_impact_reserve(cash: &ExpiryCash): u64 {
     cash.inventory_impact_reserve
 }
 
-/// Return the cash required to cover payout liability plus unresolved rebate reserve.
+/// Return the cash required to cover payout liability plus the impact escrow.
 public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64 {
-    payout_liability + cash.rebate_reserve() + cash.inventory_impact_reserve
+    payout_liability + cash.inventory_impact_reserve
 }
 
-/// Return cash net of the unresolved rebate reserve, floored at zero. Pool NAV
+/// Return cash net of the inventory-impact escrow, floored at zero. Pool NAV
 /// values this amount separately from payout liability.
 public(package) fun free_cash(cash: &ExpiryCash): u64 {
-    cash.balance().saturating_sub(cash.rebate_reserve() + cash.inventory_impact_reserve)
+    cash.balance().saturating_sub(cash.inventory_impact_reserve)
 }
 
-/// Abort unless current cash covers payout liability plus unresolved rebate reserve.
+/// Abort unless current cash covers payout liability plus the impact escrow.
 public(package) fun assert_backing(cash: &ExpiryCash, payout_liability: u64) {
     assert!(cash.balance() >= cash.required_cash(payout_liability), EInsufficientCash);
 }
@@ -74,7 +58,7 @@ public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<DUSDC>) {
     cash.cash_balance.join(funds);
 }
 
-/// Release caller-approved surplus while preserving payout and rebate backing.
+/// Release caller-approved surplus while preserving payout and escrow backing.
 public(package) fun release_surplus(
     cash: &mut ExpiryCash,
     amount: u64,
@@ -85,24 +69,13 @@ public(package) fun release_surplus(
     cash.cash_balance.split(amount)
 }
 
-/// Pay an already-authorized payout, rebate claim, or cash release.
+/// Pay an already-authorized payout or cash release.
 ///
-/// The caller owns the surrounding liability or rebate-basis transition and the
-/// post-payment backing check.
+/// The caller owns the surrounding liability transition and the post-payment
+/// backing check.
 public(package) fun pay_authorized(cash: &mut ExpiryCash, amount: u64): Balance<DUSDC> {
     assert!(cash.balance() >= amount, EInsufficientCash);
     cash.cash_balance.split(amount)
-}
-
-/// Join trade-fee cash and add the caller-designated amount to unresolved rebate basis.
-public(package) fun collect_trade_fee(
-    cash: &mut ExpiryCash,
-    fee: Balance<DUSDC>,
-    rebate_fee_basis: u64,
-) {
-    assert!(rebate_fee_basis <= fee.value(), ERebateBasisExceedsFee);
-    cash.cash_balance.join(fee);
-    cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid + rebate_fee_basis;
 }
 
 /// Reserve a charge already received with the mint payment. It remains part of
@@ -125,17 +98,4 @@ public(package) fun pay_inventory_impact_rebate(
 /// close can earn another rebate. Its cash then becomes normal expiry surplus.
 public(package) fun release_inventory_impact_reserve(cash: &mut ExpiryCash) {
     cash.inventory_impact_reserve = 0;
-}
-
-/// Decrement resolved fee basis and return the reserve implied by that basis.
-public(package) fun resolve_rebate_reserve_for_fee_basis(
-    cash: &mut ExpiryCash,
-    trading_fees_paid: u64,
-): u64 {
-    assert!(
-        cash.unresolved_trading_fees_paid >= trading_fees_paid,
-        EUnresolvedTradingFeesUnderflow,
-    );
-    cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid - trading_fees_paid;
-    cash.config.rebate_reserve_for_fee_basis(trading_fees_paid)
 }

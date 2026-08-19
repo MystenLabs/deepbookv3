@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 
 import { rollDownSvi } from "./pricer.js";
-import { NO_LEVERAGE_WINDOW_MS, RESOLVER_MARKET } from "./predictConfig.js";
+import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
 import {
@@ -19,21 +19,17 @@ import {
   type OracleFeedIds,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
-  claimRebateOnlyTx,
   cleanoutAccountTx,
   mintBatchTx,
   mintTx,
   readIsSettled,
-  redeemSettledAllTx,
   redeemTx,
   requestSupplyFromCustodyTx,
   requestWithdrawTx,
 } from "../../devtools/ts/runtime.js";
 
 const SCALE = 1_000_000_000n;
-const ADMISSION_K = 0.2;
-const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1", "predict_account:2"]);
-const FULL_CLOSE_REQUIRED_ABORT = "expiry_market:1";
+const TERMINAL_REDEEM_ABORTS = new Set(["predict_account:1"]);
 
 export interface Mkt {
   id: string;
@@ -53,13 +49,11 @@ export interface Held {
   orderId: string;
   marketId: string;
   quantity: bigint;
-  leverage1e9: bigint;
 }
 export interface MintLeg {
   strike1e9: bigint;
   isUp: boolean;
   quantity: bigint;
-  leverage1e9: bigint;
   maxCost: bigint;
   maxProbability: bigint;
 }
@@ -100,24 +94,16 @@ export interface StrategyCtx {
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
 
   // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
-  // position on THIS account then claims its rebate, and return + trace the full gas breakdown
-  // (net < 0 ⇒ the cleaner is paid). Requires the market settled — gate on isSettled first.
-  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nLiquidated: number; nSettled: number }>;
-  // Cleanup claim profile: redeemAll = the N redeems WITHOUT the claim (leaves an
-  // unresolved summary); claimRebate = the claim ALONE (once positions are closed). Diffing them
-  // isolates whether a searcher's marginal cost of adding the claim is a refund (bundles it) or a
-  // cost (skips it, leaving non-owed accounts' reserve unresolved).
-  redeemAll(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown>;
-  claimRebate(marketId: string): Promise<GasBreakdown>;
+  // position on THIS account, and return + trace the full gas breakdown (net < 0 ⇒ the cleaner
+  // is paid). Requires the market settled — gate on isSettled first.
+  cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nSettled: number }>;
   isSettled(marketId: string): Promise<boolean>; // devInspect expiry_market::is_settled
 
   // utils
   rand(lo: number, hi: number): number;
   pick<T>(a: T[]): T;
-  leverageCap(p: number): number;
   nearestExpiry(): Mkt | null;
   randomExpiry(): Mkt | null;
-  randomLeveragedExpiry(): Mkt | null;
   pruneSettled(): void; // drop held orders whose market is no longer live (settled)
   trace(record: Record<string, unknown>): void;
 }
@@ -161,15 +147,9 @@ export interface ContextDeps {
 
 const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 const pick = <T>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
-const leverageCap = (p: number) =>
-  1 + (RESOLVER_MARKET.maxAdmissionLeverage - 1) * ((p * (1 + ADMISSION_K)) / (p + ADMISSION_K));
 const isTerminalRedeemAbort = (err: unknown): boolean => {
   const a = abortInfo(err);
   return a ? TERMINAL_REDEEM_ABORTS.has(`${a.module}:${a.code}`) : false;
-};
-const isFullCloseRequiredAbort = (err: unknown): boolean => {
-  const a = abortInfo(err);
-  return a ? `${a.module}:${a.code}` === FULL_CLOSE_REQUIRED_ABORT : false;
 };
 const readJson = (p: string): any => {
   try {
@@ -218,16 +198,6 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
   };
 
   const resolve = (inst: Instruction, market: Mkt): Resolved | null => {
-    // Leave a small transaction-build margin outside the protocol's strict
-    // one-hour no-leverage window. Without this common gate, strategies spent
-    // most of their ticks submitting guaranteed strike_exposure_config:6
-    // aborts against 1m/5m/nearest-hour markets.
-    if (
-      Math.round(inst.leverage * 1e9) > Number(SCALE) &&
-      market.expiryMs - Date.now() < NO_LEVERAGE_WINDOW_MS + 5_000
-    ) {
-      return null;
-    }
     const env = envFor(market);
     if (!env) return null;
     const r = resolveMint(inst, env, RESOLVER_MARKET);
@@ -251,7 +221,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       return deps.submit(
         mintTx({
           expiryMarketId: market.id, wrapperId: deps.wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...deps.feeds,
-          strike: p.strike1e9, isUp: p.isUp, quantity: p.quantity, leverage: p.leverage1e9,
+          strike: p.strike1e9, isUp: p.isUp, quantity: p.quantity,
           maxCost: p.maxCost, maxProbability: p.maxProbability,
         }),
         "mint",
@@ -261,7 +231,7 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
     async submitMintBatch(market, legs, meta) {
       const mints = legs.map((p) => ({
         expiryMarketId: market.id, wrapperId: deps.wrapperId, protocolConfigId: PROTOCOL_CONFIG_ID, ...deps.feeds,
-        strike: p.strike1e9, isUp: p.isUp, quantity: p.quantity, leverage: p.leverage1e9,
+        strike: p.strike1e9, isUp: p.isUp, quantity: p.quantity,
         maxCost: p.maxCost, maxProbability: p.maxProbability,
       }));
       const res = await deps.submit(mintBatchTx(mints), "mintBatch");
@@ -275,13 +245,13 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       const spot = Number(snapshot()?.spot1e9 ?? 0) / 1e9;
       const res = await ctx.submitMint(market, {
         strike1e9: BigInt(Math.round(r.strikeUsd)) * SCALE, isUp: inst.direction === "UP",
-        quantity: r.quantity, leverage1e9: r.leverage1e9, maxCost: r.maxCost, maxProbability: r.maxProbability1e9,
+        quantity: r.quantity, maxCost: r.maxCost, maxProbability: r.maxProbability1e9,
       });
       const ev = res.events?.find((e: any) => e.type?.includes("OrderMinted"));
-      if (ev) held.push({ orderId: ev.parsedJson.order_id, marketId: market.id, quantity: r.quantity, leverage1e9: r.leverage1e9 });
+      if (ev) held.push({ orderId: ev.parsedJson.order_id, marketId: market.id, quantity: r.quantity });
       ctx.trace({
         type: "mint", market: market.id.slice(0, 10), direction: inst.direction, moneyness: spot ? r.strikeUsd / spot : 0,
-        prob: r.predictedProbability, leverage: inst.leverage, netPremium: ev ? Number(ev.parsedJson.net_premium) / 1e6 : 0, gas: gasOf(res),
+        prob: r.predictedProbability, premium: ev ? Number(ev.parsedJson.premium) / 1e6 : 0, gas: gasOf(res),
       });
       return "mint";
     },
@@ -301,17 +271,10 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       try {
         res = await submitRedeem(closeQuantity);
       } catch (e) {
-        if (closeQuantity < h.quantity && isFullCloseRequiredAbort(e)) {
-          try {
-            res = await submitRedeem(h.quantity);
-          } catch (retryErr) {
-            if (isTerminalRedeemAbort(retryErr)) dropHeld();
-            throw retryErr;
-          }
-          dropHeld();
-          ctx.trace({ type: "redeem", market: h.marketId.slice(0, 10), partial: false, retry: "fullCloseRequired", gas: gasOf(res) });
-          return "redeem";
-        }
+        // A live redeem against a market that settled mid-flight now aborts while
+        // loading the pricer (`pricing:9`), not with a full-close guard — the guard
+        // was deleted and its numeric slot reused, so matching on the code would
+        // misread "market not settled" as "retry with a full close".
         // Only stale local position state is terminal. Pricing, valuation-lock,
         // same-timestamp, and RPC failures should keep the order tracked for retry.
         if (isTerminalRedeemAbort(e)) dropHeld();
@@ -363,36 +326,14 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
         "cleanout",
       );
       const g = gasBreakdownOf(res);
-      // Split by redeem path: a LIQUIDATED position had its book state (payout-tree node +
-      // active-index entry) removed at liquidation time (apply_liquidation), so its cleanout frees
-      // only the account position; a SETTLED (surviving) one's cleanout also removes its active-index
-      // entry (process_settled_close removes the index entry and adjusts cached liability; the
-      // payout-tree node persists under the settled-liability model). The per-position gas profiles
-      // differ, so the fit counts each. NB: the P-9/RP-11 gas figures predate the tombstone removal
-      // (DBU-592) — the per-position rebate structure needs re-measurement under the derived-state model.
+      // A settled position's cleanout removes its active-index entry and adjusts cached liability
+      // (process_settled_close); the payout-tree node persists under the settled-liability model.
+      // NB: the P-9 gas figures predate the tombstone removal (DBU-592) — the per-position
+      // structure needs re-measurement under the derived-state model.
       const evs = (res.events ?? []) as any[];
-      const nLiquidated = evs.filter((e) => e.type?.includes("LiquidatedOrderRedeemed")).length;
       const nSettled = evs.filter((e) => e.type?.includes("SettledOrderRedeemed")).length;
-      ctx.trace({ type: "cleanout", n: positions.length, nLiquidated, nSettled, ...g });
-      return { ...g, nLiquidated, nSettled };
-    },
-    async redeemAll(marketId, positions) {
-      const res = await deps.submit(
-        redeemSettledAllTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId, positions }),
-        "redeemAll",
-      );
-      const g = gasBreakdownOf(res);
-      ctx.trace({ type: "redeemAll", n: positions.length, ...g });
-      return g;
-    },
-    async claimRebate(marketId) {
-      const res = await deps.submit(
-        claimRebateOnlyTx({ expiryMarketId: marketId, wrapperId: deps.wrapperId }),
-        "claimRebate",
-      );
-      const g = gasBreakdownOf(res);
-      ctx.trace({ type: "claimRebate", ...g });
-      return g;
+      ctx.trace({ type: "cleanout", n: positions.length, nSettled, ...g });
+      return { ...g, nSettled };
     },
     async isSettled(marketId) {
       return readIsSettled(marketId);
@@ -400,20 +341,12 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
 
     rand,
     pick,
-    leverageCap,
     nearestExpiry() {
       const m = markets();
       return m.length ? m.reduce((a, b) => (a.expiryMs <= b.expiryMs ? a : b)) : null;
     },
     randomExpiry() {
       const m = markets();
-      return m.length ? pick(m) : null;
-    },
-    randomLeveragedExpiry() {
-      const now = Date.now();
-      const m = markets().filter(
-        (market) => market.expiryMs - now >= NO_LEVERAGE_WINDOW_MS + 5_000,
-      );
       return m.length ? pick(m) : null;
     },
     pruneSettled() {

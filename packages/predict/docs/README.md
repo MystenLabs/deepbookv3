@@ -30,17 +30,12 @@ How the protocol works:
 
 - **[Markets and positions](./concepts/markets-and-positions.md)** — per-expiry
   range markets, the absolute tick grid, what an order/position is, and the
-  lifecycle from mint through live redeem and liquidation.
-- **[Leverage and the floor](./concepts/leverage-and-floor.md)** — how leverage
-  is modelled as embedded premium financing (a static floor) plus a knock-out on
-  the contract's payoff.
+  lifecycle from mint through live redeem and settlement.
 - **[Pricing and oracles](./concepts/pricing-and-oracles.md)** — how prices are
   formed from the propbook Pyth spot and split Block Scholes feeds, the forward
   fallback, and freshness rules.
 - **[Fees and rebates](./concepts/fees-and-rebates.md)** — the fee components a
-  trader pays, the staking discount, and the trading-loss rebate.
-- **[Liquidation](./concepts/liquidation.md)** — when and why a leveraged
-  position is liquidated, and what the holder receives.
+  trader pays and the isolated inventory-impact charge and rebate.
 - **[Liquidity and NAV](./concepts/liquidity-and-nav.md)** — the pool, PLP
   shares, the async supply/withdraw queues, the privileged flush, and how the
   exact pool NAV is computed.
@@ -55,7 +50,7 @@ How the protocol is built:
   defaults, how config is snapshotted per expiry, and who can change it.
 - **[Invariants](./design/invariants.md)** — a precise, scannable reference of
   the conditions the protocol always maintains (solvency, floor, NAV,
-  settlement, liquidation, rounding).
+  settlement, rounding).
 - **[Design decisions](./design/decisions.md)** — the significant design choices
   and the alternatives that were rejected, with rationale.
 
@@ -68,9 +63,8 @@ How the protocol is built:
 
 - **Trader:** [overview](./overview.md) →
   [markets and positions](./concepts/markets-and-positions.md) →
-  [leverage and the floor](./concepts/leverage-and-floor.md) →
   [fees and rebates](./concepts/fees-and-rebates.md) →
-  [liquidation](./concepts/liquidation.md) → [risks](./risks.md).
+  [risks](./risks.md).
 - **Liquidity provider:** [overview](./overview.md) →
   [liquidity and NAV](./concepts/liquidity-and-nav.md) →
   [pricing and oracles](./concepts/pricing-and-oracles.md) →

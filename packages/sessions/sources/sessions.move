@@ -220,7 +220,6 @@ public fun mint_exact_quantity(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    leverage: u64,
     max_cost: u64,
     max_probability: u64,
     root: &AccumulatorRoot,
@@ -236,7 +235,6 @@ public fun mint_exact_quantity(
         lower_tick,
         higher_tick,
         quantity,
-        leverage,
         max_cost,
         max_probability,
         root,
@@ -256,7 +254,6 @@ public fun mint_exact_amount(
     higher_tick: u64,
     max_premium: u64,
     min_quantity: u64,
-    leverage: u64,
     max_cost: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
@@ -272,7 +269,6 @@ public fun mint_exact_amount(
         higher_tick,
         max_premium,
         min_quantity,
-        leverage,
         max_cost,
         root,
         clock,
@@ -294,7 +290,7 @@ public fun redeem_live(
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u256, Option<u256>) {
+): Option<u256> {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
     market.redeem_live(
         wrapper,
@@ -318,18 +314,16 @@ public fun redeem_settled(
     wrapper: &mut AccountWrapper,
     config: &ProtocolConfig,
     order_id: u256,
-    close_quantity: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u256, Option<u256>) {
+) {
     let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
     market.redeem_settled(
         wrapper,
         auth,
         config,
         order_id,
-        close_quantity,
         root,
         clock,
         ctx,

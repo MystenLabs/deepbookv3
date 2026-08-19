@@ -6,7 +6,7 @@ Predict is a per-expiry, range-based options protocol on Sui. Its on-chain state
 
 Two design commitments shape everything below; both are stated once here and assumed throughout.
 
-- **One canonical strike interpretation — absolute integer ticks.** Protocol-wide, a strike is an absolute tick from zero, with `raw_strike = tick * tick_size`. There is no second strike representation anywhere: no market-local centered grid, no boundary-relative indices. Public entrypoints and events carry the tick pair `(lower_tick, higher_tick)` directly; order IDs, the payout tree, and the liquidation book all key on ticks (the order ID is the only packed form); raw strikes are recovered only at the pricing/settlement boundary. The `strike_exposure/range_codec` module is the single owner of the tick↔raw conversion.
+- **One canonical strike interpretation — absolute integer ticks.** Protocol-wide, a strike is an absolute tick from zero, with `raw_strike = tick * tick_size`. There is no second strike representation anywhere: no market-local centered grid, no boundary-relative indices. Public entrypoints and events carry the tick pair `(lower_tick, higher_tick)` directly; order IDs and the payout tree key on ticks (the order ID is the only packed form); raw strikes are recovered only at the pricing/settlement boundary. The `strike_exposure/range_codec` module is the single owner of the tick↔raw conversion.
 - **Oracle data lives outside Predict.** The live spot, BS forward, and SVI data come from standalone, Predict-unaware feeds in the separate `propbook` package. Predict holds no oracle object, no writer capability, and no price-ingest path; it stores a Propbook underlying ID and validates passed feeds against Propbook's current canonical binding when live pricing runs.
 
 ## Object taxonomy
@@ -25,35 +25,35 @@ The protocol is constructed at package publish: the `registry` module's `init` c
 | --- | --- | --- | --- |
 | `Registry` | `registry` | Admin-approved Propbook underlyings, cadence deployment configs, expiry uniqueness index, allowed `PauseCap` and `MarketLifecycleCap` IDs | package init |
 | `ProtocolConfig` | `protocol_config` | All admin-tunable config structs, the `trading_paused` flag, the emergency `frozen` flag, the monotonic version watermark, the transaction-local valuation lock | package init |
-| `PoolVault` | `plp` | Idle LP-owned DUSDC, protocol-reserve DUSDC, custody of staked DEEP, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply DUSDC escrow, withdraw PLP escrow) | package init |
-| `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree + liquidation book), embedded `ExpiryCash` DUSDC custody, EWMA gas-price stats, Propbook underlying ID, tick size | per underlying and expiry |
+| `PoolVault` | `plp` | Idle LP-owned DUSDC, protocol-reserve DUSDC, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply DUSDC escrow, withdraw PLP escrow) | package init |
+| `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree), embedded `ExpiryCash` DUSDC custody, EWMA gas-price stats, Propbook underlying ID, tick size | per underlying and expiry |
 
 The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Propbook underlying ID and one `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair (the version watermark lives on `ProtocolConfig`, not here). It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in Predict app data attached to accounts. It records which Propbook underlyings Predict will build markets on and the cadence deployment policies used to create them; source IDs and canonical oracle object IDs live in `propbook`.
 
-`ProtocolConfig` is a separate shared object from `Registry`. It owns the global flow gates — `trading_paused` (blocks new risk creation), `frozen` (the protocol-wide emergency freeze that halts the whole version-gated surface), and `valuation_in_progress` (a transaction-local lock held while a full-pool NAV valuation is assembled) — and the admin-tunable config structs. Two of those are *template* configs (`StrikeExposureConfig`, `ExpiryCashConfig`): their current values are snapshotted into each new `ExpiryMarket` at creation, so changing a template affects only future expiries, not live ones. See [configuration](./configuration.md).
+`ProtocolConfig` is a separate shared object from `Registry`. It owns the global flow gates — `trading_paused` (blocks new risk creation), `frozen` (the protocol-wide emergency freeze that halts the whole version-gated surface), and `valuation_in_progress` (a transaction-local lock held while a full-pool NAV valuation is assembled) — and the admin-tunable config structs. One of those is a *template* config (`StrikeExposureConfig`): its current values are snapshotted into each new `ExpiryMarket` at creation, so changing a template affects only future expiries, not live ones. See [configuration](./configuration.md).
 
-`ExpiryMarket` is the hot object for one expiry. It embeds `ExpiryCash` (a `store`-only component, not its own object) which holds that expiry's working DUSDC and tracks the unresolved trading-fee basis used to reserve cash for loss rebates. The market never reaches into the pool directly; cash enters only via pool-driven rebalancing and leaves only via release back to the pool or as payouts/rebates to accounts. Because the oracle was extracted, the market stores only the Propbook underlying ID; `pricing::load_live_pricer` validates the passed feed objects against Propbook's current canonical binding before a live price reaches exposure logic.
+`ExpiryMarket` is the hot object for one expiry. It embeds `ExpiryCash` (a `store`-only component, not its own object) which holds that expiry's working DUSDC and its isolated inventory-impact escrow. The market never reaches into the pool directly; cash enters only via pool-driven rebalancing and leaves only via release back to the pool or as payouts to accounts. Because the oracle was extracted, the market stores only the Propbook underlying ID; `pricing::load_live_pricer` validates the passed feed objects against Propbook's current canonical binding before a live price reaches exposure logic.
 
 ## DUSDC custody
 
 DUSDC is the protocol's settlement currency and has 6 decimals. Custody is partitioned across three layers, each owned by the module responsible for it:
 
-- **Per-trader funds** live inside the account-package `Account` loaded from an `AccountWrapper`. Deposits, withdrawals, net premiums, fees, LP fills, stake, and payouts all flow through this custody.
-- **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus the unresolved rebate reserve; the market re-asserts this backing invariant after every cash movement.
-- **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). The vault also custodies all staked DEEP. DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting account under owner auth — until the next flush drains them.
+- **Per-trader funds** live inside the account-package `Account` loaded from an `AccountWrapper`. Deposits, withdrawals, premiums, fees, LP fills, and payouts all flow through this custody.
+- **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus its inventory-impact escrow; the market re-asserts this backing invariant after every cash movement.
+- **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting account under owner auth — until the next flush drains them.
 
-Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' net premiums and fees flow from account custody into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into account custody; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees are the one outflow that leaves this mesh entirely (see below).
+Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' premiums and fees flow from account custody into `ExpiryCash`; payouts flow from `ExpiryCash` back into account custody; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees are the one outflow that leaves this mesh entirely (see below).
 
 ## Accounts and app authorization
 
-Predict uses the reusable `account` package for custody and account-local state. `AccountWrapper` is the shared object passed into Predict entrypoints; it embeds an `Account` that holds coin balances and the dynamic-field root for app data. Predict stores its local `PredictData` under the `PredictApp` witness: open positions keyed by `(expiry_market_id, order_id)`, per-expiry trading summaries used for rebate resolution, the sticky builder-code attribution, and the account's staked-DEEP mirror (`active_stake` / `inactive_stake`, rolled forward lazily on the first interaction in a new epoch).
+Predict uses the reusable `account` package for custody and account-local state. `AccountWrapper` is the shared object passed into Predict entrypoints; it embeds an `Account` that holds coin balances and the dynamic-field root for app data. Predict stores its local `PredictData` under the `PredictApp` witness: open positions keyed by `(expiry_market_id, order_id)` and the sticky builder-code attribution.
 
 Account mutation authority is an `Auth` hot potato consumed by `AccountWrapper::load_account_mut`. There are two relevant sources:
 
 | Auth source | Used for | Notes |
 | --- | --- | --- |
-| Owner auth | live mint/redeem, owner settled redeem, LP request/cancel, staking, builder-code config, owner rebate claim | generated by the account owner or by an owning object; this is the normal user-authorized path |
-| Predict app auth | permissionless settled redeem and permissionless rebate claim | generated inside Predict through `account_registry::generate_auth_as_app<PredictApp>`; disabled by `deauthorize_app<PredictApp>` |
+| Owner auth | live mint/redeem, owner settled redeem, LP request/cancel, builder-code config | generated by the account owner or by an owning object; this is the normal user-authorized path |
+| Predict app auth | permissionless settled redeem | generated inside Predict through `account_registry::generate_auth_as_app<PredictApp>`; disabled by `deauthorize_app<PredictApp>` |
 
 Once an entrypoint has a mutable `Account`, coin movement and Predict-data mutation need no extra account-level proof. The mutable borrow is the authority boundary: public entrypoints perform their flow gates and account authorization up front, then internal helpers operate on `&mut Account`.
 
@@ -68,7 +68,7 @@ code owner claiming accumulated rewards is the domain action.
 
 ### Settled automation
 
-`redeem_settled` and `claim_trading_loss_rebate` each have two public variants. The owner-auth variant lets the account owner exit or claim directly. The permissionless variant uses Predict app auth so a keeper can sweep settled positions and rebates into the account without the owner signing. This is the intended trust boundary: app deauthorization stops app-auth automation, while owner-auth settled exits and owner-auth rebate claims remain available.
+`redeem_settled` has two public variants. The owner-auth variant lets the account owner exit directly. The permissionless variant uses Predict app auth so a keeper can sweep settled positions into the account without the owner signing. This is the intended trust boundary: app deauthorization stops app-auth automation, while owner-auth settled exits remain available.
 
 ## Governance and attribution capabilities
 
@@ -94,7 +94,7 @@ graph TD
     subgraph Shared
         REG[Registry]
         CFG[ProtocolConfig]
-        VAULT[PoolVault<br/>idle + reserve DUSDC,<br/>staked DEEP, PLP cap,<br/>LP request queues]
+        VAULT[PoolVault<br/>idle + reserve DUSDC,<br/>PLP cap,<br/>LP request queues]
         EM[ExpiryMarket<br/>embeds ExpiryCash DUSDC]
         BC[BuilderCode]
     end
@@ -140,7 +140,7 @@ graph TD
     PAUSE -->|one-way mint pause| EM
 
     AW <-->|DUSDC trade flows| EM
-    AW <-->|LP requests / staking| VAULT
+    AW <-->|LP requests| VAULT
     VAULT <-->|funding / settled cash| EM
     VAULT -->|LP fill via accumulator| AW
     EM -->|builder fee via accumulator| BC
@@ -157,7 +157,7 @@ A priced trade composes an `ExpiryMarket`, Propbook's `OracleRegistry`, the curr
 - **Market → pool.** `create_and_share_expiry_market` registers the new expiry in `PoolVault`'s active-expiry ledger as a zero-cash accounting row. The market is not mintable until `plp::rebalance_expiry_cash` funds it from idle; the expiry never pulls from the pool itself.
 - **Account → market.** Positions are keyed by `(expiry_market_id, order_id)` inside Predict account data, so an order minted by one expiry can only be redeemed against that same expiry's market. Owner auth or Predict app-auth controls who can load the account for the flow; the position key controls which market/order pair the loaded account may mutate.
 
-`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or exact-history `ExactSpotRead`; the propbook oracle objects own their stored payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
+`ExpiryMarket` owns market flow sequencing and state mutation; `pricing` owns the oracle-read boundary that turns Propbook objects into a live `Pricer` or an exact-history spot read; the propbook oracle objects own their stored payloads and version. This division keeps flow gates, oracle trust checks, and leaf data storage separate.
 
 ## Oracle feeds (external, in `propbook`)
 
@@ -173,7 +173,7 @@ Propbook creates an underlying's store pair once through its registry and record
 
 LP supply and withdraw are **asynchronous**. An LP queues a request (`request_supply` with `min_plp_out` / `request_withdraw` with `min_dusdc_out`, routed through an account so a composing vault's own account — not necessarily the tx signer — is the fill recipient); the input is escrowed in one of two `RequestQueue`s on `PoolVault`, and a pending request can be cancelled for an immediate refund. A daily **flush** fills eligible queued heads at one frozen mark.
 
-The per-expiry NAV primitive is `expiry_market::current_nav`: the **exact** live recoverable value of one expiry — free cash minus the exact per-order live liability, floored at zero. The liability is `walk_linear` (the payout tree's full linear walk, `Σ qty·P`, which also fills a price memo for every boundary) minus `correction_value` (the leveraged-book floor-correction scan, reading each order's range price back from that memo), so an underwater leveraged order nets to zero with no liquidation pass needed. There is no approximation and no uncertainty band; the deleted approximate-NAV matrix and its band/withdraw-fee superstructure are gone.
+The per-expiry NAV primitive is `expiry_market::current_nav`: the **exact** live recoverable value of one expiry — free cash minus the exact live liability, floored at zero. The liability is `walk_linear` alone — the payout tree's full boundary-linear walk, `Σ quantity × P(range)`, with no per-order correction. There is no approximation and no uncertainty band; the deleted approximate-NAV matrix and its band/withdraw-fee superstructure are gone.
 
 The flush is vault-held state (`PoolValuation` on `PoolVault`) assembled in three stages, of which only the first must be a single PTB:
 
@@ -181,13 +181,13 @@ The flush is vault-held state (`PoolValuation` on `PoolVault`) assembled in thre
 2. `value_expiry` runs once per snapshotted market and may be spread over any number of transactions: it sweeps a market frozen as settled or rebalances a live one, then folds the market's NAV (`current_nav` against the frozen pricer, or 0 for a swept settled market) into the running total, proving the market is valued exactly once (a market outside the snapshot is skipped, not valued — RP-29). It reads no oracle and no clock, and it is the only stage that walks payout trees — so a transaction carries one market's dynamic-field children rather than the whole pool's.
 3. `finish_flush` proves every snapshotted market was valued, computes `pool_nav = idle + Σ current_nav` (net of the pending-protocol-profit exclusion priced from the aggregate profit basis), then `lp_book::drain` mints/burns PLP and delivers fills at that one frozen mark — supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue budgets (`supply_budget`/`withdraw_budget`, `None` = unbounded; independent so a supply backlog can't starve withdrawals). A head request whose mark or quote is non-executable is protocol-cancelled and refunded instead of aborting the flush; a live request whose frozen-mark quote misses its request-time limit is protocol-cancelled and refunded the same way at the shipped attempt count of one, so the drain moves straight on (`lp_request_limit_flush_attempts` is admin-tunable; above one such a request instead stays queued and stops that queue until its attempts are exhausted); a withdrawal whose quote is valid and limit-satisfying but exceeds idle is paid what idle covers, keeps its unfilled balance queued, and stops the withdrawal pass; a supply is likewise bounded by `max_lp_pool_value` and keeps any unfilled balance at the head. Fills and refunds are delivered to the account receive address through `balance::send_funds` and passively settled into account custody by later Account balance operations.
 
-The flush is **privileged**, not permissionless: the `SnapshotStage` potato that admits every oracle-reading snapshot call can only be created by a market-deployer `MarketLifecycleCap` (the sole flush authority; the root-`AdminCap` path was removed). The cap-holder is trusted not to manipulate the live oracle before flushing — the single frozen mark prices both supply and withdraw, so it must equal true recoverable value, which `current_nav`'s exactness guarantees. Cash rebalancing, the settled-market sweep, and liquidation are decoupled from the flush: each is a standalone, permissionless, per-market entrypoint, because none needs the exactly-once completeness proof. See [liquidity and NAV](../concepts/liquidity-and-nav.md).
+The flush is **privileged**, not permissionless: the `SnapshotStage` potato that admits every oracle-reading snapshot call can only be created by a market-deployer `MarketLifecycleCap` (the sole flush authority; the root-`AdminCap` path was removed). The cap-holder is trusted not to manipulate the live oracle before flushing — the single frozen mark prices both supply and withdraw, so it must equal true recoverable value, which `current_nav`'s exactness guarantees. Cash rebalancing and the settled-market sweep are decoupled from the flush: each is a standalone, permissionless, per-market entrypoint, because neither needs the exactly-once completeness proof. See [liquidity and NAV](../concepts/liquidity-and-nav.md).
 
 ## Settlement
 
 Settlement is one permissionless public transition. After expiry, `try_settle` asks `pricing` for the canonical exact-history Pyth read and passes its price to `StrikeExposure::record_settlement`, which records the exposure's phase and exact terminal payout liability together. The market's public settlement getters delegate to the exposure, while idempotent repeat calls remain owned by `try_settle`.
 
-`redeem_settled`, `redeem_settled_permissionless`, rebate claim, `plp::rebalance_expiry_cash`, and `value_expiry` do not read settlement oracles; they consume the recorded phase. Transaction builders call `try_settle` first when settlement may be due. If exact timestamp data is absent after expiry, standalone rebalance is a no-op and live valuation still aborts; no approximate mark is substituted because the flush uses one mark for both PLP supply and withdraw. See [decisions](./decisions.md) and [invariants](./invariants.md).
+`redeem_settled`, `redeem_settled_permissionless`, `plp::rebalance_expiry_cash`, and `value_expiry` do not read settlement oracles; they consume the recorded phase. Transaction builders call `try_settle` first when settlement may be due. If exact timestamp data is absent after expiry, standalone rebalance is a no-op and live valuation still aborts; no approximate mark is substituted because the flush uses one mark for both PLP supply and withdraw. See [decisions](./decisions.md) and [invariants](./invariants.md).
 
 ## Version gating
 

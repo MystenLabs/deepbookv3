@@ -39,7 +39,7 @@ jobs:
         run: |
           echo ${{ inputs.transaction_type }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -47,6 +47,14 @@ jobs:
         run: |
           /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
           echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+
+      # The macOS runner image ships with aws/tap already tapped. Homebrew's preinstall trust
+      # check warns about every untrusted third-party tap, and that warning surfaces as a job
+      # annotation. This job installs only `sui` from homebrew-core, so recording trust for
+      # the image's own tap on a throwaway runner clears the warning without trusting a tap
+      # we install anything from.
+      - name: Trust the runner image's preinstalled taps
+        run: brew trust aws/tap
 
       - name: Install Sui using Homebrew
         run: brew install sui
@@ -57,9 +65,12 @@ jobs:
           sui client switch --env mainnet-env
 
       - name: NPM BUILD TX Environment
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
+          # setup-node caches automatically from v5 on. This job installs pnpm in a later
+          # step, so keep the v4 behavior of touching no package manager at all.
+          package-manager-cache: false
 
       - name: Do a global PNPM install
         run: |
@@ -107,7 +118,7 @@ jobs:
           cat scripts/tx/tx-data.txt
 
       - name: Upload Transaction Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: transaction-data
           path: scripts/tx

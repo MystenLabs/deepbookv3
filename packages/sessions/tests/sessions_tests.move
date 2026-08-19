@@ -86,8 +86,6 @@ const NEXT_LOT_QUANTITY: u64 = 100_010_000;
 const SETTLEMENT_HIGHER_TICK_OFFSET: u64 = 10;
 const SETTLEMENT_PRICE_TICK_OFFSET: u64 = 1;
 const ONE_RAW_UNIT: u64 = 1;
-const ONE_POSITION: u64 = 1;
-const ZERO_POSITIONS: u64 = 0;
 const ZERO_COST: u64 = 0;
 const ZERO_PREMIUM: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
@@ -423,20 +421,16 @@ fun unapproved_session_cannot_use_predict_wrapper() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
-    destroy(closed_order_id);
-    destroy(replacement_order_id);
-
     abort EUnexpectedSuccess
 }
 
@@ -463,7 +457,6 @@ fun unapproved_session_cannot_mint_exact_quantity() {
         predict_helpers::strike_tick(),
         predict_helpers::pos_inf_tick(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         std::u64::max_value!(),
         ZERO_PROBABILITY,
         &root,
@@ -499,7 +492,6 @@ fun unapproved_session_cannot_mint_exact_amount() {
         predict_helpers::pos_inf_tick(),
         test_constants::mint_deposit(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         ZERO_COST,
         &root,
         clock,
@@ -524,7 +516,7 @@ fun unapproved_session_cannot_redeem_live() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_live(
+    let replacement_order_id = sessions::redeem_live(
         &mut market,
         &account_registry,
         &mut wrapper,
@@ -538,7 +530,6 @@ fun unapproved_session_cannot_redeem_live() {
         clock,
         scenario.ctx(),
     );
-    destroy(closed_order_id);
     destroy(replacement_order_id);
 
     abort EUnexpectedSuccess
@@ -559,20 +550,16 @@ fun session_at_exact_expiration_cannot_use_predict_wrapper() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
-    destroy(closed_order_id);
-    destroy(replacement_order_id);
-
     abort EUnexpectedSuccess
 }
 
@@ -591,20 +578,16 @@ fun revoked_session_cannot_use_predict_wrapper() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
-    destroy(closed_order_id);
-    destroy(replacement_order_id);
-
     abort EUnexpectedSuccess
 }
 
@@ -622,20 +605,16 @@ fun another_signer_cannot_use_an_approved_session() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
 
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         MISSING_ORDER_ID,
-        CLOSE_QUANTITY,
         &root,
         clock,
         scenario.ctx(),
     );
-    destroy(closed_order_id);
-    destroy(replacement_order_id);
-
     abort EUnexpectedSuccess
 }
 
@@ -665,7 +644,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
         ZERO_PREMIUM,
         test_constants::mint_quantity(),
         true,
-        test_constants::leverage_one_x(),
         &root,
         clock,
         scenario.ctx(),
@@ -680,7 +658,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
         predict_helpers::strike_tick(),
         predict_helpers::pos_inf_tick(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         quote.entry_probability(),
         &root,
@@ -690,10 +667,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
     assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ONE_POSITION,
-    );
     assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
@@ -712,8 +685,8 @@ fun session_mints_exact_quantity_and_redeems_live() {
     } = begin_live_tx(&mut fixture, SESSION);
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
-    let gross_value = market.order_value(option::some(copy pricer), order_id);
-    let (closed_order_id, replacement_order_id) = sessions::redeem_live(
+    let gross_value = market.live_order_value(&pricer, order_id);
+    let replacement_order_id = sessions::redeem_live(
         &mut market,
         &account_registry,
         &mut wrapper,
@@ -727,7 +700,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
         clock,
         scenario.ctx(),
     );
-    assert_eq!(closed_order_id, order_id);
     assert!(replacement_order_id.is_none());
     // The public order value is gross of the fixture's one minimum close fee.
     assert_eq!(
@@ -735,10 +707,6 @@ fun session_mints_exact_quantity_and_redeems_live() {
         post_mint_balance + gross_value - DEFAULT_TRADE_FEE,
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ZERO_POSITIONS,
-    );
     assert_eq!(event::events_by_type<order_events::LiveOrderRedeemed>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
@@ -772,7 +740,6 @@ fun session_mints_exact_amount() {
         ZERO_PREMIUM,
         NEXT_LOT_QUANTITY,
         true,
-        test_constants::leverage_one_x(),
         &root,
         clock,
         scenario.ctx(),
@@ -787,14 +754,13 @@ fun session_mints_exact_amount() {
         ZERO_PREMIUM,
         TEN_THOUSAND_LOTS,
         true,
-        test_constants::leverage_one_x(),
         &root,
         clock,
         scenario.ctx(),
     );
     predict_helpers::assert_atm_entry_probability(expected_quote.entry_probability());
     // One raw unit below the next lot's premium must size exactly ten thousand lots.
-    let budget = next_lot_quote.net_premium() - ONE_RAW_UNIT;
+    let budget = next_lot_quote.premium() - ONE_RAW_UNIT;
     let order_id = sessions::mint_exact_amount(
         &mut market,
         &account_registry,
@@ -805,7 +771,6 @@ fun session_mints_exact_amount() {
         predict_helpers::pos_inf_tick(),
         budget,
         TEN_THOUSAND_LOTS,
-        test_constants::leverage_one_x(),
         expected_quote.all_in_cost(),
         &root,
         clock,
@@ -817,10 +782,6 @@ fun session_mints_exact_amount() {
         test_constants::mint_deposit() - expected_quote.all_in_cost(),
     );
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ONE_POSITION,
-    );
     assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),
@@ -849,7 +810,7 @@ fun session_redeems_settled_order() {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
     // Predict's quote tests own the mint cost; this flow owns session auth and
-    // the independently exact in-range 1x terminal payout.
+    // the independently exact in-range terminal payout.
     let quote = market.quote_mint_for_account(
         &wrapper,
         &config,
@@ -859,7 +820,6 @@ fun session_redeems_settled_order() {
         ZERO_PREMIUM,
         test_constants::mint_quantity(),
         true,
-        test_constants::leverage_one_x(),
         &root,
         clock,
         scenario.ctx(),
@@ -873,7 +833,6 @@ fun session_redeems_settled_order() {
         lower_tick,
         higher_tick,
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
         quote.all_in_cost(),
         quote.entry_probability(),
         &root,
@@ -899,29 +858,22 @@ fun session_redeems_settled_order() {
     } = begin_settled_tx(&mut fixture, SESSION);
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
-    assert_eq!(market.order_value(option::none(), order_id), test_constants::mint_quantity());
-    let (closed_order_id, replacement_order_id) = sessions::redeem_settled(
+    assert_eq!(market.settled_order_payout(order_id), test_constants::mint_quantity());
+    sessions::redeem_settled(
         &mut market,
         &account_registry,
         &mut wrapper,
         &config,
         order_id,
-        test_constants::mint_quantity(),
         &root,
         clock,
         scenario.ctx(),
     );
-    assert_eq!(closed_order_id, order_id);
-    assert!(replacement_order_id.is_none());
     assert_eq!(
         wrapper.load_account().balance<DUSDC>(&root, clock),
         post_mint_balance + test_constants::mint_quantity(),
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    assert_eq!(
-        predict_account::expiry_position_count(wrapper.load_account(), market_id),
-        ZERO_POSITIONS,
-    );
     assert_eq!(event::events_by_type<order_events::SettledOrderRedeemed>().length(), ONE_EVENT);
     assert_eq!(
         sessions::session_expiration_ms(&wrapper, SESSION),

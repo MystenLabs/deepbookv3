@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// One-flow-many-assertions lifecycle test for the 1x (un-leveraged) live happy
+/// One-flow-many-assertions lifecycle test for the live happy
 /// path: one order is walked fund -> mint with a full state-sheet
 /// (`check_manager`) re-asserted after each action. Terminal settlement coverage
 /// lives in `settlement_flow_tests`.
@@ -13,13 +13,13 @@ use std::unit_test::assert_eq;
 
 /// Per-trade fee floors at `min_fee` (base_fee floored to 1 in the fixture).
 const MINT_MIN_FEE: u64 = 5_000_000;
-/// The post-mint free balance is `mint_deposit - net_premium - fee`. The premium
-/// is read from the quote the mint pays rather than written down: a 1x order
-/// fronts its full premium, `quote_mint_tests` owns that composition, and
+/// The post-mint free balance is `mint_deposit - premium - fee`. The premium
+/// is read from the quote the mint pays rather than written down;
+/// `quote_mint_tests` owns that composition, and
 /// `pricing_exact_tests` owns the at-the-money digital behind it.
 
 #[test]
-fun one_x_lifecycle_fund_mint() {
+fun live_lifecycle_fund_mint() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
         test_constants::short_expiry_ms(),
         test_constants::default_live_price(),
@@ -35,37 +35,29 @@ fun one_x_lifecycle_fund_mint() {
     );
 
     // Pre-trade state sheet: only the deposit has moved.
-    let mut expected = helpers::expected_manager_state(test_constants::mint_deposit(), 0, 0, 0, 0);
-    fx.check_manager_bundle(&account, expiry_id, expected);
+    let mut expected = helpers::expected_manager_state(test_constants::mint_deposit());
+    fx.check_manager_bundle(&account, expected);
 
-    // --- Mint one 1x in-range order.
+    // --- Mint one in-range order.
     let quote = fx.quote_mint_bundle(
         &market,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
-    let premium = quote.net_premium();
+    let premium = quote.premium();
     let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        test_constants::leverage_one_x(),
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     expected =
-        helpers::expected_manager_state(
-            test_constants::mint_deposit() - premium - MINT_MIN_FEE,
-            MINT_MIN_FEE,
-            1,
-            0,
-            0,
-        );
-    fx.check_manager_bundle(&account, expiry_id, expected);
+        helpers::expected_manager_state(test_constants::mint_deposit() - premium - MINT_MIN_FEE);
+    fx.check_manager_bundle(&account, expected);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

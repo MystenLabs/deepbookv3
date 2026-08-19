@@ -15,9 +15,7 @@ use deepbook_predict::{
     config_events,
     constants,
     ewma_config::{Self, EwmaConfig},
-    expiry_cash_config::{Self, ExpiryCashConfig},
     pricing_config::{Self, PricingConfig},
-    stake_config::{Self, StakeConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
 
@@ -45,8 +43,6 @@ public struct ProtocolConfig has key {
     /// who stay. Both rates are read once per flush into the frozen mark, so every
     /// fill in one flush is charged the same pair.
     plp_withdraw_fee_rate: u64,
-    /// Total liquidation candidates checked before mint and redeem flows.
-    trade_liquidation_budget: u64,
     /// Frozen-mark attempts a queued LP supply/withdraw request gets before the
     /// protocol cancels and refunds it. `1` (the default) is fill-or-kill; above
     /// that a missing request rests at the queue head and stops that queue for the
@@ -59,11 +55,9 @@ public struct ProtocolConfig has key {
     /// How long a started full-pool valuation may stay in flight before
     /// `plp::abort_valuation` becomes permissionless. Because the valuation lock
     /// freezes the whole mutation surface, this is the maximum protocol pause a
-    /// stalled keeper can cause, and so is tuned alongside flush cadence (RP-27).
+    /// stalled keeper can cause, and so is tuned alongside flush cadence (RP-29).
     max_valuation_window_ms: u64,
-    expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
-    stake_config: StakeConfig,
     ewma_config: EwmaConfig,
     /// Minimum package version permitted to run version-gated flows. Monotonic;
     /// `bump_version_watermark` advances it to the running `current_version!()`,
@@ -144,36 +138,6 @@ public fun set_template_expiry_fee_max_multiplier(
     config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
 }
 
-/// Set the near-expiry no-leverage window snapshotted by newly created expiry markets.
-public fun set_template_no_leverage_window_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    window_ms: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_no_leverage_window_ms(window_ms);
-}
-
-/// Set the liquidation LTV snapshotted by newly created expiry markets.
-public fun set_template_liquidation_ltv(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_liquidation_ltv(value);
-}
-
-/// Set the max admission leverage snapshotted by newly created expiry markets.
-public fun set_template_max_admission_leverage(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_max_admission_leverage(value);
-}
-
 /// Set the backing-buffer lambda snapshotted by newly created expiry markets.
 public fun set_template_backing_buffer_lambda(
     config: &mut ProtocolConfig,
@@ -193,32 +157,6 @@ public fun set_template_inventory_impact_max_rate(
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
-}
-
-/// Set how much of the DEEP-stake benefit programme newly created expiry markets
-/// run, from `0` (nothing) to `float_scaling` (full strength). Ships at 0, so
-/// markets charge undiscounted fees and pay no stake-scaled loss rebate until this
-/// is raised. Existing markets keep the value they snapshotted.
-public fun set_template_max_benefit_ratio(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.stake_config.set_max_benefit_ratio(value);
-}
-
-/// Set the staking benefit thresholds snapshotted by newly created expiry markets:
-/// `lower` (half of max benefits) and `upper` (full benefits). Validated as a pair
-/// (`upper > 2 * lower`). Existing markets keep the curve they snapshotted.
-public fun set_template_benefit_powers(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    lower: u64,
-    upper: u64,
-) {
-    config.assert_version();
-    config.stake_config.set_benefit_powers(lower, upper);
 }
 
 /// Set the minimum raw entry probability snapshotted by newly created expiry markets.
@@ -287,27 +225,6 @@ public fun set_block_scholes_svi_freshness_ms(
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the trading loss rebate rate snapshotted by newly created expiry markets.
-public fun set_template_trading_loss_rebate_rate(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.assert_version();
-    config.expiry_cash_template_config.set_trading_loss_rebate_rate(value);
-}
-
-/// Set the total liquidation candidate budget used before mint and redeem flows.
-public fun set_trade_liquidation_budget(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    budget: u64,
-) {
-    config.assert_version();
-    config_constants::assert_trade_liquidation_budget(budget);
-    config.trade_liquidation_budget = budget;
-}
-
 /// Set how many frozen-mark attempts a queued LP request gets before it is
 /// cancelled and refunded. `1` is fill-or-kill. Raising it lets a request rest at
 /// the head across flushes, which stops that queue each time it misses — see RP-12
@@ -329,7 +246,7 @@ public fun set_lp_request_limit_flush_attempts(
 /// discard it. This is the maximum protocol pause a stalled keeper can cause, so it
 /// belongs with the flush cadence as an operator liveness decision: too short and a
 /// legitimate long flush can be discarded from under the keeper, too long and an
-/// abandoned one freezes the protocol for that duration. See RP-27.
+/// abandoned one freezes the protocol for that duration. See RP-29.
 public fun set_max_valuation_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -458,10 +375,6 @@ public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 
     config.protocol_reserve_profit_share
 }
 
-public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
-    config.trade_liquidation_budget
-}
-
 public(package) fun lp_request_limit_flush_attempts(config: &ProtocolConfig): u64 {
     config.lp_request_limit_flush_attempts
 }
@@ -474,31 +387,14 @@ public(package) fun max_lp_pool_value(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
-public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
-    &config.expiry_cash_template_config
-}
-
 public(package) fun strike_exposure_template_config(
     config: &ProtocolConfig,
 ): &StrikeExposureConfig {
     &config.strike_exposure_template_config
 }
 
-public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {
-    expiry_cash_config::snapshot(&config.expiry_cash_template_config)
-}
-
 public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
     strike_exposure_config::snapshot(&config.strike_exposure_template_config)
-}
-
-public(package) fun stake_template_config(config: &ProtocolConfig): &StakeConfig {
-    &config.stake_config
-}
-
-/// Benefit policy a newly created expiry market snapshots as its own.
-public(package) fun stake_config_snapshot(config: &ProtocolConfig): StakeConfig {
-    stake_config::snapshot(&config.stake_config)
 }
 
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
@@ -588,13 +484,10 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         plp_supply_fee_rate: config_constants::default_plp_supply_fee_rate!(),
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
-        trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_valuation_window_ms: config_constants::default_max_valuation_window_ms!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
-        expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),
-        stake_config: stake_config::new(),
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),
         trading_paused: false,

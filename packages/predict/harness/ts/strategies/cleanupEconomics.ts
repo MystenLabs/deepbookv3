@@ -6,7 +6,7 @@ import { errorTag } from "../trace.js";
 const SCALE = 1_000_000_000n;
 const RETRIES = 8;
 
-export type CleanupProfile = "survivor" | "liquidated" | "claim";
+export type CleanupProfile = "survivor";
 
 interface CleanupConfig {
   sizes: number[];
@@ -20,40 +20,13 @@ const CONFIG: Record<CleanupProfile, CleanupConfig> = {
     fund: 40_000_000_000_000n,
     maxWaitTicks: 60,
   },
-  liquidated: {
-    sizes: [4, 10, 20],
-    fund: 60_000_000_000_000n,
-    maxWaitTicks: 120,
-  },
-  claim: {
-    sizes: [3, 10],
-    fund: 40_000_000_000_000n,
-    maxWaitTicks: 60,
-  },
 };
 
-type Phase = "mint" | "wait" | "claim" | "done";
+type Phase = "mint" | "wait" | "done";
 
-function targetMarket(ctx: StrategyCtx, profile: CleanupProfile): Mkt | null {
-  if (profile !== "liquidated") {
-    const market = ctx.nearestExpiry();
-    return market && market.expiryMs - Date.now() >= 25_000
-      ? market
-      : null;
-  }
-  const now = Date.now();
-  const usable = ctx
-    .markets()
-    .filter((market) => market.expiryMs - now > 40_000);
-  if (!usable.length) return null;
-  const drifting = usable.filter((market) => {
-    const runway = market.expiryMs - now;
-    return runway >= 120_000 && runway <= 340_000;
-  });
-  const candidates = drifting.length ? drifting : usable;
-  return candidates.reduce((left, right) =>
-    right.expiryMs > left.expiryMs ? right : left,
-  );
+function targetMarket(ctx: StrategyCtx): Mkt | null {
+  const market = ctx.nearestExpiry();
+  return market && market.expiryMs - Date.now() >= 25_000 ? market : null;
 }
 
 function mintLeg(
@@ -63,23 +36,12 @@ function mintLeg(
   index: number,
   size: number,
 ): MintLeg | null {
-  const probability =
-    profile === "liquidated"
-      ? ctx.rand(0.45, 0.55)
-      : ctx.rand(0.45, 0.6);
-  const isUp =
-    profile !== "liquidated" || index < Math.ceil(size / 2);
+  const probability = ctx.rand(0.45, 0.6);
+  const isUp = true;
   const instruction: Instruction = {
     direction: isUp ? "UP" : "DN",
-    leverage:
-      profile === "liquidated"
-        ? ctx.leverageCap(probability) * ctx.rand(0.95, 0.99)
-        : 1,
     targetProbability: probability,
-    spendUsd:
-      profile === "liquidated"
-        ? ctx.rand(20, 100)
-        : ctx.rand(5, 10),
+    spendUsd: ctx.rand(5, 10),
   };
   const resolved = ctx.resolve(instruction, market);
   if (!resolved) return null;
@@ -87,7 +49,6 @@ function mintLeg(
     strike1e9: BigInt(Math.round(resolved.strikeUsd)) * SCALE,
     isUp,
     quantity: resolved.quantity,
-    leverage1e9: resolved.leverage1e9,
     maxCost: resolved.maxCost,
     maxProbability: resolved.maxProbability1e9,
   };
@@ -143,7 +104,7 @@ export function createCleanupStrategy(profile: CleanupProfile): Strategy {
 
       if (phase === "mint") {
         if (!ctx.snapshot()) return null;
-        const market = targetMarket(ctx, profile);
+        const market = targetMarket(ctx);
         if (!market) return null;
         const size = currentSize();
         const legs: MintLeg[] = [];
@@ -215,78 +176,11 @@ export function createCleanupStrategy(profile: CleanupProfile): Strategy {
         return null;
       }
 
-      if (profile === "claim") {
-        if (phase === "wait") {
-          try {
-            await ctx.redeemAll(target.marketId, target.positions);
-            retries = 0;
-            phase = "claim";
-            return "redeem";
-          } catch (error) {
-            retries += 1;
-            if (retries > RETRIES) {
-              fail(
-                ctx,
-                `redeem n=${currentSize()}: ${errorTag(error)}`,
-                "redeem-all",
-                errorTag(error),
-              );
-            } else {
-              ctx.trace({
-                type: "cleanupRetry",
-                family: "cleanup-economics",
-                profile,
-                phase: "redeem-all",
-                attempt: retries,
-                tag: errorTag(error),
-                n: currentSize(),
-              });
-            }
-            return null;
-          }
-        }
-        try {
-          await ctx.claimRebate(target.marketId);
-          advance();
-          return "redeem";
-        } catch (error) {
-          retries += 1;
-          if (retries > RETRIES) {
-            fail(
-              ctx,
-              `claim n=${currentSize()}: ${errorTag(error)}`,
-              "claim",
-              errorTag(error),
-            );
-          } else {
-            ctx.trace({
-              type: "cleanupRetry",
-              family: "cleanup-economics",
-              profile,
-              phase: "claim",
-              attempt: retries,
-              tag: errorTag(error),
-              n: currentSize(),
-            });
-          }
-          return null;
-        }
-      }
-
       try {
         const result = await ctx.cleanout(
           target.marketId,
           target.positions,
         );
-        if (profile === "liquidated" && result.nLiquidated === 0) {
-          fail(
-            ctx,
-            `cleanout for n=${currentSize()} contained zero liquidated positions`,
-            "cleanout",
-            "no-liquidated-positions",
-          );
-          return null;
-        }
         advance();
       } catch (error) {
         retries += 1;

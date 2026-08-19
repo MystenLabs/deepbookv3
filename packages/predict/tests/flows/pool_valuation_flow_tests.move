@@ -30,27 +30,26 @@ use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
-/// 1x ATM up range, quantity 2e9 (well under the 50e9 cash floor that backs it).
-const ONE_X_QUANTITY: u64 = 2_000_000_000;
+/// Standard ATM up-range quantity, well under the 50e9 cash floor that backs it.
+const STANDARD_QUANTITY: u64 = 2_000_000_000;
 /// Idle seed large enough to fund several markets to the cash floor.
 const IDLE_SEED: u64 = 1_200_000_000_000;
 /// `value_expiry` sweeps each minted market back to its 10e9 cash target, so each
-/// market's NAV is that target less its live liability and rebate reserve, and the
+/// market's NAV is that target less its live liability, and the
 /// swept premium plus fees land in idle. Both markets are identical, so the two
 /// sides of the aggregation are pinned against each other and the pool mark is
 /// pinned against the ledger fields — none of it restates the digital, which is
 /// checked independently at each mint.
 const MARKET_CASH_TARGET: u64 = 10_000_000_000;
 const MINT_MIN_FEE: u64 = 10_000_000;
-const REBATE_AFTER_MINT: u64 = 5_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
 /// that mark is a very low but executable fair PLP price.
 const BELOW_MIN_PRICE_IDLE: u64 = 1_000_000_000;
-/// Large 1x order used to drive a fully-funded market underwater after a price jump.
+/// Large order used to drive a fully-funded market underwater after a price jump.
 const UNDERWATER_QUANTITY: u64 = 500_000_000_000;
 /// Allocation that leaves the market's cash EXACTLY equal to the liability the
 /// deep-ITM reprice creates, so the market contributes a zero NAV. This is a
-/// knife edge by necessity: for a 1x order the mint's backing requirement and the
+/// knife edge by necessity: the mint's backing requirement and the
 /// deep-ITM liability are the same number, so cash below it cannot be minted and
 /// cash above it cannot value to zero. It is `UNDERWATER_QUANTITY` minus the
 /// at-the-money premium. This is a fixture INPUT, tuned to the exact integer the
@@ -110,10 +109,9 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     // the mint premium, which was checked against the independent reference at
     // mint time — nothing is read back out of the vault to predict itself.
     //
-    // A 1x order's live worth is the same product as its premium, so a swept
-    // market holds its cash target less that worth and less the rebate withheld
-    // from the fee.
-    let expected_nav = MARKET_CASH_TARGET - premium - REBATE_AFTER_MINT;
+    // An order's live worth is the same product as its premium, so a swept
+    // market holds its cash target less that worth.
+    let expected_nav = MARKET_CASH_TARGET - premium;
     let mint_cost = premium + MINT_MIN_FEE;
     let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
     let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
@@ -239,7 +237,7 @@ fun empty_pool_valuation_returns_idle() {
 
 /// Freezing the pricer is the mandatory per-market leg of a pool-wide flush, so an over-wide
 /// active market observation must surface the named pricing-boundary error there rather than a
-/// VM cast. Since RP-27 the oracle read happens in the atomic snapshot stage rather than in
+/// VM cast. Since RP-29 the oracle read happens in the atomic snapshot stage rather than in
 /// `value_expiry`, so the abort lands inside the flush's first transaction.
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
@@ -372,7 +370,7 @@ fun valuation_split_across_transactions_marks_at_the_snapshot_instant() {
     // Guard against a vacuous test: prove the move is load-bearing. A pricer loaded
     // live at this moment marks m2 differently from its frozen one, so if
     // `value_expiry` re-read the oracle the pool mark below could not still match.
-    let expected_nav = MARKET_CASH_TARGET - premium - REBATE_AFTER_MINT;
+    let expected_nav = MARKET_CASH_TARGET - premium;
     let live_nav_after_move = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
     assert!(live_nav_after_move != expected_nav);
 
@@ -493,8 +491,7 @@ fun mint_during_valuation_aborts() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
+        STANDARD_QUANTITY,
     );
 
     abort 999
@@ -556,16 +553,14 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     // Lock released by finish: the same mint that would have aborted mid-flow now
     // succeeds, adding a position.
     let expiry_id = helpers::market(&market).id();
-    let count_before = helpers::position_count_bundle(&account, expiry_id);
-    fx.mint_bundle(
+    let order_id = fx.mint_bundle(
         &mut market,
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
+        STANDARD_QUANTITY,
     );
-    assert_eq!(helpers::position_count_bundle(&account, expiry_id), count_before + 1);
+    assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -732,8 +727,8 @@ fun fund_empty_market(fx: &mut helpers::Fixture, e: ID) {
     helpers::return_market_bundle(market);
 }
 
-/// Prepare + fund an already-created market and mint one 1x ATM up order into it.
-/// Fund a market to its allocation and mint the standard 1x order into it,
+/// Prepare and fund an already-created market and mint one ATM up order into it.
+/// Fund a market to its allocation and mint the standard order into it,
 /// returning the premium paid. The quoted probability is checked against the
 /// independent reference here, so every expected value the caller derives from
 /// this premium rests on a verified price.
@@ -747,8 +742,7 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
         &market,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
+        STANDARD_QUANTITY,
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     fx.mint_bundle(
@@ -756,12 +750,11 @@ fun fund_market_with_order(fx: &mut helpers::Fixture, trader: &helpers::Trader, 
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ONE_X_QUANTITY,
-        test_constants::leverage_one_x(),
+        STANDARD_QUANTITY,
     );
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
-    quote.net_premium()
+    quote.premium()
 }
 
 /// Build a production-created market whose full pool allocation is deployed into
@@ -788,7 +781,6 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
             helpers::strike_tick(),
             constants::pos_inf_tick!(),
             UNDERWATER_QUANTITY,
-            test_constants::leverage_one_x(),
         )
         .entry_probability());
     fx.mint_bundle(
@@ -797,7 +789,6 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         UNDERWATER_QUANTITY,
-        test_constants::leverage_one_x(),
     );
     // The knife edge this fixture rests on, stated so it fails loudly rather than
     // drifting: the deep-ITM liability is the full quantity, so a zero NAV needs

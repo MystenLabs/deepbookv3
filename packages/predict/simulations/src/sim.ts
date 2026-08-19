@@ -54,7 +54,6 @@ import {
     setBlockScholesSignerTx,
     setCadenceConfigTx,
     setTemplateExpiryFeeConfigTx,
-    setTemplateMaxAdmissionLeverageTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
 } from "../../devtools/ts/runtime.js";
@@ -1163,12 +1162,6 @@ async function setupSimulation(
     console.log(
         `[${ts()}]   Expiry fee ramp: window_ms=${expiryFeeWindowMs} max_multiplier=${expiryFeeMaxMultiplier}`,
     );
-
-    await executeAndWait(
-        setTemplateMaxAdmissionLeverageTx(protocolConfigId, maxAdmissionLeverage),
-        "set_template_max_admission_leverage",
-    );
-    console.log(`[${ts()}]   Max admission leverage: ${maxAdmissionLeverage}`);
 
     await executeAndWait(
         setCadenceConfigTx({

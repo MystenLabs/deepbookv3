@@ -30,14 +30,17 @@ INVARIANT_MODULES = {
     "strike_payout_tree",
     "lp_book",
     "expiry_cash",
-    "liquidation_book",
     "range_codec",
     "account",
     "account_registry",
 }
 EXPECTED_CODES = {
-    "liquidation_book:4",
+    # strike_payout_tree:2 is ENonMonotonePrice — an oracle-surface guard, not a
+    # protocol invariant. It lived in `pricing` (a GUARD module) until leverage
+    # removal deleted the price memo and moved the check into the tree walk; the
+    # module moved but the severity did not, so it is pinned expected here.
     "strike_payout_tree:1",
+    "strike_payout_tree:2",
     "lp_book:0",
     "lp_book:1",
     "lp_book:2",

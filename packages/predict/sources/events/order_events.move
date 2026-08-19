@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Order-lifecycle and liquidation events for Predict.
+/// Order-lifecycle events for Predict.
 ///
 /// Events carry transition identities and deltas rather than account or market
 /// balances. Partial closes link an old order ID to its replacement; the position
@@ -25,12 +25,11 @@ public struct OrderMinted has copy, drop, store {
     /// form, `tick * tick_size` with the `tick_size` from `MarketCreated`.
     lower_tick: u64,
     higher_tick: u64,
-    leverage: u64,
     /// 1e9-scaled range probability quoted at entry.
     entry_probability: u64,
     quantity: u64,
-    /// Net premium the user paid into LP backing, in DUSDC base units.
-    net_premium: u64,
+    /// Premium the user paid into LP backing, in DUSDC base units.
+    premium: u64,
     /// Full trading fee collected by the expiry, including any sponsor-paid subsidy.
     trading_fee: u64,
     /// Portion of `trading_fee` paid from expiry-local fee incentives.
@@ -66,7 +65,7 @@ public struct LiveOrderRedeemed has copy, drop, store {
     remaining_quantity: u64,
     /// New order ID minted to carry the remainder on a partial live close.
     replacement_order_id: Option<u256>,
-    /// Redeem value before fees, after any floor deduction.
+    /// Redeem value before fees.
     redeem_amount: u64,
     trading_fee: u64,
     builder_fee: u64,
@@ -95,46 +94,8 @@ public struct SettledOrderRedeemed has copy, drop, store {
     /// Stable economic-position handle, constant across the replacement chain.
     position_root_id: u256,
     owner: address,
-    quantity_closed: u64,
-    settlement_price: u64,
     payout_amount: u64,
     redeemed_at_ms: u64,
-}
-
-/// Emitted when an account clears a liquidated position with zero payout.
-public struct LiquidatedOrderRedeemed has copy, drop, store {
-    expiry_market_id: ID,
-    account_id: ID,
-    order_id: u256,
-    /// Stable economic-position handle, constant across the replacement chain.
-    position_root_id: u256,
-    owner: address,
-    quantity_closed: u64,
-    redeemed_at_ms: u64,
-}
-
-/// Emitted once per order removed by liquidation.
-///
-/// Liquidation is permissionless and does not touch accounts, so account and owner
-/// are not available here. Replacement IDs are linked by live-redemption events.
-public struct OrderLiquidated has copy, drop, store {
-    expiry_market_id: ID,
-    order_id: u256,
-    quantity: u64,
-    /// Probability-weighted value checked against the liquidation threshold.
-    gross_value: u64,
-    /// Current contract floor in DUSDC base units.
-    floor_amount: u64,
-    /// 1e9-scaled floor-to-live-value threshold used for this expiry.
-    liquidation_ltv: u64,
-    liquidated_at_ms: u64,
-    /// Oracle source timestamps present when this liquidation was priced: the provider model
-    /// times the data is "as of" (the SVI one is also the roll-down anchor). Pyth is `0` only
-    /// when unusable.
-    pyth_spot_source_timestamp_ms: u64,
-    block_scholes_spot_source_timestamp_ms: u64,
-    block_scholes_forward_source_timestamp_ms: u64,
-    block_scholes_svi_source_timestamp_ms: u64,
 }
 
 // === Public-Package Functions ===
@@ -146,9 +107,8 @@ public(package) fun emit_order_minted(
     builder_code_id: Option<ID>,
     order: &Order,
     pricer: &Pricer,
-    leverage: u64,
     entry_probability: u64,
-    net_premium: u64,
+    premium: u64,
     trading_fee: u64,
     fee_incentive_subsidy: u64,
     builder_fee: u64,
@@ -164,10 +124,9 @@ public(package) fun emit_order_minted(
         owner,
         lower_tick: order.lower_tick(),
         higher_tick: order.higher_tick(),
-        leverage,
         entry_probability,
         quantity: order.quantity(),
-        net_premium,
+        premium,
         trading_fee,
         fee_incentive_subsidy,
         builder_fee,
@@ -228,7 +187,6 @@ public(package) fun emit_settled_order_redeemed(
     owner: address,
     order: &Order,
     position_root_id: u256,
-    settlement_price: u64,
     payout_amount: u64,
     redeemed_at_ms: u64,
 ) {
@@ -238,51 +196,7 @@ public(package) fun emit_settled_order_redeemed(
         order_id: order.id(),
         position_root_id,
         owner,
-        quantity_closed: order.quantity(),
-        settlement_price,
         payout_amount,
         redeemed_at_ms,
-    });
-}
-
-public(package) fun emit_liquidated_order_redeemed(
-    expiry_market_id: ID,
-    account_id: ID,
-    owner: address,
-    order: &Order,
-    position_root_id: u256,
-    redeemed_at_ms: u64,
-) {
-    event::emit(LiquidatedOrderRedeemed {
-        expiry_market_id,
-        account_id,
-        order_id: order.id(),
-        position_root_id,
-        owner,
-        quantity_closed: order.quantity(),
-        redeemed_at_ms,
-    });
-}
-
-public(package) fun emit_order_liquidated(
-    expiry_market_id: ID,
-    order: &Order,
-    pricer: &Pricer,
-    gross_value: u64,
-    liquidation_ltv: u64,
-    liquidated_at_ms: u64,
-) {
-    event::emit(OrderLiquidated {
-        expiry_market_id,
-        order_id: order.id(),
-        quantity: order.quantity(),
-        gross_value,
-        floor_amount: order.floor_shares(),
-        liquidation_ltv,
-        liquidated_at_ms,
-        pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
-        block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
-        block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
-        block_scholes_svi_source_timestamp_ms: pricer.block_scholes_svi_source_timestamp_ms(),
     });
 }

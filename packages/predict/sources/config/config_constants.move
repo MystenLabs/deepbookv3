@@ -14,30 +14,22 @@ const EInvalidMaxEntryProbability: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesPriceFreshnessMs: u64 = 5;
 const EInvalidProtocolReserveProfitShare: u64 = 6;
-const EInvalidTradingLossRebateRate: u64 = 7;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
-const EInvalidExpiryFeeWindowMs: u64 = 9;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 10;
-const EInvalidLowerBenefitPower: u64 = 11;
-const EInvalidUpperBenefitPower: u64 = 12;
-const EInvalidTradeLiquidationBudget: u64 = 13;
-const EInvalidLiquidationLtv: u64 = 14;
-const EInvalidMarketTickSize: u64 = 15;
-const EInvalidEwmaAlpha: u64 = 16;
-const EInvalidEwmaZScoreThreshold: u64 = 17;
-const EInvalidEwmaPenaltyRate: u64 = 18;
-const EInvalidBackingBufferLambda: u64 = 19;
-const EInvalidMaxAdmissionLeverage: u64 = 20;
-const EInvalidCadenceWindowSize: u64 = 21;
-const EMarketTickSizeTooLarge: u64 = 22;
-const EInvalidNoLeverageWindowMs: u64 = 23;
-const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
-const EInvalidMaxLpPoolValue: u64 = 25;
-const EInvalidPlpSupplyFeeRate: u64 = 26;
-const EInvalidPlpWithdrawFeeRate: u64 = 27;
-const EInvalidMaxBenefitRatio: u64 = 28;
-const EInvalidInventoryImpactMaxRate: u64 = 29;
-const EInvalidMaxValuationWindowMs: u64 = 30;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
+const EInvalidExpiryFeeWindowMs: u64 = 8;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 9;
+const EInvalidMarketTickSize: u64 = 10;
+const EInvalidEwmaAlpha: u64 = 11;
+const EInvalidEwmaZScoreThreshold: u64 = 12;
+const EInvalidEwmaPenaltyRate: u64 = 13;
+const EInvalidBackingBufferLambda: u64 = 14;
+const EInvalidCadenceWindowSize: u64 = 15;
+const EMarketTickSizeTooLarge: u64 = 16;
+const EInvalidLpRequestLimitFlushAttempts: u64 = 17;
+const EInvalidMaxLpPoolValue: u64 = 18;
+const EInvalidPlpSupplyFeeRate: u64 = 19;
+const EInvalidPlpWithdrawFeeRate: u64 = 20;
+const EInvalidInventoryImpactMaxRate: u64 = 21;
+const EInvalidMaxValuationWindowMs: u64 = 22;
 
 // === Fees ===
 
@@ -91,23 +83,6 @@ public(package) fun assert_plp_withdraw_fee_rate(value: u64) {
     );
 }
 
-// === Trade Liquidation ===
-
-public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
-
-public(package) macro fun min_trade_liquidation_budget(): u64 { 24 }
-
-public(package) macro fun max_trade_liquidation_budget(): u64 {
-    3_000
-}
-
-public(package) fun assert_trade_liquidation_budget(value: u64) {
-    assert!(
-        value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
-        EInvalidTradeLiquidationBudget,
-    );
-}
-
 // === LP Request Queue ===
 
 /// Frozen-mark attempts a queued LP request gets before the protocol cancels and
@@ -147,7 +122,7 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 /// dead keeper freezes the protocol, so at a ten-minute cadence the one-hour default
 /// is six missed flush cycles, while at an hourly cadence it is about one. A live
 /// operator never waits it out — `abort_valuation_privileged` is immediate — so this
-/// only binds when the keeper is genuinely gone. See RP-27.
+/// only binds when the keeper is genuinely gone. See RP-29.
 public(package) macro fun default_max_valuation_window_ms(): u64 {
     deepbook_predict::constants::one_hour_ms!()
 }
@@ -199,68 +174,7 @@ public(package) fun assert_max_lp_pool_value(value: u64) {
     );
 }
 
-// === Backing and Liquidation ===
-
-public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
-
-public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
-
-public(package) macro fun max_liquidation_ltv(): u64 { 950_000_000 }
-
-public(package) fun assert_liquidation_ltv(value: u64) {
-    assert!(
-        value >= min_liquidation_ltv!() && value <= max_liquidation_ltv!(),
-        EInvalidLiquidationLtv,
-    );
-}
-
-/// Global admission-leverage cap snapshotted by newly created expiry markets. Mint
-/// admission scales this cap down for low-probability contracts.
-public(package) macro fun default_max_admission_leverage(): u64 {
-    3 * fixed_math::math::float_scaling!()
-}
-
-public(package) macro fun min_max_admission_leverage(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) macro fun max_max_admission_leverage(): u64 {
-    10 * fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_max_admission_leverage(value: u64) {
-    assert!(
-        value >= min_max_admission_leverage!()
-            && value <= max_max_admission_leverage!(),
-        EInvalidMaxAdmissionLeverage,
-    );
-}
-
-/// Shape parameter for the admission curve:
-/// `p * (1 + k) / (p + k)`. `0.2` makes low probabilities meaningfully stricter
-/// while still approaching the configured cap smoothly as probability rises.
-public(package) macro fun admission_leverage_curve_k(): u64 { 200_000_000 }
-
-/// Window before expiry within which mint admission originates no leverage at all:
-/// the cap is exactly 1x. Near expiry a contract's probability can move far in a
-/// single tick, leaping a leveraged order past its knockout before liquidation can
-/// fire and leaving the gap with the LP. `0` disables the block; one hour by default.
-public(package) macro fun default_no_leverage_window_ms(): u64 {
-    deepbook_predict::constants::one_hour_ms!()
-}
-
-public(package) macro fun min_no_leverage_window_ms(): u64 { 0 }
-
-public(package) macro fun max_no_leverage_window_ms(): u64 {
-    deepbook_predict::constants::one_year_ms!()
-}
-
-public(package) fun assert_no_leverage_window_ms(value: u64) {
-    assert!(
-        value >= min_no_leverage_window_ms!() && value <= max_no_leverage_window_ms!(),
-        EInvalidNoLeverageWindowMs,
-    );
-}
+// === Backing ===
 
 public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
 
@@ -323,13 +237,13 @@ public(package) fun assert_min_fee(value: u64) {
 }
 
 /// Window before expiry over which trade fees ramp up to the per-expiry max
-/// multiplier. Five minutes is the shortest admin-tunable window.
+/// multiplier. One minute is the shortest admin-tunable window.
 public(package) macro fun default_expiry_fee_window_ms(): u64 {
     deepbook_predict::constants::one_day_ms!()
 }
 
 public(package) macro fun min_expiry_fee_window_ms(): u64 {
-    deepbook_predict::constants::five_minutes_ms!()
+    deepbook_predict::constants::one_minute_ms!()
 }
 
 public(package) macro fun max_expiry_fee_window_ms(): u64 {
@@ -386,7 +300,9 @@ public(package) fun assert_cadence_window_size(value: u64) {
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }
 
-// The 1% hard floor keeps the budget-to-quantity inverse's rounding undershoot below one position lot throughout the supported leverage envelope.
+// Envelope floor for the admin-tunable minimum entry probability. The budget-to-quantity
+// rounding rationale this floor once carried died with leverage (RP-13): the search probe and
+// the admission charge are now the same expression, so no undershoot can arise.
 public(package) macro fun min_min_entry_probability(): u64 { 10_000_000 }
 
 public(package) macro fun max_min_entry_probability(): u64 {
@@ -513,89 +429,5 @@ public(package) fun assert_ewma_penalty_rate(value: u64) {
     assert!(
         value >= min_ewma_penalty_rate!() && value <= max_ewma_penalty_rate!(),
         EInvalidEwmaPenaltyRate,
-    );
-}
-
-// === Fees ===
-
-public(package) macro fun default_trading_loss_rebate_rate(): u64 {
-    500_000_000
-}
-
-public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
-
-public(package) macro fun max_trading_loss_rebate_rate(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_trading_loss_rebate_rate(value: u64) {
-    assert!(
-        value >= min_trading_loss_rebate_rate!()
-            && value <= max_trading_loss_rebate_rate!(),
-        EInvalidTradingLossRebateRate,
-    );
-}
-
-// === Staking ===
-
-/// Ceiling on the DEEP-stake benefit ratio, in FLOAT_SCALING. The stake curve is
-/// scaled by this, so it sets how much of the programme runs: `0` pays nothing at
-/// any stake, `float_scaling` runs it at full strength, and values between phase
-/// it in. Ships at **0**, so a market created from the shipped template charges
-/// every trader the undiscounted fee and pays no stake-scaled loss rebate.
-public(package) macro fun default_max_benefit_ratio(): u64 { 0 }
-
-public(package) macro fun min_max_benefit_ratio(): u64 { 0 }
-
-public(package) macro fun max_max_benefit_ratio(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_max_benefit_ratio(value: u64) {
-    assert!(
-        value >= min_max_benefit_ratio!() && value <= max_max_benefit_ratio!(),
-        EInvalidMaxBenefitRatio,
-    );
-}
-
-/// Active stake at the benefit-curve kink: half of max benefits. Default 100k
-/// DEEP, admin-tunable 10k..1M.
-public(package) macro fun default_lower_benefit_power(): u64 {
-    100_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun min_lower_benefit_power(): u64 {
-    10_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun max_lower_benefit_power(): u64 {
-    1_000_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-/// Active stake for full (max) benefits. Default 1.1M DEEP, admin-tunable
-/// 100k..50M.
-public(package) macro fun default_upper_benefit_power(): u64 {
-    1_100_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun min_upper_benefit_power(): u64 {
-    100_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) macro fun max_upper_benefit_power(): u64 {
-    50_000_000 * deepbook_predict::constants::deep_decimals!()
-}
-
-public(package) fun assert_lower_benefit_power(value: u64) {
-    assert!(
-        value >= min_lower_benefit_power!() && value <= max_lower_benefit_power!(),
-        EInvalidLowerBenefitPower,
-    );
-}
-
-public(package) fun assert_upper_benefit_power(value: u64) {
-    assert!(
-        value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
-        EInvalidUpperBenefitPower,
     );
 }

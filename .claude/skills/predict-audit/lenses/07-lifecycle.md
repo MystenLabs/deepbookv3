@@ -14,7 +14,7 @@ machine and each public entry as a transition.
 
 1. **PER-OBJECT LIFECYCLE** — for `ExpiryMarket`, `PoolVault`, `predict_account`, the propbook feeds, and the
    `account::Account`, draw the state machine: states (created → active → settled → compacted;
-   trading-enabled/paused; valuation-locked/unlocked; stake-epoch states) and per transition: entry
+   trading-enabled/paused; valuation-locked/unlocked) and per transition: entry
    function(s), precondition gates (phase, pause, version, valuation lock), postconditions it must establish.
    Flag any transition whose precondition set is incomplete or whose postcondition isn't guaranteed on every
    path (including early returns and abort-after-partial-mutation).
@@ -26,7 +26,7 @@ machine and each public entry as a transition.
    Per move.md, exits/settlement/valuation should be blocked only by the valuation lock, not trading-pause —
    verify that holds.
 
-3. **VALUATION-LOCK ATOMICITY** — since RP-27 the flush spans transactions: only the SNAPSHOT stage is
+3. **VALUATION-LOCK ATOMICITY** — since RP-29 the flush spans transactions: only the SNAPSHOT stage is
    atomic (forced by the `SnapshotStage` hot potato), while `value_expiry` is resumable and the lock is held
    across the whole sequence. The valuation must snapshot the active-expiry set, value each expiry exactly
    once, and price PLP shares only against a fully-finished sync. Stress it: can the snapshot stage be split

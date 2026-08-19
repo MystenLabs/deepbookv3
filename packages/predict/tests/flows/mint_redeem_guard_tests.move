@@ -22,8 +22,6 @@ use std::unit_test::assert_eq;
 
 /// Lot-aligned position size minted in both tests.
 const QUANTITY: u64 = 840_000_000;
-/// 1x leverage in 1e9 fixed point: no floor, so no liquidation interaction.
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 /// One second past the fixture's `now_ms()` open time — distinct timestamp, still
 /// inside the oracle freshness window.
 const REDEEM_MS: u64 = 121_000;
@@ -35,7 +33,7 @@ const MAX_COST_BELOW_QUOTE: u64 = 1;
 // driving both sides from the quote states the claim directly. The quote's own
 // decomposition into premium and fee components is pinned in `quote_mint_tests`.
 const MAX_PROBABILITY_ZERO: u64 = 0;
-const ZERO_NET_PREMIUM_AMOUNT: u64 = 0;
+const ZERO_PREMIUM_AMOUNT: u64 = 0;
 const MIN_PROBABILITY_CERTAIN: u64 = 1_000_000_000;
 const MIN_PROBABILITY_DISABLED: u64 = 0;
 const MIN_PROCEEDS_DISABLED: u64 = 0;
@@ -56,11 +54,10 @@ fun redeem_in_mint_timestamp_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     // Same fixture clock as the mint: the guard must reject this redeem.
-    fx.redeem_bundle(
+    fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
@@ -86,7 +83,6 @@ fun mint_exact_quantity_above_max_cost_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
         MAX_COST_BELOW_QUOTE,
         std::u64::max_value!(),
     );
@@ -112,7 +108,6 @@ fun mint_exact_quantity_at_exact_all_in_cost_succeeds() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        LEVERAGE_ONE_X,
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     let all_in_cost = quote.all_in_cost();
@@ -122,7 +117,6 @@ fun mint_exact_quantity_at_exact_all_in_cost_succeeds() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        LEVERAGE_ONE_X,
         all_in_cost,
         std::u64::max_value!(),
     );
@@ -153,7 +147,6 @@ fun mint_exact_quantity_one_below_all_in_cost_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        LEVERAGE_ONE_X,
     );
     helpers::assert_atm_entry_probability(quote.entry_probability());
     let all_in_cost = quote.all_in_cost();
@@ -163,7 +156,6 @@ fun mint_exact_quantity_one_below_all_in_cost_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
-        LEVERAGE_ONE_X,
         all_in_cost - 1,
         std::u64::max_value!(),
     );
@@ -187,7 +179,6 @@ fun mint_exact_quantity_above_max_probability_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
         std::u64::max_value!(),
         MAX_PROBABILITY_ZERO,
     );
@@ -210,9 +201,8 @@ fun mint_exact_amount_below_min_quantity_aborts() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        ZERO_NET_PREMIUM_AMOUNT,
+        ZERO_PREMIUM_AMOUNT,
         constants::position_lot_size!(),
-        LEVERAGE_ONE_X,
         std::u64::max_value!(),
     );
 
@@ -235,7 +225,6 @@ fun redeem_below_min_probability_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     fx.set_clock_for_testing(REDEEM_MS);
@@ -245,7 +234,7 @@ fun redeem_below_min_probability_aborts() {
         REDEEM_SOURCE_TS,
     );
 
-    fx.redeem_bundle_with_limits(
+    fx.redeem_live_bundle_with_limits(
         &mut market,
         &mut account,
         order,
@@ -273,7 +262,6 @@ fun redeem_below_min_proceeds_aborts() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
 
     fx.set_clock_for_testing(REDEEM_MS);
@@ -283,7 +271,7 @@ fun redeem_below_min_proceeds_aborts() {
         REDEEM_SOURCE_TS,
     );
 
-    fx.redeem_bundle_with_limits(
+    fx.redeem_live_bundle_with_limits(
         &mut market,
         &mut account,
         order,
@@ -311,7 +299,6 @@ fun redeem_after_clock_advances_succeeds() {
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         QUANTITY,
-        LEVERAGE_ONE_X,
     );
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
 
@@ -324,14 +311,13 @@ fun redeem_after_clock_advances_succeeds() {
         REDEEM_SOURCE_TS,
     );
 
-    let (closed, replacement) = fx.redeem_bundle(
+    let replacement = fx.redeem_live_bundle(
         &mut market,
         &mut account,
         order,
         QUANTITY,
     );
 
-    assert_eq!(closed, order);
     assert!(replacement.is_none());
     assert!(!helpers::has_position_bundle(&account, expiry_id, order));
 
