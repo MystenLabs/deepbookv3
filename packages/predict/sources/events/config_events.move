@@ -32,14 +32,13 @@ public struct QuoteCalibrationPublished has copy, drop, store {
     published_at_ms: u64,
 }
 
-/// Emitted when an admin changes calibration policy. Every field carries its
-/// post-change value whichever knob moved, so this stream alone is the current
-/// policy.
-public struct QuoteCalibrationPolicyUpdated has copy, drop, store {
+/// Emitted when quote calibration is switched on or off. The switch emits
+/// because it is a safety control, like the trading pause and the protocol
+/// freeze; the staleness window and the deviation cap are ordinary policy and
+/// stay silent, as every other economic knob on this object does.
+public struct QuoteCalibrationEnabledUpdated has copy, drop, store {
     protocol_config_id: ID,
     enabled: bool,
-    staleness_ms: u64,
-    max_deviation: u64,
 }
 
 /// Emitted when a new expiry market is created, with its cadence terms and
@@ -141,17 +140,10 @@ public(package) fun emit_quote_calibration_published(
     });
 }
 
-public(package) fun emit_quote_calibration_policy_updated(
-    protocol_config_id: ID,
-    enabled: bool,
-    staleness_ms: u64,
-    max_deviation: u64,
-) {
-    event::emit(QuoteCalibrationPolicyUpdated {
+public(package) fun emit_quote_calibration_enabled_updated(protocol_config_id: ID, enabled: bool) {
+    event::emit(QuoteCalibrationEnabledUpdated {
         protocol_config_id,
         enabled,
-        staleness_ms,
-        max_deviation,
     });
 }
 

@@ -345,7 +345,7 @@ public fun set_quote_calibration_enabled(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.quote_calibration.set_enabled(enabled);
-    config.emit_quote_calibration_policy();
+    config_events::emit_quote_calibration_enabled_updated(config.id(), enabled);
 }
 
 /// Set how old a published correction may be before quotes fall back to the
@@ -358,7 +358,6 @@ public fun set_quote_calibration_staleness_ms(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.quote_calibration.set_staleness_ms(value);
-    config.emit_quote_calibration_policy();
 }
 
 /// Set how far a correction may move a quoted probability.
@@ -375,7 +374,6 @@ public fun set_quote_calibration_max_deviation(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.quote_calibration.set_max_deviation(value);
-    config.emit_quote_calibration_policy();
 }
 
 // === Public-Package Functions ===
@@ -507,15 +505,6 @@ public(package) fun end_valuation(config: &mut ProtocolConfig) {
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config.trading_paused = paused;
     config_events::emit_trading_paused_updated(config.id(), paused);
-}
-
-fun emit_quote_calibration_policy(config: &ProtocolConfig) {
-    config_events::emit_quote_calibration_policy_updated(
-        config.id(),
-        config.quote_calibration.enabled(),
-        config.quote_calibration.staleness_ms(),
-        config.quote_calibration.max_deviation(),
-    );
 }
 
 fun set_frozen_internal(config: &mut ProtocolConfig, frozen: bool) {

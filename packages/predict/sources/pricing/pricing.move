@@ -38,11 +38,13 @@ public struct Pricer has copy, drop {
     expiry_market_id: ID,
     forward: u64,
     svi: PricingSVI,
-    /// This market's published calibration correction, resolved once to its
-    /// remaining time so every strike in the transaction is corrected alike.
-    /// `none` when the protocol must quote uncorrected — the switch is off, the
-    /// underlying has no published correction, or the published one has aged out.
-    calibration: Option<CalibrationRow>,
+    /// The remap this market's quoted probabilities pass through, resolved once
+    /// to its remaining time so every strike in the transaction is corrected
+    /// alike. `none` when the protocol must quote uncorrected — the switch is
+    /// off, the underlying has nothing published, or what is published has aged
+    /// out. Unrelated to the provider's own model-calibration times noted below,
+    /// which are timestamps rather than a correction.
+    quote_correction: Option<CalibrationRow>,
     /// Timestamps of the oracle observations this snapshot validated, as trade events report
     /// them — each observation's own economic clock. Pyth carries its source timestamp (`0` only
     /// when no usable normalized observation exists); the Block Scholes reads carry their batch
@@ -127,16 +129,47 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
 // === Public Functions ===
 
-/// Return the current UP digital probability for a typed strike. Public PTB and
+/// Return the current UP digital probability for a typed strike, corrected by
+/// this market's published calibration when one is in force. Public PTB and
 /// devInspect reads can compose it with a transaction-local `Pricer`.
+///
+/// Every probability the protocol quotes is formed here: `range_price` differences
+/// two of these, so there is no flow that reads a corrected price while another
+/// reads a raw one. The correction wraps the formula rather than reaching inside
+/// it — `compute_nd2` is unaware of it.
+///
+/// The infinity sentinels return before the correction. They would survive it
+/// unchanged, since a correction pins `m(0) = 0` and `m(1) = 1`, but they are
+/// limits of the contract rather than quoted probabilities and there is nothing
+/// to correct about them.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
-    compute_up_price(pricer, strike)
+    if (strike.is_neg_inf()) {
+        return math::float_scaling!()
+    };
+    if (strike.is_pos_inf()) {
+        return 0
+    };
+
+    let raw = compute_nd2(&pricer.svi, pricer.forward, strike.value());
+    if (pricer.quote_correction.is_none()) return raw;
+    pricer.quote_correction.borrow().apply(raw)
 }
 
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
+///
+/// A range is the difference of two corrected boundary probabilities, never a
+/// correction of the raw difference: correcting a difference is a different map,
+/// and only differencing corrected boundaries leaves a partition of the strike
+/// line summing to one.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(pricer, lower, higher)
+    assert!(lower.value() < higher.value(), EInvalidRange);
+
+    let lower_up_price = pricer.up_price(lower);
+    let higher_up_price = pricer.up_price(higher);
+    // Fixed-point approximation or a non-monotone SVI surface can invert the
+    // boundary prices; the range probability is floored at zero.
+    lower_up_price.saturating_sub(higher_up_price)
 }
 
 // === Public-Package Functions ===
@@ -221,7 +254,7 @@ public(package) fun load_live_pricer(
     assert!(clock.timestamp_ms() < expiry, ELivePricingExpired);
     // Resolved here rather than inside the assembly below because this function
     // owns the market's binding to its underlying, having just validated it.
-    let calibration = calibration_config.resolve_row(
+    let quote_correction = calibration_config.resolve_row(
         propbook_underlying_id,
         expiry,
         clock,
@@ -234,7 +267,7 @@ public(package) fun load_live_pricer(
         bs_svi,
         expiry_market_id,
         expiry,
-        calibration,
+        quote_correction,
         clock,
         ctx,
     )
@@ -317,7 +350,7 @@ fun resolve_live_pricer(
     bs_svi: &BlockScholesSVIStore,
     expiry_market_id: ID,
     expiry: u64,
-    calibration: Option<CalibrationRow>,
+    quote_correction: Option<CalibrationRow>,
     clock: &Clock,
     ctx: &TxContext,
 ): Pricer {
@@ -418,7 +451,7 @@ fun resolve_live_pricer(
         expiry_market_id,
         forward,
         svi,
-        calibration,
+        quote_correction,
         pyth_spot_source_timestamp_ms,
         block_scholes_spot_source_timestamp_ms,
         block_scholes_forward_source_timestamp_ms,
@@ -526,47 +559,6 @@ fun min_svi_variance_increment(svi: &RawSVI): u64 {
     let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
     let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
     math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
-}
-
-/// Compute the approximated probability for `(lower, higher]`.
-///
-/// A range is the difference of two corrected boundary probabilities, never a
-/// correction of the raw difference: correcting a difference is a different map,
-/// and only differencing corrected boundaries leaves a partition of the strike
-/// line summing to one.
-fun compute_range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    assert!(lower.value() < higher.value(), EInvalidRange);
-
-    let lower_up_price = compute_up_price(pricer, lower);
-    let higher_up_price = compute_up_price(pricer, higher);
-    // Fixed-point approximation or a non-monotone SVI surface can invert the
-    // boundary prices; the range probability is floored at zero.
-    lower_up_price.saturating_sub(higher_up_price)
-}
-
-/// Compute the adjusted UP digital probability for `strike`, corrected by this
-/// market's published calibration when one is in force.
-///
-/// Every probability the protocol quotes is formed here: `up_price` returns this
-/// and `range_price` differences two of them, so there is no flow that reads a
-/// corrected price while another reads a raw one. The correction wraps the
-/// formula rather than reaching inside it — `compute_nd2` is unaware of it.
-///
-/// The infinity sentinels return before the correction. They would survive it
-/// unchanged, since a published correction pins `m(0) = 0` and `m(1) = 1`, but
-/// they are limits of the contract rather than quoted probabilities and there is
-/// nothing to correct about them.
-fun compute_up_price(pricer: &Pricer, strike: Strike): u64 {
-    if (strike.is_neg_inf()) {
-        return math::float_scaling!()
-    };
-    if (strike.is_pos_inf()) {
-        return 0
-    };
-
-    let raw = compute_nd2(&pricer.svi, pricer.forward, strike.value());
-    if (pricer.calibration.is_none()) return raw;
-    pricer.calibration.borrow().apply(raw)
 }
 
 /// Binary pricing from SVI total variance:

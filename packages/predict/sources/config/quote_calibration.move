@@ -113,18 +113,6 @@ public struct CalibrationRow has copy, drop {
 
 // === Public-Package Functions ===
 
-public(package) fun enabled(config: &QuoteCalibrationConfig): bool {
-    config.enabled
-}
-
-public(package) fun staleness_ms(config: &QuoteCalibrationConfig): u64 {
-    config.staleness_ms
-}
-
-public(package) fun max_deviation(config: &QuoteCalibrationConfig): u64 {
-    config.max_deviation
-}
-
 public(package) fun new(ctx: &mut TxContext): QuoteCalibrationConfig {
     QuoteCalibrationConfig {
         enabled: config_constants::default_quote_calibration_enabled!(),
