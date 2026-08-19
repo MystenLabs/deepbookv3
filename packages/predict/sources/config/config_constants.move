@@ -29,6 +29,8 @@ const EInvalidMaxLpPoolValue: u64 = 18;
 const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
+const EInvalidQuoteCalibrationStalenessMs: u64 = 22;
+const EInvalidQuoteCalibrationMaxDeviation: u64 = 23;
 
 // === Fees ===
 
@@ -396,5 +398,52 @@ public(package) fun assert_ewma_penalty_rate(value: u64) {
     assert!(
         value >= min_ewma_penalty_rate!() && value <= max_ewma_penalty_rate!(),
         EInvalidEwmaPenaltyRate,
+    );
+}
+
+// === Quote Calibration ===
+
+/// Whether published corrections are applied to quoted probabilities. Ships off,
+/// so publishing the package changes no price; an operator enables it once a
+/// keeper is publishing and its tables have been scored.
+public(package) macro fun default_quote_calibration_enabled(): bool { false }
+
+/// How old a published correction may be before quotes fall back to the
+/// uncorrected formula output. Six hours is several missed publishes rather than
+/// one, so a single keeper hiccup does not move every quote; the floor keeps an
+/// operator from setting a window so tight that normal publish jitter disables
+/// the correction, and the ceiling keeps a forgotten keeper from correcting
+/// quotes off a day-old measurement.
+public(package) macro fun default_quote_calibration_staleness_ms(): u64 { 21_600_000 }
+
+public(package) macro fun min_quote_calibration_staleness_ms(): u64 { 60_000 }
+
+public(package) macro fun max_quote_calibration_staleness_ms(): u64 { 86_400_000 }
+
+public(package) fun assert_quote_calibration_staleness_ms(value: u64) {
+    assert!(
+        value >= min_quote_calibration_staleness_ms!()
+            && value <= max_quote_calibration_staleness_ms!(),
+        EInvalidQuoteCalibrationStalenessMs,
+    );
+}
+
+/// Furthest a published knot may sit from the probability it corrects, in
+/// FLOAT_SCALING. This is the whole bound on a wrong or compromised keeper: a
+/// table that validates cannot move any quoted probability further than this, at
+/// any probability and any remaining time. Ten cents by default; zero is a valid
+/// setting that admits only the identity correction, and the ceiling bounds how
+/// far an `AdminCap` alone can widen the keeper's reach.
+public(package) macro fun default_quote_calibration_max_deviation(): u64 { 100_000_000 }
+
+public(package) macro fun min_quote_calibration_max_deviation(): u64 { 0 }
+
+public(package) macro fun max_quote_calibration_max_deviation(): u64 { 250_000_000 }
+
+public(package) fun assert_quote_calibration_max_deviation(value: u64) {
+    assert!(
+        value >= min_quote_calibration_max_deviation!()
+            && value <= max_quote_calibration_max_deviation!(),
+        EInvalidQuoteCalibrationMaxDeviation,
     );
 }
