@@ -60,6 +60,18 @@ public struct PayoutSummary has copy, drop, store {
     /// `start` would break shape-independence with no test to catch it, and
     /// would also abort `strike_exposure`'s plain `total - max` subtraction.
     max_payout_prefix_gain: u64,
+    /// Tick-weighted boundary quantities: `sum(tick * local_start)` and
+    /// `sum(tick * local_end)` over the subtree. Their difference is the area
+    /// under the payout profile, which the plain totals cannot express — two
+    /// orders of equal quantity spanning one tick and eighty ticks produce
+    /// identical `start`/`end` but areas differing eighty-fold.
+    ///
+    /// Unlike `max_payout_prefix_gain` these are plain sums, so associativity —
+    /// and with it the tree's shape-independence — holds unconditionally rather
+    /// than by a bound on magnitude. That is also why they are `u128`: a single
+    /// term reaches `pos_inf_tick * max_order_quantity ~= 4.6e22`, past `u64`.
+    weighted_start: u128,
+    weighted_end: u128,
 }
 
 /// Height-balanced node keyed by finite boundary tick.
@@ -134,6 +146,53 @@ public(package) fun complement_max_payout(
         tree.range_max_payout(higher_tick, constants::pos_inf_tick!())
     };
     left.max(right)
+}
+
+/// Return `sum(W(S))` over the settlement ticks `S` in `(lower_tick, higher_tick]`,
+/// where `W(S)` is the payout owed if the market settles at `S`. This is the area
+/// under the payout profile across the range — the second-moment term a spread
+/// statistic needs, and the one quantity the plain boundary totals cannot express.
+///
+/// Derivation: `W(S) = W(lower+1) + sum(delta_t)` over boundaries `lower < t < S`,
+/// so summing over the range weights each boundary by how far it reaches:
+/// `(higher - lower) * W(lower+1) + sum(delta_t * (higher - t))`, and the weighted
+/// summary terms carry `sum(t * delta_t)` directly. Both reads are the same pair
+/// `range_max_payout` already performs, so this stays `O(log n)`.
+///
+/// Callers pass a range already clipped to whatever window they measure over; the
+/// tree imposes no window of its own. The final subtraction is exact rather than
+/// clamped: it underflows only if some `W(S)` in the range is negative, which a
+/// consistent book cannot produce, so the abort is the invariant check.
+public(package) fun range_payout_sum(
+    tree: &StrikePayoutTree,
+    lower_tick: u64,
+    higher_tick: u64,
+): u128 {
+    if (higher_tick <= lower_tick) return 0;
+
+    let prefix_at_lower = settlement_prefix_payout(
+        &tree.nodes,
+        tree.root,
+        lower_tick + 1,
+        tree.base,
+    );
+    let window = window_summary(
+        &tree.nodes,
+        tree.root,
+        lower_tick,
+        higher_tick,
+        0,
+        constants::pos_inf_tick!(),
+    );
+
+    // Start and end sides accumulate separately, as `walk_linear` does: a node's
+    // net boundary delta is signed, so a single running total would underflow
+    // mid-combine even though the range sum itself is non-negative.
+    let span = ((higher_tick - lower_tick) as u128) * (prefix_at_lower as u128);
+    let higher = higher_tick as u128;
+    let rises = span + higher * (window.start as u128) + window.weighted_end;
+    let falls = higher * (window.end as u128) + window.weighted_start;
+    rises - falls
 }
 
 /// Evaluate payout liability at one positive normalized settlement price.
@@ -284,7 +343,7 @@ fun apply_at(
 ): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutQuantity);
-        let leaf = new_leaf(quantity, is_start);
+        let leaf = new_leaf(tick, quantity, is_start);
         nodes.add(tick, leaf);
         return option::some(tick)
     };
@@ -317,7 +376,7 @@ fun apply_at(
     option::some(rebalance(nodes, root_tick, node))
 }
 
-fun new_leaf(quantity: u64, is_start: bool): PayoutNode {
+fun new_leaf(tick: u64, quantity: u64, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
         (quantity, 0)
     } else {
@@ -330,7 +389,7 @@ fun new_leaf(quantity: u64, is_start: bool): PayoutNode {
         right: option::none(),
         local_start: start,
         local_end: end,
-        summary: boundary_summary(start, end),
+        summary: boundary_summary(tick, start, end),
     }
 }
 
@@ -479,7 +538,7 @@ fun window_summary(
 
     let left = window_summary(nodes, node.left, lower, higher, subtree_low, tick);
     let right = window_summary(nodes, node.right, lower, higher, tick, subtree_high);
-    let boundary = boundary_summary(node.local_start, node.local_end);
+    let boundary = boundary_summary(tick, node.local_start, node.local_end);
     combine_summaries(combine_summaries(left, boundary), right)
 }
 
@@ -541,7 +600,7 @@ fun walk_linear_subtree(
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {
     let (left, left_height) = subtree_facts(nodes, node.left);
     let (right, right_height) = subtree_facts(nodes, node.right);
-    let boundary = boundary_summary(node.local_start, node.local_end);
+    let boundary = boundary_summary(tick, node.local_start, node.local_end);
     node.summary = combine_summaries(combine_summaries(left, boundary), right);
     node.height = 1 + left_height.max(right_height);
     *nodes.borrow_mut(tick) = node;
@@ -566,11 +625,13 @@ fun subtree_height(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
     nodes[*root.borrow()].height
 }
 
-fun boundary_summary(start: u64, end: u64): PayoutSummary {
+fun boundary_summary(tick: u64, start: u64, end: u64): PayoutSummary {
     PayoutSummary {
         start,
         end,
         max_payout_prefix_gain: positive_net_delta(start, end, 0),
+        weighted_start: (tick as u128) * (start as u128),
+        weighted_end: (tick as u128) * (end as u128),
     }
 }
 
@@ -579,6 +640,8 @@ fun zero_summary(): PayoutSummary {
         start: 0,
         end: 0,
         max_payout_prefix_gain: 0,
+        weighted_start: 0,
+        weighted_end: 0,
     }
 }
 
@@ -593,6 +656,8 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
         start: left.start + right.start,
         end: left.end + right.end,
         max_payout_prefix_gain: left.max_payout_prefix_gain.max(right_gain_after_left),
+        weighted_start: left.weighted_start + right.weighted_start,
+        weighted_end: left.weighted_end + right.weighted_end,
     }
 }
 
@@ -678,11 +743,13 @@ fun assert_subtree_invariant(
     assert!(taller - left_height.min(right_height) <= 1);
     assert!(node.height == 1 + taller);
 
-    let boundary = boundary_summary(node.local_start, node.local_end);
+    let boundary = boundary_summary(tick, node.local_start, node.local_end);
     let summary = combine_summaries(combine_summaries(left_summary, boundary), right_summary);
     assert!(node.summary.start == summary.start);
     assert!(node.summary.end == summary.end);
     assert!(node.summary.max_payout_prefix_gain == summary.max_payout_prefix_gain);
+    assert!(node.summary.weighted_start == summary.weighted_start);
+    assert!(node.summary.weighted_end == summary.weighted_end);
 
     (1 + taller, summary, left_count + right_count + 1)
 }
