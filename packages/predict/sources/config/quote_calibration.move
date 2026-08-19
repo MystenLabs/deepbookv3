@@ -202,8 +202,11 @@ public(package) fun resolve_row(
     let published = &config.tables[propbook_underlying_id];
     assert!(published.writer_digest != *ctx.digest(), EPublishedInThisTransaction);
 
+    // No guard against a publication timestamped ahead of `now`: the clock is
+    // non-decreasing and an earlier transaction wrote this, so the subtraction is
+    // the invariant check. If clock semantics ever changed, aborting here is the
+    // better failure than quietly dropping the correction.
     let now = clock.timestamp_ms();
-    if (published.updated_at_ms > now) return option::none();
     if (now - published.updated_at_ms > config.staleness_ms) return option::none();
 
     option::some(published.interpolate_in_time(expiry_ms - now, config.max_deviation))

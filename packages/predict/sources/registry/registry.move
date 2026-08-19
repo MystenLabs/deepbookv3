@@ -181,6 +181,11 @@ public fun revoke_quote_calibration_cap(
 /// operator may well want the correction current before trading resumes. It is
 /// refused during a full-pool valuation, like every other value a flush reads
 /// mid-transaction, so one flush marks every market under one correction.
+///
+/// The underlying must be one admin has approved. Without that check a mistyped
+/// identifier publishes successfully to a key nothing reads, emits an ordinary
+/// publication event, and leaves the intended underlying quoting uncorrected with
+/// nothing to signal it.
 public fun publish_quote_calibration(
     config: &mut ProtocolConfig,
     registry: &Registry,
@@ -193,6 +198,7 @@ public fun publish_quote_calibration(
     config.assert_version();
     config.assert_not_valuation_in_progress();
     registry.assert_valid_quote_calibration_cap(quote_calibration_cap);
+    registry.market_manager.assert_underlying_registered(propbook_underlying_id);
     config.publish_quote_calibration(propbook_underlying_id, knots, clock, ctx);
 }
 

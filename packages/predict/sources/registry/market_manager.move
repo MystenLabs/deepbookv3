@@ -254,6 +254,19 @@ public(package) fun initial_expiry_cash(deployable: &DeployableMarket): u64 {
     deployable.cadence.initial_expiry_cash
 }
 
+/// Abort unless admin has approved this Propbook underlying for Predict markets.
+///
+/// Exposed because flows outside this module need the fact before they act on an
+/// underlying, and the registration state is private here. Market creation reads
+/// it implicitly through the stored deployment policy; a flow that touches no
+/// policy asks for it directly.
+public(package) fun assert_underlying_registered(
+    manager: &MarketManager,
+    propbook_underlying_id: u32,
+) {
+    assert!(manager.underlying_configs.contains(propbook_underlying_id), EUnderlyingNotRegistered);
+}
+
 public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {
     assert!(
         !manager.underlying_configs.contains(propbook_underlying_id),
