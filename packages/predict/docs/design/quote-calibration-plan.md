@@ -196,11 +196,20 @@ active map without reading state.
 - **Total probability.** The implicit endpoints pin `m(0) = 0` and `m(1) = 1`,
   so a partition of the strike line still sums to exactly one after correction,
   and the two sides of a market still price to one.
-- **Fail-safe.** No table for the underlying, the switch off, a table older
-  than `staleness_ms`, or a table pushed by the transaction now doing the
-  pricing: each resolves to the uncorrected formula output. The protocol never
-  quotes from a correction it cannot vouch for, and the failure direction is
-  always toward today's behavior.
+- **Fail-safe.** No table for the underlying, the switch off, or a table older
+  than `staleness_ms`: each resolves to the uncorrected formula output. The
+  protocol never quotes from a correction it cannot vouch for, and the failure
+  direction is always toward today's behavior. All three are protocol-wide
+  states that apply to every trader alike.
+- **Publishing and pricing are never atomic.** Pricing against a table the
+  current transaction published aborts, rather than falling back like the three
+  states above. The publisher gains nothing legitimate from atomicity, since the
+  next transaction serves just as well; but the uncorrected fallback would give
+  the publisher alone a per-transaction way to quote outside the correction —
+  without ever publishing a table the deviation, monotonicity, or staleness
+  bounds would reject, and therefore without tripping any of them. That is the
+  one keeper capability none of the other bounds would catch, so it is closed
+  here rather than bounded.
 
 ## What the keeper must produce
 
@@ -228,10 +237,10 @@ against a broken push, not the mechanism that produces monotonicity.
   above one, a row that decreases, a knot outside the deviation bound,
   unallowlisted capability, push during valuation); resolution at and between
   keys, below the shortest key, and far beyond the longest; the disabled,
-  absent, stale, and same-transaction paths each yielding the uncorrected
-  price; a corrected quote actually differing from the raw one; and the
-  bounded-movement and monotonicity properties exercised over a grid of
-  adversarial tables rather than one hand-written example.
+  absent, and stale paths each yielding the uncorrected price; pricing in the
+  publishing transaction aborting; a corrected quote actually differing from
+  the raw one; and the bounded-movement and monotonicity properties exercised
+  over a grid of adversarial tables rather than one hand-written example.
 - **The anchor agreement**, pinned directly: a market with open-lower orders
   values identically through the NAV walk and through per-order range pricing
   under a non-identity table, which is the test that fails if the correction
