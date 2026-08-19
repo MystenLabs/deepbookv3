@@ -64,11 +64,15 @@ Deliberately unchanged:
 One table per Propbook underlying, on two fixed grids:
 
 ```
-9 time-to-expiry keys    1, 2, 5, 10, 20, 45, 90, 180, 300 seconds
+11 time-to-expiry keys   1, 2, 5, 10, 20, 45, 90, 180, 300, 600, 900 seconds
 19 probability knots     5%, 10%, ..., 95%
-                         = 171 u64 at 1e9, row-major, plus updated_at_ms
-                           and the pushing transaction's digest
+                         = 209 u64 at 1e9, row-major, plus updated_at_ms
+                           and the publishing transaction's digest
 ```
+
+The grid reaches fifteen minutes because that is the horizon over which quoted
+probabilities have been measured against realized outcomes; inside it a published
+row applies at full weight, and past it the correction decays.
 
 Each stored value is the corrected probability at that grid point, so the table
 is the map itself rather than a set of offsets, and validation is a direct
@@ -155,10 +159,12 @@ version-gated, refused during a valuation, and event-emitting:
   formula output. Ships off, so publishing this changes no price.
 - **`staleness_ms`** — how old a table may be and still be used. Default six
   hours, which is several missed keeper pushes rather than one.
-- **`max_deviation`** — the push-time bound on how far a single knot may sit
-  from its own grid probability. Default `0.10`, so the keeper may move any
-  individual UP probability by at most ten percentage points. It is a bound on
-  a wrong table, not a target; a healthy table sits far inside it.
+- **`max_deviation`** — how far a correction may move a quoted probability,
+  enforced as a clamp when the quote is priced. Default `0.10`, so no correction
+  moves any individual UP probability by more than ten percentage points. It is
+  a bound on a wrong table, not a target. Because it applies at pricing rather
+  than at publication, lowering it takes effect on the next quote, including for
+  corrections already published.
 
 Push authority is a `QuoteCalibrationCap`, allowlisted on `Registry` beside the
 existing pause and lifecycle capabilities, minted and revoked by admin, with
@@ -167,32 +173,40 @@ use. The push entrypoint lives on `registry` and mutates `ProtocolConfig`
 through a package-only setter, mirroring the existing capability-gated
 entrypoints.
 
-A push validates, in order: the capability is currently allowlisted; no
-valuation is in flight; the payload is exactly 171 entries; every knot is at
-most one; every row is non-decreasing; and every knot is within
-`max_deviation` of its grid probability. It then stamps the clock and the
-transaction digest and emits the whole table, so an indexer can reconstruct the
-active map without reading state.
+A publication validates, in order: the capability is currently allowlisted; the
+underlying is one admin has approved for Predict markets; no valuation is in
+flight; the payload is exactly 209 entries; every knot is at most one; and every
+row is non-decreasing. It then stamps the clock and the transaction digest and
+emits the whole table, so an indexer can reconstruct the active map without
+reading state.
+
+Deliberately absent from that list is any bound on how *large* a correction is.
+A keeper publishes the correction it measured and the protocol applies as much of
+it as policy allows, so an oversized fit is truncated at pricing rather than
+refused at publication. The alternative put a hard abort between a keeper and an
+honest measurement: the largest gap in the calibration evidence sits two
+thousandths under the default cap, and lands exactly on a grid knot, so a
+slightly finer fit or ordinary resampling noise would have meant the keeper
+silently failing to publish at all.
 
 ## What holds by construction
 
-- **Bounded movement.** Push validation holds every knot within
-  `max_deviation` of its own grid probability. Interpolating between knots is a
-  weighted average, so the corrected value sits within `max_deviation` of the
-  same weighted average of the grid probabilities — which is the input itself.
-  Blending two rows, and blending toward identity beyond the top key, are
-  further weighted averages of values that each satisfy the bound. So
+- **Bounded movement.** The corrected probability is clamped into
+  `[p - max_deviation, p + max_deviation]` as the last step of applying it, so
   `|m(p) - p| <= max_deviation` at every probability and every time to expiry,
-  not merely at grid points. A range quote is a difference of two corrected
-  atoms and can therefore move by up to twice that; this is a consequence of
-  the bound, not a second mechanism.
+  for every table publication admits — including one with knots nowhere near the
+  probabilities they correct. The bound is therefore true by inspection at the
+  point of use rather than by an argument about what publication accepted. A
+  range quote is a difference of two corrected atoms and can move by up to twice
+  that; this is a consequence of the bound, not a second mechanism.
 - **Monotonicity.** Each row is validated non-decreasing, and every blend is a
   weighted average of non-decreasing rows, so the resolved row is
-  non-decreasing. `up_price` is non-increasing in strike, and a non-decreasing
-  map of a non-increasing sequence is still non-increasing, so
-  `strike_payout_tree::ENonMonotonePrice` continues to hold. The correction
-  cannot create an inversion; it can only collapse one to equality, which
-  lowers the abort rate rather than raising it.
+  non-decreasing. The clamp preserves that, because it holds the correction
+  between two bounds that both rise with the input. `up_price` is non-increasing
+  in strike, and a non-decreasing map of a non-increasing sequence is still
+  non-increasing, so `strike_payout_tree::ENonMonotonePrice` continues to hold.
+  The correction cannot create an inversion; it can only collapse one to
+  equality, which lowers the abort rate rather than raising it.
 - **Total probability.** The implicit endpoints pin `m(0) = 0` and `m(1) = 1`,
   so a partition of the strike line still sums to exactly one after correction,
   and the two sides of a market still price to one.
@@ -234,7 +248,7 @@ against a broken push, not the mechanism that produces monotonicity.
 ## Test and evidence plan
 
 - **Predict tests:** push validation for each rejection (wrong length, knot
-  above one, a row that decreases, a knot outside the deviation bound,
+  above one, a row that decreases, an unregistered underlying,
   unallowlisted capability, push during valuation); resolution at and between
   keys, below the shortest key, and far beyond the longest; the disabled,
   absent, and stale paths each yielding the uncorrected price; pricing in the

@@ -58,6 +58,11 @@ const TIME_KEYS_MS: vector<u64> = vector[
 
 /// Probability knots are regular, so the grid is a step rather than a table:
 /// knot `j` corrects the probability `(j + 1) * step`, giving 5% through 95%.
+///
+/// The two must satisfy `float_scaling == (knot_count + 1) * knot_step`, which is
+/// what makes the interval index in `apply` land in range and what pins both
+/// implicit endpoints. Changing either alone puts that index past the end of a
+/// row, on the per-quote path.
 macro fun knot_step(): u64 { 50_000_000 }
 
 macro fun knot_count(): u64 { 19 }
@@ -379,7 +384,18 @@ fun blend_row_with_identity(published: &CalibrationTable, index: u64, weight: u6
 /// depends on the rounding direction.
 fun weighted(first: u64, second: u64, weight: u64): u64 {
     let scale = math::float_scaling!() as u128;
-    (
-        ((first as u128) * (weight as u128) + (second as u128) * (scale - (weight as u128))) / scale,
-    ) as u64
+    let blended =
+        (first as u128) * (weight as u128) + (second as u128) * (scale - (weight as u128));
+    (blended / scale) as u64
+}
+
+// === Test-Only Functions ===
+
+/// Build a resolved row directly, so the correction can be exercised at chosen
+/// knots without publishing a table and advancing a transaction to escape the
+/// publish-provenance guard. Deliberately unvalidated: the interesting cases are
+/// the ones a keeper should not be able to produce.
+#[test_only]
+public(package) fun row_for_testing(knots: vector<u64>, max_deviation: u64): CalibrationRow {
+    CalibrationRow { knots, max_deviation }
 }
