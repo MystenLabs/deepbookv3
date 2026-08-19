@@ -53,6 +53,10 @@ How the protocol is built:
   settlement, rounding).
 - **[Design decisions](./design/decisions.md)** — the significant design choices
   and the alternatives that were rejected, with rationale.
+- **[Quote calibration plan](./design/quote-calibration-plan.md)** — the
+  in-flight plan for a keeper-published correction that maps quoted
+  probabilities toward realized settlement outcomes (DBU-733); a plan, not
+  shipped behavior.
 
 ## Risks
 
