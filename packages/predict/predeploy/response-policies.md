@@ -1456,7 +1456,21 @@ tradeoff explicitly.
 
 Ratified accuracy ceilings for every derived price and valuation, distinct from
 the R1–R3 accounting-dust policy above (which governs one-ulp money-movement
-rounding, not model-evaluation accuracy):
+rounding, not model-evaluation accuracy).
+
+**What these ceilings measure.** They bound *evaluation* error: how far the
+on-chain fixed-point arithmetic lands from the true real-math value of the
+function the pricing path is specified to compute. They say nothing about whether
+that function is the right one — accuracy against reality is a different question,
+answered by measuring quotes against realized outcomes, not by measuring the
+contract against a reference implementation of its own formula. A change that
+deliberately moves the quoted price because the realized-outcome evidence says the
+formula is wrong is therefore not a breach of these ceilings; it changes the
+function they are measured against, and it answers to that evidence rather than to
+this section. The ceilings continue to apply undiminished to the new function:
+once a correction is part of the specified pricing path, the fixed-point result
+must sit within 0.1% of the true real-math evaluation of formula-plus-correction,
+and the independent reference must be extended to cover it.
 
 - **Contract price:** a computed range / UP price must not deviate from its true
   real-math value by more than **0.1%** (relative, in the 1c–99c tradeable band).

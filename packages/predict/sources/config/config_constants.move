@@ -428,12 +428,15 @@ public(package) fun assert_quote_calibration_staleness_ms(value: u64) {
     );
 }
 
-/// Furthest a published knot may sit from the probability it corrects, in
-/// FLOAT_SCALING. This is the whole bound on a wrong or compromised keeper: a
-/// table that validates cannot move any quoted probability further than this, at
-/// any probability and any remaining time. Ten cents by default; zero is a valid
-/// setting that admits only the identity correction, and the ceiling bounds how
-/// far an `AdminCap` alone can widen the keeper's reach.
+/// Furthest a correction may move a quoted probability, in FLOAT_SCALING. This is
+/// the whole bound on a wrong or compromised keeper: no correction can move any
+/// quoted probability further than this, at any probability and any remaining
+/// time. It is enforced as a clamp when the quote is priced, so a keeper that
+/// measures a larger correction publishes it and has it truncated rather than
+/// being rejected. Ten cents by default, comfortably above the largest
+/// miscalibration measured so far; zero is a valid setting that admits only the
+/// identity correction, and the ceiling bounds how far an `AdminCap` alone can
+/// widen the keeper's reach.
 public(package) macro fun default_quote_calibration_max_deviation(): u64 { 100_000_000 }
 
 public(package) macro fun min_quote_calibration_max_deviation(): u64 { 0 }

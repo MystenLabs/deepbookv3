@@ -361,11 +361,12 @@ public fun set_quote_calibration_staleness_ms(
     config.emit_quote_calibration_policy();
 }
 
-/// Set how far a published knot may sit from the probability it corrects.
+/// Set how far a correction may move a quoted probability.
 ///
-/// This is the bound on a wrong or compromised keeper, so lowering it tightens
-/// what any future publication may do; it does not re-validate corrections
-/// already published, which continue to apply until replaced or aged out.
+/// This is the bound on a wrong or compromised keeper. It is applied when a quote
+/// is priced rather than when a correction is published, so lowering it takes
+/// effect on the very next quote, including for corrections already stored —
+/// there is no window in which an older, wider bound still governs.
 public fun set_quote_calibration_max_deviation(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

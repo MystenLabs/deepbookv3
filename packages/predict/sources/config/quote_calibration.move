@@ -11,19 +11,20 @@
 /// keeper, plus the policy bounding what such a table may do.
 ///
 /// The table is a map from a quoted probability to a corrected one, sampled on
-/// two fixed grids — nine times to expiry by nineteen probability knots, stored
+/// two fixed grids — eleven times to expiry by nineteen probability knots, stored
 /// row-major. Both grids are upgrade-required constants, so the shape a keeper
 /// fits against cannot move underneath it. The endpoints `m(0) = 0` and
 /// `m(1) = 1` are implicit and never stored.
 ///
-/// Two rules make the correction safe rather than merely small. Every knot is
-/// validated at publish time to sit within `max_deviation` of the probability it
-/// corrects, and every row is validated non-decreasing. Both survive every later
-/// step, because resolving a market's row and applying it are weighted averages
-/// of validated values: a corrected probability is therefore within
-/// `max_deviation` of its input at every probability and every remaining time,
-/// not only at grid points, and a corrected surface is never less monotone than
-/// the surface it came from.
+/// Two rules make the correction safe rather than merely small, and they are
+/// enforced at different moments. Publication validates shape and order: every
+/// row must be non-decreasing, which survives every later step because resolving
+/// a market's row is a weighted average of validated rows, and which is what
+/// keeps a corrected surface no less monotone than the surface it came from.
+/// Pricing enforces size: a correction moves a quote by at most `max_deviation`,
+/// clamped as it is applied. Publishing an oversized correction is therefore not
+/// an error — the protocol simply applies as much of it as policy allows, and a
+/// keeper never fails to publish because an honest measurement ran past the cap.
 ///
 /// Resolution across time is one rule: linear interpolation in inverse time to
 /// expiry, against a virtual identity row at infinite time. Beyond the longest
@@ -39,25 +40,20 @@ use sui::{clock::Clock, table::{Self, Table}};
 const EInvalidKnotCount: u64 = 0;
 const EKnotAboveOne: u64 = 1;
 const ENonMonotoneRow: u64 = 2;
-const EKnotOutsideDeviation: u64 = 3;
 /// A quote may not be priced by the transaction that published the correction it
 /// would use. Named for the table's provenance rather than the sender: the point
 /// is that publishing and pricing must not be atomic, not who submitted either.
-const EPublishedInThisTransaction: u64 = 4;
+const EPublishedInThisTransaction: u64 = 3;
 
 /// Times to expiry the published rows are measured at, ascending, in
 /// milliseconds. Upgrade-required: a keeper fits its rows to these coordinates,
 /// so changing the set is a package upgrade rather than an admin transaction.
+///
+/// The grid reaches fifteen minutes because that is the horizon over which
+/// quoted probabilities have been measured against realized outcomes. Inside it
+/// a published row applies at full weight; past it the correction decays.
 const TIME_KEYS_MS: vector<u64> = vector[
-    1_000,
-    2_000,
-    5_000,
-    10_000,
-    20_000,
-    45_000,
-    90_000,
-    180_000,
-    300_000,
+    1_000, 2_000, 5_000, 10_000, 20_000, 45_000, 90_000, 180_000, 300_000, 600_000, 900_000,
 ];
 
 /// Probability knots are regular, so the grid is a step rather than a table:
@@ -75,8 +71,10 @@ public struct QuoteCalibrationConfig has store {
     /// How old a published table may be before quotes fall back to the
     /// uncorrected formula output, in milliseconds of wall clock.
     staleness_ms: u64,
-    /// Furthest any published knot may sit from the probability it corrects, in
-    /// FLOAT_SCALING. This is the bound on a wrong table, not a target.
+    /// Furthest a correction may move a quoted probability, in FLOAT_SCALING,
+    /// applied when a quote is priced rather than when a table is published. This
+    /// is the bound on a wrong table, not a target. Lowering it takes effect on
+    /// the next quote, including for corrections already published.
     max_deviation: u64,
     /// Latest published correction per Propbook underlying. An underlying with
     /// no entry is uncorrected.
@@ -105,6 +103,12 @@ public struct CalibrationTable has drop, store {
 /// pricer so every strike in a market prices under exactly one correction.
 public struct CalibrationRow has copy, drop {
     knots: vector<u64>,
+    /// How far this row may move a quote, read from configuration when the row
+    /// was resolved. Carried rather than consulted later so the cap that applies
+    /// to a transaction's quotes is fixed for the whole transaction, and so the
+    /// bound in force is always the current setting rather than whichever one
+    /// happened to hold when a keeper published.
+    max_deviation: u64,
 }
 
 // === Public-Package Functions ===
@@ -147,10 +151,9 @@ public(package) fun set_max_deviation(config: &mut QuoteCalibrationConfig, value
 /// Validate a published table and store it as one underlying's current
 /// correction, replacing any earlier one.
 ///
-/// Validation is the whole safety argument, so it happens here rather than at the
-/// entrypoint: a table that passes cannot move any quoted probability further
-/// than `max_deviation`, and cannot make a corrected surface less monotone than
-/// the surface it corrects.
+/// Validation lives here rather than at the entrypoint because this module owns
+/// what a well-formed table is. It covers shape and order only; how much of the
+/// correction a quote actually receives is decided when that quote is priced.
 public(package) fun publish(
     config: &mut QuoteCalibrationConfig,
     propbook_underlying_id: u32,
@@ -158,7 +161,7 @@ public(package) fun publish(
     clock: &Clock,
     ctx: &TxContext,
 ) {
-    config.assert_publishable(&knots);
+    assert_publishable(&knots);
 
     let published = CalibrationTable {
         knots,
@@ -203,15 +206,24 @@ public(package) fun resolve_row(
     if (published.updated_at_ms > now) return option::none();
     if (now - published.updated_at_ms > config.staleness_ms) return option::none();
 
-    option::some(published.interpolate_in_time(expiry_ms - now))
+    option::some(published.interpolate_in_time(expiry_ms - now, config.max_deviation))
 }
 
-/// Map one raw probability through this market's correction.
+/// Map one raw probability through this market's correction, moving it by at
+/// most `max_deviation`.
 ///
 /// The knot grid is regular, so the bracketing interval is an index rather than a
 /// search. The implicit endpoints `m(0) = 0` and `m(1) = 1` supply the outermost
 /// interval on each side, which is what keeps a partition of the strike line
 /// summing to one after correction.
+///
+/// The bound is enforced here rather than at publication. A keeper publishes the
+/// correction it measured, whatever its size, and the protocol applies as much of
+/// it as policy allows — so an oversized fit is truncated to the bound instead of
+/// being rejected, and a keeper never silently fails to publish because its
+/// honest measurement ran a fraction past the cap. Clamping a non-decreasing
+/// correction between two bounds that both rise with the input leaves it
+/// non-decreasing, so this costs none of the monotonicity the surface relies on.
 public(package) fun apply(row: &CalibrationRow, probability: u64): u64 {
     if (probability >= math::float_scaling!()) return math::float_scaling!();
 
@@ -224,13 +236,25 @@ public(package) fun apply(row: &CalibrationRow, probability: u64): u64 {
     };
     let offset = probability - interval * knot_step!();
     // Rows are non-decreasing and both endpoints are pinned, so `upper >= lower`.
-    lower + math::mul_div_down(upper - lower, offset, knot_step!())
+    let corrected = lower + math::mul_div_down(upper - lower, offset, knot_step!());
+
+    let floor = if (probability > row.max_deviation) {
+        probability - row.max_deviation
+    } else {
+        0
+    };
+    let ceiling = math::float_scaling!().min(probability + row.max_deviation);
+    corrected.max(floor).min(ceiling)
 }
 
 // === Private Functions ===
 
-/// Abort unless `knots` is a table this configuration would accept.
-fun assert_publishable(config: &QuoteCalibrationConfig, knots: &vector<u64>) {
+/// Abort unless `knots` is a well-formed table.
+///
+/// Validation covers shape and order only. How far a correction may move a quote
+/// is policy applied when the quote is priced, not a condition of publishing, so
+/// a keeper is free to publish the correction it actually measured.
+fun assert_publishable(knots: &vector<u64>) {
     assert!(knots.length() == published_knot_count(), EInvalidKnotCount);
 
     let keys = TIME_KEYS_MS;
@@ -247,8 +271,6 @@ fun assert_publishable(config: &QuoteCalibrationConfig, knots: &vector<u64>) {
             // against the implicit `m(0) = 0`, so the whole map including its
             // endpoints is non-decreasing.
             assert!(knot >= previous, ENonMonotoneRow);
-            assert!(within_deviation(knot, grid_probability(j), config.max_deviation),
-                EKnotOutsideDeviation);
             previous = knot;
             j = j + 1;
         };
@@ -267,11 +289,6 @@ fun grid_probability(j: u64): u64 {
     (j + 1) * knot_step!()
 }
 
-fun within_deviation(knot: u64, grid: u64, max_deviation: u64): bool {
-    let distance = if (knot >= grid) knot - grid else grid - knot;
-    distance <= max_deviation
-}
-
 /// Blend the published rows into the single row that applies at `remaining_ms`.
 ///
 /// One rule covers every remaining time: interpolate linearly in inverse time
@@ -282,34 +299,44 @@ fun within_deviation(knot: u64, grid: u64, max_deviation: u64): bool {
 /// `k_max / t`, so a market further out than the grid reaches decays smoothly
 /// toward no correction instead of clamping. Below the shortest key that row
 /// applies unchanged; there is nothing further in to interpolate toward.
-fun interpolate_in_time(published: &CalibrationTable, remaining_ms: u64): CalibrationRow {
+fun interpolate_in_time(
+    published: &CalibrationTable,
+    remaining_ms: u64,
+    max_deviation: u64,
+): CalibrationRow {
     let keys = TIME_KEYS_MS;
     let last = keys.length() - 1;
 
-    if (remaining_ms <= keys[0]) return published.row(0);
-    if (remaining_ms >= keys[last]) {
+    let knots = if (remaining_ms <= keys[0]) {
+        published.row(0)
+    } else if (remaining_ms >= keys[last]) {
         // Blend the longest key's row toward identity, whose knots are the grid
         // probabilities themselves.
         let weight = math::mul_div_down(keys[last], math::float_scaling!(), remaining_ms);
-        return published.blend_row_with_identity(last, weight)
+        published.blend_row_with_identity(last, weight)
+    } else {
+        let mut lower = 0;
+        while (keys[lower + 1] <= remaining_ms) {
+            lower = lower + 1;
+        };
+        let low_key = keys[lower];
+        let high_key = keys[lower + 1];
+        // u128 throughout: the numerator reaches `k_lo * (k_hi - t) * 1e9`, which
+        // leaves u64 inside the grid's longer intervals.
+        let numerator =
+            (low_key as u128)
+                * ((high_key - remaining_ms) as u128)
+                * (math::float_scaling!() as u128);
+        let denominator = (remaining_ms as u128) * ((high_key - low_key) as u128);
+        // `k_lo <= t` and `t < k_hi` bound this at one, so it narrows cleanly.
+        let weight = (numerator / denominator) as u64;
+        published.blend_rows(lower, lower + 1, weight)
     };
-
-    let mut lower = 0;
-    while (keys[lower + 1] <= remaining_ms) {
-        lower = lower + 1;
-    };
-    let low_key = keys[lower];
-    let high_key = keys[lower + 1];
-    // u128 throughout: the numerator reaches `k_lo * (k_hi - t) * 1e9`, which
-    // leaves u64 well before the longest key.
-    let weight =
-        ((low_key as u128) * ((high_key - remaining_ms) as u128) * (math::float_scaling!() as u128)
-            / ((remaining_ms as u128) * ((high_key - low_key) as u128))) as u64;
-    published.blend_rows(lower, lower + 1, weight)
+    CalibrationRow { knots, max_deviation }
 }
 
-/// One published row, copied out as this transaction's correction.
-fun row(published: &CalibrationTable, index: u64): CalibrationRow {
+/// One published row's knots, copied out as this transaction's correction.
+fun row(published: &CalibrationTable, index: u64): vector<u64> {
     let base = index * knot_count!();
     let mut knots = vector[];
     let mut j = 0;
@@ -317,7 +344,7 @@ fun row(published: &CalibrationTable, index: u64): CalibrationRow {
         knots.push_back(published.knots[base + j]);
         j = j + 1;
     };
-    CalibrationRow { knots }
+    knots
 }
 
 /// Weighted average of two published rows, `weight` on the first.
@@ -326,7 +353,7 @@ fun blend_rows(
     low_index: u64,
     high_index: u64,
     weight: u64,
-): CalibrationRow {
+): vector<u64> {
     let low_base = low_index * knot_count!();
     let high_base = high_index * knot_count!();
     let mut knots = vector[];
@@ -337,16 +364,12 @@ fun blend_rows(
         );
         j = j + 1;
     };
-    CalibrationRow { knots }
+    knots
 }
 
 /// Weighted average of one published row and the identity row, `weight` on the
 /// published one.
-fun blend_row_with_identity(
-    published: &CalibrationTable,
-    index: u64,
-    weight: u64,
-): CalibrationRow {
+fun blend_row_with_identity(published: &CalibrationTable, index: u64, weight: u64): vector<u64> {
     let base = index * knot_count!();
     let mut knots = vector[];
     let mut j = 0;
@@ -354,7 +377,7 @@ fun blend_row_with_identity(
         knots.push_back(weighted(published.knots[base + j], grid_probability(j), weight));
         j = j + 1;
     };
-    CalibrationRow { knots }
+    knots
 }
 
 /// `weight * first + (1 - weight) * second`, rounded down.
@@ -365,6 +388,7 @@ fun blend_row_with_identity(
 /// depends on the rounding direction.
 fun weighted(first: u64, second: u64, weight: u64): u64 {
     let scale = math::float_scaling!() as u128;
-    (((first as u128) * (weight as u128) + (second as u128) * (scale - (weight as u128))) / scale)
-        as u64
+    (
+        ((first as u128) * (weight as u128) + (second as u128) * (scale - (weight as u128))) / scale,
+    ) as u64
 }
