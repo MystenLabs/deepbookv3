@@ -16,8 +16,10 @@ use deepbook_predict::{
     constants,
     ewma_config::{Self, EwmaConfig},
     pricing_config::{Self, PricingConfig},
+    quote_calibration::{Self, QuoteCalibrationConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
+use sui::clock::Clock;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -30,6 +32,10 @@ const EProtocolFrozen: u64 = 5;
 public struct ProtocolConfig has key {
     id: UID,
     pricing_config: PricingConfig,
+    /// Calibration policy and the corrections a keeper has published. Pricing
+    /// reads it when building a live pricer; a keeper writes it through the
+    /// registry's capability-gated entrypoint.
+    quote_calibration: QuoteCalibrationConfig,
     /// Merged protocol + insurance reserve share of materialized terminal profit,
     /// in FLOAT_SCALING. The complement accrues to LPs.
     protocol_reserve_profit_share: u64,
@@ -324,10 +330,83 @@ public fun set_plp_withdraw_fee_rate(
     config.plp_withdraw_fee_rate = rate;
 }
 
+/// Apply published calibration corrections to quotes, or stop applying them.
+///
+/// Turning this off returns every quote to the uncorrected pricing formula
+/// without a package upgrade and without touching what a keeper has published,
+/// so it is the operator's way out if a correction is behaving badly. Locked
+/// during valuation like the pricing setters, so one flush marks every market
+/// under one policy.
+public fun set_quote_calibration_enabled(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config.quote_calibration.set_enabled(enabled);
+    config.emit_quote_calibration_policy();
+}
+
+/// Set how old a published correction may be before quotes fall back to the
+/// uncorrected formula output.
+public fun set_quote_calibration_staleness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config.quote_calibration.set_staleness_ms(value);
+    config.emit_quote_calibration_policy();
+}
+
+/// Set how far a published knot may sit from the probability it corrects.
+///
+/// This is the bound on a wrong or compromised keeper, so lowering it tightens
+/// what any future publication may do; it does not re-validate corrections
+/// already published, which continue to apply until replaced or aged out.
+public fun set_quote_calibration_max_deviation(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    config.quote_calibration.set_max_deviation(value);
+    config.emit_quote_calibration_policy();
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
+}
+
+public(package) fun quote_calibration(config: &ProtocolConfig): &QuoteCalibrationConfig {
+    &config.quote_calibration
+}
+
+/// Store one underlying's published calibration correction.
+///
+/// Reserved for `QuoteCalibrationCap` holders going through the registry, which
+/// owns the allowlist and the flow gates. Validation of the correction itself
+/// belongs to `quote_calibration`, which owns what a publishable table is.
+public(package) fun publish_quote_calibration(
+    config: &mut ProtocolConfig,
+    propbook_underlying_id: u32,
+    knots: vector<u64>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let reported = knots;
+    config.quote_calibration.publish(propbook_underlying_id, knots, clock, ctx);
+    config_events::emit_quote_calibration_published(
+        config.id(),
+        propbook_underlying_id,
+        reported,
+        clock.timestamp_ms(),
+    );
 }
 
 public(package) fun plp_supply_fee_rate(config: &ProtocolConfig): u64 {
@@ -429,6 +508,15 @@ fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config_events::emit_trading_paused_updated(config.id(), paused);
 }
 
+fun emit_quote_calibration_policy(config: &ProtocolConfig) {
+    config_events::emit_quote_calibration_policy_updated(
+        config.id(),
+        config.quote_calibration.enabled(),
+        config.quote_calibration.staleness_ms(),
+        config.quote_calibration.max_deviation(),
+    );
+}
+
 fun set_frozen_internal(config: &mut ProtocolConfig, frozen: bool) {
     config.frozen = frozen;
     config_events::emit_protocol_frozen_updated(config.id(), frozen);
@@ -443,6 +531,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
+        quote_calibration: quote_calibration::new(ctx),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         plp_supply_fee_rate: config_constants::default_plp_supply_fee_rate!(),
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),

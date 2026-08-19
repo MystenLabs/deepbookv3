@@ -19,6 +19,29 @@ public struct ProtocolFrozenUpdated has copy, drop, store {
     frozen: bool,
 }
 
+/// Emitted when a keeper publishes one underlying's quote calibration correction.
+/// Carries the whole table, so an indexer can reconstruct the correction in force
+/// at any time without reading protocol state.
+public struct QuoteCalibrationPublished has copy, drop, store {
+    protocol_config_id: ID,
+    propbook_underlying_id: u32,
+    /// Corrected probabilities in FLOAT_SCALING, row-major over the time and
+    /// probability grids the package compiles in.
+    knots: vector<u64>,
+    /// On-chain landing time of the publication, `clock.timestamp_ms()`.
+    published_at_ms: u64,
+}
+
+/// Emitted when an admin changes calibration policy. Every field carries its
+/// post-change value whichever knob moved, so this stream alone is the current
+/// policy.
+public struct QuoteCalibrationPolicyUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    enabled: bool,
+    staleness_ms: u64,
+    max_deviation: u64,
+}
+
 /// Emitted when a new expiry market is created, with its cadence terms and
 /// immutable expiry-policy snapshot. Fraction, fee, probability, and multiplier
 /// fields use FLOAT_SCALING; windows use milliseconds.
@@ -101,6 +124,34 @@ public(package) fun emit_protocol_frozen_updated(protocol_config_id: ID, frozen:
     event::emit(ProtocolFrozenUpdated {
         protocol_config_id,
         frozen,
+    });
+}
+
+public(package) fun emit_quote_calibration_published(
+    protocol_config_id: ID,
+    propbook_underlying_id: u32,
+    knots: vector<u64>,
+    published_at_ms: u64,
+) {
+    event::emit(QuoteCalibrationPublished {
+        protocol_config_id,
+        propbook_underlying_id,
+        knots,
+        published_at_ms,
+    });
+}
+
+public(package) fun emit_quote_calibration_policy_updated(
+    protocol_config_id: ID,
+    enabled: bool,
+    staleness_ms: u64,
+    max_deviation: u64,
+) {
+    event::emit(QuoteCalibrationPolicyUpdated {
+        protocol_config_id,
+        enabled,
+        staleness_ms,
+        max_deviation,
     });
 }
 

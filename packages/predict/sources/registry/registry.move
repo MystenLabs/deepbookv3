@@ -19,7 +19,8 @@ use deepbook_predict::{
     market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
-    protocol_config::{Self, ProtocolConfig}
+    protocol_config::{Self, ProtocolConfig},
+    quote_calibration_cap::{Self, QuoteCalibrationCap}
 };
 use propbook::registry::OracleRegistry;
 use sui::{clock::Clock, vec_set::{Self, VecSet}};
@@ -27,6 +28,8 @@ use sui::{clock::Clock, vec_set::{Self, VecSet}};
 const EPauseCapNotValid: u64 = 0;
 const ELifecycleCapNotValid: u64 = 1;
 const ELifecycleCapNotFound: u64 = 2;
+const EQuoteCalibrationCapNotValid: u64 = 3;
+const EQuoteCalibrationCapNotFound: u64 = 4;
 
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
@@ -40,6 +43,9 @@ public struct Registry has key {
     /// lifecycle entries such as market creation and full-pool valuation. Admin
     /// mints into this set and revokes from it.
     allowed_lifecycle_caps: VecSet<ID>,
+    /// IDs of `QuoteCalibrationCap` objects currently authorized to publish quote
+    /// calibration corrections. Admin mints into this set and revokes from it.
+    allowed_quote_calibration_caps: VecSet<ID>,
 }
 
 // === Public Functions ===
@@ -134,6 +140,60 @@ public fun generate_lifecycle_proof(
 ): MarketLifecycleProof {
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     lifecycle_cap.new_proof()
+}
+
+// === QuoteCalibrationCap Lifecycle (admin) ===
+
+/// Mint a version-gated `QuoteCalibrationCap` authorized to publish quote
+/// calibration corrections.
+public fun mint_quote_calibration_cap(
+    registry: &mut Registry,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): QuoteCalibrationCap {
+    config.assert_version();
+    let cap = quote_calibration_cap::new(ctx);
+    registry.allowed_quote_calibration_caps.insert(cap.id());
+    cap
+}
+
+/// Revoke a `QuoteCalibrationCap` by ID without applying the version gate, so a
+/// keeper can be cut off even from a package version below the runtime floor.
+public fun revoke_quote_calibration_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    quote_calibration_cap_id: ID,
+) {
+    assert!(
+        registry.allowed_quote_calibration_caps.contains(&quote_calibration_cap_id),
+        EQuoteCalibrationCapNotFound,
+    );
+    registry.allowed_quote_calibration_caps.remove(&quote_calibration_cap_id);
+}
+
+// === Quote Calibration (QuoteCalibrationCap) ===
+
+/// Publish one underlying's quote calibration correction through a valid
+/// `QuoteCalibrationCap`, replacing whatever that underlying carried before.
+///
+/// Deliberately not gated on trading pause: a correction creates no risk, and an
+/// operator may well want the correction current before trading resumes. It is
+/// refused during a full-pool valuation, like every other value a flush reads
+/// mid-transaction, so one flush marks every market under one correction.
+public fun publish_quote_calibration(
+    config: &mut ProtocolConfig,
+    registry: &Registry,
+    quote_calibration_cap: &QuoteCalibrationCap,
+    propbook_underlying_id: u32,
+    knots: vector<u64>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    registry.assert_valid_quote_calibration_cap(quote_calibration_cap);
+    config.publish_quote_calibration(propbook_underlying_id, knots, clock, ctx);
 }
 
 // === Emergency Pause (PauseCap) ===
@@ -318,6 +378,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             market_manager: market_manager::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_lifecycle_caps: vec_set::empty(),
+            allowed_quote_calibration_caps: vec_set::empty(),
         },
         admin::new(ctx),
     )
@@ -332,6 +393,15 @@ fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
 /// revoked.
 fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
+}
+
+/// Abort unless the supplied `QuoteCalibrationCap` was minted by admin and not
+/// revoked.
+fun assert_valid_quote_calibration_cap(registry: &Registry, cap: &QuoteCalibrationCap) {
+    assert!(
+        registry.allowed_quote_calibration_caps.contains(&cap.id()),
+        EQuoteCalibrationCapNotValid,
+    );
 }
 
 // === Test-Only Functions ===
