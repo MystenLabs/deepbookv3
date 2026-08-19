@@ -83,8 +83,10 @@ public struct QuoteCalibrationConfig has store {
     tables: Table<u32, CalibrationTable>,
 }
 
-/// One underlying's published correction.
-public struct CalibrationTable has store {
+/// One underlying's published correction. Policy data with no custody attached,
+/// so it carries `drop` and a new publication overwrites the stored row in place
+/// rather than replacing the row object.
+public struct CalibrationTable has drop, store {
     /// Corrected probabilities at every grid point in FLOAT_SCALING, row-major:
     /// entry `r * knot_count + j` is the correction at time key `r` and knot `j`.
     knots: vector<u64>,
@@ -165,16 +167,16 @@ public(package) fun publish(
 ) {
     config.assert_publishable(&knots);
 
-    let table_entry = CalibrationTable {
+    let published = CalibrationTable {
         knots,
         updated_at_ms: clock.timestamp_ms(),
         writer_digest: *ctx.digest(),
     };
     if (config.tables.contains(propbook_underlying_id)) {
-        let previous = config.tables.remove(propbook_underlying_id);
-        let CalibrationTable { .. } = previous;
+        *config.tables.borrow_mut(propbook_underlying_id) = published;
+    } else {
+        config.tables.add(propbook_underlying_id, published);
     };
-    config.tables.add(propbook_underlying_id, table_entry);
 }
 
 /// Resolve one market's correction, or `none` when the protocol must quote
