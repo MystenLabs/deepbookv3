@@ -121,13 +121,6 @@ public(package) fun max_deviation(config: &QuoteCalibrationConfig): u64 {
     config.max_deviation
 }
 
-/// Number of entries a published table must carry, for the publishing
-/// entrypoint's own event and argument shaping.
-public(package) fun published_knot_count(): u64 {
-    let keys = TIME_KEYS_MS;
-    keys.length() * knot_count!()
-}
-
 public(package) fun new(ctx: &mut TxContext): QuoteCalibrationConfig {
     QuoteCalibrationConfig {
         enabled: config_constants::default_quote_calibration_enabled!(),
@@ -261,6 +254,12 @@ fun assert_publishable(config: &QuoteCalibrationConfig, knots: &vector<u64>) {
         };
         row = row + 1;
     };
+}
+
+/// Number of entries a published table must carry.
+fun published_knot_count(): u64 {
+    let keys = TIME_KEYS_MS;
+    keys.length() * knot_count!()
 }
 
 /// The probability knot `j` corrects.

@@ -205,6 +205,12 @@ public fun required_cash(market: &ExpiryMarket): u64 {
 /// Independently submitted refresh-then-trade PTBs are unaffected: the guard
 /// compares observation `writer_digest` to `tx_context::digest()`, not sender
 /// identity, and does not prohibit reads of older observations.
+///
+/// Aborts `quote_calibration::EPublishedInThisTransaction` on the same principle
+/// when the calibration correction this market would price under was published by
+/// this transaction. Both guards compare a stored writer digest to this
+/// transaction's, so both refuse only the atomic write-then-price, never a read
+/// of state an earlier transaction wrote.
 public fun load_live_pricer(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -217,6 +223,7 @@ public fun load_live_pricer(
 ): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
+        config.quote_calibration(),
         propbook_registry,
         pyth,
         bs_values,

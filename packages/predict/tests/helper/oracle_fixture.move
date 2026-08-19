@@ -304,6 +304,7 @@ public fun load_pricer_bound_to(
 ): Pricer {
     pricing::load_live_pricer(
         config.pricing_config(),
+        config.quote_calibration(),
         oracle_registry,
         pyth,
         bs_values,
