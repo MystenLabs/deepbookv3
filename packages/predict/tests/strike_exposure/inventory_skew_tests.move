@@ -14,6 +14,7 @@ module deepbook_predict::inventory_skew_tests;
 use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
+    order::Order,
     pricing::Pricer,
     strike_exposure::{Self, StrikeExposure},
     strike_exposure_config::{Self, StrikeExposureConfig},
@@ -49,6 +50,12 @@ const WINDOW_FRACTION: u64 = 100_000_000; // 10% of the reference tick at a dail
 /// fixture's reference tick of 100 gives a 20-tick window; the fixture's own
 /// one-minute cadence would scale it to well under one tick.
 const DAILY_CADENCE_MS: u64 = 86_400_000;
+/// Hand-derived expectations for the 20-tick window (reference 100, +/-10 ticks).
+/// One order of Q over the upper half leaves W = Q on 10 of 20 ticks, so
+/// mean = Q/2, variance = Q^2/4 and the deviation is Q/2 = 5e8. At a 20% rate the
+/// charge is 0.2 * 5e8 = 1e8. Filling the lower half makes W flat, so the
+/// deviation returns to zero and the rebate is the same 1e8.
+const HALF_WINDOW_DEVIATION_CHARGE: u64 = 100_000_000;
 const ONE_ORDER: u64 = 1_000_000_000;
 
 #[test]
@@ -91,7 +98,9 @@ fun balancing_is_rebated_and_concentrating_is_charged() {
 
     assert!(!balancing.skew_is_charge());
     assert!(concentrating.skew_is_charge());
-    assert!(balancing.skew_amount() > 0);
+    // Filling the empty half flattens the profile exactly, so the rebate returns
+    // the whole deviation the leaning book had built up.
+    assert_eq!(balancing.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
     assert!(concentrating.skew_amount() > 0);
 
     cleanup(fx, oracle, harness);
@@ -155,6 +164,75 @@ fun sub_tick_window_reads_zero() {
     assert_eq!(adjustment.skew_amount(), 0);
 
     cleanup(fx, oracle, harness);
+}
+
+/// The first order into an empty book builds the whole deviation, so its charge is
+/// the exact hand-derived value rather than a direction.
+#[test]
+fun first_half_window_mint_charges_the_exact_deviation() {
+    let (mut fx, oracle, mut harness) = enabled_harness();
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let (lower, higher) = upper_half();
+
+    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    assert!(adjustment.skew_is_charge());
+    assert_eq!(adjustment.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
+
+    mint(&mut harness.exposure, &pricer, lower, higher, ONE_ORDER);
+    assert_eq!(harness.exposure.skew_potential(), HALF_WINDOW_DEVIATION_CHARGE);
+
+    cleanup(fx, oracle, harness);
+}
+
+/// The regression that killed a range-local formula. Two ranges opened and then
+/// closed in the same order they were opened, never in reverse, must still net to
+/// zero across the whole sequence even though no individual leg does.
+#[test]
+fun cross_range_cycle_nets_to_zero() {
+    let (mut fx, oracle, mut harness) = enabled_harness();
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let (lower_a, higher_a) = lower_half();
+    let (lower_b, higher_b) = upper_half();
+
+    let mut charged = 0;
+    let mut rebated = 0;
+
+    let open_a = harness.exposure.inventory_skew(lower_a, higher_a, ONE_ORDER, true);
+    let order_a = mint_order(&mut harness.exposure, &pricer, lower_a, higher_a, ONE_ORDER);
+    let open_b = harness.exposure.inventory_skew(lower_b, higher_b, ONE_ORDER, true);
+    let order_b = mint_order(&mut harness.exposure, &pricer, lower_b, higher_b, ONE_ORDER);
+
+    // Close in the order opened, not in reverse.
+    let close_a = harness.exposure.quote_live_close(&pricer, &order_a, order_a.quantity());
+    let close_a_adjustment = close_a.close_skew_adjustment();
+    harness.exposure.process_live_close(close_a).destroy_none();
+    let close_b = harness.exposure.quote_live_close(&pricer, &order_b, order_b.quantity());
+    let close_b_adjustment = close_b.close_skew_adjustment();
+    harness.exposure.process_live_close(close_b).destroy_none();
+
+    vector[open_a, open_b, close_a_adjustment, close_b_adjustment].do_ref!(|adjustment| {
+        if (adjustment.skew_is_charge()) {
+            charged = charged + adjustment.skew_amount();
+        } else {
+            rebated = rebated + adjustment.skew_amount();
+        };
+    });
+
+    assert_eq!(charged, rebated);
+    assert_eq!(harness.exposure.skew_potential(), 0);
+
+    cleanup(fx, oracle, harness);
+}
+
+fun mint_order(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+): Order {
+    let terms = exposure.quote_mint_terms(pricer, lower, higher, 0, quantity, true);
+    exposure.allocate_mint_order(terms)
 }
 
 fun enabled_harness(): (OracleFixture, OracleBundle, ExposureHarness) {

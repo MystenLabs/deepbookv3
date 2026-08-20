@@ -89,6 +89,9 @@ public struct MintTerms has drop {
     premium: u64,
     /// Separate inventory-impact charge, sampled against the pre-mint book.
     inventory_impact_charge: u64,
+    /// Signed inventory-skew adjustment, sampled against the pre-mint book. A mint
+    /// that flattens the book carries a rebate here rather than a charge.
+    skew_adjustment: SkewAdjustment,
 }
 
 /// Compute-once terms for one prospective live close. Built only by
@@ -103,6 +106,9 @@ public struct LiveCloseTerms has drop {
     range_probability: u64,
     /// Separate inventory-impact rebate, sampled against the pre-close book.
     inventory_impact_rebate: u64,
+    /// Signed inventory-skew adjustment, sampled against the pre-close book. A
+    /// close that unbalances the book carries a charge here rather than a rebate.
+    skew_adjustment: SkewAdjustment,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -129,6 +135,10 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
     terms.inventory_impact_charge
 }
 
+public(package) fun mint_skew_adjustment(terms: &MintTerms): SkewAdjustment {
+    terms.skew_adjustment
+}
+
 public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
     terms.redeem_amount
 }
@@ -139,6 +149,10 @@ public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
 
 public(package) fun inventory_impact_rebate(terms: &LiveCloseTerms): u64 {
     terms.inventory_impact_rebate
+}
+
+public(package) fun close_skew_adjustment(terms: &LiveCloseTerms): SkewAdjustment {
+    terms.skew_adjustment
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -280,6 +294,16 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
 }
 
+/// Return the skew escrow the current book must be backed by. Settled books and a
+/// zero rate carry none, which is what lets settlement release the residual.
+public(package) fun skew_potential(exposure: &StrikeExposure): u64 {
+    if (exposure.is_settled() || exposure.config.inventory_skew_rate() == 0) return 0;
+    math::mul_down(
+        exposure.config.inventory_skew_rate(),
+        exposure.skew_deviation(exposure.skew_payout_sum, exposure.skew_payout_square_sum),
+    )
+}
+
 /// Price one range change as the change in the payout profile's standard
 /// deviation over the skew window. A trade that flattens the book lowers it and is
 /// rebated; one that concentrates the book raises it and is charged.
@@ -391,6 +415,12 @@ public(package) fun quote_mint_terms(
         quantity,
         entry_probability,
         premium,
+        skew_adjustment: exposure.inventory_skew(
+            lower_tick,
+            higher_tick,
+            quantity,
+            true,
+        ),
         inventory_impact_charge: exposure.inventory_impact(
             lower_tick,
             higher_tick,
@@ -439,6 +469,12 @@ public(package) fun quote_live_close(
         redeem_amount: math::mul_down(range_probability, close_quantity),
         range_probability,
         inventory_impact_rebate: exposure.inventory_impact(
+            order.lower_tick(),
+            order.higher_tick(),
+            close_quantity,
+            false,
+        ),
+        skew_adjustment: exposure.inventory_skew(
             order.lower_tick(),
             order.higher_tick(),
             close_quantity,

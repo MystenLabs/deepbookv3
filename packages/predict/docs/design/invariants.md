@@ -13,7 +13,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
   and isolated inventory-impact reserve
-  (`cash ≥ payout_liability + inventory_impact_reserve`),
+  (`cash ≥ payout_liability + inventory_impact_reserve + skew_reserve`),
   re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
 - **Inventory-impact escrow covers the current potential.** While live,

@@ -141,6 +141,40 @@ Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_r
 
 This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
 
+## Inventory-skew charge and rebate
+
+Inventory skew is a second isolated transfer, layered on top of the fee system and independent of inventory impact. Where impact prices how much of the expiry's reserve a position ties up, skew prices how *uneven* the book's payouts are across settlement prices — which impact cannot see, because `L` moves the same way whether a trade flattens the book or fills an idle corner. `inventory_skew_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets.
+
+### The statistic
+
+Let `W(S)` be the payout the pool owes if the market settles at tick `S`. Over a window of `N` ticks centred on the market's reference tick:
+
+```text
+skew = sqrt( sum(W^2)/N - (sum(W)/N)^2 )
+```
+
+the standard deviation of the payout profile. It is `0` exactly when the pool owes the same at every price in the window, and largest when the profile is concentrated. The protocol keeps `sum(W)` and `sum(W^2)` as running totals, folded on every mint and close, so no trade walks the tick ladder.
+
+### The window
+
+The half-width is a fraction of the reference tick. A tick is a raw price divided by `tick_size`, so a fraction of the tick is the same fraction of price — one configured value spans every underlying and price level. That fraction is then scaled by `sqrt(cadence_period / one_day)`, so a window covers the same number of standard deviations at every cadence and a new cadence needs no new configuration. The window freezes with the reference tick: a moving window would score the two legs of a round trip against different domains.
+
+A window narrower than a single tick leaves nothing to average over and reads `0`. Skew over a handful of settlement outcomes is undefined, and no charge is the safe response.
+
+### Charge and rebate
+
+```text
+adjustment = rate * ( skew(after) - skew(before) )
+```
+
+signed. A mint that flattens the book is **rebated**; a close that unbalances it is **charged**. This is the only Predict adjustment whose direction is data rather than lifecycle, so both the mint and close events carry a charge and a rebate field, at most one of which is nonzero.
+
+Because the adjustment is the change in one book-level statistic, splitting a trade, closing in pieces, and cycling across ranges all telescope exactly. And because standard deviation is unchanged by adding the same payout everywhere, buying **every** outcome at once — a guaranteed payout — scores exactly zero and earns no rebate. That closes the only trade a rebate could otherwise fund for free.
+
+A mint has no outbound payment leg, so a rebate reduces the withdrawal rather than paying the trader. A rebate larger than everything else the mint owes aborts rather than clamping, since a clamp would move the statistic without crediting the trader the difference.
+
+Charges sit in `skew_reserve`, excluded from free cash and NAV, released into ordinary surplus at settlement. Cumulative collections equal the current statistic by construction, so a rebate can never exceed what the same book already paid in.
+
 ## How the components combine
 
 The full flow for a single trade:
@@ -168,6 +202,7 @@ Cash routing at trade time:
 | Builder fee | add-on to trading fee | builder code address | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No |
 | Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
+| Inventory skew | signed on either side | separate isolated escrow; residual becomes surplus at settlement | No |
 
 At **mint**, the trader's withdrawal is `premium + trading_fee + builder_fee + congestion_surcharge + inventory_impact_charge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
 
