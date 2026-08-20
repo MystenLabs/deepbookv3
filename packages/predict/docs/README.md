@@ -57,6 +57,9 @@ How the protocol is built:
   in-flight plan for a keeper-published correction that maps quoted
   probabilities toward realized settlement outcomes (DBU-733); a plan, not
   shipped behavior.
+- **[Adverse-flow calibrator](./design/adverse-flow-calibrator.md)** — a
+  successor design that derives the same correction on-chain from settled
+  outcomes and removes the keeper; a design, neither built nor scheduled.
 
 ## Risks
 

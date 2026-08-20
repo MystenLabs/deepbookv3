@@ -4,7 +4,11 @@
 > the target design and the build sequence. As pieces land, the durable parts
 > move into [architecture](./architecture.md), [configuration](./configuration.md),
 > [decisions](./decisions.md), and the module docs, and this file tracks what
-> remains; it is deleted when the work ships.
+> remains; it is deleted when the work ships. Where the table comes from is not
+> settled: the
+> [adverse-flow calibrator](./adverse-flow-calibrator.md) describes a successor
+> that derives it on-chain and removes the keeper, reusing everything below
+> except the publication path.
 
 ## Motivation
 
@@ -246,8 +250,9 @@ guessable from the table alone:
   remaining time and quoted digital probability. Fitting range outcomes instead
   would produce a table that is wrong for how it is applied, because correcting
   a difference is not the same as differencing two corrections.
-- **The interpolation law is part of the fit.** The keeper measures at the nine
-  keys, but quotes are served at every time in between under the law above. A
+- **The interpolation law is part of the fit.** The keeper measures at the
+  eleven keys, but quotes are served at every time in between under the law
+  above. A
   keeper that assumes a different law leaves a systematic error the table
   cannot see.
 
