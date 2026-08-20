@@ -70,6 +70,13 @@ const IMPACT_MAX_RATE: u64 = 200_000_000;
 const CONCENTRATING_OCCUPANCY_CHARGE: u64 = 10_000_000;
 /// The same potential at `L = 1.5Q`, less what the first mint already paid.
 const BALANCING_OCCUPANCY_CHARGE: u64 = 12_500_000;
+/// The rates the two mechanisms were calibrated against together: 0.1% occupancy
+/// and 0.13% skew, versus the exaggerated rates the other tests use to make
+/// escrow movements legible.
+const CALIBRATED_OCCUPANCY_RATE: u64 = 1_000_000;
+const CALIBRATED_SKEW_RATE: u64 = 1_300_000;
+const CALIBRATED_OCCUPANCY_REBATE: u64 = 62_500;
+const CALIBRATED_SKEW_CHARGE: u64 = 650_000;
 /// Half the reference price with minutes to expiry, so a `(reference, +inf]` leg
 /// prices at effectively zero.
 const DEEP_OUT_OF_THE_MONEY_PRICE: u64 = 50_000_000_000;
@@ -616,6 +623,78 @@ fun skew_and_occupancy_compose_without_aliasing() {
     // to zero even though neither individual leg nets zero.
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), 0);
     assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// At the rates the two mechanisms were calibrated against, skew outweighs the
+/// occupancy rebate on a risk-increasing close by roughly ten to one.
+///
+/// This is the calibration's load-bearing property and it is not visible at the
+/// exaggerated rates the other tests use. Closing the balancing leg of a complete
+/// set leaves the book one-sided, so occupancy — which reads only the cash the
+/// expiry must hold — pays a rebate for a trade that makes the pool riskier. Skew
+/// has to be the larger of the two for the net to come out a charge. It is, but
+/// only because the two rates are within a small factor of each other; the test
+/// fixture's ratio reverses the result, which is why this pins the calibrated one.
+#[test]
+fun at_calibrated_rates_skew_outweighs_the_occupancy_rebate() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
+    fx.set_template_inventory_impact_max_rate(CALIBRATED_OCCUPANCY_RATE);
+    fx.set_template_inventory_skew_rate(CALIBRATED_SKEW_RATE);
+    fx.set_template_skew_window_fraction(FULL_WINDOW_FRACTION);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(8 * test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.set_reference_tick_bundle(&mut market, test_constants::default_live_price());
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    let balancing_leg = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        test_constants::mint_quantity(),
+    );
+    let occupancy_before = helpers::market(&market).inventory_impact_reserve();
+    let skew_before = helpers::market(&market).skew_reserve();
+
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.redeem_live_bundle(
+        &mut market,
+        &mut account,
+        balancing_leg,
+        test_constants::mint_quantity(),
+    );
+
+    // Occupancy: 0.001 * (1.5Q)^2 / 2B minus 0.001 * Q^2 / 2B = 112_500 - 50_000.
+    let occupancy_rebate =
+        occupancy_before
+        - helpers::market(&market).inventory_impact_reserve();
+    assert_eq!(occupancy_rebate, CALIBRATED_OCCUPANCY_REBATE);
+    // Skew: 0.0013 * (5e8 - 0), the deviation the close reintroduces.
+    let skew_charge = helpers::market(&market).skew_reserve() - skew_before;
+    assert_eq!(skew_charge, CALIBRATED_SKEW_CHARGE);
+
+    // The net must be a charge, or the pool pays traders to unbalance its book.
+    assert!(skew_charge > occupancy_rebate);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
