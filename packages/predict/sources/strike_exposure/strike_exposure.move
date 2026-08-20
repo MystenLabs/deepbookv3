@@ -29,8 +29,7 @@ const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
-const ESkewVarianceTooWide: u64 = 7;
-const ESkewWindowUnavailable: u64 = 8;
+const ESkewWindowUnavailable: u64 = 7;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -707,18 +706,23 @@ fun skew_window(exposure: &StrikeExposure): (u64, u64) {
 /// Standard deviation of the payout profile over the window: zero when the pool
 /// owes the same at every price in it, largest when the profile is concentrated.
 ///
-/// The variance is taken in the single-division form `(n*S2 - S1^2) / n^2`, which
-/// is non-negative by Cauchy-Schwarz. Dividing first and squaring after can floor
-/// below zero and would need a clamp that the exact form does not.
+/// The variance is taken in the single-division form `(n*S2 - S1^2) / n^2`. It is
+/// non-negative by Cauchy-Schwarz, and so is the two-division form in integers, so
+/// neither needs a clamp — the reason to prefer this one is accuracy. Dividing
+/// first loses the fractional part of each mean before squaring, an error of order
+/// `max(W)` rather than of order one: on a flat book at `W = 1e12` per tick the
+/// two-division form reports a deviation of a full DUSDC where the true value is
+/// half a base unit.
 fun skew_deviation(exposure: &StrikeExposure, payout_sum: u128, payout_square_sum: u256): u64 {
     let (lower, higher) = exposure.skew_window();
     if (higher <= lower) return 0;
 
     let width = ((higher - lower) as u256);
     let sum = (payout_sum as u256);
+    // Both narrowings are total, not guarded: the tree maintains payout prefixes in
+    // `u64`, so `variance <= max(W)^2 <= (2^64 - 1)^2`, which is below `u128::MAX`,
+    // and its root is at most `2^64 - 1`.
     let variance = (width * payout_square_sum - sum * sum) / (width * width);
-    assert!(variance <= (std::u128::max_value!() as u256), ESkewVarianceTooWide);
-
     (math::sqrt_u128_down(variance as u128) as u64)
 }
 
