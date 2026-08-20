@@ -56,6 +56,9 @@ const DAILY_CADENCE_MS: u64 = 86_400_000;
 /// charge is 0.2 * 5e8 = 1e8. Filling the lower half makes W flat, so the
 /// deviation returns to zero and the rebate is the same 1e8.
 const HALF_WINDOW_DEVIATION_CHARGE: u64 = 100_000_000;
+/// Small enough that each leg's `rate * deviation` truncates: at 5e8 deviation
+/// the product is 1.5, and at 1e9 it is 3.
+const TRUNCATING_RATE: u64 = 3;
 const ONE_ORDER: u64 = 1_000_000_000;
 
 #[test]
@@ -101,7 +104,9 @@ fun balancing_is_rebated_and_concentrating_is_charged() {
     // Filling the empty half flattens the profile exactly, so the rebate returns
     // the whole deviation the leaning book had built up.
     assert_eq!(balancing.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
-    assert!(concentrating.skew_amount() > 0);
+    // Stacking on the same side doubles the deviation, so the charge is the same
+    // increment again: 20% of (1e9 - 5e8).
+    assert_eq!(concentrating.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
 
     cleanup(fx, oracle, harness);
 }
@@ -298,4 +303,77 @@ fun cleanup(fx: OracleFixture, oracle: OracleBundle, harness: ExposureHarness) {
     return_shared(harness);
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+/// Minting before the reference tick is recorded would fold into an empty window,
+/// leaving the accumulators at zero while the book carries the order — and the
+/// close would then subtract from zero and strand the position. The mint is gated
+/// instead, and only while skew is on.
+#[test, expected_failure(abort_code = strike_exposure::ESkewWindowUnavailable)]
+fun mint_without_a_reference_tick_aborts_while_skew_is_on() {
+    let (mut fx, oracle, mut harness) = enabled_harness_without_reference();
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let (lower, higher) = upper_half();
+    mint(&mut harness.exposure, &pricer, lower, higher, ONE_ORDER);
+    abort 0
+}
+
+/// The same mint is fine with skew off, so the gate costs nothing at the shipped
+/// rate.
+#[test]
+fun mint_without_a_reference_tick_is_allowed_while_skew_is_off() {
+    let (mut fx, oracle, mut harness) = new_harness(strike_exposure_config::new());
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let (lower, higher) = upper_half();
+    mint(&mut harness.exposure, &pricer, lower, higher, ONE_ORDER);
+
+    assert_eq!(harness.exposure.skew_potential(), 0);
+
+    cleanup(fx, oracle, harness);
+}
+
+/// Collected charges must telescope to the current potential exactly. Flooring
+/// each leg independently would leave the escrow below it, and the backing assert
+/// would then abort a legitimate trade. Rate and quantities here are chosen so the
+/// per-leg products truncate.
+#[test]
+fun collected_charges_track_the_potential_under_truncation() {
+    let (mut fx, oracle, mut harness) = new_harness(skew_config(TRUNCATING_RATE));
+    harness.exposure.set_reference_tick(test_constants::default_strike_tick());
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let (lower, higher) = upper_half();
+
+    // Flooring each leg independently gives 1 then 1, against a potential of 3.
+    let mut collected = 0;
+    let mut step = 0;
+    while (step < 3) {
+        let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+        collected = collected + adjustment.skew_amount();
+        mint(&mut harness.exposure, &pricer, lower, higher, ONE_ORDER);
+        assert_eq!(collected, harness.exposure.skew_potential());
+        step = step + 1;
+    };
+    assert!(collected > 0);
+
+    cleanup(fx, oracle, harness);
+}
+
+/// The window scales with the square root of the tenor, so a longer cadence gives
+/// a proportionally wider window. Linear scaling would put the hourly window at
+/// 1/24th of the daily one rather than roughly a fifth.
+#[test]
+fun window_scales_with_the_square_root_of_the_tenor() {
+    let (fx, oracle, mut harness) = new_harness_with_cadence(
+        skew_config(SKEW_RATE),
+        constants::one_hour_ms!(),
+    );
+    harness.exposure.set_reference_tick(test_constants::default_strike_tick());
+
+    // sqrt(1/24) = 0.2041, so 10% * 0.2041 * reference tick 100 = 2 ticks either
+    // side. Scaling linearly instead would give 1/24 of the daily fraction, whose
+    // half-width truncates to 0. The daily case is pinned at 10 ticks by the
+    // exact-deviation test, which depends on the window being 20 ticks wide.
+    assert_eq!(harness.exposure.skew_window_half_width_for_testing(), 2);
+
+    cleanup(fx, oracle, harness);
 }

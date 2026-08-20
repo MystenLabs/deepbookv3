@@ -30,6 +30,7 @@ const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
 const ESkewVarianceTooWide: u64 = 7;
+const ESkewWindowUnavailable: u64 = 8;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -334,11 +335,18 @@ public(package) fun inventory_skew(
     );
     let after = exposure.skew_deviation(after_sum, after_square);
 
+    // Difference of floored potentials, not the floored difference. Flooring each
+    // leg independently makes cumulative collections fall below the potential by up
+    // to a unit per trade, and the backing assert would then abort a legitimate
+    // trade. This way the collected total telescopes to the current potential
+    // exactly, which is what the escrow invariant claims.
     let rate = exposure.config.inventory_skew_rate();
-    if (after >= before) {
-        SkewAdjustment { amount: math::mul_down(rate, after - before), is_charge: true }
+    let potential_before = math::mul_down(rate, before);
+    let potential_after = math::mul_down(rate, after);
+    if (potential_after >= potential_before) {
+        SkewAdjustment { amount: potential_after - potential_before, is_charge: true }
     } else {
-        SkewAdjustment { amount: math::mul_down(rate, before - after), is_charge: false }
+        SkewAdjustment { amount: potential_before - potential_after, is_charge: false }
     }
 }
 
@@ -384,6 +392,7 @@ public(package) fun quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
 ): MintTerms {
+    exposure.assert_skew_window_ready();
     let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
 
     let quantity = if (exact_quantity) {
@@ -638,6 +647,23 @@ fun payout_liabilities_after_change(
         exposure.live_payout_liability_from_terms(max_payout, total_payout),
         exposure.live_payout_liability_from_terms(after_max, after_total),
     )
+}
+
+/// A mint recorded before the reference tick would fold into an empty window,
+/// leaving the accumulators at zero while the book carries the order. Once the
+/// window appears the close would subtract from zero and abort, stranding the
+/// position until settlement. Gate the mint instead, and only while skew is on.
+#[test_only]
+public(package) fun skew_window_half_width_for_testing(exposure: &StrikeExposure): u64 {
+    let (lower, higher) = exposure.skew_window();
+    (higher - lower) / 2
+}
+
+fun assert_skew_window_ready(exposure: &StrikeExposure) {
+    assert!(
+        exposure.config.inventory_skew_rate() == 0 || exposure.reference_tick.is_some(),
+        ESkewWindowUnavailable,
+    );
 }
 
 /// Scale the daily-anchored window fraction to this market's tenor by the

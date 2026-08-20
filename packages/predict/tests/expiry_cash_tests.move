@@ -16,6 +16,7 @@ const INVENTORY_IMPACT_CHARGE: u64 = 30;
 const INVENTORY_IMPACT_REBATE: u64 = 12;
 /// Cash left after paying out past the earmark (5 < escrow 30).
 const CASH_BELOW_ESCROW: u64 = 5;
+const SKEW_CHARGE: u64 = 25;
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun assert_backing_underfunded_aborts() {
@@ -121,5 +122,70 @@ fun settlement_release_turns_residual_escrow_into_surplus() {
     let released = cash.release_surplus(INVENTORY_IMPACT_CHARGE, 0);
     assert_eq!(released.value(), INVENTORY_IMPACT_CHARGE);
     destroy(released);
+    destroy(cash);
+}
+
+#[test]
+fun skew_escrow_is_isolated_from_free_cash_and_required_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut cash = expiry_cash::new();
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    // Neither spendable nor visible in NAV while the market is live.
+    assert_eq!(cash.skew_reserve(), SKEW_CHARGE);
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - SKEW_CHARGE);
+    assert_eq!(cash.required_cash(FEE_AMOUNT), FEE_AMOUNT + SKEW_CHARGE);
+
+    // Both escrows net out together.
+    cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - SKEW_CHARGE - INVENTORY_IMPACT_CHARGE);
+    assert_eq!(cash.required_cash(FEE_AMOUNT), FEE_AMOUNT + SKEW_CHARGE + INVENTORY_IMPACT_CHARGE);
+
+    destroy(cash);
+}
+
+#[test]
+fun skew_rebate_draws_only_on_its_own_escrow() {
+    let ctx = &mut tx_context::dummy();
+    let mut cash = expiry_cash::new();
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    let paid = cash.pay_skew_rebate(SKEW_CHARGE);
+    assert_eq!(paid.value(), SKEW_CHARGE);
+    assert_eq!(cash.skew_reserve(), 0);
+    assert_eq!(cash.balance(), CASH_AMOUNT - SKEW_CHARGE);
+
+    destroy(paid);
+    destroy(cash);
+}
+
+#[test, expected_failure(abort_code = expiry_cash::ESkewRebateExceedsReserve)]
+fun skew_rebate_above_the_escrow_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut cash = expiry_cash::new();
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    let payout = cash.pay_skew_rebate(SKEW_CHARGE + 1);
+    destroy(payout);
+    abort 999
+}
+
+/// Settlement turns the residual escrow into ordinary surplus without moving cash.
+#[test]
+fun settlement_release_frees_the_skew_escrow() {
+    let ctx = &mut tx_context::dummy();
+    let mut cash = expiry_cash::new();
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - SKEW_CHARGE);
+
+    cash.release_skew_reserve();
+    assert_eq!(cash.skew_reserve(), 0);
+    assert_eq!(cash.balance(), CASH_AMOUNT);
+    assert_eq!(cash.free_cash(), CASH_AMOUNT);
+
     destroy(cash);
 }

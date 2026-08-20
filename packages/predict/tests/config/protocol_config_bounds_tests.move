@@ -185,6 +185,43 @@ fun template_inventory_impact_max_rate_above_one_aborts() {
     abort 999
 }
 
+// === Strike-exposure templates: inventory-skew rate and window fraction ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidInventorySkewRate)]
+fun template_inventory_skew_rate_above_one_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_inventory_skew_rate(
+        &admin_cap,
+        config_constants::max_inventory_skew_rate!() + 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidSkewWindowFraction)]
+fun template_skew_window_fraction_above_one_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_skew_window_fraction(
+        &admin_cap,
+        config_constants::max_skew_window_fraction!() + 1,
+    );
+    abort 999
+}
+
+/// Unlike the rates, the window fraction floors well above zero: a window with no
+/// ticks to average over would disable the statistic silently.
+#[test, expected_failure(abort_code = config_constants::EInvalidSkewWindowFraction)]
+fun template_skew_window_fraction_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_skew_window_fraction(
+        &admin_cap,
+        config_constants::min_skew_window_fraction!() - 1,
+    );
+    abort 999
+}
+
 // === Strike-exposure templates: boundary values round-trip ===
 
 #[test]

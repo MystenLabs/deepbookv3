@@ -138,6 +138,11 @@ public fun inventory_impact_reserve(market: &ExpiryMarket): u64 {
     market.cash.inventory_impact_reserve()
 }
 
+/// Return the isolated inventory-skew escrow for SDK and devInspect state reads.
+public fun skew_reserve(market: &ExpiryMarket): u64 {
+    market.cash.skew_reserve()
+}
+
 /// Return local fee incentives for SDK and devInspect state reads.
 public fun fee_incentive_balance(market: &ExpiryMarket): u64 {
     market.fee_incentive_balance.value()
@@ -382,6 +387,16 @@ public fun penalty_fee(quote: &MintQuote): u64 {
 /// consumers.
 public fun inventory_impact_charge(quote: &MintQuote): u64 {
     quote.inventory_impact_charge
+}
+
+/// Return the inventory-skew amounts for SDK and devInspect quote reads. At most
+/// one is nonzero: a mint that flattens the book carries a rebate, not a charge.
+public fun skew_charge(quote: &MintQuote): u64 {
+    quote.skew_charge
+}
+
+public fun skew_rebate(quote: &MintQuote): u64 {
+    quote.skew_rebate
 }
 
 /// Return the total quoted account withdrawal for SDK and devInspect consumers.
