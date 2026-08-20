@@ -850,3 +850,36 @@ fun assert_reference_tick_event(
     };
     assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
 }
+
+/// A market whose reference-tick observation never lands cannot be minted on, and
+/// there is no way back: the skew rate is snapshotted at creation and no admin
+/// path reaches a live market's config. The market holds its pool allocation for
+/// its whole life and never trades. The gate itself is necessary — without it a
+/// pre-window mint folds nothing and the matching close underflows the
+/// accumulator — so the defect is the missing recovery path, not the assert.
+#[test, expected_failure(abort_code = deepbook_predict::strike_exposure::ESkewWindowUnavailable)]
+fun a_market_whose_reference_tick_never_lands_cannot_be_minted_on() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_inventory_skew_rate(SKEW_RATE);
+    fx.set_template_skew_window_fraction(FULL_WINDOW_FRACTION);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    // Live pricing is healthy; only the historical reference print is absent.
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    abort EUnexpectedSuccess
+}
