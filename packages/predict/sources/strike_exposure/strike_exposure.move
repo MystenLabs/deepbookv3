@@ -29,6 +29,7 @@ const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
+const ESkewVarianceTooWide: u64 = 7;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -53,8 +54,21 @@ public struct StrikeExposure has store {
     settlement_price: Option<u64>,
     /// Remaining payout liability in the settled phase.
     settled_payout_liability: u64,
+    /// Running `sum(W(S))` and `sum(W(S)^2)` over the skew window, maintained on
+    /// every mint and close. The statistic reads them instead of walking the tick
+    /// ladder, which a trade cannot afford. Both stay zero while the rate is zero.
+    skew_payout_sum: u128,
+    skew_payout_square_sum: u256,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
+}
+
+/// One trade's inventory-skew adjustment. A mint that flattens the book and a
+/// close that unbalances it both invert the usual direction, so the sign travels
+/// with the amount rather than being implied by the flow.
+public struct SkewAdjustment has copy, drop, store {
+    amount: u64,
+    is_charge: bool,
 }
 
 /// Pure mint terms for one prospective live mint: the priced tick range and
@@ -98,6 +112,14 @@ public(package) fun premium(terms: &MintTerms): u64 {
 
 public(package) fun quantity(terms: &MintTerms): u64 {
     terms.quantity
+}
+
+public(package) fun skew_amount(adjustment: &SkewAdjustment): u64 {
+    adjustment.amount
+}
+
+public(package) fun skew_is_charge(adjustment: &SkewAdjustment): bool {
+    adjustment.is_charge
 }
 
 public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
@@ -255,6 +277,44 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
 }
 
+/// Price one range change as the change in the payout profile's standard
+/// deviation over the skew window. A trade that flattens the book lowers it and is
+/// rebated; one that concentrates the book raises it and is charged.
+///
+/// The measure is translation-invariant: adding the same payout at every price in
+/// the window leaves it unchanged. Buying every outcome at once is exactly that
+/// move, so a guaranteed-payout position earns no rebate and cannot be farmed.
+public(package) fun inventory_skew(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    payout: u64,
+    adding: bool,
+): SkewAdjustment {
+    if (exposure.config.inventory_skew_rate() == 0 || payout == 0) {
+        return SkewAdjustment { amount: 0, is_charge: true }
+    };
+
+    let before = exposure.skew_deviation(
+        exposure.skew_payout_sum,
+        exposure.skew_payout_square_sum,
+    );
+    let (after_sum, after_square) = exposure.skew_terms_after_change(
+        lower_tick,
+        higher_tick,
+        payout,
+        adding,
+    );
+    let after = exposure.skew_deviation(after_sum, after_square);
+
+    let rate = exposure.config.inventory_skew_rate();
+    if (after >= before) {
+        SkewAdjustment { amount: math::mul_down(rate, after - before), is_charge: true }
+    } else {
+        SkewAdjustment { amount: math::mul_down(rate, before - after), is_charge: false }
+    }
+}
+
 /// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
 /// single book-level potential. Using one state function for every range makes
 /// all closed inventory cycles sum to zero before ordinary trading fees.
@@ -350,6 +410,7 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
     let allocated_order = order::new_from_ticks(lower_tick, higher_tick, quantity, sequence);
     exposure.next_order_sequence = sequence + 1;
 
+    exposure.commit_skew_terms(lower_tick, higher_tick, quantity, true);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity);
 
     allocated_order
@@ -392,6 +453,12 @@ public(package) fun process_live_close(
     let LiveCloseTerms { expiry_market_id, order, close_quantity, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
+    exposure.commit_skew_terms(
+        order.lower_tick(),
+        order.higher_tick(),
+        close_quantity,
+        false,
+    );
     exposure.payout.remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
 
     let remaining_quantity = order.quantity() - close_quantity;
@@ -462,6 +529,8 @@ public(package) fun new(
         next_order_sequence: 0,
         settlement_price: option::none(),
         settled_payout_liability: 0,
+        skew_payout_sum: 0,
+        skew_payout_square_sum: 0,
         payout: strike_payout_tree::new(ctx),
     }
 }
@@ -528,6 +597,93 @@ fun payout_liabilities_after_change(
         exposure.live_payout_liability_from_terms(max_payout, total_payout),
         exposure.live_payout_liability_from_terms(after_max, after_total),
     )
+}
+
+/// Half-open `(lower, higher]` window the statistic averages over, centred on the
+/// reference tick. A fraction of the reference tick is the same fraction of price,
+/// so one configured value spans every underlying and price level. The window is
+/// empty until the reference tick is recorded, which reads as a zero statistic.
+fun skew_window(exposure: &StrikeExposure): (u64, u64) {
+    if (exposure.reference_tick.is_none()) return (0, 0);
+
+    let reference = *exposure.reference_tick.borrow();
+    let half_width = math::mul_down(exposure.config.skew_window_fraction(), reference);
+    if (half_width == 0) return (0, 0);
+
+    // Clamp rather than abort: a window centred near the bottom of the ladder
+    // legitimately reaches past tick zero, and the truncated window is still the
+    // exact domain every read and update shares.
+    (reference.saturating_sub(half_width), (reference + half_width).min(constants::pos_inf_tick!()))
+}
+
+/// Standard deviation of the payout profile over the window: zero when the pool
+/// owes the same at every price in it, largest when the profile is concentrated.
+///
+/// The variance is taken in the single-division form `(n*S2 - S1^2) / n^2`, which
+/// is non-negative by Cauchy-Schwarz. Dividing first and squaring after can floor
+/// below zero and would need a clamp that the exact form does not.
+fun skew_deviation(exposure: &StrikeExposure, payout_sum: u128, payout_square_sum: u256): u64 {
+    let (lower, higher) = exposure.skew_window();
+    if (higher <= lower) return 0;
+
+    let width = ((higher - lower) as u256);
+    let sum = (payout_sum as u256);
+    let variance = (width * payout_square_sum - sum * sum) / (width * width);
+    assert!(variance <= (std::u128::max_value!() as u256), ESkewVarianceTooWide);
+
+    (math::sqrt_u128_down(variance as u128) as u64)
+}
+
+/// Return the accumulators one range change would leave behind, with the range
+/// clipped to the window. The range sum must be read before the payout tree
+/// mutates, so every caller runs this on the pre-trade book.
+fun skew_terms_after_change(
+    exposure: &StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    payout: u64,
+    adding: bool,
+): (u128, u256) {
+    let (window_lower, window_higher) = exposure.skew_window();
+    let lower = lower_tick.max(window_lower);
+    let higher = higher_tick.min(window_higher);
+    if (higher <= lower) {
+        return (exposure.skew_payout_sum, exposure.skew_payout_square_sum)
+    };
+
+    // Adding `q` across `k` ticks moves sum(W) by `q*k` and sum(W^2) by
+    // `2q*sum(W) + q^2*k` over the same ticks; removal inverts the cross term.
+    let width = ((higher - lower) as u256);
+    let quantity = (payout as u256);
+    let linear = ((payout as u128) * ((higher - lower) as u128));
+    let cross = 2 * quantity * (exposure.payout.range_payout_sum(lower, higher) as u256);
+    let square = quantity * quantity * width;
+
+    if (adding) {
+        (exposure.skew_payout_sum + linear, exposure.skew_payout_square_sum + cross + square)
+    } else {
+        (exposure.skew_payout_sum - linear, exposure.skew_payout_square_sum + square - cross)
+    }
+}
+
+/// Fold one range change into the stored accumulators. Runs before the payout
+/// tree mutates, for the same reason `skew_terms_after_change` does.
+fun commit_skew_terms(
+    exposure: &mut StrikeExposure,
+    lower_tick: u64,
+    higher_tick: u64,
+    payout: u64,
+    adding: bool,
+) {
+    if (exposure.config.inventory_skew_rate() == 0) return;
+    let (sum, square) = exposure.skew_terms_after_change(
+        lower_tick,
+        higher_tick,
+        payout,
+        adding,
+    );
+    exposure.skew_payout_sum = sum;
+    exposure.skew_payout_square_sum = square;
 }
 
 fun live_payout_liability_from_terms(

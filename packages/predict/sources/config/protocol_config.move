@@ -144,6 +144,28 @@ public fun set_template_inventory_impact_max_rate(
     config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
 }
 
+/// Set the template rate charged on the payout profile's standard deviation.
+/// Existing markets keep the rate they snapshotted at creation.
+public fun set_template_inventory_skew_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_skew_rate(value);
+}
+
+/// Set the template half-width of the skew window, as a fraction of a market's
+/// reference tick. Existing markets keep the fraction they snapshotted.
+public fun set_template_skew_window_fraction(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_skew_window_fraction(value);
+}
+
 /// Set the minimum raw entry probability snapshotted by newly created expiry markets.
 public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,

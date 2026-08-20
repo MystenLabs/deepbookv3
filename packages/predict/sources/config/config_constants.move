@@ -29,6 +29,8 @@ const EInvalidMaxLpPoolValue: u64 = 18;
 const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
+const EInvalidInventorySkewRate: u64 = 22;
+const EInvalidSkewWindowFraction: u64 = 23;
 
 // === Fees ===
 
@@ -178,6 +180,56 @@ public(package) fun assert_inventory_impact_max_rate(value: u64) {
         value >= min_inventory_impact_max_rate!()
             && value <= max_inventory_impact_max_rate!(),
         EInvalidInventoryImpactMaxRate,
+    );
+}
+
+// === Inventory Skew ===
+
+/// Rate applied to the payout profile's standard deviation, in FLOAT_SCALING.
+/// Occupancy prices how much reserve a position ties up; this prices how uneven
+/// the book's payouts are across settlement prices, which occupancy cannot see.
+/// The mechanism ships inert; a zero rate short-circuits before any payout-tree
+/// range read.
+public(package) macro fun default_inventory_skew_rate(): u64 { 0 }
+
+public(package) macro fun min_inventory_skew_rate(): u64 { 0 }
+
+/// A full-scale rate charges one DUSDC per DUSDC of standard deviation added.
+/// This is a representability envelope, not a recommended operating value.
+public(package) macro fun max_inventory_skew_rate(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_inventory_skew_rate(value: u64) {
+    assert!(
+        value >= min_inventory_skew_rate!() && value <= max_inventory_skew_rate!(),
+        EInvalidInventorySkewRate,
+    );
+}
+
+/// Half-width of the skew window as a fraction of the market's reference tick,
+/// in FLOAT_SCALING. Because a tick is a price divided by `tick_size`, a fraction
+/// of the reference tick is the same fraction of price — one value covers every
+/// underlying and price level. The window is frozen with the reference tick, so
+/// a market created at 50k with a 10% fraction measures skew over 45k-55k for its
+/// whole life.
+///
+/// Sizing errs wide: too wide only weakens the charge, while too narrow lets
+/// exposure park just past the edge where the measure cannot see it.
+public(package) macro fun default_skew_window_fraction(): u64 { 100_000_000 }
+
+/// A degenerate window has no ticks to average over, so the floor is well above
+/// zero rather than at it.
+public(package) macro fun min_skew_window_fraction(): u64 { 1_000_000 }
+
+public(package) macro fun max_skew_window_fraction(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_skew_window_fraction(value: u64) {
+    assert!(
+        value >= min_skew_window_fraction!() && value <= max_skew_window_fraction!(),
+        EInvalidSkewWindowFraction,
     );
 }
 

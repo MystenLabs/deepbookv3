@@ -38,6 +38,11 @@ public struct StrikeExposureConfig has store {
     /// Maximum marginal rate of the path-independent inventory-impact curve, in
     /// FLOAT_SCALING. `0` disables both charges and rebates.
     inventory_impact_max_rate: u64,
+    /// Rate on the payout profile's standard deviation. Zero disables the charge.
+    inventory_skew_rate: u64,
+    /// Half-width of the skew measurement window, as a fraction of the market's
+    /// reference tick and therefore of its reference price.
+    skew_window_fraction: u64,
 }
 
 // === Public-Package Functions ===
@@ -72,6 +77,14 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun inventory_impact_max_rate(config: &StrikeExposureConfig): u64 {
     config.inventory_impact_max_rate
+}
+
+public(package) fun inventory_skew_rate(config: &StrikeExposureConfig): u64 {
+    config.inventory_skew_rate
+}
+
+public(package) fun skew_window_fraction(config: &StrikeExposureConfig): u64 {
+    config.skew_window_fraction
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -128,6 +141,8 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         inventory_impact_max_rate: config_constants::default_inventory_impact_max_rate!(),
+        inventory_skew_rate: config_constants::default_inventory_skew_rate!(),
+        skew_window_fraction: config_constants::default_skew_window_fraction!(),
     }
 }
 
@@ -142,6 +157,8 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         inventory_impact_max_rate: config.inventory_impact_max_rate,
+        inventory_skew_rate: config.inventory_skew_rate,
+        skew_window_fraction: config.skew_window_fraction,
     }
 }
 
@@ -185,6 +202,16 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_inventory_impact_max_rate(value);
     config.inventory_impact_max_rate = value;
+}
+
+public(package) fun set_inventory_skew_rate(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_skew_rate(value);
+    config.inventory_skew_rate = value;
+}
+
+public(package) fun set_skew_window_fraction(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_skew_window_fraction(value);
+    config.skew_window_fraction = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.
