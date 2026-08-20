@@ -317,3 +317,40 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
     destroy(admin_cap);
     scenario.end();
 }
+
+// === Quote calibration ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidQuoteCalibrationStalenessMs)]
+fun quote_calibration_staleness_below_min_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_quote_calibration_staleness_ms(
+        &admin_cap,
+        config_constants::min_quote_calibration_staleness_ms!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidQuoteCalibrationStalenessMs)]
+fun quote_calibration_staleness_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_quote_calibration_staleness_ms(
+        &admin_cap,
+        config_constants::max_quote_calibration_staleness_ms!() + 1,
+    );
+    abort 999
+}
+
+// The deviation envelope floors at zero, so there is no reachable below-min case
+// for a `u64`; zero is a valid setting that admits only the identity correction.
+#[test, expected_failure(abort_code = config_constants::EInvalidQuoteCalibrationMaxDeviation)]
+fun quote_calibration_max_deviation_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_quote_calibration_max_deviation(
+        &admin_cap,
+        config_constants::max_quote_calibration_max_deviation!() + 1,
+    );
+    abort 999
+}
