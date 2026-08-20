@@ -232,7 +232,7 @@ public(package) fun assert_inventory_skew_rate(value: u64) {
 ///
 /// Sizing errs wide: too wide only weakens the charge, while too narrow lets
 /// exposure park just past the edge where the measure cannot see it.
-public(package) macro fun default_skew_window_fraction(): u64 { 100_000_000 }
+public(package) macro fun default_skew_window_fraction(): u64 { 150_000_000 }
 
 /// A degenerate window has no ticks to average over, so the floor is well above
 /// zero rather than at it.
