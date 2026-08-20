@@ -525,10 +525,14 @@ fun escrow_charge_outranks_the_fee_when_the_payout_is_fully_consumed() {
 /// separate potentials, and both telescope to zero over the same round trip.
 ///
 /// It also pins why the second mechanism exists. The two mints below are a
-/// complete set, so they are disjoint and the peak `M` never moves; occupancy
-/// reads `L = M + lambda(T - M)` and therefore charges the *balancing* mint
-/// more than the concentrating one, purely because it adds to `T`. Skew reverses
-/// that ordering, which is the whole point.
+/// complete set, so they are disjoint and the peak `M` never moves while `T`
+/// doubles. Occupancy reads `L = M + lambda(T - M)`, so it charges the
+/// *balancing* mint more than the concentrating one. That is not a defect:
+/// `lambda(T - M)` is the early-exit liquidity buffer, and the second leg
+/// genuinely adds to it. It is the point — occupancy ranks these two trades by
+/// the cash the expiry must hold, which is the opposite of how they rank by
+/// directional risk, and it has no term that could tell them apart. Skew
+/// supplies that term.
 #[test]
 fun skew_and_occupancy_compose_without_aliasing() {
     let mut fx = helpers::setup_market_default();
