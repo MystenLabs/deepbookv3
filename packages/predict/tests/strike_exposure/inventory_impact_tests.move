@@ -228,6 +228,7 @@ fun zero_inventory_impact_scale_aborts() {
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         0,
+        test_constants::default_cadence_period_ms(),
         0,
         ctx,
     );
@@ -306,6 +307,7 @@ fun new_harness(
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
+        test_constants::default_cadence_period_ms(),
         inventory_impact_scale,
         fx.scenario_mut().ctx(),
     );

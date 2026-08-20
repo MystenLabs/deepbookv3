@@ -727,6 +727,7 @@ public(package) fun create_and_share(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    cadence_period_ms: u64,
     inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): ID {
@@ -745,6 +746,7 @@ public(package) fun create_and_share(
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
+            cadence_period_ms,
             inventory_impact_scale,
             ctx,
         ),

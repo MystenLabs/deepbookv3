@@ -43,7 +43,12 @@ public struct ExposureHarness has key {
 
 const IMPACT_SCALE: u64 = 4_000_000_000;
 const SKEW_RATE: u64 = 200_000_000; // 20%
-const WINDOW_FRACTION: u64 = 100_000_000; // 10% of the reference tick
+const WINDOW_FRACTION: u64 = 100_000_000; // 10% of the reference tick at a daily tenor
+/// The statistic needs a window several ticks wide to mean anything, and the
+/// fraction scales with the square root of the tenor. A daily cadence against the
+/// fixture's reference tick of 100 gives a 20-tick window; the fixture's own
+/// one-minute cadence would scale it to well under one tick.
+const DAILY_CADENCE_MS: u64 = 86_400_000;
 const ONE_ORDER: u64 = 1_000_000_000;
 
 #[test]
@@ -130,6 +135,28 @@ fun round_trip_nets_to_zero() {
     cleanup(fx, oracle, harness);
 }
 
+/// A tenor short enough that the scaled fraction rounds below one tick leaves no
+/// window to average over, so the statistic reads zero rather than measuring a
+/// degenerate one-tick domain. Skew is undefined when the plausible settlement
+/// range spans too few ticks, and reading zero is the safe response.
+#[test]
+fun sub_tick_window_reads_zero() {
+    let (mut fx, oracle, mut harness) = new_harness_with_cadence(
+        skew_config(SKEW_RATE),
+        test_constants::default_cadence_period_ms(),
+    );
+    harness.exposure.set_reference_tick(test_constants::default_strike_tick());
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let (upper_lower, upper_higher) = upper_half();
+    mint(&mut harness.exposure, &pricer, upper_lower, upper_higher, ONE_ORDER);
+
+    let (lower, higher) = lower_half();
+    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    assert_eq!(adjustment.skew_amount(), 0);
+
+    cleanup(fx, oracle, harness);
+}
+
 fun enabled_harness(): (OracleFixture, OracleBundle, ExposureHarness) {
     let (fx, oracle, mut harness) = new_harness(skew_config(SKEW_RATE));
     harness.exposure.set_reference_tick(test_constants::default_strike_tick());
@@ -154,6 +181,13 @@ fun skew_config(rate: u64): StrikeExposureConfig {
 }
 
 fun new_harness(config: StrikeExposureConfig): (OracleFixture, OracleBundle, ExposureHarness) {
+    new_harness_with_cadence(config, DAILY_CADENCE_MS)
+}
+
+fun new_harness_with_cadence(
+    config: StrikeExposureConfig,
+    cadence_period_ms: u64,
+): (OracleFixture, OracleBundle, ExposureHarness) {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -170,6 +204,7 @@ fun new_harness(config: StrikeExposureConfig): (OracleFixture, OracleBundle, Exp
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
         expiry_ms - test_constants::default_cadence_period_ms(),
+        cadence_period_ms,
         IMPACT_SCALE,
         fx.scenario_mut().ctx(),
     );

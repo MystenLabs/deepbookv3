@@ -41,6 +41,9 @@ public struct StrikeExposure has store {
     admission_tick_size: u64,
     /// Exact Propbook Pyth source timestamp used to derive the reference tick.
     reference_tick_source_timestamp_ms: u64,
+    /// This market's cadence period. The skew window scales with its square root,
+    /// so every cadence covers the same number of standard deviations.
+    cadence_period_ms: u64,
     /// Reference fine-grid tick that may bypass the coarser admission grid once set.
     reference_tick: Option<u64>,
     /// Snapshotted exposure and fee policy for this expiry.
@@ -514,6 +517,7 @@ public(package) fun new(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
+    cadence_period_ms: u64,
     inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
@@ -523,6 +527,7 @@ public(package) fun new(
         tick_size,
         admission_tick_size,
         reference_tick_source_timestamp_ms,
+        cadence_period_ms,
         reference_tick: option::none(),
         config,
         inventory_impact_scale,
@@ -599,6 +604,27 @@ fun payout_liabilities_after_change(
     )
 }
 
+/// Scale the daily-anchored window fraction to this market's tenor by the
+/// square-root-of-time rule, so the window spans the same number of standard
+/// deviations at every cadence and a new cadence needs no new configuration.
+///
+/// The rule assumes independent, identically distributed returns. Crypto returns
+/// are fat-tailed and cluster, which makes the true short-horizon deviation larger
+/// than the rule implies — so the derived window runs slightly narrow at short
+/// tenors, and the anchor is sized with headroom rather than at the target.
+fun tenor_scaled_window_fraction(exposure: &StrikeExposure): u64 {
+    let tenor_ratio = math::mul_div_down(
+        exposure.cadence_period_ms,
+        math::float_scaling!(),
+        constants::one_day_ms!(),
+    );
+    let scaled = math::mul_down(
+        exposure.config.skew_window_fraction(),
+        math::sqrt_down(tenor_ratio),
+    );
+    scaled.min(math::float_scaling!())
+}
+
 /// Half-open `(lower, higher]` window the statistic averages over, centred on the
 /// reference tick. A fraction of the reference tick is the same fraction of price,
 /// so one configured value spans every underlying and price level. The window is
@@ -607,7 +633,7 @@ fun skew_window(exposure: &StrikeExposure): (u64, u64) {
     if (exposure.reference_tick.is_none()) return (0, 0);
 
     let reference = *exposure.reference_tick.borrow();
-    let half_width = math::mul_down(exposure.config.skew_window_fraction(), reference);
+    let half_width = math::mul_down(exposure.tenor_scaled_window_fraction(), reference);
     if (half_width == 0) return (0, 0);
 
     // Clamp rather than abort: a window centred near the bottom of the ladder
