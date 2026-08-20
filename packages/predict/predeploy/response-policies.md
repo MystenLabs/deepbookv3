@@ -1620,7 +1620,13 @@ worth-fixing.
   premium alone is at least `min_entry_probability * quantity`; at the shipped
   constants that is a factor of four. Both are upgrade-required constants, so the
   margin cannot drift through admin config.
-- **Risk profile:** n/a (bound semantics, not a probabilistic risk).
+- **Risk profile:** MEASURED — `evidence/dbu732-skew-calibration-2026-08-20.md`
+  replays Feb–Jun 2026 BTC and puts this bound's margins on data. The rebate
+  ceiling `rate * quantity / 2` is attained, not merely approached, so at the
+  recommended `r_skew = 0.25%` it is 12.5 bps against the 50 bps fee floor — a
+  4.0x margin, and the pool keeps at least 37.5 bps on any trade however perfectly
+  it flattens the book. The same record sizes the window on measured escape rather
+  than on sigma coverage.
 - **Pinning tests:** `inventory_skew_flow_tests.move` —
   `close_of_a_worthless_leg_that_unbalances_the_book_aborts` (reaches the abort
   through the real close path) and

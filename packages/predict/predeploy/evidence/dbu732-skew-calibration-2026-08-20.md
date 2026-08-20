@@ -1,6 +1,6 @@
 # Inventory-Charge Calibration - 2026-08-20
 
-**Item:** DBU-732 · **Instrument:** replay over Block Scholes v2composite BTC, Feb 1 - Jun 30 2026 (12.96M seconds of 1s spot, SVI params at 20s) · **Date:** 2026-08-20
+**Item:** RP-29 (rate and window calibration; DBU-732) · **Instrument:** replay over Block Scholes v2composite BTC, Feb 1 - Jun 30 2026 (12.96M seconds of 1s spot, SVI params at 20s) · **Date:** 2026-08-20
 
 Resolves: what rates should `inventory_skew_rate`, `inventory_impact_max_rate` and `skew_window_fraction` start at, given both mechanisms run together.
 
