@@ -90,6 +90,10 @@ const CALIBRATED_OCCUPANCY_RATE: u64 = 1_000_000;
 const CALIBRATED_SKEW_RATE: u64 = 1_300_000;
 const CALIBRATED_OCCUPANCY_REBATE: u64 = 62_500;
 const CALIBRATED_SKEW_CHARGE: u64 = 650_000;
+/// `12_500_000` occupancy rebate less the `2_500_000` skew charge, with the fee
+/// taking the whole payout. Under a clamp that also deducts the charge from the
+/// fee's base the trader would net `12_500_000` — the fee revenue diverted.
+const SENIORITY_PRESERVES_FEE_NET: u64 = 10_000_000;
 /// Half the reference price with minutes to expiry, so a `(reference, +inf]` leg
 /// prices at effectively zero.
 const DEEP_OUT_OF_THE_MONEY_PRICE: u64 = 50_000_000_000;
@@ -882,4 +886,71 @@ fun a_market_whose_reference_tick_never_lands_cannot_be_minted_on() {
         test_constants::mint_quantity(),
     );
     abort EUnexpectedSuccess
+}
+
+/// Making the escrow senior must not quietly hand fee revenue to the closer. When
+/// the payout alone covers both the charge and the fee, the fee is exactly what it
+/// would have been without skew — the seniority cap binds only when the payout
+/// cannot cover both.
+///
+/// Only visible with occupancy enabled, because its rebate is what gives the close
+/// enough proceeds to pay both. Every other test here runs at a zero impact rate
+/// and cannot distinguish the two clampings.
+///
+/// With the fee floor at its ceiling the fee always exceeds the payout, so the
+/// clamp binds: fee = redeem = 500_006_309, and the trader nets
+/// `redeem + 12_500_000 impact rebate - fee - 2_500_000 skew charge`.
+#[test]
+fun seniority_does_not_divert_fee_revenue_to_the_closer() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(config_constants::max_min_fee!());
+    fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
+    fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
+    fx.set_template_inventory_skew_rate(SKEW_RATE);
+    fx.set_template_skew_window_fraction(FULL_WINDOW_FRACTION);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(20 * test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.set_reference_tick_bundle(&mut market, test_constants::default_live_price());
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    let balancing_leg = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        test_constants::mint_quantity(),
+    );
+
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    let balance_before_close = fx.account_balance_bundle<DUSDC>(&account);
+    fx.redeem_live_bundle(
+        &mut market,
+        &mut account,
+        balancing_leg,
+        test_constants::mint_quantity(),
+    );
+
+    assert_eq!(
+        fx.account_balance_bundle<DUSDC>(&account) - balance_before_close,
+        SENIORITY_PRESERVES_FEE_NET,
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }

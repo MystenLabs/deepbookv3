@@ -1011,12 +1011,26 @@ fun redeem_live_with_auth(
     } else {
         (0, skew.skew_amount())
     };
-    // Cap the fee at the payout it is charged against: an expiry-ramped fee can
-    // exceed a deep out-of-the-money redeem, and a close must never cost more
-    // than it releases. The skew escrow backs future rebates rather than being
-    // revenue, so it is senior to the fee and comes out of the payout first —
-    // without that ordering a close whose fee already consumed the payout would
-    // abort rather than collect, stranding a deep out-of-the-money position.
+    let inventory_impact_rebate = terms.inventory_impact_rebate();
+    // Everything the close releases. Both rebates are the trader's, so they count
+    // toward covering the deductions even though the fee is not charged on them.
+    let gross_proceeds = redeem_amount + inventory_impact_rebate + skew_rebate;
+    // The pot the fee, builder fee and penalty share. Two caps, and each one is a
+    // separate rule:
+    //
+    // `redeem_amount` is the payout the fee is charged against — an expiry-ramped
+    // fee can exceed a deep out-of-the-money redeem, and a close must never cost
+    // more than it releases. Capping here also keeps the fee out of the inventory
+    // rebates, which are the trader's own escrowed money coming back.
+    //
+    // `gross_proceeds - skew_charge` makes the escrow senior to fee revenue, per
+    // `move.md`: the escrow backs future rebates rather than being revenue, so it
+    // is the first claim on the payout. Without it a close whose fee already
+    // consumed the payout would abort rather than collect, stranding a position
+    // the first cap exists to keep closable. It binds only when the payout alone
+    // cannot cover both, so a close with a rebate large enough to absorb the
+    // charge pays exactly the fee it would have paid before.
+    let available = redeem_amount.min(gross_proceeds.saturating_sub(skew_charge));
     let fee_amount = market
         .strike_exposure
         .trading_fee(
@@ -1025,27 +1039,21 @@ fun redeem_live_with_auth(
             close_quantity,
             clock,
         )
-        .min(redeem_amount.saturating_sub(skew_charge));
+        .min(available);
 
-    // The redeem payment decomposition, computed in full before any cash moves:
-    // builder fee and penalty are each clamped at the payout remaining after the
-    // prior deductions, so every subtraction below is exact. The single
-    // `builder_code_id` read feeds the fee amount, the routing destination, and
-    // the event, so they cannot come from different reads.
+    // The redeem payment decomposition, computed in full before any cash moves.
+    // The single `builder_code_id` read feeds the fee amount, the routing
+    // destination, and the event, so they cannot come from different reads.
     let builder_code_id = predict_account::builder_code_id(account);
     let builder_fee_amount = builder_fee_amount(
         &builder_code_id,
         fee_amount,
         close_quantity,
-    ).min(redeem_amount.saturating_sub(skew_charge + fee_amount));
-    let penalty_amount = penalty_amount.min(redeem_amount.saturating_sub(
-        skew_charge + fee_amount + builder_fee_amount,
-    ));
-    let inventory_impact_rebate = terms.inventory_impact_rebate();
-    // Close-side all-in slippage floor: the net credited to the account is
-    // `redeem_amount` plus both inventory rebates, minus fee, builder fee,
-    // penalty, and any skew charge. `0` disables. Mirror of mint's `max_cost`.
-    let gross_proceeds = redeem_amount + inventory_impact_rebate + skew_rebate;
+    ).min(available - fee_amount);
+    let penalty_amount = penalty_amount.min(available - fee_amount - builder_fee_amount);
+    // Reachable only when the charge exceeds everything the close releases: the
+    // clamps above already hold the three deductions to `available`, which is at
+    // most `gross_proceeds - skew_charge` whenever that is non-zero.
     assert!(
         skew_charge + fee_amount + builder_fee_amount + penalty_amount <= gross_proceeds,
         ESkewChargeExceedsCloseProceeds,

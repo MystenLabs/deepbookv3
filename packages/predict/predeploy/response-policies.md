@@ -1580,8 +1580,6 @@ worth-fixing.
 
 ---
 
----
-
 ## RP-29: A close whose skew charge exceeds its payout aborts; the escrow outranks fee revenue (DBU-732)
 
 - **Trigger state:** a live close whose inventory-skew charge is larger than
@@ -1607,9 +1605,12 @@ worth-fixing.
   is **senior to the trading fee**. The charge comes out of the payout first and
   the fee is clamped against what remains, matching the seniority rule in
   `move.md` (trader/principal backing outranks protocol revenue). Without that
-  ordering the abort would fire far more often — on every deep out-of-the-money
-  close whose expiry-ramped fee already consumed the payout, which is a regime
-  the fee clamp exists precisely to keep closable.
+  ordering the abort would fire far more often — on a deep out-of-the-money close
+  whose expiry-ramped fee already consumed the payout, which is a regime the fee
+  clamp exists precisely to keep closable. The cap is `min(redeem_amount,
+  gross_proceeds - skew_charge)`, so it binds only when the payout alone cannot
+  cover both; a close whose inventory-impact rebate absorbs the charge pays the
+  fee it would have paid without skew, and no fee revenue is diverted.
 - **Why not clamp the charge:** a clamp would move the potential without
   collecting it, leaving the escrow below the amount a future rebate can claim.
   That converts a bounded single-user abort into an abort on someone else's
