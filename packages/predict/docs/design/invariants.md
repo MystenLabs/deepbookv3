@@ -12,7 +12,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Solvency and custody
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
-  and isolated inventory-impact reserve
+  and its isolated inventory-impact and inventory-skew reserves
   (`cash ≥ payout_liability + inventory_impact_reserve + skew_reserve`),
   re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
@@ -21,6 +21,14 @@ and contributors. For *how* each mechanism works, follow the links into
   potential increase and voluntary live closes may withdraw only the potential
   decrease;
   settlement releases the residual earmark when live closes become impossible.
+- **Skew escrow equals the current potential exactly.** While live,
+  `skew_reserve == rate * stddev(payout profile)` — not merely at least it. Each
+  adjustment is the difference of two potentials floored by the same operation, so
+  the flooring cancels and collections telescope to the stored value. The code
+  asserts the weaker `>=` because that is what solvency needs; equality is what
+  makes a rebate unable to exceed what the same book paid in, and it is why
+  `ESkewRebateExceedsReserve` is unreachable. Settlement releases the residual to
+  ordinary surplus.
 - **Inventory cycles telescope.** Inventory charge/rebate is always the signed
   difference between two evaluations of the same deterministic integer state
   function. Therefore any sequence returning the payout book to its starting

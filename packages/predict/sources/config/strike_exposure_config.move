@@ -16,6 +16,7 @@ const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
 const EPremiumBelowMinimum: u64 = 3;
+const ESkewRateExceedsFeeFloor: u64 = 4;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -147,7 +148,22 @@ public(package) fun new(): StrikeExposureConfig {
 }
 
 /// Snapshot a strike-exposure config into an independent live copy.
+/// Freeze the template's values onto one market. This is the only point where the
+/// skew rate and the fee floor are fixed together, so it is where their
+/// relationship is checked.
+///
+/// A skew rebate is bounded by `rate * quantity / 2` — the deviation of a payout
+/// profile moves by at most half the quantity added — while the ordinary fee is
+/// bounded below by `min_fee * quantity`, since the `base_fee * sqrt(p(1-p))` term
+/// vanishes at both probability extremes. Once `rate` passes twice the floor, a
+/// trade that flattens the book earns more than it pays and the rebate becomes
+/// farmable, which is exactly what `max_inventory_skew_rate` was sized to prevent.
+///
+/// Checked at runtime rather than pinned by a test because `min_fee` is
+/// admin-tunable with a floor of zero: unlike the premium relation, whose both
+/// sides are upgrade-required constants, this one is reachable through config.
 public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfig {
+    assert!(config.inventory_skew_rate <= 2 * config.min_fee, ESkewRateExceedsFeeFloor);
     StrikeExposureConfig {
         backing_buffer_lambda: config.backing_buffer_lambda,
         base_fee: config.base_fee,

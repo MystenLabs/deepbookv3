@@ -22,11 +22,14 @@ use deepbook_predict::{
     constants,
     flow_test_helpers as helpers,
     protocol_config::{Self, ProtocolConfig},
+    strike_exposure_config,
     test_constants
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
+
+const EUnexpectedSuccess: u64 = 999;
 
 /// Create a real shared `ProtocolConfig` (all template values at defaults) and
 /// an `AdminCap`, ready for admin setter calls in the next transaction.
@@ -365,4 +368,48 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
 fun max_skew_rebate_stays_below_the_minimum_premium() {
     let max_rebate_per_unit = config_constants::max_inventory_skew_rate!() / 2;
     assert!(max_rebate_per_unit < config_constants::min_min_entry_probability!());
+}
+
+/// A skew rebate is bounded by `rate * quantity / 2` while the ordinary fee is
+/// bounded below by `min_fee * quantity`. `min_fee` is admin-tunable down to zero,
+/// so an admin can drive the fee under the rebate ceiling and make flattening the
+/// book pay more than it costs. Market creation refuses the pairing.
+#[test, expected_failure(abort_code = strike_exposure_config::ESkewRateExceedsFeeFloor)]
+fun a_skew_rate_above_twice_the_fee_floor_cannot_be_snapshotted() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Each value is individually admissible; only the pairing is not.
+    config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
+    config.set_template_inventory_skew_rate(&admin_cap, 1);
+    destroy(config.strike_exposure_template_config().snapshot());
+
+    abort EUnexpectedSuccess
+}
+
+/// The shipped pairing sits at the boundary's safe side with room to spare, and
+/// the boundary itself is accepted.
+#[test]
+fun the_shipped_skew_rate_and_fee_floor_pair_within_the_bound() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Ceiling rate against the shipped floor: 0.25% rebate under a 0.5% fee.
+    config.set_template_inventory_skew_rate(
+        &admin_cap,
+        config_constants::max_inventory_skew_rate!(),
+    );
+    let snapshot = config.strike_exposure_template_config().snapshot();
+    assert_eq!(snapshot.inventory_skew_rate(), config_constants::max_inventory_skew_rate!());
+    destroy(snapshot);
+
+    // Exactly twice the floor is the boundary and is admitted.
+    config.set_template_min_fee(&admin_cap, config_constants::max_inventory_skew_rate!() / 2);
+    let boundary = config.strike_exposure_template_config().snapshot();
+    assert_eq!(boundary.min_fee(), config_constants::max_inventory_skew_rate!() / 2);
+    destroy(boundary);
+
+    return_shared(config);
+    destroy(admin_cap);
+    scenario.end();
 }
