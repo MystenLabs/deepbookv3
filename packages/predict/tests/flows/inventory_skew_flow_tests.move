@@ -64,6 +64,12 @@ const HALF_WINDOW_CHARGE: u64 = 2_500_000;
 const QUARTER_WINDOW_CHARGE: u64 = 1_250_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
 const HALF_QUANTITY: u64 = 500_000_000;
+const BACKING_BUFFER_LAMBDA: u64 = 500_000_000;
+const IMPACT_MAX_RATE: u64 = 200_000_000;
+/// `0.2 * Q^2 / (2 * IMPACT_SCALE)` with `M = T = Q`.
+const CONCENTRATING_OCCUPANCY_CHARGE: u64 = 10_000_000;
+/// The same potential at `L = 1.5Q`, less what the first mint already paid.
+const BALANCING_OCCUPANCY_CHARGE: u64 = 12_500_000;
 /// Half the reference price with minutes to expiry, so a `(reference, +inf]` leg
 /// prices at effectively zero.
 const DEEP_OUT_OF_THE_MONEY_PRICE: u64 = 50_000_000_000;
@@ -508,6 +514,104 @@ fun escrow_charge_outranks_the_fee_when_the_payout_is_fully_consumed() {
     // nothing — but the close lands and the escrow is whole.
     assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_before_close);
     assert_eq!(helpers::market(&market).skew_reserve(), HALF_WINDOW_CHARGE);
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// Skew and capital occupancy compose rather than collide: separate escrows,
+/// separate potentials, and both telescope to zero over the same round trip.
+///
+/// It also pins why the second mechanism exists. The two mints below are a
+/// complete set, so they are disjoint and the peak `M` never moves; occupancy
+/// reads `L = M + lambda(T - M)` and therefore charges the *balancing* mint
+/// more than the concentrating one, purely because it adds to `T`. Skew reverses
+/// that ordering, which is the whole point.
+#[test]
+fun skew_and_occupancy_compose_without_aliasing() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
+    fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
+    fx.set_template_inventory_skew_rate(SKEW_RATE);
+    fx.set_template_skew_window_fraction(FULL_WINDOW_FRACTION);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(8 * test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.set_reference_tick_bundle(&mut market, test_constants::default_live_price());
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+
+    // Into an empty book: M = T = Q, so L = Q and the potential is
+    // 0.2 * Q^2 / (2 * 1e10) = 1e7. The profile is a half-window step, so skew
+    // charges 5e8 * 0.005.
+    let concentrating = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(concentrating.inventory_impact_charge(), CONCENTRATING_OCCUPANCY_CHARGE);
+    assert_eq!(concentrating.skew_charge(), HALF_WINDOW_CHARGE);
+    let up_leg = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+
+    // The complementary leg is disjoint, so M stays Q while T doubles:
+    // L = Q + 0.5 * Q = 1.5Q, the potential is 2.25e7, and occupancy charges the
+    // 1.25e7 difference — more than it charged the trade that created the
+    // imbalance. Skew reads the flattening and rebates.
+    let balancing = fx.quote_mint_bundle(
+        &market,
+        0,
+        helpers::strike_tick(),
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(balancing.inventory_impact_charge(), BALANCING_OCCUPANCY_CHARGE);
+    assert_eq!(balancing.skew_rebate(), HALF_WINDOW_CHARGE);
+    assert_eq!(balancing.skew_charge(), 0);
+
+    // Occupancy alone ranks these backwards; the two together rank them right.
+    assert!(BALANCING_OCCUPANCY_CHARGE > CONCENTRATING_OCCUPANCY_CHARGE);
+    assert!(
+        BALANCING_OCCUPANCY_CHARGE - HALF_WINDOW_CHARGE
+            < CONCENTRATING_OCCUPANCY_CHARGE + HALF_WINDOW_CHARGE,
+    );
+
+    let down_leg = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        test_constants::mint_quantity(),
+    );
+
+    // Each escrow holds its own mechanism's potential and neither reads the other.
+    assert_eq!(
+        helpers::market(&market).inventory_impact_reserve(),
+        CONCENTRATING_OCCUPANCY_CHARGE + BALANCING_OCCUPANCY_CHARGE,
+    );
+    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    helpers::assert_market_backed_bundle(&market);
+
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.redeem_live_bundle(&mut market, &mut account, down_leg, test_constants::mint_quantity());
+    fx.redeem_live_bundle(&mut market, &mut account, up_leg, test_constants::mint_quantity());
+
+    // Both potentials are state functions, so the round trip returns both escrows
+    // to zero even though neither individual leg nets zero.
+    assert_eq!(helpers::market(&market).inventory_impact_reserve(), 0);
+    assert_eq!(helpers::market(&market).skew_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
