@@ -38,6 +38,7 @@ use sui::table::{Self, Table};
 const EInsufficientPayoutQuantity: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
 const ENonMonotonePrice: u64 = 2;
+const EInvertedRange: u64 = 3;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -60,11 +61,12 @@ public struct PayoutSummary has copy, drop, store {
     /// `start` would break shape-independence with no test to catch it, and
     /// would also abort `strike_exposure`'s plain `total - max` subtraction.
     max_payout_prefix_gain: u64,
-    /// Tick-weighted boundary quantities: `sum(tick * local_start)` and
-    /// `sum(tick * local_end)` over the subtree. Their difference is the area
-    /// under the payout profile, which the plain totals cannot express — two
-    /// orders of equal quantity spanning one tick and eighty ticks produce
-    /// identical `start`/`end` but areas differing eighty-fold.
+    /// First moments of the boundary measure: `sum(tick * local_start)` and
+    /// `sum(tick * local_end)` over the subtree. They carry where quantity sits,
+    /// which the plain totals cannot express — two orders of equal quantity
+    /// spanning one tick and eighty ticks produce identical `start`/`end`. They
+    /// are not themselves an area; `range_payout_sum` combines them with the
+    /// range's opening prefix to get one.
     ///
     /// Unlike `max_payout_prefix_gain` these are plain sums, so associativity —
     /// and with it the tree's shape-independence — holds unconditionally rather
@@ -150,8 +152,8 @@ public(package) fun complement_max_payout(
 
 /// Return `sum(W(S))` over the settlement ticks `S` in `(lower_tick, higher_tick]`,
 /// where `W(S)` is the payout owed if the market settles at `S`. This is the area
-/// under the payout profile across the range — the second-moment term a spread
-/// statistic needs, and the one quantity the plain boundary totals cannot express.
+/// across the range — the discrete integral of `W`, or equivalently the area under
+/// the payout profile, which the plain boundary totals cannot express.
 ///
 /// Derivation: `W(S) = W(lower+1) + sum(delta_t)` over boundaries `lower < t < S`,
 /// so summing over the range weights each boundary by how far it reaches:
@@ -160,15 +162,21 @@ public(package) fun complement_max_payout(
 /// `range_max_payout` already performs, so this stays `O(log n)`.
 ///
 /// Callers pass a range already clipped to whatever window they measure over; the
-/// tree imposes no window of its own. The final subtraction is exact rather than
-/// clamped: it underflows only if some `W(S)` in the range is negative, which a
-/// consistent book cannot produce, so the abort is the invariant check.
+/// tree imposes no window of its own — an unterminated `+inf` leg really does span
+/// the rest of the ladder, so where to clip is the caller's policy.
+///
+/// The final subtraction is exact rather than clamped: a consistent book cannot
+/// drive it negative. It is not a desync detector, for the reason the module doc
+/// gives about the settlement walk — it tests the aggregate, not each prefix, so a
+/// book with negative prefixes can still return a positive total. `apply_net_delta`
+/// remains the authority.
 public(package) fun range_payout_sum(
     tree: &StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
 ): u128 {
-    if (higher_tick <= lower_tick) return 0;
+    assert!(higher_tick >= lower_tick, EInvertedRange);
+    if (higher_tick == lower_tick) return 0;
 
     let prefix_at_lower = settlement_prefix_payout(
         &tree.nodes,

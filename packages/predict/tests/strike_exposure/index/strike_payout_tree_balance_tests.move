@@ -225,6 +225,10 @@ fun boundary_gc_preserves_terms_and_balance() {
     let (rebuilt_max, rebuilt_total) = rebuilt.payout_reserve_terms();
     assert_eq!(gc_max, rebuilt_max);
     assert_eq!(gc_total, rebuilt_total);
+    assert_eq!(
+        tree.range_payout_sum(0, constants::pos_inf_tick!()),
+        rebuilt.range_payout_sum(0, constants::pos_inf_tick!()),
+    );
 
     destroy(tree);
     destroy(rebuilt);

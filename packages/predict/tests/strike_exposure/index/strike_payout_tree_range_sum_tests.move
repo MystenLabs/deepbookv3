@@ -11,6 +11,10 @@ use deepbook_predict::{constants, strike_payout_tree::{Self, StrikePayoutTree}};
 use std::unit_test::{assert_eq, destroy};
 
 const TICK_SIZE: u64 = 1_000;
+/// Hand-summed W(1..10) for each fixture; the derivations sit above each surface.
+const MIXED_SURFACE_AREA: u128 = 320;
+const OPEN_UPPER_SURFACE_AREA: u128 = 395;
+const SHARED_BOUNDARY_SURFACE_AREA: u128 = 240;
 
 /// Sum `W(S)` one settlement tick at a time over `(lower, higher]`, the reference
 /// the logarithmic read must reproduce.
@@ -45,13 +49,20 @@ fun empty_tree_has_zero_area() {
 }
 
 #[test]
-fun empty_or_inverted_range_is_zero() {
+fun empty_range_is_zero() {
     let ctx = &mut tx_context::dummy();
     let tree = mixed_surface(ctx);
 
     assert_eq!(tree.range_payout_sum(5, 5), 0);
-    assert_eq!(tree.range_payout_sum(9, 4), 0);
     destroy(tree);
+}
+
+#[test, expected_failure(abort_code = strike_payout_tree::EInvertedRange)]
+fun inverted_range_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let tree = mixed_surface(ctx);
+    tree.range_payout_sum(9, 4);
+    abort 0
 }
 
 /// The read the plain boundary totals cannot make. Both books carry one order of
@@ -85,7 +96,7 @@ fun area_matches_hand_computed_surface() {
     let tree = mixed_surface(ctx);
 
     // 10 + 50 + 40 + 70 + 70 + 30 + 30 + 0 + 20 + 0
-    assert_eq!(tree.range_payout_sum(0, 10), 320);
+    assert_eq!(tree.range_payout_sum(0, 10), MIXED_SURFACE_AREA);
     // The open-lower prefix alone.
     assert_eq!(tree.range_payout_sum(0, 1), 10);
     // A window whose interior holds no boundary at all.
@@ -110,34 +121,26 @@ fun area_matches_brute_force_over_every_window() {
     destroy(tree);
 }
 
-/// Rotations relink nodes but never re-key them, so the tick-weighted terms must
-/// be invariant to insertion order. Ascending inserts force left-heavy rebalances
-/// that a shape-dependent aggregate would not survive.
+/// The same final book reached by two construction paths must report the same
+/// area: rotation and node-reclaim history must not be observable. Shape-difference
+/// over a churned 66-node tree is covered by `strike_payout_tree_balance_tests`.
 #[test]
-fun area_is_independent_of_insertion_order() {
+fun area_is_independent_of_construction_path() {
     let ctx = &mut tx_context::dummy();
 
-    let mut ascending = strike_payout_tree::new(ctx);
-    ascending.insert_range(1, 5, 40);
-    ascending.insert_range(3, 7, 30);
-    ascending.insert_range(8, 9, 20);
-    ascending.insert_range(0, 2, 10);
+    let mut churned = mixed_surface(ctx);
+    churned.insert_range(2, 11, 77);
+    churned.insert_range(6, 13, 44);
+    churned.remove_range(2, 11, 77);
+    churned.remove_range(6, 13, 44);
 
-    let mut descending = strike_payout_tree::new(ctx);
-    descending.insert_range(8, 9, 20);
-    descending.insert_range(3, 7, 30);
-    descending.insert_range(1, 5, 40);
-    descending.insert_range(0, 2, 10);
+    let direct = mixed_surface(ctx);
 
-    assert_eq!(
-        ascending.range_payout_sum(0, constants::pos_inf_tick!()),
-        descending.range_payout_sum(0, constants::pos_inf_tick!()),
-    );
-    assert_eq!(ascending.range_payout_sum(0, 10), 320);
-    assert_eq!(descending.range_payout_sum(0, 10), 320);
+    assert_eq!(churned.range_payout_sum(0, 20), direct.range_payout_sum(0, 20));
+    assert_eq!(churned.range_payout_sum(0, 20), MIXED_SURFACE_AREA);
 
-    destroy(ascending);
-    destroy(descending);
+    destroy(churned);
+    destroy(direct);
 }
 
 /// Removing an order must return the area to exactly where it started, the same
@@ -148,8 +151,10 @@ fun removing_an_order_restores_the_prior_area() {
     let mut tree = mixed_surface(ctx);
 
     let before = tree.range_payout_sum(0, 20);
+    assert_eq!(before, MIXED_SURFACE_AREA);
+    // `(4,12]` covers settlement ticks 5..12, so the area rises by 8 * 55.
     tree.insert_range(4, 12, 55);
-    assert!(tree.range_payout_sum(0, 20) > before);
+    assert_eq!(tree.range_payout_sum(0, 20), 760);
     tree.remove_range(4, 12, 55);
     assert_eq!(tree.range_payout_sum(0, 20), before);
 
@@ -169,6 +174,82 @@ fun open_upper_range_spans_the_finite_ladder() {
         tree.range_payout_sum(0, constants::pos_inf_tick!()),
         ((constants::pos_inf_tick!() - 10) as u128),
     );
+
+    destroy(tree);
+}
+
+/// An open-upper leg over a nonzero open-lower prefix: a start boundary with no
+/// stored end, which `mixed_surface` never produces.
+/// (-inf,2] 10; (2,3] 50; (3,5] 40; (5,8] 65; (8,+inf] 25.
+fun open_upper_surface(ctx: &mut TxContext): StrikePayoutTree {
+    let mut tree = strike_payout_tree::new(ctx);
+    tree.insert_range(0, 3, 10);
+    tree.insert_range(2, 8, 40);
+    tree.insert_range(5, constants::pos_inf_tick!(), 25);
+    tree
+}
+
+/// Adjacent orders sharing one boundary tick, so a single node carries both a
+/// `local_start` and a `local_end` weighted by the same tick.
+fun shared_boundary_surface(ctx: &mut TxContext): StrikePayoutTree {
+    let mut tree = strike_payout_tree::new(ctx);
+    tree.insert_range(1, 4, 30);
+    tree.insert_range(4, 7, 50);
+    tree
+}
+
+fun assert_matches_brute_force_over_windows(tree: &StrikePayoutTree, limit: u64) {
+    let mut lower = 0;
+    while (lower <= limit) {
+        let mut higher = lower;
+        while (higher <= limit) {
+            assert_eq!(tree.range_payout_sum(lower, higher), brute_force_sum(tree, lower, higher));
+            higher = higher + 1;
+        };
+        lower = lower + 1;
+    };
+}
+
+#[test]
+fun open_upper_area_matches_brute_force_over_every_window() {
+    let ctx = &mut tx_context::dummy();
+    let tree = open_upper_surface(ctx);
+
+    assert_matches_brute_force_over_windows(&tree, 12);
+    // 10 + 10 + 50 + 40 + 40 + 65 + 65 + 65 + 25 + 25
+    assert_eq!(tree.range_payout_sum(0, 10), OPEN_UPPER_SURFACE_AREA);
+    destroy(tree);
+}
+
+#[test]
+fun shared_boundary_area_matches_brute_force_over_every_window() {
+    let ctx = &mut tx_context::dummy();
+    let tree = shared_boundary_surface(ctx);
+
+    assert_matches_brute_force_over_windows(&tree, 10);
+    // (1,4] 30 over ticks 2..4, (4,7] 50 over ticks 5..7.
+    assert_eq!(tree.range_payout_sum(0, 10), SHARED_BOUNDARY_SURFACE_AREA);
+    destroy(tree);
+}
+
+/// Pins the width of the stored weighted terms. The boundary sits at the TOP of the
+/// ladder carrying the largest quantity one order may hold, so the stored term is
+/// `(pos_inf_tick - 1) * quantity ~= 4.6e22` — past `u64`, which would abort in
+/// `boundary_summary`. Placing the same order at a low tick does not pin anything:
+/// the returned sum is built in `u128` regardless of what the fields hold.
+#[test]
+fun ladder_top_boundary_term_exceeds_u64() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = strike_payout_tree::new(ctx);
+
+    let top_tick = constants::pos_inf_tick!() - 1;
+    let quantity = (std::u32::max_value!() as u64) * constants::position_lot_size!();
+    assert!((top_tick as u128) * (quantity as u128) > (std::u64::max_value!() as u128));
+
+    tree.insert_range(top_tick, constants::pos_inf_tick!(), quantity);
+
+    // Only settlement tick `pos_inf_tick` is covered by the order.
+    assert_eq!(tree.range_payout_sum(0, constants::pos_inf_tick!()), (quantity as u128));
 
     destroy(tree);
 }
