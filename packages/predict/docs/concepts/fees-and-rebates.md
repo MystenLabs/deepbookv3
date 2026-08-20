@@ -173,7 +173,7 @@ Because the adjustment is the change in one book-level statistic, splitting a tr
 
 A mint has no outbound payment leg, so a rebate reduces the withdrawal rather than paying the trader. A rebate larger than everything else the mint owes aborts rather than clamping, since a clamp would move the statistic without crediting the trader the difference.
 
-Charges sit in `skew_reserve`, excluded from free cash and NAV, released into ordinary surplus at settlement. Cumulative collections equal the current statistic by construction, so a rebate can never exceed what the same book already paid in.
+Charges sit in `skew_reserve`, excluded from free cash and NAV, released into ordinary surplus at settlement. Each adjustment is the difference of two rounded potentials rather than the rounded difference, so cumulative collections equal the current potential exactly and a rebate can never exceed what the same book already paid in. Rounding the difference instead would let collections fall a unit short of what the book requires, and the backing check would then reject a legitimate trade.
 
 ## How the components combine
 
