@@ -43,7 +43,7 @@ public struct ExposureHarness has key {
 }
 
 const IMPACT_SCALE: u64 = 4_000_000_000;
-const SKEW_RATE: u64 = 200_000_000; // 20%
+const SKEW_RATE: u64 = 5_000_000; // 0.5%, the configured ceiling
 const WINDOW_FRACTION: u64 = 100_000_000; // 10% of the reference tick at a daily tenor
 /// The statistic needs a window several ticks wide to mean anything, and the
 /// fraction scales with the square root of the tenor. A daily cadence against the
@@ -52,10 +52,10 @@ const WINDOW_FRACTION: u64 = 100_000_000; // 10% of the reference tick at a dail
 const DAILY_CADENCE_MS: u64 = 86_400_000;
 /// Hand-derived expectations for the 20-tick window (reference 100, +/-10 ticks).
 /// One order of Q over the upper half leaves W = Q on 10 of 20 ticks, so
-/// mean = Q/2, variance = Q^2/4 and the deviation is Q/2 = 5e8. At a 20% rate the
-/// charge is 0.2 * 5e8 = 1e8. Filling the lower half makes W flat, so the
-/// deviation returns to zero and the rebate is the same 1e8.
-const HALF_WINDOW_DEVIATION_CHARGE: u64 = 100_000_000;
+/// mean = Q/2, variance = Q^2/4 and the deviation is Q/2 = 5e8. At the 0.5% ceiling
+/// the charge is 0.005 * 5e8 = 2.5e6. Filling the lower half makes W flat, so the
+/// deviation returns to zero and the rebate is the same 2.5e6.
+const HALF_WINDOW_DEVIATION_CHARGE: u64 = 2_500_000;
 /// Small enough that each leg's `rate * deviation` truncates: at 5e8 deviation
 /// the product is 1.5, and at 1e9 it is 3.
 const TRUNCATING_RATE: u64 = 3;
@@ -105,7 +105,7 @@ fun balancing_is_rebated_and_concentrating_is_charged() {
     // the whole deviation the leaning book had built up.
     assert_eq!(balancing.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
     // Stacking on the same side doubles the deviation, so the charge is the same
-    // increment again: 20% of (1e9 - 5e8).
+    // increment again: 0.5% of (1e9 - 5e8).
     assert_eq!(concentrating.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
 
     cleanup(fx, oracle, harness);

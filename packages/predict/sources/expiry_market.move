@@ -49,6 +49,7 @@ const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const ESkewRebateExceedsMintCost: u64 = 10;
 const ESkewChargeExceedsCloseProceeds: u64 = 11;
+const EInsufficientSkewEscrow: u64 = 12;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -1221,5 +1222,8 @@ fun assert_cash_backing(market: &ExpiryMarket) {
         market.cash.inventory_impact_reserve()
             >= market.strike_exposure.inventory_impact_potential(),
     );
-    assert!(market.cash.skew_reserve() >= market.strike_exposure.skew_potential());
+    assert!(
+        market.cash.skew_reserve() >= market.strike_exposure.skew_potential(),
+        EInsufficientSkewEscrow,
+    );
 }

@@ -194,11 +194,20 @@ public(package) macro fun default_inventory_skew_rate(): u64 { 0 }
 
 public(package) macro fun min_inventory_skew_rate(): u64 { 0 }
 
-/// A full-scale rate charges one DUSDC per DUSDC of standard deviation added.
-/// This is a representability envelope, not a recommended operating value.
-public(package) macro fun max_inventory_skew_rate(): u64 {
-    fixed_math::math::float_scaling!()
-}
+/// The ceiling is a safety bound, not a representability envelope.
+///
+/// The statistic is uniform over ticks while every amount it is checked against —
+/// premium, redeem proceeds, the fee — is proportional to the contract's
+/// probability. A marginal adjustment is `rate * c * quantity` with
+/// `c = sqrt(f(1-f)) <= 1/2`, so it is independent of probability, and once
+/// `rate * c` passes a low-probability contract's premium the wing positions this
+/// mechanism exists to encourage stop being mintable and, worse, stop being
+/// closable. Holding `rate <= 0.5%` keeps `rate * c` at or below `0.25%`, half the
+/// default `min_fee`, so the ordinary fee still dominates any rebate: wing trades
+/// stay admissible, closes stay affordable, and harvesting the escrow stays
+/// unprofitable. Raising `min_fee` or `min_entry_probability` widens that margin;
+/// lowering either narrows it.
+public(package) macro fun max_inventory_skew_rate(): u64 { 5_000_000 }
 
 public(package) fun assert_inventory_skew_rate(value: u64) {
     assert!(
