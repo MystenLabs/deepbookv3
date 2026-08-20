@@ -10,6 +10,7 @@ module deepbook_predict::inventory_skew_flow_tests;
 
 use deepbook_predict::{
     config_constants,
+    config_events,
     constants,
     flow_test_helpers as helpers,
     order_events,
@@ -18,6 +19,18 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use std::{bcs, unit_test::assert_eq};
 use sui::event;
+
+/// Mirror of `config_events::ReferenceTickSet` for byte-exact event comparison.
+public struct ExpectedReferenceTickSet has drop {
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    source_timestamp_ms: u64,
+    spot: u64,
+    tick: u64,
+    skew_window_lower: u64,
+    skew_window_higher: u64,
+    recorded_at_ms: u64,
+}
 
 /// Mirror of `order_events::OrderMinted` for byte-exact event comparison; the
 /// event's own fields are module-private.
@@ -81,6 +94,12 @@ const CALIBRATED_SKEW_CHARGE: u64 = 650_000;
 /// prices at effectively zero.
 const DEEP_OUT_OF_THE_MONEY_PRICE: u64 = 50_000_000_000;
 const EUnexpectedSuccess: u64 = 999;
+/// `default_live_price` floored to `default_tick_size`.
+const REFERENCE_TICK: u64 = 100;
+/// A window that rounded to nothing reports equal bounds at zero.
+const INERT_WINDOW_BOUND: u64 = 0;
+/// `100 * 1.0 * sqrt(one_minute / one_day)` floored to whole ticks.
+const LIVE_WINDOW_HALF_WIDTH: u64 = 2;
 
 #[test]
 fun mint_charge_escrows_and_full_close_returns_it() {
@@ -741,4 +760,93 @@ fun at_calibrated_rates_skew_outweighs_the_occupancy_rebate() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+/// The reference-tick event reports the window the market will use for its whole
+/// life, so an operator can tell an inert market from a balanced one. Without
+/// these fields both read as `skew_reserve == 0` and a stream of zero-valued
+/// adjustments, which are indistinguishable on chain.
+///
+/// The production-scale 10% anchor, on this fixture's one-minute cadence and
+/// reference tick of 100, scales to 0.26% of a tick and floors to a zero-width
+/// window: the charge is silently inert, and the event is the only thing that
+/// says so.
+#[test]
+fun the_reference_tick_event_reports_an_inert_window() {
+    let (mut fx, expiry_id, _trader) = setup_for_window(
+        config_constants::default_skew_window_fraction!(),
+    );
+    let mut market = fx.take_market_bundle(expiry_id);
+    let expiry_market_id = helpers::market(&market).id();
+    let source_timestamp_ms = helpers::market(&market).reference_tick_source_timestamp_ms();
+
+    let tick = fx.set_reference_tick_bundle(&mut market, test_constants::default_live_price());
+
+    assert_eq!(tick, REFERENCE_TICK);
+    assert_reference_tick_event(
+        expiry_market_id,
+        source_timestamp_ms,
+        tick,
+        INERT_WINDOW_BOUND,
+        INERT_WINDOW_BOUND,
+        fx.clock().timestamp_ms(),
+    );
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The same market at a window fraction wide enough to resolve ticks reports real
+/// bounds either side of the reference.
+#[test]
+fun the_reference_tick_event_reports_a_live_window() {
+    let (mut fx, expiry_id, _trader) = setup_for_window(FULL_WINDOW_FRACTION);
+    let mut market = fx.take_market_bundle(expiry_id);
+    let expiry_market_id = helpers::market(&market).id();
+    let source_timestamp_ms = helpers::market(&market).reference_tick_source_timestamp_ms();
+
+    let tick = fx.set_reference_tick_bundle(&mut market, test_constants::default_live_price());
+
+    assert_reference_tick_event(
+        expiry_market_id,
+        source_timestamp_ms,
+        tick,
+        REFERENCE_TICK - LIVE_WINDOW_HALF_WIDTH,
+        REFERENCE_TICK + LIVE_WINDOW_HALF_WIDTH,
+        fx.clock().timestamp_ms(),
+    );
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+fun setup_for_window(window_fraction: u64): (helpers::Fixture, ID, helpers::Trader) {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_inventory_skew_rate(SKEW_RATE);
+    fx.set_template_skew_window_fraction(window_fraction);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    (fx, expiry_id, trader)
+}
+
+fun assert_reference_tick_event(
+    expiry_market_id: ID,
+    source_timestamp_ms: u64,
+    tick: u64,
+    skew_window_lower: u64,
+    skew_window_higher: u64,
+    recorded_at_ms: u64,
+) {
+    let events = event::events_by_type<config_events::ReferenceTickSet>();
+    assert_eq!(events.length(), 1);
+    let expected = ExpectedReferenceTickSet {
+        expiry_market_id,
+        propbook_underlying_id: test_constants::propbook_underlying_id(),
+        source_timestamp_ms,
+        spot: test_constants::default_live_price(),
+        tick,
+        skew_window_lower,
+        skew_window_higher,
+        recorded_at_ms,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
 }

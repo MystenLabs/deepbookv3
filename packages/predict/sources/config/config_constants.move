@@ -207,6 +207,13 @@ public(package) macro fun min_inventory_skew_rate(): u64 { 0 }
 /// stay admissible, closes stay affordable, and harvesting the escrow stays
 /// unprofitable. Raising `min_fee` or `min_entry_probability` widens that margin;
 /// lowering either narrows it.
+/// The ceiling also holds a relational invariant against `min_min_entry_probability`:
+/// a skew rebate is bounded by `rate * quantity / 2`, while the premium alone is at
+/// least `min_entry_probability * quantity`, so a rate above twice the premium floor
+/// would make a legitimate book-flattening mint owe more than the trade costs. Both
+/// sides are upgrade-required constants, so the relation is pinned by
+/// `protocol_config_bounds_tests::max_skew_rebate_stays_below_the_minimum_premium`
+/// rather than by a runtime guard that could never fire.
 public(package) macro fun max_inventory_skew_rate(): u64 { 5_000_000 }
 
 public(package) fun assert_inventory_skew_rate(value: u64) {

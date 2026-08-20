@@ -76,6 +76,12 @@ public struct ReferenceTickSet has copy, drop, store {
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
+    /// Half-open `(lower, higher]` inventory-skew window this tick determines,
+    /// after tenor scaling. `lower == higher` means the window rounded to nothing
+    /// and the skew charge is inert for this market — a state otherwise
+    /// indistinguishable on chain from a perfectly balanced book.
+    skew_window_lower: u64,
+    skew_window_higher: u64,
     recorded_at_ms: u64,
 }
 
@@ -173,6 +179,8 @@ public(package) fun emit_reference_tick_set(
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
+    skew_window_lower: u64,
+    skew_window_higher: u64,
     recorded_at_ms: u64,
 ) {
     event::emit(ReferenceTickSet {
@@ -181,6 +189,8 @@ public(package) fun emit_reference_tick_set(
         source_timestamp_ms,
         spot,
         tick,
+        skew_window_lower,
+        skew_window_higher,
         recorded_at_ms,
     });
 }

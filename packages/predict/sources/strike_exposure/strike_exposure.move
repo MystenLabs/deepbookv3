@@ -74,6 +74,19 @@ public struct SkewAdjustment has copy, drop, store {
     is_charge: bool,
 }
 
+/// One trade's skew result: what it is charged or rebated, and the accumulator
+/// state the book carries once it lands. Both are sampled together against the
+/// pre-trade book, so the mutation re-uses the quote's reads instead of repeating
+/// the two `O(log n)` tree traversals `range_payout_sum` costs. Carrying the
+/// accumulators rather than recomputing them also removes the ordering
+/// requirement that the fold run before the payout tree mutates — by the time
+/// the terms exist, the read has already happened.
+public struct SkewTerms has copy, drop, store {
+    adjustment: SkewAdjustment,
+    payout_sum: u128,
+    payout_square_sum: u256,
+}
+
 /// Pure mint terms for one prospective live mint: the priced tick range and
 /// quantity, plus the admission results they produced. Built only by
 /// `quote_mint_terms` and consumed by value in `allocate_mint_order`, so one
@@ -89,9 +102,10 @@ public struct MintTerms has drop {
     premium: u64,
     /// Separate inventory-impact charge, sampled against the pre-mint book.
     inventory_impact_charge: u64,
-    /// Signed inventory-skew adjustment, sampled against the pre-mint book. A mint
-    /// that flattens the book carries a rebate here rather than a charge.
-    skew_adjustment: SkewAdjustment,
+    /// Signed inventory-skew adjustment and the accumulators the mint leaves
+    /// behind, both sampled against the pre-mint book. A mint that flattens the
+    /// book carries a rebate here rather than a charge.
+    skew: SkewTerms,
 }
 
 /// Compute-once terms for one prospective live close. Built only by
@@ -106,9 +120,10 @@ public struct LiveCloseTerms has drop {
     range_probability: u64,
     /// Separate inventory-impact rebate, sampled against the pre-close book.
     inventory_impact_rebate: u64,
-    /// Signed inventory-skew adjustment, sampled against the pre-close book. A
-    /// close that unbalances the book carries a charge here rather than a rebate.
-    skew_adjustment: SkewAdjustment,
+    /// Signed inventory-skew adjustment and the accumulators the close leaves
+    /// behind, both sampled against the pre-close book. A close that unbalances
+    /// the book carries a charge here rather than a rebate.
+    skew: SkewTerms,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -121,6 +136,10 @@ public(package) fun premium(terms: &MintTerms): u64 {
 
 public(package) fun quantity(terms: &MintTerms): u64 {
     terms.quantity
+}
+
+public(package) fun adjustment(skew: &SkewTerms): SkewAdjustment {
+    skew.adjustment
 }
 
 public(package) fun skew_amount(adjustment: &SkewAdjustment): u64 {
@@ -136,7 +155,7 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
 }
 
 public(package) fun mint_skew_adjustment(terms: &MintTerms): SkewAdjustment {
-    terms.skew_adjustment
+    terms.skew.adjustment
 }
 
 public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
@@ -152,7 +171,7 @@ public(package) fun inventory_impact_rebate(terms: &LiveCloseTerms): u64 {
 }
 
 public(package) fun close_skew_adjustment(terms: &LiveCloseTerms): SkewAdjustment {
-    terms.skew_adjustment
+    terms.skew.adjustment
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -317,9 +336,15 @@ public(package) fun inventory_skew(
     higher_tick: u64,
     payout: u64,
     adding: bool,
-): SkewAdjustment {
+): SkewTerms {
     if (exposure.config.inventory_skew_rate() == 0 || payout == 0) {
-        return SkewAdjustment { amount: 0, is_charge: true }
+        // Carry the current accumulators so the commit is unconditional: an inert
+        // mechanism writes back exactly what it already held.
+        return SkewTerms {
+            adjustment: SkewAdjustment { amount: 0, is_charge: true },
+            payout_sum: exposure.skew_payout_sum,
+            payout_square_sum: exposure.skew_payout_square_sum,
+        }
     };
 
     let before = exposure.skew_deviation(
@@ -342,11 +367,12 @@ public(package) fun inventory_skew(
     let rate = exposure.config.inventory_skew_rate();
     let potential_before = math::mul_down(rate, before);
     let potential_after = math::mul_down(rate, after);
-    if (potential_after >= potential_before) {
+    let adjustment = if (potential_after >= potential_before) {
         SkewAdjustment { amount: potential_after - potential_before, is_charge: true }
     } else {
         SkewAdjustment { amount: potential_before - potential_after, is_charge: false }
-    }
+    };
+    SkewTerms { adjustment, payout_sum: after_sum, payout_square_sum: after_square }
 }
 
 /// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
@@ -423,7 +449,7 @@ public(package) fun quote_mint_terms(
         quantity,
         entry_probability,
         premium,
-        skew_adjustment: exposure.inventory_skew(
+        skew: exposure.inventory_skew(
             lower_tick,
             higher_tick,
             quantity,
@@ -444,14 +470,14 @@ public(package) fun quote_mint_terms(
 /// fields are always the ones that were priced, and the market-identity assert
 /// rejects terms priced on another exposure.
 public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
-    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, .. } = terms;
+    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, skew, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_ticks(lower_tick, higher_tick, quantity, sequence);
     exposure.next_order_sequence = sequence + 1;
 
-    exposure.commit_skew_terms(lower_tick, higher_tick, quantity, true);
+    exposure.commit_skew_terms(skew);
     exposure.payout.insert_range(lower_tick, higher_tick, quantity);
 
     allocated_order
@@ -482,7 +508,7 @@ public(package) fun quote_live_close(
             close_quantity,
             false,
         ),
-        skew_adjustment: exposure.inventory_skew(
+        skew: exposure.inventory_skew(
             order.lower_tick(),
             order.higher_tick(),
             close_quantity,
@@ -497,15 +523,10 @@ public(package) fun process_live_close(
     exposure: &mut StrikeExposure,
     terms: LiveCloseTerms,
 ): Option<Order> {
-    let LiveCloseTerms { expiry_market_id, order, close_quantity, .. } = terms;
+    let LiveCloseTerms { expiry_market_id, order, close_quantity, skew, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
-    exposure.commit_skew_terms(
-        order.lower_tick(),
-        order.higher_tick(),
-        close_quantity,
-        false,
-    );
+    exposure.commit_skew_terms(skew);
     exposure.payout.remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
 
     let remaining_quantity = order.quantity() - close_quantity;
@@ -686,6 +707,12 @@ fun tenor_scaled_window_fraction(exposure: &StrikeExposure): u64 {
     scaled.min(math::float_scaling!())
 }
 
+/// Half-open `(lower, higher]` inventory-skew window for this exposure. Equal
+/// bounds mean the window rounded to nothing and the charge is inert.
+public(package) fun skew_window_bounds(exposure: &StrikeExposure): (u64, u64) {
+    exposure.skew_window()
+}
+
 /// Half-open `(lower, higher]` window the statistic averages over, centred on the
 /// reference tick. A fraction of the reference tick is the same fraction of price,
 /// so one configured value spans every underlying and price level. The window is
@@ -758,24 +785,12 @@ fun skew_terms_after_change(
     }
 }
 
-/// Fold one range change into the stored accumulators. Runs before the payout
-/// tree mutates, for the same reason `skew_terms_after_change` does.
-fun commit_skew_terms(
-    exposure: &mut StrikeExposure,
-    lower_tick: u64,
-    higher_tick: u64,
-    payout: u64,
-    adding: bool,
-) {
-    if (exposure.config.inventory_skew_rate() == 0) return;
-    let (sum, square) = exposure.skew_terms_after_change(
-        lower_tick,
-        higher_tick,
-        payout,
-        adding,
-    );
-    exposure.skew_payout_sum = sum;
-    exposure.skew_payout_square_sum = square;
+/// Write back the accumulators the quote already folded. The read they came from
+/// happened before this terms value existed, so unlike the fold itself this has
+/// no ordering requirement against the payout tree.
+fun commit_skew_terms(exposure: &mut StrikeExposure, skew: SkewTerms) {
+    exposure.skew_payout_sum = skew.payout_sum;
+    exposure.skew_payout_square_sum = skew.payout_square_sum;
 }
 
 fun live_payout_liability_from_terms(

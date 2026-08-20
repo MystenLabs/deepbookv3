@@ -626,12 +626,17 @@ public fun set_reference_tick(
     let tick_size = market.strike_exposure.tick_size();
     let tick = range_codec::grid_tick(spot, tick_size);
     if (market.strike_exposure.set_reference_tick(tick)) {
+        // Sampled after the write, so the bounds are the ones this market will
+        // actually use for its whole life.
+        let (window_lower, window_higher) = market.strike_exposure.skew_window_bounds();
         config_events::emit_reference_tick_set(
             market.id(),
             market.propbook_underlying_id,
             source_timestamp_ms,
             spot,
             tick,
+            window_lower,
+            window_higher,
             clock.timestamp_ms(),
         );
     };

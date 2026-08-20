@@ -66,7 +66,7 @@ fun default_zero_rate_is_a_kill_switch() {
     let (fx, oracle, harness) = disabled_harness();
     let (lower, higher) = upper_half();
 
-    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true).adjustment();
     assert_eq!(adjustment.skew_amount(), 0);
 
     cleanup(fx, oracle, harness);
@@ -79,7 +79,7 @@ fun no_reference_tick_reads_zero() {
     let (fx, oracle, harness) = enabled_harness_without_reference();
     let (lower, higher) = upper_half();
 
-    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true).adjustment();
     assert_eq!(adjustment.skew_amount(), 0);
 
     cleanup(fx, oracle, harness);
@@ -95,9 +95,15 @@ fun balancing_is_rebated_and_concentrating_is_charged() {
     mint(&mut harness.exposure, &pricer, upper_lower, upper_higher, ONE_ORDER);
 
     let (balance_lower, balance_higher) = lower_half();
-    let balancing = harness.exposure.inventory_skew(balance_lower, balance_higher, ONE_ORDER, true);
+    let balancing = harness
+        .exposure
+        .inventory_skew(balance_lower, balance_higher, ONE_ORDER, true)
+        .adjustment();
     let (pile_lower, pile_higher) = upper_half();
-    let concentrating = harness.exposure.inventory_skew(pile_lower, pile_higher, ONE_ORDER, true);
+    let concentrating = harness
+        .exposure
+        .inventory_skew(pile_lower, pile_higher, ONE_ORDER, true)
+        .adjustment();
 
     assert!(!balancing.skew_is_charge());
     assert!(concentrating.skew_is_charge());
@@ -123,7 +129,8 @@ fun covering_the_whole_window_changes_nothing() {
 
     let adjustment = harness
         .exposure
-        .inventory_skew(0, constants::pos_inf_tick!(), ONE_ORDER, true);
+        .inventory_skew(0, constants::pos_inf_tick!(), ONE_ORDER, true)
+        .adjustment();
     assert_eq!(adjustment.skew_amount(), 0);
 
     cleanup(fx, oracle, harness);
@@ -139,9 +146,9 @@ fun round_trip_nets_to_zero() {
     mint(&mut harness.exposure, &pricer, upper_lower, upper_higher, ONE_ORDER);
 
     let (lower, higher) = lower_half();
-    let opening = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    let opening = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true).adjustment();
     mint(&mut harness.exposure, &pricer, lower, higher, ONE_ORDER);
-    let closing = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, false);
+    let closing = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, false).adjustment();
 
     assert_eq!(opening.skew_amount(), closing.skew_amount());
     assert!(opening.skew_is_charge() != closing.skew_is_charge());
@@ -165,7 +172,7 @@ fun sub_tick_window_reads_zero() {
     mint(&mut harness.exposure, &pricer, upper_lower, upper_higher, ONE_ORDER);
 
     let (lower, higher) = lower_half();
-    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true).adjustment();
     assert_eq!(adjustment.skew_amount(), 0);
 
     cleanup(fx, oracle, harness);
@@ -179,7 +186,7 @@ fun first_half_window_mint_charges_the_exact_deviation() {
     let pricer = fx.load_pricer_bundle(&oracle);
     let (lower, higher) = upper_half();
 
-    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+    let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true).adjustment();
     assert!(adjustment.skew_is_charge());
     assert_eq!(adjustment.skew_amount(), HALF_WINDOW_DEVIATION_CHARGE);
 
@@ -202,9 +209,9 @@ fun cross_range_cycle_nets_to_zero() {
     let mut charged = 0;
     let mut rebated = 0;
 
-    let open_a = harness.exposure.inventory_skew(lower_a, higher_a, ONE_ORDER, true);
+    let open_a = harness.exposure.inventory_skew(lower_a, higher_a, ONE_ORDER, true).adjustment();
     let order_a = mint_order(&mut harness.exposure, &pricer, lower_a, higher_a, ONE_ORDER);
-    let open_b = harness.exposure.inventory_skew(lower_b, higher_b, ONE_ORDER, true);
+    let open_b = harness.exposure.inventory_skew(lower_b, higher_b, ONE_ORDER, true).adjustment();
     let order_b = mint_order(&mut harness.exposure, &pricer, lower_b, higher_b, ONE_ORDER);
 
     // Close in the order opened, not in reverse.
@@ -347,7 +354,10 @@ fun collected_charges_track_the_potential_under_truncation() {
     let mut collected = 0;
     let mut step = 0u64;
     while (step < 3) {
-        let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
+        let adjustment = harness
+            .exposure
+            .inventory_skew(lower, higher, ONE_ORDER, true)
+            .adjustment();
         collected = collected + adjustment.skew_amount();
         mint(&mut harness.exposure, &pricer, lower, higher, ONE_ORDER);
         assert_eq!(collected, harness.exposure.skew_potential());
