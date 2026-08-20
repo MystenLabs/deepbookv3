@@ -388,14 +388,3 @@ fun weighted(first: u64, second: u64, weight: u64): u64 {
         (first as u128) * (weight as u128) + (second as u128) * (scale - (weight as u128));
     (blended / scale) as u64
 }
-
-// === Test-Only Functions ===
-
-/// Build a resolved row directly, so the correction can be exercised at chosen
-/// knots without publishing a table and advancing a transaction to escape the
-/// publish-provenance guard. Deliberately unvalidated: the interesting cases are
-/// the ones a keeper should not be able to produce.
-#[test_only]
-public(package) fun row_for_testing(knots: vector<u64>, max_deviation: u64): CalibrationRow {
-    CalibrationRow { knots, max_deviation }
-}

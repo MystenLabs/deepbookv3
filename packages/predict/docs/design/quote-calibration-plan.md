@@ -33,9 +33,8 @@ on the timescale over which the gap drifts.
 This plan adds one: a small correction table, measured from settled outcomes by
 a permissioned off-chain keeper and applied on-chain after the pricing formula.
 It is deliberately a remap of a number rather than a second model. It carries no
-view of its own, cannot express a shape the raw quote did not already have, and
-is bounded at push time, so a wrong table is a bounded error rather than a
-repricing.
+view of its own and is bounded when it is applied, so a wrong table is a bounded
+error rather than a repricing.
 
 ## What it corrects
 
@@ -99,9 +98,9 @@ identity = a virtual row at u = 0, whose knots are the grid probabilities
 ```
 
 Interpolating in `1 / tte` rather than in `tte` is what makes the far end fall
-out of the same rule instead of needing its own. Beyond the 300-second key the
+out of the same rule instead of needing its own. Beyond the longest key the
 interpolation runs between that row and the identity row, which works out to
-`p + (300s / tte) * (m_300(p) - p)`: a correction that decays smoothly toward
+`p + (900s / tte) * (m_900(p) - p)`: a correction that decays smoothly toward
 none as the market gets further out, with no clamp, no second constant, and no
 kink. Interpolating linearly in `tte` cannot express this — with the identity
 anchor at infinity it never decays at all, and pulling the anchor to a finite
@@ -124,7 +123,7 @@ anywhere — which is what keeps the properties below provable by inspection.
 ```
 ProtocolConfig.quote_calibration      tables, switch, staleness, deviation cap
         |
-registry::push_quote_calibration      keeper pushes one underlying's table;
+registry::publish_quote_calibration   keeper publishes one underlying's table;
         |                             capability-gated, validated, and refused
         |                             while a valuation is in flight
 pricing::load_live_pricer             resolves the row for this market's
@@ -132,19 +131,26 @@ pricing::load_live_pricer             resolves the row for this market's
         |                             transaction-local Pricer
 Pricer.up_price / range_price
         |
-compute_up_price                      infinity sentinels return 1 and 0 ahead
+pricing::up_price                     infinity sentinels return 1 and 0 ahead
         |                             of the branch, unchanged
         `-- compute_nd2(...)   ->   correct(row, q_raw)
 ```
 
-The insertion point is load-bearing, not incidental. It sits on the
-`compute_nd2` branch so that `P(-inf) = 1` and `P(+inf) = 0` stay structurally
-exact, because the NAV walk enters open-lower orders at face value as its
-`P(-inf) = 1` anchor without calling the pricer at all
-(`strike_payout_tree::walk_linear`). A correction applied one level up, at
-`up_price` or `range_price`, would move per-order range prices while leaving
-that anchor at one — a disagreement between two ways of valuing the same book,
-with nothing to abort on it. A test pins the agreement.
+The insertion point is load-bearing, not incidental, because `up_price` is the
+single point both public reads funnel through: `range_price` differences two of
+its results rather than calling anything of its own. Correcting `range_price`
+instead would correct a difference, which is a different map — one that does not
+leave a partition of the strike line summing to one, and that would leave the NAV
+walk corrected while mint admission and live close were not, since those reach
+prices through different functions.
+
+The infinity sentinels return ahead of the correction. They would survive it
+unchanged, since a correction pins `m(0) = 0` and `m(1) = 1`, but they are limits
+of the contract rather than quoted probabilities. That matters beyond tidiness:
+the NAV walk enters open-lower orders at face value as its `P(-inf) = 1` anchor
+without calling the pricer at all (`strike_payout_tree::walk_linear`), so the
+anchor and per-order range pricing have to agree under a non-identity correction.
+A test pins that agreement.
 
 Resolution happens once per `Pricer`, so a transaction prices every strike in a
 market under exactly one row, and a full-pool flush marks each market under the
@@ -153,7 +159,10 @@ row for that market's own remaining time.
 ## Configuration and authority
 
 On `ProtocolConfig`, alongside `pricing_config`, all `AdminCap`-gated,
-version-gated, refused during a valuation, and event-emitting:
+version-gated, and refused during a valuation. Only the switch emits an event:
+it is a safety control, like the trading pause and the protocol freeze, while
+the staleness window and the deviation cap are ordinary policy and stay silent
+as every other economic knob on this object does:
 
 - **`enabled`** — the kill switch. Off means every quote is the uncorrected
   formula output. Ships off, so publishing this changes no price.
@@ -276,7 +285,7 @@ against a broken push, not the mechanism that produces monotonicity.
    allowlist, mint and revoke, the push entrypoint, the admin setters, and the
    events.
 3. **Resolution and application** — the calibration read in
-   `load_live_pricer`, the `Pricer` field, the `compute_up_price` branch, the
+   `load_live_pricer`, the `Pricer` field, the `up_price` branch, the
    anchor-agreement test, and the flush-cost measurement.
 4. **Enablement** — publish with the switch off, then a keeper pushing tables
    and an admin transaction turning it on once the replay score is recorded.
