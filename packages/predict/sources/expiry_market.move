@@ -1000,9 +1000,18 @@ fun redeem_live_with_auth(
     // Close-side slippage floor: reject if the quoted per-contract probability
     // has slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
+    let skew = terms.close_skew_adjustment();
+    let (skew_charge, skew_rebate) = if (skew.skew_is_charge()) {
+        (skew.skew_amount(), 0)
+    } else {
+        (0, skew.skew_amount())
+    };
     // Cap the fee at the payout it is charged against: an expiry-ramped fee can
     // exceed a deep out-of-the-money redeem, and a close must never cost more
-    // than it releases.
+    // than it releases. The skew escrow backs future rebates rather than being
+    // revenue, so it is senior to the fee and comes out of the payout first —
+    // without that ordering a close whose fee already consumed the payout would
+    // abort rather than collect, stranding a deep out-of-the-money position.
     let fee_amount = market
         .strike_exposure
         .trading_fee(
@@ -1011,7 +1020,7 @@ fun redeem_live_with_auth(
             close_quantity,
             clock,
         )
-        .min(redeem_amount);
+        .min(redeem_amount.saturating_sub(skew_charge));
 
     // The redeem payment decomposition, computed in full before any cash moves:
     // builder fee and penalty are each clamped at the payout remaining after the
@@ -1023,15 +1032,11 @@ fun redeem_live_with_auth(
         &builder_code_id,
         fee_amount,
         close_quantity,
-    ).min(redeem_amount - fee_amount);
-    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+    ).min(redeem_amount.saturating_sub(skew_charge + fee_amount));
+    let penalty_amount = penalty_amount.min(redeem_amount.saturating_sub(
+        skew_charge + fee_amount + builder_fee_amount,
+    ));
     let inventory_impact_rebate = terms.inventory_impact_rebate();
-    let skew = terms.close_skew_adjustment();
-    let (skew_charge, skew_rebate) = if (skew.skew_is_charge()) {
-        (skew.skew_amount(), 0)
-    } else {
-        (0, skew.skew_amount())
-    };
     // Close-side all-in slippage floor: the net credited to the account is
     // `redeem_amount` plus both inventory rebates, minus fee, builder fee,
     // penalty, and any skew charge. `0` disables. Mirror of mint's `max_cost`.

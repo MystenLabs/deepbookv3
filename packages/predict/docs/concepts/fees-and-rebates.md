@@ -150,10 +150,10 @@ Inventory skew is a second isolated transfer, layered on top of the fee system a
 Let `W(S)` be the payout the pool owes if the market settles at tick `S`. Over a window of `N` ticks centred on the market's reference tick:
 
 ```text
-skew = sqrt( sum(W^2)/N - (sum(W)/N)^2 )
+skew = sqrt( ( N*sum(W^2) - sum(W)^2 ) / N^2 )
 ```
 
-the standard deviation of the payout profile. It is `0` exactly when the pool owes the same at every price in the window, and largest when the profile is concentrated. The protocol keeps `sum(W)` and `sum(W^2)` as running totals, folded on every mint and close, so no trade walks the tick ladder.
+the standard deviation of the payout profile. It is `0` exactly when the pool owes the same at every price in the window, and largest when the profile is concentrated. The single division is deliberate: the textbook arrangement `sum(W^2)/N - (sum(W)/N)^2` truncates each term separately in integer arithmetic, and its error grows with the size of the book rather than staying inside one unit. The protocol keeps `sum(W)` and `sum(W^2)` as running totals, folded on every mint and close, so no trade walks the tick ladder.
 
 ### The window
 
@@ -172,6 +172,8 @@ signed. A mint that flattens the book is **rebated**; a close that unbalances it
 Because the adjustment is the change in one book-level statistic, splitting a trade, closing in pieces, and cycling across ranges all telescope exactly. And because standard deviation is unchanged by adding the same payout everywhere, buying **every** outcome at once — a guaranteed payout — scores exactly zero and earns no rebate. That closes the only trade a rebate could otherwise fund for free.
 
 A mint has no outbound payment leg, so a rebate reduces the withdrawal rather than paying the trader. A rebate larger than everything else the mint owes aborts rather than clamping, since a clamp would move the statistic without crediting the trader the difference.
+
+On a close the charge is deducted from the payout **before** the trading fee, and the fee is then clamped against what remains. The escrow backs future rebates rather than being protocol revenue, so it is the senior claim; without that ordering a deep out-of-the-money close whose fee already consumed the payout would abort rather than collect. A charge larger than the whole payout still aborts, for the same reason the mint side does — the position settles at expiry for what it is worth, which in that regime is nothing.
 
 Charges sit in `skew_reserve`, excluded from free cash and NAV, released into ordinary surplus at settlement. Each adjustment is the difference of two rounded potentials rather than the rounded difference, so cumulative collections equal the current potential exactly and a rebate can never exceed what the same book already paid in. Rounding the difference instead would let collections fall a unit short of what the book requires, and the backing check would then reject a legitimate trade.
 

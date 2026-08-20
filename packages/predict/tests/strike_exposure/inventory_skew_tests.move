@@ -345,7 +345,7 @@ fun collected_charges_track_the_potential_under_truncation() {
 
     // Flooring each leg independently gives 1 then 1, against a potential of 3.
     let mut collected = 0;
-    let mut step = 0;
+    let mut step = 0u64;
     while (step < 3) {
         let adjustment = harness.exposure.inventory_skew(lower, higher, ONE_ORDER, true);
         collected = collected + adjustment.skew_amount();

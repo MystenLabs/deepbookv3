@@ -1579,3 +1579,50 @@ worth-fixing.
 - **Reopen when:** a loss rebate, a fee-basis reserve, or any other per-account liability funded out of expiry cash is reintroduced — the backing term and its resolve-side underflow guard come back together, and the settled sweep must hold the reserve back again.
 
 ---
+
+---
+
+## RP-29: A close whose skew charge exceeds its payout aborts; the escrow outranks fee revenue (DBU-732)
+
+- **Trigger state:** a live close whose inventory-skew charge is larger than
+  everything the close releases — `redeem_amount` plus both inventory rebates.
+  Reaching it needs a book that is flat before the close (so closing unbalances
+  it and is charged rather than rebated) and a leg priced far enough out of the
+  money that its payout is worth less than the charge.
+- **Controller:** market — the payout is the oracle-priced range value and the
+  charge is derived from the book's shape; neither is caller-controlled.
+- **Blast radius:** one caller's own close, on one position. No protocol-side
+  effect, and no other user's flow is blocked.
+- **Response:** `abort` (`ESkewChargeExceedsCloseProceeds`), the single-user
+  user-recoverable rung. The position is not stranded in value terms: it settles
+  at expiry for what it is worth, which in the reachable regime is zero. What the
+  caller loses is the ability to realise that value early.
+- **Ordering:** the escrow backs future rebates rather than being revenue, so it
+  is **senior to the trading fee**. The charge comes out of the payout first and
+  the fee is clamped against what remains, matching the seniority rule in
+  `move.md` (trader/principal backing outranks protocol revenue). Without that
+  ordering the abort would fire far more often — on every deep out-of-the-money
+  close whose expiry-ramped fee already consumed the payout, which is a regime
+  the fee clamp exists precisely to keep closable.
+- **Why not clamp the charge:** a clamp would move the potential without
+  collecting it, leaving the escrow below the amount a future rebate can claim.
+  That converts a bounded single-user abort into an abort on someone else's
+  trade, which is strictly worse on the blast-radius ladder.
+- **Mint side:** the mirror code `ESkewRebateExceedsMintCost` is unreachable at
+  any admissible rate. A rebate is bounded by `rate * quantity / 2` and the
+  premium alone is at least `min_entry_probability * quantity`; at the shipped
+  constants that is a factor of four. Both are upgrade-required constants, so the
+  margin cannot drift through admin config.
+- **Risk profile:** n/a (bound semantics, not a probabilistic risk).
+- **Pinning tests:** `inventory_skew_flow_tests.move` —
+  `close_of_a_worthless_leg_that_unbalances_the_book_aborts` (reaches the abort
+  through the real close path) and
+  `escrow_charge_outranks_the_fee_when_the_payout_is_fully_consumed` (the fee
+  floor at its ceiling, where the fee always exceeds the payout: the close lands
+  and the escrow is whole only because the charge is taken first).
+  `protocol_config_bounds_tests.move` —
+  `max_skew_rebate_stays_below_the_minimum_premium` fails first if the rate
+  ceiling is raised past the margin that keeps the mint-side code unreachable.
+- **Reopen when:** the rate ceiling is raised above the mint-side margin, a
+  probability floor is added to the close path, or the fee clamp changes so that
+  a close can once again cost more than it releases.

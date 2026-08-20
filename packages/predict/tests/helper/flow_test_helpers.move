@@ -477,6 +477,15 @@ public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBund
     self.set_expiry_mint_paused(&mut market.market, &market.config, paused);
 }
 
+/// Set the per-unit floor under the ordinary trading fee.
+public fun set_template_min_fee(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_min_fee(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 public fun set_template_zero_min_fee(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
@@ -499,6 +508,26 @@ public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the rate charged on the payout profile's deviation. Markets snapshot this
+/// value at creation; `0` disables the mechanism.
+public fun set_template_inventory_skew_rate(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_inventory_skew_rate(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the daily half-width of the skew window as a fraction of the reference
+/// tick, before the market's tenor scales it down.
+public fun set_template_skew_window_fraction(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_skew_window_fraction(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -2169,6 +2198,39 @@ public fun insert_exact_settlement_spot(
         &ctx,
     );
     end_seed_tx(restore);
+}
+
+/// Seed the exact previous-window Pyth print the reference tick derives from and
+/// set it through the production admin path. The skew window is centred on that
+/// tick, so a market carries no window until this runs.
+public fun set_reference_tick_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    spot: u64,
+): u64 {
+    let source_timestamp_ms = market.market.reference_tick_source_timestamp_ms();
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    pyth_feed::record_raw_for_testing(
+        &mut market.pyth,
+        spot,
+        false,
+        PYTH_EXPONENT_NEG_9,
+        true,
+        source_timestamp_ms * 1000,
+        source_timestamp_ms * 1000,
+        source_timestamp_ms,
+        true,
+        &ctx,
+    );
+    end_seed_tx(restore);
+    market
+        .market
+        .set_reference_tick(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            &self.clock,
+        )
 }
 
 /// Insert an exact settlement spot for the bundled market expiry.

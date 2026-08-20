@@ -354,3 +354,15 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
     destroy(admin_cap);
     scenario.end();
 }
+
+/// The mint-side skew abort is a tripwire, not a reachable path, and this pins
+/// the margin that makes it so. A rebate cannot exceed `rate * quantity / 2`,
+/// because the deviation of a payout profile moves by at most half the quantity
+/// added; the premium alone is at least `min_entry_probability * quantity`. Both
+/// bounds are upgrade-required constants, so raising the rate ceiling past this
+/// margin makes `ESkewRebateExceedsMintCost` reachable and must fail here first.
+#[test]
+fun max_skew_rebate_stays_below_the_minimum_premium() {
+    let max_rebate_per_unit = config_constants::max_inventory_skew_rate!() / 2;
+    assert!(max_rebate_per_unit < config_constants::min_min_entry_probability!());
+}
