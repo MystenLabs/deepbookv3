@@ -1591,8 +1591,14 @@ worth-fixing.
   money that its payout is worth less than the charge.
 - **Controller:** market — the payout is the oracle-priced range value and the
   charge is derived from the book's shape; neither is caller-controlled.
-- **Blast radius:** one caller's own close, on one position. No protocol-side
-  effect, and no other user's flow is blocked.
+- **Blast radius:** the caller's own close, on one position — but reachable by a
+  third party, not only by the holder's own trading. The charge is a function of
+  global book state, so an actor who shapes the window between the holder's quote
+  and execution can flip a close from rebated to charged and push it past the
+  bound. Cost to the actor is the fee on the shaping notional, which is a
+  fraction of the position it strands; the stranded value is near zero by
+  construction, and it settles in full at expiry, so the harm is denial of an
+  early exit rather than loss. No protocol-side effect.
 - **Response:** `abort` (`ESkewChargeExceedsCloseProceeds`), the single-user
   user-recoverable rung. The position is not stranded in value terms: it settles
   at expiry for what it is worth, which in the reachable regime is zero. What the

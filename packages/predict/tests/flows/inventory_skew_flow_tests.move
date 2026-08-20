@@ -335,6 +335,47 @@ fun close_of_a_worthless_leg_that_unbalances_the_book_aborts() {
     abort EUnexpectedSuccess
 }
 
+/// Closing a slice does not escape the bound above. The charge is convex in the
+/// quantity closed, so smaller closes are never worse per unit — but the state
+/// that makes a close maximally unbalancing is a book already flat across the
+/// window, and there the charge is exactly linear, so proceeds and charge shrink
+/// together and every fraction aborts alike.
+#[
+    test,
+    expected_failure(
+        abort_code = deepbook_predict::expiry_market::ESkewChargeExceedsCloseProceeds,
+    ),
+]
+fun closing_a_slice_of_the_worthless_leg_aborts_the_same_way() {
+    let (mut fx, mut market, mut account, _trader) = setup_skewed_market();
+
+    let up_leg = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        test_constants::mint_quantity(),
+    );
+
+    fx.advance_live_oracle_bundle(&mut market, DEEP_OUT_OF_THE_MONEY_PRICE);
+    fx.redeem_live_bundle_with_limits(
+        &mut market,
+        &mut account,
+        up_leg,
+        test_constants::mint_quantity() / 10,
+        0,
+        0,
+    );
+    abort EUnexpectedSuccess
+}
+
 /// The event reports the same signed adjustment the escrow moved, and never both
 /// legs at once. Compared over the whole event, so a swapped or dropped emit
 /// cannot pass — no state assertion can catch that, because events move no cash.
