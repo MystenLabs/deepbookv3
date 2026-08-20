@@ -253,3 +253,84 @@ fun ladder_top_boundary_term_exceeds_u64() {
 
     destroy(tree);
 }
+
+/// Draining every order must return the area to zero, not to a residue left by
+/// reclaimed nodes. The tree also has to stay usable afterwards.
+#[test]
+fun emptying_the_tree_returns_zero_area() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = mixed_surface(ctx);
+    assert_eq!(tree.range_payout_sum(0, 20), MIXED_SURFACE_AREA);
+
+    tree.remove_range(0, 2, 10);
+    tree.remove_range(1, 5, 40);
+    tree.remove_range(3, 7, 30);
+    tree.remove_range(8, 9, 20);
+
+    assert_eq!(tree.range_payout_sum(0, 20), 0);
+    assert_eq!(tree.range_payout_sum(0, constants::pos_inf_tick!()), 0);
+
+    // Still usable: a fresh order reads back exactly.
+    tree.insert_range(2, 5, 7);
+    assert_eq!(tree.range_payout_sum(0, 20), 21);
+
+    destroy(tree);
+}
+
+/// Several orders sharing one lower boundary aggregate into a single node's
+/// `local_start`, so the tick is weighted once against the summed quantity rather
+/// than once per order.
+#[test]
+fun stacked_orders_at_one_boundary_aggregate_exactly() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = strike_payout_tree::new(ctx);
+    tree.insert_range(4, 6, 10);
+    tree.insert_range(4, 8, 20);
+    tree.insert_range(4, 10, 30);
+
+    // W: ticks 5,6 -> 60; 7,8 -> 50; 9,10 -> 30; zero elsewhere.
+    assert_eq!(tree.range_payout_sum(0, 12), 280);
+    assert_matches_brute_force_over_windows(&tree, 12);
+
+    // Peeling one order back leaves the other two exact: start@4 drops to 30,
+    // so W is 30,30,20,20 over ticks 5..8.
+    tree.remove_range(4, 10, 30);
+    assert_eq!(tree.range_payout_sum(0, 12), 100);
+    assert_matches_brute_force_over_windows(&tree, 12);
+
+    destroy(tree);
+}
+
+/// A tree deep enough to rotate repeatedly, cross-checked tick by tick. The
+/// fixtures above are small enough to stay near-flat; this one is not.
+#[test]
+fun deep_tree_area_matches_brute_force() {
+    let ctx = &mut tx_context::dummy();
+    let mut tree = strike_payout_tree::new(ctx);
+
+    // Interleave ascending and descending inserts so the shape churns.
+    let mut i = 0;
+    while (i < 20) {
+        tree.insert_range(i * 2 + 1, i * 2 + 9, 100 + i);
+        tree.insert_range(60 - i * 2, 70 - i, 50 + i);
+        i = i + 1;
+    };
+
+    // A full window sweep over this domain is ~10^5 evaluations and times out;
+    // check a spread that covers below, inside, straddling and above the book.
+    let windows = vector[
+        vector[0u64, 75u64],
+        vector[0, 10],
+        vector[12, 40],
+        vector[38, 52],
+        vector[45, 75],
+        vector[70, 75],
+        vector[33, 34],
+    ];
+    windows.do_ref!(|w| {
+        let lower = w[0];
+        let higher = w[1];
+        assert_eq!(tree.range_payout_sum(lower, higher), brute_force_sum(&tree, lower, higher));
+    });
+    destroy(tree);
+}
