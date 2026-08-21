@@ -259,7 +259,7 @@ interface EventRecord {
     parsedJson?: unknown;
 }
 
-interface Receipt {
+export interface Receipt {
     digest?: string;
     effects?: unknown;
     objectChanges?: ObjectChange[] | null;
@@ -2386,6 +2386,15 @@ async function executeTransaction(
     label: string,
     tx: Transaction,
 ): Promise<Receipt> {
+    const completedDigest = irreversibleStepDigest(runtime.result, "transaction", label, null);
+    if (completedDigest) {
+        const receipt = await settledReceipt(runtime.client, completedDigest);
+        const failure = effectsError(receipt.effects);
+        if (failure) {
+            throw new Error(`${label}/${completedDigest} was checkpointed but failed: ${failure}`);
+        }
+        return receipt;
+    }
     if (runtime.result.inFlight) {
         throw new Error(`cannot start ${label}; ${runtime.result.inFlight.label} is in flight`);
     }
@@ -2569,39 +2578,77 @@ export function recordVerifiedTransactionFailure(
     result.inFlight = null;
 }
 
-async function reconcileInFlight(runtime: Runtime): Promise<void> {
-    const inFlight = runtime.result.inFlight;
-    if (!inFlight) return;
+export function irreversibleStepDigest(
+    result: DeploymentResult,
+    kind: InFlight["kind"],
+    label: string,
+    pkg: PackageName | null,
+): string | null {
+    if (kind === "publish") {
+        if (!pkg) throw new Error(`${label} publish step is missing its package`);
+        return result.packages[pkg] && result.publishTx[pkg] ? result.publishTx[pkg]! : null;
+    }
+    return result.transactions[label] ?? null;
+}
+
+interface ReconcileJournaledInFlightActions {
+    loadReceipt: (digest: string) => Promise<Receipt>;
+    recoverPublish: (pkg: PackageName, receipt: Receipt) => Promise<void>;
+    persist: () => void;
+}
+
+export async function reconcileJournaledInFlight(
+    result: DeploymentResult,
+    actions: ReconcileJournaledInFlightActions,
+): Promise<InFlight | null> {
+    const inFlight = result.inFlight;
+    if (!inFlight) return null;
     assertRecoverableInFlight(inFlight, true);
     let receipt: Receipt;
     try {
-        receipt = await settledReceipt(runtime.client, inFlight.digest!, 4);
+        receipt = await actions.loadReceipt(inFlight.digest!);
     } catch {
         assertRecoverableInFlight(inFlight, false);
         throw new Error(
             `${inFlight.label}/${inFlight.digest} is not visible on Testnet. Fail closed; do not retry with new transaction bytes`,
         );
     }
+    if (receipt.digest !== inFlight.digest) {
+        throw new Error(
+            `${inFlight.label} recovery returned digest ${receipt.digest}, expected ${inFlight.digest}`,
+        );
+    }
     const failure = effectsError(receipt.effects);
     if (failure) {
-        recordVerifiedTransactionFailure(runtime.result, inFlight, failure);
-        writeState(runtime.result);
+        recordVerifiedTransactionFailure(result, inFlight, failure);
+        actions.persist();
         throw new Error(
             `${inFlight.label}/${inFlight.digest} failed: ${failure}; failure checkpoint cleared`,
         );
     }
     if (inFlight.kind === "publish") {
         if (!inFlight.package) throw new Error("in-flight publish is missing its package");
-        recordPublish(runtime.result, inFlight.package, receipt);
-        reconstructPublishedMetadata(runtime.result, inFlight.package);
-        assertCompletedPackage(runtime.result, inFlight.package);
-        await verifyPublishedPackageCheckpoint(runtime, inFlight.package);
+        await actions.recoverPublish(inFlight.package, receipt);
+        result.inFlight = null;
     } else {
-        checkpointRecoveredTransaction(runtime.result);
+        checkpointRecoveredTransaction(result);
     }
-    if (inFlight.kind === "publish") runtime.result.inFlight = null;
-    writeState(runtime.result);
-    console.log(`[deploy] reconciled ${inFlight.label}: ${inFlight.digest}`);
+    actions.persist();
+    return inFlight;
+}
+
+async function reconcileInFlight(runtime: Runtime): Promise<void> {
+    const recovered = await reconcileJournaledInFlight(runtime.result, {
+        loadReceipt: (digest) => settledReceipt(runtime.client, digest, 4),
+        recoverPublish: async (pkg, receipt) => {
+            recordPublish(runtime.result, pkg, receipt);
+            reconstructPublishedMetadata(runtime.result, pkg);
+            assertCompletedPackage(runtime.result, pkg);
+            await verifyPublishedPackageCheckpoint(runtime, pkg);
+        },
+        persist: () => writeState(runtime.result),
+    });
+    if (recovered) console.log(`[deploy] reconciled ${recovered.label}: ${recovered.digest}`);
 }
 
 function packageId(result: DeploymentResult, pkg: PackageName): string {
@@ -2979,10 +3026,17 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
     }
     const pythState = await moveObjectFields(runtime, LINKED_OBJECTS.pythLazerState);
     const trustedSigners = pythState.trusted_signers;
-    const now = Math.floor(Date.now() / 1_000);
+    const now = (await currentClockMs(runtime)) / 1_000n;
     if (
         !Array.isArray(trustedSigners) ||
-        !trustedSigners.some((value) => Number(asRecord(value).expires_at) > now)
+        !trustedSigners.some((value) => {
+            const expiresAt = asRecord(value).expires_at;
+            return (
+                (typeof expiresAt === "string" || typeof expiresAt === "number") &&
+                /^[0-9]+$/.test(String(expiresAt)) &&
+                BigInt(String(expiresAt)) > now
+            );
+        })
     ) {
         throw new Error("Pyth Lazer state has no unexpired trusted signer");
     }
@@ -4397,7 +4451,7 @@ async function executeDeployment(runtime: Runtime, bindings: ExecutionBindings):
 
     try {
         for (const pkg of PACKAGES) {
-            if (result.packages[pkg]) {
+            if (irreversibleStepDigest(result, "publish", `publish_${pkg}`, pkg)) {
                 await verifyPublishedPackageCheckpoint(runtime, pkg);
                 console.log(`[deploy] ${pkg} checkpoint verified; skipping publish`);
             } else {

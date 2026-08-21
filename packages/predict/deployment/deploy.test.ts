@@ -22,6 +22,7 @@ import {
     checkpointRecoveredTransaction,
     createDeploymentState,
     irreversibleDeploymentSteps,
+    irreversibleStepDigest,
     maximumTransactionCountPerRun,
     parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
@@ -29,6 +30,7 @@ import {
     plannedTransactionCount,
     plannedTransactionSteps,
     publishedMetadataText,
+    reconcileJournaledInFlight,
     recordVerifiedTransactionFailure,
     runBroadcastBoundary,
     sameObjectReference,
@@ -557,25 +559,78 @@ test("known-digest recovery checkpoints once and unknown outcomes fail closed", 
     );
 });
 
-test("every planned transaction label recovers verified failure and success idempotently", () => {
-    for (const label of plannedTransactionSteps()) {
-        const state = createDeploymentState();
-        const failed = {
+test("every irreversible publish and transaction boundary resumes without rebroadcast", async () => {
+    const runtimeMarketIds = CADENCES.filter((cadence) => cadence.marketsToCreate > 0).flatMap(
+        (cadence) =>
+            Array.from({ length: cadence.marketsToCreate }, (_, index) =>
+                id(`${cadence.id + 1}${index + 1}`),
+            ),
+    );
+    const transactionLabels = [
+        ...plannedTransactionSteps().filter((label) => !label.startsWith("rebalance_market_")),
+        ...runtimeMarketIds.map((marketId) => `rebalance_market_${marketId}`),
+    ];
+    const cases = [
+        ...(
+            [
+                "fixed_math",
+                "account",
+                "propbook",
+                "predict",
+                "deepbook_core_account",
+                "sessions",
+            ] as const
+        ).map((pkg) => ({ kind: "publish" as const, label: `publish_${pkg}`, pkg })),
+        ...transactionLabels.map((label) => ({
             kind: "transaction" as const,
             label,
-            package: null,
+            pkg: null,
+        })),
+    ];
+    for (const boundary of cases) {
+        const state = createDeploymentState();
+        const digest = `success-${boundary.label}`;
+        state.inFlight = {
+            kind: boundary.kind,
+            label: boundary.label,
+            package: boundary.pkg,
             startedAt: "2026-08-21T00:00:00.000Z",
-            digest: `failed-${label}`,
+            digest,
         };
-        state.inFlight = failed;
-        recordVerifiedTransactionFailure(state, failed, "MoveAbort");
+        let receiptReads = 0;
+        let publishRecoveries = 0;
+        let persists = 0;
+        await reconcileJournaledInFlight(state, {
+            loadReceipt: async (requestedDigest) => {
+                receiptReads++;
+                assert.equal(requestedDigest, digest);
+                return { digest, effects: { status: { success: true } } };
+            },
+            recoverPublish: async (pkg) => {
+                publishRecoveries++;
+                state.packages[pkg] = id(`${cases.indexOf(boundary) + 1}`);
+                state.publishTx[pkg] = digest;
+            },
+            persist: () => persists++,
+        });
+        assert.equal(receiptReads, 1);
+        assert.equal(publishRecoveries, boundary.kind === "publish" ? 1 : 0);
+        assert.equal(persists, 1);
         assert.equal(state.inFlight, null);
-        assert.equal(state.failedTransactions[label].digest, `failed-${label}`);
-        state.inFlight = { ...failed, digest: `success-${label}` };
-        checkpointRecoveredTransaction(state);
-        checkpointRecoveredTransaction(state);
-        assert.equal(state.transactions[label], `success-${label}`);
-        assert.equal(state.inFlight, null);
+        assert.equal(
+            irreversibleStepDigest(state, boundary.kind, boundary.label, boundary.pkg),
+            digest,
+        );
+        assert.equal(
+            await reconcileJournaledInFlight(state, {
+                loadReceipt: async () =>
+                    assert.fail("a completed step must not be reconciled twice"),
+                recoverPublish: async () =>
+                    assert.fail("a completed publish must not be recovered twice"),
+                persist: () => assert.fail("a completed step must not be rewritten"),
+            }),
+            null,
+        );
     }
 });
 
