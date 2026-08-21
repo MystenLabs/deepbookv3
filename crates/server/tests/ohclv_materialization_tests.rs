@@ -6,10 +6,9 @@ use sui_pg_db::{Db, DbArgs};
 use url::Url;
 
 const POOL_ID: &str = "pool-1";
-// 2023-11-05 is a 25-hour day in America/Detroit.
-const DAY_START_MS: i64 = 1_699_156_800_000;
-const NEXT_DAY_START_MS: i64 = 1_699_246_800_000;
+const DAY_START_MS: i64 = 1_700_006_400_000;
 const MINUTE_MS: i64 = 60_000;
+const DAY_MS: i64 = 86_400_000;
 
 #[derive(Debug, PartialEq, QueryableByName)]
 struct CandleAggregate {
@@ -92,7 +91,7 @@ async fn insert_fill(db: &Db, tag: &str, timestamp_ms: i64, price: i64, volume: 
 
 async fn call_materializer(db: &Db, procedure: &str, start_ms: i64, end_ms: i64) {
     let mut conn = db.connect().await.unwrap();
-    diesel::sql_query("SET TIME ZONE 'America/Detroit'")
+    diesel::sql_query("SET TIME ZONE 'UTC'")
         .execute(&mut conn)
         .await
         .unwrap();
@@ -106,7 +105,7 @@ async fn corrupt_candle(db: &Db, table: &str, bucket_predicate: &str) {
     let mut conn = db.connect().await.unwrap();
     diesel::sql_query(format!(
         "UPDATE {table}
-         SET open = 99, high = 99, low = 1, close = 99,
+         SET open = 10, high = 99, low = 1, close = 99,
              base_volume = 99, quote_volume = 99, trade_count = 99,
              first_trade_timestamp = 1, last_trade_timestamp = 2
          WHERE pool_id = '{POOL_ID}' AND {bucket_predicate}"
@@ -191,6 +190,25 @@ async fn load_candle_count(db: &Db, table: &str) -> i64 {
     .count
 }
 
+async fn load_row_version(db: &Db, table: &str, bucket_predicate: &str) -> i64 {
+    #[derive(QueryableByName)]
+    struct Version {
+        #[diesel(sql_type = BigInt)]
+        version: i64,
+    }
+
+    let mut conn = db.connect().await.unwrap();
+    diesel::sql_query(format!(
+        "SELECT xmin::TEXT::BIGINT AS version
+         FROM {table}
+         WHERE pool_id = '{POOL_ID}' AND {bucket_predicate}"
+    ))
+    .get_result::<Version>(&mut conn)
+    .await
+    .unwrap()
+    .version
+}
+
 fn expected(first_ms: i64, last_ms: i64) -> CandleAggregate {
     CandleAggregate {
         open: 10.0,
@@ -231,7 +249,7 @@ async fn partial_minute_refresh_recomputes_the_complete_bucket() {
 
     call_materializer(&db, "update_ohclv_1m", DAY_START_MS, next_minute_ms - 1).await;
     let bucket_predicate = format!(
-        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')"
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
     );
     corrupt_candle(&db, "ohclv_1m", &bucket_predicate).await;
     call_materializer(&db, "update_ohclv_1m", last_ms, last_ms).await;
@@ -250,14 +268,14 @@ async fn partial_daily_refresh_recomputes_the_complete_bucket() {
     let (_temp_db, db) = setup().await;
     let first_ms = DAY_START_MS + 5 * MINUTE_MS;
     let last_ms = DAY_START_MS + 23 * 60 * MINUTE_MS;
-    let next_day_ms = NEXT_DAY_START_MS;
+    let next_day_ms = DAY_START_MS + DAY_MS;
     insert_fill(&db, "day-first", first_ms, 10, 2).await;
     insert_fill(&db, "day-last", last_ms, 12, 3).await;
     insert_fill(&db, "day-boundary", next_day_ms, 20, 7).await;
 
     call_materializer(&db, "update_ohclv_1d", DAY_START_MS, next_day_ms - 1).await;
     let bucket_predicate = format!(
-        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')::DATE"
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
     );
     corrupt_candle(&db, "ohclv_1d", &bucket_predicate).await;
     call_materializer(&db, "update_ohclv_1d", last_ms, last_ms).await;
@@ -281,10 +299,10 @@ async fn stale_refresh_does_not_replace_a_newer_materialization() {
     insert_fill(&db, "stale-last", snapshot_last_ms, 12, 3).await;
 
     let minute_predicate = format!(
-        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')"
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
     );
     let daily_predicate = format!(
-        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')::DATE"
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
     );
     call_materializer(&db, "update_ohclv_1m", first_ms, snapshot_last_ms).await;
     call_materializer(&db, "update_ohclv_1d", first_ms, snapshot_last_ms).await;
@@ -311,5 +329,47 @@ async fn stale_refresh_does_not_replace_a_newer_materialization() {
     assert_eq!(
         load_candle(&db, "ohclv_1d", &daily_predicate).await,
         expected_newer(first_ms, snapshot_last_ms)
+    );
+}
+
+#[tokio::test]
+async fn identical_snapshot_does_not_rewrite_a_candle() {
+    let (_temp_db, db) = setup().await;
+    let timestamp_ms = DAY_START_MS + 5_000;
+    insert_fill(&db, "same-time-first", timestamp_ms, 10, 2).await;
+    insert_fill(&db, "same-time-second", timestamp_ms, 12, 3).await;
+
+    let minute_predicate = format!(
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
+    );
+    let daily_predicate = format!(
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
+    );
+    call_materializer(&db, "update_ohclv_1m", timestamp_ms, timestamp_ms).await;
+    call_materializer(&db, "update_ohclv_1d", timestamp_ms, timestamp_ms).await;
+
+    let minute_before = load_candle(&db, "ohclv_1m", &minute_predicate).await;
+    let minute_version = load_row_version(&db, "ohclv_1m", &minute_predicate).await;
+    let daily_before = load_candle(&db, "ohclv_1d", &daily_predicate).await;
+    let daily_version = load_row_version(&db, "ohclv_1d", &daily_predicate).await;
+
+    call_materializer(&db, "update_ohclv_1m", timestamp_ms, timestamp_ms).await;
+    call_materializer(&db, "update_ohclv_1d", timestamp_ms, timestamp_ms).await;
+
+    assert_eq!(
+        load_candle(&db, "ohclv_1m", &minute_predicate).await,
+        minute_before
+    );
+    assert_eq!(
+        load_row_version(&db, "ohclv_1m", &minute_predicate).await,
+        minute_version
+    );
+    assert_eq!(
+        load_candle(&db, "ohclv_1d", &daily_predicate).await,
+        daily_before
+    );
+    assert_eq!(
+        load_row_version(&db, "ohclv_1d", &daily_predicate).await,
+        daily_version
     );
 }

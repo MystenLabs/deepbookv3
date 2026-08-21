@@ -4,6 +4,8 @@ CREATE OR REPLACE PROCEDURE update_ohclv_1m(
 )
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    bucket_width_ms CONSTANT BIGINT := 60000;
 BEGIN
     -- Default to last 24 hours if no range specified
     IF start_timestamp IS NULL THEN
@@ -15,12 +17,8 @@ BEGIN
     END IF;
 
     -- The requested range selects buckets to refresh. Read every selected bucket in full.
-    start_timestamp := (
-        EXTRACT(EPOCH FROM date_trunc('minute', to_timestamp(start_timestamp / 1000.0))) * 1000
-    )::BIGINT;
-    end_timestamp := (
-        EXTRACT(EPOCH FROM date_trunc('minute', to_timestamp(end_timestamp / 1000.0)) + INTERVAL '1 minute') * 1000
-    )::BIGINT;
+    start_timestamp := (start_timestamp / bucket_width_ms) * bucket_width_ms;
+    end_timestamp := ((end_timestamp / bucket_width_ms) + 1) * bucket_width_ms;
 
     INSERT INTO ohclv_1m (
         pool_id,
@@ -66,7 +64,6 @@ BEGIN
       AND f.checkpoint_timestamp_ms < end_timestamp
     ON CONFLICT (pool_id, bucket_time)
     DO UPDATE SET
-        open = EXCLUDED.open,
         high = EXCLUDED.high,
         low = EXCLUDED.low,
         close = EXCLUDED.close,
@@ -78,7 +75,7 @@ BEGIN
     WHERE EXCLUDED.last_trade_timestamp > ohclv_1m.last_trade_timestamp
        OR (
             EXCLUDED.last_trade_timestamp = ohclv_1m.last_trade_timestamp
-            AND EXCLUDED.trade_count >= ohclv_1m.trade_count
+            AND EXCLUDED.trade_count > ohclv_1m.trade_count
        );
 END;
 $$;
@@ -89,6 +86,8 @@ CREATE OR REPLACE PROCEDURE update_ohclv_1d(
 )
 LANGUAGE plpgsql
 AS $$
+DECLARE
+    bucket_width_ms CONSTANT BIGINT := 86400000;
 BEGIN
     -- Default to last 7 days if no range specified
     IF start_timestamp IS NULL THEN
@@ -100,12 +99,8 @@ BEGIN
     END IF;
 
     -- The requested range selects buckets to refresh. Read every selected bucket in full.
-    start_timestamp := (
-        EXTRACT(EPOCH FROM date_trunc('day', to_timestamp(start_timestamp / 1000.0))) * 1000
-    )::BIGINT;
-    end_timestamp := (
-        EXTRACT(EPOCH FROM date_trunc('day', to_timestamp(end_timestamp / 1000.0)) + INTERVAL '1 day') * 1000
-    )::BIGINT;
+    start_timestamp := (start_timestamp / bucket_width_ms) * bucket_width_ms;
+    end_timestamp := ((end_timestamp / bucket_width_ms) + 1) * bucket_width_ms;
 
     INSERT INTO ohclv_1d (
         pool_id,
@@ -151,7 +146,6 @@ BEGIN
       AND f.checkpoint_timestamp_ms < end_timestamp
     ON CONFLICT (pool_id, bucket_time)
     DO UPDATE SET
-        open = EXCLUDED.open,
         high = EXCLUDED.high,
         low = EXCLUDED.low,
         close = EXCLUDED.close,
@@ -163,7 +157,7 @@ BEGIN
     WHERE EXCLUDED.last_trade_timestamp > ohclv_1d.last_trade_timestamp
        OR (
             EXCLUDED.last_trade_timestamp = ohclv_1d.last_trade_timestamp
-            AND EXCLUDED.trade_count >= ohclv_1d.trade_count
+            AND EXCLUDED.trade_count > ohclv_1d.trade_count
        );
 END;
 $$;
