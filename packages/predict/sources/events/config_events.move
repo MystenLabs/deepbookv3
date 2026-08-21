@@ -89,18 +89,6 @@ public struct MarketSettled has copy, drop, store {
     settled_at_ms: u64,
 }
 
-#[test_only]
-public fun market_settled_fields(event: &MarketSettled): (ID, u32, u64, u64, u8, u64) {
-    (
-        event.expiry_market_id,
-        event.propbook_underlying_id,
-        event.expiry,
-        event.settlement_price,
-        event.settlement_source,
-        event.settled_at_ms,
-    )
-}
-
 // === Public-Package Functions ===
 
 public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: bool) {

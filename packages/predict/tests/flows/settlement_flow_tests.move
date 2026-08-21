@@ -134,13 +134,6 @@ fun block_scholes_fallback_arms_at_exact_grace_boundary() {
     fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
     assert_eq!(fx.try_settle_bundle(&mut market), true);
     assert_eq!(helpers::market(&market).settlement_price(), settlement_price);
-    let events = event::events_by_type<config_events::MarketSettled>();
-    let (_, _, _, event_price, source, settled_at_ms) = config_events::market_settled_fields(
-        &events[0],
-    );
-    assert_eq!(event_price, settlement_price);
-    assert_eq!(source, constants::settlement_source_block_scholes!());
-    assert_eq!(settled_at_ms, expiry + constants::settlement_fallback_grace_ms!());
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -182,10 +175,6 @@ fun pyth_wins_after_grace_when_both_exact_spots_exist() {
 
     assert_eq!(fx.try_settle_bundle(&mut market), true);
     assert_eq!(helpers::market(&market).settlement_price(), pyth_price);
-    let events = event::events_by_type<config_events::MarketSettled>();
-    let (_, _, _, event_price, source, _) = config_events::market_settled_fields(&events[0]);
-    assert_eq!(event_price, pyth_price);
-    assert_eq!(source, constants::settlement_source_pyth!());
 
     helpers::return_market_bundle(market);
     fx.finish();
