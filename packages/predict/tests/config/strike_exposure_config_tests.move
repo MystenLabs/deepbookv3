@@ -24,7 +24,7 @@ use deepbook_predict::{
 };
 use fixed_math::math::float_scaling as float;
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::{Self as test, Scenario, return_shared};
+use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ENTRY_PROBABILITY_BELOW_MIN: u64 = 5_860_417;
 const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
@@ -36,12 +36,14 @@ const DEFAULT_MIN_FEE_DUSDC_RAW: u64 = 22_000;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
-fun new_shared_config(): (Scenario, AdminCap, ID) {
+fun new_shared_config(): (Scenario, AdminCap, ID, Clock) {
     let mut scenario = test::begin(test_constants::admin());
     let config_id = protocol_config::create_and_share(scenario.ctx());
     let admin_cap = admin::new(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(test_constants::now_ms());
     scenario.next_tx(test_constants::admin());
-    (scenario, admin_cap, config_id)
+    (scenario, admin_cap, config_id, clock)
 }
 
 #[test]
@@ -73,29 +75,31 @@ fun new_config_seeds_default_market_economics() {
 // `config_constants` envelope, so the relational guard is what fires.
 #[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
 fun template_min_entry_probability_at_max_entry_probability_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_min_entry_probability(
         &admin_cap,
         config_constants::default_max_entry_probability!(),
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = strike_exposure_config::EInvalidEntryProbabilityBound)]
 fun template_max_entry_probability_at_min_entry_probability_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_max_entry_probability(
         &admin_cap,
         config_constants::default_min_entry_probability!(),
+        &clock,
     );
     abort 999
 }
 
 #[test]
 fun template_entry_probability_bounds_accept_adjacent_values() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
     // min one unit below the default max, then max one unit above that min:
@@ -103,10 +107,12 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
     config.set_template_min_entry_probability(
         &admin_cap,
         config_constants::default_max_entry_probability!() - 1,
+        &clock,
     );
     config.set_template_max_entry_probability(
         &admin_cap,
         config_constants::default_max_entry_probability!(),
+        &clock,
     );
 
     let snapshot = config.strike_exposure_config_snapshot();
@@ -121,6 +127,7 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
     destroy(snapshot);
 
     return_shared(config);
+    clock.destroy_for_testing();
     destroy(admin_cap);
     scenario.end();
 }

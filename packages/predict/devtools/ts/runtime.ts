@@ -1517,6 +1517,7 @@ export function setTemplateExpiryFeeConfigTx(
             tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u64(expiryFeeWindowMs),
+            tx.object(CLOCK_ID),
         ],
     });
     tx.moveCall({
@@ -1525,6 +1526,7 @@ export function setTemplateExpiryFeeConfigTx(
             tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u64(expiryFeeMaxMultiplier),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;

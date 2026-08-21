@@ -311,7 +311,7 @@ fun update_flows_into_raw_and_normalized_latest_getters() {
 
     let raw_read = feed.raw_spot();
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(raw_read.read_onchain_timestamp_ms(), UPDATE_1_MS);
     let raw = raw_read.read_value();
     assert_eq!(pyth_feed::raw_pyth_source_id(&raw), BTC_SOURCE_ID);
     assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
@@ -504,14 +504,14 @@ fun insert_at_records_exact_read_without_latest() {
 
     let raw_read = feed.raw_spot_at(SOURCE_TS_1_MS);
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(raw_read.read_onchain_timestamp_ms(), UPDATE_1_MS);
     let raw = raw_read.read_value();
     assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw), SOURCE_TS_1_US);
     assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
 
     let normalized = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
     assert_eq!(normalized.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(normalized.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(normalized.read_onchain_timestamp_ms(), UPDATE_1_MS);
     assert_eq!(normalized.read_value(), SPOT_65K);
 
     return_shared(feed);
@@ -561,7 +561,7 @@ fun carried_price_does_not_refresh_latest() {
     // `latest` still ages from generation time (1ms), not from the envelope (5ms).
     let raw_read = feed.raw_spot();
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(raw_read.read_onchain_timestamp_ms(), UPDATE_1_MS);
     assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw_read.read_value()), SOURCE_TS_1_US);
 
     return_shared(feed);
@@ -785,7 +785,7 @@ fun duplicate_future_and_zero_exact_inserts_are_no_ops() {
 
     let exact = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
     assert_eq!(exact.read_value(), SPOT_65K);
-    assert_eq!(exact.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(exact.read_onchain_timestamp_ms(), UPDATE_1_MS);
     assert!(feed.normalized_spot_at(SOURCE_TS_FUTURE_MS).is_none());
     assert!(feed.normalized_spot_at(SOURCE_TS_ZERO_MS).is_none());
     assert!(feed.normalized_spot().is_none());
@@ -812,7 +812,7 @@ fun store_raw(
     exponent_magnitude: u16,
     exponent_is_negative: bool,
     source_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     store_raw_carried(
         feed,
@@ -822,7 +822,7 @@ fun store_raw(
         exponent_is_negative,
         source_timestamp_us,
         source_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
     );
 }
 
@@ -835,7 +835,7 @@ fun store_raw_carried(
     exponent_is_negative: bool,
     feed_update_timestamp_us: u64,
     envelope_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     let ctx = tx_context::dummy();
     pyth_feed::record_raw_for_testing(
@@ -846,7 +846,7 @@ fun store_raw_carried(
         exponent_is_negative,
         feed_update_timestamp_us,
         envelope_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         false,
         &ctx,
     );
@@ -859,7 +859,7 @@ fun insert_raw(
     exponent_magnitude: u16,
     exponent_is_negative: bool,
     source_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     insert_raw_carried(
         feed,
@@ -869,7 +869,7 @@ fun insert_raw(
         exponent_is_negative,
         source_timestamp_us,
         source_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
     );
 }
 
@@ -883,7 +883,7 @@ fun insert_raw_carried(
     exponent_is_negative: bool,
     feed_update_timestamp_us: u64,
     envelope_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     let ctx = tx_context::dummy();
     pyth_feed::record_raw_for_testing(
@@ -894,7 +894,7 @@ fun insert_raw_carried(
         exponent_is_negative,
         feed_update_timestamp_us,
         envelope_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         true,
         &ctx,
     );
@@ -904,11 +904,11 @@ fun assert_latest_normalized(
     feed: &PythFeed,
     expected_spot: u64,
     expected_source_timestamp_ms: u64,
-    expected_update_timestamp_ms: u64,
+    expected_onchain_timestamp_ms: u64,
 ) {
     let normalized = feed.normalized_spot().destroy_some();
     assert_eq!(normalized.read_source_timestamp_ms(), expected_source_timestamp_ms);
-    assert_eq!(normalized.read_update_timestamp_ms(), expected_update_timestamp_ms);
+    assert_eq!(normalized.read_onchain_timestamp_ms(), expected_onchain_timestamp_ms);
     assert_eq!(normalized.read_value(), expected_spot);
 }
 

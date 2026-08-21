@@ -13,7 +13,13 @@ use deepbook_predict::{
     test_helpers
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::return_shared;
+use sui::{clock::{Self, Clock}, test_scenario::{Scenario, return_shared}};
+
+fun new_clock(scenario: &mut Scenario): Clock {
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(test_constants::now_ms());
+    clock
+}
 
 const DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE: u64 = 100_000_000;
 
@@ -31,13 +37,15 @@ fun new_config_seeds_protocol_reserve_profit_share() {
 
 #[test]
 fun set_ewma_params_and_enabled_update_config() {
-    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
 
     config.set_ewma_params(
         &admin_cap,
         config_constants::min_ewma_alpha!(),
         config_constants::min_ewma_z_score_threshold!(),
         config_constants::min_ewma_penalty_rate!(),
+        &clock,
     );
     assert_eq!(config.ewma_config().alpha(), config_constants::min_ewma_alpha!());
     assert_eq!(
@@ -46,12 +54,13 @@ fun set_ewma_params_and_enabled_update_config() {
     );
     assert_eq!(config.ewma_config().penalty_rate(), config_constants::min_ewma_penalty_rate!());
 
-    config.set_ewma_enabled(&admin_cap, true);
+    config.set_ewma_enabled(&admin_cap, true, &clock);
     assert!(config.ewma_config().enabled());
-    config.set_ewma_enabled(&admin_cap, false);
+    config.set_ewma_enabled(&admin_cap, false, &clock);
     assert!(!config.ewma_config().enabled());
 
     destroy(admin_cap);
+    clock.destroy_for_testing();
     return_shared(reg);
     return_shared(config);
     scenario.end();
@@ -153,9 +162,10 @@ fun frozen_defaults_false_and_admin_toggles() {
 fun frozen_blocks_version_gated_flow() {
     // The freeze folds into `assert_version`, so every version-gated flow aborts
     // while frozen. `set_ewma_enabled` is a representative gated entrypoint.
-    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
     config.set_frozen(&admin_cap, true);
-    config.set_ewma_enabled(&admin_cap, true);
+    config.set_ewma_enabled(&admin_cap, true, &clock);
     abort 999
 }
 
@@ -172,41 +182,48 @@ fun bump_version_watermark_at_current_version_aborts() {
 fun set_use_pyth_spot_for_forward_during_valuation_aborts() {
     // The flush marks every active market against one live-forward formula; letting
     // the source change mid-valuation would mix two marks into one NAV.
-    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
     config.begin_valuation();
-    config.set_use_pyth_spot_for_forward(&admin_cap, false);
+    config.set_use_pyth_spot_for_forward(&admin_cap, false, &clock);
     abort 999
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_pyth_spot_freshness_during_valuation_aborts() {
-    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
     config.begin_valuation();
     config.set_pyth_spot_freshness_ms(
         &admin_cap,
         config_constants::min_pyth_spot_freshness_ms!(),
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_block_scholes_price_freshness_during_valuation_aborts() {
-    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
     config.begin_valuation();
     config.set_block_scholes_price_freshness_ms(
         &admin_cap,
         config_constants::min_block_scholes_price_freshness_ms!(),
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_block_scholes_svi_freshness_during_valuation_aborts() {
-    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
     config.begin_valuation();
     config.set_block_scholes_svi_freshness_ms(
         &admin_cap,
         config_constants::min_block_scholes_svi_freshness_ms!(),
+        &clock,
     );
     abort 999
 }

@@ -577,7 +577,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Pricing keys on the publish time; the model time is calibration identity.**
   Freshness for all three Block Scholes reads, the SVI roll-down anchor, and the
   timestamps snapshotted onto the `Pricer` for trade events all key on each
-  stored observation's signed batch-envelope time (`published_at_ms`), which
+  stored observation's signed batch-envelope time (`source_timestamp_ms`), which
   advances on every provider flush including retransmissions of an unchanged
   value; the model time stays on the stored observation and its ingestion
   events. This implements the provider contract: the model timestamp is
