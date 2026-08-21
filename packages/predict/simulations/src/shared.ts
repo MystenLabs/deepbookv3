@@ -12,11 +12,51 @@ import { type GasUsage, type OracleFeedIds } from "../../devtools/ts/runtime.js"
 
 export { FAILED_TRANSACTIONS_DIR, ensureDir, ts, writeJson };
 
-export type ScenarioActionName = "oracle_mint_ptb" | "redeem" | "supply" | "withdraw";
-export type SimulationActionName =
-    | ScenarioActionName
+export type ScenarioActionName =
+    | "mint"
+    | "redeem_live"
+    | "request_supply"
+    | "request_withdraw"
     | "flush"
-    | "rebalance_expiry_cash";
+    | "rebalance_expiry_cash"
+    | "settle"
+    | "redeem_settled";
+
+export const REQUIRED_ACTIONS: ScenarioActionName[] = [
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "request_withdraw",
+    "flush",
+    "rebalance_expiry_cash",
+    "settle",
+    "redeem_settled",
+];
+
+export const EXPECTED_ACTION_SEQUENCE: ScenarioActionName[] = [
+    "mint",
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "flush",
+    "request_withdraw",
+    "flush",
+    "mint",
+    "redeem_live",
+    "rebalance_expiry_cash",
+    "mint",
+    "mint",
+    "settle",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "flush",
+    "request_supply",
+    "flush",
+];
+
+export const EXPECTED_SETTLED_REDEMPTION_MODES = [false, true, false, true];
 
 export interface OracleRefreshData {
     spot: bigint;
@@ -32,58 +72,60 @@ export interface OracleRefreshData {
     riskFreeRate: bigint;
 }
 
+interface ScenarioRowBase {
+    lineNumber: number;
+    step: number;
+}
+
 export type ScenarioRow =
-    | {
-          action: "oracle_mint_ptb";
-          lineNumber: number;
-          step: number;
-          spot: bigint;
-          forward: bigint;
-          a: bigint;
-          aNegative: boolean;
-          b: bigint;
-          rho: bigint;
-          rhoNegative: boolean;
-          m: bigint;
-          mNegative: boolean;
-          sigma: bigint;
-          riskFreeRate: bigint;
-          strike: bigint;
-          isUp: boolean;
-          quantity: bigint;
-          leverage: bigint;
-          orderRef: string;
-      }
-    | {
-          action: "redeem";
-          lineNumber: number;
-          step: number;
+    | (ScenarioRowBase &
+          OracleRefreshData & {
+              action: "mint";
+              strike: bigint;
+              isUp: boolean;
+              quantity: bigint;
+              orderRef: string;
+          })
+    | (ScenarioRowBase & {
+          action: "redeem_live";
           oracleRefresh: OracleRefreshData;
           orderRef: string;
           closeQuantity: bigint;
           replacementOrderRef: string | null;
-      }
-    | {
-          action: "supply";
-          lineNumber: number;
-          step: number;
-          oracleRefresh: OracleRefreshData;
+      })
+    | (ScenarioRowBase & {
+          action: "request_supply";
           amount: bigint;
+          minOutput: bigint;
           lpRef: string;
-      }
-    | {
-          action: "withdraw";
-          lineNumber: number;
-          step: number;
-          oracleRefresh: OracleRefreshData;
+      })
+    | (ScenarioRowBase & {
+          action: "request_withdraw";
+          shares: bigint;
+          minOutput: bigint;
           lpRef: string;
-      };
+      })
+    | (ScenarioRowBase & {
+          action: "flush";
+          oracleRefresh: OracleRefreshData | null;
+      })
+    | (ScenarioRowBase & { action: "rebalance_expiry_cash" })
+    | (ScenarioRowBase & { action: "settle"; settlementPrice: bigint })
+    | (ScenarioRowBase & {
+          action: "redeem_settled";
+          orderRef: string;
+          permissionless: boolean;
+      });
 
-export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
+export type MintRow = Extract<ScenarioRow, { action: "mint" }>;
+export type OracleRefreshRow = Extract<
+    ScenarioRow,
+    { action: "mint" | "redeem_live" | "flush" }
+>;
 
 export interface LocalTraceStep {
     step: number;
-    action: SimulationActionName;
+    action: ScenarioActionName;
     digest: string;
     pricingTimestampMs: number;
     wallMs: number;
@@ -106,13 +148,15 @@ export interface EconomicDataFile {
     schema_version: typeof ECONOMIC_SCHEMA_VERSION;
     scenario: {
         quantity_scale: string;
+        required_actions: ScenarioActionName[];
+        observed_actions: ScenarioActionName[];
     };
     records: EconomicRecord[];
 }
 
 export interface EconomicRecord {
     step: number;
-    action: SimulationActionName;
+    action: ScenarioActionName;
     input: Record<string, unknown>;
     updates: Record<string, unknown>[];
     state: Record<string, string>;
@@ -122,30 +166,22 @@ export interface SimState extends OracleFeedIds {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    // Expiry timestamp chosen on-chain by the registry cadence manager and emitted
-    // in MarketCreated. Stored as a decimal string so state.json stays plain JSON.
     expiryMs: string;
-    // Propbook feeds replace the in-package oracle + Pyth source. There is no
-    // writer cap anymore; BS updates are permissionless verified batches, ingested
-    // into the underlying's sid-keyed value/SVI store pair.
-    // The sender's canonical derived account wrapper (replaces the predict manager).
-    // Owner auth is minted per-call from the tx sender, so there are no capital caps.
     accountWrapperId: string;
-    // Sole flush-start authority: the market-deployer MarketLifecycleCap, used to
-    // mint a per-flush lifecycle proof for `plp::start_pool_valuation`.
     lifecycleCapId: string;
-    // Per-cadence initial expiry cash target snapshotted into pool accounting.
     initialExpiryCash: string;
+    tickSize: string;
 }
 
 type RawScenarioRow = Record<string, string>;
 
-const SCENARIO_COLUMNS = [
+export const SCENARIO_COLUMNS = [
     "tx",
     "action",
     "spot",
     "forward",
     "a",
+    "a_negative",
     "b",
     "rho",
     "rho_negative",
@@ -156,12 +192,15 @@ const SCENARIO_COLUMNS = [
     "strike",
     "is_up",
     "quantity",
-    "leverage",
     "order_ref",
     "close_quantity",
     "replacement_order_ref",
     "amount",
+    "shares",
+    "min_output",
     "lp_ref",
+    "settlement_price",
+    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -171,6 +210,7 @@ const ORACLE_REFRESH_FIELDS = [
     "spot",
     "forward",
     "a",
+    "a_negative",
     "b",
     "rho",
     "rho_negative",
@@ -181,22 +221,10 @@ const ORACLE_REFRESH_FIELDS = [
 ] as const;
 
 const POSITION_LOT_SIZE = 10_000n;
-const LEVERAGE_ONE_X = 1_000_000_000n;
-
-function isScenarioActionName(value: string): value is ScenarioActionName {
-    return (
-        value === "oracle_mint_ptb" ||
-        value === "redeem" ||
-        value === "supply" ||
-        value === "withdraw"
-    );
-}
 
 function requireField(row: RawScenarioRow, field: string, lineNumber: number): string {
     const value = row[field] ?? "";
-    if (value === "") {
-        throw new Error(`Scenario line ${lineNumber}: missing ${field}`);
-    }
+    if (value === "") throw new Error(`Scenario line ${lineNumber}: missing ${field}`);
     return value;
 }
 
@@ -210,40 +238,8 @@ function parseUnsignedInteger(row: RawScenarioRow, field: string, lineNumber: nu
     return BigInt(value);
 }
 
-function parseOptionalUnsignedInteger(
-    row: RawScenarioRow,
-    field: string,
-    lineNumber: number,
-    defaultValue: bigint,
-): bigint {
-    const value = row[field] ?? "";
-    if (value === "") return defaultValue;
-    if (!/^\d+$/.test(value)) {
-        throw new Error(
-            `Scenario line ${lineNumber}: expected ${field} to be an unsigned integer, got "${value}"`,
-        );
-    }
-    return BigInt(value);
-}
-
 function parseBoolean(row: RawScenarioRow, field: string, lineNumber: number): boolean {
     const value = requireField(row, field, lineNumber);
-    if (value !== "true" && value !== "false") {
-        throw new Error(
-            `Scenario line ${lineNumber}: expected ${field} to be true/false, got "${value}"`,
-        );
-    }
-    return value === "true";
-}
-
-function parseOptionalBoolean(
-    row: RawScenarioRow,
-    field: string,
-    lineNumber: number,
-    defaultValue: boolean,
-): boolean {
-    const value = row[field] ?? "";
-    if (value === "") return defaultValue;
     if (value !== "true" && value !== "false") {
         throw new Error(
             `Scenario line ${lineNumber}: expected ${field} to be true/false, got "${value}"`,
@@ -266,7 +262,7 @@ function parseOracleRefresh(row: RawScenarioRow, lineNumber: number): OracleRefr
         spot: parseUnsignedInteger(row, "spot", lineNumber),
         forward: parseUnsignedInteger(row, "forward", lineNumber),
         a: parseUnsignedInteger(row, "a", lineNumber),
-        aNegative: parseOptionalBoolean(row, "a_negative", lineNumber, false),
+        aNegative: parseBoolean(row, "a_negative", lineNumber),
         b: parseUnsignedInteger(row, "b", lineNumber),
         rho: parseUnsignedInteger(row, "rho", lineNumber),
         rhoNegative: parseBoolean(row, "rho_negative", lineNumber),
@@ -277,6 +273,15 @@ function parseOracleRefresh(row: RawScenarioRow, lineNumber: number): OracleRefr
     };
 }
 
+function parseOptionalOracleRefresh(
+    row: RawScenarioRow,
+    lineNumber: number,
+): OracleRefreshData | null {
+    const present = ORACLE_REFRESH_FIELDS.filter((field) => (row[field] ?? "") !== "");
+    if (present.length === 0) return null;
+    return parseOracleRefresh(row, lineNumber);
+}
+
 function parseRef(row: RawScenarioRow, field: string, lineNumber: number): string {
     const value = requireField(row, field, lineNumber);
     if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(value)) {
@@ -285,91 +290,101 @@ function parseRef(row: RawScenarioRow, field: string, lineNumber: number): strin
     return value;
 }
 
-function parseMintQuantity(row: RawScenarioRow, field: string, lineNumber: number): bigint {
+function parseQuantity(row: RawScenarioRow, field: string, lineNumber: number): bigint {
     const quantity = parseUnsignedInteger(row, field, lineNumber);
-    const lots = quantity / POSITION_LOT_SIZE;
-    if (lots <= 0n) {
+    if (quantity < POSITION_LOT_SIZE || quantity % POSITION_LOT_SIZE !== 0n) {
         throw new Error(
-            `Scenario line ${lineNumber}: mint quantity must be at least one position lot`,
-        );
-    }
-    if (quantity % POSITION_LOT_SIZE !== 0n) {
-        throw new Error(
-            `Scenario line ${lineNumber}: mint quantity must be a multiple of ${POSITION_LOT_SIZE}`,
+            `Scenario line ${lineNumber}: ${field} must be a positive multiple of ${POSITION_LOT_SIZE}`,
         );
     }
     return quantity;
 }
 
-function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
-    const action = requireField(row, "action", lineNumber);
-    if (!isScenarioActionName(action)) {
-        throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
-    }
-
+function parseStep(row: RawScenarioRow, lineNumber: number): number {
     const step = Number(parseUnsignedInteger(row, "tx", lineNumber));
     if (!Number.isSafeInteger(step) || step <= 0) {
         throw new Error(`Scenario line ${lineNumber}: tx must be a positive safe integer`);
     }
+    return step;
+}
 
-    if (action === "oracle_mint_ptb") {
+function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
+    const action = requireField(row, "action", lineNumber) as ScenarioActionName;
+    const step = parseStep(row, lineNumber);
+    if (action === "mint") {
         return {
             action,
             lineNumber,
             step,
-            spot: parseUnsignedInteger(row, "spot", lineNumber),
-            forward: parseUnsignedInteger(row, "forward", lineNumber),
-            a: parseUnsignedInteger(row, "a", lineNumber),
-            aNegative: parseOptionalBoolean(row, "a_negative", lineNumber, false),
-            b: parseUnsignedInteger(row, "b", lineNumber),
-            rho: parseUnsignedInteger(row, "rho", lineNumber),
-            rhoNegative: parseBoolean(row, "rho_negative", lineNumber),
-            m: parseUnsignedInteger(row, "m", lineNumber),
-            mNegative: parseBoolean(row, "m_negative", lineNumber),
-            sigma: parseUnsignedInteger(row, "sigma", lineNumber),
-            riskFreeRate: parseUnsignedInteger(row, "risk_free_rate", lineNumber),
+            ...parseOracleRefresh(row, lineNumber),
             strike: parseUnsignedInteger(row, "strike", lineNumber),
             isUp: parseBoolean(row, "is_up", lineNumber),
-            quantity: parseMintQuantity(row, "quantity", lineNumber),
-            leverage: parseOptionalUnsignedInteger(row, "leverage", lineNumber, LEVERAGE_ONE_X),
+            quantity: parseQuantity(row, "quantity", lineNumber),
             orderRef: parseRef(row, "order_ref", lineNumber),
         };
     }
-
-    if (action === "redeem") {
+    if (action === "redeem_live") {
         return {
             action,
             lineNumber,
             step,
             oracleRefresh: parseOracleRefresh(row, lineNumber),
             orderRef: parseRef(row, "order_ref", lineNumber),
-            closeQuantity: parseMintQuantity(row, "close_quantity", lineNumber),
+            closeQuantity: parseQuantity(row, "close_quantity", lineNumber),
             replacementOrderRef: parseOptionalString(row, "replacement_order_ref"),
         };
     }
-
-    if (action === "supply") {
+    if (action === "request_supply") {
         return {
             action,
             lineNumber,
             step,
-            oracleRefresh: parseOracleRefresh(row, lineNumber),
             amount: parseUnsignedInteger(row, "amount", lineNumber),
+            minOutput: parseUnsignedInteger(row, "min_output", lineNumber),
             lpRef: parseRef(row, "lp_ref", lineNumber),
         };
     }
-
-    return {
-        action,
-        lineNumber,
-        step,
-        oracleRefresh: parseOracleRefresh(row, lineNumber),
-        lpRef: parseRef(row, "lp_ref", lineNumber),
-    };
+    if (action === "request_withdraw") {
+        return {
+            action,
+            lineNumber,
+            step,
+            shares: parseUnsignedInteger(row, "shares", lineNumber),
+            minOutput: parseUnsignedInteger(row, "min_output", lineNumber),
+            lpRef: parseRef(row, "lp_ref", lineNumber),
+        };
+    }
+    if (action === "flush") {
+        return {
+            action,
+            lineNumber,
+            step,
+            oracleRefresh: parseOptionalOracleRefresh(row, lineNumber),
+        };
+    }
+    if (action === "rebalance_expiry_cash") return { action, lineNumber, step };
+    if (action === "settle") {
+        return {
+            action,
+            lineNumber,
+            step,
+            settlementPrice: parseUnsignedInteger(row, "settlement_price", lineNumber),
+        };
+    }
+    if (action === "redeem_settled") {
+        return {
+            action,
+            lineNumber,
+            step,
+            orderRef: parseRef(row, "order_ref", lineNumber),
+            permissionless: parseBoolean(row, "permissionless", lineNumber),
+        };
+    }
+    throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
 }
 
-export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v3";
-export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v4";
+export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v4";
+export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5";
 export const STATE_PATH = path.join(INSTANCE_DIR, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(INSTANCE_DIR, "artifacts", "local_trace.json");
 export const LOCAL_DATA_PATH = path.join(INSTANCE_DIR, "artifacts", "local_data.json");
@@ -390,24 +405,32 @@ export function scenarioQuantityScale(): string {
 }
 
 export function parseScenarioText(text: string): ScenarioRow[] {
-    text = text.replace(/\r/g, "");
-    const [header, ...lines] = text.trim().split("\n");
+    const normalized = text.replace(/\r/g, "").trim();
+    if (normalized === "") throw new Error("Scenario is empty");
+    const [header, ...lines] = normalized.split("\n");
     const columns = header.split(",").map((column) => column.trim());
-
-    for (const expectedColumn of SCENARIO_COLUMNS) {
-        if (!columns.includes(expectedColumn)) {
-            throw new Error(`Scenario header is missing required column ${expectedColumn}`);
-        }
+    if (
+        columns.length !== SCENARIO_COLUMNS.length ||
+        columns.some((column, index) => column !== SCENARIO_COLUMNS[index])
+    ) {
+        throw new Error(
+            `Scenario header does not match schema: expected ${SCENARIO_COLUMNS.join(",")}`,
+        );
     }
 
     let lastStep = 0;
     return lines.map((line, index) => {
         const values = line.split(",");
-        const row: RawScenarioRow = {};
+        if (values.length !== columns.length) {
+            throw new Error(
+                `Scenario line ${index + 2}: expected ${columns.length} columns, got ${values.length}`,
+            );
+        }
+        const raw: RawScenarioRow = {};
         columns.forEach((column, valueIndex) => {
-            row[column] = (values[valueIndex] ?? "").trim();
+            raw[column] = values[valueIndex].trim();
         });
-        const parsed = parseRow(row, index + 2);
+        const parsed = parseRow(raw, index + 2);
         if (parsed.step <= lastStep) {
             throw new Error(
                 `Scenario line ${parsed.lineNumber}: tx values must be strictly increasing`,
@@ -418,8 +441,42 @@ export function parseScenarioText(text: string): ScenarioRow[] {
     });
 }
 
-export function loadScenario(path: string): ScenarioRow[] {
-    return parseScenarioText(readFileSync(path, "utf8"));
+export function loadScenario(filePath: string): ScenarioRow[] {
+    return parseScenarioText(readFileSync(filePath, "utf8"));
+}
+
+export function validateCompleteScenario(rows: readonly ScenarioRow[]): void {
+    if (rows.length !== EXPECTED_ACTION_SEQUENCE.length) {
+        throw new Error(
+            `scenario must contain exactly ${EXPECTED_ACTION_SEQUENCE.length} steps, got ${rows.length}`,
+        );
+    }
+    rows.forEach((row, index) => {
+        if (row.step !== index + 1) {
+            throw new Error(`scenario step ${index + 1} must use tx ${index + 1}, got ${row.step}`);
+        }
+        if (row.action !== EXPECTED_ACTION_SEQUENCE[index]) {
+            throw new Error(
+                `scenario step ${index + 1} must be ${EXPECTED_ACTION_SEQUENCE[index]}, got ${row.action}`,
+            );
+        }
+    });
+    const settledRedemptionModes = rows
+        .filter((row): row is Extract<ScenarioRow, { action: "redeem_settled" }> =>
+            row.action === "redeem_settled",
+        )
+        .map((row) => row.permissionless);
+    if (
+        settledRedemptionModes.length !== EXPECTED_SETTLED_REDEMPTION_MODES.length ||
+        settledRedemptionModes.some(
+            (permissionless, index) =>
+                permissionless !== EXPECTED_SETTLED_REDEMPTION_MODES[index],
+        )
+    ) {
+        throw new Error(
+            "scenario settled redemptions must be owner/permissionless/owner/permissionless",
+        );
+    }
 }
 
 export function readJson<T>(filePath: string): T {

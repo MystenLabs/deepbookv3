@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from sim_artifacts import load_local_trace, normalized_action, write_json
+from sim_artifacts import load_local_trace, write_json
 
 
 RESULTS_SCHEMA_VERSION = "results_v3"
@@ -47,11 +47,10 @@ def build_results(trace: dict[str, Any]) -> dict[str, Any]:
     by_action: dict[str, list[dict[str, float]]] = defaultdict(list)
 
     for step in trace["steps"]:
-        action = normalized_action(step["action"])
-        by_action[action].append(execution_result(step))
+        by_action[step["action"]].append(execution_result(step))
 
     mints = by_action.get("mint", [])
-    supplies = by_action.get("supply", [])
+    supplies = by_action.get("request_supply", [])
 
     return {
         "schema_version": RESULTS_SCHEMA_VERSION,
