@@ -20,6 +20,7 @@ const ELazerValueUnavailable: u64 = 4;
 const EInsertTimestampNotExactMillisecond: u64 = 5;
 const EFeedTimestampAfterEnvelope: u64 = 6;
 const ESettlementCarryExceedsWindow: u64 = 7;
+const EUnderlyingAlreadyAssigned: u64 = 8;
 
 /// Source-native Pyth Lazer spot fields, including the microsecond time at which Pyth generated this price.
 /// The lane adds Propbook's millisecond ordering key and on-chain recording time around this payload.
@@ -36,6 +37,8 @@ public struct RawSpot has copy, drop, store {
 public struct PythFeed has key {
     id: UID,
     pyth_source_id: u32,
+    /// Assigned by the registry's canonical binding flow; absent before the feed is first bound.
+    propbook_underlying_id: Option<u32>,
     /// Package version this feed runs at; updates require an exact match and
     /// `migrate` advances it forward-only after a package upgrade.
     version: u64,
@@ -132,7 +135,7 @@ public fun update(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock, ctx: 
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_read(&update, clock.timestamp_ms(), ctx);
     let id = feed.id();
-    feed.lane.update(read, id);
+    feed.lane.update(read, feed.propbook_underlying_id, id);
 }
 
 /// Insert an exact Pyth Lazer spot observation keyed by its exact millisecond
@@ -148,7 +151,7 @@ public fun insert_at(feed: &mut PythFeed, update: LazerUpdate, clock: &Clock, ct
     assert!(feed.version == constants::current_version!(), EWrongVersion);
     let read = feed.new_insert_read(&update, clock.timestamp_ms(), ctx);
     let id = feed.id();
-    feed.lane.insert_at(read, id);
+    feed.lane.insert_at(read, feed.propbook_underlying_id, id);
 }
 
 /// Migrate this feed to the running package version (forward-only).
@@ -165,12 +168,26 @@ public(package) fun create_and_share(pyth_source_id: u32, ctx: &mut TxContext): 
     let feed = PythFeed {
         id: object::new(ctx),
         pyth_source_id,
+        propbook_underlying_id: option::none(),
         version: constants::current_version!(),
         lane: oracle_lane::new(ctx),
     };
     let id = feed.id();
     transfer::share_object(feed);
     id
+}
+
+/// Record the canonical underlying selected by the registry. A source wrapper remains assigned to
+/// its first underlying even after it stops being the active feed for that underlying.
+public(package) fun assign_underlying(feed: &mut PythFeed, propbook_underlying_id: u32) {
+    if (feed.propbook_underlying_id.is_some()) {
+        assert!(
+            *feed.propbook_underlying_id.borrow() == propbook_underlying_id,
+            EUnderlyingAlreadyAssigned,
+        );
+    } else {
+        feed.propbook_underlying_id = option::some(propbook_underlying_id);
+    };
 }
 
 // === Private Functions ===
@@ -394,8 +411,8 @@ public fun record_raw_for_testing(
     };
     let id = feed.id();
     if (insert_at) {
-        feed.lane.insert_at(read, id);
+        feed.lane.insert_at(read, feed.propbook_underlying_id, id);
     } else {
-        feed.lane.update(read, id);
+        feed.lane.update(read, feed.propbook_underlying_id, id);
     };
 }

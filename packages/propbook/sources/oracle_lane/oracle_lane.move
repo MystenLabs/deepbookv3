@@ -33,6 +33,8 @@ public struct OracleLane<Payload: copy + drop + store> has store {
 /// Emitted when a feed accepts a source-native observation into its live oracle
 /// state.
 public struct ObservationRecorded<Observation: copy + drop> has copy, drop {
+    /// Canonical Propbook underlying when this source wrapper has been bound.
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
     observation: Observation,
 }
@@ -40,6 +42,8 @@ public struct ObservationRecorded<Observation: copy + drop> has copy, drop {
 /// Emitted when a feed inserts source-native data keyed by exact source
 /// timestamp.
 public struct ObservationInserted<Observation: copy + drop> has copy, drop {
+    /// Canonical Propbook underlying when this source wrapper has been bound.
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
     observation: Observation,
 }
@@ -135,6 +139,7 @@ public(package) fun project_read<FromValue: copy + drop + store, ToValue: copy +
 public(package) fun update<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
     read: OracleRead<Payload>,
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
 ) {
     if (!read.read_has_valid_timestamp()) return;
@@ -144,6 +149,7 @@ public(package) fun update<Payload: copy + drop + store>(
 
     lane.latest = option::some(read);
     event::emit(ObservationRecorded<OracleRead<Payload>> {
+        propbook_underlying_id,
         propbook_oracle_id,
         observation: read,
     });
@@ -154,6 +160,7 @@ public(package) fun update<Payload: copy + drop + store>(
 public(package) fun insert_at<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
     read: OracleRead<Payload>,
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
 ) {
     if (!read.read_has_valid_timestamp()) return;
@@ -161,7 +168,22 @@ public(package) fun insert_at<Payload: copy + drop + store>(
 
     lane.exact_reads.add(read.source_timestamp_ms, read);
     event::emit(ObservationInserted<OracleRead<Payload>> {
+        propbook_underlying_id,
         propbook_oracle_id,
         observation: read,
     });
+}
+
+#[test_only]
+public fun observation_recorded_fields<Observation: copy + drop>(
+    event: &ObservationRecorded<Observation>,
+): (Option<u32>, ID, Observation) {
+    (event.propbook_underlying_id, event.propbook_oracle_id, event.observation)
+}
+
+#[test_only]
+public fun observation_inserted_fields<Observation: copy + drop>(
+    event: &ObservationInserted<Observation>,
+): (Option<u32>, ID, Observation) {
+    (event.propbook_underlying_id, event.propbook_oracle_id, event.observation)
 }

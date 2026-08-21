@@ -299,10 +299,9 @@ public fun quote_mint(
     market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
 }
 
-/// Quote the all-in cost of a mint request for one account, reading the
-/// account's builder code. Budget mode caps premium by total account balance,
-/// including unsettled accumulator funds. Public for SDK and devInspect
-/// pre-trade pricing.
+/// Quote the all-in cost of a mint request for one account, reading its builder
+/// code. Budget mode caps premium by total account balance, including unsettled
+/// accumulator funds. Public for SDK and devInspect pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -630,28 +629,41 @@ public fun set_mint_paused(
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
-/// Settle from Propbook's exact positive normalized Pyth spot at expiry and
-/// materialize terminal payout liability. Permissionless and idempotent; a missing
-/// or non-normalizable observation leaves the market unsettled.
+/// Settle from Propbook's exact positive Pyth spot at expiry, or from the exact Block Scholes
+/// minute-boundary spot when Pyth remains unavailable after the compiled grace period.
+/// Permissionless and idempotent; missing or unusable observations leave the market unsettled.
 public fun try_settle(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
     clock: &Clock,
 ): bool {
     config.assert_version();
     if (market.is_settled()) return true;
-    if (clock.timestamp_ms() < market.expiry) return false;
+    let now = clock.timestamp_ms();
+    if (now < market.expiry) return false;
 
-    let spot = pricing::load_exact_spot(
+    let pyth_spot = pricing::load_exact_spot(
         propbook_registry,
         pyth,
         market.propbook_underlying_id,
         market.expiry,
     );
-    if (spot.is_none()) return false;
-    let settlement_price = spot.destroy_some();
+    let (settlement_price, settlement_source) = if (pyth_spot.is_some()) {
+        (pyth_spot.destroy_some(), constants::settlement_source_pyth!())
+    } else {
+        if (now - market.expiry < constants::settlement_fallback_grace_ms!()) return false;
+        let block_scholes_spot = pricing::load_exact_block_scholes_spot(
+            propbook_registry,
+            bs_values,
+            market.propbook_underlying_id,
+            market.expiry,
+        );
+        if (block_scholes_spot.is_none()) return false;
+        (block_scholes_spot.destroy_some(), constants::settlement_source_block_scholes!())
+    };
     market.strike_exposure.record_settlement(settlement_price);
     // Live-close rebates are no longer reachable after settlement. Release the
     // residual inventory-impact escrow so the settled sweep returns it to LPs.
@@ -661,7 +673,8 @@ public fun try_settle(
         market.propbook_underlying_id,
         market.expiry,
         settlement_price,
-        clock.timestamp_ms(),
+        settlement_source,
+        now,
     );
     true
 }
@@ -810,16 +823,35 @@ fun mint_prepared(
     // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
     let builder_code_id = predict_account::builder_code_id(account);
+    let referrer_account_id = account.referrer_account_id();
+    let referrer_receive_address = account.referrer_receive_address();
     let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+    let referral_fee = if (referrer_receive_address.is_some()) {
+        let referral_fee_basis =
+            quote.trading_fee - quote.fee_incentive_subsidy + quote.penalty_fee;
+        math::mul_down(referral_fee_basis, config.referral_fee_rate())
+    } else {
+        0
+    };
 
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
-    market.settle_mint_payment(account, &minted_order, &quote, builder_code_id, clock, ctx);
+    market.settle_mint_payment(
+        account,
+        &minted_order,
+        &quote,
+        builder_code_id,
+        referrer_receive_address,
+        referral_fee,
+        clock,
+        ctx,
+    );
     order_events::emit_order_minted(
         market.id(),
         account.account_id(),
         account.owner(),
         builder_code_id,
+        referrer_account_id,
         &minted_order,
         pricer,
         quote.entry_probability,
@@ -828,6 +860,7 @@ fun mint_prepared(
         quote.fee_incentive_subsidy,
         quote.builder_fee,
         quote.penalty_fee,
+        referral_fee,
         quote.inventory_impact_charge,
         clock.timestamp_ms(),
     );
@@ -878,20 +911,23 @@ fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
 }
 
 /// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
-/// account, route the builder fee and the subsidized trading fee, and keep the
-/// remainder in expiry cash. The caller owns the all-in `max_cost` guard and the
+/// account, route the builder and referral fees, join the subsidized trading fee,
+/// and keep the remainder in expiry cash. The caller owns the all-in `max_cost` guard and the
 /// quote derivation (`compute_mint_quote`), and passes its single
 /// `builder_code_id` read so the fee amount and the routing destination cannot
-/// come from different reads. The EWMA penalty rides into expiry cash as
-/// surplus and earns no builder cut.
+/// come from different reads. The EWMA penalty, net of the referral split, rides
+/// into expiry cash as surplus and earns no builder cut.
 /// Fee incentives subsidize only the trader-paid portion of the trading fee;
-/// the expiry still collects the full fee amount.
+/// the referral is split before that sponsor balance joins, so incentives do not
+/// fund the referral payment.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     account: &mut Account,
     order: &Order,
     quote: &MintQuote,
     builder_code_id: Option<ID>,
+    referrer_receive_address: Option<address>,
+    referral_fee: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -906,9 +942,11 @@ fun settle_mint_payment(
     let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
-    // The fee, its sponsor-funded subsidy, the premium, the penalty and the
-    // inventory impact all land in the same custody; the impact amount is
-    // earmarked separately once its cash has arrived.
+    let referral_fee_payment = payment.split(referral_fee);
+    send_referral_fee(referrer_receive_address, referral_fee_payment);
+    // The remaining fee, sponsor subsidy, premium, penalty and inventory impact
+    // land in the same custody; the impact amount is earmarked separately once
+    // its cash has arrived.
     payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.cash.receive(payment);
     market.cash.credit_inventory_impact_reserve(quote.inventory_impact_charge);
@@ -1145,6 +1183,14 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     };
     let builder_code_id = builder_code_id.destroy_some();
     balance::send_funds(fee, builder_code_id.to_address());
+}
+
+fun send_referral_fee(referrer_receive_address: Option<address>, fee: Balance<DUSDC>) {
+    if (fee.value() == 0) {
+        fee.destroy_zero();
+        return
+    };
+    balance::send_funds(fee, referrer_receive_address.destroy_some());
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {

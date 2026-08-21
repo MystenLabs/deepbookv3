@@ -34,6 +34,9 @@ public struct ProtocolConfig has key {
     /// Merged protocol + insurance reserve share of materialized terminal profit,
     /// in FLOAT_SCALING. The complement accrues to LPs.
     protocol_reserve_profit_share: u64,
+    /// Portion of a referred mint's trader-paid trading fee and congestion
+    /// surcharge routed to the referrer, in FLOAT_SCALING.
+    referral_fee_rate: u64,
     /// Fee charged on an executed PLP supply fill, in FLOAT_SCALING, deducted from
     /// the DUSDC taken in before shares are priced. Ships at zero — a deposit
     /// dilutes the pool's risk per dollar rather than concentrating it, so it is
@@ -90,6 +93,11 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 /// Return the global protocol-freeze state for SDK and devInspect reads.
 public fun frozen(config: &ProtocolConfig): bool {
     config.frozen
+}
+
+/// Return the live referral fee rate for SDK and devInspect reads.
+public fun referral_fee_rate(config: &ProtocolConfig): u64 {
+    config.referral_fee_rate
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -366,6 +374,14 @@ public fun set_protocol_reserve_profit_share(
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
 
+/// Set the portion of referred mint fees routed to the referrer. The new rate
+/// applies to subsequent mints without changing their all-in account withdrawal.
+public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
+    config.assert_version();
+    config_constants::assert_referral_fee_rate(rate);
+    config.referral_fee_rate = rate;
+}
+
 /// Set the fee charged on executed PLP supply fills. Admin-gated and validated
 /// against its config-constants envelope. Locked during valuation so the rate a
 /// flush froze into its mark cannot change midway through that flush.
@@ -525,6 +541,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
+        referral_fee_rate: config_constants::default_referral_fee_rate!(),
         plp_supply_fee_rate: config_constants::default_plp_supply_fee_rate!(),
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),

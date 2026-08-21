@@ -91,9 +91,10 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Settlement
 
 - **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
-  settlement-price writer. It records the exact normalized Pyth spot at the market's
-  expiry timestamp and exact terminal payout liability atomically; otherwise it
-  returns false without changing the market. Settled consumers read no oracle.
+  settlement-price writer. It records exact Pyth at the market expiry when available, or exact
+  Block Scholes after the 30-second Pyth-exclusive window, and exact terminal payout liability
+  atomically; otherwise it returns false without changing the market. Settled consumers read no
+  oracle.
 - A settled order pays its full `quantity` if the settlement price is in
   `(lower, higher]`, else 0 (`strike_exposure::process_settled_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw
@@ -141,6 +142,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
   min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
+- On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-impact charges are excluded. The DUSDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
   `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the DUSDC leg
   **outside** the mark and retained by the pool, so it accrues to remaining

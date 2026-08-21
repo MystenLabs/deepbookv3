@@ -29,6 +29,7 @@ const EInvalidMaxLpPoolValue: u64 = 18;
 const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
+const EInvalidReferralFeeRate: u64 = 22;
 
 // === Fees ===
 
@@ -47,6 +48,21 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
         value >= min_protocol_reserve_profit_share!()
             && value <= max_protocol_reserve_profit_share!(),
         EInvalidProtocolReserveProfitShare,
+    );
+}
+
+/// Portion of each referred mint's trader-paid trading fee and congestion
+/// surcharge routed to the referrer, in FLOAT_SCALING.
+public(package) macro fun default_referral_fee_rate(): u64 { 100_000_000 }
+
+public(package) macro fun min_referral_fee_rate(): u64 { 0 }
+
+public(package) macro fun max_referral_fee_rate(): u64 { 250_000_000 }
+
+public(package) fun assert_referral_fee_rate(value: u64) {
+    assert!(
+        value >= min_referral_fee_rate!() && value <= max_referral_fee_rate!(),
+        EInvalidReferralFeeRate,
     );
 }
 

@@ -422,7 +422,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 ## Explicit exact-timestamp settlement (recent)
 
 - **Settlement is one public permissionless transition.** `expiry_market::try_settle`
-  consumes pricing's canonical exact-history read and calls
+  consumes pricing's canonical exact-history selection and calls
   `StrikeExposure::record_settlement`, which stores the terminal price and exact
   remaining payout liability together. The exposure's settlement-price option is
   the phase discriminator; settled redeem, pool rebalance, and valuation
@@ -430,12 +430,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   when needed. *Rationale:* one writer makes the market phase transition atomic,
   keeps price and book liability under one owner, and removes oracle ingress from
   every later settled consumer. *Rejected:* implicit settlement inside each consumer.
+- **Pyth is exclusive for 30 seconds, then Block Scholes is an exact fallback.** Every settlement attempt reads exact Pyth first. At or after `expiry + 30_000`, Pyth absence permits the exact Block Scholes spot at the same timestamp; missing, zero, or over-wide fallback values return false. After the grace boundary the first successful transaction is final, so Block Scholes may win before a Pyth row that lands later; `MarketSettled` records the source. *Rationale:* the second independent exact source bounds the former Pyth-only permanent flush brick without admitting latest, nearest, interpolated, or administrative prices. *Rejected:* an admin settlement lever and approximate boundary lookup.
 - **Expired-unsettled cash maintenance is a no-op.** A standalone rebalance after
   expiry moves no cash until `try_settle` succeeds; valuation still aborts through
   live-pricing expiry. *Rationale:* live cash targets have no purpose after expiry,
   while an unsettled market has no exact terminal liability from which to sweep.
-- **Accepted consequence: exact-data liveness.** If the exact Pyth timestamp is
-  missing after expiry, the market remains unsettled and live valuation aborts.
+- **Accepted consequence: exact-data liveness.** If both exact sources are missing
+  after expiry, the market remains unsettled and live valuation aborts.
   *Rationale:* there is no solvency-safe NAV for a past-expiry-but-unsettled market —
   the single flush mark needs a true value that is settlement-dependent and undefined
   until the exact timestamp spot exists. Substituting contribute-0 dilutes incumbents
@@ -546,9 +547,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   directly. *Rationale:* off-chain calibration work reports the Block Scholes
   forward as the more accurate input (not yet recorded under
   `predeploy/evidence/` — treat it as a working result, not a measured one), but
-  two facts block adopting it outright — settlement prices off Pyth, not off the
-  Block Scholes spot, so pricing off Block Scholes alone splits the live mark
-  from the settlement source; and the Pyth spot's freshness advantage over the
+  two facts block adopting it outright — settlement is Pyth-exclusive for 30 seconds and
+  Pyth-preferred afterward but can finish from Block Scholes, so either live source can differ
+  from the terminal source; and the Pyth spot's freshness advantage over the
   Block Scholes forward has never been measured against that accuracy gap. Colocation and other latency work can move that
   comparison, so the choice has to stay reversible from data rather than be
   frozen by a package upgrade. This does not supersede the Pyth-stale fallback
@@ -627,3 +628,10 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 - **`MarketCreated` no longer carries `trading_loss_rebate_rate`, `max_benefit_ratio`, or the two `*_benefit_power` thresholds.** The market policy snapshot keeps the strike-exposure terms only. Off-chain consumers of those four fields must be updated with this change.
 
 `predeploy/response-policies.md` RP-11 is retired by this removal; the register carries the retirement note.
+
+## Mint referral fee distribution (2026-08-21)
+
+- **Referral rewards redistribute protocol proceeds without changing mint quotes.** A referred mint sends `referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee)`, rounded down, to the referring Account. Builder fees remain an add-on owned by the builder, while inventory-impact charges remain isolated escrow; neither enters the referral basis. `MintQuote` remains the trader-payment decomposition because referral distribution does not change `all_in_cost`.
+- **The referral rate is live protocol config.** `ProtocolConfig.referral_fee_rate` defaults to 10%, accepts 0% through 25%, and is read on every mint. Accounts and expiry markets do not snapshot it, so an admin update applies to subsequent mints protocol-wide.
+- **Account stores identity and payment routing separately.** Referral creation snapshots the existing referrer's canonical Account ID for attribution and its outer wrapper receive address for `balance::send_funds`. The relation is immutable, direct, and one level. A newly created Account cannot refer to itself because its referrer must already exist and the registry permits one canonical Account per owner; common beneficial ownership across distinct owner addresses is not checked.
+- **Mint events preserve attribution when payment is zero.** `OrderMinted` reports the calculated referral amount and the stored canonical referrer Account ID independently, so a zero rate or rounded-zero amount does not erase the referral relation from the event stream.

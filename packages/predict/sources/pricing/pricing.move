@@ -16,7 +16,7 @@ use fixed_math::{i64::{Self, I64}, math};
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore, SVIParams},
     pyth_feed::PythFeed,
-    registry::OracleRegistry
+    registry::{BlockScholesStorePair, OracleRegistry}
 };
 use sui::clock::Clock;
 
@@ -226,6 +226,28 @@ public(package) fun load_exact_spot(
     }
 }
 
+/// Validate the canonical Block Scholes value-store binding and read its exact spot at
+/// `source_timestamp_ms`. Missing, zero, and values outside Predict's settlement width remain
+/// unavailable so the permissionless settlement flow can retry without aborting.
+public(package) fun load_exact_block_scholes_spot(
+    propbook_registry: &OracleRegistry,
+    bs_values: &BlockScholesValueStore,
+    propbook_underlying_id: u32,
+    source_timestamp_ms: u64,
+): Option<u64> {
+    let binding = current_block_scholes_binding(propbook_registry, propbook_underlying_id);
+    assert!(
+        binding.block_scholes_value_store_id() == bs_values.value_store_id(),
+        EWrongBlockScholesValueStore,
+    );
+    let read = bs_values.spot_at(source_timestamp_ms);
+    if (read.is_none()) return option::none();
+
+    let value = read.destroy_some().read_value();
+    if (value == 0 || value > (std::u64::max_value!() as u128)) return option::none();
+    option::some(value as u64)
+}
+
 // === Private Functions ===
 
 /// Validate all supplied feed objects against Propbook's canonical bindings.
@@ -237,15 +259,10 @@ fun assert_current_oracles(
     bs_svi: &BlockScholesSVIStore,
 ) {
     assert_current_pyth(propbook_registry, propbook_underlying_id, pyth);
-    let block_scholes_binding = propbook_registry.propbook_block_scholes_store_pair_for_underlying(
+    let block_scholes_binding = current_block_scholes_binding(
+        propbook_registry,
         propbook_underlying_id,
     );
-    // Unreachable for a live market: creation requires the binding
-    // (`market_manager::next_deployable_market`) and Propbook never removes one.
-    // The unwrap needs a code regardless, so it shares the store-mismatch one
-    // rather than spending a second on a branch nothing reaches.
-    assert!(block_scholes_binding.is_some(), EWrongBlockScholesValueStore);
-    let block_scholes_binding = block_scholes_binding.destroy_some();
     assert!(
         block_scholes_binding.block_scholes_value_store_id() == bs_values.value_store_id(),
         EWrongBlockScholesValueStore,
@@ -254,6 +271,19 @@ fun assert_current_oracles(
         block_scholes_binding.block_scholes_svi_store_id() == bs_svi.svi_store_id(),
         EWrongBlockScholesSVIStore,
     );
+}
+
+fun current_block_scholes_binding(
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+): BlockScholesStorePair {
+    let binding = propbook_registry.propbook_block_scholes_store_pair_for_underlying(
+        propbook_underlying_id,
+    );
+    // Unreachable for a market: creation requires the binding and Propbook never removes it. The
+    // unwrap still needs a code, so it shares the value-store mismatch used by both callers.
+    assert!(binding.is_some(), EWrongBlockScholesValueStore);
+    binding.destroy_some()
 }
 
 fun assert_current_pyth(

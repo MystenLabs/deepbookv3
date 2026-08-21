@@ -271,10 +271,12 @@ public fun create_and_share_block_scholes_stores(
         EInvalidBlockScholesBaseAsset,
     );
     let value_store_id = block_scholes_store::create_and_share_value_store(
+        propbook_underlying_id,
         copy block_scholes_base_asset,
         ctx,
     );
     let svi_store_id = block_scholes_store::create_and_share_svi_store(
+        propbook_underlying_id,
         copy block_scholes_base_asset,
         ctx,
     );
@@ -297,7 +299,7 @@ public fun create_and_share_block_scholes_stores(
 public fun bind_pyth_to_underlying(
     registry: &mut OracleRegistry,
     admin_cap: &RegistryAdminCap,
-    feed: &PythFeed,
+    feed: &mut PythFeed,
     propbook_underlying_id: u32,
 ) {
     registry.bind_oracle(
@@ -306,6 +308,7 @@ public fun bind_pyth_to_underlying(
         pyth_feed::id(feed),
         pyth_binding_key(propbook_underlying_id),
     );
+    feed.assign_underlying(propbook_underlying_id);
 }
 
 /// Admin-replace the canonical Pyth source feed for a Propbook underlying.
@@ -316,7 +319,7 @@ public fun bind_pyth_to_underlying(
 public fun replace_pyth_binding_for_underlying(
     registry: &mut OracleRegistry,
     admin_cap: &RegistryAdminCap,
-    feed: &PythFeed,
+    feed: &mut PythFeed,
     propbook_underlying_id: u32,
 ) {
     registry.replace_oracle(
@@ -325,6 +328,7 @@ public fun replace_pyth_binding_for_underlying(
         pyth_feed::id(feed),
         pyth_binding_key(propbook_underlying_id),
     );
+    feed.assign_underlying(propbook_underlying_id);
 }
 
 // === Public-Package Functions ===

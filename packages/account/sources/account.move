@@ -41,7 +41,7 @@ public struct AccountWrapper has key {
     account: Account,
 }
 
-/// Account state and custody; `account_id` is the canonical identity and app-data root, while `receive_address` is the wrapper address used for accumulator delivery.
+/// Account state and custody; `account_id` is the canonical identity and app-data root, while receive addresses are wrapper addresses used for accumulator delivery.
 public struct Account has store {
     /// Dynamic-field parent for account-owned application data.
     account_id: UID,
@@ -55,6 +55,8 @@ public struct Account has store {
     settlements: Bag,
     /// Canonical account ID supplied at referral-based creation, if any.
     referrer_account_id: Option<ID>,
+    /// Referrer's wrapper address for accumulator delivery, if any.
+    referrer_receive_address: Option<address>,
 }
 
 /// Dynamic-field key for one app's per-account data slot. The phantom `App` is the
@@ -101,6 +103,11 @@ public fun account_id(self: &Account): ID {
 /// Returns the canonical referrer account ID recorded at creation for external Move composition.
 public fun referrer_account_id(self: &Account): Option<ID> {
     self.referrer_account_id
+}
+
+/// Returns the referrer's accumulator receive address for external Move composition.
+public fun referrer_receive_address(self: &Account): Option<address> {
+    self.referrer_receive_address
 }
 
 /// Returns the accumulator receive address for this account (the wrapper address).
@@ -243,6 +250,7 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
     account_key: AccountKey,
     owner: address,
     referrer_account_id: Option<ID>,
+    referrer_receive_address: Option<address>,
     ctx: &mut TxContext,
 ): AccountWrapper {
     let id = derived_object::claim(parent, wrapper_key);
@@ -255,6 +263,7 @@ public(package) fun new_derived<WrapperKey: copy + drop + store, AccountKey: cop
             balances: bag::new(ctx),
             settlements: bag::new(ctx),
             referrer_account_id,
+            referrer_receive_address,
         },
         id,
     }

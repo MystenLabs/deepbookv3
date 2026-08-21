@@ -4,7 +4,8 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate).
+/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate) and the
+/// live protocol-wide referral fee rate.
 /// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
@@ -245,6 +246,37 @@ fun inventory_impact_rate_and_scale_snapshot_at_creation() {
     assert_eq!(helpers::market(&market).inventory_impact_max_rate(), rate);
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+// === Referral fee rate ===
+//
+// The floor is 0, so there is no reachable below-min case for a `u64`.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidReferralFeeRate)]
+fun referral_fee_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, _clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_referral_fee_rate(&admin_cap, config_constants::max_referral_fee_rate!() + 1);
+    abort 999
+}
+
+#[test]
+fun referral_fee_rate_ships_at_ten_percent_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    assert_eq!(config.referral_fee_rate(), 100_000_000);
+
+    config.set_referral_fee_rate(&admin_cap, config_constants::min_referral_fee_rate!());
+    assert_eq!(config.referral_fee_rate(), 0);
+
+    config.set_referral_fee_rate(&admin_cap, config_constants::max_referral_fee_rate!());
+    assert_eq!(config.referral_fee_rate(), 250_000_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
 }
 
 // === PLP supply/withdraw fee ===

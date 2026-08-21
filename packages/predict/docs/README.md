@@ -12,7 +12,7 @@ contain transaction recipes or a function-by-function API reference.
 > (`raw_strike = tick × tick_size`); the LP layer is **asynchronous** — supply
 > and withdraw are queued and settled by a **privileged periodic flush** that
 > marks the whole pool at one **exact** NAV; and **terminal settlement is
-> passive**, using Propbook's exact Pyth timestamp history when a normal redeem
+> passive**, preferring Propbook's exact Pyth history and permitting exact Block Scholes after a 30-second grace period when a normal redeem
 > or pool-rebalance flow first needs the settled branch. Where a behaviour is
 > still changing, the docs describe it at the conceptual level and point to the
 > configuration that governs it rather than to specific values that may drift.

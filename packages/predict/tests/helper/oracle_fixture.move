@@ -219,11 +219,11 @@ public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): O
 
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::replace_pyth_binding_for_underlying(
         &mut oracle_registry,
         &self.propbook_admin_cap,
-        &pyth,
+        &mut pyth,
         test_constants::propbook_underlying_id(),
     );
     return_shared(pyth);

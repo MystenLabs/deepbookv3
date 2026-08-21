@@ -4,12 +4,20 @@
 #[test_only]
 module propbook::pyth_feed_tests;
 
-use propbook::{constants, pyth_feed::{Self, PythFeed}, registry::{Self, OracleRegistry}};
-use std::unit_test::assert_eq;
-use sui::test_scenario::{Self as test, Scenario, return_shared};
+use propbook::{
+    constants,
+    oracle_lane::{Self, OracleRead},
+    pyth_feed::{Self, PythFeed, RawSpot},
+    registry::{Self, OracleRegistry, RegistryAdminCap}
+};
+use std::unit_test::{assert_eq, destroy};
+use sui::{event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
+const BTC_UNDERLYING_ID: u32 = 1;
+const ETH_UNDERLYING_ID: u32 = 2;
 const BTC_SOURCE_ID: u32 = 1;
+const BTC_REPLACEMENT_SOURCE_ID: u32 = 2;
 const UNKNOWN_SOURCE_ID: u32 = 999;
 const SPOT_65K: u64 = 65_000_000_000_000;
 const BTC_PYTH_MAGNITUDE: u64 = 6_500_012_345_678;
@@ -66,6 +74,150 @@ fun registry_records_created_pyth_source() {
 
     return_shared(registry);
     scenario.end();
+}
+
+#[test]
+fun bound_feed_observation_events_include_the_underlying() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &mut feed, BTC_UNDERLYING_ID);
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    insert_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_2_US,
+        UPDATE_2_MS,
+    );
+
+    let recorded = event::events_by_type<oracle_lane::ObservationRecorded<OracleRead<RawSpot>>>();
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(&recorded[0]);
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, feed_obj_id);
+
+    let inserted = event::events_by_type<oracle_lane::ObservationInserted<OracleRead<RawSpot>>>();
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_inserted_fields(&inserted[0]);
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, feed_obj_id);
+
+    return_shared(feed);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun unbound_feed_observation_event_has_no_underlying() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+
+    let recorded = event::events_by_type<oracle_lane::ObservationRecorded<OracleRead<RawSpot>>>();
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(&recorded[0]);
+    assert!(underlying_id.is_none());
+    assert_eq!(oracle_id, feed_obj_id);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun replacement_and_replaced_feed_observations_keep_the_underlying() {
+    let (mut scenario, replaced_feed_id) = setup_feed();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let replacement_feed_id = registry::create_and_share_pyth_feed(
+        &mut registry,
+        BTC_REPLACEMENT_SOURCE_ID,
+        scenario.ctx(),
+    );
+    return_shared(registry);
+    scenario.next_tx(ADMIN);
+
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let mut replaced_feed = scenario.take_shared_by_id<PythFeed>(replaced_feed_id);
+    let mut replacement_feed = scenario.take_shared_by_id<PythFeed>(replacement_feed_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &mut replaced_feed, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(
+        &admin_cap,
+        &mut replacement_feed,
+        BTC_UNDERLYING_ID,
+    );
+    store_raw(
+        &mut replaced_feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    store_raw(
+        &mut replacement_feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_2_US,
+        UPDATE_2_MS,
+    );
+
+    let mut recorded = event::events_by_type<
+        oracle_lane::ObservationRecorded<OracleRead<RawSpot>>,
+    >();
+    let replacement_event = recorded.pop_back();
+    let replaced_event = recorded.pop_back();
+    assert!(recorded.is_empty());
+
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(&replaced_event);
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, replaced_feed_id);
+
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(
+        &replacement_event,
+    );
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, replacement_feed_id);
+
+    return_shared(replacement_feed);
+    return_shared(replaced_feed);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EUnderlyingAlreadyAssigned)]
+fun assigning_feed_to_a_different_underlying_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.assign_underlying(BTC_UNDERLYING_ID);
+    feed.assign_underlying(ETH_UNDERLYING_ID);
+
+    abort 999
 }
 
 #[test, expected_failure(abort_code = registry::ESourceAlreadyExists)]
