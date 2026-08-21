@@ -6,10 +6,10 @@ use sui_pg_db::{Db, DbArgs};
 use url::Url;
 
 const POOL_ID: &str = "pool-1";
-// 2023-11-05 00:00:00 UTC crosses the America/Detroit daylight-saving transition.
-const DAY_START_MS: i64 = 1_699_142_400_000;
+// 2023-11-05 is a 25-hour day in America/Detroit.
+const DAY_START_MS: i64 = 1_699_156_800_000;
+const NEXT_DAY_START_MS: i64 = 1_699_246_800_000;
 const MINUTE_MS: i64 = 60_000;
-const DAY_MS: i64 = 86_400_000;
 
 #[derive(Debug, PartialEq, QueryableByName)]
 struct CandleAggregate {
@@ -231,7 +231,7 @@ async fn partial_minute_refresh_recomputes_the_complete_bucket() {
 
     call_materializer(&db, "update_ohclv_1m", DAY_START_MS, next_minute_ms - 1).await;
     let bucket_predicate = format!(
-        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')"
     );
     corrupt_candle(&db, "ohclv_1m", &bucket_predicate).await;
     call_materializer(&db, "update_ohclv_1m", last_ms, last_ms).await;
@@ -250,14 +250,14 @@ async fn partial_daily_refresh_recomputes_the_complete_bucket() {
     let (_temp_db, db) = setup().await;
     let first_ms = DAY_START_MS + 5 * MINUTE_MS;
     let last_ms = DAY_START_MS + 23 * 60 * MINUTE_MS;
-    let next_day_ms = DAY_START_MS + DAY_MS;
+    let next_day_ms = NEXT_DAY_START_MS;
     insert_fill(&db, "day-first", first_ms, 10, 2).await;
     insert_fill(&db, "day-last", last_ms, 12, 3).await;
     insert_fill(&db, "day-boundary", next_day_ms, 20, 7).await;
 
     call_materializer(&db, "update_ohclv_1d", DAY_START_MS, next_day_ms - 1).await;
     let bucket_predicate = format!(
-        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')::DATE"
     );
     corrupt_candle(&db, "ohclv_1d", &bucket_predicate).await;
     call_materializer(&db, "update_ohclv_1d", last_ms, last_ms).await;
@@ -281,10 +281,10 @@ async fn stale_refresh_does_not_replace_a_newer_materialization() {
     insert_fill(&db, "stale-last", snapshot_last_ms, 12, 3).await;
 
     let minute_predicate = format!(
-        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')"
     );
     let daily_predicate = format!(
-        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'America/Detroit')::DATE"
     );
     call_materializer(&db, "update_ohclv_1m", first_ms, snapshot_last_ms).await;
     call_materializer(&db, "update_ohclv_1d", first_ms, snapshot_last_ms).await;

@@ -4,8 +4,6 @@ CREATE OR REPLACE PROCEDURE update_ohclv_1m(
 )
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    bucket_width_ms CONSTANT BIGINT := 60000;
 BEGIN
     -- Default to last 24 hours if no range specified
     IF start_timestamp IS NULL THEN
@@ -17,8 +15,12 @@ BEGIN
     END IF;
 
     -- The requested range selects buckets to refresh. Read every selected bucket in full.
-    start_timestamp := (start_timestamp / bucket_width_ms) * bucket_width_ms;
-    end_timestamp := ((end_timestamp / bucket_width_ms) + 1) * bucket_width_ms;
+    start_timestamp := (
+        EXTRACT(EPOCH FROM date_trunc('minute', to_timestamp(start_timestamp / 1000.0))) * 1000
+    )::BIGINT;
+    end_timestamp := (
+        EXTRACT(EPOCH FROM date_trunc('minute', to_timestamp(end_timestamp / 1000.0)) + INTERVAL '1 minute') * 1000
+    )::BIGINT;
 
     INSERT INTO ohclv_1m (
         pool_id,
@@ -35,29 +37,29 @@ BEGIN
     )
     SELECT DISTINCT ON (pool_id, bucket_time)
         f.pool_id,
-        date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC') as bucket_time,
+        date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0)) as bucket_time,
         FIRST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
                   ORDER BY f.checkpoint_timestamp_ms
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as open,
         MAX(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as high,
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as high,
         MIN(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as low,
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as low,
         LAST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
                   ORDER BY f.checkpoint_timestamp_ms
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as close,
         SUM(f.base_quantity::numeric / POWER(10, p.base_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as base_volume,
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as base_volume,
         SUM(f.quote_quantity::numeric / POWER(10, p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as quote_volume,
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as quote_volume,
         COUNT(*)
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as trade_count,
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as trade_count,
         MIN(f.checkpoint_timestamp_ms)
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as first_trade_timestamp,
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as first_trade_timestamp,
         MAX(f.checkpoint_timestamp_ms)
-            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as last_trade_timestamp
+            OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as last_trade_timestamp
     FROM order_fills f
     INNER JOIN pools p ON f.pool_id = p.pool_id
     WHERE f.checkpoint_timestamp_ms >= start_timestamp
@@ -87,8 +89,6 @@ CREATE OR REPLACE PROCEDURE update_ohclv_1d(
 )
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    bucket_width_ms CONSTANT BIGINT := 86400000;
 BEGIN
     -- Default to last 7 days if no range specified
     IF start_timestamp IS NULL THEN
@@ -100,8 +100,12 @@ BEGIN
     END IF;
 
     -- The requested range selects buckets to refresh. Read every selected bucket in full.
-    start_timestamp := (start_timestamp / bucket_width_ms) * bucket_width_ms;
-    end_timestamp := ((end_timestamp / bucket_width_ms) + 1) * bucket_width_ms;
+    start_timestamp := (
+        EXTRACT(EPOCH FROM date_trunc('day', to_timestamp(start_timestamp / 1000.0))) * 1000
+    )::BIGINT;
+    end_timestamp := (
+        EXTRACT(EPOCH FROM date_trunc('day', to_timestamp(end_timestamp / 1000.0)) + INTERVAL '1 day') * 1000
+    )::BIGINT;
 
     INSERT INTO ohclv_1d (
         pool_id,
@@ -118,29 +122,29 @@ BEGIN
     )
     SELECT DISTINCT ON (pool_id, bucket_time)
         f.pool_id,
-        date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')::DATE as bucket_time,
+        date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))::DATE as bucket_time,
         FIRST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
                   ORDER BY f.checkpoint_timestamp_ms
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as open,
         MAX(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as high,
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as high,
         MIN(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as low,
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as low,
         LAST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
                   ORDER BY f.checkpoint_timestamp_ms
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as close,
         SUM(f.base_quantity::numeric / POWER(10, p.base_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as base_volume,
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as base_volume,
         SUM(f.quote_quantity::numeric / POWER(10, p.quote_asset_decimals))
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as quote_volume,
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as quote_volume,
         COUNT(*)
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as trade_count,
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as trade_count,
         MIN(f.checkpoint_timestamp_ms)
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as first_trade_timestamp,
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as first_trade_timestamp,
         MAX(f.checkpoint_timestamp_ms)
-            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0) AT TIME ZONE 'UTC')) as last_trade_timestamp
+            OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as last_trade_timestamp
     FROM order_fills f
     INNER JOIN pools p ON f.pool_id = p.pool_id
     WHERE f.checkpoint_timestamp_ms >= start_timestamp
