@@ -142,7 +142,10 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
             const ref = aliases.orderRefs.get(id) ?? (row.action === "redeem_live" ? row.orderRef : null);
             if (!ref) throw new Error(`LiveOrderRedeemed ${id} has no scenario alias`);
             const replacement = optionDecimal(value.replacement_order_id);
-            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: row.action === "redeem_live" ? row.replacementOrderRef : null, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_rebate: decimal(value.inventory_impact_rebate), redeemed_at_ms: decimal(value.redeemed_at_ms), ...sourceTimestamps(value) });
+            const replacementRef = replacement !== null && row.action === "redeem_live"
+                ? row.replacementOrderRef ?? row.orderRef
+                : null;
+            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: replacementRef, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_rebate: decimal(value.inventory_impact_rebate), redeemed_at_ms: decimal(value.redeemed_at_ms), ...sourceTimestamps(value) });
         } else if (name === "SupplyRequested") {
             updates.push({ type: "supply_requested", lp_ref: row.action === "request_supply" ? row.lpRef : "", index: decimal(value.index), amount: decimal(value.amount), min_output: decimal(value.min_plp_out), requests_pending_after: decimal(value.requests_pending_after) });
         } else if (name === "WithdrawRequested") {

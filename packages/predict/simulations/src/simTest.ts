@@ -31,19 +31,22 @@ test("scenario parser accepts every current explicit action", () => {
     const text = [
         SCENARIO_COLUMNS.join(","),
         csvRow(1, "mint", { ...oracle, strike: "75000000000000", is_up: "true", quantity: "20000", order_ref: "o1" }),
-        csvRow(2, "redeem_live", { ...oracle, order_ref: "o1", close_quantity: "10000", replacement_order_ref: "o2" }),
+        csvRow(2, "redeem_live", { ...oracle, order_ref: "o1", close_quantity: "10000" }),
         csvRow(3, "request_supply", { amount: "100", min_output: "0", lp_ref: "s1" }),
         csvRow(4, "request_withdraw", { shares: "100", min_output: "0", lp_ref: "w1" }),
         csvRow(5, "flush", oracle),
         csvRow(6, "rebalance_expiry_cash"),
         csvRow(7, "settle", { settlement_price: "75000000000000" }),
-        csvRow(8, "redeem_settled", { order_ref: "o2", permissionless: "true" }),
+        csvRow(8, "redeem_settled", { order_ref: "o1", permissionless: "true" }),
     ].join("\n");
 
+    const rows = parseScenarioText(text);
     assert.deepEqual(
-        parseScenarioText(text).map((row) => row.action),
+        rows.map((row) => row.action),
         ["mint", "redeem_live", "request_supply", "request_withdraw", "flush", "rebalance_expiry_cash", "settle", "redeem_settled"],
     );
+    assert.equal(rows[1].action, "redeem_live");
+    if (rows[1].action === "redeem_live") assert.equal(rows[1].replacementOrderRef, null);
 });
 
 test("scenario parser rejects removed leverage-era actions", () => {

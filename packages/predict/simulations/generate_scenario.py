@@ -46,6 +46,19 @@ DATA_DIR = Path(__file__).with_name("data")
 SCENARIO_CONFIG = DATA_DIR / "scenario_config.json"
 GENERATED_DIR = DATA_DIR / "generated"
 DEFAULT_RISK_FREE_RATE = 35_000_000
+SOURCE_COLUMNS = [
+    "spot",
+    "forward",
+    "a",
+    "b",
+    "rho",
+    "rho_negative",
+    "m",
+    "m_negative",
+    "sigma",
+    "svi_checkpoint_timestamp_ms",
+    "price_checkpoint_timestamp_ms",
+]
 
 
 class GenerationError(RuntimeError):
@@ -183,12 +196,44 @@ class Generator:
             order_ref=order_ref,
         )
 
+    def settlement_mint_row(
+        self,
+        step: int,
+        order_ref: str,
+        *,
+        winner: bool,
+        settlement_price: int,
+    ) -> dict[str, str]:
+        snapshot = self.snapshot(step)
+        forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
+        for _ in range(32):
+            offset_bps = self.rng.randint(-1_500, 1_500)
+            strike = replay.align_strike_to_tick(
+                forward * (10_000 + offset_bps) // 10_000
+            )
+            settlement_at_or_above = settlement_price >= strike
+            is_up = winner == settlement_at_or_above
+            lower, higher = replay.binary_range_bounds(strike, is_up)
+            probability = replay.compute_range_price(
+                svi_for_replay(snapshot), forward, lower, higher
+            )
+            if replay.MIN_ENTRY_PROBABILITY <= probability <= replay.MAX_ENTRY_PROBABILITY:
+                return self.mint_row(
+                    step,
+                    order_ref,
+                    is_up,
+                    strike=strike,
+                )
+        outcome = "winner" if winner else "loser"
+        raise GenerationError(
+            f"could not sample an admissible settlement {outcome} for step {step}"
+        )
+
     def generate(self) -> list[dict[str, str]]:
         generation = self.config["generation"]
         if generation["rows"] != 20:
             raise GenerationError("current parity scenario requires generation.rows=20")
         settlement_price = int(self.config["source"]["settlement_price"])
-        settlement_strike = replay.align_strike_to_tick(settlement_price * 105 // 100)
 
         rows = [
             self.mint_row(1, "o_up_partial", True),
@@ -209,7 +254,6 @@ class Generator:
                     **oracle_fields(self.snapshot(3)),
                     order_ref="o_up_partial",
                     close_quantity=partial_quantity,
-                    replacement_order_ref="o_up_remainder",
                 ),
                 scenario_row(
                     4,
@@ -236,13 +280,23 @@ class Generator:
                     close_quantity=self.order_quantities["o_round_trip"],
                 ),
                 scenario_row(10, "rebalance_expiry_cash"),
-                self.mint_row(11, "o_settle_winner", False, strike=settlement_strike),
-                self.mint_row(12, "o_settle_loser", True, strike=settlement_strike),
+                self.settlement_mint_row(
+                    11,
+                    "o_settle_winner",
+                    winner=True,
+                    settlement_price=settlement_price,
+                ),
+                self.settlement_mint_row(
+                    12,
+                    "o_settle_loser",
+                    winner=False,
+                    settlement_price=settlement_price,
+                ),
                 scenario_row(13, "settle", settlement_price=settlement_price),
                 scenario_row(
                     14,
                     "redeem_settled",
-                    order_ref="o_up_remainder",
+                    order_ref="o_up_partial",
                     permissionless=False,
                 ),
                 scenario_row(
@@ -277,24 +331,47 @@ class Generator:
         return rows
 
 
+def source_bool(raw: dict[str, str], column: str, row_number: int) -> bool:
+    value = raw[column]
+    if value not in {"true", "false"}:
+        raise GenerationError(
+            f"source dataset row {row_number} has invalid {column}: {value!r}"
+        )
+    return value == "true"
+
+
 def read_snapshots(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     with path.open(newline="") as file:
-        rows = [
-            {
-                "spot": int(raw["spot"]),
-                "forward": int(raw["forward"]),
-                "a": int(raw["a"]),
-                "b": int(raw["b"]),
-                "rho": int(raw["rho"]),
-                "rho_negative": raw["rho_negative"] == "true",
-                "m": int(raw["m"]),
-                "m_negative": raw["m_negative"] == "true",
-                "sigma": int(raw["sigma"]),
-                "svi_checkpoint_timestamp_ms": int(raw["svi_checkpoint_timestamp_ms"]),
-                "price_checkpoint_timestamp_ms": int(raw["price_checkpoint_timestamp_ms"]),
-            }
-            for raw in csv.DictReader(file)
-        ]
+        reader = csv.DictReader(file)
+        if reader.fieldnames != SOURCE_COLUMNS:
+            raise GenerationError(
+                f"source dataset header must be exactly {','.join(SOURCE_COLUMNS)}"
+            )
+        for row_number, raw in enumerate(reader, start=1):
+            if None in raw or any(raw[column] is None for column in SOURCE_COLUMNS):
+                raise GenerationError(
+                    f"source dataset row {row_number} does not match the source schema"
+                )
+            rows.append(
+                {
+                    "spot": int(raw["spot"]),
+                    "forward": int(raw["forward"]),
+                    "a": int(raw["a"]),
+                    "b": int(raw["b"]),
+                    "rho": int(raw["rho"]),
+                    "rho_negative": source_bool(raw, "rho_negative", row_number),
+                    "m": int(raw["m"]),
+                    "m_negative": source_bool(raw, "m_negative", row_number),
+                    "sigma": int(raw["sigma"]),
+                    "svi_checkpoint_timestamp_ms": int(
+                        raw["svi_checkpoint_timestamp_ms"]
+                    ),
+                    "price_checkpoint_timestamp_ms": int(
+                        raw["price_checkpoint_timestamp_ms"]
+                    ),
+                }
+            )
     if not rows:
         raise GenerationError(f"source dataset is empty: {path}")
     previous_svi = rows[0]["svi_checkpoint_timestamp_ms"]

@@ -19,6 +19,17 @@ OBSERVATIONAL_EVENT_FIELDS = {
     "block_scholes_svi_source_timestamp_ms",
     "block_scholes_svi_params_timestamp_ms",
 }
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
+REQUIRED_ACTIONS = [
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "request_withdraw",
+    "flush",
+    "rebalance_expiry_cash",
+    "settle",
+    "redeem_settled",
+]
 
 
 def parity_projection(payload: dict[str, Any]) -> dict[str, Any]:
@@ -31,6 +42,10 @@ def parity_projection(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_action_coverage(payload: dict[str, Any], label: str) -> None:
+    if payload.get("schema_version") != ECONOMIC_SCHEMA_VERSION:
+        raise SystemExit(
+            f"{label}: unsupported economic schema {payload.get('schema_version')!r}"
+        )
     scenario = payload.get("scenario")
     if not isinstance(scenario, dict):
         raise SystemExit(f"{label}: missing scenario metadata")
@@ -38,7 +53,9 @@ def validate_action_coverage(payload: dict[str, Any], label: str) -> None:
     observed = scenario.get("observed_actions")
     if not isinstance(required, list) or not isinstance(observed, list):
         raise SystemExit(f"{label}: invalid action coverage metadata")
-    missing = [action for action in required if action not in observed]
+    if required != REQUIRED_ACTIONS:
+        raise SystemExit(f"{label}: required actions do not match the current schema")
+    missing = [action for action in REQUIRED_ACTIONS if action not in observed]
     if missing:
         raise SystemExit(f"{label}: missing required actions: {','.join(missing)}")
 

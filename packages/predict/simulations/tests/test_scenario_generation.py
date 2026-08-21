@@ -21,6 +21,11 @@ SOURCE_ROWS = (
     "75850295501350,75799394983317,171736,7449196,243059022,true,1133202,false,15731214,1779868818472,1779868818472\n"
     "75848584749562,75797682842049,171736,7449196,243059022,true,1133202,false,15731214,1779868819584,1779868819584\n"
 )
+HIGH_FORWARD_SOURCE_ROWS = (
+    "110000000000000,110000000000000,171736,7449196,243059022,true,1133202,false,15731214,1779868817525,1779868817525\n"
+    "110000000000000,110000000000000,171736,7449196,243059022,true,1133202,false,15731214,1779868818472,1779868818472\n"
+    "110000000000000,110000000000000,171736,7449196,243059022,true,1133202,false,15731214,1779868819584,1779868819584\n"
+)
 
 
 class ScenarioGenerationTests(unittest.TestCase):
@@ -130,10 +135,69 @@ class ScenarioGenerationTests(unittest.TestCase):
                 [row["permissionless"] for row in rows if row["action"] == "redeem_settled"],
                 ["false", "true", "false", "true"],
             )
+            partial = next(row for row in rows if row["tx"] == "3")
+            self.assertEqual(partial["replacement_order_ref"], "")
+            self.assertEqual(
+                next(row for row in rows if row["tx"] == "14")["order_ref"],
+                partial["order_ref"],
+            )
             self.assertLessEqual(
                 max(int(row["quantity"]) for row in rows if row["action"] == "mint"),
                 6_250_000_000,
             )
+
+    def test_settlement_positions_remain_admissible_when_forward_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            source = tmp / "source.csv"
+            source.write_text(SOURCE_HEADER + "".join(HIGH_FORWARD_SOURCE_ROWS))
+            output = tmp / "scenario.csv"
+            self._generate(source, output, 0)
+
+            with output.open(newline="") as file:
+                rows = list(csv.DictReader(file))
+            settlement_price = int(
+                next(row["settlement_price"] for row in rows if row["action"] == "settle")
+            )
+            positions = {
+                row["order_ref"]: row
+                for row in rows
+                if row["action"] == "mint"
+                and row["order_ref"] in {"o_settle_winner", "o_settle_loser"}
+            }
+
+            def wins(row: dict[str, str]) -> bool:
+                settlement_at_or_above = settlement_price >= int(row["strike"])
+                return (row["is_up"] == "true") == settlement_at_or_above
+
+            self.assertTrue(wins(positions["o_settle_winner"]))
+            self.assertFalse(wins(positions["o_settle_loser"]))
+
+    def test_source_schema_rejects_unknown_columns_and_malformed_booleans(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            unknown = tmp / "unknown.csv"
+            first_source_row = SOURCE_ROWS.splitlines()[0]
+            unknown.write_text(
+                SOURCE_HEADER.removesuffix("\n") + ",leverage\n" + first_source_row + ",1\n"
+            )
+            unknown_run = self._generate(unknown, tmp / "unknown-out.csv", 0, check=False)
+
+            malformed = tmp / "malformed.csv"
+            malformed.write_text(
+                SOURCE_HEADER + first_source_row.replace("true", "treu", 1) + "\n"
+            )
+            malformed_run = self._generate(
+                malformed,
+                tmp / "malformed-out.csv",
+                0,
+                check=False,
+            )
+
+            self.assertNotEqual(unknown_run.returncode, 0)
+            self.assertIn("header must be exactly", unknown_run.stderr)
+            self.assertNotEqual(malformed_run.returncode, 0)
+            self.assertIn("invalid rho_negative", malformed_run.stderr)
 
 
 if __name__ == "__main__":
