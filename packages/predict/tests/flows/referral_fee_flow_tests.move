@@ -67,13 +67,15 @@ public struct ExpectedOrderMinted has copy, drop {
 
 #[test]
 fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
-    let (mut fx, expiry_id, trader, _referrer) = helpers::setup_referred_live_market(
+    let (mut fx, expiry_id, trader, referrer) = helpers::setup_referred_live_market(
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
     );
+    let referrer_account_id = trader_account_id(&mut fx, &referrer);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    let account_id = helpers::account_id_bundle(&account);
 
     let quote = fx.quote_mint_for_account_bundle(
         &market,
@@ -107,6 +109,34 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
         helpers::market(&market).cash_balance(),
         market_cash_before + quote.premium() + MIN_TRADING_FEE - DEFAULT_REFERRAL_FEE,
     );
+    let events = event::events_by_type<order_events::OrderMinted>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedOrderMinted {
+        expiry_market_id: expiry_id,
+        account_id,
+        order_id,
+        position_root_id: order_id,
+        owner: helpers::owner(&trader),
+        lower_tick: helpers::strike_tick(),
+        higher_tick: constants::pos_inf_tick!(),
+        entry_probability: quote.entry_probability(),
+        quantity: test_constants::mint_quantity(),
+        premium: quote.premium(),
+        trading_fee: MIN_TRADING_FEE,
+        fee_incentive_subsidy: 0,
+        builder_fee: 0,
+        penalty_fee: 0,
+        referral_fee: DEFAULT_REFERRAL_FEE,
+        inventory_impact_charge: 0,
+        builder_code_id: option::none(),
+        referrer_account_id: option::some(referrer_account_id),
+        minted_at_ms: test_constants::now_ms(),
+        pyth_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);

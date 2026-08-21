@@ -170,11 +170,11 @@ flowchart TD
     RAMP --> FEE[trading fee = rate x quantity]
     FEE --> BUILD["builder fee = min(fee x builder_mult, quantity x max_builder_rate)"]
     GAS[Gas-price EWMA z-score] --> CONG["congestion surcharge = penalty_rate x quantity (if outlier)"]
-    FEE --> COLLECT[fee -> expiry cash]
     BUILD --> BUILDER[builder fee -> builder code address]
-    CONG --> SURPLUS[surcharge -> expiry cash surplus]
-    FEE --> REF[referred mint: share of trader-paid fee]
-    CONG --> REF
+    FEE --> ROUTE[protocol fee routing]
+    CONG --> ROUTE
+    ROUTE --> COLLECT[net fee and surcharge -> expiry cash]
+    ROUTE --> REF[referred mint: configured share]
     REF --> RACCOUNT[referrer Account receive address]
     L[Book payout liability L] --> PHI["inventory potential phi(L)"]
     PHI --> IMPACT["mint: charge delta / live close: rebate delta"]
@@ -185,9 +185,9 @@ Cash routing at trade time:
 
 | Component | Charged on | Destination | Earns builder cut? |
 |---|---|---|---|
-| Trading fee | mint price / redeem payout | expiry cash (LP + protocol) | — |
+| Trading fee | mint price / redeem payout | expiry cash, net of any mint referral share (LP + protocol) | — |
 | Builder fee | add-on to trading fee | builder code address | — |
-| Congestion surcharge | add-on / withheld | expiry cash surplus | No |
+| Congestion surcharge | add-on / withheld | expiry cash surplus, net of any mint referral share | No |
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
 | Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
 
