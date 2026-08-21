@@ -79,7 +79,9 @@ def run(
         manifest_path = artifacts_dir / "run-manifest.json"
 
         command = [
-            "npx",
+            "npm",
+            "exec",
+            "--",
             "tsx",
             "simulations/src/sim.ts",
             "--scenario",

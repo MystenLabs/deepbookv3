@@ -1,1704 +1,363 @@
-import { existsSync, rmSync, unlinkSync } from "fs";
-import { spawnSync } from "child_process";
-import { fileURLToPath } from "url";
+import { existsSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
-    ECONOMIC_SCHEMA_VERSION,
-    FAILED_TRANSACTIONS_DIR,
-    LOCAL_DATA_PATH,
-    LOCAL_DATA_PARTIAL_PATH,
-    LOCAL_TRACE_PATH,
-    LOCAL_TRACE_PARTIAL_PATH,
-    LOCAL_TRACE_SCHEMA_VERSION,
-    PYTHON_DATA_PATH,
-    STATE_PATH,
-    type EconomicDataFile,
-    type EconomicRecord,
-    type LocalTraceFile,
-    type LocalTraceStep,
-    type MintRow,
-    type OracleRefreshData,
-    type ScenarioRow,
-    type SimState,
-    loadScenario,
-    readJson,
-    scenarioQuantityScale,
-    ts,
+    ECONOMIC_SCHEMA_VERSION, LOCAL_DATA_PARTIAL_PATH, LOCAL_DATA_PATH,
+    LOCAL_TRACE_PARTIAL_PATH, LOCAL_TRACE_PATH, LOCAL_TRACE_SCHEMA_VERSION,
+    PYTHON_DATA_PATH, STATE_PATH, type EconomicDataFile, type EconomicRecord,
+    type LocalTraceFile, type LocalTraceStep, type OracleRefreshData,
+    type ScenarioActionName, type ScenarioRow, type SimState, loadScenario,
+    readJson, REQUIRED_ACTIONS, scenarioQuantityScale, ts, validateCompleteScenario,
     writeJson,
 } from "./shared.js";
 import {
-    POOL_VAULT_ID,
-    PROTOCOL_CONFIG_ID,
-    address,
-    binaryRangeTicks,
-    bindFeedsToUnderlyingTx,
-    createAccountTx,
-    createExpiryMarketTx,
-    depositToAccountTx,
-    deriveAccountWrapperId,
-    execute,
-    executeAndWait,
-    finalizeDusdcCurrencyRegistrationTx,
-    MIN_BOOTSTRAP_LIQUIDITY,
-    lockCapitalTx,
-    mintLifecycleCapTx,
-    nextOneMonthExpiryMs,
-    rebalanceExpiryCashTx,
-    refreshOracleAndFlushTxs,
-    refreshOracleAndMintTxs,
-    refreshOracleAndRedeemTxs,
-    registerUnderlyingAndCreateFeedsTx,
-    requestSupplyTx,
-    requestWithdrawTx,
-    seedOracleTx,
-    setBlockScholesSignerTx,
-    setCadenceConfigTx,
-    setTemplateExpiryFeeConfigTx,
-    type ExecutionReceipt,
-    updatePythTrustedSignerTx,
+    POOL_VAULT_ID, PROTOCOL_CONFIG_ID, address, bareFlushTx, binaryRangeTicks,
+    bindFeedsToUnderlyingTx, clockTimestampMs, createAccountTx, createExpiryMarketTx,
+    depositToAccountTx, deriveAccountWrapperId, execute, executeAndWait,
+    finalizeDusdcCurrencyRegistrationTx, keeperSettleTx, lockCapitalTx,
+    mintLifecycleCapTx, readPredictEconomicState,
+    rebalanceExpiryCashTx, redeemSettledTx, refreshOracleAndFlushTxs,
+    refreshOracleAndMintTxs, refreshOracleAndRedeemTxs,
+    registerUnderlyingAndCreateFeedsTx, requestSupplyTx, requestWithdrawTx,
+    seedOracleTx, setBlockScholesSignerTx, setCadenceConfigTx,
+    setSimulationEconomicPolicyTx, setTemplateExpiryFeeConfigTx,
+    type ExecutionReceipt, updatePythTrustedSignerTx,
 } from "../../devtools/ts/runtime.js";
 
-const DUSDC_DECIMALS = 1_000_000n;
-const FLOAT_SCALING = 1_000_000_000n;
-const SIM_CADENCE_ONE_MONTH = 5;
-const SIM_CADENCE_WINDOW_SIZE = 1n;
-const SCENARIO_CONFIG_PATH = fileURLToPath(
-    new URL("../data/scenario_config.json", import.meta.url),
-);
-// Absolute-tick strike domain (range_codec / constants.move): `raw_strike =
-// tick * tick_size`, no centered grid. The harness tick size is $1 (1e9-scaled).
-// Admission uses the same $1 grid so existing generated scenarios keep the old
-// behavior while matching the two-tick-size cadence interface.
-const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
-const ADMISSION_TICK_SIZE = ORACLE_TICK_SIZE;
-const TICK_BITS = 30n;
-const POS_INF_TICK = (1n << TICK_BITS) - 1n;
+const CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
 const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
-
-interface SimulationCapital {
-    vaultSeed: bigint;
-    managerSeed: bigint;
+interface ScenarioConfig {
+    schema_version: number;
+    capital: { manager_seed: string; vault_seed: string };
+    market: Record<string, string | number> & { cadence_id: number };
+    protocol: Record<string, string>;
 }
+interface Aliases { orderIds: Map<string, string>; orderRefs: Map<string, string> }
 
-interface EconomicState {
-    managerBalance: bigint;
-    expiryCashBalance: bigint;
-    expiryUnresolvedTradingFees: bigint;
-    vaultIdleBalance: bigint;
-    vaultProtocolReserveBalance: bigint;
-    vaultPendingProtocolProfit: bigint;
-    profitBasisDebits: bigint;
-    profitBasisCredits: bigint;
-    vaultTotalPlpSupply: bigint;
-    supplyRequestsPending: bigint;
-    withdrawRequestsPending: bigint;
-    openOrderCount: bigint;
-    openOrderQuantity: bigint;
-    liquidatedOrderCount: bigint;
-}
-
-interface AliasState {
-    orderIdsByRef: Map<string, string>;
-    orderRefsById: Map<string, string>;
-    // LP requests are now keyed by their queue index (the cancel handle returned by
-    // request_supply / request_withdraw), not a returned PLP coin object — the async
-    // flush delivers fills to the account via the balance accumulator, so no PLP coin
-    // is created in the request tx.
-    lpRequestIndexByRef: Map<string, bigint>;
-    // Supply DUSDC amount per lp_ref, recorded at the supply row. A withdraw row
-    // fully unwinds its referenced supply, so this is the PLP-share amount it targets
-    // (PLP is ~1:1 with DUSDC near the bootstrap mark).
-    lpAmountByRef: Map<string, bigint>;
-    // PLP shares the account has materialized (settle-able) and not yet withdrawn.
-    // Seeded with the bootstrap supply (minted 1:1 at setup). Under the batched-flush
-    // cadence, scenario supplies are NOT credited here until/unless a flush mints them,
-    // so withdraws draw against the bootstrap PLP — a deliberately conservative bound
-    // that never over-withdraws (actual settled PLP is always >= this).
-    availableSettledPlp: bigint;
-}
-
-function parseArgs() {
+function parseArgs(): { scenario: string; maxRows?: number } {
     let scenario: string | undefined;
     let maxRows: number | undefined;
     const args = process.argv.slice(2);
-    for (let i = 0; i < args.length; i++) {
-        const argument = args[i];
+    for (let i = 0; i < args.length; i += 1) {
         const value = args[i + 1];
-        if (argument === "--scenario") {
-            if (scenario !== undefined) throw new Error("--scenario may only be provided once");
-            if (value === undefined || value.trim().length === 0 || value.startsWith("--")) {
-                throw new Error("--scenario requires a path");
-            }
-            scenario = value;
-            i += 1;
-            continue;
-        }
-        if (argument === "--max-rows") {
-            if (maxRows !== undefined) throw new Error("--max-rows may only be provided once");
-            if (value === undefined || !/^[1-9][0-9]*$/.test(value)) {
-                throw new Error("--max-rows requires a positive integer");
-            }
-            maxRows = parseInt(value, 10);
-            i += 1;
-            continue;
-        }
-        throw new Error(`Unsupported sim argument ${argument}`);
+        if (args[i] === "--scenario" && value && !value.startsWith("--")) {
+            scenario = value; i += 1;
+        } else if (args[i] === "--max-rows" && value && /^[1-9][0-9]*$/.test(value)) {
+            maxRows = Number(value); i += 1;
+        } else throw new Error(`invalid simulation argument ${args[i]}`);
     }
-    if (scenario === undefined) throw new Error("--scenario is required");
+    if (!scenario) throw new Error("--scenario is required");
     return { scenario, maxRows };
 }
 
-function initialEconomicState(
-    capital: SimulationCapital,
-    initialExpiryCash: bigint,
-): EconomicState {
-    if (capital.vaultSeed < initialExpiryCash) {
-        throw new Error("vault seed is below the setup expiry cash floor");
+function integer(value: unknown, path: string): bigint {
+    if (typeof value !== "string" || !/^\d+$/.test(value)) {
+        throw new Error(`${path} must be an unsigned integer string`);
     }
-
-    return {
-        managerBalance: capital.managerSeed,
-        expiryCashBalance: initialExpiryCash,
-        expiryUnresolvedTradingFees: 0n,
-        vaultIdleBalance: capital.vaultSeed + MIN_BOOTSTRAP_LIQUIDITY - initialExpiryCash,
-        vaultProtocolReserveBalance: 0n,
-        vaultPendingProtocolProfit: 0n,
-        profitBasisDebits: initialExpiryCash,
-        profitBasisCredits: 0n,
-        vaultTotalPlpSupply: capital.vaultSeed + MIN_BOOTSTRAP_LIQUIDITY,
-        supplyRequestsPending: 0n,
-        withdrawRequestsPending: 0n,
-        openOrderCount: 0n,
-        openOrderQuantity: 0n,
-        liquidatedOrderCount: 0n,
-    };
+    return BigInt(value);
 }
-
-function initialAliases(): AliasState {
-    return {
-        orderIdsByRef: new Map(),
-        orderRefsById: new Map(),
-        lpRequestIndexByRef: new Map(),
-        lpAmountByRef: new Map(),
-        availableSettledPlp: 0n,
-    };
+function eventName(event: any): string { return String(event.type ?? "").split("::").at(-1) ?? "" }
+function eventJson(event: any): any { return event.parsedJson ?? {} }
+function eventsNamed(receipt: ExecutionReceipt, name: string): any[] {
+    return receipt.events.filter((event: any) => eventName(event) === name);
 }
-
-// Snap a raw strike DOWN to its admission boundary, then back to a raw strike.
-// With the absolute-tick domain there is no grid to center; admission alignment is
-// just flooring to the configured mint-entry multiple. The tick must land in the
-// finite domain `1..POS_INF_TICK-1`.
-function alignStrikeToTick(strike: bigint): bigint {
-    if (strike <= 0n) throw new Error("strike must be positive");
-    const aligned = (strike / ADMISSION_TICK_SIZE) * ADMISSION_TICK_SIZE;
-    const tick = aligned / ORACLE_TICK_SIZE;
-    if (tick <= 0n || tick >= POS_INF_TICK) {
-        throw new Error(
-            `strike tick ${tick} outside the finite tick domain (1..POS_INF_TICK-1); ` +
-                "raise the oracle tick size to cover a higher strike",
-        );
-    }
-    return aligned;
+function onlyEvent(receipt: ExecutionReceipt, name: string): any {
+    const matches = eventsNamed(receipt, name);
+    if (matches.length !== 1) throw new Error(`${name}: expected one event, found ${matches.length}`);
+    return matches[0];
 }
-
-function direction(row: MintRow): "UP" | "DN" {
-    return row.isUp ? "UP" : "DN";
-}
-
-function scaledUsd(value: bigint): string {
-    return (Number(value) / 1e9).toFixed(0);
-}
-
-function formatLeverage(leverage: bigint): string {
-    const whole = leverage / FLOAT_SCALING;
-    const fraction = leverage % FLOAT_SCALING;
-    if (fraction === 0n) return `${whole}x`;
-    if (fraction === FLOAT_SCALING / 2n) return `${whole}.5x`;
-    return `${Number(leverage) / Number(FLOAT_SCALING)}x`;
-}
-
-function signedValue(magnitude: bigint, isNegative: boolean): string {
-    if (magnitude === 0n) return "0";
-    return isNegative ? `-${magnitude}` : magnitude.toString();
-}
-
-function decimal(value: unknown): string {
-    if (typeof value === "string") return value;
-    if (typeof value === "number") return String(value);
+function decimal(value: any): string {
     if (typeof value === "bigint") return value.toString();
-    throw new Error(`Expected decimal-compatible value, got ${JSON.stringify(value)}`);
+    if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+    if (typeof value === "string" && /^\d+$/.test(value)) return value;
+    throw new Error(`expected unsigned integer event field, got ${JSON.stringify(value)}`);
 }
-
-function booleanField(value: unknown): boolean {
-    if (typeof value === "boolean") return value;
-    if (typeof value === "string") return value === "true";
-    return Boolean(value);
+function boolean(value: any): boolean {
+    if (typeof value !== "boolean") throw new Error(`expected boolean event field, got ${JSON.stringify(value)}`);
+    return value;
 }
-
-function orderSequence(orderId: string): string {
-    return (BigInt(orderId) & ORDER_SEQUENCE_MASK).toString();
-}
-
 function optionDecimal(value: any): string | null {
     if (value === null || value === undefined) return null;
     if (Array.isArray(value)) return value.length === 0 ? null : decimal(value[0]);
-    if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
-        return decimal(value);
-    }
-    const fields = value.fields ?? value;
-    if (Array.isArray(fields.vec)) return fields.vec.length === 0 ? null : decimal(fields.vec[0]);
-    if (Array.isArray(fields)) return fields.length === 0 ? null : decimal(fields[0]);
-    if (fields.some !== undefined) return decimal(fields.some);
-    if (fields.value !== undefined) return decimal(fields.value);
+    if (Array.isArray(value.vec)) return value.vec.length === 0 ? null : decimal(value.vec[0]);
+    return decimal(value);
+}
+function orderSequence(orderId: string): string { return (BigInt(orderId) & ORDER_SEQUENCE_MASK).toString() }
+
+function oracleFor(row: ScenarioRow): OracleRefreshData | null {
+    if (row.action === "mint") return row;
+    if (row.action === "redeem_live") return row.oracleRefresh;
+    if (row.action === "flush") return row.oracleRefresh;
     return null;
 }
-
-function eventName(event: any): string {
-    return (
-        String(event.type ?? "")
-            .split("::")
-            .pop() ?? ""
-    );
-}
-
-function findEvent(events: any[], name: string): any | undefined {
-    return events.find(
-        (event) => eventName(event) === name || String(event.type ?? "").includes(name),
-    );
-}
-
-function findEvents(events: any[], name: string): any[] {
-    return events.filter(
-        (event) => eventName(event) === name || String(event.type ?? "").includes(name),
-    );
-}
-
-function sviInput(row: MintRow | OracleRefreshData) {
+function oracleInput(value: OracleRefreshData | null): Record<string, unknown> {
+    if (!value) return {};
     return {
-        a: signedValue(row.a, row.aNegative),
-        b: row.b.toString(),
-        rho: signedValue(row.rho, row.rhoNegative),
-        m: signedValue(row.m, row.mNegative),
-        sigma: row.sigma.toString(),
+        spot: value.spot.toString(), forward: value.forward.toString(),
+        a: value.a.toString(), a_negative: value.aNegative, b: value.b.toString(),
+        rho: value.rho.toString(), rho_negative: value.rhoNegative,
+        m: value.m.toString(), m_negative: value.mNegative,
+        sigma: value.sigma.toString(), risk_free_rate: value.riskFreeRate.toString(),
     };
 }
-
-// The canonical mint input is the `(lower_tick, higher_tick)` pair the contract
-// takes at the entrypoint directly (there is no standalone packed range key; only
-// the order ID packs the ticks).
-function mintInput(row: MintRow): Record<string, string> {
-    const strike = alignStrikeToTick(row.strike);
-    const { lowerTick, higherTick } = binaryRangeTicks(
-        strike,
-        row.isUp,
-        ORACLE_TICK_SIZE,
-    );
-    return {
-        order_ref: row.orderRef,
-        lower_tick: lowerTick.toString(),
-        higher_tick: higherTick.toString(),
-        quantity: row.quantity.toString(),
-        leverage: row.leverage.toString(),
-    };
-}
-
-function rowInput(row: ScenarioRow): Record<string, unknown> {
-    if (row.action === "oracle_mint_ptb") {
-        return {
-            spot: row.spot.toString(),
-            forward: row.forward.toString(),
-            svi: sviInput(row),
-            ...mintInput(row),
-        };
+function rowInput(row: ScenarioRow, tickSize: bigint): Record<string, unknown> {
+    const oracle = oracleInput(oracleFor(row));
+    if (row.action === "mint") {
+        const { lowerTick, higherTick } = binaryRangeTicks(row.strike, row.isUp, tickSize);
+        return { ...oracle, order_ref: row.orderRef, lower_tick: lowerTick.toString(), higher_tick: higherTick.toString(), quantity: row.quantity.toString() };
     }
-    if (row.action === "redeem") {
-        return {
-            ...oracleRefreshInput(row),
-            order_ref: row.orderRef,
-            close_quantity: row.closeQuantity.toString(),
-            replacement_order_ref: row.replacementOrderRef,
-        };
-    }
-    if (row.action === "supply") {
-        return { ...oracleRefreshInput(row), amount: row.amount.toString(), lp_ref: row.lpRef };
-    }
-    return { ...oracleRefreshInput(row), lp_ref: row.lpRef };
+    if (row.action === "redeem_live") return { ...oracle, order_ref: row.orderRef, close_quantity: row.closeQuantity.toString(), replacement_order_ref: row.replacementOrderRef };
+    if (row.action === "request_supply") return { amount: row.amount.toString(), min_output: row.minOutput.toString(), lp_ref: row.lpRef };
+    if (row.action === "request_withdraw") return { shares: row.shares.toString(), min_output: row.minOutput.toString(), lp_ref: row.lpRef };
+    if (row.action === "settle") return { settlement_price: row.settlementPrice.toString() };
+    if (row.action === "redeem_settled") return { order_ref: row.orderRef, permissionless: row.permissionless };
+    return oracle;
 }
-
-function oracleRefreshInput(row: ScenarioRow): Record<string, unknown> {
-    if (row.action === "oracle_mint_ptb") return {};
+function sourceTimestamps(value: any): Record<string, string> {
     return {
-        spot: row.oracleRefresh.spot.toString(),
-        forward: row.oracleRefresh.forward.toString(),
-        svi: sviInput(row.oracleRefresh),
+        pyth_spot_source_timestamp_ms: decimal(value.pyth_spot_source_timestamp_ms),
+        block_scholes_spot_source_timestamp_ms: decimal(value.block_scholes_spot_source_timestamp_ms),
+        block_scholes_forward_source_timestamp_ms: decimal(value.block_scholes_forward_source_timestamp_ms),
+        block_scholes_svi_source_timestamp_ms: decimal(value.block_scholes_svi_source_timestamp_ms),
     };
 }
 
-function eventObservationValue(event: any): any {
-    const json = event.parsedJson ?? {};
-    const observation = json.observation?.fields ?? json.observation ?? {};
-    return observation.value?.fields ?? observation.value ?? {};
-}
-
-function pow10(exp: bigint): bigint {
-    return 10n ** exp;
-}
-
-function normalizedPythSpot(raw: any): string {
-    if (booleanField(raw.price_is_negative ?? raw.priceIsNegative ?? false)) {
-        throw new Error("simulation Pyth spot event was negative");
-    }
-    const magnitude = BigInt(decimal(raw.price_magnitude ?? raw.priceMagnitude));
-    const exponentMagnitude = BigInt(decimal(raw.exponent_magnitude ?? raw.exponentMagnitude));
-    const exponentIsNegative = booleanField(
-        raw.exponent_is_negative ?? raw.exponentIsNegative ?? false,
-    );
-    if (!exponentIsNegative) return (magnitude * pow10(exponentMagnitude + 9n)).toString();
-    if (exponentMagnitude > 9n) return (magnitude / pow10(exponentMagnitude - 9n)).toString();
-    return (magnitude * pow10(9n - exponentMagnitude)).toString();
-}
-
-// propbook `ObservationRecorded<OracleRead<RawSpot>>`: the global Pyth spot.
-// Timestamps are localnet-clock-derived, so they are intentionally excluded from
-// the parity diff.
-function normalizePythObservation(event: any): Record<string, unknown> {
-    const raw = eventObservationValue(event);
-    return {
-        type: "pyth_feed_updated",
-        spot: normalizedPythSpot(raw),
-    };
-}
-
-// One oracle refresh lands as three `BlockScholesBatchIngested` events (spot,
-// forward, then SVI). The event carries counts, not
-// values, so the parity row's values come from the refresh inputs on the scenario
-// row; the event assertions confirm the chain accepted every update. The values
-// remain chain-checked downstream: order/flush parity round-trips the stored
-// series through on-chain `load_live_pricer`.
-function blockScholesBatchSeriesKind(event: any): number {
-    const json = event.parsedJson ?? {};
-    const updateCount = BigInt(decimal(json.update_count));
-    const applied = BigInt(decimal(json.applied));
-    if (updateCount === 0n || applied !== updateCount) {
-        throw new Error(
-            `Block Scholes batch not fully applied: update_count=${updateCount} applied=${applied}`,
-        );
-    }
-    const seriesKind = Number(decimal(json.series_kind));
-    if (!Number.isInteger(seriesKind) || seriesKind < 0 || seriesKind > 2) {
-        throw new Error(`invalid Block Scholes series_kind ${String(json.series_kind)}`);
-    }
-    return seriesKind;
-}
-
-// Rebuild the synthetic surface update the Python replay emits from the row's
-// own refresh inputs (a mint row carries them inline; every other action under
-// `oracleRefresh`).
-function blockScholesSurfaceUpdateFromRow(row: ScenarioRow): Record<string, unknown> {
-    const o = row.action === "oracle_mint_ptb" ? row : row.oracleRefresh;
-    return {
-        type: "block_scholes_surface_updated",
-        spot: o.spot.toString(),
-        forward: o.forward.toString(),
-        a: signedValue(o.a, o.aNegative),
-        b: o.b.toString(),
-        rho: signedValue(o.rho, o.rhoNegative),
-        m: signedValue(o.m, o.mNegative),
-        sigma: o.sigma.toString(),
-    };
-}
-
-function normalizeOrderMinted(event: any, orderRef: string | null): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "order_minted",
-        order_ref: orderRef,
-        order_sequence: orderSequence(decimal(json.order_id)),
-        lower_tick: decimal(json.lower_tick),
-        higher_tick: decimal(json.higher_tick),
-        leverage: decimal(json.leverage),
-        entry_probability: decimal(json.entry_probability),
-        quantity: decimal(json.quantity),
-        contribution: decimal(json.net_premium),
-        trading_fee: decimal(json.trading_fee),
-        fee_incentive_subsidy: decimal(json.fee_incentive_subsidy ?? 0),
-        builder_fee: decimal(json.builder_fee),
-        penalty_fee: decimal(json.penalty_fee),
-        minted_at_ms: decimal(json.minted_at_ms),
-        ...normalizePricingSourceTimestamps(json),
-    };
-}
-
-function normalizePricingSourceTimestamps(json: any): Record<string, string> {
-    return {
-        pyth_spot_source_timestamp_ms: decimal(json.pyth_spot_source_timestamp_ms),
-        block_scholes_spot_source_timestamp_ms: decimal(json.block_scholes_spot_source_timestamp_ms),
-        block_scholes_forward_source_timestamp_ms: decimal(json.block_scholes_forward_source_timestamp_ms),
-        block_scholes_svi_source_timestamp_ms: decimal(json.block_scholes_svi_source_timestamp_ms),
-    };
-}
-
-function normalizeOrderLiquidated(event: any, aliases: AliasState): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    const orderId = decimal(json.order_id);
-    return {
-        type: "order_liquidated",
-        order_ref: aliases.orderRefsById.get(orderId) ?? null,
-        order_sequence: orderSequence(orderId),
-        quantity: decimal(json.quantity),
-        gross_value: decimal(json.gross_value),
-        floor_amount: decimal(json.floor_amount),
-        liquidation_ltv: decimal(json.liquidation_ltv),
-        liquidated_at_ms: decimal(json.liquidated_at_ms),
-        ...normalizePricingSourceTimestamps(json),
-    };
-}
-
-function normalizeLiveOrderRedeemed(event: any, row: ScenarioRow): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    const replacementOrderId = optionDecimal(json.replacement_order_id);
-    const replacementRef =
-        row.action === "redeem" && replacementOrderId !== null
-            ? (row.replacementOrderRef ?? row.orderRef)
-            : null;
-    return {
-        type: "live_order_redeemed",
-        order_ref: row.action === "redeem" ? row.orderRef : null,
-        order_sequence: orderSequence(decimal(json.order_id)),
-        quantity_closed: decimal(json.quantity_closed),
-        remaining_quantity: decimal(json.remaining_quantity),
-        replacement_order_ref: replacementRef,
-        replacement_order_sequence:
-            replacementOrderId === null ? null : orderSequence(replacementOrderId),
-        redeem_amount: decimal(json.redeem_amount),
-        trading_fee: decimal(json.trading_fee),
-        builder_fee: decimal(json.builder_fee),
-        penalty_fee: decimal(json.penalty_fee),
-        redeemed_at_ms: decimal(json.redeemed_at_ms),
-        ...normalizePricingSourceTimestamps(json),
-    };
-}
-
-function normalizeLiquidatedOrderRedeemed(event: any, row: ScenarioRow): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "liquidated_order_redeemed",
-        order_ref: row.action === "redeem" ? row.orderRef : null,
-        order_sequence: orderSequence(decimal(json.order_id)),
-        quantity_closed: decimal(json.quantity_closed),
-        redeemed_at_ms: decimal(json.redeemed_at_ms),
-    };
-}
-
-function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "settled_order_redeemed",
-        order_ref: row.action === "redeem" ? row.orderRef : null,
-        order_sequence: orderSequence(decimal(json.order_id)),
-        quantity_closed: decimal(json.quantity_closed),
-        settlement_price: decimal(json.settlement_price),
-        payout_amount: decimal(json.payout_amount),
-        redeemed_at_ms: decimal(json.redeemed_at_ms),
-    };
-}
-
-// === Async LP request/flush events. A supply/withdraw is a two-phase flow: a request
-// row escrows funds (SupplyRequested / WithdrawRequested), and a later flush drains the
-// queues at one frozen mark, emitting per-request SupplyFilled / WithdrawFilled and a
-// single FlushExecuted that carries the frozen valuation (the former PoolValued fields
-// were folded into it). Generated rows do not request cancellation, but protocol
-// refunds can still emit RequestCancelled. The `index` queue handle is the request
-// alias key (no PLP coin is returned).
-
-function normalizeSupplyRequested(event: any, row: ScenarioRow): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "supply_requested",
-        lp_ref: row.action === "supply" ? row.lpRef : null,
-        index: decimal(json.index),
-        amount: decimal(json.amount),
-        requests_pending_after: decimal(json.requests_pending_after),
-    };
-}
-
-function normalizeWithdrawRequested(event: any, row: ScenarioRow): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "withdraw_requested",
-        lp_ref: row.action === "withdraw" ? row.lpRef : null,
-        index: decimal(json.index),
-        amount: decimal(json.amount),
-        requests_pending_after: decimal(json.requests_pending_after),
-    };
-}
-
-function normalizeRequestCancelled(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "request_cancelled",
-        index: decimal(json.index),
-        amount: decimal(json.amount),
-        is_supply: booleanField(json.is_supply),
-        reason: decimal(json.reason),
-        requests_pending_after: decimal(json.requests_pending_after),
-    };
-}
-
-function normalizeSupplyFilled(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "supply_filled",
-        index: decimal(json.index),
-        dusdc_amount: decimal(json.dusdc_amount),
-        shares_minted: decimal(json.shares_minted),
-        fee_dusdc: decimal(json.fee_dusdc),
-        requests_pending_after: decimal(json.requests_pending_after),
-    };
-}
-
-function normalizeWithdrawFilled(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "withdraw_filled",
-        index: decimal(json.index),
-        shares_burned: decimal(json.shares_burned),
-        dusdc_amount: decimal(json.dusdc_amount),
-        fee_dusdc: decimal(json.fee_dusdc),
-        requests_pending_after: decimal(json.requests_pending_after),
-    };
-}
-
-// FlushExecuted carries the frozen valuation plus the drain counts and post-drain
-// idle. `idle_balance_after` is the pool-idle reconciliation anchor for LP queue
-// fills; expiry cash/profit events below are now applied from deltas.
-function normalizeFlushExecuted(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "flush_executed",
-        pool_value: decimal(json.pool_value),
-        total_supply: decimal(json.total_supply),
-        active_market_nav: decimal(json.active_market_nav),
-        market_count: decimal(json.market_count),
-        idle_balance_before: decimal(json.idle_balance_before),
-        supplies_filled: decimal(json.supplies_filled),
-        withdrawals_filled: decimal(json.withdrawals_filled),
-        requests_processed: decimal(json.requests_processed),
-        idle_balance_after: decimal(json.idle_balance_after),
-        total_supply_after: decimal(json.total_supply_after),
-    };
-}
-
-function normalizeExpiryCashRebalanced(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "expiry_cash_rebalanced",
-        amount: decimal(json.amount),
-        to_expiry: booleanField(json.to_expiry),
-        target_cash: decimal(json.target_cash),
-        protocol_profit_realized: decimal(json.protocol_profit_realized),
-    };
-}
-
-function normalizeExpiryCashReceived(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "expiry_cash_received",
-        settlement_price: decimal(json.settlement_price),
-        amount: decimal(json.amount),
-    };
-}
-
-function normalizeExpiryProfitMaterialized(event: any): Record<string, unknown> {
-    const json = event.parsedJson ?? {};
-    return {
-        type: "expiry_profit_materialized",
-        expiry_market_id: json.expiry_market_id ?? null,
-        lp_profit: decimal(json.lp_profit),
-        protocol_profit: decimal(json.protocol_profit),
-        protocol_reserve_balance_after: decimal(json.protocol_reserve_balance_after),
-        profit_basis_after: decimal(json.profit_basis_after),
-        pending_protocol_profit_after: decimal(json.pending_protocol_profit_after),
-    };
-}
-
-function normalizeUpdates(
-    row: ScenarioRow,
-    receipt: ExecutionReceipt,
-    aliases: AliasState,
-    mintOrderRefs = row.action === "oracle_mint_ptb" ? [row.orderRef] : [],
-): Record<string, unknown>[] {
+function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: Aliases): Record<string, unknown>[] {
     const updates: Record<string, unknown>[] = [];
-    let pendingBsBatches = 0;
-    let mintIndex = 0;
     for (const event of receipt.events) {
-        const fullType = String(event.type ?? "");
         const name = eventName(event);
-        if (
-            fullType.includes("::oracle_lane::ObservationRecorded") &&
-            fullType.includes("::pyth_feed::RawSpot")
-        )
-            updates.push(normalizePythObservation(event));
-        else if (fullType.includes("::block_scholes_store::BlockScholesBatchIngested")) {
-            const seriesKind = blockScholesBatchSeriesKind(event);
-            if (seriesKind !== pendingBsBatches) {
-                throw new Error(
-                    `Block Scholes batch order mismatch: expected series_kind=${pendingBsBatches}, saw ${seriesKind}`,
-                );
-            }
-            pendingBsBatches++;
-            // The third batch of a refresh (spot, forward, then SVI) completes the
-            // synthetic surface update.
-            if (pendingBsBatches === 3) {
-                updates.push(blockScholesSurfaceUpdateFromRow(row));
-                pendingBsBatches = 0;
-            }
-        } else if (name === "OrderLiquidated")
-            updates.push(normalizeOrderLiquidated(event, aliases));
-        else if (name === "OrderMinted") {
-            updates.push(normalizeOrderMinted(event, mintOrderRefs[mintIndex] ?? null));
-            mintIndex++;
+        const value = eventJson(event);
+        if (name === "OrderMinted") {
+            const id = decimal(value.order_id);
+            const ref = row.action === "mint" ? row.orderRef : aliases.orderRefs.get(id);
+            if (!ref) throw new Error(`OrderMinted ${id} has no scenario alias`);
+            updates.push({ type: "order_minted", order_ref: ref, order_sequence: orderSequence(id), lower_tick: decimal(value.lower_tick), higher_tick: decimal(value.higher_tick), entry_probability: decimal(value.entry_probability), quantity: decimal(value.quantity), premium: decimal(value.premium), trading_fee: decimal(value.trading_fee), fee_incentive_subsidy: decimal(value.fee_incentive_subsidy), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), referral_fee: decimal(value.referral_fee), inventory_impact_charge: decimal(value.inventory_impact_charge), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
+        } else if (name === "LiveOrderRedeemed") {
+            const id = decimal(value.order_id);
+            const ref = aliases.orderRefs.get(id) ?? (row.action === "redeem_live" ? row.orderRef : null);
+            if (!ref) throw new Error(`LiveOrderRedeemed ${id} has no scenario alias`);
+            const replacement = optionDecimal(value.replacement_order_id);
+            const replacementRef = replacement !== null && row.action === "redeem_live"
+                ? row.replacementOrderRef ?? row.orderRef
+                : null;
+            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: replacementRef, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_rebate: decimal(value.inventory_impact_rebate), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
+        } else if (name === "SupplyRequested") {
+            updates.push({ type: "supply_requested", lp_ref: row.action === "request_supply" ? row.lpRef : "", index: decimal(value.index), amount: decimal(value.amount), min_output: decimal(value.min_plp_out), requests_pending_after: decimal(value.requests_pending_after) });
+        } else if (name === "WithdrawRequested") {
+            updates.push({ type: "withdraw_requested", lp_ref: row.action === "request_withdraw" ? row.lpRef : "", index: decimal(value.index), amount: decimal(value.amount), min_output: decimal(value.min_dusdc_out), requests_pending_after: decimal(value.requests_pending_after) });
+        } else if (name === "RequestCancelled") {
+            updates.push({ type: "request_cancelled", index: decimal(value.index), amount: decimal(value.amount), is_supply: boolean(value.is_supply), reason: decimal(value.reason), requests_pending_after: decimal(value.requests_pending_after) });
+        } else if (name === "SupplyFilled") {
+            updates.push({ type: "supply_filled", index: decimal(value.index), dusdc_amount: decimal(value.dusdc_amount), shares_minted: decimal(value.shares_minted), fee_dusdc: decimal(value.fee_dusdc), dusdc_remaining: decimal(value.dusdc_remaining), requests_pending_after: decimal(value.requests_pending_after) });
+        } else if (name === "WithdrawFilled") {
+            updates.push({ type: "withdraw_filled", index: decimal(value.index), shares_burned: decimal(value.shares_burned), dusdc_amount: decimal(value.dusdc_amount), fee_dusdc: decimal(value.fee_dusdc), shares_remaining: decimal(value.shares_remaining), requests_pending_after: decimal(value.requests_pending_after) });
+        } else if (name === "FlushExecuted") {
+            updates.push({ type: "flush_executed", pool_value: decimal(value.pool_value), total_supply: decimal(value.total_supply), supply_fee_rate: decimal(value.supply_fee_rate), withdraw_fee_rate: decimal(value.withdraw_fee_rate), active_market_nav: decimal(value.active_market_nav), market_count: decimal(value.market_count), idle_balance_before: decimal(value.idle_balance_before), supplies_filled: decimal(value.supplies_filled), withdrawals_filled: decimal(value.withdrawals_filled), requests_processed: decimal(value.requests_processed), idle_balance_after: decimal(value.idle_balance_after), total_supply_after: decimal(value.total_supply_after) });
+        } else if (name === "ExpiryCashRebalanced") {
+            updates.push({ type: "expiry_cash_rebalanced", amount: decimal(value.amount), to_expiry: boolean(value.to_expiry), target_cash: decimal(value.target_cash), protocol_profit_realized: decimal(value.protocol_profit_realized) });
+        } else if (name === "MarketSettled") {
+            updates.push({ type: "market_settled", settlement_price: decimal(value.settlement_price), settlement_source: decimal(value.settlement_source), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms) });
+        } else if (name === "ExpiryCashReceived") {
+            updates.push({ type: "expiry_cash_received", settlement_price: decimal(value.settlement_price), amount: decimal(value.amount) });
+        } else if (name === "ExpiryProfitMaterialized") {
+            updates.push({ type: "expiry_profit_materialized", lp_profit: decimal(value.lp_profit), protocol_profit: decimal(value.protocol_profit), protocol_reserve_balance_after: decimal(value.protocol_reserve_balance_after), profit_basis_after: decimal(value.profit_basis_after), pending_protocol_profit_after: decimal(value.pending_protocol_profit_after) });
+        } else if (name === "SettledOrderRedeemed") {
+            const id = decimal(value.order_id);
+            const ref = aliases.orderRefs.get(id) ?? (row.action === "redeem_settled" ? row.orderRef : null);
+            if (!ref) throw new Error(`SettledOrderRedeemed ${id} has no scenario alias`);
+            updates.push({ type: "settled_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), payout_amount: decimal(value.payout_amount), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms) });
         }
-        else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
-        else if (name === "LiquidatedOrderRedeemed")
-            updates.push(normalizeLiquidatedOrderRedeemed(event, row));
-        else if (name === "SettledOrderRedeemed")
-            updates.push(normalizeSettledOrderRedeemed(event, row));
-        else if (name === "SupplyRequested") updates.push(normalizeSupplyRequested(event, row));
-        else if (name === "WithdrawRequested") updates.push(normalizeWithdrawRequested(event, row));
-        else if (name === "RequestCancelled") updates.push(normalizeRequestCancelled(event));
-        else if (name === "SupplyFilled") updates.push(normalizeSupplyFilled(event));
-        else if (name === "WithdrawFilled") updates.push(normalizeWithdrawFilled(event));
-        else if (name === "FlushExecuted") updates.push(normalizeFlushExecuted(event));
-        else if (name === "ExpiryCashRebalanced")
-            updates.push(normalizeExpiryCashRebalanced(event));
-        else if (name === "ExpiryCashReceived") updates.push(normalizeExpiryCashReceived(event));
-        else if (name === "ExpiryProfitMaterialized")
-            updates.push(normalizeExpiryProfitMaterialized(event));
-    }
-    if (pendingBsBatches !== 0) {
-        throw new Error("incomplete Block Scholes batch set in transaction events");
-    }
-    if (mintIndex !== mintOrderRefs.length) {
-        throw new Error(`expected ${mintOrderRefs.length} OrderMinted events, saw ${mintIndex}`);
     }
     return updates;
 }
 
-function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
-    if (update.type === "order_minted") {
-        const contribution = BigInt(decimal(update.contribution));
-        const tradingFee = BigInt(decimal(update.trading_fee));
-        const feeIncentiveSubsidy = BigInt(decimal(update.fee_incentive_subsidy ?? 0));
-        const builderFee = BigInt(decimal(update.builder_fee));
-        const penaltyFee = BigInt(decimal(update.penalty_fee));
-        const quantity = BigInt(decimal(update.quantity));
-        state.managerBalance -=
-            contribution + (tradingFee - feeIncentiveSubsidy) + builderFee + penaltyFee;
-        state.expiryCashBalance += contribution + tradingFee + penaltyFee;
-        state.expiryUnresolvedTradingFees += tradingFee;
-        state.openOrderCount += 1n;
-        state.openOrderQuantity += quantity;
-    } else if (update.type === "order_liquidated") {
-        const quantity = BigInt(decimal(update.quantity));
-        state.openOrderCount -= 1n;
-        state.openOrderQuantity -= quantity;
-        state.liquidatedOrderCount += 1n;
-    } else if (update.type === "live_order_redeemed") {
-        const redeemAmount = BigInt(decimal(update.redeem_amount));
-        const tradingFee = BigInt(decimal(update.trading_fee));
-        const builderFee = BigInt(decimal(update.builder_fee));
-        const penaltyFee = BigInt(decimal(update.penalty_fee));
-        const quantityClosed = BigInt(decimal(update.quantity_closed));
-        const remainingQuantity = BigInt(decimal(update.remaining_quantity));
-        state.managerBalance += redeemAmount - tradingFee - builderFee - penaltyFee;
-        state.expiryCashBalance -= redeemAmount;
-        state.expiryCashBalance += tradingFee + penaltyFee;
-        state.expiryUnresolvedTradingFees += tradingFee;
-        state.openOrderQuantity -= quantityClosed;
-        if (remainingQuantity === 0n) state.openOrderCount -= 1n;
-    } else if (update.type === "liquidated_order_redeemed") {
-        state.liquidatedOrderCount -= 1n;
-    } else if (update.type === "settled_order_redeemed") {
-        const payout = BigInt(decimal(update.payout_amount));
-        const quantityClosed = BigInt(decimal(update.quantity_closed));
-        state.managerBalance += payout;
-        state.expiryCashBalance -= payout;
-        state.openOrderCount -= 1n;
-        state.openOrderQuantity -= quantityClosed;
-    } else if (update.type === "expiry_cash_rebalanced") {
-        const amount = BigInt(decimal(update.amount));
-        const protocolProfitRealized = BigInt(decimal(update.protocol_profit_realized ?? 0));
-        if (update.to_expiry === true) {
-            state.expiryCashBalance += amount;
-            state.vaultIdleBalance -= amount;
-            state.profitBasisDebits += amount;
-        } else {
-            state.expiryCashBalance -= amount;
-            state.vaultIdleBalance += amount - protocolProfitRealized;
-            state.vaultProtocolReserveBalance += protocolProfitRealized;
-            state.vaultPendingProtocolProfit -= protocolProfitRealized;
-            state.profitBasisCredits += amount;
+function updateAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: Aliases): void {
+    if (row.action === "mint") {
+        const id = decimal(eventJson(onlyEvent(receipt, "OrderMinted")).order_id);
+        aliases.orderIds.set(row.orderRef, id); aliases.orderRefs.set(id, row.orderRef);
+    } else if (row.action === "redeem_live") {
+        const value = eventJson(onlyEvent(receipt, "LiveOrderRedeemed"));
+        const old = aliases.orderIds.get(row.orderRef);
+        if (old) { aliases.orderIds.delete(row.orderRef); aliases.orderRefs.delete(old) }
+        const replacement = optionDecimal(value.replacement_order_id);
+        if (replacement !== null) {
+            const ref = row.replacementOrderRef ?? row.orderRef;
+            aliases.orderIds.set(ref, replacement); aliases.orderRefs.set(replacement, ref);
         }
-    } else if (update.type === "expiry_cash_received") {
-        const amount = BigInt(decimal(update.amount));
-        state.expiryCashBalance -= amount;
-        state.vaultIdleBalance += amount;
-        state.profitBasisCredits += amount;
-    } else if (update.type === "expiry_profit_materialized") {
-        const profitBasisAfter = BigInt(decimal(update.profit_basis_after));
-        const protocolReserveAfter = BigInt(decimal(update.protocol_reserve_balance_after));
-        const pendingProtocolProfitAfter = BigInt(decimal(update.pending_protocol_profit_after));
-        const protocolProfitRealized = protocolReserveAfter - state.vaultProtocolReserveBalance;
-        state.vaultIdleBalance -= protocolProfitRealized;
-        state.vaultProtocolReserveBalance = protocolReserveAfter;
-        state.vaultPendingProtocolProfit = pendingProtocolProfitAfter;
-        state.profitBasisDebits = profitBasisAfter;
-    } else if (update.type === "supply_filled") {
-        // A supply fill mints PLP and joins its escrowed DUSDC into idle. PLP supply
-        // grows by shares_minted; idle is reconciled by the FlushExecuted snapshot.
-        state.vaultTotalPlpSupply += BigInt(decimal(update.shares_minted));
-        state.supplyRequestsPending = BigInt(decimal(update.requests_pending_after));
-    } else if (update.type === "withdraw_filled") {
-        // A withdraw fill burns PLP and pays DUSDC from idle. PLP supply shrinks by
-        // shares_burned; idle is reconciled by the FlushExecuted snapshot.
-        state.vaultTotalPlpSupply -= BigInt(decimal(update.shares_burned));
-        state.withdrawRequestsPending = BigInt(decimal(update.requests_pending_after));
-    } else if (update.type === "supply_requested") {
-        state.supplyRequestsPending = BigInt(decimal(update.requests_pending_after));
-    } else if (update.type === "withdraw_requested") {
-        state.withdrawRequestsPending = BigInt(decimal(update.requests_pending_after));
-    } else if (update.type === "request_cancelled") {
-        if (update.is_supply === true) {
-            state.supplyRequestsPending = BigInt(decimal(update.requests_pending_after));
-        } else {
-            state.withdrawRequestsPending = BigInt(decimal(update.requests_pending_after));
-        }
-    } else if (update.type === "flush_executed") {
-        // FlushExecuted carries the post-drain idle balance; trust it as the
-        // authoritative idle after both queues drain at the frozen mark.
-        state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-        const totalSupplyAfter = BigInt(decimal(update.total_supply_after));
-        if (state.vaultTotalPlpSupply !== totalSupplyAfter) {
-            throw new Error(
-                `flush total supply mismatch: deltas=${state.vaultTotalPlpSupply} event=${totalSupplyAfter}`,
-            );
-        }
-        state.vaultTotalPlpSupply = totalSupplyAfter;
+    } else if (row.action === "redeem_settled") {
+        const id = aliases.orderIds.get(row.orderRef);
+        if (id) { aliases.orderIds.delete(row.orderRef); aliases.orderRefs.delete(id) }
     }
-    // NOTE: supply_requested / withdraw_requested escrow funds OUTSIDE the tracked
-    // vault/account balances (the request queue holds them); they move balances only
-    // at the flush. They carry no state delta here.
-    // The account-side credit of a supply fill / withdraw payout lands via the
-    // balance accumulator (send_funds) and is absorbed lazily on the account's next
-    // capital op, so it does not change manager_balance in the flush record.
 }
 
-function stateSnapshot(state: EconomicState): Record<string, string> {
+async function stateSnapshot(state: SimState): Promise<Record<string, string>> {
+    const value = await readPredictEconomicState({ poolVaultId: state.poolVaultId, expiryMarketId: state.expiryMarketId, wrapperId: state.accountWrapperId });
     return {
-        manager_balance: state.managerBalance.toString(),
-        expiry_cash_balance: state.expiryCashBalance.toString(),
-        expiry_unresolved_trading_fees: state.expiryUnresolvedTradingFees.toString(),
-        vault_idle_balance: state.vaultIdleBalance.toString(),
-        vault_protocol_reserve_balance: state.vaultProtocolReserveBalance.toString(),
-        pending_protocol_profit: state.vaultPendingProtocolProfit.toString(),
-        profit_basis_debits: state.profitBasisDebits.toString(),
-        profit_basis_credits: state.profitBasisCredits.toString(),
-        vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),
-        supply_requests_pending: state.supplyRequestsPending.toString(),
-        withdraw_requests_pending: state.withdrawRequestsPending.toString(),
-        open_order_count: state.openOrderCount.toString(),
-        open_order_quantity: state.openOrderQuantity.toString(),
-        liquidated_order_count: state.liquidatedOrderCount.toString(),
+        account_dusdc_balance: value.accountDusdcBalance.toString(),
+        account_plp_balance: value.accountPlpBalance.toString(),
+        expiry_cash_balance: value.expiryCashBalance.toString(),
+        inventory_impact_reserve: value.inventoryImpactReserve.toString(),
+        payout_liability: value.payoutLiability.toString(), required_cash: value.requiredCash.toString(),
+        fee_incentive_balance: value.feeIncentiveBalance.toString(),
+        vault_idle_balance: value.vaultIdleBalance.toString(),
+        vault_protocol_reserve_balance: value.vaultProtocolReserveBalance.toString(),
+        vault_pending_protocol_profit: value.vaultPendingProtocolProfit.toString(),
+        profit_basis_debits: value.profitBasisDebits.toString(),
+        profit_basis_credits: value.profitBasisCredits.toString(),
+        vault_total_plp_supply: value.vaultTotalPlpSupply.toString(),
+        supply_requests_pending: value.supplyRequestsPending.toString(),
+        withdraw_requests_pending: value.withdrawRequestsPending.toString(),
+        is_settled: value.isSettled ? "1" : "0",
+        active_market_count: value.activeMarketCount.toString(),
     };
 }
+function traceStep(row: ScenarioRow, receipt: ExecutionReceipt, wallMs: number, timestampMs: number): LocalTraceStep {
+    return { step: row.step, action: row.action, digest: receipt.digest, pricingTimestampMs: timestampMs, wallMs, gas: receipt.gas, events: receipt.events.map((event: any) => ({ type: eventName(event), full_type: String(event.type ?? ""), parsedJson: event.parsedJson ?? {} })) };
+}
+function oracleParams(value: OracleRefreshData) {
+    return { spot: value.spot, forward: value.forward, svi: { a: value.a, aNegative: value.aNegative, b: value.b, rho: value.rho, rhoNegative: value.rhoNegative, m: value.m, mNegative: value.mNegative, sigma: value.sigma } };
+}
 
-function economicRecord(
-    row: ScenarioRow,
-    receipt: ExecutionReceipt,
-    state: EconomicState,
-    aliases: AliasState,
-    mintOrderRefs?: string[],
-): EconomicRecord {
-    const updates = normalizeUpdates(row, receipt, aliases, mintOrderRefs);
-    for (const update of updates) {
-        applyUpdate(state, update);
+async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): Promise<ExecutionReceipt> {
+    const common = { expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, bsSviStoreId: state.bsSviStoreId };
+    if (row.action === "mint") return execute(() => refreshOracleAndMintTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row), strike: row.strike, isUp: row.isUp, quantity: row.quantity, tickSize: BigInt(state.tickSize) }), `scenario_${row.step}_mint`);
+    if (row.action === "redeem_live") {
+        const orderId = aliases.orderIds.get(row.orderRef);
+        if (!orderId) throw new Error(`unknown order_ref ${row.orderRef}`);
+        return execute(() => refreshOracleAndRedeemTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row.oracleRefresh), orderId, closeQuantity: row.closeQuantity }), `scenario_${row.step}_redeem_live`);
     }
-
-    return {
-        step: row.step,
-        action: row.action,
-        input: rowInput(row),
-        updates,
-        state: stateSnapshot(state),
-    };
-}
-
-function economicMaintenanceRecord(
-    afterRow: number,
-    action: "flush" | "rebalance_expiry_cash",
-    row: ScenarioRow,
-    receipt: ExecutionReceipt,
-    state: EconomicState,
-    aliases: AliasState,
-): EconomicRecord {
-    const updates = normalizeUpdates(row, receipt, aliases, []);
-    for (const update of updates) {
-        applyUpdate(state, update);
+    if (row.action === "request_supply") return execute(() => requestSupplyTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, amount: row.amount, minPlpOut: row.minOutput }), `scenario_${row.step}_request_supply`);
+    if (row.action === "request_withdraw") return execute(() => requestWithdrawTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, shares: row.shares, minDusdcOut: row.minOutput }), `scenario_${row.step}_request_withdraw`);
+    if (row.action === "flush") {
+        if (row.oracleRefresh === null) return execute(() => bareFlushTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, lifecycleCapId: state.lifecycleCapId }), `scenario_${row.step}_flush_empty`);
+        const oracle = row.oracleRefresh;
+        return execute(() => refreshOracleAndFlushTxs({ ...common, poolVaultId: state.poolVaultId, lifecycleCapId: state.lifecycleCapId, expiry: BigInt(state.expiryMs), ...oracleParams(oracle) }), `scenario_${row.step}_flush`);
     }
-    if (action === "flush" && !updates.some((update) => update.type === "flush_executed")) {
-        throw new Error(`flush after row ${afterRow} emitted no FlushExecuted event`);
+    if (row.action === "rebalance_expiry_cash") return execute(() => rebalanceExpiryCashTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, expiryMarketId: state.expiryMarketId }), `scenario_${row.step}_rebalance_expiry_cash`);
+    if (row.action === "settle") {
+        while ((await clockTimestampMs()) < BigInt(state.expiryMs)) await new Promise((resolve) => setTimeout(resolve, 100));
+        return execute(() => keeperSettleTx({ pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, expiryMs: BigInt(state.expiryMs), price: row.settlementPrice, marketId: state.expiryMarketId, poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId }), `scenario_${row.step}_settle`);
     }
-
-    return {
-        step: row.step,
-        action,
-        input: { after_row: afterRow },
-        updates,
-        state: stateSnapshot(state),
-    };
+    const orderId = aliases.orderIds.get(row.orderRef);
+    if (!orderId) throw new Error(`unknown order_ref ${row.orderRef}`);
+    return execute(() => redeemSettledTx({ expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, orderId, permissionless: row.permissionless }), `scenario_${row.step}_redeem_settled`);
 }
 
-function traceStep(row: ScenarioRow, receipt: ExecutionReceipt, wallMs: number): LocalTraceStep {
-    if (receipt.clockTimestampMs === null) {
-        throw new Error(`priced ${row.action} transaction did not read the Sui Clock`);
-    }
-    return {
-        step: row.step,
-        action: row.action,
-        digest: receipt.digest,
-        pricingTimestampMs: receipt.clockTimestampMs,
-        wallMs,
-        gas: receipt.gas,
-        events: receipt.events.map((event: any) => ({
-            type: eventName(event),
-            full_type: String(event.type ?? ""),
-            parsedJson: event.parsedJson ?? {},
-        })),
-    };
+function createdObjectId(result: any, typeName: string): string {
+    const change = result.objectChanges.find((candidate: any) => candidate.type === "created" && String(candidate.objectType).includes(typeName));
+    if (!change?.objectId) throw new Error(`setup did not create ${typeName}`);
+    return change.objectId;
+}
+async function alignCreation(periodMs: bigint): Promise<void> {
+    const now = await clockTimestampMs();
+    const remaining = periodMs - (now % periodMs);
+    if (remaining < 50_000n) await new Promise((resolve) => setTimeout(resolve, Number(remaining + 100n)));
 }
 
-function eventOrderId(receipt: ExecutionReceipt, name: string): string | null {
-    const event = findEvent(receipt.events, name);
-    if (!event) return null;
-    const json = event.parsedJson ?? {};
-    return json.order_id === undefined ? null : decimal(json.order_id);
-}
-
-function requestIndex(receipt: ExecutionReceipt, name: string): bigint | null {
-    const event = findEvent(receipt.events, name);
-    if (!event) return null;
-    const json = event.parsedJson ?? {};
-    return json.index === undefined ? null : BigInt(decimal(json.index));
-}
-
-function eventDecimalField(receipt: ExecutionReceipt, name: string, field: string): string {
-    const event = findEvent(receipt.events, name);
-    if (!event) throw new Error(`Missing ${name} event`);
-    const json = event.parsedJson ?? {};
-    if (json[field] === undefined) throw new Error(`Missing ${name}.${field}`);
-    return decimal(json[field]);
-}
-
-function recordAliases(
-    row: ScenarioRow,
-    receipt: ExecutionReceipt,
-    aliases: AliasState,
-    mintOrderRefs = row.action === "oracle_mint_ptb" ? [row.orderRef] : [],
-) {
-    if (row.action === "oracle_mint_ptb") {
-        const orderEvents = findEvents(receipt.events, "OrderMinted");
-        if (orderEvents.length !== mintOrderRefs.length) {
-            throw new Error(
-                `Expected ${mintOrderRefs.length} OrderMinted event(s), saw ${orderEvents.length}`,
-            );
-        }
-        orderEvents.forEach((event, index) => {
-            const orderId = decimal(event.parsedJson?.order_id);
-            const orderRef = mintOrderRefs[index];
-            aliases.orderIdsByRef.set(orderRef, orderId);
-            aliases.orderRefsById.set(orderId, orderRef);
-        });
-        return;
-    }
-
-    if (row.action === "redeem") {
-        const liveRedeem = findEvent(receipt.events, "LiveOrderRedeemed");
-        if (liveRedeem) {
-            const oldOrderId = decimal(liveRedeem.parsedJson.order_id);
-            aliases.orderRefsById.delete(oldOrderId);
-            const replacementOrderId = optionDecimal(liveRedeem.parsedJson.replacement_order_id);
-            if (replacementOrderId === null) {
-                aliases.orderIdsByRef.delete(row.orderRef);
-            } else {
-                const replacementRef = row.replacementOrderRef ?? row.orderRef;
-                aliases.orderIdsByRef.delete(row.orderRef);
-                aliases.orderIdsByRef.set(replacementRef, replacementOrderId);
-                aliases.orderRefsById.set(replacementOrderId, replacementRef);
-            }
-            return;
-        }
-
-        const closedOrderId =
-            eventOrderId(receipt, "LiquidatedOrderRedeemed") ??
-            eventOrderId(receipt, "SettledOrderRedeemed");
-        if (closedOrderId) {
-            aliases.orderIdsByRef.delete(row.orderRef);
-            aliases.orderRefsById.delete(closedOrderId);
-        }
-        return;
-    }
-
-    // A supply/withdraw row now ENQUEUES a request (the flush drains it later), so the
-    // alias is the queue index, not a PLP coin object. The index is the cancel handle.
-    if (row.action === "supply") {
-        const index = requestIndex(receipt, "SupplyRequested");
-        if (index === null) throw new Error(`Missing SupplyRequested event for ${row.lpRef}`);
-        aliases.lpRequestIndexByRef.set(row.lpRef, index);
-        aliases.lpAmountByRef.set(row.lpRef, row.amount);
-    } else if (row.action === "withdraw") {
-        const index = requestIndex(receipt, "WithdrawRequested");
-        if (index === null) throw new Error(`Missing WithdrawRequested event for ${row.lpRef}`);
-        aliases.lpRequestIndexByRef.set(row.lpRef, index);
-    }
-}
-
-function mintContext(row: MintRow, alignedStrike: bigint): string {
-    return `${row.action} csv_line=${row.lineNumber} ${direction(row)} strike=$${scaledUsd(alignedStrike)} quantity=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}`;
-}
-
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
-// Row counts after which the runner synthesizes a privileged LP flush.
-function flushCheckpoints(): Set<number> {
-    return new Set([300, 999]);
-}
-
-// Row counts after which the runner synthesizes a standalone expiry-cash rebalance.
-// This is intentionally more frequent than the LP flush cadence: lowering the
-// bootstrap cash floor to 10k means backing headroom can be consumed well before
-// the next LP queue drain. The rebalance is a real tx and is recorded in the gas
-// trace, but it is not a CSV row action.
-function cashRebalanceCheckpoints(
-    rowCount: number,
-    flushAfter: Set<number>,
-): Set<number> {
-    const interval = 100;
-    const checkpoints = new Set<number>();
-    for (let row = interval; row <= rowCount; row += interval) {
-        if (!flushAfter.has(row)) checkpoints.add(row);
-    }
-    return checkpoints;
-}
-
-function clearOutputArtifacts() {
-    for (const path of [
-        LOCAL_TRACE_PATH,
-        LOCAL_DATA_PATH,
-        LOCAL_TRACE_PARTIAL_PATH,
-        LOCAL_DATA_PARTIAL_PATH,
-        PYTHON_DATA_PATH,
-    ]) {
-        if (existsSync(path)) unlinkSync(path);
-    }
-    if (existsSync(FAILED_TRANSACTIONS_DIR)) {
-        rmSync(FAILED_TRANSACTIONS_DIR, { recursive: true, force: true });
-    }
-}
-
-function configInteger(value: unknown, path: string): bigint {
-    if (typeof value !== "string" || !/^\d+$/.test(value)) {
-        throw new Error(`${path} must be a non-negative integer string`);
-    }
-    return BigInt(value);
-}
-
-function protocolConfigValue(config: Record<string, any>, key: string): bigint {
-    return configInteger(config.protocol?.[key], `scenario config.protocol.${key}`);
-}
-
-function capitalConfigValue(config: Record<string, any>, mode: string, key: string): bigint {
-    return configInteger(config.capital?.[mode]?.[key], `scenario config.capital.${mode}.${key}`);
-}
-
-function simulationCapital(config: Record<string, any>, mode: "normal" | "long"): SimulationCapital {
-    const vaultSeed = capitalConfigValue(config, mode, "vault_seed");
-    return {
-        vaultSeed,
-        managerSeed: capitalConfigValue(config, mode, "manager_seed"),
-    };
-}
-
-interface OracleSeedData {
-    spot: bigint;
-    forward: bigint;
-    svi: {
-        a: bigint;
-        aNegative: boolean;
-        b: bigint;
-        rho: bigint;
-        rhoNegative: boolean;
-        m: bigint;
-        mNegative: boolean;
-        sigma: bigint;
-    };
-}
-
-// The first scenario row's full oracle snapshot (spot + forward + SVI). Used to
-// seed the split Block Scholes feeds for the market's expiry before any mint. A
-// mint row carries the SVI inline; every other action carries it under
-// `oracleRefresh`.
-function firstOracleData(row: ScenarioRow): OracleSeedData {
-    const o = row.action === "oracle_mint_ptb" ? row : row.oracleRefresh;
-    return {
-        spot: o.spot,
-        forward: o.forward,
-        svi: {
-            a: o.a,
-            aNegative: o.aNegative,
-            b: o.b,
-            rho: o.rho,
-            rhoNegative: o.rhoNegative,
-            m: o.m,
-            mNegative: o.mNegative,
-            sigma: o.sigma,
-        },
-    };
-}
-
-async function setupSimulation(
-    scenarioConfig: any,
-    capital: SimulationCapital,
-    seed: OracleSeedData,
-): Promise<SimState> {
-    console.log(`[${ts()}] --- Setup ---`);
-    const expiryFeeMaxMultiplier = protocolConfigValue(
-        scenarioConfig,
-        "expiry_fee_max_multiplier",
-    );
-    const expiryFeeWindowMs = protocolConfigValue(
-        scenarioConfig,
-        "expiry_fee_window_ms",
-    );
-    const maxAdmissionLeverage = protocolConfigValue(
-        scenarioConfig,
-        "max_admission_leverage",
-    );
-    const maxExpiryAllocation = protocolConfigValue(
-        scenarioConfig,
-        "max_expiry_allocation",
-    );
-    const initialExpiryCash = protocolConfigValue(
-        scenarioConfig,
-        "initial_expiry_cash",
-    );
-
-    let result = await executeAndWait(
-        finalizeDusdcCurrencyRegistrationTx(),
-        "finalize_dusdc_currency_registration",
-    );
-    const dusdcCurrencyChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" &&
-            change.objectType.includes("coin_registry::Currency") &&
-            change.objectType.includes("dusdc::DUSDC"),
-    );
-    const dusdcCurrencyId: string = dusdcCurrencyChange.objectId;
-    console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
-
-    const poolVaultId = POOL_VAULT_ID;
-    const protocolConfigId = PROTOCOL_CONFIG_ID;
-    console.log(`[${ts()}]   PoolVault: ${poolVaultId}`);
-    console.log(`[${ts()}]   ProtocolConfig: ${protocolConfigId}`);
-
-    result = await executeAndWait(mintLifecycleCapTx(address), "mint_lifecycle_cap");
-    const lifecycleCapChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" && change.objectType.includes("MarketLifecycleCap"),
-    );
-    const lifecycleCapId: string = lifecycleCapChange.objectId;
-    console.log(`[${ts()}]   LifecycleCap: ${lifecycleCapId}`);
-
-    // Admin-approve the Propbook underlying, create the global Pyth feed, and
-    // create the underlying's Block Scholes store pair (canonical at creation —
-    // every expiry's series lives in these two stores, keyed by sid).
-    result = await executeAndWait(
-        registerUnderlyingAndCreateFeedsTx(),
-        "register_underlying_and_create_feeds",
-    );
-    const pythFeedChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" && change.objectType.includes("pyth_feed::PythFeed"),
-    );
-    const bsValueStoreChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" &&
-            change.objectType.includes("block_scholes_store::BlockScholesValueStore"),
-    );
-    const bsSviStoreChange = result.objectChanges.find(
-        (change: any) =>
-            change.type === "created" &&
-            change.objectType.includes("block_scholes_store::BlockScholesSVIStore"),
-    );
-    const pythFeedId: string = pythFeedChange.objectId;
-    const bsValueStoreId: string = bsValueStoreChange.objectId;
-    const bsSviStoreId: string = bsSviStoreChange.objectId;
-    console.log(`[${ts()}]   PythFeed: ${pythFeedId}`);
-    console.log(
-        `[${ts()}]   BlockScholes stores: values=${bsValueStoreId} svi=${bsSviStoreId}`,
-    );
-
-    // Admin-bind global Pyth to the canonical underlying (separate tx: the feed
-    // must already be shared).
+async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<SimState> {
+    console.log(`[${ts()}] setup current Predict topology`);
+    await executeAndWait(finalizeDusdcCurrencyRegistrationTx(), "finalize_dusdc_currency_registration");
+    const capResult = await executeAndWait(mintLifecycleCapTx(address), "mint_lifecycle_cap");
+    const lifecycleCapId = createdObjectId(capResult, "MarketLifecycleCap");
+    const feedResult = await executeAndWait(registerUnderlyingAndCreateFeedsTx(), "register_underlying_and_create_feeds");
+    const pythFeedId = createdObjectId(feedResult, "pyth_feed::PythFeed");
+    const bsValueStoreId = createdObjectId(feedResult, "BlockScholesValueStore");
+    const bsSviStoreId = createdObjectId(feedResult, "BlockScholesSVIStore");
     await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind_feeds_to_underlying");
-    console.log(`[${ts()}]   Global feeds bound to underlying`);
-
-    await executeAndWait(
-        setTemplateExpiryFeeConfigTx(protocolConfigId, expiryFeeWindowMs, expiryFeeMaxMultiplier),
-        "set_template_expiry_fee_config",
-    );
-    console.log(
-        `[${ts()}]   Expiry fee ramp: window_ms=${expiryFeeWindowMs} max_multiplier=${expiryFeeMaxMultiplier}`,
-    );
-
-    await executeAndWait(
-        setCadenceConfigTx({
-            cadenceId: SIM_CADENCE_ONE_MONTH,
-            tickSize: ORACLE_TICK_SIZE,
-            admissionTickSize: ADMISSION_TICK_SIZE,
-            maxExpiryAllocation,
-            initialExpiryCash,
-            windowSize: SIM_CADENCE_WINDOW_SIZE,
-        }),
-        "set_template_cadence_config",
-    );
-    console.log(
-        `[${ts()}]   Cadence configured: id=${SIM_CADENCE_ONE_MONTH} tick=$${scaledUsd(ORACLE_TICK_SIZE)} admission_tick=$${scaledUsd(ADMISSION_TICK_SIZE)} allocation=${maxExpiryAllocation / DUSDC_DECIMALS} DUSDC initial_cash=${initialExpiryCash / DUSDC_DECIMALS} DUSDC window=${SIM_CADENCE_WINDOW_SIZE}`,
-    );
-
+    const policy = (key: string) => integer(config.protocol[key], `scenario config.protocol.${key}`);
+    await executeAndWait(setSimulationEconomicPolicyTx({
+        protocolConfigId: PROTOCOL_CONFIG_ID, baseFee: policy("base_fee"), minFee: policy("min_fee"),
+        minEntryProbability: policy("min_entry_probability"), maxEntryProbability: policy("max_entry_probability"),
+        backingBufferLambda: policy("backing_buffer_lambda"), inventoryImpactMaxRate: policy("inventory_impact_max_rate"),
+        protocolReserveProfitShare: policy("protocol_reserve_profit_share"), plpSupplyFeeRate: policy("plp_supply_fee_rate"),
+        plpWithdrawFeeRate: policy("plp_withdraw_fee_rate"), lpRequestLimitFlushAttempts: policy("lp_request_limit_flush_attempts"),
+        maxLpPoolValue: policy("max_lp_pool_value"),
+    }), "set_simulation_economic_policy");
+    await executeAndWait(setTemplateExpiryFeeConfigTx(PROTOCOL_CONFIG_ID, policy("expiry_fee_window_ms"), policy("expiry_fee_max_multiplier")), "set_template_expiry_fee_config");
+    const marketValue = (key: string) => integer(config.market[key], `scenario config.market.${key}`);
+    const periodMs = marketValue("cadence_period_ms");
+    const tickSize = marketValue("tick_size");
+    const initialExpiryCash = marketValue("initial_expiry_cash");
+    await executeAndWait(setCadenceConfigTx({ cadenceId: config.market.cadence_id, tickSize, admissionTickSize: marketValue("admission_tick_size"), maxExpiryAllocation: marketValue("max_expiry_allocation"), initialExpiryCash, windowSize: marketValue("cadence_window_size") }), "set_template_cadence_config");
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
-    console.log(`[${ts()}]   Pyth trusted signer configured`);
-
     await executeAndWait(setBlockScholesSignerTx(), "set_block_scholes_signer");
-    console.log(`[${ts()}]   Block Scholes local signer registered`);
-
-    const expectedExpiryMs = await nextOneMonthExpiryMs();
-    result = await executeAndWait(
-        createExpiryMarketTx({
-            poolVaultId,
-            protocolConfigId,
-            lifecycleCapId,
-            cadenceId: SIM_CADENCE_ONE_MONTH,
-        }),
-        "create_and_share_expiry_market",
-    );
-    const expiryMarketChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket"),
-    );
-    const expiryMarketId: string = expiryMarketChange.objectId;
-    const expiryMsString = eventDecimalField(result, "MarketCreated", "expiry");
-    const expiryMs = BigInt(expiryMsString);
-    if (expiryMs !== expectedExpiryMs) {
-        throw new Error(
-            `expected cadence expiry ${expectedExpiryMs}, got market expiry ${expiryMs}`,
-        );
-    }
-    console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId} expiry=${expiryMsString}`);
-
-    // Seed the Block Scholes stores + Pyth spot for the on-chain cadence-created
-    // expiry so pricing has fresh spot/forward/SVI inputs.
-    await executeAndWait(
-        await seedOracleTx({
-            pythFeedId,
-            bsValueStoreId,
-            bsSviStoreId,
-            expiry: expiryMs,
-            spot: seed.spot,
-            forward: seed.forward,
-            svi: seed.svi,
-        }),
-        "seed_oracle_surface",
-    );
-    console.log(
-        `[${ts()}]   Oracle seeded: expiry=${expiryMsString} spot=${seed.spot} forward=${seed.forward} tick=$${scaledUsd(ORACLE_TICK_SIZE)}`,
-    );
-
     const accountWrapperId = deriveAccountWrapperId(address);
     await executeAndWait(createAccountTx(), "create_account");
-    console.log(`[${ts()}]   Account: ${accountWrapperId}`);
-
-    // Owner auth is minted per-call from the tx sender, so there are no capital caps:
-    // deposit / request_supply / request_withdraw all consume a fresh `Auth` hot potato.
-    await executeAndWait(
-        depositToAccountTx(accountWrapperId, capital.managerSeed),
-        "deposit_to_account",
-    );
-    console.log(`[${ts()}]   Account funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
-
-    // Vault bootstrap (async): the market is already registered active (with 0 cash)
-    // by create_and_share_expiry_market, so the bootstrap flush values it (NAV 0, no orders).
-    //   0. lock_capital permanently locks the genesis minimum liquidity so
-    //      total_supply > 0; request_supply aborts ENotBootstrapped until it has.
-    //   1. request_supply(vaultSeed) deposits fresh DUSDC into the account and pulls
-    //      it into queue escrow against the account.
-    //   2. a privileged flush bootstrap-mints PLP ~1:1 (genesis total_supply ==
-    //      pool_value == min liquidity) and joins the escrowed DUSDC into idle; the
-    //      PLP is delivered to the account via the balance accumulator.
-    //   3. rebalance_expiry_cash pushes idle -> expiry up to the cash floor so the
-    //      market is mintable.
-    await executeAndWait(lockCapitalTx(poolVaultId), "bootstrap_lock_capital");
-    console.log(
-        `[${ts()}]   Genesis liquidity locked: ${MIN_BOOTSTRAP_LIQUIDITY / DUSDC_DECIMALS} DUSDC`,
-    );
-
-    await executeAndWait(
-        requestSupplyTx({
-            poolVaultId,
-            protocolConfigId,
-            wrapperId: accountWrapperId,
-            amount: capital.vaultSeed,
-        }),
-        "bootstrap_request_supply",
-    );
-    console.log(`[${ts()}]   Bootstrap supply queued: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
-
-    await execute(
-        () =>
-            refreshOracleAndFlushTxs({
-                poolVaultId,
-                protocolConfigId,
-                expiryMarketId,
-                pythFeedId,
-                bsValueStoreId,
-                bsSviStoreId,
-                lifecycleCapId,
-                expiry: expiryMs,
-                spot: seed.spot,
-                forward: seed.forward,
-                svi: seed.svi,
-            }),
-        "bootstrap_flush",
-    );
-    console.log(`[${ts()}]   Bootstrap flush: PLP minted 1:1, idle funded`);
-
-    await executeAndWait(
-        rebalanceExpiryCashTx({ poolVaultId, protocolConfigId, expiryMarketId }),
-        "bootstrap_rebalance_expiry_cash",
-    );
-    console.log(`[${ts()}]   Expiry cash rebalanced toward floor`);
-
-    const state: SimState = {
-        poolVaultId,
-        protocolConfigId,
-        expiryMarketId,
-        expiryMs: expiryMsString,
-        pythFeedId,
-        bsValueStoreId,
-        bsSviStoreId,
-        accountWrapperId,
-        lifecycleCapId,
-        initialExpiryCash: initialExpiryCash.toString(),
-    };
-
+    await executeAndWait(depositToAccountTx(accountWrapperId, integer(config.capital.manager_seed, "scenario config.capital.manager_seed")), "fund_simulation_account");
+    await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "bootstrap_lock_capital");
+    await executeAndWait(requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: accountWrapperId, amount: integer(config.capital.vault_seed, "scenario config.capital.vault_seed") }), "bootstrap_request_supply");
+    await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }), "bootstrap_flush");
+    await alignCreation(periodMs);
+    const marketResult = await executeAndWait(createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId: config.market.cadence_id }), "create_and_share_expiry_market");
+    const expiryMarketId = createdObjectId(marketResult, "ExpiryMarket");
+    const expiryMs = decimal(eventJson(onlyEvent(marketResult, "MarketCreated")).expiry);
+    if (marketResult.clockTimestampMs === null) throw new Error("market creation did not record its Clock timestamp");
+    const creationTimestampMs = BigInt(marketResult.clockTimestampMs);
+    const expectedExpiry = ((creationTimestampMs / periodMs) + 1n) * periodMs;
+    if (BigInt(expiryMs) !== expectedExpiry) throw new Error(`expected cadence expiry ${expectedExpiry}, got ${expiryMs}`);
+    await executeAndWait(await seedOracleTx({ pythFeedId, bsValueStoreId, bsSviStoreId, expiry: BigInt(expiryMs), ...oracleParams(seed) }), "seed_oracle_surface");
+    await executeAndWait(rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId }), "bootstrap_rebalance_expiry_cash");
+    const state: SimState = { poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId, expiryMs, pythFeedId, bsValueStoreId, bsSviStoreId, accountWrapperId, lifecycleCapId, initialExpiryCash: initialExpiryCash.toString(), tickSize: tickSize.toString() };
     writeJson(STATE_PATH, state);
-    console.log(`[${ts()}]   State saved to ${STATE_PATH}`);
-
     return state;
 }
 
-function mintParamsFromRow(row: MintRow, state: SimState, alignedStrike: bigint) {
-    return {
-        expiryMarketId: state.expiryMarketId,
-        protocolConfigId: state.protocolConfigId,
-        wrapperId: state.accountWrapperId,
-        pythFeedId: state.pythFeedId,
-        bsValueStoreId: state.bsValueStoreId,
-        bsSviStoreId: state.bsSviStoreId,
-        strike: alignedStrike,
-        isUp: row.isUp,
-        quantity: row.quantity,
-        leverage: row.leverage,
-        tickSize: ORACLE_TICK_SIZE,
-    };
+function clearArtifacts(): void {
+    for (const path of [LOCAL_TRACE_PATH, LOCAL_DATA_PATH, LOCAL_TRACE_PARTIAL_PATH, LOCAL_DATA_PARTIAL_PATH, PYTHON_DATA_PATH]) if (existsSync(path)) rmSync(path);
+}
+function runPython(scenario: string, expiryMs: string, maxRows?: number): void {
+    const script = fileURLToPath(new URL("../python_replay.py", import.meta.url));
+    const args = [script, "--scenario", scenario, "--out", PYTHON_DATA_PATH, "--pricing-trace", LOCAL_TRACE_PATH, "--expiry-ms", expiryMs];
+    if (maxRows !== undefined) args.push("--max-rows", String(maxRows));
+    const result = spawnSync("python3", args, { stdio: "inherit", env: process.env });
+    if (result.status !== 0) throw new Error(`python replay failed with exit code ${result.status}`);
 }
 
-async function executeRow(
-    row: ScenarioRow,
-    state: SimState,
-    aliases: AliasState,
-): Promise<ExecutionReceipt> {
-    if (row.action === "oracle_mint_ptb") {
-        const alignedStrike = alignStrikeToTick(row.strike);
-        return execute(
-            () =>
-                refreshOracleAndMintTxs({
-                    ...mintParamsFromRow(row, state, alignedStrike),
-                    expiry: BigInt(state.expiryMs),
-                    spot: row.spot,
-                    forward: row.forward,
-                    svi: {
-                        a: row.a,
-                        aNegative: row.aNegative,
-                        b: row.b,
-                        rho: row.rho,
-                        rhoNegative: row.rhoNegative,
-                        m: row.m,
-                        mNegative: row.mNegative,
-                        sigma: row.sigma,
-                    },
-                }),
-            "oracle_mint_ptb",
-        );
-    }
-
-    if (row.action === "redeem") {
-        const orderId = aliases.orderIdsByRef.get(row.orderRef);
-        if (!orderId) throw new Error(`Unknown order_ref ${row.orderRef}`);
-        return execute(
-            () =>
-                refreshOracleAndRedeemTxs({
-                    expiryMarketId: state.expiryMarketId,
-                    protocolConfigId: state.protocolConfigId,
-                    wrapperId: state.accountWrapperId,
-                    pythFeedId: state.pythFeedId,
-                    bsValueStoreId: state.bsValueStoreId,
-                    bsSviStoreId: state.bsSviStoreId,
-                    expiry: BigInt(state.expiryMs),
-                    orderId,
-                    closeQuantity: row.closeQuantity,
-                    spot: row.oracleRefresh.spot,
-                    forward: row.oracleRefresh.forward,
-                    svi: row.oracleRefresh,
-                }),
-            "redeem",
-        );
-    }
-
-    // supply/withdraw are ASYNC: a row only ENQUEUES a request; the economic effect
-    // (PLP mint/burn, account credit) lands at a later privileged flush
-    // (start_pool_valuation -> value_expiry -> finish_flush), synthesized by the
-    // runner at the batched checkpoints (see executeScenario). request_supply deposits
-    // fresh DUSDC into the account and pulls it into escrow; request_withdraw pulls PLP
-    // from account custody, auto-settling any flush-delivered PLP first (no separate
-    // withdraw_settled step).
-    if (row.action === "supply") {
-        return execute(
-            () =>
-                requestSupplyTx({
-                    poolVaultId: state.poolVaultId,
-                    protocolConfigId: state.protocolConfigId,
-                    wrapperId: state.accountWrapperId,
-                    amount: row.amount,
-                }),
-            "supply",
-        );
-    }
-
-    // Withdraw fully unwinds its referenced supply. Affordability against the
-    // account's materialized PLP is pre-checked in executeScenario (skip-and-log when
-    // the batched cadence hasn't minted enough yet), so by here the shares are known
-    // available; decrement the running balance and enqueue the withdraw request, which
-    // auto-settles delivered PLP into custody and pulls `shares`.
-    const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
-    aliases.availableSettledPlp -= shares;
-    return execute(
-        () =>
-            requestWithdrawTx({
-                poolVaultId: state.poolVaultId,
-                protocolConfigId: state.protocolConfigId,
-                wrapperId: state.accountWrapperId,
-                shares,
-            }),
-        "withdraw",
-    );
-}
-
-async function executeScenario(
-    rows: ScenarioRow[],
-    state: SimState,
-    capital: SimulationCapital,
-    scenarioPath: string,
-    maxRows?: number,
-    runPython = true,
-): Promise<void> {
-    clearOutputArtifacts();
-
-    const traceSteps: LocalTraceStep[] = [];
+async function replay(rows: ScenarioRow[], state: SimState, scenario: string, maxRows?: number): Promise<void> {
+    clearArtifacts();
+    const aliases: Aliases = { orderIds: new Map(), orderRefs: new Map() };
+    const observed: ScenarioActionName[] = [];
     const records: EconomicRecord[] = [];
-    const economicState = initialEconomicState(capital, BigInt(state.initialExpiryCash));
-    const aliases = initialAliases();
-    const targetMints = rows.filter((row) => row.action === "oracle_mint_ptb").length;
-    let successfulMints = 0;
-
-    console.log(`\n[${ts()}] Loaded ${rows.length} executable tx rows (${targetMints} mints)`);
-    console.log(`[${ts()}] --- Executing economic replay ---\n`);
-
-    // Batched LP flush cadence: requests accumulate and are drained by a privileged
-    // flush the runner synthesizes after rows 300 and 999. The
-    // bootstrap supply minted PLP 1:1 at setup, so seed the account's withdrawable PLP
-    // with it (a conservative lower bound — see AliasState.availableSettledPlp).
-    aliases.availableSettledPlp = capital.vaultSeed;
-    const flushAfter = flushCheckpoints();
-    const rebalanceAfter = cashRebalanceCheckpoints(rows.length, flushAfter);
-    let skippedWithdraws = 0;
-
-    const runFlush = async (afterRow: number, row: ScenarioRow) => {
-        const oracle = firstOracleData(row);
-        const startedAt = performance.now();
-        // Use `execute` so the receipt carries normalized gas. Refresh and flush are
-        // two PTBs under the same-tx oracle guard; `execute` aggregates both legs'
-        // gas and events into one trace step while the flush supplies digest/effects.
-        const receipt = await execute(
-            () =>
-                refreshOracleAndFlushTxs({
-                    poolVaultId: state.poolVaultId,
-                    protocolConfigId: state.protocolConfigId,
-                    expiryMarketId: state.expiryMarketId,
-                    pythFeedId: state.pythFeedId,
-                    bsValueStoreId: state.bsValueStoreId,
-                    bsSviStoreId: state.bsSviStoreId,
-                    lifecycleCapId: state.lifecycleCapId,
-                    expiry: BigInt(state.expiryMs),
-                    spot: oracle.spot,
-                    forward: oracle.forward,
-                    svi: oracle.svi,
-                }),
-            `flush_after_row_${afterRow}`,
-        );
-        const wallMs = performance.now() - startedAt;
-        if (receipt.clockTimestampMs === null) {
-            throw new Error(`flush after row ${afterRow} did not read the Sui Clock`);
-        }
-        traceSteps.push({
-            step: afterRow,
-            action: "flush",
-            digest: receipt.digest,
-            pricingTimestampMs: receipt.clockTimestampMs,
-            wallMs,
-            gas: receipt.gas,
-            events: receipt.events.map((event: any) => ({
-                type: eventName(event),
-                full_type: String(event.type ?? ""),
-                parsedJson: event.parsedJson ?? {},
-            })),
-        });
-        records.push(
-            economicMaintenanceRecord(
-                afterRow,
-                "flush",
-                row,
-                receipt,
-                economicState,
-                aliases,
-            ),
-        );
-        process.stdout.write(
-            `[${ts()}]   -- flush after row ${afterRow} (drained LP queues, gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
-        );
-    };
-
-    const runCashRebalance = async (afterRow: number, row: ScenarioRow) => {
-        const startedAt = performance.now();
-        const receipt = await execute(
-            () =>
-                rebalanceExpiryCashTx({
-                    poolVaultId: state.poolVaultId,
-                    protocolConfigId: state.protocolConfigId,
-                    expiryMarketId: state.expiryMarketId,
-                }),
-            `rebalance_expiry_cash_after_row_${afterRow}`,
-        );
-        const wallMs = performance.now() - startedAt;
-        if (receipt.clockTimestampMs === null) {
-            throw new Error(`cash rebalance after row ${afterRow} did not read the Sui Clock`);
-        }
-        traceSteps.push({
-            step: afterRow,
-            action: "rebalance_expiry_cash",
-            digest: receipt.digest,
-            pricingTimestampMs: receipt.clockTimestampMs,
-            wallMs,
-            gas: receipt.gas,
-            events: receipt.events.map((event: any) => ({
-                type: eventName(event),
-                full_type: String(event.type ?? ""),
-                parsedJson: event.parsedJson ?? {},
-            })),
-        });
-        records.push(
-            economicMaintenanceRecord(
-                afterRow,
-                "rebalance_expiry_cash",
-                row,
-                receipt,
-                economicState,
-                aliases,
-            ),
-        );
-        process.stdout.write(
-            `[${ts()}]   -- rebalance expiry cash after row ${afterRow} (gas ${(receipt.gas.gasTotal / 1e9).toFixed(4)} SUI) --\n`,
-        );
-    };
-
-    const runSyntheticMaintenance = async (afterRow: number, row: ScenarioRow) => {
-        if (flushAfter.has(afterRow)) {
-            await runFlush(afterRow, row);
-        } else if (rebalanceAfter.has(afterRow)) {
-            await runCashRebalance(afterRow, row);
-        }
-    };
-
-    const buildTraceFile = (): LocalTraceFile => ({
-        schema_version: LOCAL_TRACE_SCHEMA_VERSION,
-        steps: traceSteps,
-    });
-    const buildDataFile = (): EconomicDataFile => ({
-        schema_version: ECONOMIC_SCHEMA_VERSION,
-        scenario: {
-            quantity_scale: scenarioQuantityScale(),
-        },
-        records,
-    });
-    const writeReplayArtifacts = (tracePath: string, dataPath: string) => {
-        writeJson(tracePath, buildTraceFile());
-        writeJson(dataPath, buildDataFile());
-    };
-    const writePartialReplayArtifacts = () => {
-        writeReplayArtifacts(LOCAL_TRACE_PARTIAL_PATH, LOCAL_DATA_PARTIAL_PATH);
-        process.stderr.write(`[${ts()}]   Partial local trace: ${LOCAL_TRACE_PARTIAL_PATH}\n`);
-        process.stderr.write(`[${ts()}]   Partial local data:  ${LOCAL_DATA_PARTIAL_PATH}\n`);
-    };
-
-    let processed = 0;
+    const steps: LocalTraceStep[] = [];
+    const data = (): EconomicDataFile => ({ schema_version: ECONOMIC_SCHEMA_VERSION, scenario: { quantity_scale: scenarioQuantityScale(), required_actions: REQUIRED_ACTIONS, observed_actions: observed }, records });
+    const trace = (): LocalTraceFile => ({ schema_version: LOCAL_TRACE_SCHEMA_VERSION, steps });
     try {
         for (const row of rows) {
-            processed++;
-            // Withdraw affordability under the batched cadence: a supply's PLP is not
-            // minted until its flush, so a withdraw can reference PLP that does not exist
-            // yet. Skip-and-log instead of aborting, so the run completes and reports how
-            // many withdraws the cadence could actually service.
-            if (row.action === "withdraw") {
-                const shares = aliases.lpAmountByRef.get(row.lpRef) ?? 0n;
-                if (shares === 0n || shares > aliases.availableSettledPlp) {
-                    skippedWithdraws++;
-                    process.stdout.write(
-                        `[${ts()}]   [${row.step}] withdraw SKIPPED (${row.lpRef}: want ${shares} PLP, ${aliases.availableSettledPlp} materialized)\n`,
-                    );
-                    await runSyntheticMaintenance(processed, row);
-                    continue;
-                }
-            }
-            try {
-                const startedAt = performance.now();
-                const receipt = await executeRow(row, state, aliases);
-                const wallMs = performance.now() - startedAt;
-                const record = economicRecord(row, receipt, economicState, aliases);
-                recordAliases(row, receipt, aliases);
-                traceSteps.push(traceStep(row, receipt, wallMs));
-                records.push(record);
-
-                if (row.action === "oracle_mint_ptb") {
-                    successfulMints += 1;
-                    const alignedStrike = alignStrikeToTick(row.strike);
-                    process.stdout.write(
-                        `[${ts()}]   [${row.step}] ${direction(row)} $${scaledUsd(alignedStrike)} qty=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}\n`,
-                    );
-                } else {
-                    process.stdout.write(`[${ts()}]   [${row.step}] ${row.action}\n`);
-                }
-            } catch (error) {
-                if (row.action === "oracle_mint_ptb") {
-                    throw new Error(
-                        `${mintContext(row, alignStrikeToTick(row.strike))} failed: ${errorMessage(error)}`,
-                    );
-                }
-                throw new Error(
-                    `${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`,
-                );
-            }
-            await runSyntheticMaintenance(processed, row);
+            const started = performance.now();
+            const receipt = await executeRow(row, state, aliases);
+            const step = traceStep(row, receipt, performance.now() - started, receipt.clockTimestampMs ?? 0);
+            steps.push(step);
+            if (receipt.clockTimestampMs === null) step.pricingTimestampMs = Number(await clockTimestampMs());
+            const updates = normalizeUpdates(row, receipt, aliases);
+            updateAliases(row, receipt, aliases);
+            records.push({ step: row.step, action: row.action, input: rowInput(row, BigInt(state.tickSize)), updates, state: await stateSnapshot(state) });
+            if (!observed.includes(row.action)) observed.push(row.action);
+            console.log(`[${ts()}] [${row.step}/${rows.length}] ${row.action}`);
         }
     } catch (error) {
-        writePartialReplayArtifacts();
+        if (steps.length > 0) writeJson(LOCAL_TRACE_PARTIAL_PATH, trace());
+        if (records.length > 0) writeJson(LOCAL_DATA_PARTIAL_PATH, data());
         throw error;
     }
-    if (skippedWithdraws > 0) {
-        console.log(
-            `[${ts()}]   ${skippedWithdraws} withdraw row(s) skipped (batched cadence had not materialized enough PLP)`,
-        );
-    }
-
-    writeReplayArtifacts(LOCAL_TRACE_PATH, LOCAL_DATA_PATH);
-    if (runPython) {
-        runPythonReplay(scenarioPath, state.expiryMs, maxRows);
-    }
-
-    console.log(`\n[${ts()}] --- Done ---`);
-    console.log(
-        `[${ts()}]   ${traceSteps.length} txs, ${successfulMints}/${targetMints} successful mints`,
-    );
-    console.log(`[${ts()}]   Local trace: ${LOCAL_TRACE_PATH}`);
-    console.log(`[${ts()}]   Local data:  ${LOCAL_DATA_PATH}`);
-    if (runPython) {
-        console.log(`[${ts()}]   Python data: ${PYTHON_DATA_PATH}`);
-    }
+    const missing = REQUIRED_ACTIONS.filter((action) => !observed.includes(action));
+    if (missing.length > 0) throw new Error(`scenario did not execute required actions: ${missing.join(",")}`);
+    writeJson(LOCAL_TRACE_PATH, trace()); writeJson(LOCAL_DATA_PATH, data());
+    runPython(scenario, state.expiryMs, maxRows);
 }
 
-function runPythonReplay(scenarioPath: string, expiryMs: string, maxRows?: number) {
-    const script = fileURLToPath(new URL("../python_replay.py", import.meta.url));
-    const args = [
-        script,
-        "--scenario",
-        scenarioPath,
-        "--out",
-        PYTHON_DATA_PATH,
-        "--pricing-trace",
-        LOCAL_TRACE_PATH,
-        "--expiry-ms",
-        expiryMs,
-    ];
-    if (maxRows !== undefined) {
-        args.push("--max-rows", String(maxRows));
-    }
-
-    const result = spawnSync("python3", args, {
-        stdio: "inherit",
-        env: process.env,
-    });
-    if (result.status !== 0) {
-        throw new Error(`python_replay.py failed with exit code ${result.status}`);
-    }
-}
-
-async function main() {
+async function main(): Promise<void> {
     const args = parseArgs();
-    const scenario = args.scenario;
-    const scenarioConfig = readJson<Record<string, any>>(SCENARIO_CONFIG_PATH);
-    if (scenarioConfig.schema_version !== 1) {
-        throw new Error(`unsupported scenario config schema_version: ${String(scenarioConfig.schema_version)}`);
-    }
-    const capital = simulationCapital(scenarioConfig, "normal");
-    let rows = loadScenario(scenario);
-    if (args.maxRows !== undefined) {
-        console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
-        rows = rows.slice(0, args.maxRows);
-    }
-    if (rows.length === 0) throw new Error("Scenario has no executable rows");
-
-    const state = await setupSimulation(scenarioConfig, capital, firstOracleData(rows[0]));
-    await executeScenario(
-        rows,
-        state,
-        capital,
-        scenario,
-        args.maxRows,
-        true,
-    );
+    const config = readJson<ScenarioConfig>(CONFIG_PATH);
+    if (config.schema_version !== 2) throw new Error(`unsupported scenario config schema ${config.schema_version}`);
+    let rows = loadScenario(args.scenario);
+    if (args.maxRows !== undefined) rows = rows.slice(0, args.maxRows);
+    validateCompleteScenario(rows);
+    const seed = rows.map(oracleFor).find((value): value is OracleRefreshData => value !== null);
+    if (!seed) throw new Error("scenario has no oracle snapshot for setup");
+    const state = await setup(config, seed);
+    await replay(rows, state, args.scenario, args.maxRows);
+    console.log(`[${ts()}] parity artifacts written for ${rows.length} explicit actions`);
 }
 
-main().catch((error) => {
-    console.error("Simulation failed:", error);
-    process.exit(1);
-});
+main().catch((error) => { console.error("Simulation failed:", error); process.exitCode = 1 });

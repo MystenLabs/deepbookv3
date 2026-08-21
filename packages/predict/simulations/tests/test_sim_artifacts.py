@@ -15,11 +15,11 @@ from write_benchmark_results import main as write_benchmark_results
 
 
 class LocalTraceTests(unittest.TestCase):
-    def test_consumers_reject_incomplete_or_coerced_v4_steps(self) -> None:
+    def test_consumers_reject_incomplete_or_coerced_v5_steps(self) -> None:
         invalid_steps = (
             {
                 "step": 1,
-                "action": "oracle_mint_ptb",
+                "action": "mint",
                 "pricingTimestampMs": 125,
                 "events": [],
             },
@@ -46,7 +46,7 @@ class LocalTraceTests(unittest.TestCase):
                 trace_path.write_text(
                     json.dumps(
                         {
-                            "schema_version": "predict_local_trace_v4",
+                            "schema_version": "predict_local_trace_v5",
                             "steps": [step],
                         }
                     )
@@ -69,7 +69,7 @@ class LocalTraceTests(unittest.TestCase):
             trace_path.write_text(
                 json.dumps(
                     {
-                        "schema_version": "predict_local_trace_v4",
+                        "schema_version": "predict_local_trace_v5",
                         "steps": [],
                         "unexpected": True,
                     }

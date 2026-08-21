@@ -19,6 +19,7 @@ packages/sessions/Move.lock
 # Node.js
 node_modules
 package-lock.json
+!packages/predict/package-lock.json
 **/pnpm-lock.yaml
 
 # Jupyter

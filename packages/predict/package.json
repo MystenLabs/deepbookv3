@@ -3,9 +3,10 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "packageManager": "npm@10.9.4",
   "scripts": {
     "build": "tsc --noEmit",
-    "test": "tsx --test harness/ts/harnessTest.ts devtools/ts/devtoolsTest.ts"
+    "test": "tsx --test harness/ts/harnessTest.ts devtools/ts/devtoolsTest.ts simulations/src/simTest.ts"
   },
   "dependencies": {
     "@mysten/sui": "^2.5.0",

@@ -11,57 +11,78 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from python_indexes.liquidation_book import (
-    LiquidationBook,
-    encode_order_id,
-)
 from python_indexes.strike_payout_tree import StrikePayoutTree
 from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v3"
-DERIVED_SCHEMA_VERSION = "predict_derived_v2"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
+LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
+EXPECTED_ACTION_SEQUENCE = (
+    "mint",
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "flush",
+    "request_withdraw",
+    "flush",
+    "mint",
+    "redeem_live",
+    "rebalance_expiry_cash",
+    "mint",
+    "mint",
+    "settle",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "flush",
+    "request_supply",
+    "flush",
+)
+EXPECTED_SETTLED_REDEMPTION_MODES = (False, True, False, True)
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
-    "schema_version": None,
-    "source": {
-        "expiry_ms": None,
-        "settlement_timestamp_ms": None,
-        "settlement_price": None,
-    },
-    "capital": {
-        "normal": {"manager_seed": None, "vault_seed": None},
-        "long": {"manager_seed": None, "vault_seed": None},
-    },
+    "schema_version": int,
+    "source": {"settlement_price": str},
+    "capital": {"manager_seed": str, "vault_seed": str},
     "generation": {
-        "normal": {"min_mint_spend": None, "max_mint_spend": None},
-        "long": {"min_mint_spend": None, "max_mint_spend": None},
+        "rows": int,
+        "min_mint_spend": str,
+        "max_mint_spend": str,
+        "supply_amount": str,
+        "withdraw_shares": str,
+    },
+    "market": {
+        "cadence_id": int,
+        "cadence_period_ms": str,
+        "cadence_window_size": str,
+        "tick_size": str,
+        "admission_tick_size": str,
+        "max_expiry_allocation": str,
+        "initial_expiry_cash": str,
     },
     "protocol": {
-        "base_fee": None,
-        "min_fee": None,
-        "min_entry_probability": None,
-        "max_entry_probability": None,
-        "trade_liquidation_budget": None,
-        "valuation_liquidation_budget": None,
-        "liquidation_head_scan_divisor": None,
-        "curve_samples": None,
-        "protocol_reserve_profit_share": None,
-        "trading_loss_rebate_rate": None,
-        "max_expiry_allocation": None,
-        "initial_expiry_cash": None,
-        "expiry_fee_window_ms": None,
-        "expiry_fee_max_multiplier": None,
-        "max_admission_leverage": None,
-        "liquidation_ltv": None,
-        "backing_buffer_lambda": None,
+        "base_fee": str,
+        "min_fee": str,
+        "min_entry_probability": str,
+        "max_entry_probability": str,
+        "protocol_reserve_profit_share": str,
+        "expiry_fee_window_ms": str,
+        "expiry_fee_max_multiplier": str,
+        "backing_buffer_lambda": str,
+        "inventory_impact_max_rate": str,
+        "plp_supply_fee_rate": str,
+        "plp_withdraw_fee_rate": str,
+        "lp_request_limit_flush_attempts": str,
+        "max_lp_pool_value": str,
     },
 }
 ORACLE_REFRESH_FIELDS = (
     "spot",
     "forward",
     "a",
+    "a_negative",
     "b",
     "rho",
     "rho_negative",
@@ -69,6 +90,36 @@ ORACLE_REFRESH_FIELDS = (
     "m_negative",
     "sigma",
     "risk_free_rate",
+)
+SCENARIO_COLUMNS = (
+    "tx",
+    "action",
+    "spot",
+    "forward",
+    "a",
+    "a_negative",
+    "b",
+    "rho",
+    "rho_negative",
+    "m",
+    "m_negative",
+    "sigma",
+    "risk_free_rate",
+    "strike",
+    "is_up",
+    "quantity",
+    "order_ref",
+    "close_quantity",
+    "replacement_order_ref",
+    "amount",
+    "shares",
+    "min_output",
+    "lp_ref",
+    "settlement_price",
+    "permissionless",
+    "replay_timestamp_ms",
+    "source_timestamp_ms",
+    "price_source_timestamp_ms",
 )
 # Lightweight mirror initialized from the complete scenario_config.json contract.
 BASE_FEE = 20_000_000
@@ -91,39 +142,25 @@ POS_INF_STRIKE = (1 << 64) - 1  # constants::pos_inf!() == u64::MAX
 # are known before any row runs.
 ORACLE_MIN_STRIKE = 1 * ORACLE_TICK_SIZE
 ORACLE_MAX_STRIKE = (POS_INF_TICK - 1) * ORACLE_TICK_SIZE
-MIN_NET_PREMIUM = 1_000_000
+MIN_PREMIUM = 1_000_000
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
 MIN_BOOTSTRAP_LIQUIDITY = 10 * DUSDC_DECIMALS
-INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
+INITIAL_ACCOUNT_PLP_BALANCE = VAULT_SEED
+INITIAL_TOTAL_PLP_SUPPLY = INITIAL_ACCOUNT_PLP_BALANCE + MIN_BOOTSTRAP_LIQUIDITY
 INITIAL_EXPIRY_CASH = 50_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
 MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
-TRADE_LIQUIDATION_BUDGET = 24
-VALUATION_LIQUIDATION_BUDGET = 192
-LIQUIDATION_HEAD_SCAN_DIVISOR = 3
-CURVE_SAMPLES = 50
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
-# WITHDRAW_FEE_ALPHA removed: the withdraw band fee died with the approximate-NAV
-# world. The async flush pays withdrawals exactly pro-rata (plp::withdraw_dusdc).
-TRADING_LOSS_REBATE_RATE = 500_000_000
-TERMINAL_REBATE_FRACTION = 0
-# Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
-EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
-
-# Dynamic mint-admission cap. Actual liquidation still uses LIQUIDATION_LTV.
-MAX_ADMISSION_LEVERAGE = 3_000_000_000  # 3x, default_max_admission_leverage
-ADMISSION_LEVERAGE_CURVE_K = 200_000_000  # 0.20, admission_leverage_curve_k
-LIQUIDATION_LTV = 850_000_000  # 0.85, default_liquidation_ltv
-GLOBAL_OBSERVABILITY_INTERVAL = 10
-LEVERAGE_ONE_X = 1_000_000_000
-LEVERAGE_ONE_AND_HALF_X = 1_500_000_000
-LEVERAGE_TWO_X = 2_000_000_000
-LEVERAGE_TWO_AND_HALF_X = 2_500_000_000
-LEVERAGE_THREE_X = 3_000_000_000
+EXPIRY_FEE_MAX_MULTIPLIER = 2_000_000_000
+INVENTORY_IMPACT_MAX_RATE = 50_000_000
+PLP_SUPPLY_FEE_RATE = 1_000_000
+PLP_WITHDRAW_FEE_RATE = 2_000_000
+LP_REQUEST_LIMIT_FLUSH_ATTEMPTS = 1
+MAX_LP_POOL_VALUE = (1 << 64) - 1
 
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
@@ -194,9 +231,12 @@ def _validate_config_object(
         if isinstance(nested, dict):
             _validate_config_object(child, nested, child_path)
         elif key == "schema_version":
-            if child != 1:
+            if child != 2:
                 raise ValueError(f"unsupported scenario config schema_version: {child}")
-        elif not isinstance(child, str) or not child.isdecimal():
+        elif nested is int:
+            if isinstance(child, bool) or not isinstance(child, int) or child < 0:
+                raise ValueError(f"{child_path} must be a non-negative integer")
+        elif nested is str and (not isinstance(child, str) or not child.isdecimal()):
             raise ValueError(f"{child_path} must be a non-negative integer string")
 
 
@@ -208,35 +248,33 @@ def _config_int(config: dict[str, Any], section: str, key: str) -> int:
     return int(config[section][key])
 
 
-def _capital_int(config: dict[str, Any], mode: str, key: str) -> int:
-    return int(config["capital"][mode][key])
-
-
 def apply_scenario_config(config: dict[str, Any]) -> None:
     global VAULT_SEED
     global MANAGER_SEED
+    global INITIAL_ACCOUNT_PLP_BALANCE
     global INITIAL_TOTAL_PLP_SUPPLY
     global BASE_FEE
     global MIN_FEE
     global MIN_ENTRY_PROBABILITY
     global MAX_ENTRY_PROBABILITY
-    global TRADE_LIQUIDATION_BUDGET
-    global VALUATION_LIQUIDATION_BUDGET
-    global LIQUIDATION_HEAD_SCAN_DIVISOR
-    global CURVE_SAMPLES
     global PROTOCOL_RESERVE_PROFIT_SHARE
-    global TRADING_LOSS_REBATE_RATE
     global MAX_EXPIRY_ALLOCATION
     global INITIAL_EXPIRY_CASH
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global BACKING_BUFFER_LAMBDA
-    global MAX_ADMISSION_LEVERAGE
-    global LIQUIDATION_LTV
+    global INVENTORY_IMPACT_MAX_RATE
+    global PLP_SUPPLY_FEE_RATE
+    global PLP_WITHDRAW_FEE_RATE
+    global LP_REQUEST_LIMIT_FLUSH_ATTEMPTS
+    global MAX_LP_POOL_VALUE
+    global ORACLE_TICK_SIZE
+    global ADMISSION_TICK_SIZE
+    global ORACLE_MIN_STRIKE
+    global ORACLE_MAX_STRIKE
 
-    VAULT_SEED = _capital_int(config, "normal", "vault_seed")
-    MANAGER_SEED = _capital_int(config, "normal", "manager_seed")
-    INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY
+    VAULT_SEED = int(config["capital"]["vault_seed"])
+    MANAGER_SEED = int(config["capital"]["manager_seed"])
 
     BASE_FEE = _config_int(config, "protocol", "base_fee")
     MIN_FEE = _config_int(config, "protocol", "min_fee")
@@ -250,36 +288,19 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
         "protocol",
         "max_entry_probability",
     )
-    TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget")
-    VALUATION_LIQUIDATION_BUDGET = _config_int(
-        config,
-        "protocol",
-        "valuation_liquidation_budget",
-    )
-    LIQUIDATION_HEAD_SCAN_DIVISOR = _config_int(
-        config,
-        "protocol",
-        "liquidation_head_scan_divisor",
-    )
-    CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples")
     PROTOCOL_RESERVE_PROFIT_SHARE = _config_int(
         config,
         "protocol",
         "protocol_reserve_profit_share",
     )
-    TRADING_LOSS_REBATE_RATE = _config_int(
-        config,
-        "protocol",
-        "trading_loss_rebate_rate",
-    )
     MAX_EXPIRY_ALLOCATION = _config_int(
         config,
-        "protocol",
+        "market",
         "max_expiry_allocation",
     )
     INITIAL_EXPIRY_CASH = _config_int(
         config,
-        "protocol",
+        "market",
         "initial_expiry_cash",
     )
     BACKING_BUFFER_LAMBDA = _config_int(
@@ -297,12 +318,24 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
         "protocol",
         "expiry_fee_max_multiplier",
     )
-    MAX_ADMISSION_LEVERAGE = _config_int(
+    INVENTORY_IMPACT_MAX_RATE = _config_int(config, "protocol", "inventory_impact_max_rate")
+    PLP_SUPPLY_FEE_RATE = _config_int(config, "protocol", "plp_supply_fee_rate")
+    PLP_WITHDRAW_FEE_RATE = _config_int(config, "protocol", "plp_withdraw_fee_rate")
+    LP_REQUEST_LIMIT_FLUSH_ATTEMPTS = _config_int(
         config,
         "protocol",
-        "max_admission_leverage",
+        "lp_request_limit_flush_attempts",
     )
-    LIQUIDATION_LTV = _config_int(config, "protocol", "liquidation_ltv")
+    MAX_LP_POOL_VALUE = _config_int(config, "protocol", "max_lp_pool_value")
+    ORACLE_TICK_SIZE = _config_int(config, "market", "tick_size")
+    ADMISSION_TICK_SIZE = _config_int(config, "market", "admission_tick_size")
+    ORACLE_MIN_STRIKE = ORACLE_TICK_SIZE
+    ORACLE_MAX_STRIKE = (POS_INF_TICK - 1) * ORACLE_TICK_SIZE
+    bootstrap_fee = (
+        PLP_SUPPLY_FEE_RATE * VAULT_SEED + FLOAT_SCALING - 1
+    ) // FLOAT_SCALING
+    INITIAL_ACCOUNT_PLP_BALANCE = VAULT_SEED - bootstrap_fee
+    INITIAL_TOTAL_PLP_SUPPLY = INITIAL_ACCOUNT_PLP_BALANCE + MIN_BOOTSTRAP_LIQUIDITY
 
 
 def config_source_value(config: dict[str, Any], key: str) -> int:
@@ -461,29 +494,36 @@ def _optional_bool(row: dict[str, str], field: str, line_number: int, default: b
     return value == "true"
 
 
-def _oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
+def _oracle_values(row: dict[str, str], line_number: int) -> dict[str, Any]:
     present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
     if len(present) != len(ORACLE_REFRESH_FIELDS):
         raise ValueError(f"Scenario line {line_number}: oracle refresh fields must all be present")
     return {
-        "oracleRefresh": {
-            "spot": _uint(row, "spot", line_number),
-            "forward": _uint(row, "forward", line_number),
-            "a": _uint(row, "a", line_number),
-            "aNegative": _optional_bool(row, "a_negative", line_number),
-            "b": _uint(row, "b", line_number),
-            "rho": _uint(row, "rho", line_number),
-            "rhoNegative": _bool(row, "rho_negative", line_number),
-            "m": _uint(row, "m", line_number),
-            "mNegative": _bool(row, "m_negative", line_number),
-            "sigma": _uint(row, "sigma", line_number),
-            "riskFreeRate": _uint(row, "risk_free_rate", line_number),
-        },
+        "spot": _uint(row, "spot", line_number),
+        "forward": _uint(row, "forward", line_number),
+        "a": _uint(row, "a", line_number),
+        "aNegative": _bool(row, "a_negative", line_number),
+        "b": _uint(row, "b", line_number),
+        "rho": _uint(row, "rho", line_number),
+        "rhoNegative": _bool(row, "rho_negative", line_number),
+        "m": _uint(row, "m", line_number),
+        "mNegative": _bool(row, "m_negative", line_number),
+        "sigma": _uint(row, "sigma", line_number),
+        "riskFreeRate": _uint(row, "risk_free_rate", line_number),
     }
+
+
+def _optional_oracle_values(row: dict[str, str], line_number: int) -> dict[str, Any] | None:
+    present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
+    if not present:
+        return None
+    return _oracle_values(row, line_number)
 
 
 def parse_scenario_text(text: str) -> list[dict[str, Any]]:
     reader = csv.DictReader(StringIO(text.replace("\r", "")))
+    if tuple(reader.fieldnames or ()) != SCENARIO_COLUMNS:
+        raise ValueError(f"scenario header does not match schema: expected {','.join(SCENARIO_COLUMNS)}")
     rows: list[dict[str, Any]] = []
     last_tx = 0
     for index, raw in enumerate(reader, start=2):
@@ -493,65 +533,85 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
             raise ValueError(f"Scenario line {index}: tx values must be strictly increasing")
         last_tx = tx
         action = _required(row, "action", index)
-        if action == "oracle_mint_ptb":
+        if action == "mint":
             rows.append(
                 {
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
                     **_timestamps(row, index),
-                    "spot": _uint(row, "spot", index),
-                    "forward": _uint(row, "forward", index),
-                    "a": _uint(row, "a", index),
-                    "aNegative": _optional_bool(row, "a_negative", index),
-                    "b": _uint(row, "b", index),
-                    "rho": _uint(row, "rho", index),
-                    "rhoNegative": _bool(row, "rho_negative", index),
-                    "m": _uint(row, "m", index),
-                    "mNegative": _bool(row, "m_negative", index),
-                    "sigma": _uint(row, "sigma", index),
-                    "riskFreeRate": _uint(row, "risk_free_rate", index),
+                    **_oracle_values(row, index),
                     "strike": _uint(row, "strike", index),
                     "isUp": _bool(row, "is_up", index),
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
-                    "leverage": _optional_uint(row, "leverage", index, LEVERAGE_ONE_X),
                     "orderRef": _ref(row, "order_ref", index),
                 }
             )
-        elif action == "redeem":
+        elif action == "redeem_live":
             rows.append(
                 {
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
                     **_timestamps(row, index),
-                    **_oracle_refresh(row, index),
+                    "oracleRefresh": _oracle_values(row, index),
                     "orderRef": _ref(row, "order_ref", index),
                     "closeQuantity": parse_mint_quantity(_uint(row, "close_quantity", index), index, "close_quantity"),
                     "replacementOrderRef": _optional_str(row, "replacement_order_ref"),
                 }
             )
-        elif action == "supply":
+        elif action == "request_supply":
             rows.append(
                 {
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
-                    **_timestamps(row, index),
-                    **_oracle_refresh(row, index),
                     "amount": _uint(row, "amount", index),
+                    "minOutput": _uint(row, "min_output", index),
                     "lpRef": _ref(row, "lp_ref", index),
                 }
             )
-        elif action == "withdraw":
+        elif action == "request_withdraw":
             rows.append(
                 {
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
-                    **_timestamps(row, index),
-                    **_oracle_refresh(row, index),
+                    "shares": _uint(row, "shares", index),
+                    "minOutput": _uint(row, "min_output", index),
                     "lpRef": _ref(row, "lp_ref", index),
+                }
+            )
+        elif action == "flush":
+            oracle = _optional_oracle_values(row, index)
+            rows.append(
+                {
+                    "action": action,
+                    "lineNumber": index,
+                    "step": tx,
+                    "oracleRefresh": oracle,
+                    **(_timestamps(row, index) if oracle is not None else {}),
+                }
+            )
+        elif action == "rebalance_expiry_cash":
+            rows.append({"action": action, "lineNumber": index, "step": tx})
+        elif action == "settle":
+            rows.append(
+                {
+                    "action": action,
+                    "lineNumber": index,
+                    "step": tx,
+                    "settlementPrice": _uint(row, "settlement_price", index),
+                }
+            )
+        elif action == "redeem_settled":
+            rows.append(
+                {
+                    "action": action,
+                    "lineNumber": index,
+                    "step": tx,
+                    "orderRef": _ref(row, "order_ref", index),
+                    "permissionless": _bool(row, "permissionless", index),
                 }
             )
         else:
@@ -561,6 +621,29 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
 
 def parse_scenario(path: Path) -> list[dict[str, Any]]:
     return parse_scenario_text(path.read_text())
+
+
+def validate_complete_scenario(rows: list[dict[str, Any]]) -> None:
+    if len(rows) != len(EXPECTED_ACTION_SEQUENCE):
+        raise ValueError(
+            f"scenario must contain exactly {len(EXPECTED_ACTION_SEQUENCE)} steps, got {len(rows)}"
+        )
+    for index, (row, expected_action) in enumerate(
+        zip(rows, EXPECTED_ACTION_SEQUENCE, strict=True), start=1
+    ):
+        if row["step"] != index:
+            raise ValueError(f"scenario step {index} must use tx {index}, got {row['step']}")
+        if row["action"] != expected_action:
+            raise ValueError(
+                f"scenario step {index} must be {expected_action}, got {row['action']}"
+            )
+    settled_redemption_modes = tuple(
+        row["permissionless"] for row in rows if row["action"] == "redeem_settled"
+    )
+    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
+        raise ValueError(
+            "scenario settled redemptions must be owner/permissionless/owner/permissionless"
+        )
 
 
 def deepbook_div(x: int, y: int) -> int:
@@ -587,54 +670,6 @@ def live_forward(spot: int, forward: int) -> int:
     if spot <= 0:
         raise ValueError("live forward requires a positive spot")
     return forward
-
-
-def assert_valid_leverage(leverage: int) -> None:
-    if leverage < LEVERAGE_ONE_X:
-        raise ValueError("invalid leverage multiplier")
-
-
-def leverage_multiplier(leverage: int) -> int:
-    assert_valid_leverage(leverage)
-    return leverage
-
-
-def admission_leverage_cap(entry_probability: int) -> int:
-    risk_curve = mul_div_round_down(
-        entry_probability,
-        FLOAT_SCALING + ADMISSION_LEVERAGE_CURVE_K,
-        entry_probability + ADMISSION_LEVERAGE_CURVE_K,
-    )
-    return FLOAT_SCALING + deepbook_mul(MAX_ADMISSION_LEVERAGE - FLOAT_SCALING, risk_curve)
-
-
-def assert_admission_leverage_cap(entry_probability: int, leverage: int) -> None:
-    assert_valid_leverage(leverage)
-    if leverage > admission_leverage_cap(entry_probability):
-        raise ValueError("leverage above admission cap")
-
-
-def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
-    return deepbook_div(exposure_value, leverage_multiplier(leverage))
-
-
-def assert_net_premium_above_min(net_premium: int) -> None:
-    # Mirror strike_exposure_config.move: net_premium >= min_net_premium!(), so a
-    # net premium exactly equal to the minimum is allowed.
-    if net_premium < MIN_NET_PREMIUM:
-        raise ValueError("net premium below minimum")
-
-
-def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
-    assert_admission_leverage_cap(entry_probability, leverage)
-    entry_exposure_value = deepbook_mul(entry_probability, quantity)
-    contribution = user_contribution_from_exposure_value(entry_exposure_value, leverage)
-    return {
-        "entry_exposure_value": entry_exposure_value,
-        "contribution": contribution,
-        "floor_shares": entry_exposure_value - contribution,
-        "leverage_multiplier": leverage_multiplier(leverage),
-    }
 
 
 def mul_scaled_u128(x: int, y: int) -> int:
@@ -1023,452 +1058,29 @@ def compute_range_price(svi: dict[str, Any], forward: int, lower: int, higher: i
     return compute_range_price_cached(forward, *svi_cache_key(svi), lower, higher)
 
 
-def directional_probability_bounds(curve: list[dict[str, int]], lower: int, higher: int) -> tuple[int, int]:
-    if lower >= higher or ((lower == NEG_INF_STRIKE) == (higher == POS_INF_STRIKE)):
-        raise ValueError("invalid liquidation range")
-    if not curve:
-        raise ValueError("empty liquidation curve")
-    is_up = higher == POS_INF_STRIKE
-    strike = lower if is_up else higher
-    if strike < curve[0]["strike"] or strike > curve[-1]["strike"]:
-        raise ValueError("strike outside liquidation curve")
+REQUIRED_ACTIONS = [
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "request_withdraw",
+    "flush",
+    "rebalance_expiry_cash",
+    "settle",
+    "redeem_settled",
+]
 
-    lo = 0
-    hi = len(curve)
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if curve[mid]["strike"] < strike:
-            lo = mid + 1
-        else:
-            hi = mid
 
-    point = curve[lo]
-    if point["strike"] == strike:
-        price = point["up_price"] if is_up else FLOAT_SCALING - point["up_price"]
-        return price, price
+def order_id_for_terms(lower_tick: int, higher_tick: int, quantity: int, sequence: int) -> int:
+    lots = quantity // POSITION_LOT_SIZE
+    return (lots << 100) | (lower_tick << 70) | (higher_tick << 40) | sequence
 
-    lo_point = curve[lo - 1]
-    if lo_point["up_price"] < point["up_price"]:
-        raise ValueError("curve price underflow")
-    if is_up:
-        return point["up_price"], lo_point["up_price"]
-    return FLOAT_SCALING - lo_point["up_price"], FLOAT_SCALING - point["up_price"]
 
+def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int) -> int:
+    return max(0, model["expiry_ms"] - timestamp_ms)
 
-def build_curve(svi: dict[str, Any], forward: int, min_strike: int, max_strike: int) -> list[dict[str, int]]:
-    if min_strike > max_strike:
-        raise ValueError("invalid curve range")
-    if min_strike == max_strike:
-        return [{"strike": min_strike, "up_price": compute_up_price(svi, forward, min_strike)}]
 
-    points = [
-        {"strike": min_strike, "up_price": compute_up_price(svi, forward, min_strike)},
-        {"strike": max_strike, "up_price": compute_up_price(svi, forward, max_strike)},
-    ]
-    while len(points) < CURVE_SAMPLES:
-        best_idx = None
-        best_diff = 0
-        for i in range(len(points) - 1):
-            lo = points[i]
-            hi = points[i + 1]
-            if hi["strike"] - lo["strike"] <= ORACLE_TICK_SIZE:
-                continue
-            if lo["up_price"] < hi["up_price"]:
-                raise ValueError("curve price underflow")
-            diff = lo["up_price"] - hi["up_price"]
-            if diff > best_diff:
-                best_idx = i
-                best_diff = diff
-        if best_idx is None:
-            break
-        lo = points[best_idx]
-        hi = points[best_idx + 1]
-        mid = align_strike_to_tick((lo["strike"] + hi["strike"]) // 2)
-        points.insert(best_idx + 1, {"strike": mid, "up_price": compute_up_price(svi, forward, mid)})
-    return points
-
-
-def order_id_for_terms(order: dict[str, Any]) -> int:
-    return encode_order_id(
-        lower_tick=order["lower_tick"],
-        higher_tick=order["higher_tick"],
-        pos_inf_tick=POS_INF_TICK,
-        floor_shares=order_floor_shares(order),
-        quantity=order["quantity"],
-        sequence=order["sequence"],
-        position_lot_size=POSITION_LOT_SIZE,
-    )
-
-
-def floor_amount(floor_shares: int) -> int:
-    return floor_shares
-
-
-def liquidation_threshold_value(floor_amount: int) -> int:
-    return deepbook_div(floor_amount, LIQUIDATION_LTV)
-
-
-def assert_mint_above_liquidation_threshold(
-    entry_probability: int,
-    quantity: int,
-    leverage: int,
-    floor_shares: int,
-) -> None:
-    if leverage == LEVERAGE_ONE_X:
-        return
-    threshold_value = liquidation_threshold_value(floor_amount(floor_shares))
-    gross_value = deepbook_mul(entry_probability, quantity)
-    if gross_value <= threshold_value:
-        raise ValueError("order below liquidation threshold at entry")
-
-
-def order_floor_shares(order: dict[str, Any]) -> int:
-    return order["floor_shares"]
-
-
-def current_order_floor_amount(model: dict[str, Any], order: dict[str, Any]) -> int:
-    return floor_amount(order_floor_shares(order))
-
-
-def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int | None = None) -> int | None:
-    if not model.get("wall_clock_time"):
-        return None
-    now_ms = model.get("now_ms") if timestamp_ms is None else timestamp_ms
-    expiry_ms = model.get("pricing_expiry_ms")
-    if now_ms is None or expiry_ms is None:
-        raise ValueError("exact-time fee ramp requires now_ms and expiry_ms")
-    return max(0, expiry_ms - now_ms)
-
-
-def order_index_update_terms(order: dict[str, Any]) -> tuple[int, int]:
-    floor_shares = order_floor_shares(order)
-    return (order["quantity"], floor_shares)
-
-
-def invalidate_valuation_cache(model: dict[str, Any]) -> None:
-    model["valuation_cache"]["liability_key"] = None
-    model["valuation_cache"]["liability"] = None
-
-
-def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
-    quantity, floor_shares = order_index_update_terms(order)
-    assert_mint_above_liquidation_threshold(
-        order["entry_probability"],
-        order["quantity"],
-        order["leverage"],
-        floor_shares,
-    )
-    # The payout tree owns both the linear quantity walk and max-point net payout
-    # reserve reads. The replay mirrors NAV from model["orders"] directly after
-    # checking the same active-book monotonicity precondition as the on-chain
-    # price memo, so it needs no per-order NAV index.
-    model["payout"].insert_range(order["lower"], order["higher"], quantity, floor_shares)
-    invalidate_valuation_cache(model)
-    track_minted_boundaries(model, order["lower"], order["higher"])
-    insert_active_order(model, order["ref"])
-
-
-def remove_closed_live_order(
-    model: dict[str, Any],
-    order: dict[str, Any],
-    close_quantity: int,
-    resulting_order: dict[str, Any] | None,
-) -> int:
-    old_quantity, old_floor_shares = order_index_update_terms(order)
-    if resulting_order is None:
-        remaining_floor_shares = 0
-        remaining_quantity = 0
-    else:
-        remaining_quantity, remaining_floor_shares = order_index_update_terms(resulting_order)
-
-    model["payout"].remove_range(order["lower"], order["higher"], old_quantity, old_floor_shares)
-    if resulting_order is not None:
-        model["payout"].insert_range(
-            resulting_order["lower"],
-            resulting_order["higher"],
-            remaining_quantity,
-            remaining_floor_shares,
-        )
-    invalidate_valuation_cache(model)
-    closed_floor_amount = mul_div_round_up(old_floor_shares, close_quantity, old_quantity)
-    return floor_amount(closed_floor_amount)
-
-
-def remove_live_order(model: dict[str, Any], order: dict[str, Any]) -> int:
-    return remove_closed_live_order(model, order, order["quantity"], None)
-
-
-def valuation_curve_key(
-    model: dict[str, Any],
-) -> tuple[int, int, bool, int, int, bool, int, bool, int, int, int] | None:
-    if model["current_svi"] is None or model["current_forward"] == 0:
-        raise ValueError("pool valuation requires prior price and SVI updates")
-    if model["minted_min_strike"] is None or model["minted_max_strike"] is None:
-        return None
-    return (
-        model["current_forward"],
-        *svi_cache_key(model["current_svi"]),
-        model["minted_min_strike"],
-        model["minted_max_strike"],
-    )
-
-
-def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
-    key = valuation_curve_key(model)
-    if key is None:
-        return None
-    cache = model["valuation_cache"]
-    if cache["curve_key"] == key:
-        return cache["curve"]
-    curve = build_curve(
-        model["current_svi"],
-        model["current_forward"],
-        model["minted_min_strike"],
-        model["minted_max_strike"],
-    )
-    cache["curve_key"] = key
-    cache["curve"] = curve
-    cache["liability_key"] = None
-    cache["liability"] = None
-    return curve
-
-
-# --- Exact NAV liability (replaces the deleted dense StrikeNavMatrix + curve). ---
-# The contract's `strike_exposure::exact_live_liability` is `linear - correction`.
-# The payout-tree `walk_linear` and leveraged-book `correction_value` are efficient
-# on-chain aggregations of per-order sums when the active boundary UP prices are
-# monotone. The contract rejects non-monotone active boundary sets during the price
-# memo walk; mirror that precondition, then sum order-by-order here (the simulation
-# has one book, so the O(n) walk is fine and exact):
-#   linear     = Σ_active           quantity · range_price(lower, higher)
-#   correction = Σ_active_leveraged min(quantity · range_price(lower, higher),
-#                                       floor_shares)
-#   exact_live_liability = max(0, linear - correction)
-# There is NO conservative band anymore (deleted with the approximate-NAV world):
-# the flush prices one exact mark for both supply and withdraw.
-def assert_active_book_monotone(model: dict[str, Any]) -> None:
-    boundaries = sorted(
-        {
-            strike
-            for order in model["orders"].values()
-            if order["status"] == "active"
-            for strike in (order["lower"], order["higher"])
-            if strike not in (NEG_INF_STRIKE, POS_INF_STRIKE)
-        },
-    )
-    previous: int | None = None
-    for strike in boundaries:
-        price = compute_up_price(model["current_svi"], model["current_forward"], strike)
-        if previous is not None and price > previous:
-            raise ValueError("non-monotone active-book SVI surface")
-        previous = price
-
-
-def exact_live_liability(model: dict[str, Any]) -> int:
-    if model["current_svi"] is None or model["current_forward"] == 0:
-        raise ValueError("pool valuation requires prior price and SVI updates")
-    assert_active_book_monotone(model)
-    linear = 0
-    correction = 0
-    for order in model["orders"].values():
-        if order["status"] != "active":
-            continue
-        range_value = deepbook_mul(
-            compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"]),
-            order["quantity"],
-        )
-        linear += range_value
-        if order["leverage"] != LEVERAGE_ONE_X:
-            floor_value = floor_amount(order_floor_shares(order))
-            correction += min(range_value, floor_value)
-    return max(0, linear - correction)
-
-
-def live_position_liability(model: dict[str, Any]) -> int:
-    return exact_live_liability(model)
-
-
-# current_nav (per ExpiryMarket): free cash minus the exact per-order live
-# liability, floored at zero. free_cash = expiry_cash - rebate_reserve. This is the
-# EXACT mark the flush prices supply AND withdraw at.
-def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
-    rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    free_cash = max(0, state["expiry_cash_balance"] - rebate_reserve)
-    return max(0, free_cash - exact_live_liability(model))
-
-
-def compute_pool_value(
-    model: dict[str, Any],
-    state: dict[str, int],
-    curve: list[dict[str, int]] | None = None,
-    position_liability: int | None = None,
-) -> int:
-    # Pool NAV = lp_pool_value(idle, credits, debits, share, active, pending), where
-    # the single active market's NAV is the EXACT `current_nav` above (settled markets
-    # contribute 0 — not modelled here, settlement is stubbed). Mirrors
-    # plp::lp_pool_value's saturating exclusion of unmaterialized and carried
-    # protocol profit.
-    if model["current_svi"] is None or model["current_forward"] == 0:
-        raise ValueError("pool valuation requires prior price and SVI updates")
-    active_expiry_value = current_nav(model, state)
-    exclusion = unmaterialized_protocol_profit_exclusion(state, active_expiry_value)
-    return max(0, state["vault_idle_balance"] + active_expiry_value - exclusion - state["pending_protocol_profit"])
-
-
-def expiry_net_funding(state: dict[str, int]) -> int:
-    return max(0, state["expiry_sent_to_expiry"] - state["expiry_received_from_expiry"])
-
-
-def available_expiry_funding(state: dict[str, int]) -> int:
-    return max(0, MAX_EXPIRY_ALLOCATION - expiry_net_funding(state))
-
-
-def payout_reserve(model: dict[str, Any]) -> int:
-    max_net_payout, total_net_payout = model["payout"].net_payout_reserve_terms()
-    gap = total_net_payout - max_net_payout
-    if gap < 0:
-        raise ValueError("net payout sum below payout-tree max")
-    return max_net_payout + deepbook_mul(BACKING_BUFFER_LAMBDA, gap)
-
-
-def record_sent_to_expiry(state: dict[str, int], amount: int) -> None:
-    if amount == 0:
-        return
-    if state["terminal_accounting_started"]:
-        raise ValueError("cannot send cash after terminal accounting starts")
-    state["expiry_sent_to_expiry"] += amount
-    state["profit_basis_debits"] += amount
-
-
-def record_received_from_expiry(state: dict[str, int], amount: int) -> None:
-    if amount == 0:
-        return
-    state["expiry_received_from_expiry"] += amount
-    state["profit_basis_credits"] += amount
-
-
-def realize_pending_protocol_profit(state: dict[str, int]) -> int:
-    draw = min(state["pending_protocol_profit"], state["vault_idle_balance"])
-    state["pending_protocol_profit"] -= draw
-    state["vault_idle_balance"] -= draw
-    state["vault_protocol_reserve_balance"] += draw
-    return draw
-
-
-def realize_protocol_profit(state: dict[str, int], amount: int) -> int:
-    state["pending_protocol_profit"] += amount
-    return realize_pending_protocol_profit(state)
-
-
-def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
-    initial_loss = 0
-    if not state["terminal_accounting_started"]:
-        state["terminal_accounting_started"] = 1
-        if state["expiry_sent_to_expiry"] > state["expiry_received_from_expiry"]:
-            state["terminal_received_watermark"] = state["expiry_received_from_expiry"]
-            initial_loss = state["expiry_sent_to_expiry"] - state["expiry_received_from_expiry"]
-        else:
-            state["terminal_received_watermark"] = state["expiry_sent_to_expiry"]
-
-    received = state["expiry_received_from_expiry"]
-    if received > state["terminal_received_watermark"]:
-        profit = received - state["terminal_received_watermark"]
-        state["terminal_received_watermark"] = received
-    else:
-        profit = 0
-
-    state["net_losses_to_fill"] += initial_loss
-    if profit == 0:
-        return (0, 0, 0)
-    if profit <= state["net_losses_to_fill"]:
-        state["net_losses_to_fill"] -= profit
-        return (0, 0, 0)
-
-    materialized_profit = profit - state["net_losses_to_fill"]
-    state["net_losses_to_fill"] = 0
-    state["profit_basis_debits"] += materialized_profit
-    protocol_profit = deepbook_mul(materialized_profit, PROTOCOL_RESERVE_PROFIT_SHARE)
-    lp_profit = materialized_profit - protocol_profit
-    realize_protocol_profit(state, protocol_profit)
-    return (materialized_profit, lp_profit, protocol_profit)
-
-
-def expiry_rebalance_cash_terms(model: dict[str, Any], state: dict[str, int]) -> tuple[int, int, int]:
-    required_cash = payout_reserve(model) + deepbook_mul(
-        state["expiry_unresolved_trading_fees"],
-        TRADING_LOSS_REBATE_RATE,
-    )
-    target_buffer = deepbook_mul(required_cash, EXPIRY_REBALANCE_PCT)
-    target_cash = max(required_cash + target_buffer, INITIAL_EXPIRY_CASH)
-    sweep_threshold_cash = max(required_cash + target_buffer + target_buffer, INITIAL_EXPIRY_CASH)
-    return state["expiry_cash_balance"], target_cash, sweep_threshold_cash
-
-
-def sync_active_expiry_cash_updates(model: dict[str, Any], state: dict[str, int]) -> list[dict[str, Any]]:
-    cash_balance, target_cash, sweep_threshold_cash = expiry_rebalance_cash_terms(model, state)
-    if cash_balance < target_cash:
-        top_up = min(target_cash - cash_balance, state["vault_idle_balance"], available_expiry_funding(state))
-        if top_up <= 0:
-            return []
-        state["vault_idle_balance"] -= top_up
-        state["expiry_cash_balance"] += top_up
-        record_sent_to_expiry(state, top_up)
-        return [
-            {
-                "type": "expiry_cash_rebalanced",
-                "amount": str(top_up),
-                "to_expiry": True,
-                "target_cash": str(target_cash),
-                "protocol_profit_realized": "0",
-            }
-        ]
-    if cash_balance <= sweep_threshold_cash:
-        return []
-
-    returned_cash = cash_balance - target_cash
-    state["expiry_cash_balance"] -= returned_cash
-    state["vault_idle_balance"] += returned_cash
-    record_received_from_expiry(state, returned_cash)
-    protocol_profit_realized = realize_pending_protocol_profit(state)
-    return [
-        {
-            "type": "expiry_cash_rebalanced",
-            "amount": str(returned_cash),
-            "to_expiry": False,
-            "target_cash": str(target_cash),
-            "protocol_profit_realized": str(protocol_profit_realized),
-        }
-    ]
-
-
-# The flush valuation: rebalance the (single) active expiry, then price the pool
-# NAV at the EXACT mark. The deleted approximate-NAV world's verified-vs-unscanned
-# floor scan, supply_liability band, and aggregate_band are GONE — the flush uses
-# one exact `current_nav` for both supply and withdraw (DOCS_CONSOLIDATED_FACTS §3,
-# move.md NAV-mark invariant). Returns (cash-rebalance updates, pool_value,
-# synced_state).
-# The parity replay calls this once per synthetic flush, then uses the frozen pool
-# value and pre-drain total supply for both FIFO queues.
-def flush_valuation(
-    model: dict[str, Any],
-    state: dict[str, int],
-) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
-    synced_state = dict(state)
-    updates = sync_active_expiry_cash_updates(model, synced_state)
-    pool_value = compute_pool_value(model, synced_state)
-    return updates, pool_value, synced_state
-
-
-def unmaterialized_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
-    aggregate_credits = state["profit_basis_credits"] + active_expiry_value
-    aggregate_debits = state["profit_basis_debits"]
-    if aggregate_credits <= aggregate_debits:
-        return 0
-    return deepbook_mul(aggregate_credits - aggregate_debits, PROTOCOL_RESERVE_PROFIT_SHARE)
-
-
-def expiry_fee_multiplier(time_to_expiry_ms: int | None) -> int:
-    if time_to_expiry_ms is None or time_to_expiry_ms >= EXPIRY_FEE_WINDOW_MS:
+def expiry_fee_multiplier(time_to_expiry_ms: int) -> int:
+    if time_to_expiry_ms >= EXPIRY_FEE_WINDOW_MS:
         return FLOAT_SCALING
     ramp = mul_div_round_down(
         EXPIRY_FEE_MAX_MULTIPLIER - FLOAT_SCALING,
@@ -1479,15 +1091,17 @@ def expiry_fee_multiplier(time_to_expiry_ms: int | None) -> int:
 
 
 def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
-    if probability == 0 or probability == FLOAT_SCALING:
-        raw_fee = 0
+    if probability < 0 or probability > FLOAT_SCALING:
+        raise ValueError("invalid fee probability")
+    if probability in (0, FLOAT_SCALING):
+        raw = 0
     else:
-        complement = FLOAT_SCALING - probability
-        variance = deepbook_mul(probability, complement)
-        bernoulli_factor = sqrt_down(variance)
-        raw_fee = deepbook_mul(BASE_FEE, bernoulli_factor)
-    base = raw_fee if raw_fee > MIN_FEE else MIN_FEE
-    return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
+        variance = deepbook_mul(probability, FLOAT_SCALING - probability)
+        raw = deepbook_mul(BASE_FEE, sqrt_down(variance))
+    rate = max(raw, MIN_FEE)
+    if time_to_expiry_ms is not None:
+        rate = deepbook_mul(rate, expiry_fee_multiplier(time_to_expiry_ms))
+    return rate
 
 
 def assert_entry_probability_bounds(probability: int) -> None:
@@ -1495,1478 +1109,543 @@ def assert_entry_probability_bounds(probability: int) -> None:
         raise ValueError("entry probability out of bounds")
 
 
-def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
-    return fee_rate(probability, time_to_expiry_ms)
+def oracle_for_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    if row["action"] == "mint":
+        return {key: row[key] for key in (
+            "spot",
+            "forward",
+            "a",
+            "aNegative",
+            "b",
+            "rho",
+            "rhoNegative",
+            "m",
+            "mNegative",
+            "sigma",
+            "riskFreeRate",
+        )}
+    return row.get("oracleRefresh")
 
 
-def initial_state() -> dict[str, int]:
-    if VAULT_SEED < INITIAL_EXPIRY_CASH:
-        raise ValueError("vault seed is below the setup expiry cash floor")
-
+def svi_input(oracle: dict[str, Any]) -> dict[str, str]:
     return {
-        "manager_balance": MANAGER_SEED,
-        "expiry_cash_balance": INITIAL_EXPIRY_CASH,
-        "expiry_unresolved_trading_fees": 0,
-        "vault_idle_balance": VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY - INITIAL_EXPIRY_CASH,
-        "vault_protocol_reserve_balance": 0,
-        "pending_protocol_profit": 0,
-        "expiry_sent_to_expiry": INITIAL_EXPIRY_CASH,
-        "expiry_received_from_expiry": 0,
-        "terminal_accounting_started": 0,
-        "terminal_received_watermark": 0,
-        "net_losses_to_fill": 0,
-        "profit_basis_debits": INITIAL_EXPIRY_CASH,
-        "profit_basis_credits": 0,
-        "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
-        "supply_requests_pending": 0,
-        "withdraw_requests_pending": 0,
-        "open_order_count": 0,
-        "open_order_quantity": 0,
-        "liquidated_order_count": 0,
-    }
-
-
-CANONICAL_STATE_KEYS = (
-    "manager_balance",
-    "expiry_cash_balance",
-    "expiry_unresolved_trading_fees",
-    "vault_idle_balance",
-    "vault_protocol_reserve_balance",
-    "pending_protocol_profit",
-    "profit_basis_debits",
-    "profit_basis_credits",
-    "vault_total_plp_supply",
-    "supply_requests_pending",
-    "withdraw_requests_pending",
-    "open_order_count",
-    "open_order_quantity",
-    "liquidated_order_count",
-)
-
-
-def state_snapshot(state: dict[str, int]) -> dict[str, str]:
-    return {key: str(state[key]) for key in CANONICAL_STATE_KEYS}
-
-
-def svi_input(row: dict[str, Any]) -> dict[str, str]:
-    return {
-        "a": signed_svi_value(row["a"], row.get("aNegative", False)),
-        "b": str(row["b"]),
-        "rho": signed_svi_value(row["rho"], row["rhoNegative"]),
-        "m": signed_svi_value(row["m"], row["mNegative"]),
-        "sigma": str(row["sigma"]),
-    }
-
-
-def pricing_svi(
-    raw_svi: dict[str, Any],
-    *,
-    expiry_ms: int | None = None,
-    model_timestamp_ms: int | None = None,
-    pricing_timestamp_ms: int | None = None,
-) -> dict[str, Any]:
-    """Build the transaction-local 1e18 SVI tuple consumed by pricing.move."""
-    timing = (expiry_ms, model_timestamp_ms, pricing_timestamp_ms)
-    if all(value is None for value in timing):
-        remaining_ms = 1
-        anchor_tte_ms = 1
-    elif any(value is None for value in timing):
-        raise ValueError("SVI roll-down requires expiry, model, and pricing timestamps")
-    else:
-        assert expiry_ms is not None
-        assert model_timestamp_ms is not None
-        assert pricing_timestamp_ms is not None
-        remaining_ms = expiry_ms - pricing_timestamp_ms
-        anchor_tte_ms = expiry_ms - model_timestamp_ms
-        if remaining_ms <= 0 or anchor_tte_ms <= 0:
-            raise ValueError("SVI roll-down requires model and pricing timestamps before expiry")
-        if pricing_timestamp_ms < model_timestamp_ms:
-            raise ValueError("SVI pricing timestamp cannot precede the provider model timestamp")
-
-    return {
-        "a": raw_svi["a"] * F * remaining_ms // anchor_tte_ms,
-        "aNegative": raw_svi.get("aNegative", False),
-        "b": raw_svi["b"] * F * remaining_ms // anchor_tte_ms,
-        "rho": raw_svi["rho"],
-        "rhoNegative": raw_svi["rhoNegative"],
-        "m": raw_svi["m"],
-        "mNegative": raw_svi["mNegative"],
-        "sigma": raw_svi["sigma"],
-        "at1e18": True,
-    }
-
-
-def mint_input(row: dict[str, Any]) -> dict[str, str]:
-    # Mirror sim.ts mintInput: the canonical mint input is the (lower_tick,
-    # higher_tick) pair the entrypoint takes directly (no standalone range key).
-    strike = align_strike_to_tick(row["strike"])
-    lower_tick, higher_tick = binary_range_ticks(strike, row["isUp"])
-    return {
-        "order_ref": row["orderRef"],
-        "lower_tick": str(lower_tick),
-        "higher_tick": str(higher_tick),
-        "quantity": str(row["quantity"]),
-        "leverage": str(row["leverage"]),
+        "a": signed_svi_value(oracle["a"], oracle["aNegative"]),
+        "b": str(oracle["b"]),
+        "rho": signed_svi_value(oracle["rho"], oracle["rhoNegative"]),
+        "m": signed_svi_value(oracle["m"], oracle["mNegative"]),
+        "sigma": str(oracle["sigma"]),
     }
 
 
 def row_input(row: dict[str, Any]) -> dict[str, Any]:
     action = row["action"]
-    if action == "oracle_mint_ptb":
-        return {
-            "spot": str(row["spot"]),
-            "forward": str(row["forward"]),
-            "svi": svi_input(row),
-            **mint_input(row),
+    oracle = oracle_for_row(row)
+    oracle_input = (
+        {
+            "spot": str(oracle["spot"]),
+            "forward": str(oracle["forward"]),
+            "a": str(oracle["a"]),
+            "a_negative": oracle["aNegative"],
+            "b": str(oracle["b"]),
+            "rho": str(oracle["rho"]),
+            "rho_negative": oracle["rhoNegative"],
+            "m": str(oracle["m"]),
+            "m_negative": oracle["mNegative"],
+            "sigma": str(oracle["sigma"]),
+            "risk_free_rate": str(oracle["riskFreeRate"]),
         }
-    if action == "redeem":
+        if oracle is not None
+        else {}
+    )
+    if action == "mint":
+        lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
         return {
-            **oracle_refresh_input(row),
+            **oracle_input,
+            "order_ref": row["orderRef"],
+            "lower_tick": str(lower_tick),
+            "higher_tick": str(higher_tick),
+            "quantity": str(row["quantity"]),
+        }
+    if action == "redeem_live":
+        return {
+            **oracle_input,
             "order_ref": row["orderRef"],
             "close_quantity": str(row["closeQuantity"]),
             "replacement_order_ref": row["replacementOrderRef"],
         }
-    if action == "supply":
-        return {**oracle_refresh_input(row), "amount": str(row["amount"]), "lp_ref": row["lpRef"]}
-    return {**oracle_refresh_input(row), "lp_ref": row["lpRef"]}
+    if action == "request_supply":
+        return {
+            "amount": str(row["amount"]),
+            "min_output": str(row["minOutput"]),
+            "lp_ref": row["lpRef"],
+        }
+    if action == "request_withdraw":
+        return {
+            "shares": str(row["shares"]),
+            "min_output": str(row["minOutput"]),
+            "lp_ref": row["lpRef"],
+        }
+    if action == "settle":
+        return {"settlement_price": str(row["settlementPrice"])}
+    if action == "redeem_settled":
+        return {
+            "order_ref": row["orderRef"],
+            "permissionless": row["permissionless"],
+        }
+    return oracle_input
 
 
-def oracle_refresh_input(row: dict[str, Any]) -> dict[str, Any]:
-    oracle = row["oracleRefresh"]
+def initial_state() -> dict[str, int]:
     return {
-        "spot": str(oracle["spot"]),
-        "forward": str(oracle["forward"]),
-        "svi": svi_input(oracle),
+        "account_dusdc_balance": MANAGER_SEED,
+        "account_plp_balance": INITIAL_ACCOUNT_PLP_BALANCE,
+        "expiry_cash_balance": INITIAL_EXPIRY_CASH,
+        "inventory_impact_reserve": 0,
+        "payout_liability": 0,
+        "required_cash": 0,
+        "fee_incentive_balance": 0,
+        "vault_idle_balance": VAULT_SEED + MIN_BOOTSTRAP_LIQUIDITY - INITIAL_EXPIRY_CASH,
+        "vault_protocol_reserve_balance": 0,
+        "vault_pending_protocol_profit": 0,
+        "profit_basis_debits": INITIAL_EXPIRY_CASH,
+        "profit_basis_credits": 0,
+        "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
+        "supply_requests_pending": 0,
+        "withdraw_requests_pending": 0,
+        "is_settled": 0,
+        "active_market_count": 1,
+        "sent_to_expiry": INITIAL_EXPIRY_CASH,
+        "received_from_expiry": 0,
     }
 
 
-# Propbook Pyth oracle_lane::ObservationRecorded normalized view: the global Pyth
-# spot tick. Mirrors the TS normalizer; timestamps are localnet-clock-derived and
-# excluded from the parity diff.
-def pyth_feed_update(price: dict[str, Any]) -> dict[str, str]:
+def state_snapshot(state: dict[str, int]) -> dict[str, str]:
+    visible = (
+        "account_dusdc_balance",
+        "account_plp_balance",
+        "expiry_cash_balance",
+        "inventory_impact_reserve",
+        "payout_liability",
+        "required_cash",
+        "fee_incentive_balance",
+        "vault_idle_balance",
+        "vault_protocol_reserve_balance",
+        "vault_pending_protocol_profit",
+        "profit_basis_debits",
+        "profit_basis_credits",
+        "vault_total_plp_supply",
+        "supply_requests_pending",
+        "withdraw_requests_pending",
+        "is_settled",
+        "active_market_count",
+    )
+    return {key: str(state[key]) for key in visible}
+
+
+def initial_model(expiry_ms: int) -> dict[str, Any]:
     return {
-        "type": "pyth_feed_updated",
-        "spot": str(price["spot"]),
+        "expiry_ms": expiry_ms,
+        "tree": StrikePayoutTree(tick_size=ORACLE_TICK_SIZE, pos_inf_tick=POS_INF_TICK),
+        "orders": {},
+        "next_order_sequence": 0,
+        "last_oracle": None,
+        "settlement_price": None,
+        "settled_liability": 0,
+        "supply_queue": [],
+        "withdraw_queue": [],
+        "next_supply_index": 1,
+        "next_withdraw_index": 0,
     }
 
 
-# Synthetic normalized view collapsed from Propbook's split Block Scholes spot,
-# forward, and SVI feed events. `basis` is no longer an event field (derived as
-# forward/spot).
-def block_scholes_surface_update(oracle: dict[str, Any]) -> dict[str, str]:
-    return {
-        "type": "block_scholes_surface_updated",
-        "spot": str(oracle["spot"]),
-        "forward": str(oracle["forward"]),
-        **svi_input(oracle),
-    }
+def live_payout_liability(model: dict[str, Any]) -> int:
+    maximum, total = model["tree"].payout_reserve_terms()
+    return maximum + deepbook_mul(BACKING_BUFFER_LAMBDA, total - maximum)
 
 
-def apply_inline_oracle_refresh(
+def update_required_cash(model: dict[str, Any], state: dict[str, int]) -> None:
+    liability = (
+        model["settled_liability"]
+        if model["settlement_price"] is not None
+        else live_payout_liability(model)
+    )
+    state["payout_liability"] = liability
+    state["required_cash"] = liability + state["inventory_impact_reserve"]
+
+
+def inventory_impact_potential(liability: int) -> int:
+    if INVENTORY_IMPACT_MAX_RATE == 0 or liability == 0:
+        return 0
+    capped = min(liability, MAX_EXPIRY_ALLOCATION)
+    utilization = mul_div_round_down(capped, FLOAT_SCALING, MAX_EXPIRY_ALLOCATION)
+    marginal_rate = deepbook_mul(INVENTORY_IMPACT_MAX_RATE, utilization)
+    potential = deepbook_mul(marginal_rate, capped) // 2
+    if liability > MAX_EXPIRY_ALLOCATION:
+        potential += deepbook_mul(INVENTORY_IMPACT_MAX_RATE, liability - MAX_EXPIRY_ALLOCATION)
+    return potential
+
+
+def apply_oracle(
     model: dict[str, Any],
     row: dict[str, Any],
-    updates: list[dict[str, Any]],
-    pricing_timing: dict[str, int] | None = None,
+    timing: dict[str, int] | None,
 ) -> None:
-    oracle = row if row["action"] == "oracle_mint_ptb" else row["oracleRefresh"]
-    model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
-    model["current_svi"] = pricing_svi(
-        oracle,
-        expiry_ms=model.get("pricing_expiry_ms") if pricing_timing else None,
-        model_timestamp_ms=(
-            pricing_timing["model_timestamp_ms"] if pricing_timing else None
-        ),
-        pricing_timestamp_ms=(
-            pricing_timing["pricing_timestamp_ms"] if pricing_timing else None
-        ),
+    oracle = oracle_for_row(row)
+    if oracle is not None:
+        snapshot = dict(oracle)
+        snapshot["expiryMs"] = model["expiry_ms"]
+        snapshot["pricingTimestampMs"] = (
+            timing["pricing_timestamp_ms"] if timing else row.get("replayTimestampMs", 0)
+        )
+        snapshot["sviSourceTimestampMs"] = (
+            timing.get("svi_source_timestamp_ms", snapshot["pricingTimestampMs"])
+            if timing
+            else row.get("sourceTimestampMs", snapshot["pricingTimestampMs"])
+        )
+        model["last_oracle"] = snapshot
+
+
+def live_marked_liability(model: dict[str, Any]) -> int:
+    oracle = model["last_oracle"]
+    if oracle is None:
+        raise ValueError("live valuation requires an oracle snapshot")
+    svi = pricing_svi(oracle)
+    forward = live_forward(oracle["spot"], oracle["forward"])
+    return model["tree"].walk_linear(
+        lambda strike: compute_up_price(svi, forward, strike),
+        FLOAT_SCALING,
     )
-    updates.append(pyth_feed_update(oracle))
-    updates.append(block_scholes_surface_update(oracle))
 
 
-def order_minted_update(
-    mint: dict[str, Any],
-    svi: dict[str, Any],
-    forward: int,
-    sequence: int,
-    time_to_expiry_ms: int | None = None,
-) -> dict[str, str]:
-    strike = align_strike_to_tick(mint["strike"])
-    lower, higher = binary_range_bounds(strike, mint["isUp"])
-    lower_tick, higher_tick = binary_range_ticks(strike, mint["isUp"])
-    entry_probability = compute_range_price(svi, forward, lower, higher)
-    assert_entry_probability_bounds(entry_probability)
-    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
-    terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
-    assert_net_premium_above_min(terms["contribution"])
+def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
+    if model["settlement_price"] is not None:
+        return 0
+    free_cash = max(0, state["expiry_cash_balance"] - state["inventory_impact_reserve"])
+    return max(0, free_cash - live_marked_liability(model))
+
+
+def pool_value(state: dict[str, int], active_nav: int) -> int:
+    gross = state["vault_idle_balance"] + active_nav
+    aggregate_credits = state["profit_basis_credits"] + active_nav
+    exclusion = deepbook_mul(
+        max(0, aggregate_credits - state["profit_basis_debits"]),
+        PROTOCOL_RESERVE_PROFIT_SHARE,
+    )
+    return max(0, gross - exclusion - state["vault_pending_protocol_profit"])
+
+
+def pricing_svi(oracle: dict[str, Any]) -> dict[str, Any]:
+    remaining_ms = oracle["expiryMs"] - oracle["pricingTimestampMs"]
+    anchor_tte_ms = oracle["expiryMs"] - oracle["sviSourceTimestampMs"]
+    if remaining_ms <= 0 or anchor_tte_ms <= 0:
+        raise ValueError("SVI roll-down requires pre-expiry timestamps")
+    rolled_a = oracle["a"] * FLOAT_SCALING * remaining_ms // anchor_tte_ms
+    rolled_b = oracle["b"] * FLOAT_SCALING * remaining_ms // anchor_tte_ms
     return {
-        "type": "order_minted",
-        "order_ref": mint["orderRef"],
-        "order_sequence": str(sequence),
-        # Canonical strike range as absolute ticks, matching the OrderMinted event
-        # (raw `lower`/`higher` are kept locally only for pricing, not emitted).
-        "lower_tick": str(lower_tick),
-        "higher_tick": str(higher_tick),
-        "leverage": str(mint["leverage"]),
-        "entry_probability": str(entry_probability),
-        "quantity": str(mint["quantity"]),
-        "contribution": str(terms["contribution"]),
-        "trading_fee": str(fee_amount),
-        "fee_incentive_subsidy": "0",
-        "builder_fee": "0",
-        "penalty_fee": "0",
+        "a": rolled_a,
+        "aNegative": oracle["aNegative"],
+        "b": rolled_b,
+        "rho": oracle["rho"],
+        "rhoNegative": oracle["rhoNegative"],
+        "m": oracle["m"],
+        "mNegative": oracle["mNegative"],
+        "sigma": oracle["sigma"],
+        "riskFreeRate": oracle["riskFreeRate"],
+        "at1e18": True,
     }
 
 
-def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
-    if update["type"] == "order_minted":
-        contribution = int(update["contribution"])
-        trading_fee = int(update["trading_fee"])
-        fee_incentive_subsidy = int(update.get("fee_incentive_subsidy", 0))
-        builder_fee = int(update["builder_fee"])
-        penalty_fee = int(update["penalty_fee"])
-        quantity = int(update["quantity"])
-        state["manager_balance"] -= (
-            contribution + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
+def price_range(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> int:
+    if "lower_tick" in row_or_order:
+        lower, higher = strikes_from_ticks(
+            row_or_order["lower_tick"],
+            row_or_order["higher_tick"],
         )
-        state["expiry_cash_balance"] += contribution + trading_fee + penalty_fee
-        state["expiry_unresolved_trading_fees"] += trading_fee
-        state["open_order_count"] += 1
-        state["open_order_quantity"] += quantity
-    elif update["type"] == "order_liquidated":
-        quantity = int(update["quantity"])
-        state["open_order_count"] -= 1
-        state["open_order_quantity"] -= quantity
-        state["liquidated_order_count"] += 1
-    elif update["type"] == "live_order_redeemed":
-        redeem_amount = int(update["redeem_amount"])
-        trading_fee = int(update["trading_fee"])
-        builder_fee = int(update["builder_fee"])
-        penalty_fee = int(update["penalty_fee"])
-        quantity_closed = int(update["quantity_closed"])
-        remaining_quantity = int(update["remaining_quantity"])
-        state["manager_balance"] += redeem_amount - trading_fee - builder_fee - penalty_fee
-        state["expiry_cash_balance"] -= redeem_amount
-        state["expiry_cash_balance"] += trading_fee + penalty_fee
-        state["expiry_unresolved_trading_fees"] += trading_fee
-        state["open_order_quantity"] -= quantity_closed
-        if remaining_quantity == 0:
-            state["open_order_count"] -= 1
-    elif update["type"] == "liquidated_order_redeemed":
-        state["liquidated_order_count"] -= 1
-    elif update["type"] == "settled_order_redeemed":
-        payout = int(update["payout_amount"])
-        quantity_closed = int(update["quantity_closed"])
-        state["manager_balance"] += payout
-        state["expiry_cash_balance"] -= payout
-        state["open_order_count"] -= 1
-        state["open_order_quantity"] -= quantity_closed
-    elif update["type"] == "expiry_cash_rebalanced":
-        amount = int(update["amount"])
-        if update["to_expiry"]:
-            state["expiry_cash_balance"] += amount
-            state["vault_idle_balance"] -= amount
-            record_sent_to_expiry(state, amount)
-        else:
-            protocol_profit_realized = int(update.get("protocol_profit_realized", 0))
-            state["expiry_cash_balance"] -= amount
-            state["vault_idle_balance"] += amount - protocol_profit_realized
-            state["vault_protocol_reserve_balance"] += protocol_profit_realized
-            state["pending_protocol_profit"] -= protocol_profit_realized
-            record_received_from_expiry(state, amount)
-    elif update["type"] == "expiry_cash_received":
-        amount = int(update["amount"])
-        state["expiry_cash_balance"] -= amount
-        state["vault_idle_balance"] += amount
-        record_received_from_expiry(state, amount)
-    elif update["type"] == "expiry_profit_materialized":
-        profit_basis_after = int(update["profit_basis_after"])
-        reserve_after = int(update["protocol_reserve_balance_after"])
-        pending_after = int(update["pending_protocol_profit_after"])
-        protocol_profit_realized = reserve_after - state["vault_protocol_reserve_balance"]
-        state["vault_idle_balance"] -= protocol_profit_realized
-        state["vault_protocol_reserve_balance"] = reserve_after
-        state["pending_protocol_profit"] = pending_after
-        state["profit_basis_debits"] = profit_basis_after
-    elif update["type"] == "supply_requested":
-        state["supply_requests_pending"] = int(update["requests_pending_after"])
-    elif update["type"] == "withdraw_requested":
-        state["withdraw_requests_pending"] = int(update["requests_pending_after"])
-    elif update["type"] == "request_cancelled":
-        key = "supply_requests_pending" if update["is_supply"] else "withdraw_requests_pending"
-        state[key] = int(update["requests_pending_after"])
-    elif update["type"] == "supply_filled":
-        if "requests_pending_after" in update:
-            state["vault_total_plp_supply"] += int(update["shares_minted"])
-            state["supply_requests_pending"] = int(update["requests_pending_after"])
-        else:
-            state["vault_idle_balance"] = int(update["idle_balance_after"])
-            state["vault_total_plp_supply"] = int(update["total_supply_after"])
-    elif update["type"] == "withdraw_filled":
-        if "requests_pending_after" in update:
-            state["vault_total_plp_supply"] -= int(update["shares_burned"])
-            state["withdraw_requests_pending"] = int(update["requests_pending_after"])
-        else:
-            state["vault_idle_balance"] = int(update["idle_balance_after"])
-            state["vault_total_plp_supply"] = int(update["total_supply_after"])
-    elif update["type"] == "flush_executed":
-        state["vault_idle_balance"] = int(update["idle_balance_after"])
-        total_supply_after = int(update["total_supply_after"])
-        if state["vault_total_plp_supply"] != total_supply_after:
-            raise ValueError(
-                "flush total supply mismatch: "
-                f"deltas={state['vault_total_plp_supply']} event={total_supply_after}"
-            )
-
-
-def active_refs(model: dict[str, Any]) -> list[str]:
-    return model["liquidation"].active_refs()
-
-
-def active_order_count(model: dict[str, Any]) -> int:
-    return model["liquidation"].active_order_count
-
-
-def insert_active_order(model: dict[str, Any], ref: str) -> None:
-    order = model["orders"][ref]
-    if order["leverage"] == LEVERAGE_ONE_X:
-        return
-    model["liquidation"].insert_order(order["order_id"], ref)
-
-
-def remove_active_order(model: dict[str, Any], ref: str) -> None:
-    order = model["orders"][ref]
-    if order["leverage"] == LEVERAGE_ONE_X:
-        return
-    model["liquidation"].remove_ref(ref)
-
-
-def mark_order_liquidated(model: dict[str, Any], ref: str) -> None:
-    order = model["orders"][ref]
-    if order["leverage"] == LEVERAGE_ONE_X:
-        return
-    model["liquidation"].mark_ref_liquidated(ref)
-
-
-def select_liquidation_candidates(model: dict[str, Any], budget: int) -> list[str]:
-    candidate_ids = model["liquidation"].select_liquidation_candidates(
-        budget,
-        LIQUIDATION_HEAD_SCAN_DIVISOR,
+    else:
+        strike = align_strike_to_tick(row_or_order["strike"])
+        lower, higher = binary_range_bounds(strike, row_or_order["isUp"])
+    return compute_range_price(
+        pricing_svi(oracle),
+        live_forward(oracle["spot"], oracle["forward"]),
+        lower,
+        higher,
     )
-    return [model["liquidation"].ref_for(order_id) for order_id in candidate_ids]
 
 
-def assert_liquidation_inputs(model: dict[str, Any]) -> None:
-    if model["current_svi"] is None or model["current_forward"] == 0:
-        raise ValueError("liquidation requires prior price and SVI updates")
-
-
-def run_liquidation_pass_with_verification(
-    model: dict[str, Any],
-    budget: int,
-) -> tuple[list[dict[str, str]], int, int]:
-    candidates = select_liquidation_candidates(model, budget)
-    if not candidates:
-        return ([], 0, 0)
-    assert_liquidation_inputs(model)
-    updates = []
-    verified_floor_amount = 0
-    verified_range = 0
-    for ref in candidates:
-        order = model["orders"][ref]
-        if order["status"] != "active":
-            continue
-        probability = compute_range_price(
-            model["current_svi"],
-            model["current_forward"],
-            order["lower"],
-            order["higher"],
-        )
-        gross_value = deepbook_mul(probability, order["quantity"])
-        floor_amount = current_order_floor_amount(model, order)
-        threshold_value = liquidation_threshold_value(floor_amount)
-        if gross_value > threshold_value:
-            verified_floor_amount += floor_amount
-            verified_range += gross_value
-            continue
-        remove_live_order(model, order)
-        mark_order_liquidated(model, ref)
-        order["status"] = "liquidated"
-        updates.append(
-            {
-                "type": "order_liquidated",
-                "order_ref": ref,
-                "order_sequence": str(order["sequence"]),
-                "quantity": str(order["quantity"]),
-                "gross_value": str(gross_value),
-                "floor_amount": str(floor_amount),
-                "liquidation_ltv": str(LIQUIDATION_LTV),
-            }
-        )
-    return updates, verified_floor_amount, verified_range
-
-
-def run_liquidation_pass(
-    model: dict[str, Any],
-    budget: int,
-) -> list[dict[str, str]]:
-    updates, _, _ = run_liquidation_pass_with_verification(model, budget)
-    return updates
-
-
-def append_pool_sync_phase(
+def mint_order(
     model: dict[str, Any],
     state: dict[str, int],
-    updates: list[dict[str, Any]],
-) -> tuple[int, dict[str, int]]:
-    # The flush still runs a passive liquidation pass, but NAV no longer needs its
-    # verified-floor/range output (the exact per-order floor-capped liability makes
-    # an underwater order net to zero with no scan — see exact_live_liability), so
-    # the verification plumbing and the band it fed are dropped.
-    updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
-    sync_updates, pool_value, synced_state = flush_valuation(model, state)
-    updates.extend(sync_updates)
-    return pool_value, synced_state
-
-
-def track_minted_boundaries(model: dict[str, Any], lower: int, higher: int) -> None:
-    for strike in (lower, higher):
-        if strike in (NEG_INF_STRIKE, POS_INF_STRIKE):
-            continue
-        if model["minted_min_strike"] is None or strike < model["minted_min_strike"]:
-            model["minted_min_strike"] = strike
-        if model["minted_max_strike"] is None or strike > model["minted_max_strike"]:
-            model["minted_max_strike"] = strike
-
-
-def mint_order(model: dict[str, Any], row: dict[str, Any], timestamp_ms: int) -> dict[str, str]:
-    if model["current_svi"] is None or model["current_forward"] == 0:
-        raise ValueError("mint requires prior price and SVI updates")
-    if row["orderRef"] in model["orders"]:
-        raise ValueError(f"duplicate order_ref {row['orderRef']}")
-    update = order_minted_update(
-        row,
-        model["current_svi"],
-        model["current_forward"],
-        model["next_sequence"],
-        model_fee_time_to_expiry_ms(model, timestamp_ms),
+    row: dict[str, Any],
+    timestamp_ms: int,
+) -> list[dict[str, Any]]:
+    oracle = model["last_oracle"]
+    if oracle is None:
+        raise ValueError("mint requires an oracle snapshot")
+    probability = price_range(row, oracle)
+    assert_entry_probability_bounds(probability)
+    quantity = row["quantity"]
+    premium = deepbook_mul(probability, quantity)
+    if premium < MIN_PREMIUM:
+        raise ValueError("premium below minimum")
+    fee = deepbook_mul(
+        fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
+        quantity,
     )
-    terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
-    lower_tick = int(update["lower_tick"])
-    higher_tick = int(update["higher_tick"])
-    lower, higher = strikes_from_ticks(lower_tick, higher_tick)
-    order = {
-        "ref": row["orderRef"],
-        "sequence": model["next_sequence"],
-        "lower": lower,
-        "higher": higher,
+    lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+    before = live_payout_liability(model)
+    model["tree"].insert_range(lower_tick, higher_tick, quantity)
+    after = live_payout_liability(model)
+    impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
+    total_cost = premium + fee + impact_charge
+    if total_cost > state["account_dusdc_balance"]:
+        raise ValueError("insufficient account balance for mint")
+
+    sequence = model["next_order_sequence"]
+    model["next_order_sequence"] += 1
+    model["orders"][row["orderRef"]] = {
         "lower_tick": lower_tick,
         "higher_tick": higher_tick,
-        "leverage": row["leverage"],
-        "entry_probability": int(update["entry_probability"]),
-        "quantity": row["quantity"],
-        "contribution": int(update["contribution"]),
-        "floor_shares": terms["floor_shares"],
-        "status": "active",
+        "quantity": quantity,
+        "sequence": sequence,
+        "position_root_sequence": sequence,
     }
-    order["order_id"] = order_id_for_terms(order)
-    model["orders"][row["orderRef"]] = order
-    model["next_sequence"] += 1
-    insert_live_order(model, order)
-    return update
+    state["account_dusdc_balance"] -= total_cost
+    state["expiry_cash_balance"] += total_cost
+    state["inventory_impact_reserve"] += impact_charge
+    update_required_cash(model, state)
+    return [
+        {
+            "type": "order_minted",
+            "order_ref": row["orderRef"],
+            "order_sequence": str(sequence),
+            "lower_tick": str(lower_tick),
+            "higher_tick": str(higher_tick),
+            "entry_probability": str(probability),
+            "quantity": str(quantity),
+            "premium": str(premium),
+            "trading_fee": str(fee),
+            "fee_incentive_subsidy": "0",
+            "builder_fee": "0",
+            "penalty_fee": "0",
+            "referral_fee": "0",
+            "inventory_impact_charge": str(impact_charge),
+            "onchain_timestamp_ms": str(timestamp_ms),
+            "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
+            "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
+            "block_scholes_forward_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
+            "block_scholes_svi_source_timestamp_ms": str(row["sourceTimestampMs"]),
+        }
+    ]
 
 
-def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
-    ref = row["orderRef"]
-    if ref not in model["orders"]:
-        raise ValueError(f"unknown order_ref {ref}")
-    order = model["orders"][ref]
+def redeem_live(
+    model: dict[str, Any],
+    state: dict[str, int],
+    row: dict[str, Any],
+    timestamp_ms: int,
+) -> list[dict[str, Any]]:
+    order = model["orders"].pop(row["orderRef"], None)
+    if order is None:
+        raise ValueError(f"unknown order_ref {row['orderRef']}")
     close_quantity = row["closeQuantity"]
     if close_quantity > order["quantity"]:
-        raise ValueError(f"redeem close_quantity exceeds order quantity for {ref}")
+        raise ValueError("close quantity exceeds order")
+    oracle = model["last_oracle"]
+    if oracle is None:
+        raise ValueError("live redeem requires an oracle snapshot")
+    probability = price_range(order, oracle)
+    redeem_amount = deepbook_mul(probability, close_quantity)
+    fee = min(
+        redeem_amount,
+        deepbook_mul(
+            fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
+            close_quantity,
+        ),
+    )
+    before = live_payout_liability(model)
+    model["tree"].remove_range(order["lower_tick"], order["higher_tick"], close_quantity)
+    after = live_payout_liability(model)
+    impact_rebate = inventory_impact_potential(before) - inventory_impact_potential(after)
+    remaining = order["quantity"] - close_quantity
+    replacement_ref = None
+    replacement_sequence = None
+    if remaining > 0:
+        replacement_ref = row["replacementOrderRef"] or row["orderRef"]
+        replacement_sequence = model["next_order_sequence"]
+        model["next_order_sequence"] += 1
+        model["orders"][replacement_ref] = {
+            **order,
+            "quantity": remaining,
+            "sequence": replacement_sequence,
+        }
 
-    if order["status"] == "liquidated":
-        if close_quantity != order["quantity"]:
-            raise ValueError("liquidated redeem requires full close")
-        if order["leverage"] != LEVERAGE_ONE_X:
-            model["liquidation"].clear_liquidated(order["order_id"])
-        del model["orders"][ref]
-        return {
-            "type": "liquidated_order_redeemed",
-            "order_ref": ref,
+    state["account_dusdc_balance"] += redeem_amount + impact_rebate - fee
+    state["expiry_cash_balance"] += fee - redeem_amount - impact_rebate
+    state["inventory_impact_reserve"] -= impact_rebate
+    update_required_cash(model, state)
+    return [
+        {
+            "type": "live_order_redeemed",
+            "order_ref": row["orderRef"],
             "order_sequence": str(order["sequence"]),
             "quantity_closed": str(close_quantity),
+            "remaining_quantity": str(remaining),
+            "replacement_order_ref": replacement_ref,
+            "replacement_order_sequence": (
+                None if replacement_sequence is None else str(replacement_sequence)
+            ),
+            "redeem_amount": str(redeem_amount),
+            "trading_fee": str(fee),
+            "builder_fee": "0",
+            "penalty_fee": "0",
+            "inventory_impact_rebate": str(impact_rebate),
+            "onchain_timestamp_ms": str(timestamp_ms),
+            "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
+            "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
+            "block_scholes_forward_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
+            "block_scholes_svi_source_timestamp_ms": str(row["sourceTimestampMs"]),
         }
-    if order["status"] != "active":
-        raise ValueError(f"order_ref {ref} is not redeemable")
+    ]
 
-    probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
-    fee = deepbook_mul(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
-    gross = deepbook_mul(probability, close_quantity)
 
-    remaining_quantity = order["quantity"] - close_quantity
-    if remaining_quantity == 0:
-        replacement_ref = None
-        replacement_sequence = None
-        remove_active_order(model, ref)
-        closed_floor = remove_live_order(model, order)
-        del model["orders"][ref]
-    else:
-        replacement_ref = row["replacementOrderRef"] or ref
-        replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
-        old_floor_shares = order_floor_shares(order)
-        close_fraction = deepbook_div(close_quantity, order["quantity"])
-        remaining_floor_shares = old_floor_shares - deepbook_mul(old_floor_shares, close_fraction)
-        replacement = {
-            **order,
-            "ref": replacement_ref,
-            "sequence": model["next_sequence"],
-            "quantity": remaining_quantity,
-            "contribution": replacement_terms["contribution"],
-            "floor_shares": remaining_floor_shares,
-            "status": "active",
-        }
-        replacement["order_id"] = order_id_for_terms(replacement)
-        remove_active_order(model, ref)
-        closed_floor = remove_closed_live_order(model, order, close_quantity, replacement)
-        del model["orders"][ref]
-        model["next_sequence"] += 1
-        model["orders"][replacement_ref] = replacement
-        insert_active_order(model, replacement_ref)
-        replacement_sequence = replacement["sequence"]
-
-    redeem_amount = gross - min(gross, closed_floor)
-    fee = min(fee, redeem_amount)
-    return {
-        "type": "live_order_redeemed",
-        "order_ref": ref,
-        "order_sequence": str(order["sequence"]),
-        "quantity_closed": str(close_quantity),
-        "remaining_quantity": str(remaining_quantity),
-        "replacement_order_ref": replacement_ref,
-        "replacement_order_sequence": None if replacement_sequence is None else str(replacement_sequence),
-        "redeem_amount": str(redeem_amount),
-        "trading_fee": str(fee),
-        "builder_fee": "0",
-        "penalty_fee": "0",
-    }
-
-
-# === Async LP supply/withdraw (replaces the deleted synchronous SupplyExecuted /
-# WithdrawExecuted). A supply/withdraw is now: a request that escrows funds, then a
-# later privileged flush that drains the queue at one EXACT frozen mark
-# (current_nav). plp::supply_shares mints `amount * total_supply / pool_value`
-# (bootstrap 1:1 when total_supply == 0 AND pool_value == 0); plp::withdraw_dusdc
-# pays `shares * pool_value / total_supply`. Both round down; a dust request that
-# prices to 0 is refunded.
-#
-# THIS MODEL DOES NOT INCLUDE THE PLP SUPPLY/WITHDRAW FEES (`plp_supply_fee_rate` / `plp_withdraw_fee_rate`, DBU-688).
-# The contract charges it on the DUSDC leg of every fill, so a parity run against a
-# deployment with a NON-ZERO rate will mismatch `shares_minted` / `total_supply_after`
-# on supply rows and `dusdc_amount` / `idle_balance_after` on withdraw rows, by
-# exactly the fee. Until the fee is modelled here, parity runs must stage
-# both rates at 0 (the supply leg already ships there; the withdraw leg does not). Deliberately not mirrored from the Move source: this file is the
-# INDEPENDENT oracle, so the fee belongs here as a separately-derived formula
-# validated by an actual parity run, not as a copy of the implementation under test.
-# Tracked on predeploy open item P-27.
-#
-# These synchronous helpers are for the long Python-only replay. Normal parity
-# queues requests and drains them later in `parity_flush_updates`.
-def supply_update(
-    model: dict[str, Any],
-    row: dict[str, Any],
-    pool_value: int,
-    synced_state: dict[str, int],
-) -> dict[str, str]:
-    if row["lpRef"] in model["lp_refs"]:
-        raise ValueError(f"duplicate lp_ref {row['lpRef']}")
-    total_supply = synced_state["vault_total_plp_supply"]
-    # plp::supply_shares: bootstrap 1:1 requires an empty pool NAV.
-    if total_supply == 0:
-        if pool_value != 0:
-            raise ValueError("bootstrap supply requires empty pool NAV")
-        shares = row["amount"]
-    elif pool_value == 0:
-        shares = 0  # wiped pool — caller refunds the escrowed DUSDC
-    else:
-        shares = mul_div_round_down(row["amount"], total_supply, pool_value)
-    if shares <= 0:
-        raise ValueError("supply priced to zero shares (would be refunded)")
-    model["lp_refs"][row["lpRef"]] = shares
-    return {
-        "type": "supply_filled",
-        "lp_ref": row["lpRef"],
-        "dusdc_amount": str(row["amount"]),
-        "shares_minted": str(shares),
-        "pool_value": str(pool_value),
-        "total_supply_after": str(total_supply + shares),
-        "idle_balance_after": str(synced_state["vault_idle_balance"] + row["amount"]),
-    }
-
-
-def withdraw_update(
-    model: dict[str, Any],
-    row: dict[str, Any],
-    pool_value: int,
-    synced_state: dict[str, int],
-) -> dict[str, str]:
-    shares = model["lp_refs"].get(row["lpRef"])
-    if shares is None:
-        raise ValueError(f"unknown lp_ref {row['lpRef']}")
-    total_supply = synced_state["vault_total_plp_supply"]
-    # plp::withdraw_dusdc: pro-rata, rounded down. Does NOT model `plp_withdraw_fee_rate` —
-    # see the module note above; parity requires a zero-rate staging until it does.
-    payout = mul_div_round_down(shares, pool_value, total_supply) if total_supply else 0
-    if payout <= 0:
-        raise ValueError("withdraw priced to zero DUSDC (would be refunded)")
-    if synced_state["vault_idle_balance"] < payout:
-        raise ValueError("insufficient idle balance for withdraw")
-    del model["lp_refs"][row["lpRef"]]
-    return {
-        "type": "withdraw_filled",
-        "lp_ref": row["lpRef"],
-        "shares_burned": str(shares),
-        "dusdc_amount": str(payout),
-        "pool_value": str(pool_value),
-        "total_supply_after": str(total_supply - shares),
-        "idle_balance_after": str(synced_state["vault_idle_balance"] - payout),
-    }
-
-
-def initial_manager_summary() -> dict[str, int]:
-    return {
-        "gross_paid_to_expiry": 0,
-        "gross_received_from_expiry": 0,
-        "trading_fees_paid": 0,
-    }
-
-
-def apply_manager_summary_update(summary: dict[str, int], update: dict[str, Any]) -> None:
-    update_type = update["type"]
-    if update_type == "order_minted":
-        summary["gross_paid_to_expiry"] += int(update["contribution"])
-        summary["trading_fees_paid"] += int(update["trading_fee"]) - int(
-            update.get("fee_incentive_subsidy", 0)
-        )
-    elif update_type == "live_order_redeemed":
-        summary["gross_received_from_expiry"] += int(update["redeem_amount"])
-        summary["trading_fees_paid"] += int(update["trading_fee"])
-    elif update_type == "settled_order_redeemed":
-        summary["gross_received_from_expiry"] += int(update["payout_amount"])
-
-
-def settled_order_payout(order: dict[str, Any], settlement_price: int) -> int:
-    # Half-open (lower, higher] winner test on raw strikes. Bit-equivalent to the
-    # contract's tick-domain predicate (range_codec::settlement_in_range, the single
-    # owner both settlement surfaces derive from): for integer boundaries at exact
-    # tick multiples, settlement > l*ts <=> l < ceil(settlement/ts) and
-    # settlement <= h*ts <=> ceil(settlement/ts) <= h, with sentinel ends mapping to
-    # 0 / u64::MAX — so the raw and tick thresholds agree for EVERY settlement,
-    # whole-tick multiple or not.
-    if settlement_price > order["lower"] and settlement_price <= order["higher"]:
-        return order["quantity"] - order_floor_shares(order)
-    return 0
-
-
-def reset_terminal_model(model: dict[str, Any]) -> None:
-    model["orders"].clear()
-    model["liquidation"] = LiquidationBook()
-    model["minted_min_strike"] = None
-    model["minted_max_strike"] = None
-    model["payout"] = StrikePayoutTree(
-        min_strike=ORACLE_MIN_STRIKE,
-        tick_size=ORACLE_TICK_SIZE,
-        max_strike=ORACLE_MAX_STRIKE,
-        neg_inf=NEG_INF_STRIKE,
-        pos_inf=POS_INF_STRIKE,
-    )
-    invalidate_valuation_cache(model)
-
-
-def assert_terminal_state_closed(state: dict[str, int]) -> None:
-    expected_zero = (
-        "expiry_cash_balance",
-        "expiry_unresolved_trading_fees",
-        "open_order_count",
-        "open_order_quantity",
-        "liquidated_order_count",
-    )
-    for key in expected_zero:
-        if state[key] != 0:
-            raise ValueError(f"terminal closeout left {key}={state[key]}")
-
-
-def terminal_closeout_update(
-    model: dict[str, Any],
-    state: dict[str, int],
-    manager_summary: dict[str, int],
-    *,
-    expiry_ms: int,
-    settlement_timestamp_ms: int,
-    settlement_price: int,
-) -> dict[str, str]:
-    active_orders = [order for order in model["orders"].values() if order["status"] == "active"]
-    liquidated_orders = [order for order in model["orders"].values() if order["status"] == "liquidated"]
-
-    settled_payout = 0
-    winning_order_count = 0
-    winning_quantity = 0
-    active_quantity = 0
-    for order in active_orders:
-        active_quantity += order["quantity"]
-        payout = settled_order_payout(order, settlement_price)
-        settled_payout += payout
-        if payout > 0:
-            winning_order_count += 1
-            winning_quantity += order["quantity"]
-
-    indexed_payout = model["payout"].settled_payout_liability(settlement_price)
-    if indexed_payout != settled_payout:
-        raise ValueError(f"terminal payout index drifted: indexed={indexed_payout} scanned={settled_payout}")
-    if settled_payout > state["expiry_cash_balance"]:
-        raise ValueError("terminal payout exceeds expiry cash")
-
-    state["manager_balance"] += settled_payout
-    state["expiry_cash_balance"] -= settled_payout
-    manager_summary["gross_received_from_expiry"] += settled_payout
-
-    gross_profit = max(
-        0,
-        manager_summary["gross_received_from_expiry"] - manager_summary["gross_paid_to_expiry"],
-    )
-    trading_fees_paid = manager_summary["trading_fees_paid"]
-    if trading_fees_paid > state["expiry_unresolved_trading_fees"]:
-        raise ValueError("terminal trading fee basis exceeds unresolved trading fees")
-    resolved_rebate_reserve = deepbook_mul(trading_fees_paid, TRADING_LOSS_REBATE_RATE)
-    eligible_rebate = max(0, resolved_rebate_reserve - gross_profit)
-    rebate_amount = deepbook_mul(eligible_rebate, TERMINAL_REBATE_FRACTION)
-    if rebate_amount > state["expiry_cash_balance"]:
-        raise ValueError("terminal rebate exceeds expiry cash")
-    residual_rebate_reserve = resolved_rebate_reserve - rebate_amount
-    state["manager_balance"] += rebate_amount
-    state["expiry_cash_balance"] -= rebate_amount
-    state["expiry_unresolved_trading_fees"] -= trading_fees_paid
-    if residual_rebate_reserve > state["expiry_cash_balance"]:
-        raise ValueError("terminal residual rebate reserve exceeds expiry cash")
-
-    materialized_profit = 0
-    protocol_profit = 0
-    lp_profit = 0
-
-    def materialize_terminal_return(amount: int) -> None:
-        nonlocal materialized_profit, protocol_profit, lp_profit
-        record_received_from_expiry(state, amount)
-        update_materialized_profit, update_lp_profit, update_protocol_profit = materialize_expiry_profit(state)
-        materialized_profit += update_materialized_profit
-        lp_profit += update_lp_profit
-        protocol_profit += update_protocol_profit
-
-    returned_rebate_reserve = residual_rebate_reserve
-    state["expiry_cash_balance"] -= returned_rebate_reserve
-    state["vault_idle_balance"] += returned_rebate_reserve
-    materialize_terminal_return(returned_rebate_reserve)
-
-    returned_pool_cash = state["expiry_cash_balance"]
-    state["expiry_cash_balance"] = 0
-    state["vault_idle_balance"] += returned_pool_cash
-    materialize_terminal_return(returned_pool_cash)
-    returned_cash = returned_rebate_reserve + returned_pool_cash
-
-    state["open_order_count"] = 0
-    state["open_order_quantity"] = 0
-    state["liquidated_order_count"] = 0
-    reset_terminal_model(model)
-    assert_terminal_state_closed(state)
-
-    return {
-        "type": "terminal_closeout",
-        "expiry_ms": str(expiry_ms),
-        "settlement_timestamp_ms": str(settlement_timestamp_ms),
-        "settlement_price": str(settlement_price),
-        "active_orders_redeemed": str(len(active_orders)),
-        "active_quantity_redeemed": str(active_quantity),
-        "winning_order_count": str(winning_order_count),
-        "winning_quantity": str(winning_quantity),
-        "settled_payout_amount": str(settled_payout),
-        "liquidated_orders_cleared": str(len(liquidated_orders)),
-        "gross_paid_to_expiry": str(manager_summary["gross_paid_to_expiry"]),
-        "gross_received_from_expiry": str(manager_summary["gross_received_from_expiry"]),
-        "trading_fees_paid": str(manager_summary["trading_fees_paid"]),
-        "gross_profit_before_rebate": str(gross_profit),
-        "resolved_rebate_reserve": str(resolved_rebate_reserve),
-        "eligible_rebate": str(eligible_rebate),
-        "rebate_fraction": str(TERMINAL_REBATE_FRACTION),
-        "rebate_amount": str(rebate_amount),
-        "residual_rebate_reserve": str(residual_rebate_reserve),
-        "returned_rebate_reserve": str(returned_rebate_reserve),
-        "returned_pool_cash": str(returned_pool_cash),
-        "returned_cash": str(returned_cash),
-        "materialized_profit": str(materialized_profit),
-        "lp_profit": str(lp_profit),
-        "protocol_profit": str(protocol_profit),
-        "manager_balance_after": str(state["manager_balance"]),
-        "vault_idle_balance_after": str(state["vault_idle_balance"]),
-        "vault_protocol_reserve_balance_after": str(state["vault_protocol_reserve_balance"]),
-        "pending_protocol_profit_after": str(state["pending_protocol_profit"]),
-        "profit_basis_debits_after": str(state["profit_basis_debits"]),
-        "profit_basis_credits_after": str(state["profit_basis_credits"]),
-        "expiry_cash_balance_after": str(state["expiry_cash_balance"]),
-        "expiry_unresolved_trading_fees_after": str(state["expiry_unresolved_trading_fees"]),
-        "open_order_count_after": str(state["open_order_count"]),
-        "liquidated_order_count_after": str(state["liquidated_order_count"]),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Derived (Python-only) data. Not produced by localnet, so it never enters the
-# canonical parity diff. These functions introspect the live replay model to
-# expose per-transaction valuation and liquidation-efficiency metrics that the
-# canonical projection deliberately omits.
-# ---------------------------------------------------------------------------
-
-
-def initial_analytics() -> dict[str, Any]:
-    return {
-        "orders": {},
-        "active_refs": set(),
-        "orders_by_range": {},
-        "probability_oracle_key": None,
-        "probability_cache": {},
-    }
-
-
-def active_range_key(order: dict[str, Any]) -> tuple[int, int]:
-    return (order["lower"], order["higher"])
-
-
-def analytics_insert_order(analytics: dict[str, Any], order: dict[str, Any]) -> None:
-    ref = order["ref"]
-    analytics["orders"][ref] = order
-    if order["leverage"] == LEVERAGE_ONE_X or order["status"] != "active":
-        return
-    analytics["active_refs"].add(ref)
-    analytics["orders_by_range"].setdefault(active_range_key(order), []).append(order)
-
-
-def analytics_remove_active_order(analytics: dict[str, Any], ref: str) -> dict[str, Any] | None:
-    order = analytics["orders"].get(ref)
-    if order is None or ref not in analytics["active_refs"]:
-        return order
-    analytics["active_refs"].remove(ref)
-    range_key = active_range_key(order)
-    orders = analytics["orders_by_range"].get(range_key)
-    if orders is not None:
-        orders.remove(order)
-        if not orders:
-            del analytics["orders_by_range"][range_key]
-    return order
-
-
-def analytics_delete_order(analytics: dict[str, Any], ref: str) -> None:
-    analytics_remove_active_order(analytics, ref)
-    analytics["orders"].pop(ref, None)
-
-
-def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], time_ctx: dict[str, int]) -> None:
-    update_type = update["type"]
-    if update_type == "order_minted":
-        leverage = int(update["leverage"])
-        if leverage == LEVERAGE_ONE_X:
-            return
-        terms = compute_mint_terms(int(update["entry_probability"]), int(update["quantity"]), leverage)
-        floor_shares = terms["floor_shares"]
-        lower, higher = strikes_from_ticks(int(update["lower_tick"]), int(update["higher_tick"]))
-        analytics_insert_order(
-            analytics,
-            {
-                "ref": update["order_ref"],
-                "sequence": int(update["order_sequence"]),
-                "lower": lower,
-                "higher": higher,
-                "leverage": leverage,
-                "entry_probability": int(update["entry_probability"]),
-                "quantity": int(update["quantity"]),
-                "opened_ms": time_ctx["now_ms"],
-                "floor_shares": floor_shares,
-                "status": "active",
-            },
-        )
-    elif update_type == "live_order_redeemed":
-        ref = update["order_ref"]
-        order = analytics_remove_active_order(analytics, ref)
-        if order is None:
-            return
-        del analytics["orders"][ref]
-        remaining_quantity = int(update["remaining_quantity"])
-        replacement_ref = update["replacement_order_ref"]
-        if remaining_quantity == 0 or not replacement_ref:
-            return
-        close_quantity = int(update["quantity_closed"])
-        close_fraction = deepbook_div(close_quantity, order["quantity"])
-        floor_shares = order["floor_shares"] - deepbook_mul(order["floor_shares"], close_fraction)
-        analytics_insert_order(
-            analytics,
-            {
-                **order,
-                "ref": replacement_ref,
-                "sequence": int(update["replacement_order_sequence"]),
-                "quantity": remaining_quantity,
-                "floor_shares": floor_shares,
-                "opened_ms": order["opened_ms"],
-                "status": "active",
-            },
-        )
-    elif update_type == "order_liquidated":
-        order = analytics_remove_active_order(analytics, update["order_ref"])
-        if order is not None:
-            order["status"] = "liquidated"
-    elif update_type in ("liquidated_order_redeemed", "settled_order_redeemed"):
-        analytics_delete_order(analytics, update["order_ref"])
-
-
-def apply_analytics_updates(analytics: dict[str, Any], updates: list[dict[str, Any]], time_ctx: dict[str, int]) -> None:
-    for update in updates:
-        apply_analytics_update(analytics, update, time_ctx)
-
-
-def budget_for_action(action: str, row: dict[str, Any]) -> int:
-    """Liquidation scan budget the engine applies for this action's pass."""
-    if action in ("oracle_mint_ptb", "redeem"):
-        return TRADE_LIQUIDATION_BUDGET
-    if action in ("supply", "withdraw"):
-        return VALUATION_LIQUIDATION_BUDGET
-    return 0
-
-
-def normalized_flow_action(action: str) -> str:
-    return "mint" if action == "oracle_mint_ptb" else action
-
-
-def analytics_oracle_key(model: dict[str, Any]) -> tuple[int, int, bool, int, int, bool, int, bool, int]:
-    if model["current_svi"] is None or model["current_forward"] == 0:
-        raise ValueError("liquidation requires prior price and SVI updates")
-    return (model["current_forward"], *svi_cache_key(model["current_svi"]))
-
-
-def analytics_range_probability(model: dict[str, Any], analytics: dict[str, Any], lower: int, higher: int) -> int:
-    oracle_key = analytics_oracle_key(model)
-    if analytics["probability_oracle_key"] != oracle_key:
-        analytics["probability_oracle_key"] = oracle_key
-        analytics["probability_cache"].clear()
-    range_key = (lower, higher)
-    cached = analytics["probability_cache"].get(range_key)
-    if cached is not None:
-        return cached
-    probability = compute_range_price(model["current_svi"], model["current_forward"], lower, higher)
-    analytics["probability_cache"][range_key] = probability
-    return probability
-
-
-def analytics_order_floor_amount(order: dict[str, Any], time_ctx: dict[str, int]) -> int:
-    return floor_amount(order["floor_shares"])
-
-
-def empty_liquidation_observability() -> dict[str, Any]:
-    return {
-        "liquidatable_count": 0,
-        "liquidatable_value": 0,
-        "leveraged_floor_value": 0,
-    }
-
-
-def analytics_liquidation_observability(
-    model: dict[str, Any],
-    analytics: dict[str, Any],
-    curve: list[dict[str, int]] | None,
-    time_ctx: dict[str, int],
-) -> dict[str, Any]:
-    if not analytics["active_refs"]:
-        return empty_liquidation_observability()
-    try:
-        assert_liquidation_inputs(model)
-    except ValueError:
-        return empty_liquidation_observability()
-    if curve is None:
-        curve = build_valuation_curve(model)
-
-    liquidatable_floor_by_ref: dict[str, int] = {}
-    total_leveraged_floor = 0
-    for (lower, higher), orders in analytics["orders_by_range"].items():
-        lower_probability, upper_probability = directional_probability_bounds(curve, lower, higher)
-        exact_probability: int | None = None
-        for order in orders:
-            floor_amount = analytics_order_floor_amount(order, time_ctx)
-            total_leveraged_floor += floor_amount
-            threshold_value = liquidation_threshold_value(floor_amount)
-            upper_gross_value = deepbook_mul(upper_probability, order["quantity"])
-            if upper_gross_value <= threshold_value:
-                liquidatable_floor_by_ref[order["ref"]] = floor_amount
-                continue
-            lower_gross_value = deepbook_mul(lower_probability, order["quantity"])
-            if lower_gross_value > threshold_value:
-                continue
-            if exact_probability is None:
-                exact_probability = analytics_range_probability(model, analytics, lower, higher)
-            gross_value = deepbook_mul(exact_probability, order["quantity"])
-            if gross_value <= threshold_value:
-                liquidatable_floor_by_ref[order["ref"]] = floor_amount
-
-    total_liquidatable_value = sum(liquidatable_floor_by_ref.values())
-
-    return {
-        "liquidatable_count": len(liquidatable_floor_by_ref),
-        "liquidatable_value": total_liquidatable_value,
-        "leveraged_floor_value": total_leveraged_floor,
-    }
-
-
-def analytics_crystallized_borrow_fee(analytics: dict[str, Any], time_ctx: dict[str, int]) -> int:
-    return 0
-
-
-def step_trading_fee(updates: list[dict[str, Any]]) -> int:
-    return sum(
-        int(update["trading_fee"])
-        for update in updates
-        if update["type"] in ("order_minted", "live_order_redeemed")
-    )
-
-
-def step_premium(updates: list[dict[str, Any]]) -> int:
-    return sum(int(update["contribution"]) for update in updates if update["type"] == "order_minted")
-
-
-def step_redeem_payout(updates: list[dict[str, Any]]) -> int:
-    total = 0
-    for update in updates:
-        if update["type"] == "live_order_redeemed":
-            total += int(update["redeem_amount"])
-        elif update["type"] == "settled_order_redeemed":
-            total += int(update["payout_amount"])
-    return total
-
-
-def step_liquidated_floor_value(updates: list[dict[str, Any]]) -> int:
-    return sum(int(update["floor_amount"]) for update in updates if update["type"] == "order_liquidated")
-
-
-def step_liquidated_gross_value(updates: list[dict[str, Any]]) -> int:
-    return sum(int(update["gross_value"]) for update in updates if update["type"] == "order_liquidated")
-
-
-def step_liquidation_bad_debt(updates: list[dict[str, Any]]) -> int:
-    return sum(
-        max(0, int(update["floor_amount"]) - int(update["gross_value"]))
-        for update in updates
-        if update["type"] == "order_liquidated"
-    )
-
-
-def step_liquidation_surplus(updates: list[dict[str, Any]]) -> int:
-    return sum(
-        max(0, int(update["gross_value"]) - int(update["floor_amount"]))
-        for update in updates
-        if update["type"] == "order_liquidated"
-    )
-
-
-def active_open_contribution(model: dict[str, Any]) -> int:
-    return sum(
-        int(order["contribution"])
-        for order in model["orders"].values()
-        if order["status"] == "active"
-    )
-
-
-def ratio_scaled(numerator: int, denominator: int) -> int | None:
-    if denominator <= 0:
-        return None
-    return mul_div_round_down(numerator, FLOAT_SCALING, denominator)
-
-
-def signed_ratio_scaled(numerator: int, denominator: int) -> int | None:
-    if denominator <= 0:
-        return None
-    sign = -1 if numerator < 0 else 1
-    return sign * mul_div_round_down(abs(numerator), FLOAT_SCALING, denominator)
-
-
-def should_sample_global_observability(row: dict[str, Any]) -> bool:
-    return row["step"] % GLOBAL_OBSERVABILITY_INTERVAL == 0
-
-
-def build_derived_record(
+def request_supply(
     model: dict[str, Any],
     state: dict[str, int],
     row: dict[str, Any],
-    updates: list[dict[str, Any]],
-    analytics: dict[str, Any],
-    interval: dict[str, Any],
-    scan_active_count: int,
-    time_ctx: dict[str, int],
-) -> dict[str, Any]:
-    sampled_global = should_sample_global_observability(row)
-    curve = None
-    liability: int | None = None
-    vault_value: int | None = None
-    if sampled_global:
-        if model["minted_min_strike"] is not None and model["minted_max_strike"] is not None:
-            curve = build_valuation_curve(model)
-        liability = live_position_liability(model)
-        try:
-            vault_value = compute_pool_value(model, state, curve, liability)
-        except ValueError:
-            vault_value = None
-    rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    active_expiry_value = None
-    unmaterialized_protocol_profit = None
-    protocol_profit_exclusion = None
-    if liability is not None:
-        reserved_cash = liability + rebate_reserve
-        if state["expiry_cash_balance"] >= reserved_cash:
-            active_expiry_value = state["expiry_cash_balance"] - reserved_cash
-            unmaterialized_protocol_profit = unmaterialized_protocol_profit_exclusion(
-                state,
-                active_expiry_value,
-            )
-            protocol_profit_exclusion = unmaterialized_protocol_profit + state["pending_protocol_profit"]
-
-    liquidation_observability: dict[str, Any] | None = None
-    liquidatable_count: int | None = None
-    liquidatable_value: int | None = None
-    leveraged_floor_value: int | None = None
-    borrow_fee: int | None = None
-
-    if sampled_global:
-        liquidation_observability = analytics_liquidation_observability(model, analytics, curve, time_ctx)
-        liquidatable_count = liquidation_observability["liquidatable_count"]
-        liquidatable_value = liquidation_observability["liquidatable_value"]
-        leveraged_floor_value = liquidation_observability["leveraged_floor_value"]
-        borrow_fee = analytics_crystallized_borrow_fee(analytics, time_ctx)
-    liquidated_this_step = sum(1 for update in updates if update["type"] == "order_liquidated")
-    premium = step_premium(updates)
-    trading_fee = step_trading_fee(updates)
-    redeem_payout = step_redeem_payout(updates)
-    liquidated_floor_value = step_liquidated_floor_value(updates)
-    liquidated_gross_value = step_liquidated_gross_value(updates)
-    liquidation_gap = step_liquidation_bad_debt(updates)
-    liquidation_surplus = step_liquidation_surplus(updates)
-    interval["liquidated_count"] += liquidated_this_step
-    interval["liquidated_value"] += liquidated_floor_value
-    interval_action = normalized_flow_action(row["action"])
-    interval["liquidated_value_by_action"].setdefault(interval_action, 0)
-    interval["liquidated_value_by_action"][interval_action] += liquidated_floor_value
-    active_contribution = active_open_contribution(model)
-    active_count = len(analytics["active_refs"])
-    budget = budget_for_action(row["action"], row)
-    scan_coverage = (
-        FLOAT_SCALING
-        if scan_active_count == 0
-        else min(FLOAT_SCALING, mul_div_round_down(budget, FLOAT_SCALING, scan_active_count))
-    )
-    interval_liquidated_count = interval["liquidated_count"] if sampled_global else None
-    interval_liquidated_value = interval["liquidated_value"] if sampled_global else None
-    interval_liquidated_value_by_action = (
-        dict(interval["liquidated_value_by_action"]) if sampled_global else None
-    )
-    backlog_remaining_ratio = None
-    liquidation_pressure_value = None
-    all_passive_required_manual_topup_value = None
-    all_passive_required_manual_topup_share = None
-    mint_redeem_required_manual_topup_value = None
-    mint_redeem_required_manual_topup_share = None
-    all_passive_coverage_share = None
-    mint_redeem_coverage_share = None
-    if liquidatable_value is not None and interval_liquidated_value is not None:
-        backlog_remaining_ratio = ratio_scaled(
-            liquidatable_value,
-            liquidatable_value + interval_liquidated_value,
-        )
-        previous_backlog_value = interval.get("last_liquidatable_value", 0)
-        liquidation_pressure_value = max(
-            0,
-            liquidatable_value - previous_backlog_value + interval_liquidated_value,
-        )
-        all_passive_value = sum(interval["liquidated_value_by_action"].values())
-        mint_redeem_value = (
-            interval["liquidated_value_by_action"].get("mint", 0)
-            + interval["liquidated_value_by_action"].get("redeem", 0)
-        )
-        all_passive_required_manual_topup_value = max(0, liquidation_pressure_value - all_passive_value)
-        mint_redeem_required_manual_topup_value = max(0, liquidation_pressure_value - mint_redeem_value)
-        all_passive_required_manual_topup_share = ratio_scaled(
-            all_passive_required_manual_topup_value,
-            liquidation_pressure_value,
-        )
-        mint_redeem_required_manual_topup_share = ratio_scaled(
-            mint_redeem_required_manual_topup_value,
-            liquidation_pressure_value,
-        )
-        all_passive_coverage_share = ratio_scaled(all_passive_value, liquidation_pressure_value)
-        mint_redeem_coverage_share = ratio_scaled(mint_redeem_value, liquidation_pressure_value)
-    if sampled_global:
-        interval["last_liquidatable_value"] = liquidatable_value or 0
-        interval["liquidated_count"] = 0
-        interval["liquidated_value"] = 0
-        interval["liquidated_value_by_action"] = {
-            "mint": 0,
-            "redeem": 0,
-            "supply": 0,
-            "withdraw": 0,
-        }
-
-    expiry_funding_basis = expiry_net_funding(state)
-    lp_live_mtm_pnl = (
-        None
-        if active_expiry_value is None or protocol_profit_exclusion is None
-        else active_expiry_value - protocol_profit_exclusion - expiry_funding_basis
-    )
-    active_book_live_pnl = None if liability is None else active_contribution - liability
-    position_liability_over_funding = None if liability is None else ratio_scaled(liability, expiry_funding_basis)
-    active_open_contribution_over_funding = ratio_scaled(active_contribution, expiry_funding_basis)
-    lp_live_mtm_pnl_over_funding = (
-        None if lp_live_mtm_pnl is None else signed_ratio_scaled(lp_live_mtm_pnl, expiry_funding_basis)
-    )
-    active_book_live_pnl_over_funding = (
-        None if active_book_live_pnl is None else signed_ratio_scaled(active_book_live_pnl, expiry_funding_basis)
-    )
-    active_book_live_pnl_over_liability = (
-        None if active_book_live_pnl is None or liability is None else signed_ratio_scaled(active_book_live_pnl, liability)
-    )
-    liquidatable_value_over_liability = (
-        None if liquidatable_value is None or liability is None else ratio_scaled(liquidatable_value, liability)
-    )
-    step_trading_fee_over_funding = ratio_scaled(trading_fee, expiry_funding_basis)
-    step_liquidation_gap_over_funding = ratio_scaled(liquidation_gap, expiry_funding_basis)
-    step_net_liquidation_over_funding = signed_ratio_scaled(liquidation_surplus - liquidation_gap, expiry_funding_basis)
-
-    return {
-        "step": row["step"],
-        "action": row["action"],
-        "timestamp_ms": None
-        if time_ctx.get("record_timestamp_ms") is None
-        else str(time_ctx["record_timestamp_ms"]),
-        "valuation": {
-            "vault_value": None if vault_value is None else str(vault_value),
-            "total_plp_supply": str(state["vault_total_plp_supply"]),
-            "idle": str(state["vault_idle_balance"]),
-            "expiry_cash_balance": str(state["expiry_cash_balance"]),
-            "active_expiry_value": None if active_expiry_value is None else str(active_expiry_value),
-            "position_liability": None if liability is None else str(liability),
-            "rebate_reserve": str(rebate_reserve),
-            "unmaterialized_protocol_profit_exclusion": None
-            if unmaterialized_protocol_profit is None
-            else str(unmaterialized_protocol_profit),
-            "pending_protocol_profit": str(state["pending_protocol_profit"]),
-            "protocol_profit_exclusion": None
-            if protocol_profit_exclusion is None
-            else str(protocol_profit_exclusion),
-            "active_open_contribution": str(active_contribution),
-            "lp_live_mtm_pnl": None if lp_live_mtm_pnl is None else str(lp_live_mtm_pnl),
-            "active_book_live_pnl": None if active_book_live_pnl is None else str(active_book_live_pnl),
-        },
-        "flows": {
-            "premium": str(premium),
-            "trading_fee": str(trading_fee),
-            "redeem_payout": str(redeem_payout),
-            "borrow_fee_accrued": None if borrow_fee is None else str(borrow_fee),
-            "counterparty_position_value": None if liability is None else str(liability),
-            "liquidated_floor_value": str(liquidated_floor_value),
-            "liquidated_gross_value": str(liquidated_gross_value),
-            "liquidation_gap": str(liquidation_gap),
-            "liquidation_surplus": str(liquidation_surplus),
-        },
-        "liquidation": {
-            "active_count": str(active_count),
-            "liquidatable_count": None if liquidatable_count is None else str(liquidatable_count),
-            "liquidatable_value": None if liquidatable_value is None else str(liquidatable_value),
-            "leveraged_floor_value": None if leveraged_floor_value is None else str(leveraged_floor_value),
-            "liquidated_count": str(liquidated_this_step),
-            "liquidated_value": str(liquidated_floor_value),
-            "interval_liquidated_count": None if interval_liquidated_count is None else str(interval_liquidated_count),
-            "interval_liquidated_value": None if interval_liquidated_value is None else str(interval_liquidated_value),
-            "interval_liquidated_value_by_action": None
-            if interval_liquidated_value_by_action is None
-            else {key: str(value) for key, value in sorted(interval_liquidated_value_by_action.items())},
-            "liquidation_pressure_value": None
-            if liquidation_pressure_value is None
-            else str(liquidation_pressure_value),
-            "all_passive_coverage_share": None
-            if all_passive_coverage_share is None
-            else str(all_passive_coverage_share),
-            "mint_redeem_coverage_share": None
-            if mint_redeem_coverage_share is None
-            else str(mint_redeem_coverage_share),
-            "all_passive_required_manual_topup_value": None
-            if all_passive_required_manual_topup_value is None
-            else str(all_passive_required_manual_topup_value),
-            "all_passive_required_manual_topup_share": None
-            if all_passive_required_manual_topup_share is None
-            else str(all_passive_required_manual_topup_share),
-            "mint_redeem_required_manual_topup_value": None
-            if mint_redeem_required_manual_topup_value is None
-            else str(mint_redeem_required_manual_topup_value),
-            "mint_redeem_required_manual_topup_share": None
-            if mint_redeem_required_manual_topup_share is None
-            else str(mint_redeem_required_manual_topup_share),
-            "budget": str(budget),
-            "scan_active_count": str(scan_active_count),
-            "scan_coverage": str(scan_coverage),
-            "backlog_remaining_ratio": None if backlog_remaining_ratio is None else str(backlog_remaining_ratio),
-            "sampled": sampled_global,
-        },
-        "risk": {
-            "expiry_funding_basis": str(expiry_funding_basis),
-            "open_order_quantity": str(state["open_order_quantity"]),
-            "active_leveraged_count": str(active_count),
-            "position_liability_over_funding": None
-            if position_liability_over_funding is None
-            else str(position_liability_over_funding),
-            "active_open_contribution_over_funding": None
-            if active_open_contribution_over_funding is None
-            else str(active_open_contribution_over_funding),
-            "lp_live_mtm_pnl_over_funding": None
-            if lp_live_mtm_pnl_over_funding is None
-            else str(lp_live_mtm_pnl_over_funding),
-            "active_book_live_pnl_over_funding": None
-            if active_book_live_pnl_over_funding is None
-            else str(active_book_live_pnl_over_funding),
-            "active_book_live_pnl_over_liability": None
-            if active_book_live_pnl_over_liability is None
-            else str(active_book_live_pnl_over_liability),
-            "liquidatable_value_over_liability": None
-            if liquidatable_value_over_liability is None
-            else str(liquidatable_value_over_liability),
-            "step_trading_fee_over_funding": None
-            if step_trading_fee_over_funding is None
-            else str(step_trading_fee_over_funding),
-            "step_liquidation_gap_over_funding": None
-            if step_liquidation_gap_over_funding is None
-            else str(step_liquidation_gap_over_funding),
-            "step_net_liquidation_over_funding": None
-            if step_net_liquidation_over_funding is None
-            else str(step_net_liquidation_over_funding),
-        },
-    }
-
-
-def exact_row_timestamp_ms(row: dict[str, Any]) -> int:
-    timestamp = row.get("replayTimestampMs")
-    if timestamp is None:
-        raise ValueError(
-            f"exact-time replay requires replay_timestamp_ms at scenario line {row['lineNumber']}"
-        )
-    return int(timestamp)
-
-
-def scenario_pricing_timing(row: dict[str, Any]) -> dict[str, int]:
-    source_timestamp = row.get("sourceTimestampMs")
-    if source_timestamp is None:
-        raise ValueError(
-            f"SVI roll-down requires source_timestamp_ms at scenario line {row['lineNumber']}"
-        )
-    return {
-        "model_timestamp_ms": int(source_timestamp),
-        "pricing_timestamp_ms": exact_row_timestamp_ms(row),
-    }
-
-
-def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
-    trace = load_local_trace(path)
-
-    timings: dict[tuple[int, str], dict[str, int]] = {}
-    for step in trace["steps"]:
-        step_number = step["step"]
-        action = step["action"]
-        pricing_timestamp = step["pricingTimestampMs"]
-        observation = None
-        for event in step["events"]:
-            full_type = event["full_type"]
-            if (
-                "BlockScholesObservationRecorded" not in full_type
-                or "SVIParams" not in full_type
-            ):
-                continue
-            parsed = event.get("parsedJson")
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    f"pricing trace step {(step_number, action)} SVI event has invalid parsedJson"
-                )
-            observation = parsed.get("observation")
-            if not isinstance(observation, dict):
-                raise ValueError(
-                    f"pricing trace step {(step_number, action)} SVI event has invalid observation"
-                )
-            if "fields" in observation:
-                observation = observation["fields"]
-                if not isinstance(observation, dict):
-                    raise ValueError(
-                        f"pricing trace step {(step_number, action)} SVI event has invalid fields"
-                    )
-            break
-        if observation is None:
-            continue
-        key = (step_number, action)
-        if key in timings:
-            raise ValueError(f"duplicate SVI timing for trace step {key}")
-        model_timestamp = observation.get("model_timestamp_ms")
-        if (
-            not isinstance(model_timestamp, str)
-            or not model_timestamp.isdecimal()
-        ):
-            raise ValueError(
-                f"pricing trace step {key} has invalid model_timestamp_ms"
-            )
-        timings[key] = {
-            "model_timestamp_ms": int(model_timestamp),
-            "pricing_timestamp_ms": pricing_timestamp,
-        }
-    return timings
-
-
-def flush_checkpoints(row_count: int) -> set[int]:
-    return {checkpoint for checkpoint in (300, 999) if checkpoint <= row_count}
-
-
-def cash_rebalance_checkpoints(row_count: int, flush_after: set[int]) -> set[int]:
-    return {
-        checkpoint
-        for checkpoint in range(100, row_count + 1, 100)
-        if checkpoint not in flush_after
-    }
-
-
-def parity_flush_updates(
-    model: dict[str, Any],
-    state: dict[str, int],
-    row: dict[str, Any],
-    supply_queue: list[dict[str, Any]],
-    withdraw_queue: list[dict[str, Any]],
-    pricing_timing: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    updates: list[dict[str, Any]] = []
-    apply_inline_oracle_refresh(model, row, updates, pricing_timing)
-    updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
-    sync_updates, pool_value, synced_state = flush_valuation(model, state)
-    updates.extend(sync_updates)
+    index = model["next_supply_index"]
+    model["next_supply_index"] += 1
+    model["supply_queue"].append(
+        {
+            "index": index,
+            "amount": row["amount"],
+            "min_output": row["minOutput"],
+            "misses": 0,
+        }
+    )
+    state["supply_requests_pending"] += 1
+    return [
+        {
+            "type": "supply_requested",
+            "lp_ref": row["lpRef"],
+            "index": str(index),
+            "amount": str(row["amount"]),
+            "min_output": str(row["minOutput"]),
+            "requests_pending_after": str(state["supply_requests_pending"]),
+        }
+    ]
 
-    total_supply = synced_state["vault_total_plp_supply"]
-    idle_balance_before = synced_state["vault_idle_balance"]
-    idle_balance_after = idle_balance_before
-    total_supply_after = total_supply
-    supplies_filled = 0
-    withdrawals_filled = 0
-    requests_processed = 0
 
-    while supply_queue:
-        request = supply_queue.pop(0)
-        shares = (
-            mul_div_round_down(request["amount"], total_supply, pool_value)
-            if pool_value > 0
-            else 0
+def request_withdraw(
+    model: dict[str, Any],
+    state: dict[str, int],
+    row: dict[str, Any],
+) -> list[dict[str, Any]]:
+    shares = row["shares"]
+    if shares > state["account_plp_balance"]:
+        raise ValueError("insufficient account PLP")
+    state["account_plp_balance"] -= shares
+    index = model["next_withdraw_index"]
+    model["next_withdraw_index"] += 1
+    model["withdraw_queue"].append(
+        {
+            "index": index,
+            "amount": shares,
+            "min_output": row["minOutput"],
+            "misses": 0,
+        }
+    )
+    state["withdraw_requests_pending"] += 1
+    return [
+        {
+            "type": "withdraw_requested",
+            "lp_ref": row["lpRef"],
+            "index": str(index),
+            "amount": str(shares),
+            "min_output": str(row["minOutput"]),
+            "requests_pending_after": str(state["withdraw_requests_pending"]),
+        }
+    ]
+
+
+def realize_pending_protocol_profit(state: dict[str, int]) -> int:
+    amount = min(
+        state["vault_pending_protocol_profit"],
+        state["vault_idle_balance"],
+    )
+    state["vault_pending_protocol_profit"] -= amount
+    state["vault_idle_balance"] -= amount
+    state["vault_protocol_reserve_balance"] += amount
+    return amount
+
+
+def rebalance_expiry(
+    model: dict[str, Any],
+    state: dict[str, int],
+) -> list[dict[str, Any]]:
+    if state["active_market_count"] == 0 or model["settlement_price"] is not None:
+        return []
+    update_required_cash(model, state)
+    required = state["required_cash"]
+    target_buffer = deepbook_mul(required, EXPIRY_REBALANCE_PCT)
+    target = max(INITIAL_EXPIRY_CASH, required + target_buffer)
+    threshold = max(INITIAL_EXPIRY_CASH, required + target_buffer + target_buffer)
+    cash = state["expiry_cash_balance"]
+    if cash < target:
+        funding_room = max(
+            0,
+            MAX_EXPIRY_ALLOCATION
+            - max(0, state["sent_to_expiry"] - state["received_from_expiry"]),
         )
-        requests_pending_after = len(supply_queue)
-        if shares == 0:
+        amount = min(target - cash, state["vault_idle_balance"], funding_room)
+        if amount == 0:
+            return []
+        state["vault_idle_balance"] -= amount
+        state["expiry_cash_balance"] += amount
+        state["sent_to_expiry"] += amount
+        state["profit_basis_debits"] += amount
+        return [
+            {
+                "type": "expiry_cash_rebalanced",
+                "amount": str(amount),
+                "to_expiry": True,
+                "target_cash": str(target),
+                "protocol_profit_realized": "0",
+            }
+        ]
+    if cash > threshold:
+        amount = cash - target
+        state["expiry_cash_balance"] -= amount
+        state["vault_idle_balance"] += amount
+        state["received_from_expiry"] += amount
+        state["profit_basis_credits"] += amount
+        realized = realize_pending_protocol_profit(state)
+        return [
+            {
+                "type": "expiry_cash_rebalanced",
+                "amount": str(amount),
+                "to_expiry": False,
+                "target_cash": str(target),
+                "protocol_profit_realized": str(realized),
+            }
+        ]
+    return []
+
+
+def drain_supply_queue(
+    model: dict[str, Any],
+    state: dict[str, int],
+    frozen_pool_value: int,
+    frozen_total_supply: int,
+) -> tuple[list[dict[str, Any]], int]:
+    updates = []
+    processed = 0
+    while model["supply_queue"]:
+        request = model["supply_queue"][0]
+        if frozen_pool_value == 0 or frozen_total_supply == 0:
+            model["supply_queue"].pop(0)
+            state["supply_requests_pending"] -= 1
+            state["account_dusdc_balance"] += request["amount"]
             updates.append(
                 {
                     "type": "request_cancelled",
@@ -2974,438 +1653,429 @@ def parity_flush_updates(
                     "amount": str(request["amount"]),
                     "is_supply": True,
                     "reason": "1",
-                    "requests_pending_after": str(requests_pending_after),
+                    "requests_pending_after": str(state["supply_requests_pending"]),
                 }
             )
-        else:
-            updates.append(
-                {
-                    "type": "supply_filled",
-                    "index": str(request["index"]),
-                    "dusdc_amount": str(request["amount"]),
-                    "shares_minted": str(shares),
-                    "requests_pending_after": str(requests_pending_after),
-                }
-            )
-            model["lp_refs"][request["ref"]] = shares
-            idle_balance_after += request["amount"]
-            total_supply_after += shares
-            supplies_filled += 1
-        requests_processed += 1
-
-    while withdraw_queue:
-        request = withdraw_queue[0]
-        payout = (
-            mul_div_round_down(request["shares"], pool_value, total_supply)
-            if total_supply > 0
-            else 0
+            processed += 1
+            continue
+        fee = mul_div_round_up(
+            request["amount"], PLP_SUPPLY_FEE_RATE, FLOAT_SCALING
         )
-        if payout > idle_balance_after:
-            break
-        withdraw_queue.pop(0)
-        requests_pending_after = len(withdraw_queue)
-        if payout == 0:
+        shares = mul_div_round_down(
+            request["amount"] - fee,
+            frozen_total_supply,
+            frozen_pool_value,
+        )
+        if shares < request["min_output"]:
+            model["supply_queue"].pop(0)
+            state["supply_requests_pending"] -= 1
+            state["account_dusdc_balance"] += request["amount"]
             updates.append(
                 {
                     "type": "request_cancelled",
                     "index": str(request["index"]),
-                    "amount": str(request["shares"]),
-                    "is_supply": False,
-                    "reason": "1",
-                    "requests_pending_after": str(requests_pending_after),
+                    "amount": str(request["amount"]),
+                    "is_supply": True,
+                    "reason": "2",
+                    "requests_pending_after": str(state["supply_requests_pending"]),
                 }
             )
+            processed += 1
+            continue
+        capacity = max(0, MAX_LP_POOL_VALUE - frozen_pool_value)
+        fill = min(request["amount"], capacity)
+        if fill == 0:
+            break
+        fee = mul_div_round_up(fill, PLP_SUPPLY_FEE_RATE, FLOAT_SCALING)
+        shares = mul_div_round_down(fill - fee, frozen_total_supply, frozen_pool_value)
+        remaining = request["amount"] - fill
+        state["vault_idle_balance"] += fill
+        state["vault_total_plp_supply"] += shares
+        state["account_plp_balance"] += shares
+        if remaining == 0:
+            model["supply_queue"].pop(0)
+            state["supply_requests_pending"] -= 1
         else:
+            request["amount"] = remaining
+            request["min_output"] = mul_div_round_up(
+                request["min_output"],
+                remaining,
+                fill + remaining,
+            )
+        updates.append(
+            {
+                "type": "supply_filled",
+                "index": str(request["index"]),
+                "dusdc_amount": str(fill),
+                "shares_minted": str(shares),
+                "fee_dusdc": str(fee),
+                "dusdc_remaining": str(remaining),
+                "requests_pending_after": str(state["supply_requests_pending"]),
+            }
+        )
+        processed += 1
+        if remaining:
+            break
+    return updates, processed
+
+
+def drain_withdraw_queue(
+    model: dict[str, Any],
+    state: dict[str, int],
+    frozen_pool_value: int,
+    frozen_total_supply: int,
+) -> tuple[list[dict[str, Any]], int]:
+    updates = []
+    processed = 0
+    while model["withdraw_queue"]:
+        request = model["withdraw_queue"][0]
+        if frozen_pool_value == 0 or frozen_total_supply == 0:
+            model["withdraw_queue"].pop(0)
+            state["withdraw_requests_pending"] -= 1
+            state["account_plp_balance"] += request["amount"]
             updates.append(
                 {
-                    "type": "withdraw_filled",
+                    "type": "request_cancelled",
                     "index": str(request["index"]),
-                    "shares_burned": str(request["shares"]),
-                    "dusdc_amount": str(payout),
-                    "requests_pending_after": str(requests_pending_after),
+                    "amount": str(request["amount"]),
+                    "is_supply": False,
+                    "reason": "1",
+                    "requests_pending_after": str(state["withdraw_requests_pending"]),
                 }
             )
-            idle_balance_after -= payout
-            total_supply_after -= request["shares"]
-            withdrawals_filled += 1
-        requests_processed += 1
+            processed += 1
+            continue
+        gross = mul_div_round_down(request["amount"], frozen_pool_value, frozen_total_supply)
+        fee = mul_div_round_up(gross, PLP_WITHDRAW_FEE_RATE, FLOAT_SCALING)
+        payout = gross - fee
+        if payout < request["min_output"]:
+            model["withdraw_queue"].pop(0)
+            state["withdraw_requests_pending"] -= 1
+            state["account_plp_balance"] += request["amount"]
+            updates.append(
+                {
+                    "type": "request_cancelled",
+                    "index": str(request["index"]),
+                    "amount": str(request["amount"]),
+                    "is_supply": False,
+                    "reason": "2",
+                    "requests_pending_after": str(state["withdraw_requests_pending"]),
+                }
+            )
+            processed += 1
+            continue
+        if state["vault_idle_balance"] < payout:
+            affordable = mul_div_round_down(
+                state["vault_idle_balance"],
+                frozen_total_supply,
+                frozen_pool_value,
+            )
+            if affordable == 0:
+                break
+            burn = min(request["amount"], affordable)
+            gross = mul_div_round_down(burn, frozen_pool_value, frozen_total_supply)
+            fee = mul_div_round_up(gross, PLP_WITHDRAW_FEE_RATE, FLOAT_SCALING)
+            payout = gross - fee
+        else:
+            burn = request["amount"]
+        remaining = request["amount"] - burn
+        state["vault_idle_balance"] -= payout
+        state["vault_total_plp_supply"] -= burn
+        state["account_dusdc_balance"] += payout
+        if remaining == 0:
+            model["withdraw_queue"].pop(0)
+            state["withdraw_requests_pending"] -= 1
+        else:
+            request["amount"] = remaining
+            request["min_output"] = mul_div_round_up(
+                request["min_output"],
+                remaining,
+                burn + remaining,
+            )
+        updates.append(
+            {
+                "type": "withdraw_filled",
+                "index": str(request["index"]),
+                "shares_burned": str(burn),
+                "dusdc_amount": str(payout),
+                "fee_dusdc": str(fee),
+                "shares_remaining": str(remaining),
+                "requests_pending_after": str(state["withdraw_requests_pending"]),
+            }
+        )
+        processed += 1
+        if remaining:
+            break
+    return updates, processed
 
+
+def flush(
+    model: dict[str, Any],
+    state: dict[str, int],
+) -> list[dict[str, Any]]:
+    updates = rebalance_expiry(model, state)
+    active_nav = current_nav(model, state) if state["active_market_count"] else 0
+    idle_before = state["vault_idle_balance"]
+    frozen_pool_value = pool_value(state, active_nav)
+    frozen_total_supply = state["vault_total_plp_supply"]
+    supply_updates, supply_processed = drain_supply_queue(
+        model,
+        state,
+        frozen_pool_value,
+        frozen_total_supply,
+    )
+    withdraw_updates, withdraw_processed = drain_withdraw_queue(
+        model,
+        state,
+        frozen_pool_value,
+        frozen_total_supply,
+    )
+    updates.extend(supply_updates)
+    updates.extend(withdraw_updates)
     updates.append(
         {
             "type": "flush_executed",
-            "pool_value": str(pool_value),
-            "total_supply": str(total_supply),
-            "active_market_nav": str(current_nav(model, synced_state)),
-            "market_count": "1",
-            "idle_balance_before": str(idle_balance_before),
-            "supplies_filled": str(supplies_filled),
-            "withdrawals_filled": str(withdrawals_filled),
-            "requests_processed": str(requests_processed),
-            "idle_balance_after": str(idle_balance_after),
-            "total_supply_after": str(total_supply_after),
+            "pool_value": str(frozen_pool_value),
+            "total_supply": str(frozen_total_supply),
+            "supply_fee_rate": str(PLP_SUPPLY_FEE_RATE),
+            "withdraw_fee_rate": str(PLP_WITHDRAW_FEE_RATE),
+            "active_market_nav": str(active_nav),
+            "market_count": str(state["active_market_count"]),
+            "idle_balance_before": str(idle_before),
+            "supplies_filled": str(sum(u["type"] == "supply_filled" for u in supply_updates)),
+            "withdrawals_filled": str(
+                sum(u["type"] == "withdraw_filled" for u in withdraw_updates)
+            ),
+            "requests_processed": str(supply_processed + withdraw_processed),
+            "idle_balance_after": str(state["vault_idle_balance"]),
+            "total_supply_after": str(state["vault_total_plp_supply"]),
         }
     )
     return updates
 
 
-def replay(
-    rows: list[dict[str, Any]],
-    collect_derived: bool = False,
-    exact_time: bool = False,
-    expiry_ms: int | None = None,
-    settlement_price: int | None = None,
-    settlement_timestamp_ms: int | None = None,
-    terminal_closeout: bool = False,
-    pricing_timings: dict[tuple[int, str], dict[str, int]] | None = None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    if exact_time and expiry_ms is None:
-        raise ValueError("exact-time replay requires expiry_ms")
-    if pricing_timings is not None and expiry_ms is None:
-        raise ValueError("observed SVI timing replay requires expiry_ms")
-    if terminal_closeout:
-        if not exact_time:
-            raise ValueError("terminal closeout requires exact-time replay")
-        if expiry_ms is None or settlement_price is None:
-            raise ValueError("terminal closeout requires expiry_ms and settlement_price")
-        if settlement_timestamp_ms is None:
-            settlement_timestamp_ms = expiry_ms + 1
+def settle_market(
+    model: dict[str, Any],
+    state: dict[str, int],
+    row: dict[str, Any],
+    timestamp_ms: int,
+) -> list[dict[str, Any]]:
+    if model["settlement_price"] is not None:
+        raise ValueError("market already settled")
+    settlement_price = row["settlementPrice"]
+    model["settlement_price"] = settlement_price
+    model["settled_liability"] = model["tree"].settled_payout_liability(settlement_price)
+    state["inventory_impact_reserve"] = 0
+    state["is_settled"] = 1
+    update_required_cash(model, state)
+    updates = [
+        {
+            "type": "market_settled",
+            "settlement_price": str(settlement_price),
+            "settlement_source": "0",
+            "onchain_timestamp_ms": str(timestamp_ms),
+        }
+    ]
 
-    # No grid to configure: strikes are absolute ticks (raw = tick*tick_size), so
-    # the tick domain is fixed and known before any row runs.
-    state = initial_state()
-    model: dict[str, Any] = {
-        "current_forward": 0,
-        "current_svi": None,
-        "next_sequence": 0,
-        "orders": {},
-        "exact_time": exact_time,
-        "wall_clock_time": exact_time or pricing_timings is not None,
-        "pricing_expiry_ms": expiry_ms if exact_time or pricing_timings is not None else None,
-        "now_ms": None,
-        "liquidation": LiquidationBook(),
-        "lp_refs": {},
-        "minted_min_strike": None,
-        "minted_max_strike": None,
-        "payout": StrikePayoutTree(
-            min_strike=ORACLE_MIN_STRIKE,
-            tick_size=ORACLE_TICK_SIZE,
-            max_strike=ORACLE_MAX_STRIKE,
-            neg_inf=NEG_INF_STRIKE,
-            pos_inf=POS_INF_STRIKE,
-        ),
-        "valuation_cache": {
-            "curve_key": None,
-            "curve": None,
-            "liability_key": None,
-            "liability": None,
-        },
-    }
-    records = []
-    derived_records: list[dict[str, Any]] = []
-    analytics = initial_analytics()
-    derived_interval = {
-        "liquidated_count": 0,
-        "liquidated_value": 0,
-        "last_liquidatable_value": 0,
-        "liquidated_value_by_action": {
-            "mint": 0,
-            "redeem": 0,
-            "supply": 0,
-            "withdraw": 0,
-        },
-    }
-    manager_summary = initial_manager_summary()
-
-    total_steps = len(rows)
-    derived_expiry_ms = expiry_ms if exact_time and expiry_ms is not None else total_steps
-    # Parity-path async-LP request bookkeeping (mirrors the localnet runner). Supply /
-    # withdraw rows only ENQUEUE a request in the parity model; the flush (runner
-    # machinery, not a CSV row) drains them later, so no fill/oracle-refresh update is
-    # emitted per row. The bootstrap supply consumed supply-queue index 0, so scenario
-    # supplies start at 1; withdraws start at 0. Withdraws draw against the bootstrap
-    # PLP only (conservative, matching the runner) and any that exceed it are skipped
-    # with no emitted record (the runner `continue`s).
-    supply_queue_index = 1
-    withdraw_queue_index = 0
-    available_settled_plp = VAULT_SEED
-    lp_request_amounts: dict[str, int] = {}
-    supply_queue: list[dict[str, Any]] = []
-    withdraw_queue: list[dict[str, Any]] = []
-    flush_after = set() if exact_time else flush_checkpoints(total_steps)
-    rebalance_after = (
-        set() if exact_time else cash_rebalance_checkpoints(total_steps, flush_after)
+    state["active_market_count"] = 0
+    returned = state["expiry_cash_balance"] - model["settled_liability"]
+    state["expiry_cash_balance"] = model["settled_liability"]
+    state["vault_idle_balance"] += returned
+    state["received_from_expiry"] += returned
+    state["profit_basis_credits"] += returned
+    updates.append(
+        {
+            "type": "expiry_cash_received",
+            "settlement_price": str(settlement_price),
+            "amount": str(returned),
+        }
     )
 
-    def pricing_timing(row: dict[str, Any], action: str) -> dict[str, int] | None:
-        if pricing_timings is not None:
-            key = (int(row["step"]), action)
-            timing = pricing_timings.get(key)
-            if timing is None:
-                raise ValueError(f"pricing trace has no SVI observation for step {key}")
-            return timing
-        if exact_time:
-            return scenario_pricing_timing(row)
-        return None
+    profit = max(0, state["received_from_expiry"] - state["sent_to_expiry"])
+    if profit:
+        state["profit_basis_debits"] += profit
+        protocol_profit = deepbook_mul(profit, PROTOCOL_RESERVE_PROFIT_SHARE)
+        lp_profit = profit - protocol_profit
+        state["vault_pending_protocol_profit"] += protocol_profit
+        realize_pending_protocol_profit(state)
+        updates.append(
+            {
+                "type": "expiry_profit_materialized",
+                "lp_profit": str(lp_profit),
+                "protocol_profit": str(protocol_profit),
+                "protocol_reserve_balance_after": str(
+                    state["vault_protocol_reserve_balance"]
+                ),
+                "profit_basis_after": str(state["profit_basis_debits"]),
+                "pending_protocol_profit_after": str(
+                    state["vault_pending_protocol_profit"]
+                ),
+            }
+        )
+    update_required_cash(model, state)
+    return updates
 
-    def append_maintenance_record(after_row: int, row: dict[str, Any]) -> None:
-        if after_row in flush_after:
-            maintenance_action = "flush"
-            maintenance_timing = pricing_timing(row, maintenance_action)
-            if maintenance_timing is not None:
-                model["now_ms"] = maintenance_timing["pricing_timestamp_ms"]
-            maintenance_updates = parity_flush_updates(
-                model,
-                state,
-                row,
-                supply_queue,
-                withdraw_queue,
-                maintenance_timing,
-            )
-        elif after_row in rebalance_after:
-            maintenance_action = "rebalance_expiry_cash"
-            maintenance_updates = sync_active_expiry_cash_updates(model, dict(state))
+
+def settlement_in_range(order: dict[str, Any], settlement_price: int) -> bool:
+    lower_tick = order["lower_tick"]
+    higher_tick = order["higher_tick"]
+    lower_ok = lower_tick == 0 or settlement_price > lower_tick * ORACLE_TICK_SIZE
+    higher_ok = (
+        higher_tick == POS_INF_TICK
+        or settlement_price <= higher_tick * ORACLE_TICK_SIZE
+    )
+    return lower_ok and higher_ok
+
+
+def redeem_settled(
+    model: dict[str, Any],
+    state: dict[str, int],
+    row: dict[str, Any],
+    timestamp_ms: int,
+) -> list[dict[str, Any]]:
+    if model["settlement_price"] is None:
+        raise ValueError("market is not settled")
+    order = model["orders"].pop(row["orderRef"], None)
+    if order is None:
+        raise ValueError(f"unknown order_ref {row['orderRef']}")
+    payout = (
+        order["quantity"]
+        if settlement_in_range(order, model["settlement_price"])
+        else 0
+    )
+    model["settled_liability"] -= payout
+    state["expiry_cash_balance"] -= payout
+    state["account_dusdc_balance"] += payout
+    update_required_cash(model, state)
+    return [
+        {
+            "type": "settled_order_redeemed",
+            "order_ref": row["orderRef"],
+            "order_sequence": str(order["sequence"]),
+            "payout_amount": str(payout),
+            "onchain_timestamp_ms": str(timestamp_ms),
+        }
+    ]
+
+
+def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
+    payload = load_local_trace(path)
+    if payload["schema_version"] != LOCAL_TRACE_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported local trace schema_version: {payload['schema_version']}"
+        )
+    timings: dict[tuple[int, str], dict[str, int]] = {}
+    for step in payload["steps"]:
+        timing = {
+            "pricing_timestamp_ms": step["pricingTimestampMs"],
+        }
+        for event in step["events"]:
+            parsed = event["parsedJson"]
+            if parsed.get("series_kind") != 2:
+                continue
+            observation = parsed.get("observation", {})
+            source_timestamp_ms = observation.get("source_timestamp_ms")
+            if isinstance(source_timestamp_ms, str) and source_timestamp_ms.isdecimal():
+                timing["svi_source_timestamp_ms"] = int(source_timestamp_ms)
+                break
+        timings[(step["step"], step["action"])] = timing
+    return timings
+
+
+def timestamp_for_row(
+    row: dict[str, Any],
+    timings: dict[tuple[int, str], dict[str, int]],
+) -> int:
+    timing = timings.get((row["step"], row["action"]))
+    if timing is not None:
+        return timing["pricing_timestamp_ms"]
+    return row.get("replayTimestampMs", 0)
+
+
+def replay(
+    rows: list[dict[str, Any]],
+    expiry_ms: int,
+    pricing_timings: dict[tuple[int, str], dict[str, int]],
+) -> dict[str, Any]:
+    validate_complete_scenario(rows)
+    model = initial_model(expiry_ms)
+    state = initial_state()
+    records: list[dict[str, Any]] = []
+    observed_actions: list[str] = []
+
+    for row in rows:
+        action = row["action"]
+        if action not in observed_actions:
+            observed_actions.append(action)
+        timing = pricing_timings.get((row["step"], row["action"]))
+        timestamp_ms = timestamp_for_row(row, pricing_timings)
+        apply_oracle(model, row, timing)
+        updates: list[dict[str, Any]] = []
+        if action == "mint":
+            updates.extend(mint_order(model, state, row, timestamp_ms))
+        elif action == "redeem_live":
+            updates.extend(redeem_live(model, state, row, timestamp_ms))
+        elif action == "request_supply":
+            updates.extend(request_supply(model, state, row))
+        elif action == "request_withdraw":
+            updates.extend(request_withdraw(model, state, row))
+        elif action == "flush":
+            updates.extend(flush(model, state))
+        elif action == "rebalance_expiry_cash":
+            updates.extend(rebalance_expiry(model, state))
+        elif action == "settle":
+            updates.extend(settle_market(model, state, row, timestamp_ms))
+        elif action == "redeem_settled":
+            updates.extend(redeem_settled(model, state, row, timestamp_ms))
         else:
-            return
-
-        for maintenance_update in maintenance_updates:
-            apply_update(state, maintenance_update)
-            apply_manager_summary_update(manager_summary, maintenance_update)
+            raise ValueError(f"unsupported action {action}")
+        update_required_cash(model, state)
         records.append(
             {
                 "step": row["step"],
-                "action": maintenance_action,
-                "input": {"after_row": after_row},
-                "updates": maintenance_updates,
+                "action": action,
+                "input": row_input(row),
+                "updates": updates,
                 "state": state_snapshot(state),
             }
         )
 
-    for step_index, row in enumerate(rows):
-        updates: list[dict[str, Any]] = []
-        action = row["action"]
-        action_timing = (
-            pricing_timing(row, action)
-            if action in ("oracle_mint_ptb", "redeem") or exact_time
-            else None
-        )
-        row_timestamp_ms = (
-            action_timing["pricing_timestamp_ms"]
-            if action_timing is not None
-            else exact_row_timestamp_ms(row)
-            if exact_time
-            else row["step"]
-        )
-        model["now_ms"] = row_timestamp_ms
-        scan_active_count = active_order_count(model)
-        if action == "oracle_mint_ptb":
-            apply_inline_oracle_refresh(model, row, updates, action_timing)
-            scan_active_count = active_order_count(model)
-            updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
-            updates.append(mint_order(model, row, row_timestamp_ms))
-        elif action == "redeem":
-            apply_inline_oracle_refresh(model, row, updates, action_timing)
-            scan_active_count = active_order_count(model)
-            # Mirror Move `redeem_internal`: the bounded liquidation pass runs on every
-            # live-market redeem (before the is-liquidated check), so it advances the
-            # passive watermark even when redeeming an already-liquidated order. Skipping
-            # it there silently drifted the watermark vs localnet. Settlement is stubbed
-            # in this model (the market never settles), so the pass is unconditional.
-            updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
-            updates.append(redeem_order(model, row))
-        elif action == "supply":
-            if exact_time:
-                # Long Python-only replay keeps the synchronous fill model so the
-                # economic charts still see LP fills + pool funding.
-                apply_inline_oracle_refresh(model, row, updates, action_timing)
-                scan_active_count = active_order_count(model)
-                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-                updates.append(supply_update(model, row, pool_value, synced_state))
-            else:
-                # Parity: request_supply only escrows DUSDC into the queue (no oracle
-                # refresh, no fill). Mirror the localnet request record exactly.
-                ref = row["lpRef"]
-                amount = row["amount"]
-                lp_request_amounts[ref] = amount
-                supply_queue.append(
-                    {
-                        "ref": ref,
-                        "index": supply_queue_index,
-                        "amount": amount,
-                    }
-                )
-                updates.append(
-                    {
-                        "type": "supply_requested",
-                        "lp_ref": ref,
-                        "index": str(supply_queue_index),
-                        "amount": str(amount),
-                        "requests_pending_after": str(len(supply_queue)),
-                    }
-                )
-                supply_queue_index += 1
-        elif action == "withdraw":
-            if exact_time:
-                apply_inline_oracle_refresh(model, row, updates, action_timing)
-                scan_active_count = active_order_count(model)
-                pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-                updates.append(withdraw_update(model, row, pool_value, synced_state))
-            else:
-                # Parity: request_withdraw escrows PLP (materialized from the bootstrap
-                # pool) into the queue. The runner skips — with no record — any withdraw
-                # the bootstrap PLP can't cover; mirror that exactly.
-                ref = row["lpRef"]
-                shares = lp_request_amounts.get(ref, 0)
-                if shares == 0 or shares > available_settled_plp:
-                    append_maintenance_record(step_index + 1, row)
-                    continue
-                available_settled_plp -= shares
-                withdraw_queue.append(
-                    {
-                        "ref": ref,
-                        "index": withdraw_queue_index,
-                        "shares": shares,
-                    }
-                )
-                updates.append(
-                    {
-                        "type": "withdraw_requested",
-                        "lp_ref": ref,
-                        "index": str(withdraw_queue_index),
-                        "amount": str(shares),
-                        "requests_pending_after": str(len(withdraw_queue)),
-                    }
-                )
-                withdraw_queue_index += 1
-        else:
-            raise ValueError(f"unsupported action {action}")
-
-        for update in updates:
-            apply_update(state, update)
-            apply_manager_summary_update(manager_summary, update)
-
-        record = {
-            "step": row["step"],
-            "action": action,
-            "input": row_input(row),
-            "updates": updates,
-            "state": state_snapshot(state),
-        }
-        if exact_time:
-            record["timestamp_ms"] = str(row_timestamp_ms)
-        records.append(record)
-
-        if collect_derived:
-            now_ms = row_timestamp_ms if exact_time else step_index
-            time_ctx = {
-                "now_ms": now_ms,
-                "expiry_ms": derived_expiry_ms,
-                "record_timestamp_ms": row_timestamp_ms if exact_time else None,
-            }
-            apply_analytics_updates(analytics, updates, time_ctx)
-            derived_records.append(
-                build_derived_record(
-                    model,
-                    state,
-                    row,
-                    updates,
-                    analytics,
-                    derived_interval,
-                    scan_active_count,
-                    time_ctx,
-                )
-            )
-        append_maintenance_record(step_index + 1, row)
-
-    if terminal_closeout:
-        assert expiry_ms is not None
-        assert settlement_timestamp_ms is not None
-        assert settlement_price is not None
-        model["now_ms"] = settlement_timestamp_ms
-        update = terminal_closeout_update(
-            model,
-            state,
-            manager_summary,
-            expiry_ms=expiry_ms,
-            settlement_timestamp_ms=settlement_timestamp_ms,
-            settlement_price=settlement_price,
-        )
-        terminal_record = {
-            "step": (records[-1]["step"] + 1) if records else 1,
-            "action": "terminal_closeout",
-            "timestamp_ms": str(settlement_timestamp_ms),
-            "input": {
-                "expiry_ms": str(expiry_ms),
-                "settlement_timestamp_ms": str(settlement_timestamp_ms),
-                "settlement_price": str(settlement_price),
-            },
-            "updates": [update],
-            "state": state_snapshot(state),
-        }
-        records.append(terminal_record)
-
-    scenario = {"quantity_scale": str(scenario_quantity_scale())}
-    if exact_time:
-        scenario["expiry_ms"] = str(expiry_ms)
-    if terminal_closeout:
-        scenario["settlement_timestamp_ms"] = str(settlement_timestamp_ms)
-        scenario["settlement_price"] = str(settlement_price)
-
-    canonical = {
+    missing = [action for action in REQUIRED_ACTIONS if action not in observed_actions]
+    if missing:
+        raise ValueError(f"scenario did not execute required actions: {','.join(missing)}")
+    return {
         "schema_version": ECONOMIC_SCHEMA_VERSION,
-        "scenario": scenario,
+        "scenario": {
+            "quantity_scale": str(scenario_quantity_scale()),
+            "required_actions": REQUIRED_ACTIONS,
+            "observed_actions": observed_actions,
+        },
         "records": records,
     }
-    derived = None
-    if collect_derived:
-        derived_scenario = {"quantity_scale": str(scenario_quantity_scale())}
-        if exact_time:
-            derived_scenario["expiry_ms"] = str(expiry_ms)
-        if terminal_closeout:
-            derived_scenario["settlement_timestamp_ms"] = str(settlement_timestamp_ms)
-            derived_scenario["settlement_price"] = str(settlement_price)
-        derived = {
-            "schema_version": DERIVED_SCHEMA_VERSION,
-            "scenario": derived_scenario,
-            "records": derived_records,
-        }
-    return canonical, derived
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", default=str(Path(__file__).with_name("data") / "generated" / "normal_scenario.csv"))
-    parser.add_argument("--out", required=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--scenario", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--pricing-trace", type=Path, required=True)
+    parser.add_argument("--expiry-ms", type=int, required=True)
     parser.add_argument("--max-rows", type=int)
     parser.add_argument("--config", type=Path, default=DEFAULT_SCENARIO_CONFIG_PATH)
-    parser.add_argument("--pricing-trace", type=Path)
-    parser.add_argument("--expiry-ms", type=int)
     args = parser.parse_args()
-
-    if args.pricing_trace is not None and args.expiry_ms is None:
-        parser.error("--pricing-trace requires --expiry-ms from the local market")
 
     config = load_scenario_config(args.config)
     apply_scenario_config(config)
-    expiry_ms = (
-        args.expiry_ms
-        if args.expiry_ms is not None
-        else config_source_value(config, "expiry_ms")
-    )
-    pricing_timings = (
-        load_pricing_timings(args.pricing_trace)
-        if args.pricing_trace is not None
-        else None
-    )
-
-    rows = parse_scenario(Path(args.scenario))
+    rows = parse_scenario(args.scenario)
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
-    canonical, _ = replay(
+    output = replay(
         rows,
-        expiry_ms=expiry_ms,
-        pricing_timings=pricing_timings,
+        args.expiry_ms,
+        load_pricing_timings(args.pricing_trace),
     )
-    write_json(Path(args.out), canonical)
+    write_json(args.out, output)
+    print(f"wrote {args.out} records={len(output['records'])}")
 
 
 if __name__ == "__main__":

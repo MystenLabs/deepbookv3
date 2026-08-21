@@ -19,11 +19,11 @@ class PricingTimingTests(unittest.TestCase):
             trace.write_text(
                 json.dumps(
                     {
-                        "schema_version": "predict_local_trace_v4",
+                        "schema_version": "predict_local_trace_v5",
                         "steps": [
                             {
                                 "step": 1,
-                                "action": "oracle_mint_ptb",
+                                "action": "mint",
                                 "digest": "priced-digest",
                                 "pricingTimestampMs": 125,
                                 "wallMs": 1.5,
@@ -44,8 +44,10 @@ class PricingTimingTests(unittest.TestCase):
                                         "parsedJson": {
                                             "observation": {
                                                 "model_timestamp_ms": "90",
-                                                "recorded_at_ms": "100",
-                                            }
+                                                "source_timestamp_ms": "90",
+                                                "onchain_timestamp_ms": "100",
+                                            },
+                                            "series_kind": 2,
                                         },
                                     }
                                 ],
@@ -58,9 +60,9 @@ class PricingTimingTests(unittest.TestCase):
             self.assertEqual(
                 load_pricing_timings(trace),
                 {
-                    (1, "oracle_mint_ptb"): {
-                        "model_timestamp_ms": 90,
+                    (1, "mint"): {
                         "pricing_timestamp_ms": 125,
+                        "svi_source_timestamp_ms": 90,
                     }
                 },
             )
@@ -69,7 +71,7 @@ class PricingTimingTests(unittest.TestCase):
         invalid_traces = (
             {"steps": []},
             {
-                "schema_version": "predict_local_trace_v4",
+                "schema_version": "predict_local_trace_v5",
                 "steps": [
                     {
                         "step": "1",
@@ -80,11 +82,11 @@ class PricingTimingTests(unittest.TestCase):
                 ],
             },
             {
-                "schema_version": "predict_local_trace_v4",
+                "schema_version": "predict_local_trace_v5",
                 "steps": [
                     {
                         "step": 1,
-                        "action": "oracle_mint_ptb",
+                        "action": "mint",
                         "pricingTimestampMs": 125,
                         "events": [
                             {

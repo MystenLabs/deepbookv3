@@ -663,7 +663,7 @@ export class DirectWsSource implements MarketSource {
       if (verified <= 3 || verified % 30 === 0) {
         console.log(
           `[bs-signed] verified batch #${verified} kind=${batch.kind} ` +
-          `values=${batch.updates.length} published_at_ms=${batch.batchTimestampMs}`,
+          `values=${batch.updates.length} source_timestamp_ms=${batch.batchTimestampMs}`,
         );
       }
     } catch (error) {
