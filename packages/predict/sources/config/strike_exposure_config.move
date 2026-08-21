@@ -16,6 +16,7 @@ const EEntryProbabilityOutOfBounds: u64 = 0;
 const EInvalidEntryProbabilityBound: u64 = 1;
 const EInvalidFeeProbability: u64 = 2;
 const EPremiumBelowMinimum: u64 = 3;
+const ESkewRateExceedsFeeFloor: u64 = 4;
 
 /// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
@@ -38,6 +39,9 @@ public struct StrikeExposureConfig has store {
     /// Maximum marginal rate of the path-independent inventory-impact curve, in
     /// FLOAT_SCALING. `0` disables both charges and rebates.
     inventory_impact_max_rate: u64,
+    /// Rate on the payout profile's probability-weighted standard deviation.
+    /// Zero disables the charge.
+    inventory_skew_rate: u64,
 }
 
 // === Public-Package Functions ===
@@ -72,6 +76,10 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun inventory_impact_max_rate(config: &StrikeExposureConfig): u64 {
     config.inventory_impact_max_rate
+}
+
+public(package) fun inventory_skew_rate(config: &StrikeExposureConfig): u64 {
+    config.inventory_skew_rate
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -128,11 +136,27 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         inventory_impact_max_rate: config_constants::default_inventory_impact_max_rate!(),
+        inventory_skew_rate: config_constants::default_inventory_skew_rate!(),
     }
 }
 
-/// Snapshot a strike-exposure config into an independent live copy.
+/// Snapshot a strike-exposure config into an independent live copy — the only
+/// point where the skew rate and the fee floor are fixed together, so it is
+/// where their relationship is checked.
+///
+/// A skew rebate is bounded by `rate * quantity / 2` — the deviation of a payout
+/// profile moves by at most half the quantity added — while the ordinary fee is
+/// bounded below by `min_fee * quantity`, since the `base_fee * sqrt(p(1-p))`
+/// term vanishes at both probability extremes. Once `rate` passes twice the
+/// floor, a trade that flattens the book earns more than it pays and the rebate
+/// becomes farmable, which is exactly what `max_inventory_skew_rate` was sized to
+/// prevent.
+///
+/// Checked at runtime rather than pinned by a test because `min_fee` is
+/// admin-tunable with a floor of zero: unlike the premium relation, whose both
+/// sides are upgrade-required constants, this one is reachable through config.
 public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfig {
+    assert!(config.inventory_skew_rate <= 2 * config.min_fee, ESkewRateExceedsFeeFloor);
     StrikeExposureConfig {
         backing_buffer_lambda: config.backing_buffer_lambda,
         base_fee: config.base_fee,
@@ -142,6 +166,7 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         inventory_impact_max_rate: config.inventory_impact_max_rate,
+        inventory_skew_rate: config.inventory_skew_rate,
     }
 }
 
@@ -185,6 +210,11 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_inventory_impact_max_rate(value);
     config.inventory_impact_max_rate = value;
+}
+
+public(package) fun set_inventory_skew_rate(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_skew_rate(value);
+    config.inventory_skew_rate = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.

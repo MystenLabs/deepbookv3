@@ -22,11 +22,14 @@ use deepbook_predict::{
     constants,
     flow_test_helpers as helpers,
     protocol_config::{Self, ProtocolConfig},
+    strike_exposure_config,
     test_constants
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::{Self as test, Scenario, return_shared};
+
+const EUnexpectedSuccess: u64 = 999;
 
 /// Create a real shared `ProtocolConfig` (all template values at defaults) and
 /// an `AdminCap`, ready for admin setter calls in the next transaction.
@@ -183,6 +186,46 @@ fun template_inventory_impact_max_rate_above_one_aborts() {
         config_constants::max_inventory_impact_max_rate!() + 1,
     );
     abort 999
+}
+
+// === Strike-exposure templates: inventory-skew rate ===
+
+#[test, expected_failure(abort_code = config_constants::EInvalidInventorySkewRate)]
+fun template_inventory_skew_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_inventory_skew_rate(
+        &admin_cap,
+        config_constants::max_inventory_skew_rate!() + 1,
+    );
+    abort 999
+}
+
+/// The relational half of the skew-rate ceiling's rationale: the largest possible
+/// per-unit rebate, `max_rate / 2`, must sit under the smallest premium any
+/// admissible config can charge, `min_min_entry_probability`. Both sides are
+/// upgrade-required constants, so this pin is the guard.
+#[test]
+fun max_skew_rebate_stays_below_the_minimum_premium() {
+    let max_rebate_per_unit = config_constants::max_inventory_skew_rate!() / 2;
+    assert!(max_rebate_per_unit < config_constants::min_min_entry_probability!());
+}
+
+/// A skew rebate is bounded by `rate * quantity / 2` while the ordinary fee is
+/// bounded below by `min_fee * quantity`. `min_fee` is admin-tunable down to zero,
+/// so an admin can drive the fee under the rebate ceiling and make flattening the
+/// book pay more than it costs. Market creation refuses the pairing.
+#[test, expected_failure(abort_code = strike_exposure_config::ESkewRateExceedsFeeFloor)]
+fun a_skew_rate_above_twice_the_fee_floor_cannot_be_snapshotted() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Each value is individually admissible; only the pairing is not.
+    config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
+    config.set_template_inventory_skew_rate(&admin_cap, 1);
+    destroy(config.strike_exposure_template_config().snapshot());
+
+    abort EUnexpectedSuccess
 }
 
 // === Strike-exposure templates: boundary values round-trip ===

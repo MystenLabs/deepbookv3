@@ -39,11 +39,15 @@ fun new_tree(ctx: &mut TxContext): StrikePayoutTree {
     strike_payout_tree::new(ctx)
 }
 
+/// Weight-less wrapper: these tests exercise structure and payout totals, so
+/// every boundary carries a zero weight.
 fun insert_range(tree: &mut StrikePayoutTree, lower_tick: u64, higher_tick: u64, quantity: u64) {
     tree.insert_range(
         lower_tick,
         higher_tick,
         quantity,
+        0,
+        0,
     );
 }
 

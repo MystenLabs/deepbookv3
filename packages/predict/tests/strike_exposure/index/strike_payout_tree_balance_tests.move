@@ -59,7 +59,7 @@ const EXPECTED_HEIGHT: u64 = 7;
 const AVL_HEIGHT_BOUND: u64 = 9;
 
 fun insert(tree: &mut StrikePayoutTree, tick: u64) {
-    tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY);
+    tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY, 0, 0);
 }
 
 fun remove(tree: &mut StrikePayoutTree, tick: u64) {

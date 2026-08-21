@@ -477,6 +477,15 @@ public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBund
     self.set_expiry_mint_paused(&mut market.market, &market.config, paused);
 }
 
+/// Set the per-unit floor under the ordinary trading fee.
+public fun set_template_min_fee(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_min_fee(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 public fun set_template_zero_min_fee(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
@@ -499,6 +508,16 @@ public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
     config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the rate charged on the payout profile's probability-weighted deviation.
+/// Markets snapshot this value at creation; `0` disables the mechanism.
+public fun set_template_inventory_skew_rate(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_inventory_skew_rate(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -2004,7 +2023,10 @@ public fun finish_flush_bundle(
 /// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
-    assert!(market.cash_balance() >= market.payout_liability() + market.inventory_impact_reserve());
+    assert!(
+        market.cash_balance()
+            >= market.payout_liability() + market.inventory_impact_reserve() + market.skew_reserve(),
+    );
 }
 
 /// S1 backing assertion for a market bundle.

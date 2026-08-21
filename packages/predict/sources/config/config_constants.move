@@ -29,6 +29,7 @@ const EInvalidMaxLpPoolValue: u64 = 18;
 const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
+const EInvalidInventorySkewRate: u64 = 22;
 
 // === Fees ===
 
@@ -178,6 +179,47 @@ public(package) fun assert_inventory_impact_max_rate(value: u64) {
         value >= min_inventory_impact_max_rate!()
             && value <= max_inventory_impact_max_rate!(),
         EInvalidInventoryImpactMaxRate,
+    );
+}
+
+// === Inventory Skew ===
+
+/// Rate applied to the payout profile's probability-weighted standard deviation,
+/// in FLOAT_SCALING. Occupancy prices how much reserve a position ties up; this
+/// prices how unevenly the book's payouts sit across the settlement prices that
+/// carry probability, which occupancy cannot see. The mechanism ships inert; a
+/// zero rate short-circuits before any weight evaluation or payout-tree read.
+public(package) macro fun default_inventory_skew_rate(): u64 { 0 }
+
+public(package) macro fun min_inventory_skew_rate(): u64 { 0 }
+
+/// The ceiling is a safety bound, not a representability envelope.
+///
+/// Every amount the statistic is checked against — premium, redeem proceeds, the
+/// fee — is proportional to the contract's probability, while a marginal
+/// adjustment is `rate * c * quantity` with `c = sqrt(m(1-m)) <= 1/2` for a range
+/// of frozen mass `m` — independent of probability. Once `rate * c` passes a
+/// low-probability contract's premium, the wing positions this mechanism exists
+/// to price stop being mintable and, worse, stop being closable. Holding
+/// `rate <= 0.5%` keeps `rate * c` at or below `0.25%`, half the default
+/// `min_fee`, so the ordinary fee still dominates any rebate: wing trades stay
+/// admissible, closes stay affordable, and harvesting the escrow stays
+/// unprofitable. Raising `min_fee` or `min_entry_probability` widens that margin;
+/// lowering either narrows it.
+/// The ceiling also holds a relational invariant against
+/// `min_min_entry_probability`: a skew rebate is bounded by `rate * quantity / 2`,
+/// while the premium alone is at least `min_entry_probability * quantity`, so a
+/// rate above twice the premium floor would make a legitimate book-flattening
+/// mint owe more than the trade costs. Both sides are upgrade-required constants,
+/// so the relation is pinned by
+/// `protocol_config_bounds_tests::max_skew_rebate_stays_below_the_minimum_premium`
+/// rather than by a runtime guard that could never fire.
+public(package) macro fun max_inventory_skew_rate(): u64 { 5_000_000 }
+
+public(package) fun assert_inventory_skew_rate(value: u64) {
+    assert!(
+        value >= min_inventory_skew_rate!() && value <= max_inventory_skew_rate!(),
+        EInvalidInventorySkewRate,
     );
 }
 

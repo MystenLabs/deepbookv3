@@ -61,7 +61,7 @@ public struct RawSVI has copy, drop {
 /// a full raw unit — which a short-dated surface cannot afford, because its whole
 /// total variance is only about ten raw units at 1e9. Keeping the rolled values at
 /// 1e18 hands `variance_sqrt_and_d2` the same domain it already computes in.
-public struct PricingSVI has copy, drop {
+public struct PricingSVI has copy, drop, store {
     /// Rolled-down SVI `a`, magnitude at 1e18, sign in `a_is_negative`.
     a_magnitude: u128,
     a_is_negative: bool,
@@ -70,6 +70,15 @@ public struct PricingSVI has copy, drop {
     rho: I64,
     m: I64,
     sigma: u64,
+}
+
+/// Storable snapshot of one pricer's surface: exactly the pair `up_price` reads.
+/// The inventory-skew weights freeze one of these at a market's first mint so the
+/// probability measure the statistic integrates against is fixed for the market's
+/// life — a moving measure would make the charge path-dependent.
+public struct FrozenSurface has copy, drop, store {
+    forward: u64,
+    svi: PricingSVI,
 }
 
 const EZeroForward: u64 = 0;
@@ -128,6 +137,18 @@ public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
+}
+
+/// Snapshot the surface this pricer prices with, dropping its market binding and
+/// oracle provenance. The result is a fixed function of strike, not a live quote.
+public(package) fun freeze_surface(pricer: &Pricer): FrozenSurface {
+    FrozenSurface { forward: pricer.forward, svi: pricer.svi }
+}
+
+/// UP digital probability for `strike` under a frozen surface. Same computation
+/// as `up_price`, against the snapshot instead of the live oracle load.
+public(package) fun frozen_up_price(surface: &FrozenSurface, strike: Strike): u64 {
+    compute_up_price(&surface.svi, surface.forward, strike)
 }
 
 public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
