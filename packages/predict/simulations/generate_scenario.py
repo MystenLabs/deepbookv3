@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Generate executable Predict simulation scenarios from oracle snapshots."""
+"""Generate the bounded current-contract Predict parity scenario."""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import random
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +17,7 @@ SCENARIO_COLUMNS = [
     "spot",
     "forward",
     "a",
+    "a_negative",
     "b",
     "rho",
     "rho_negative",
@@ -28,12 +28,15 @@ SCENARIO_COLUMNS = [
     "strike",
     "is_up",
     "quantity",
-    "leverage",
     "order_ref",
     "close_quantity",
     "replacement_order_ref",
     "amount",
+    "shares",
+    "min_output",
     "lp_ref",
+    "settlement_price",
+    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -43,283 +46,11 @@ DATA_DIR = Path(__file__).with_name("data")
 SCENARIO_CONFIG = DATA_DIR / "scenario_config.json"
 GENERATED_DIR = DATA_DIR / "generated"
 DEFAULT_RISK_FREE_RATE = 35_000_000
-MAX_ROW_ATTEMPTS = 100
-DUSDC = 1_000_000
-MANAGER_CASH_FLOOR = 50_000 * DUSDC
-
-
-@dataclass(frozen=True)
-class FlowConfig:
-    rows: int
-    mint_count: int
-    redeem_count: int
-    supply_count: int
-    withdraw_count: int
-    min_quantity_lots: int
-    max_quantity_lots: int
-    min_mint_spend: int
-    max_mint_spend: int
-    min_supply: int
-    max_supply: int
 
 
 class GenerationError(RuntimeError):
     pass
 
-
-class Generator:
-    def __init__(
-        self,
-        snapshots: list[dict[str, Any]],
-        config: FlowConfig,
-        seed: int,
-    ):
-        self.snapshots = snapshots
-        self.config = config
-        if config.min_mint_spend <= 0 or config.max_mint_spend < config.min_mint_spend:
-            raise GenerationError("mint spend range must be positive and ordered")
-        self.expiry_ms = None
-        self.rng = random.Random(seed)
-        self.remaining = {
-            "oracle_mint_ptb": config.mint_count,
-            "redeem": config.redeem_count,
-            "supply": config.supply_count,
-            "withdraw": config.withdraw_count,
-        }
-        self.rows: list[dict[str, str]] = []
-        self.order_quantities: dict[str, int] = {}
-        self.redeemable_refs: list[str] = []
-        self.lp_amounts: dict[str, int] = {}
-        self.withdrawable_lp_refs: list[str] = []
-        self.manager_balance = replay.MANAGER_SEED
-        self.vault_idle_balance = replay.VAULT_SEED
-        self.next_order = 1
-        self.next_lp = 1
-
-    def generate(self) -> list[dict[str, str]]:
-        for index in range(self.config.rows):
-            snapshot = self.snapshot_for_index(index)
-            self.rows.append(self.generate_row(index + 1, snapshot))
-        if any(value != 0 for value in self.remaining.values()):
-            raise GenerationError(f"remaining action counts after generation: {self.remaining}")
-        return self.rows
-
-    def snapshot_for_index(self, index: int) -> dict[str, Any]:
-        if self.config.rows == 1:
-            return self.snapshots[0]
-        source_index = round(index * (len(self.snapshots) - 1) / (self.config.rows - 1))
-        return self.snapshots[source_index]
-
-    def generate_row(self, tx: int, snapshot: dict[str, Any]) -> dict[str, str]:
-        reasons: list[str] = []
-        for _ in range(MAX_ROW_ATTEMPTS):
-            action = self.choose_action(tx)
-            try:
-                if action == "oracle_mint_ptb":
-                    return self.build_mint_row(tx, snapshot)
-                if action == "redeem":
-                    return with_oracle_fields(self.build_redeem_row(tx), snapshot)
-                if action == "supply":
-                    return with_oracle_fields(self.build_supply_row(tx), snapshot)
-                return with_oracle_fields(self.build_withdraw_row(tx), snapshot)
-            except GenerationError as error:
-                reasons.append(str(error))
-        raise GenerationError(
-            "unable to generate legal row "
-            f"tx={tx} remaining={self.remaining} "
-            f"open_orders={len(self.redeemable_refs)} lp_refs={len(self.withdrawable_lp_refs)} "
-            f"last_errors={reasons[-5:]}"
-        )
-
-    def choose_action(self, tx: int) -> str:
-        if tx == 1:
-            return "oracle_mint_ptb"
-
-        weighted: list[tuple[str, int]] = []
-        if self.remaining["oracle_mint_ptb"] > 0 and self.manager_balance > MANAGER_CASH_FLOOR:
-            weighted.append(("oracle_mint_ptb", self.remaining["oracle_mint_ptb"]))
-        if self.remaining["redeem"] > 0 and self.redeemable_refs:
-            weighted.append(("redeem", self.remaining["redeem"]))
-        if self.remaining["supply"] > 0:
-            weighted.append(("supply", self.remaining["supply"]))
-        if self.remaining["withdraw"] > 0 and self.withdrawable_lp_refs:
-            weighted.append(("withdraw", self.remaining["withdraw"]))
-
-        if not weighted:
-            raise GenerationError(f"no eligible actions at tx={tx} remaining={self.remaining}")
-
-        cursor = self.rng.randrange(sum(weight for _, weight in weighted))
-        for action, weight in weighted:
-            if cursor < weight:
-                return action
-            cursor -= weight
-        raise AssertionError("unreachable weighted action selection")
-
-    def build_mint_row(self, tx: int, snapshot: dict[str, Any]) -> dict[str, str]:
-        if self.remaining["oracle_mint_ptb"] <= 0:
-            raise GenerationError("mint count exhausted")
-
-        svi = svi_for_replay(snapshot)
-        forward = snapshot["forward"]
-        # The raw `forward` is written to the CSV (localnet pushes it to
-        # update_block_scholes_prices), but pricing must use the value the
-        # contracts actually quote with: forward re-derived from the live Pyth
-        # spot via pricing::load_live_pricer. Mirror that here so admission decisions
-        # (dynamic leverage cap, LTV, min premium) match localnet and the replay.
-        pricing_forward = replay.live_forward(snapshot["spot"], forward)
-        for _ in range(MAX_ROW_ATTEMPTS):
-            strike = self.random_strike(forward)
-            is_up = bool(self.rng.randrange(2))
-            lower, higher = replay.binary_range_bounds(replay.align_strike_to_tick(strike), is_up)
-            try:
-                entry_probability = replay.compute_range_price(svi, pricing_forward, lower, higher)
-                replay.assert_entry_probability_bounds(entry_probability)
-                fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
-                leverage = self.random_leverage(entry_probability)
-                quantity = self.quantity_for_spend(
-                    self.random_mint_spend(),
-                    entry_probability,
-                    fee_rate,
-                    leverage,
-                )
-                terms = replay.compute_mint_terms(entry_probability, quantity, leverage)
-                replay.assert_net_premium_above_min(terms["contribution"])
-                replay.assert_mint_above_liquidation_threshold(
-                    entry_probability,
-                    quantity,
-                    leverage,
-                    terms["floor_shares"],
-                )
-            except ValueError:
-                continue
-
-            fee_amount = replay.deepbook_mul(fee_rate, quantity)
-            cash_required = terms["contribution"] + fee_amount
-            if self.manager_balance - cash_required < MANAGER_CASH_FLOOR:
-                continue
-
-            order_ref = f"o_{self.next_order:06d}"
-            self.next_order += 1
-            self.manager_balance -= cash_required
-            self.remaining["oracle_mint_ptb"] -= 1
-            self.order_quantities[order_ref] = quantity
-            self.redeemable_refs.append(order_ref)
-
-            return scenario_row(
-                tx=tx,
-                action="oracle_mint_ptb",
-                spot=snapshot["spot"],
-                forward=forward,
-                a=snapshot["a"],
-                b=snapshot["b"],
-                rho=snapshot["rho"],
-                rho_negative=snapshot["rho_negative"],
-                m=snapshot["m"],
-                m_negative=snapshot["m_negative"],
-                sigma=snapshot["sigma"],
-                risk_free_rate=DEFAULT_RISK_FREE_RATE,
-                strike=strike,
-                is_up=is_up,
-                quantity=quantity,
-                leverage=leverage,
-                order_ref=order_ref,
-                replay_timestamp_ms=snapshot["price_checkpoint_timestamp_ms"],
-                source_timestamp_ms=snapshot["svi_checkpoint_timestamp_ms"],
-                price_source_timestamp_ms=snapshot["price_checkpoint_timestamp_ms"],
-            )
-
-        raise GenerationError("could not find legal mint parameters")
-
-    def fee_time_to_expiry(self, snapshot: dict[str, Any]) -> int | None:
-        if self.expiry_ms is None:
-            return None
-        return max(0, self.expiry_ms - snapshot["price_checkpoint_timestamp_ms"])
-
-    def random_strike(self, forward: int) -> int:
-        offset_bps = self.rng.randint(-2_500, 2_500)
-        strike = forward * (10_000 + offset_bps) // 10_000
-        strike = max(replay.ORACLE_MIN_STRIKE, min(replay.ORACLE_MAX_STRIKE, strike))
-        return replay.align_strike_to_tick(strike)
-
-    def max_leverage_for_probability(self, entry_probability: int) -> int:
-        return replay.admission_leverage_cap(entry_probability)
-
-    def random_leverage(self, entry_probability: int) -> int:
-        max_leverage = self.max_leverage_for_probability(entry_probability)
-        weighted = [
-            (replay.LEVERAGE_ONE_X, 45),
-            (replay.LEVERAGE_ONE_AND_HALF_X, 15),
-            (replay.LEVERAGE_TWO_X, 15),
-            (replay.LEVERAGE_TWO_AND_HALF_X, 12),
-            (replay.LEVERAGE_THREE_X, 13),
-        ]
-        legal_weighted = [(leverage, weight) for leverage, weight in weighted if leverage <= max_leverage]
-        cursor = self.rng.randrange(sum(weight for _, weight in legal_weighted))
-        for leverage, weight in legal_weighted:
-            if cursor < weight:
-                return leverage
-            cursor -= weight
-        raise AssertionError("unreachable leverage selection")
-
-    def random_mint_spend(self) -> int:
-        return self.rng.randint(self.config.min_mint_spend, self.config.max_mint_spend)
-
-    def quantity_for_spend(
-        self,
-        target_spend: int,
-        entry_probability: int,
-        fee_rate: int,
-        leverage: int,
-    ) -> int:
-        lot_terms = replay.compute_mint_terms(entry_probability, replay.POSITION_LOT_SIZE, leverage)
-        lot_fee = replay.deepbook_mul(fee_rate, replay.POSITION_LOT_SIZE)
-        lot_cost = lot_terms["contribution"] + lot_fee
-        if lot_cost <= 0:
-            raise GenerationError("mint lot cost must be positive")
-        lots = max(1, (target_spend + lot_cost // 2) // lot_cost)
-        lots = max(self.config.min_quantity_lots, min(self.config.max_quantity_lots, lots))
-        return lots * replay.POSITION_LOT_SIZE
-
-    def build_redeem_row(self, tx: int) -> dict[str, str]:
-        if self.remaining["redeem"] <= 0 or not self.redeemable_refs:
-            raise GenerationError("redeem unavailable")
-
-        idx = self.rng.randrange(len(self.redeemable_refs))
-        order_ref = self.redeemable_refs.pop(idx)
-        quantity = self.order_quantities.pop(order_ref)
-        self.remaining["redeem"] -= 1
-        return scenario_row(
-            tx=tx,
-            action="redeem",
-            order_ref=order_ref,
-            close_quantity=quantity,
-        )
-
-    def build_supply_row(self, tx: int) -> dict[str, str]:
-        if self.remaining["supply"] <= 0:
-            raise GenerationError("supply count exhausted")
-        amount = self.rng.randint(self.config.min_supply // DUSDC, self.config.max_supply // DUSDC) * DUSDC
-        lp_ref = f"lp_{self.next_lp:06d}"
-        self.next_lp += 1
-        self.lp_amounts[lp_ref] = amount
-        self.withdrawable_lp_refs.append(lp_ref)
-        self.vault_idle_balance += amount
-        self.remaining["supply"] -= 1
-        return scenario_row(tx=tx, action="supply", amount=amount, lp_ref=lp_ref)
-
-    def build_withdraw_row(self, tx: int) -> dict[str, str]:
-        if self.remaining["withdraw"] <= 0 or not self.withdrawable_lp_refs:
-            raise GenerationError("withdraw unavailable")
-        idx = self.rng.randrange(len(self.withdrawable_lp_refs))
-        lp_ref = self.withdrawable_lp_refs[idx]
-        amount = self.lp_amounts[lp_ref]
-        if self.vault_idle_balance < amount:
-            raise GenerationError("withdraw would exceed generated idle estimate")
-        self.withdrawable_lp_refs.pop(idx)
-        self.lp_amounts.pop(lp_ref)
-        self.vault_idle_balance -= amount
-        self.remaining["withdraw"] -= 1
-        return scenario_row(tx=tx, action="withdraw", lp_ref=lp_ref)
 
 def scenario_row(tx: int, action: str, **values: Any) -> dict[str, str]:
     row = {column: "" for column in SCENARIO_COLUMNS}
@@ -335,30 +66,29 @@ def scenario_row(tx: int, action: str, **values: Any) -> dict[str, str]:
     return row
 
 
-def with_oracle_fields(row: dict[str, str], snapshot: dict[str, Any]) -> dict[str, str]:
-    row.update(
-        {
-            "spot": str(snapshot["spot"]),
-            "forward": str(snapshot["forward"]),
-            "a": str(snapshot["a"]),
-            "b": str(snapshot["b"]),
-            "rho": str(snapshot["rho"]),
-            "rho_negative": "true" if snapshot["rho_negative"] else "false",
-            "m": str(snapshot["m"]),
-            "m_negative": "true" if snapshot["m_negative"] else "false",
-            "sigma": str(snapshot["sigma"]),
-            "risk_free_rate": str(DEFAULT_RISK_FREE_RATE),
-            "replay_timestamp_ms": str(snapshot["price_checkpoint_timestamp_ms"]),
-            "source_timestamp_ms": str(snapshot["svi_checkpoint_timestamp_ms"]),
-            "price_source_timestamp_ms": str(snapshot["price_checkpoint_timestamp_ms"]),
-        }
-    )
-    return row
+def oracle_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "spot": snapshot["spot"],
+        "forward": snapshot["forward"],
+        "a": snapshot["a"],
+        "a_negative": False,
+        "b": snapshot["b"],
+        "rho": snapshot["rho"],
+        "rho_negative": snapshot["rho_negative"],
+        "m": snapshot["m"],
+        "m_negative": snapshot["m_negative"],
+        "sigma": snapshot["sigma"],
+        "risk_free_rate": DEFAULT_RISK_FREE_RATE,
+        "replay_timestamp_ms": snapshot["price_checkpoint_timestamp_ms"],
+        "source_timestamp_ms": snapshot["svi_checkpoint_timestamp_ms"],
+        "price_source_timestamp_ms": snapshot["price_checkpoint_timestamp_ms"],
+    }
 
 
 def svi_for_replay(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "a": snapshot["a"],
+        "aNegative": False,
         "b": snapshot["b"],
         "rho": snapshot["rho"],
         "rhoNegative": snapshot["rho_negative"],
@@ -369,96 +99,219 @@ def svi_for_replay(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class Generator:
+    def __init__(
+        self,
+        snapshots: list[dict[str, Any]],
+        config: dict[str, Any],
+        seed: int,
+    ) -> None:
+        self.snapshots = snapshots
+        self.config = config
+        self.rng = random.Random(seed)
+        self.order_quantities: dict[str, int] = {}
+
+    def snapshot(self, step: int) -> dict[str, Any]:
+        index = round((step - 1) * (len(self.snapshots) - 1) / 19)
+        return self.snapshots[index]
+
+    def mint_row(
+        self,
+        step: int,
+        order_ref: str,
+        is_up: bool,
+        *,
+        strike: int | None = None,
+    ) -> dict[str, str]:
+        snapshot = self.snapshot(step)
+        forward = replay.live_forward(snapshot["spot"], snapshot["forward"])
+        if strike is None:
+            for _ in range(32):
+                offset_bps = self.rng.randint(-1_500, 1_500)
+                candidate = replay.align_strike_to_tick(
+                    forward * (10_000 + offset_bps) // 10_000
+                )
+                lower, higher = replay.binary_range_bounds(candidate, is_up)
+                probability = replay.compute_range_price(
+                    svi_for_replay(snapshot), forward, lower, higher
+                )
+                if replay.MIN_ENTRY_PROBABILITY <= probability <= replay.MAX_ENTRY_PROBABILITY:
+                    strike = candidate
+                    break
+            else:
+                raise GenerationError(f"could not sample an admissible strike for step {step}")
+        else:
+            strike = replay.align_strike_to_tick(strike)
+            lower, higher = replay.binary_range_bounds(strike, is_up)
+            probability = replay.compute_range_price(
+                svi_for_replay(snapshot), forward, lower, higher
+            )
+            replay.assert_entry_probability_bounds(probability)
+
+        generation = self.config["generation"]
+        target_spend = self.rng.randint(
+            int(generation["min_mint_spend"]),
+            int(generation["max_mint_spend"]),
+        )
+        lots = max(1, target_spend * replay.FLOAT_SCALING // probability // replay.POSITION_LOT_SIZE)
+        quantity = lots * replay.POSITION_LOT_SIZE
+        # Several orders remain open concurrently before the first flush can
+        # rebalance cash. Bound each position by one eighth of the configured
+        # initial cash so scenario validity does not depend on sampled probability.
+        cash_bound = int(self.config["market"]["initial_expiry_cash"]) // 8
+        cash_bound = cash_bound // replay.POSITION_LOT_SIZE * replay.POSITION_LOT_SIZE
+        quantity = min(quantity, cash_bound)
+        if replay.deepbook_mul(probability, quantity) < replay.MIN_PREMIUM:
+            quantity = replay.mul_div_round_up(
+                replay.MIN_PREMIUM,
+                replay.FLOAT_SCALING,
+                probability,
+            )
+            quantity = (
+                (quantity + replay.POSITION_LOT_SIZE - 1)
+                // replay.POSITION_LOT_SIZE
+                * replay.POSITION_LOT_SIZE
+            )
+        self.order_quantities[order_ref] = quantity
+        return scenario_row(
+            step,
+            "mint",
+            **oracle_fields(snapshot),
+            strike=strike,
+            is_up=is_up,
+            quantity=quantity,
+            order_ref=order_ref,
+        )
+
+    def generate(self) -> list[dict[str, str]]:
+        generation = self.config["generation"]
+        if generation["rows"] != 20:
+            raise GenerationError("current parity scenario requires generation.rows=20")
+        settlement_price = int(self.config["source"]["settlement_price"])
+        settlement_strike = replay.align_strike_to_tick(settlement_price * 105 // 100)
+
+        rows = [
+            self.mint_row(1, "o_up_partial", True),
+            self.mint_row(2, "o_down", False),
+        ]
+        partial_quantity = self.order_quantities["o_up_partial"] // 2
+        partial_quantity = max(
+            replay.POSITION_LOT_SIZE,
+            partial_quantity // replay.POSITION_LOT_SIZE * replay.POSITION_LOT_SIZE,
+        )
+        if partial_quantity >= self.order_quantities["o_up_partial"]:
+            partial_quantity = self.order_quantities["o_up_partial"] - replay.POSITION_LOT_SIZE
+        rows.extend(
+            [
+                scenario_row(
+                    3,
+                    "redeem_live",
+                    **oracle_fields(self.snapshot(3)),
+                    order_ref="o_up_partial",
+                    close_quantity=partial_quantity,
+                    replacement_order_ref="o_up_remainder",
+                ),
+                scenario_row(
+                    4,
+                    "request_supply",
+                    amount=generation["supply_amount"],
+                    min_output=0,
+                    lp_ref="lp_supply_1",
+                ),
+                scenario_row(5, "flush", **oracle_fields(self.snapshot(5))),
+                scenario_row(
+                    6,
+                    "request_withdraw",
+                    shares=generation["withdraw_shares"],
+                    min_output=0,
+                    lp_ref="lp_withdraw_1",
+                ),
+                scenario_row(7, "flush", **oracle_fields(self.snapshot(7))),
+                self.mint_row(8, "o_round_trip", bool(self.rng.randrange(2))),
+                scenario_row(
+                    9,
+                    "redeem_live",
+                    **oracle_fields(self.snapshot(9)),
+                    order_ref="o_round_trip",
+                    close_quantity=self.order_quantities["o_round_trip"],
+                ),
+                scenario_row(10, "rebalance_expiry_cash"),
+                self.mint_row(11, "o_settle_winner", False, strike=settlement_strike),
+                self.mint_row(12, "o_settle_loser", True, strike=settlement_strike),
+                scenario_row(13, "settle", settlement_price=settlement_price),
+                scenario_row(
+                    14,
+                    "redeem_settled",
+                    order_ref="o_up_remainder",
+                    permissionless=False,
+                ),
+                scenario_row(
+                    15,
+                    "redeem_settled",
+                    order_ref="o_down",
+                    permissionless=True,
+                ),
+                scenario_row(
+                    16,
+                    "redeem_settled",
+                    order_ref="o_settle_winner",
+                    permissionless=False,
+                ),
+                scenario_row(
+                    17,
+                    "redeem_settled",
+                    order_ref="o_settle_loser",
+                    permissionless=True,
+                ),
+                scenario_row(18, "flush"),
+                scenario_row(
+                    19,
+                    "request_supply",
+                    amount=generation["supply_amount"],
+                    min_output=0,
+                    lp_ref="lp_supply_2",
+                ),
+                scenario_row(20, "flush"),
+            ]
+        )
+        return rows
+
+
 def read_snapshots(path: Path) -> list[dict[str, Any]]:
     with path.open(newline="") as file:
-        rows = []
-        for raw in csv.DictReader(file):
-            rows.append(
-                {
-                    "spot": int(raw["spot"]),
-                    "forward": int(raw["forward"]),
-                    "a": int(raw["a"]),
-                    "b": int(raw["b"]),
-                    "rho": int(raw["rho"]),
-                    "rho_negative": raw["rho_negative"] == "true",
-                    "m": int(raw["m"]),
-                    "m_negative": raw["m_negative"] == "true",
-                    "sigma": int(raw["sigma"]),
-                    "svi_checkpoint_timestamp_ms": int(raw["svi_checkpoint_timestamp_ms"]),
-                    "price_checkpoint_timestamp_ms": int(raw["price_checkpoint_timestamp_ms"]),
-                }
-            )
+        rows = [
+            {
+                "spot": int(raw["spot"]),
+                "forward": int(raw["forward"]),
+                "a": int(raw["a"]),
+                "b": int(raw["b"]),
+                "rho": int(raw["rho"]),
+                "rho_negative": raw["rho_negative"] == "true",
+                "m": int(raw["m"]),
+                "m_negative": raw["m_negative"] == "true",
+                "sigma": int(raw["sigma"]),
+                "svi_checkpoint_timestamp_ms": int(raw["svi_checkpoint_timestamp_ms"]),
+                "price_checkpoint_timestamp_ms": int(raw["price_checkpoint_timestamp_ms"]),
+            }
+            for raw in csv.DictReader(file)
+        ]
     if not rows:
         raise GenerationError(f"source dataset is empty: {path}")
-    if rows[0]["price_checkpoint_timestamp_ms"] < rows[0]["svi_checkpoint_timestamp_ms"]:
-        raise GenerationError(
-            "source dataset has stale price at data row 1: "
-            f"{rows[0]['price_checkpoint_timestamp_ms']} < {rows[0]['svi_checkpoint_timestamp_ms']}"
-        )
-    previous_timestamp = rows[0]["svi_checkpoint_timestamp_ms"]
-    previous_replay_timestamp = rows[0]["price_checkpoint_timestamp_ms"]
-    for index, row in enumerate(rows[1:], start=2):
-        timestamp = row["svi_checkpoint_timestamp_ms"]
-        replay_timestamp = row["price_checkpoint_timestamp_ms"]
-        if row["price_checkpoint_timestamp_ms"] < timestamp:
+    previous_svi = rows[0]["svi_checkpoint_timestamp_ms"]
+    previous_price = rows[0]["price_checkpoint_timestamp_ms"]
+    for index, row in enumerate(rows, start=1):
+        svi_timestamp = row["svi_checkpoint_timestamp_ms"]
+        price_timestamp = row["price_checkpoint_timestamp_ms"]
+        if price_timestamp < svi_timestamp:
             raise GenerationError(
                 f"source dataset has stale price at data row {index}: "
-                f"{row['price_checkpoint_timestamp_ms']} < {timestamp}"
+                f"{price_timestamp} < {svi_timestamp}"
             )
-        if timestamp < previous_timestamp:
-            raise GenerationError(
-                f"source dataset is not chronological at data row {index}: "
-                f"{timestamp} < {previous_timestamp}"
-            )
-        if replay_timestamp < previous_replay_timestamp:
-            raise GenerationError(
-                f"source dataset replay timestamps are not chronological at data row {index}: "
-                f"{replay_timestamp} < {previous_replay_timestamp}"
-            )
-        previous_timestamp = timestamp
-        previous_replay_timestamp = replay_timestamp
+        if svi_timestamp < previous_svi or price_timestamp < previous_price:
+            raise GenerationError(f"source dataset is not chronological at data row {index}")
+        previous_svi = svi_timestamp
+        previous_price = price_timestamp
     return rows
-
-
-def flow_counts(total_rows: int) -> tuple[int, int, int, int]:
-    mint_count = total_rows * 60 // 100
-    redeem_count = total_rows * 30 // 100
-    withdraw_count = total_rows * 5 // 100
-    supply_count = total_rows - mint_count - redeem_count - withdraw_count
-    return mint_count, redeem_count, supply_count, withdraw_count
-
-
-def generation_config_int(
-    source_config: dict[str, Any],
-    mode: str,
-    key: str,
-) -> int:
-    return int(source_config["generation"][mode][key])
-
-
-def normal_config(source_config: dict[str, Any]) -> FlowConfig:
-    mint_count, redeem_count, supply_count, withdraw_count = flow_counts(1_000)
-    return FlowConfig(
-        rows=1_000,
-        mint_count=mint_count,
-        redeem_count=redeem_count,
-        supply_count=supply_count,
-        withdraw_count=withdraw_count,
-        min_quantity_lots=100,
-        max_quantity_lots=100_000,
-        min_mint_spend=generation_config_int(
-            source_config,
-            "normal",
-            "min_mint_spend",
-        ),
-        max_mint_spend=generation_config_int(
-            source_config,
-            "normal",
-            "max_mint_spend",
-        ),
-        min_supply=500 * DUSDC,
-        max_supply=5_000 * DUSDC,
-    )
 
 
 def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
@@ -475,17 +328,8 @@ def generate_scenario(
     source_config: dict[str, Any],
     seed: int,
 ) -> Path:
-    snapshots = read_snapshots(source)
-    # No grid to configure: the strike domain is absolute ticks (raw = tick*tick_size)
-    # over a fixed domain known before any row runs, so there is nothing to center on
-    # the first spot. Strikes are selected near the live forward in random_strike.
-    generator = Generator(
-        snapshots,
-        normal_config(source_config),
-        seed,
-    )
-    rows = generator.generate()
-    out_path = out if out is not None else GENERATED_DIR / "normal_scenario.csv"
+    rows = Generator(read_snapshots(source), source_config, seed).generate()
+    out_path = out if out is not None else GENERATED_DIR / "parity_scenario.csv"
     write_scenario(out_path, rows)
     print(f"wrote {out_path} rows={len(rows)} seed={seed}")
     return out_path

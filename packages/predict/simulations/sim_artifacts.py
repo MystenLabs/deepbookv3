@@ -7,14 +7,16 @@ import math
 from pathlib import Path
 from typing import Any
 
-LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v4"
+LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
 LOCAL_TRACE_ACTIONS = {
-    "oracle_mint_ptb",
-    "redeem",
-    "supply",
-    "withdraw",
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "request_withdraw",
     "flush",
     "rebalance_expiry_cash",
+    "settle",
+    "redeem_settled",
 }
 _TRACE_FIELDS = {"schema_version", "steps"}
 _STEP_FIELDS = {
@@ -126,4 +128,4 @@ def write_json(path: Path, value: Any) -> None:
 
 
 def normalized_action(action: str) -> str:
-    return "mint" if action == "oracle_mint_ptb" else action
+    return action

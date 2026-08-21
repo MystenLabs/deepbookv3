@@ -10,7 +10,7 @@ Run commands from `packages/predict` after `npm install`.
 python3 -m harness smoke
 python3 -m harness live --traders 1 --seconds 300
 python3 -m harness campaign mint-only mixed-churn fuzz --timeout 600
-python3 -m harness parity --source /path/to/scenario_dataset.csv --seed 0 --max-rows 20
+python3 -m harness parity --source simulations/data/synthetic_oracle_fixture.csv --seed 0 --max-rows 20
 python3 -m harness analyze harness/.localnets/campaigns/<campaign-id>
 python3 -m harness status
 python3 -m harness cleanup --instances

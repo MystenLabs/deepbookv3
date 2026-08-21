@@ -14,7 +14,7 @@ import {
   serializableSnapshot,
   subscriptionItemMatches,
 } from "./marketSource.js";
-import { budgetLadder, gridExpiries } from "./runnerConfig.js";
+import { gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
 import { abortInfo } from "./trace.js";
 
@@ -165,4 +165,3 @@ test("Block Scholes subscriptions keep expected SIDs local and send complete des
   const { exchange: _exchange, ...missingExchange } = acknowledged;
   assert.equal(subscriptionItemMatches(forward.request, missingExchange), false);
 });
-

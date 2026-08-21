@@ -1,6 +1,6 @@
 // Predict lifecycle keeper. On an oracle-ready localnet WITH the updater streaming, run a
 // tick loop that SETTLES expired markets (own PTBs), FLUSHES the active pool (own PTB),
-// liquidates, and rolls the cadence. The "conditional cron" is off-chain: each tick reconciles
+// settles markets, flushes LP requests, and rolls the cadence. The "conditional cron" is off-chain: each tick reconciles
 // the active market set from CHAIN (plp::active_expiry_markets) and assembles the due PTBs.
 //
 // Reconciling from chain (not an in-memory list) is what makes the keeper crash/restart
@@ -100,7 +100,7 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string) {
-  // Reconcile the active set from CHAIN — never an in-memory list. Used by liquidate / rebalance /
+  // Reconcile the active set from CHAIN — never an in-memory list. Used by settle / rebalance /
   // roll below; settlement (step 1) re-reads a fresh set of its own each pass.
   const active: Mkt[] = [];
   for (const id of await readActiveMarketIds()) active.push({ id, expiryMs: await expiryOf(id) });

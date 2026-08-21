@@ -1,47 +1,41 @@
 {
-    "schema_version": 1,
+    "schema_version": 2,
     "source": {
-        "expiry_ms": "1779955200000",
-        "settlement_timestamp_ms": "1779955200001",
         "settlement_price": "73380034988828"
     },
     "capital": {
-        "normal": {
-            "manager_seed": "500000000000",
-            "vault_seed": "500000000000"
-        },
-        "long": {
-            "manager_seed": "5000000000000",
-            "vault_seed": "5000000000000"
-        }
+        "manager_seed": "500000000000",
+        "vault_seed": "500000000000"
     },
     "generation": {
-        "normal": {
-            "min_mint_spend": "2000000",
-            "max_mint_spend": "20000000"
-        },
-        "long": {
-            "min_mint_spend": "5000000",
-            "max_mint_spend": "50000000"
-        }
+        "rows": 20,
+        "min_mint_spend": "500000000",
+        "max_mint_spend": "2000000000",
+        "supply_amount": "10000000000",
+        "withdraw_shares": "2500000000"
+    },
+    "market": {
+        "cadence_id": 0,
+        "cadence_period_ms": "60000",
+        "cadence_window_size": "1",
+        "tick_size": "1000000000",
+        "admission_tick_size": "1000000000",
+        "max_expiry_allocation": "250000000000",
+        "initial_expiry_cash": "50000000000"
     },
     "protocol": {
         "base_fee": "20000000",
         "min_fee": "5000000",
         "min_entry_probability": "10000000",
         "max_entry_probability": "990000000",
-        "trade_liquidation_budget": "24",
-        "valuation_liquidation_budget": "192",
-        "liquidation_head_scan_divisor": "3",
-        "curve_samples": "50",
         "protocol_reserve_profit_share": "400000000",
-        "trading_loss_rebate_rate": "500000000",
-        "max_expiry_allocation": "250000000000",
-        "initial_expiry_cash": "50000000000",
         "expiry_fee_window_ms": "86400000",
         "expiry_fee_max_multiplier": "2000000000",
-        "max_admission_leverage": "3000000000",
-        "liquidation_ltv": "850000000",
-        "backing_buffer_lambda": "250000000"
+        "backing_buffer_lambda": "250000000",
+        "inventory_impact_max_rate": "50000000",
+        "plp_supply_fee_rate": "1000000",
+        "plp_withdraw_fee_rate": "2000000",
+        "lp_request_limit_flush_attempts": "1",
+        "max_lp_pool_value": "18446744073709551615"
     }
 }

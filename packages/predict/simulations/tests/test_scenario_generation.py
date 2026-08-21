@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import subprocess
 import sys
 import tempfile
@@ -100,6 +101,39 @@ class ScenarioGenerationTests(unittest.TestCase):
             self.assertIn("missing=base_fee", missing_run.stderr)
             self.assertNotEqual(unknown_run.returncode, 0)
             self.assertIn("unknown=base_fees", unknown_run.stderr)
+
+    def test_generated_scenario_covers_every_current_contract_action(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            source = tmp / "source.csv"
+            source.write_text(SOURCE_HEADER + "".join(SOURCE_ROWS))
+            output = tmp / "scenario.csv"
+            self._generate(source, output, 0)
+
+            with output.open(newline="") as file:
+                rows = list(csv.DictReader(file))
+            self.assertEqual(len(rows), 20)
+            self.assertEqual(
+                {row["action"] for row in rows},
+                {
+                    "mint",
+                    "redeem_live",
+                    "request_supply",
+                    "request_withdraw",
+                    "flush",
+                    "rebalance_expiry_cash",
+                    "settle",
+                    "redeem_settled",
+                },
+            )
+            self.assertEqual(
+                [row["permissionless"] for row in rows if row["action"] == "redeem_settled"],
+                ["false", "true", "false", "true"],
+            )
+            self.assertLessEqual(
+                max(int(row["quantity"]) for row in rows if row["action"] == "mint"),
+                6_250_000_000,
+            )
 
 
 if __name__ == "__main__":

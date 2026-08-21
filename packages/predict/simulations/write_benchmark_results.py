@@ -51,7 +51,7 @@ def build_results(trace: dict[str, Any]) -> dict[str, Any]:
         by_action[action].append(execution_result(step))
 
     mints = by_action.get("mint", [])
-    supplies = by_action.get("supply", [])
+    supplies = by_action.get("request_supply", [])
 
     return {
         "schema_version": RESULTS_SCHEMA_VERSION,

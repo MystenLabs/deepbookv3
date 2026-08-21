@@ -10,12 +10,12 @@ From `packages/predict`:
 
 ```bash
 python3 -m harness parity \
-  --source /path/to/scenario_dataset.csv \
+  --source simulations/data/synthetic_oracle_fixture.csv \
   --seed 0 \
   --max-rows 20
 ```
 
-`--max-rows` is optional. `--source` is required because the source dataset is not committed.
+The checked-in synthetic fixture makes the complete 20-action parity case reproducible without private data. `--source` may instead point to a current oracle snapshot with the same schema. A row limit below 20 is rejected by action-coverage validation because it would skip current contract flows.
 
 The external benchmark worker calls:
 
@@ -60,7 +60,7 @@ The Block Scholes local fixture derives series identities through the published 
 
 `data/scenario_config.json` is the complete, versioned protocol and generator configuration. Missing, unknown, malformed, and unsupported fields fail before execution. Scenario generation is byte-deterministic for a fixed source, configuration, and seed. Changing any input is visible in the retained manifest hashes.
 
-The generator writes fixed-point integers as decimal text. The Python replay remains independent of Move execution and is the semantic oracle for the parity check.
+The generator writes fixed-point integers as decimal text and emits explicit mint, live redeem, LP request, flush, rebalance, settlement, owner-settled-redeem, and permissionless-settled-redeem actions. The TypeScript executor records emitted transitions plus direct chain-state snapshots after every action; the Python replay independently models the same economics.
 
 ## Verification
 

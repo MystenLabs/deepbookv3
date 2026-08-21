@@ -694,6 +694,12 @@ function parseU64LE(bytes: number[]): bigint {
     return v;
 }
 
+function commandReturnBytes(result: any, cmdIndex: number): number[] {
+    const value = result.commandResults?.[cmdIndex]?.returnValues?.[0]?.bcs;
+    if (!value) throw new Error(`devInspect: no return value at command ${cmdIndex}`);
+    return Array.from(value as Uint8Array);
+}
+
 // BCS vector<ID>: ULEB128 length, then N x 32-byte object ids.
 function parseVectorId(bytes: number[]): string[] {
     let i = 0, len = 0, shift = 0;
@@ -774,6 +780,95 @@ export async function readPlpBalance(owner: string): Promise<bigint> {
     return parseU64LE(await devInspectFirstReturn(tx, 1));
 }
 
+export interface PredictEconomicState {
+    accountDusdcBalance: bigint;
+    accountPlpBalance: bigint;
+    expiryCashBalance: bigint;
+    inventoryImpactReserve: bigint;
+    payoutLiability: bigint;
+    requiredCash: bigint;
+    feeIncentiveBalance: bigint;
+    vaultIdleBalance: bigint;
+    vaultProtocolReserveBalance: bigint;
+    vaultPendingProtocolProfit: bigint;
+    profitBasisDebits: bigint;
+    profitBasisCredits: bigint;
+    vaultTotalPlpSupply: bigint;
+    supplyRequestsPending: bigint;
+    withdrawRequestsPending: bigint;
+    isSettled: boolean;
+    activeMarketCount: bigint;
+}
+
+// Read every material parity field from one devInspect snapshot. The simulation
+// deliberately does not maintain a shadow TypeScript ledger: the chain is the live
+// side's state authority, while emitted events describe each transition.
+export async function readPredictEconomicState(params: {
+    poolVaultId: string;
+    expiryMarketId: string;
+    wrapperId: string;
+}): Promise<PredictEconomicState> {
+    const tx = new Transaction();
+    const vault = tx.object(params.poolVaultId);
+    const market = tx.object(params.expiryMarketId);
+    tx.moveCall({ target: target("plp", "idle_balance"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "protocol_reserve_balance"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "pending_protocol_profit"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "profit_basis_debits"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "profit_basis_credits"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "plp_total_supply"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "supply_requests_pending"), arguments: [vault] });
+    tx.moveCall({ target: target("plp", "withdraw_requests_pending"), arguments: [vault] });
+    tx.moveCall({ target: target("expiry_market", "cash_balance"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "inventory_impact_reserve"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "payout_liability"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "required_cash"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "fee_incentive_balance"), arguments: [market] });
+    tx.moveCall({ target: target("expiry_market", "is_settled"), arguments: [market] });
+    tx.moveCall({ target: target("plp", "active_expiry_markets"), arguments: [vault] });
+    const account = tx.moveCall({
+        target: accountTarget("account", "load_account"),
+        arguments: [tx.object(params.wrapperId)],
+    });
+    tx.moveCall({
+        target: accountTarget("account", "balance"),
+        typeArguments: [DUSDC_TYPE],
+        arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
+    });
+    tx.moveCall({
+        target: accountTarget("account", "balance"),
+        typeArguments: [`${PACKAGE_ID}::plp::PLP`],
+        arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
+    });
+    tx.setSenderIfNotSet(address);
+    const result = await simulateGrpc(tx);
+    if (!isSuccessStatus(result.effects?.status)) {
+        throw new Error(
+            `economic state simulation failed: ${formatStatusError(result.effects?.status, JSON.stringify(result).slice(0, 300))}`,
+        );
+    }
+    const u64 = (index: number) => parseU64LE(commandReturnBytes(result, index));
+    return {
+        vaultIdleBalance: u64(0),
+        vaultProtocolReserveBalance: u64(1),
+        vaultPendingProtocolProfit: u64(2),
+        profitBasisDebits: u64(3),
+        profitBasisCredits: u64(4),
+        vaultTotalPlpSupply: u64(5),
+        supplyRequestsPending: u64(6),
+        withdrawRequestsPending: u64(7),
+        expiryCashBalance: u64(8),
+        inventoryImpactReserve: u64(9),
+        payoutLiability: u64(10),
+        requiredCash: u64(11),
+        feeIncentiveBalance: u64(12),
+        isSettled: (commandReturnBytes(result, 13)[0] ?? 0) !== 0,
+        activeMarketCount: BigInt(parseVectorId(commandReturnBytes(result, 14)).length),
+        accountDusdcBalance: u64(16),
+        accountPlpBalance: u64(17),
+    };
+}
+
 async function nextSourceTimestampMs(): Promise<bigint> {
     for (let attempt = 0; attempt < 50; attempt++) {
         const latestAllowed = (await clockTimestampMs()) - 1n;
@@ -790,6 +885,12 @@ async function nextSourceTimestampMs(): Promise<bigint> {
 export async function nextOneMonthExpiryMs(): Promise<bigint> {
     const now = await clockTimestampMs();
     return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
+}
+
+export async function nextCadenceExpiryMs(periodMs: bigint): Promise<bigint> {
+    if (periodMs <= 0n) throw new Error("cadence period must be positive");
+    const now = await clockTimestampMs();
+    return ((now / periodMs) + 1n) * periodMs;
 }
 
 // One oracle refresh writes all Propbook slots: a permissionless Pyth Lazer spot
@@ -1370,7 +1471,7 @@ export interface CleanoutParams {
 
 function addRedeemSettledPermissionless(
     tx: Transaction,
-    p: { expiryMarketId: string; wrapperId: string; orderId: string },
+    p: { expiryMarketId: string; wrapperId: string; orderId: string; protocolConfigId?: string },
 ): void {
     // redeem_settled_permissionless(market, account_registry, wrapper, config, order_id,
     //   root, clock, ctx). A settled close is always full — the entrypoint takes no
@@ -1382,12 +1483,40 @@ function addRedeemSettledPermissionless(
             tx.object(p.expiryMarketId),
             tx.object(ACCOUNT_REGISTRY_ID),
             tx.object(p.wrapperId),
-            tx.object(PROTOCOL_CONFIG_ID),
+            tx.object(p.protocolConfigId ?? PROTOCOL_CONFIG_ID),
             tx.pure.u256(BigInt(p.orderId)),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
     });
+}
+
+export function redeemSettledTx(params: {
+    expiryMarketId: string;
+    protocolConfigId: string;
+    wrapperId: string;
+    orderId: string;
+    permissionless: boolean;
+}): Transaction {
+    const tx = new Transaction();
+    if (params.permissionless) {
+        addRedeemSettledPermissionless(tx, params);
+    } else {
+        const auth = generateAuth(tx);
+        tx.moveCall({
+            target: target("expiry_market", "redeem_settled"),
+            arguments: [
+                tx.object(params.expiryMarketId),
+                tx.object(params.wrapperId),
+                auth,
+                tx.object(params.protocolConfigId),
+                tx.pure.u256(BigInt(params.orderId)),
+                tx.object(ACCUMULATOR_ROOT_ID),
+                tx.object(CLOCK_ID),
+            ],
+        });
+    }
+    return tx;
 }
 
 export function cleanoutAccountTx(params: CleanoutParams): Transaction {
@@ -1527,6 +1656,44 @@ export function setTemplateExpiryFeeConfigTx(
             tx.pure.u64(expiryFeeMaxMultiplier),
         ],
     });
+    return tx;
+}
+
+export function setSimulationEconomicPolicyTx(params: {
+    protocolConfigId: string;
+    baseFee: bigint;
+    minFee: bigint;
+    minEntryProbability: bigint;
+    maxEntryProbability: bigint;
+    backingBufferLambda: bigint;
+    inventoryImpactMaxRate: bigint;
+    protocolReserveProfitShare: bigint;
+    plpSupplyFeeRate: bigint;
+    plpWithdrawFeeRate: bigint;
+    lpRequestLimitFlushAttempts: bigint;
+    maxLpPoolValue: bigint;
+}): Transaction {
+    const tx = new Transaction();
+    const call = (fn: string, value: bigint) =>
+        tx.moveCall({
+            target: target("protocol_config", fn),
+            arguments: [
+                tx.object(params.protocolConfigId),
+                tx.object(ADMIN_CAP_ID),
+                tx.pure.u64(value),
+            ],
+        });
+    call("set_template_base_fee", params.baseFee);
+    call("set_template_min_fee", params.minFee);
+    call("set_template_min_entry_probability", params.minEntryProbability);
+    call("set_template_max_entry_probability", params.maxEntryProbability);
+    call("set_template_backing_buffer_lambda", params.backingBufferLambda);
+    call("set_template_inventory_impact_max_rate", params.inventoryImpactMaxRate);
+    call("set_protocol_reserve_profit_share", params.protocolReserveProfitShare);
+    call("set_plp_supply_fee_rate", params.plpSupplyFeeRate);
+    call("set_plp_withdraw_fee_rate", params.plpWithdrawFeeRate);
+    call("set_lp_request_limit_flush_attempts", params.lpRequestLimitFlushAttempts);
+    call("set_max_lp_pool_value", params.maxLpPoolValue);
     return tx;
 }
 
