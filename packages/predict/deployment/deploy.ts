@@ -1670,9 +1670,7 @@ function assertExpectedWorktree(result: DeploymentResult): void {
     const generatedPackages = PACKAGES.filter(
         (pkg) => result.packages[pkg] || result.inFlight?.package === pkg,
     );
-    removeRecoveryTemporaries(
-        generatedPackages.map((pkg) => `${publishedPath(pkg)}.recovery.tmp`),
-    );
+    removeRecoveryTemporaries(generatedPackages.map((pkg) => `${publishedPath(pkg)}.recovery.tmp`));
     const unexpected = unexpectedDeploymentPaths(
         changedPaths(),
         generatedPackages,
@@ -2160,13 +2158,14 @@ function assertResolvedLinkedPackages(): void {
     const resolved: Record<keyof typeof LINKED, string> = {
         deepbook: debugPackageId(resolve(debug, "deepbook", "registry.json")),
         dusdc: debugPackageId(resolve(debug, "dusdc", "dusdc.json")),
-        deep: debugPackageId(resolve(debug, "token", "deep.json")),
+        deep: debugPackageId(resolve(debug, "token_2", "deep.json")),
         pyth_lazer: debugPackageId(resolve(debug, "pyth_lazer", "channel.json")),
         wormhole: debugPackageId(resolve(debug, "wormhole", "external_address.json")),
         bs_oracle: debugPackageId(resolve(debug, "bs_oracle", "verify.json")),
         bs_sid: debugPackageId(resolve(debug, "bs_sid", "sid.json")),
     };
-    for (const [name, expectedId] of Object.entries(LINKED)) {
+    for (const [name, linkedId] of Object.entries(LINKED)) {
+        const expectedId = name === "deepbook" ? DEEPBOOK_ORIGINAL : linkedId;
         if (resolved[name as keyof typeof LINKED] !== expectedId) {
             throw new Error(
                 `${name} resolves to ${resolved[name as keyof typeof LINKED]}, expected ${expectedId}`,
@@ -2260,7 +2259,7 @@ export function assertExecutionBindings(
 
 function assertCliTarget(snapshot: ClientSnapshot): void {
     const environment = suiClient(snapshot, ["active-env"]);
-    const chainId = suiClient(snapshot, ["chain-identifier"]);
+    const chainId = suiClient(snapshot, ["chain-identifier", "--format", "hex"]);
     const address = suiClient(snapshot, ["active-address"]);
     assertDeploymentTarget(environment, chainId, address);
 }
@@ -3016,14 +3015,14 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
         deepbookRegistry: await objectEvidence(
             runtime,
             DEEPBOOK_REGISTRY,
-            `${LINKED.deepbook}::registry::Registry`,
+            `${DEEPBOOK_ORIGINAL}::registry::Registry`,
             "shared",
         ),
     };
     await objectEvidence(
         runtime,
         DEEPBOOK_ADMIN_CAP,
-        `${LINKED.deepbook}::registry::DeepbookAdminCap`,
+        `${DEEPBOOK_ORIGINAL}::registry::DeepbookAdminCap`,
         partyOwnerLabel(DEEPBOOK_ADMIN_OWNER),
     );
     const signerRegistry = await moveObjectFields(
@@ -3297,11 +3296,15 @@ async function ensureOracleObjects(runtime: Runtime): Promise<void> {
 
 export function isUnderlyingNotRegisteredError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
+    const missingCode =
+        /},\s*0\)(?:\s|$)/.test(message) ||
+        /"abortCode"\s*:\s*(?:"0"|0)/.test(message) ||
+        /abort code:\s*0(?:\D|$)/.test(message);
     return (
         message.includes("MoveAbort") &&
         message.includes("market_manager") &&
         message.includes("underlying_config") &&
-        /},\s*0\)(?:\s|$)/.test(message)
+        missingCode
     );
 }
 
@@ -4204,7 +4207,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     const deepbookSnapshot = await stableObjectSnapshot(
         runtime,
         DEEPBOOK_REGISTRY,
-        `${LINKED.deepbook}::registry::Registry`,
+        `${DEEPBOOK_ORIGINAL}::registry::Registry`,
         () => deepbookCoreAppAuthorized(runtime),
     );
     const deepbookCoreAuthorized = deepbookSnapshot.value;

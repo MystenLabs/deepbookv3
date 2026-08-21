@@ -701,6 +701,14 @@ test("only the Predict missing-underlying abort is treated as an absent registra
     assert.equal(
         isUnderlyingNotRegisteredError(
             new Error(
+                'predict_underlying_registered simulation failed: {"success":false,"error":{"$kind":"MoveAbort","message":"MoveAbort in 1st command, abort code: 0, in \'0x1::market_manager::underlying_config\'","MoveAbort":{"abortCode":"0","location":{"module":"market_manager","functionName":"underlying_config"}}}}',
+            ),
+        ),
+        true,
+    );
+    assert.equal(
+        isUnderlyingNotRegisteredError(
+            new Error(
                 'MoveAbort(MoveLocation { module: ModuleId { name: Identifier("market_manager") }, function_name: Some("underlying_config") }, 1) in command 0',
             ),
         ),
