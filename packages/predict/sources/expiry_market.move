@@ -74,9 +74,7 @@ public struct ExpiryMarket has key {
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes. `referral_fee`
-/// is split from the trader-paid trading fee and penalty and does not increase
-/// `all_in_cost`.
+/// fee policy because it is escrowed for risk-reducing live closes.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -85,7 +83,6 @@ public struct MintQuote has copy, drop {
     fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
-    referral_fee: u64,
     inventory_impact_charge: u64,
     all_in_cost: u64,
 }
@@ -299,20 +296,12 @@ public fun quote_mint(
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(
-        &terms,
-        &builder_code_id,
-        false,
-        config.referral_fee_rate(),
-        penalty_fee,
-        clock,
-    )
+    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
 }
 
 /// Quote the all-in cost of a mint request for one account, reading its builder
-/// code and referral attribution. Budget mode caps premium by total account
-/// balance, including unsettled accumulator funds. Public for SDK and devInspect
-/// pre-trade pricing.
+/// code. Budget mode caps premium by total account balance, including unsettled
+/// accumulator funds. Public for SDK and devInspect pre-trade pricing.
 public fun quote_mint_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -342,14 +331,7 @@ public fun quote_mint_for_account(
         );
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(
-        &terms,
-        &builder_code_id,
-        account.referrer_receive_address().is_some(),
-        config.referral_fee_rate(),
-        penalty_fee,
-        clock,
-    )
+    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
 }
 
 // === MintQuote Getters ===
@@ -387,11 +369,6 @@ public fun builder_fee(quote: &MintQuote): u64 {
 /// Return the quoted EWMA congestion surcharge for SDK and devInspect consumers.
 public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
-}
-
-/// Return the quoted fee routed to the referrer without increasing account cost.
-public fun referral_fee(quote: &MintQuote): u64 {
-    quote.referral_fee
 }
 
 /// Return the separate inventory-impact charge for SDK and devInspect quote
@@ -834,15 +811,15 @@ fun mint_prepared(
     let builder_code_id = predict_account::builder_code_id(account);
     let referrer_account_id = account.referrer_account_id();
     let referrer_receive_address = account.referrer_receive_address();
-    let quote = market.compute_mint_quote(
-        &terms,
-        &builder_code_id,
-        referrer_receive_address.is_some(),
-        config.referral_fee_rate(),
-        penalty_amount,
-        clock,
-    );
+    let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+    let referral_fee = if (referrer_receive_address.is_some()) {
+        let referral_fee_basis =
+            quote.trading_fee - quote.fee_incentive_subsidy + quote.penalty_fee;
+        math::mul_down(referral_fee_basis, config.referral_fee_rate())
+    } else {
+        0
+    };
 
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
     market.settle_mint_payment(
@@ -851,6 +828,7 @@ fun mint_prepared(
         &quote,
         builder_code_id,
         referrer_receive_address,
+        referral_fee,
         clock,
         ctx,
     );
@@ -868,7 +846,7 @@ fun mint_prepared(
         quote.fee_incentive_subsidy,
         quote.builder_fee,
         quote.penalty_fee,
-        quote.referral_fee,
+        referral_fee,
         quote.inventory_impact_charge,
         clock.timestamp_ms(),
     );
@@ -880,8 +858,6 @@ fun compute_mint_quote(
     market: &ExpiryMarket,
     terms: &MintTerms,
     builder_code_id: &Option<ID>,
-    has_referrer: bool,
-    referral_fee_rate: u64,
     penalty_fee: u64,
     clock: &Clock,
 ): MintQuote {
@@ -892,12 +868,6 @@ fun compute_mint_quote(
         .trading_fee(market.expiry, entry_probability, quantity, clock);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
-    let referral_fee = if (has_referrer) {
-        let referral_fee_basis = trading_fee - fee_incentive_subsidy + penalty_fee;
-        math::mul_down(referral_fee_basis, referral_fee_rate)
-    } else {
-        0
-    };
     let premium = terms.premium();
     let inventory_impact_charge = terms.inventory_impact_charge();
     let all_in_cost =
@@ -915,7 +885,6 @@ fun compute_mint_quote(
         fee_incentive_subsidy,
         builder_fee,
         penalty_fee,
-        referral_fee,
         inventory_impact_charge,
         all_in_cost,
     }
@@ -944,6 +913,7 @@ fun settle_mint_payment(
     quote: &MintQuote,
     builder_code_id: Option<ID>,
     referrer_receive_address: Option<address>,
+    referral_fee: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -958,7 +928,7 @@ fun settle_mint_payment(
     let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
-    let referral_fee_payment = payment.split(quote.referral_fee);
+    let referral_fee_payment = payment.split(referral_fee);
     send_referral_fee(referrer_receive_address, referral_fee_payment);
     // The remaining fee, sponsor subsidy, premium, penalty and inventory impact
     // land in the same custody; the impact amount is earmarked separately once
