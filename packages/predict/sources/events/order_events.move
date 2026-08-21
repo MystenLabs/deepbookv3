@@ -30,18 +30,23 @@ public struct OrderMinted has copy, drop, store {
     quantity: u64,
     /// Premium the user paid into LP backing, in DUSDC base units.
     premium: u64,
-    /// Full trading fee collected by the expiry, including any sponsor-paid subsidy.
+    /// Full trading fee assessed for the mint, including any sponsor-paid subsidy.
     trading_fee: u64,
     /// Portion of `trading_fee` paid from expiry-local fee incentives.
     fee_incentive_subsidy: u64,
     builder_fee: u64,
-    /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
+    /// EWMA gas-price congestion surcharge assessed for the mint, in DUSDC base units.
     penalty_fee: u64,
+    /// Portion of the trader-paid trading fee and congestion surcharge delivered
+    /// to the referrer.
+    referral_fee: u64,
     /// Separate inventory-impact charge escrowed for live-close rebates.
     inventory_impact_charge: u64,
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
+    /// Referrer recorded on the minting account, independent of the fee paid.
+    referrer_account_id: Option<ID>,
     minted_at_ms: u64,
     /// Oracle source timestamps present when this mint was priced: the provider model times the
     /// data is "as of" (the SVI one is also the roll-down anchor). Pyth is `0` only when unusable.
@@ -105,6 +110,7 @@ public(package) fun emit_order_minted(
     account_id: ID,
     owner: address,
     builder_code_id: Option<ID>,
+    referrer_account_id: Option<ID>,
     order: &Order,
     pricer: &Pricer,
     entry_probability: u64,
@@ -113,6 +119,7 @@ public(package) fun emit_order_minted(
     fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
+    referral_fee: u64,
     inventory_impact_charge: u64,
     minted_at_ms: u64,
 ) {
@@ -131,8 +138,10 @@ public(package) fun emit_order_minted(
         fee_incentive_subsidy,
         builder_fee,
         penalty_fee,
+        referral_fee,
         inventory_impact_charge,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
+        referrer_account_id,
         minted_at_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
