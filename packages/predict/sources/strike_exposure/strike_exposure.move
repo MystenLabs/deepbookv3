@@ -705,8 +705,10 @@ fun commit_skew_terms(exposure: &mut StrikeExposure, skew: &SkewTerms) {
         } else {
             // Two first-trade quotes in one transaction each snapshot the same
             // oracle load — the same-transaction write guard pins that — so a
-            // second install can only ever agree with the first. Anything else
-            // is terms smuggled from a different market state.
+            // second install can only ever agree with the first. Structurally
+            // unreachable: terms are `drop`-only and cannot cross transactions,
+            // and every quote-commit pair shares one call frame. Kept as a
+            // tripwire; no `expected_failure` test per unit-tests rule 4.
             assert!(
                 exposure.frozen_surface.borrow() == skew.surface.borrow(),
                 EFrozenSurfaceMismatch,

@@ -690,6 +690,7 @@ public fun try_settle(
     // Live-close rebates are no longer reachable after settlement. Release the
     // residual inventory-impact escrow so the settled sweep returns it to LPs.
     market.cash.release_inventory_impact_reserve();
+    let skew_reserve_released = market.cash.skew_reserve();
     market.cash.release_skew_reserve();
     config_events::emit_market_settled(
         market.id(),
@@ -697,6 +698,7 @@ public fun try_settle(
         market.expiry,
         settlement_price,
         settlement_source,
+        skew_reserve_released,
         now,
     );
     true
@@ -887,6 +889,8 @@ fun mint_prepared(
         quote.inventory_impact_charge,
         quote.skew_charge,
         quote.skew_rebate,
+        // Post-settlement sample: the escrow already holds this mint's charge.
+        market.cash.skew_reserve(),
         clock.timestamp_ms(),
     );
     minted_order.id()
@@ -924,6 +928,10 @@ fun compute_mint_quote(
     // A mint has no outbound leg, so a skew rebate can only reduce what the trader
     // pays. Aborting rather than clamping keeps the escrow equal to the potential:
     // a clamp would move the potential without crediting the trader the difference.
+    // Unreachable at any admissible rate — the rebate is bounded by half the rate
+    // against a premium of at least the entry-probability floor; the margin is
+    // pinned by `protocol_config_bounds_tests::max_skew_rebate_stays_below_the_minimum_premium`
+    // and recorded in RP-29, so there is no `expected_failure` test to write.
     assert!(skew_rebate <= gross_cost, ESkewRebateExceedsMintCost);
 
     MintQuote {
@@ -1149,6 +1157,7 @@ fun redeem_live_with_auth(
         inventory_impact_rebate,
         skew_charge,
         skew_rebate,
+        market.cash.skew_reserve(),
         clock.timestamp_ms(),
     );
     replacement_order_id
@@ -1279,6 +1288,11 @@ fun assert_cash_backing(market: &ExpiryMarket) {
         market.cash.inventory_impact_reserve()
             >= market.strike_exposure.inventory_impact_potential(),
     );
+    // Structurally unreachable, kept as a protocol-invariant tripwire: every
+    // trade collects or refunds exactly the difference of floored potentials
+    // (`strike_exposure::inventory_skew`), so cumulative collections telescope
+    // to the current potential with equality, and settled or zero-rate books
+    // carry zero potential. No `expected_failure` test per unit-tests rule 4.
     assert!(
         market.cash.skew_reserve() >= market.strike_exposure.skew_potential(),
         EInsufficientSkewEscrow,

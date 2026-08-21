@@ -131,6 +131,11 @@ public struct MarketSettled has copy, drop, store {
     settlement_price: u64,
     /// `0` = Pyth and `1` = Block Scholes.
     settlement_source: u8,
+    /// Residual skew escrow released into expiry surplus by this settlement —
+    /// the mechanism's realized net collection for this market, and the closing
+    /// entry of the escrow's canonical event stream (the post-settlement
+    /// reserve is zero by definition).
+    skew_reserve_released: u64,
     /// On-chain landing time of the settlement, `clock.timestamp_ms()`.
     onchain_timestamp_ms: u64,
 }
@@ -286,6 +291,7 @@ public(package) fun emit_market_settled(
     expiry: u64,
     settlement_price: u64,
     settlement_source: u8,
+    skew_reserve_released: u64,
     onchain_timestamp_ms: u64,
 ) {
     event::emit(MarketSettled {
@@ -294,6 +300,7 @@ public(package) fun emit_market_settled(
         expiry,
         settlement_price,
         settlement_source,
+        skew_reserve_released,
         onchain_timestamp_ms,
     });
 }

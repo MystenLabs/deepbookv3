@@ -14,7 +14,7 @@ const FIRST_EVENT_INDEX: u64 = 0;
 const ONE_EVENT: u64 = 1;
 const TWO_EVENTS: u64 = 2;
 const FOUR_EVENTS: u64 = 4;
-const EIGHT_EVENTS: u64 = 8;
+const NINE_EVENTS: u64 = 9;
 
 const BACKING_BUFFER_LAMBDA: u64 = 300_000_000;
 const BASE_FEE: u64 = 30_000_000;
@@ -24,6 +24,7 @@ const MAX_ENTRY_PROBABILITY: u64 = 980_000_000;
 const EXPIRY_FEE_WINDOW_MS: u64 = 120_000;
 const EXPIRY_FEE_MAX_MULTIPLIER: u64 = 2_000_000_000;
 const INVENTORY_IMPACT_MAX_RATE: u64 = 100_000_000;
+const INVENTORY_SKEW_RATE: u64 = 2_500_000;
 
 const PYTH_SPOT_FRESHNESS_MS: u64 = 20_000;
 const BLOCK_SCHOLES_PRICE_FRESHNESS_MS: u64 = 30_000;
@@ -94,9 +95,10 @@ fun strike_exposure_template_setters_emit_complete_post_state() {
         INVENTORY_IMPACT_MAX_RATE,
         &clock,
     );
+    config.set_template_inventory_skew_rate(&admin_cap, INVENTORY_SKEW_RATE, &clock);
 
     let events = event::events_by_type<config_events::StrikeExposureTemplateConfigUpdated>();
-    assert_eq!(events.length(), EIGHT_EVENTS);
+    assert_eq!(events.length(), NINE_EVENTS);
     let expected = ExpectedStrikeExposureTemplateConfigUpdated {
         backing_buffer_lambda: BACKING_BUFFER_LAMBDA,
         base_fee: BASE_FEE,
@@ -106,11 +108,10 @@ fun strike_exposure_template_setters_emit_complete_post_state() {
         expiry_fee_window_ms: EXPIRY_FEE_WINDOW_MS,
         expiry_fee_max_multiplier: EXPIRY_FEE_MAX_MULTIPLIER,
         inventory_impact_max_rate: INVENTORY_IMPACT_MAX_RATE,
-        // Untouched by the setters above, so the event carries its default.
-        inventory_skew_rate: 0,
+        inventory_skew_rate: INVENTORY_SKEW_RATE,
         onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
     };
-    assert_eq!(bcs::to_bytes(&events[EIGHT_EVENTS - ONE_EVENT]), bcs::to_bytes(&expected));
+    assert_eq!(bcs::to_bytes(&events[NINE_EVENTS - ONE_EVENT]), bcs::to_bytes(&expected));
 
     clock.destroy_for_testing();
     destroy(admin_cap);

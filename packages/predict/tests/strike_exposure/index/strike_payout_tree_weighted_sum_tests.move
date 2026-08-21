@@ -158,6 +158,50 @@ fun a_rebalanced_partially_drained_book_reads_exactly() {
     scenario.end();
 }
 
+/// An equal-tick range reads zero without touching the tree.
+#[test]
+fun an_empty_range_reads_zero() {
+    let mut scenario = test_scenario::begin(@0xA);
+    let mut tree = new_tree(scenario.ctx());
+    insert(&mut tree, 2, 6, 100);
+    assert_eq!(read(&tree, 4, 4), 0);
+    sui::test_utils::destroy(tree);
+    scenario.end();
+}
+
+/// Width companion to the statistic's u64::MAX audit: a maximum-quantity
+/// position's weighted moments fold and read inside `u128`. Expected value from
+/// the same per-position identity as every other test here.
+#[test]
+fun a_maximum_quantity_position_reads_inside_the_widths() {
+    let mut scenario = test_scenario::begin(@0xA);
+    let mut tree = new_tree(scenario.ctx());
+    let q = std::u64::max_value!();
+    insert(&mut tree, 2, 6, q);
+    assert_eq!(read(&tree, 2, 6), (q as u128) * mass(2, 6));
+    tree.remove_range(2, 6, q);
+    assert_eq!(read(&tree, 2, 6), 0);
+    sui::test_utils::destroy(tree);
+    scenario.end();
+}
+
+/// The dust clamp on the read: a boundary stored with a locally inverted weight
+/// — the frozen surface's flooring can produce one — makes a wider read
+/// saturate at zero rather than abort, which is the documented liveness policy.
+#[test]
+fun a_dust_inverted_interior_weight_saturates_the_read_instead_of_aborting() {
+    let mut scenario = test_scenario::begin(@0xA);
+    let mut tree = new_tree(scenario.ctx());
+    // End boundary at 4 stored with a weight one raw unit ABOVE its start
+    // boundary's, inverting the interior of `(2, 4]` by dust.
+    tree.insert_range(2, 4, 100, w(4), w(4) + 1);
+    // A read of the position's own span with consistent outer weights sees a
+    // negative-by-dust weighted area and floors at zero.
+    assert_eq!(tree.range_weighted_payout_sum(2, 4, w(4), w(4)), 0);
+    sui::test_utils::destroy(tree);
+    scenario.end();
+}
+
 /// A reused boundary must arrive with the weight it already stores: the weight is
 /// a pure function of tick under one frozen measure, so a mismatch is a caller
 /// pricing against a different measure.

@@ -46,6 +46,11 @@ public struct OrderMinted has copy, drop, store {
     /// reduces the withdrawal rather than paying the trader.
     skew_charge: u64,
     skew_rebate: u64,
+    /// Isolated skew escrow after this mint settled. Every event that moves the
+    /// escrow carries this post-state field — both order events and the
+    /// settlement release — so the family is the canonical stream for the escrow
+    /// and a monitor needs no delta replay.
+    skew_reserve: u64,
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
@@ -87,6 +92,8 @@ public struct LiveOrderRedeemed has copy, drop, store {
     /// that unbalances the book is charged rather than rebated.
     skew_charge: u64,
     skew_rebate: u64,
+    /// Isolated skew escrow after this close settled; see `OrderMinted.skew_reserve`.
+    skew_reserve: u64,
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
@@ -132,6 +139,7 @@ public(package) fun emit_order_minted(
     inventory_impact_charge: u64,
     skew_charge: u64,
     skew_rebate: u64,
+    skew_reserve: u64,
     onchain_timestamp_ms: u64,
 ) {
     event::emit(OrderMinted {
@@ -153,6 +161,7 @@ public(package) fun emit_order_minted(
         inventory_impact_charge,
         skew_charge,
         skew_rebate,
+        skew_reserve,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         referrer_account_id,
         onchain_timestamp_ms,
@@ -180,6 +189,7 @@ public(package) fun emit_live_order_redeemed(
     inventory_impact_rebate: u64,
     skew_charge: u64,
     skew_rebate: u64,
+    skew_reserve: u64,
     onchain_timestamp_ms: u64,
 ) {
     event::emit(LiveOrderRedeemed {
@@ -198,6 +208,7 @@ public(package) fun emit_live_order_redeemed(
         inventory_impact_rebate,
         skew_charge,
         skew_rebate,
+        skew_reserve,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         onchain_timestamp_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),

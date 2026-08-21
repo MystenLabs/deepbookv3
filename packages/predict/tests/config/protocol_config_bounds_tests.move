@@ -223,6 +223,24 @@ fun max_skew_rebate_stays_below_the_minimum_premium() {
     assert!(max_rebate_per_unit < config_constants::min_min_entry_probability!());
 }
 
+/// The pass side of the fee-floor relation, at the exact boundary: a snapshot
+/// with `rate == 2 * min_fee` is admissible.
+#[test]
+fun a_skew_rate_at_exactly_twice_the_fee_floor_snapshots() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    config.set_template_min_fee(&admin_cap, 1, &clock);
+    config.set_template_inventory_skew_rate(&admin_cap, 2, &clock);
+    let snapshot = config.strike_exposure_template_config().snapshot();
+    assert_eq!(snapshot.inventory_skew_rate(), 2);
+    destroy(snapshot);
+    destroy(config);
+    destroy(admin_cap);
+    destroy(clock);
+    scenario.end();
+}
+
 /// A skew rebate is bounded by `rate * quantity / 2` while the ordinary fee is
 /// bounded below by `min_fee * quantity`. `min_fee` is admin-tunable down to zero,
 /// so an admin can drive the fee under the rebate ceiling and make flattening the

@@ -145,6 +145,46 @@ fun draining_a_stacked_book_in_reverse_order_returns_to_zero() {
     assert_eq!(terms.second(), 0);
 }
 
+/// Executes the struct doc's width audit instead of trusting it: a payout at
+/// `u64::MAX` over half the mass folds, reads, and reverses inside the widths.
+/// By hand: variance = floor(q^2 / 4) with q = 2^64 - 1, so
+/// variance = 2^126 - 2^63 and its integer root is 2^63 - 1.
+#[test]
+fun a_maximum_payout_folds_and_reverses_inside_the_widths() {
+    let q = std::u64::max_value!();
+    let opened = weighted::zero_terms().fold(0, HALF_MASS, q, true);
+    assert_eq!(opened.deviation(), 9_223_372_036_854_775_807);
+
+    let closed = opened.fold(opened.first(), HALF_MASS, q, false);
+    assert_eq!(closed.first(), 0);
+    assert_eq!(closed.second(), 0);
+}
+
+/// The dust clamp on removal: a `range_first` overstated by surface inversion
+/// dust floors the second total at zero instead of aborting, so a close on a
+/// truly flat book cannot strand. The overstated cross term exceeds the exact
+/// one by 2 * payout; the floor absorbs it and the deviation reads zero.
+#[test]
+fun removal_with_dust_overstated_range_first_clamps_instead_of_aborting() {
+    let opened = weighted::zero_terms().fold(0, HALF_MASS, ONE, true);
+    let closed = opened.fold(opened.first() + 1, HALF_MASS, ONE, false);
+    assert_eq!(closed.first(), 0);
+    assert_eq!(closed.second(), 0);
+    assert_eq!(closed.deviation(), 0);
+}
+
+/// The fold's early returns are exact no-ops.
+#[test]
+fun zero_payout_and_zero_mass_folds_change_nothing() {
+    let terms = weighted::zero_terms().fold(0, HALF_MASS, ONE, true);
+    let zero_payout = terms.fold(terms.first(), HALF_MASS, 0, true);
+    assert_eq!(zero_payout.first(), terms.first());
+    assert_eq!(zero_payout.second(), terms.second());
+    let zero_mass = terms.fold(terms.first(), 0, ONE, true);
+    assert_eq!(zero_mass.first(), terms.first());
+    assert_eq!(zero_mass.second(), terms.second());
+}
+
 #[test, expected_failure(abort_code = weighted::EWeightsExceedCertainty)]
 fun a_range_mass_above_certainty_aborts() {
     weighted::zero_terms().fold(0, ALL_MASS + 1, ONE, true);
