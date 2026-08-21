@@ -4,7 +4,8 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate).
+/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate) and the
+/// live protocol-wide referral fee rate.
 /// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
@@ -27,35 +28,37 @@ use deepbook_predict::{
 };
 use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::{Self as test, Scenario, return_shared};
+use sui::{clock::{Self, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
 
 const EUnexpectedSuccess: u64 = 999;
 
 /// Create a real shared `ProtocolConfig` (all template values at defaults) and
 /// an `AdminCap`, ready for admin setter calls in the next transaction.
-fun new_shared_config(): (Scenario, AdminCap, ID) {
+fun new_shared_config(): (Scenario, AdminCap, ID, Clock) {
     let mut scenario = test::begin(test_constants::admin());
     let config_id = protocol_config::create_and_share(scenario.ctx());
     let admin_cap = admin::new(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(test_constants::now_ms());
     scenario.next_tx(test_constants::admin());
-    (scenario, admin_cap, config_id)
+    (scenario, admin_cap, config_id, clock)
 }
 
 // === Strike-exposure templates: base fee ===
 
 #[test, expected_failure(abort_code = config_constants::EInvalidBaseFee)]
 fun template_base_fee_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_base_fee(&admin_cap, config_constants::min_base_fee!() - 1);
+    config.set_template_base_fee(&admin_cap, config_constants::min_base_fee!() - 1, &clock);
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidBaseFee)]
 fun template_base_fee_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_base_fee(&admin_cap, config_constants::max_base_fee!() + 1);
+    config.set_template_base_fee(&admin_cap, config_constants::max_base_fee!() + 1, &clock);
     abort 999
 }
 
@@ -63,9 +66,9 @@ fun template_base_fee_above_max_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMinFee)]
 fun template_min_fee_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!() + 1);
+    config.set_template_min_fee(&admin_cap, config_constants::max_min_fee!() + 1, &clock);
     abort 999
 }
 
@@ -80,33 +83,36 @@ fun template_min_fee_above_max_aborts() {
 // probability cannot be configured below it (RP-13).
 #[test, expected_failure(abort_code = config_constants::EInvalidMinEntryProbability)]
 fun template_min_entry_probability_below_envelope_floor_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_min_entry_probability(
         &admin_cap,
         config_constants::min_min_entry_probability!() - 1,
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMinEntryProbability)]
 fun template_min_entry_probability_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_min_entry_probability(
         &admin_cap,
         config_constants::max_min_entry_probability!() + 1,
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMaxEntryProbability)]
 fun template_max_entry_probability_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_max_entry_probability(
         &admin_cap,
         config_constants::max_max_entry_probability!() + 1,
+        &clock,
     );
     abort 999
 }
@@ -115,44 +121,48 @@ fun template_max_entry_probability_above_max_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeWindowMs)]
 fun template_expiry_fee_window_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
         constants::one_minute_ms!() - 1,
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeWindowMs)]
 fun template_expiry_fee_window_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_expiry_fee_window_ms(
         &admin_cap,
         config_constants::max_expiry_fee_window_ms!() + 1,
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
 fun template_expiry_fee_max_multiplier_below_min_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_expiry_fee_max_multiplier(
         &admin_cap,
         config_constants::min_expiry_fee_max_multiplier!() - 1,
+        &clock,
     );
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
 fun template_expiry_fee_max_multiplier_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_expiry_fee_max_multiplier(
         &admin_cap,
         config_constants::max_expiry_fee_max_multiplier!() + 1,
+        &clock,
     );
     abort 999
 }
@@ -179,11 +189,12 @@ fun backing_buffer_lambda_above_max_assert_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidInventoryImpactMaxRate)]
 fun template_inventory_impact_max_rate_above_one_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_inventory_impact_max_rate(
         &admin_cap,
         config_constants::max_inventory_impact_max_rate!() + 1,
+        &clock,
     );
     abort 999
 }
@@ -192,11 +203,12 @@ fun template_inventory_impact_max_rate_above_one_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidInventorySkewRate)]
 fun template_inventory_skew_rate_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.set_template_inventory_skew_rate(
         &admin_cap,
         config_constants::max_inventory_skew_rate!() + 1,
+        &clock,
     );
     abort 999
 }
@@ -217,12 +229,12 @@ fun max_skew_rebate_stays_below_the_minimum_premium() {
 /// book pay more than it costs. Market creation refuses the pairing.
 #[test, expected_failure(abort_code = strike_exposure_config::ESkewRateExceedsFeeFloor)]
 fun a_skew_rate_above_twice_the_fee_floor_cannot_be_snapshotted() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
     // Each value is individually admissible; only the pairing is not.
-    config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!());
-    config.set_template_inventory_skew_rate(&admin_cap, 1);
+    config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!(), &clock);
+    config.set_template_inventory_skew_rate(&admin_cap, 1, &clock);
     destroy(config.strike_exposure_template_config().snapshot());
 
     abort EUnexpectedSuccess
@@ -280,6 +292,37 @@ fun inventory_impact_rate_and_scale_snapshot_at_creation() {
     fx.finish();
 }
 
+// === Referral fee rate ===
+//
+// The floor is 0, so there is no reachable below-min case for a `u64`.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidReferralFeeRate)]
+fun referral_fee_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, _clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_referral_fee_rate(&admin_cap, config_constants::max_referral_fee_rate!() + 1);
+    abort 999
+}
+
+#[test]
+fun referral_fee_rate_ships_at_ten_percent_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    assert_eq!(config.referral_fee_rate(), 100_000_000);
+
+    config.set_referral_fee_rate(&admin_cap, config_constants::min_referral_fee_rate!());
+    assert_eq!(config.referral_fee_rate(), 0);
+
+    config.set_referral_fee_rate(&admin_cap, config_constants::max_referral_fee_rate!());
+    assert_eq!(config.referral_fee_rate(), 250_000_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
 // === PLP supply/withdraw fee ===
 //
 // Two independent rates sharing one envelope. The floor is 0, so there is no
@@ -287,35 +330,43 @@ fun inventory_impact_rate_and_scale_snapshot_at_creation() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpSupplyFeeRate)]
 fun plp_supply_fee_rate_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_plp_supply_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!() + 1);
+    config.set_plp_supply_fee_rate(
+        &admin_cap,
+        config_constants::max_plp_fee_rate!() + 1,
+        &clock,
+    );
     abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidPlpWithdrawFeeRate)]
 fun plp_withdraw_fee_rate_above_max_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
-    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!() + 1);
+    config.set_plp_withdraw_fee_rate(
+        &admin_cap,
+        config_constants::max_plp_fee_rate!() + 1,
+        &clock,
+    );
     abort 999
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_plp_supply_fee_rate_during_valuation_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.begin_valuation();
-    config.set_plp_supply_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    config.set_plp_supply_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!(), &clock);
     abort 999
 }
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_plp_withdraw_fee_rate_during_valuation_aborts() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
     config.begin_valuation();
-    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!(), &clock);
     abort 999
 }
 
@@ -341,22 +392,23 @@ fun plp_withdraw_fee_rate_at_full_scale_is_rejected() {
 /// together so a change that accidentally symmetrises them fails here.
 #[test]
 fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
-    let (scenario, admin_cap, config_id) = new_shared_config();
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
     assert_eq!(config.plp_supply_fee_rate(), 0); // entry is not taxed
     assert_eq!(config.plp_withdraw_fee_rate(), 2_000_000); // 20 bps on exit
 
     // Each leg moves independently over the shared envelope.
-    config.set_plp_supply_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!());
+    config.set_plp_supply_fee_rate(&admin_cap, config_constants::max_plp_fee_rate!(), &clock);
     assert_eq!(config.plp_supply_fee_rate(), 50_000_000);
     assert_eq!(config.plp_withdraw_fee_rate(), 2_000_000); // untouched
 
-    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!());
+    config.set_plp_withdraw_fee_rate(&admin_cap, config_constants::min_plp_fee_rate!(), &clock);
     assert_eq!(config.plp_withdraw_fee_rate(), 0);
     assert_eq!(config.plp_supply_fee_rate(), 50_000_000); // untouched
 
     return_shared(config);
+    clock.destroy_for_testing();
     destroy(admin_cap);
     scenario.end();
 }

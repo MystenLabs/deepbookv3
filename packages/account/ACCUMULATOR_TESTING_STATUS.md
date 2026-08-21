@@ -20,8 +20,7 @@ address-balance accumulators.
   `Bag`. If a second transaction reaches settlement for the same coin at the
   same `Clock.timestamp_ms()`, Account skips the accumulator withdrawal attempt.
 
-Predict relies on the same receive-address pattern for PLP, DUSDC, DEEP, and
-builder-code fees.
+Predict relies on the same receive-address pattern for PLP fills and refunds, builder-code fees, and mint referral fees delivered to a referring Account.
 
 ## Current Dependency Choice
 
@@ -75,6 +74,7 @@ which an empty root cannot exercise:
   and depend on a later Account read/write to observe or settle those funds.
 - Builder-code fee visibility and claims after Predict sends builder fees to a
   builder-code object address.
+- Referral-fee visibility and Account settlement after Predict sends DUSDC to the immutable referrer receive address.
 
 The blocker is not Account source structure. Unit tests can create only an empty
 `AccumulatorRoot`; external package tests cannot populate it the same way the

@@ -292,101 +292,6 @@ the budgets still bound the observed deviations. Until then the file's stated
 contract — "propagated from `math.move`'s documented per-primitive budgets" — is
 true of the generator but not of the committed data.
 
-### P-29: Settlement has no fallback when no admissible print exists at a boundary
-
-**Severity:** High for any non-24/7 underlying; otherwise an unmeasured tail
-with an unbounded consequence. Launch blocker before listing a session-traded
-asset.
-
-Settlement reads one exact key. `try_settle` calls `load_exact_spot` at
-`market.expiry`, and the only way to fill that key is
-`pyth_feed::insert_at`, which requires an envelope stamped at exactly that
-millisecond carrying a price generated no more than
-`constants::max_settlement_carry_ms` (2s) earlier. The lane is insert-only:
-`oracle_lane::insert_at` ignores an occupied key without aborting, and there is
-no overwrite or removal.
-
-So a boundary has no admissible settling row, permanently, in either of two
-states:
-
-- **Empty.** Price generation gapped across the boundary by more than the carry
-  window, so every envelope at that millisecond is rejected
-  (`ESettlementCarryExceedsWindow`).
-- **Poisoned.** The first lane-valid observation to claim the key has no
-  normalized projection (`pyth_feed::normalize_raw_spot` returns none on a
-  negative price, a `scale_up` overflow, a negative exponent shifted more than
-  18, or a price that rounds to zero). The doc comment on `insert_at` states
-  the consequence directly: the first lane-valid raw observation owns the key
-  and cannot be replaced, even if its normalized projection is unavailable.
-
-Either way `try_settle` returns false forever, post-expiry live pricing aborts
-`ELivePricingExpired`, and RP-4's response — abort the flush and retry — never
-terminates. RP-4 records this ("Recovery is not guaranteed", risk profile
-`UNMEASURED` for the unrecoverable case) and its reopen clause names the
-remedy: an admin settlement fallback. This item is that remedy.
-
-**Why this is not only a tail.** For a 24/7 crypto underlying the trigger is an
-unmeasured generation-gap tail. For a session-traded underlying — equities,
-futures, FX, metals — a grid boundary landing in a closed session carries from
-beyond the window *by construction*, so the failure is certain rather than
-probabilistic. Listing any such asset without this item resolved ships a known
-permanent pool-wide brick.
-
-**Two properties any fallback must preserve.**
-
-1. **It must not weaken `insert_at`.** First-writer-wins on the oracle lane is
-   what stops a permissionless caller from rewriting settlement history. The
-   fallback therefore records a settlement price on the market and must not
-   mutate or remove a lane row.
-2. **It must not become an admin price lever.** RP-4 refuses a substitute
-   *mark* because an unsettled market has no well-defined value. A fallback
-   avoids that objection only by actually settling the market, and only when
-   normal settlement provably cannot — so the arming condition has to be
-   objective and on-chain checkable, never discretionary.
-
-**Proposed design — two layers, the second only if the first cannot fire.**
-
-*Arming condition (both layers).* `clock.timestamp_ms() >= expiry +
-settlement_grace_ms`, and the exact key is either unfilled or holds a read with
-no normalized projection. Normal settlement always wins inside the grace
-window; the fallback is unreachable for any market that could still settle
-normally.
-
-*Layer 1 — deterministic widened reach, permissionless, no discretion.* Settle
-from the nearest admissible normalized print within a compiled
-`fallback_reach_ms` of the boundary, nearest-preceding first, ties to the
-earlier timestamp. Fully determined by lane contents, so any caller computes
-the same answer and no attestation is needed. This is the layer that answers
-the crypto generation-gap case and the poisoned-key case, because it reads past
-the poisoned key rather than replacing it. It deliberately relaxes the
-"defensible mark for that tick" property the carry bound protects, which is
-exactly why it sits behind the arming condition.
-
-*Layer 2 — attested settlement under a timelock, only when layer 1 finds
-nothing.* An `AdminCap` holder proposes a settlement price; the market enters a
-published `challenge_window_ms` during which it is flagged and settlement is
-not yet recorded; the price takes effect when the window elapses. The check on
-a wrong price is the window plus the existing protocol freeze, not an on-chain
-dispute mechanism — worth stating plainly rather than calling it a challenge
-process it is not. This is the layer that answers the session-closure case,
-where no print exists within any defensible reach, and it is the layer that
-carries a real trust decision.
-
-**What this buys even before layer 2.** Today the flush block is unbounded.
-With the arming condition alone it becomes bounded by `settlement_grace_ms`
-plus the reach lookup, which converts a permanent pool-wide brick into a
-delay of known length.
-
-**Action:** Decide whether layer 2 is in scope for launch or whether launch is
-restricted to 24/7 underlyings with layer 1 only, then implement and graduate
-the decision to `response-policies.md` as an entry resolving this item and
-reopening RP-4. Publish the rule before launch, not during an outage. Pinning
-tests to carry: arming refused inside the grace window; arming refused when the
-exact key holds a normalizable read; layer 1 settling across an empty key;
-layer 1 settling across a poisoned key without mutating it; layer 1 refusing
-beyond `fallback_reach_ms`; and, if layer 2 ships, no effect before the window
-elapses.
-
 ### P-30: The C-1 capacity model is one measurement behind the pricing path
 
 **Severity:** Low, but it compounds. Not a defect; a stale measurement.
@@ -411,7 +316,7 @@ than running one for this alone, and refresh the C-1 figures.
 **Severity:** Medium; liveness, misattributed failure.
 
 `block_scholes_store::apply` returns `false` rather than aborting when
-`published_at_ms > recorded_at_ms` — the batch's envelope time is ahead of the
+`source_timestamp_ms > onchain_timestamp_ms` — the batch's envelope time is ahead of the
 Sui `Clock` at execution. The transaction still succeeds, so the relayer sees
 success, and the only signal is `applied` reading below `update_count` in
 `BlockScholesBatchIngested`. Skipping is the right response for one unusable
@@ -423,11 +328,11 @@ halts a freshness window later on `EBlockScholesPriceStale` — an error naming
 provider staleness for what is actually clock skew on our side of the boundary.
 
 The comparison has a real duty and is not simply removable: accepting a
-future-dated envelope would let that observation win the `(model, published)`
+future-dated envelope would let that observation win the `(model, source)`
 ordering against every honest later batch at equal model time, pinning the
 series until its model time advances.
 
-**Action:** Measure the observed `published_at_ms - recorded_at_ms` distribution
+**Action:** Measure the observed `source_timestamp_ms - onchain_timestamp_ms` distribution
 against the live provider before a value-bearing deployment, and alert on
 `update_count > 0 && applied == 0` sustained across consecutive batches, which
 is what distinguishes this from a genuinely quiet feed. If the observed margin

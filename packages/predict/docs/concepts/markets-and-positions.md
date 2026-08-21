@@ -106,7 +106,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-Settlement records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history; see [pricing and oracles](./pricing-and-oracles.md). `try_settle` is the single permissionless transition: it records the price and terminal payout liability together. `redeem_settled`, `redeem_settled_permissionless`, pool rebalance, and pool valuation only consume the current phase, so transaction builders compose `try_settle` before them when settlement may be due. If the exact expiry spot is missing, the market remains unsettled, standalone rebalance moves no cash, and live pricing rejects the past-expiry market.
+Settlement records an exact Propbook spot at the market expiry: Pyth first on every attempt, then the exact Block Scholes minute-boundary spot when Pyth remains unavailable at least 30 seconds after expiry; see [pricing and oracles](./pricing-and-oracles.md). `try_settle` is the single permissionless transition and records the price plus terminal payout liability together. `redeem_settled`, `redeem_settled_permissionless`, pool rebalance, and pool valuation only consume the current phase, so transaction builders compose `try_settle` before them when settlement may be due. If neither exact source is usable, the market remains unsettled, standalone rebalance moves no cash, and live pricing rejects the past-expiry market.
 
 ### Settled redeem
 

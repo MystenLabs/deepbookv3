@@ -14,6 +14,7 @@ use deepbook_predict::{
     pricing::Pricer,
     protocol_config::ProtocolConfig
 };
+use deepbook_sessions::session_config::{Self, SessionsConfig};
 use std::internal::permit;
 use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, VecMap}};
 
@@ -67,11 +68,13 @@ public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Op
 /// Accounts may store at most 20 addresses; reauthorization replaces in place.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     session: address,
     duration_ms: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    sessions_config.assert_version();
     assert!(duration_ms > 0 && duration_ms <= max_session_duration_ms!(), EInvalidSessionDuration);
     let expires_at_ms = clock.timestamp_ms() + duration_ms;
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
@@ -106,6 +109,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     deepbook_registry: &Registry,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -118,7 +122,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     deepbook_core_account::place_limit_order(
         pool,
         deepbook_registry,
@@ -144,6 +148,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     deepbook_registry: &Registry,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -154,7 +159,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     deepbook_core_account::place_market_order(
         pool,
         deepbook_registry,
@@ -177,11 +182,12 @@ public fun cancel_live_order<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     order_id: u128,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     deepbook_core_account::cancel_live_order(pool, wrapper, auth, order_id, clock, ctx);
 }
 
@@ -190,11 +196,12 @@ public fun cancel_live_orders<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     order_ids: vector<u128>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     deepbook_core_account::cancel_live_orders(pool, wrapper, auth, order_ids, clock, ctx);
 }
 
@@ -203,10 +210,11 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     deepbook_core_account::withdraw_settled_amounts(pool, wrapper, auth, ctx);
 }
 
@@ -215,6 +223,7 @@ public fun mint_exact_quantity(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     config: &ProtocolConfig,
     pricer: &Pricer,
     lower_tick: u64,
@@ -226,7 +235,7 @@ public fun mint_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.mint_exact_quantity(
         wrapper,
         auth,
@@ -248,6 +257,7 @@ public fun mint_exact_amount(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     config: &ProtocolConfig,
     pricer: &Pricer,
     lower_tick: u64,
@@ -259,7 +269,7 @@ public fun mint_exact_amount(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.mint_exact_amount(
         wrapper,
         auth,
@@ -281,6 +291,7 @@ public fun redeem_live(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     config: &ProtocolConfig,
     pricer: &Pricer,
     order_id: u256,
@@ -291,7 +302,7 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.redeem_live(
         wrapper,
         auth,
@@ -312,13 +323,14 @@ public fun redeem_settled(
     market: &mut ExpiryMarket,
     account_registry: &AccountRegistry,
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     config: &ProtocolConfig,
     order_id: u256,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.redeem_settled(
         wrapper,
         auth,
@@ -333,11 +345,13 @@ public fun redeem_settled(
 // === Private Functions ===
 
 fun generate_auth_as_session(
+    sessions_config: &SessionsConfig,
     account_registry: &AccountRegistry,
     wrapper: &AccountWrapper,
     clock: &Clock,
     ctx: &TxContext,
 ): Auth {
+    sessions_config.assert_version();
     let expiration = session_expiration_ms(wrapper, ctx.sender());
     assert!(expiration.is_some(), ESessionNotAuthorized);
     assert!(clock.timestamp_ms() < *expiration.borrow(), ESessionNotAuthorized);

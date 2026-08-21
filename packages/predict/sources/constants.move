@@ -112,8 +112,16 @@ public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
 // === Settlement ===
 
 /// Exact settlement timestamp grid.
-/// Cadence periods are multiples of this value so created expiries align with whole-millisecond Pyth history keys; a missing exact expiry observation prevents settlement and therefore pool valuation.
+/// Cadence periods are multiples of this value so created expiries align with both Propbook exact
+/// Pyth history and Block Scholes minute-boundary history.
 public(package) macro fun resolution_period_ms(): u64 { one_minute_ms!() }
+
+/// Time during which exact Pyth history is the exclusive terminal settlement source.
+public(package) macro fun settlement_fallback_grace_ms(): u64 { 30_000 }
+
+public(package) macro fun settlement_source_pyth(): u8 { 0 }
+
+public(package) macro fun settlement_source_block_scholes(): u8 { 1 }
 
 // === Strike Tick Domain ===
 

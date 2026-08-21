@@ -19,7 +19,10 @@ use deepbook_core_account::{
     account_data::{Self as account_data, DeepbookCoreAccountApp},
     deepbook_core_account as dca
 };
-use deepbook_sessions::sessions::{Self as sessions, SessionsApp};
+use deepbook_sessions::{
+    session_config::{Self as session_config, SessionsConfig},
+    sessions::{Self as sessions, SessionsApp}
+};
 use std::unit_test::{assert_eq, destroy};
 use sui::{
     accumulator::{Self as accumulator, AccumulatorRoot},
@@ -51,6 +54,7 @@ const TWO_OPEN_ORDERS: u64 = 2;
 const ZERO_BALANCE: u64 = 0;
 const ZERO_ORDER_ID: u128 = 0;
 const EUnexpectedSuccess: u64 = 999;
+const FUTURE_VERSION: u64 = 2;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
@@ -60,6 +64,7 @@ public struct SpotFixture {
     registry_id: ID,
     pool_id: ID,
     wrapper_id: ID,
+    sessions_config_id: ID,
 }
 
 #[test]
@@ -76,6 +81,9 @@ fun session_places_and_cancels_spot_limit_orders() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     let first = sessions::place_limit_order<BASE, QUOTE>(
@@ -83,6 +91,7 @@ fun session_places_and_cancels_spot_limit_orders() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         LIMIT_ORDER_CLIENT_ID,
         constants::no_restriction(),
         constants::self_matching_allowed(),
@@ -111,6 +120,7 @@ fun session_places_and_cancels_spot_limit_orders() {
     assert_eq!(deep_locked, ZERO_BALANCE);
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -120,12 +130,16 @@ fun session_places_and_cancels_spot_limit_orders() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     sessions::cancel_live_order<BASE, QUOTE>(
         &mut pool,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         first_id,
         &clock,
         fixture.scenario.ctx(),
@@ -137,6 +151,7 @@ fun session_places_and_cancels_spot_limit_orders() {
     assert_eq!(wrapper.load_account().balance<BASE>(&root, &clock), ACCOUNT_BALANCE);
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -146,6 +161,9 @@ fun session_places_and_cancels_spot_limit_orders() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     let second = sessions::place_limit_order<BASE, QUOTE>(
@@ -153,6 +171,7 @@ fun session_places_and_cancels_spot_limit_orders() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         SECOND_LIMIT_ORDER_CLIENT_ID,
         constants::no_restriction(),
         constants::self_matching_allowed(),
@@ -170,6 +189,7 @@ fun session_places_and_cancels_spot_limit_orders() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         THIRD_LIMIT_ORDER_CLIENT_ID,
         constants::no_restriction(),
         constants::self_matching_allowed(),
@@ -190,6 +210,7 @@ fun session_places_and_cancels_spot_limit_orders() {
     let third_id = third.order_id();
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -199,12 +220,16 @@ fun session_places_and_cancels_spot_limit_orders() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     sessions::cancel_live_orders<BASE, QUOTE>(
         &mut pool,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         vector[second_id, third_id],
         &clock,
         fixture.scenario.ctx(),
@@ -216,6 +241,7 @@ fun session_places_and_cancels_spot_limit_orders() {
     assert_eq!(wrapper.load_account().balance<BASE>(&root, &clock), ACCOUNT_BALANCE);
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -246,6 +272,9 @@ fun session_places_spot_market_order() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     let fill = sessions::place_market_order<BASE, QUOTE>(
@@ -253,6 +282,7 @@ fun session_places_spot_market_order() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         MARKET_TAKER_CLIENT_ID,
         constants::self_matching_allowed(),
         trade_amount,
@@ -276,6 +306,7 @@ fun session_places_spot_market_order() {
     assert_eq!(account_data::balance_manager_balance<DEEP>(wrapper.load_account()), ZERO_BALANCE);
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -298,6 +329,9 @@ fun session_withdraws_settled_spot_amounts() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     let ask = sessions::place_limit_order<BASE, QUOTE>(
@@ -305,6 +339,7 @@ fun session_withdraws_settled_spot_amounts() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         LIMIT_ORDER_CLIENT_ID,
         constants::no_restriction(),
         constants::self_matching_allowed(),
@@ -322,6 +357,7 @@ fun session_withdraws_settled_spot_amounts() {
     assert_eq!(wrapper.load_account().balance<BASE>(&root, &clock), ACCOUNT_BALANCE - trade_amount);
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -341,6 +377,9 @@ fun session_withdraws_settled_spot_amounts() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     assert_eq!(wrapper.load_account().balance<QUOTE>(&root, &clock), ACCOUNT_BALANCE);
@@ -348,6 +387,7 @@ fun session_withdraws_settled_spot_amounts() {
         &mut pool,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &clock,
         fixture.scenario.ctx(),
     );
@@ -361,6 +401,7 @@ fun session_withdraws_settled_spot_amounts() {
     assert_eq!(account_data::balance_manager_balance<DEEP>(wrapper.load_account()), ZERO_BALANCE);
     return_shared(clock);
     return_shared(root);
+    return_shared(sessions_config);
     return_shared(wrapper);
     return_shared(pool);
     return_shared(account_registry);
@@ -379,6 +420,9 @@ fun unapproved_session_cannot_place_spot_order() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     let _ = sessions::place_limit_order<BASE, QUOTE>(
@@ -386,6 +430,7 @@ fun unapproved_session_cannot_place_spot_order() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         LIMIT_ORDER_CLIENT_ID,
         constants::no_restriction(),
         constants::self_matching_allowed(),
@@ -415,6 +460,9 @@ fun session_at_exact_expiration_cannot_place_spot_market_order() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let root = fixture.scenario.take_shared<AccumulatorRoot>();
     let clock = fixture.scenario.take_shared<Clock>();
     let _ = sessions::place_market_order<BASE, QUOTE>(
@@ -422,6 +470,7 @@ fun session_at_exact_expiration_cannot_place_spot_market_order() {
         &registry,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         MARKET_TAKER_CLIENT_ID,
         constants::self_matching_allowed(),
         constants::min_size(),
@@ -447,11 +496,48 @@ fun revoked_session_cannot_cancel_spot_order() {
     let account_registry = fixture.scenario.take_shared<AccountRegistry>();
     let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let clock = fixture.scenario.take_shared<Clock>();
     sessions::cancel_live_order<BASE, QUOTE>(
         &mut pool,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
+        ZERO_ORDER_ID,
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = session_config::EPackageVersionDisabled)]
+fun retired_package_version_cannot_use_spot_wrapper() {
+    let mut fixture = setup_spot_fixture();
+    authorize_session(&mut fixture);
+    let sessions_config_id = fixture.sessions_config_id;
+    let pool_id = fixture.pool_id;
+    let wrapper_id = fixture.wrapper_id;
+
+    fixture.scenario.next_tx(ADMIN);
+    let mut sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(sessions_config_id);
+    session_config::set_version_watermark_for_testing(&mut sessions_config, FUTURE_VERSION);
+    return_shared(sessions_config);
+
+    fixture.scenario.next_tx(SESSION);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture.scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    let clock = fixture.scenario.take_shared<Clock>();
+    sessions::cancel_live_order<BASE, QUOTE>(
+        &mut pool,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
         ZERO_ORDER_ID,
         &clock,
         fixture.scenario.ctx(),
@@ -468,6 +554,8 @@ fun setup_spot_fixture(): SpotFixture {
     scenario.next_tx(ADMIN);
     let registry_id = registry::test_registry(scenario.ctx());
     account_registry::init_for_testing(scenario.ctx());
+    let (sessions_config_id, sessions_admin_cap) = session_config::init_for_testing(scenario.ctx());
+    destroy(sessions_admin_cap);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
     clock.share_for_testing();
@@ -486,16 +574,20 @@ fun setup_spot_fixture(): SpotFixture {
     wrapper.share();
     return_shared(account_registry);
 
-    SpotFixture { scenario, registry_id, pool_id, wrapper_id }
+    SpotFixture { scenario, registry_id, pool_id, wrapper_id, sessions_config_id }
 }
 
 fun authorize_session(fixture: &mut SpotFixture) {
     let wrapper_id = fixture.wrapper_id;
     fixture.scenario.next_tx(ALICE);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
     let clock = fixture.scenario.take_shared<Clock>();
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
         &clock,
@@ -506,6 +598,7 @@ fun authorize_session(fixture: &mut SpotFixture) {
         option::some(SESSION_EXPIRES_AT_MS),
     );
     return_shared(clock);
+    return_shared(sessions_config);
     return_shared(wrapper);
 }
 
@@ -647,6 +740,12 @@ fun create_pool(scenario: &mut Scenario, registry_id: ID): ID {
 }
 
 fun finish_spot_fixture(fixture: SpotFixture) {
-    let SpotFixture { scenario, registry_id: _, pool_id: _, wrapper_id: _ } = fixture;
+    let SpotFixture {
+        scenario,
+        registry_id: _,
+        pool_id: _,
+        wrapper_id: _,
+        sessions_config_id: _,
+    } = fixture;
     scenario.end();
 }

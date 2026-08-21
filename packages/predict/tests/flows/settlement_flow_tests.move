@@ -9,18 +9,27 @@ module deepbook_predict::settlement_flow_tests;
 use account::account_registry;
 use deepbook_predict::{
     config_events,
+    constants,
     expiry_market,
     flow_test_helpers as helpers,
     predict_account,
     pricing,
     test_constants
 };
-use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
+use propbook::{
+    block_scholes_store::BlockScholesValueStore,
+    pyth_feed::PythFeed,
+    registry::{Self as propbook_registry, OracleRegistry}
+};
 use std::unit_test::assert_eq;
 use sui::{event, test_scenario::return_shared};
 
 const SECOND_SOURCE_ID: u32 = 2;
+const FOREIGN_UNDERLYING_ID: u32 = 9_002;
 const IDLE_SEED: u64 = 1_200_000_000_000;
+const ONE_MS: u64 = 1;
+const ZERO_SPOT: u128 = 0;
+const ONE_U128: u128 = 1;
 
 /// Per-trade fee floor for the default flow fixture.
 const MINT_MIN_FEE: u64 = 5_000_000;
@@ -102,6 +111,141 @@ fun try_settle_without_exact_expiry_spot_returns_false_without_mutation() {
 
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+#[test]
+fun block_scholes_fallback_arms_at_exact_grace_boundary() {
+    let expiry = test_constants::default_expiry_ms();
+    let settlement_price = settlement_inside_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!() - ONE_MS);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.insert_exact_block_scholes_settlement_spot_bundle(
+        &mut market,
+        settlement_price as u128,
+    );
+
+    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    assert!(!helpers::market(&market).is_settled());
+
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), settlement_price);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun block_scholes_fallback_missing_after_grace_remains_retryable() {
+    let expiry = test_constants::default_expiry_ms();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    assert!(!helpers::market(&market).is_settled());
+    assert_eq!(helpers::market(&market).try_settlement_price(), option::none());
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun pyth_wins_after_grace_when_both_exact_spots_exist() {
+    let expiry = test_constants::default_expiry_ms();
+    let pyth_price = settlement_inside_default_finite_range();
+    let block_scholes_price = settlement_below_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.insert_exact_block_scholes_settlement_spot_bundle(
+        &mut market,
+        block_scholes_price as u128,
+    );
+    fx.insert_exact_settlement_spot_bundle(&mut market, pyth_price);
+
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), pyth_price);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun zero_block_scholes_fallback_spot_remains_retryable() {
+    let expiry = test_constants::default_expiry_ms();
+    let recovery_price = settlement_inside_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.insert_exact_block_scholes_settlement_spot_bundle(&mut market, ZERO_SPOT);
+
+    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    assert!(!helpers::market(&market).is_settled());
+
+    fx.insert_exact_block_scholes_settlement_spot_bundle(&mut market, recovery_price as u128);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), recovery_price);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun oversized_block_scholes_fallback_spot_remains_retryable() {
+    let expiry = test_constants::default_expiry_ms();
+    let recovery_price = settlement_inside_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.insert_exact_block_scholes_settlement_spot_bundle(
+        &mut market,
+        (std::u64::max_value!() as u128) + ONE_U128,
+    );
+
+    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    assert!(!helpers::market(&market).is_settled());
+
+    fx.insert_exact_block_scholes_settlement_spot_bundle(&mut market, recovery_price as u128);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), recovery_price);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EWrongBlockScholesValueStore)]
+fun block_scholes_fallback_rejects_another_underlyings_store() {
+    let expiry = test_constants::default_expiry_ms();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    let foreign_pair = fx.create_foreign_block_scholes_stores(FOREIGN_UNDERLYING_ID);
+    let foreign_values_id = foreign_pair.block_scholes_value_store_id();
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let foreign_values = fx
+        .scenario_mut()
+        .take_shared_by_id<BlockScholesValueStore>(foreign_values_id);
+    fx.try_settle_bundle_with_bs_values(&mut market, &foreign_values);
+
+    abort 999
 }
 
 #[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
@@ -487,19 +631,20 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
 }
 
 #[test]
-fun explicit_settlement_unblocks_pool_valuation_sweep() {
+fun block_scholes_fallback_unblocks_pool_valuation_sweep() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
     bootstrap_pool(&mut fx, IDLE_SEED);
-    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let expiry = test_constants::default_expiry_ms();
+    let expiry_id = fx.create_expiry(expiry);
     fund_empty_market(&mut fx, expiry_id);
-    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(expiry_id);
-    fx.insert_exact_settlement_spot_bundle(
+    fx.insert_exact_block_scholes_settlement_spot_bundle(
         &mut market,
-        settlement_inside_default_finite_range(),
+        settlement_inside_default_finite_range() as u128,
     );
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 

@@ -14,6 +14,7 @@ A session grant contains only the session address and its expiration timestamp i
 
 Every trading wrapper requires both of these conditions:
 
+- The executing Sessions package version is at or above the shared `SessionsConfig.version_watermark`.
 - The transaction sender has a stored session grant for the supplied Account.
 - The current clock timestamp is strictly less than the stored expiration.
 
@@ -29,6 +30,7 @@ public fun session_expiration_ms(
 
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
+    sessions_config: &SessionsConfig,
     session: address,
     duration_ms: u64,
     clock: &Clock,
@@ -48,6 +50,16 @@ The shared `AccountWrapper` can be supplied as an object input in a programmable
 
 Revoking a known session removes it from the session map immediately, whether it is active or already expired, and frees its slot for another address. Once the Sessions app-data slot has been attached to an Account, it remains attached even when the session map becomes empty. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; they continue to count toward the 20-session limit until the owner revokes them, while reauthorization replaces the expiration in place.
 
+Session reads and revocation remain available after a package version is retired so owners can inspect and remove grants without using a trading-capable package version.
+
+## Version governance
+
+Publishing Sessions creates a shared `SessionsConfig` at the package's compiled-in version and transfers a `SessionsAdminCap` to the publisher. `authorize_session` and every trading wrapper require the shared config and reject package versions below its watermark.
+
+Each package upgrade must increment `current_version!()`. After clients have moved to the new package, the `SessionsAdminCap` holder calls that package's `bump_version_watermark`; the function derives the target from the executing package and only advances the watermark, so callers cannot select an arbitrary version or use an older package to retire a newer one.
+
+Advancing the watermark retires authorization and trading entrypoints in older package versions. Account-level deauthorization of `SessionsApp` remains the lineage-wide emergency stop because it prevents every version of the app from generating Account authorization.
+
 ## Predict wrappers
 
 An active session may call these wrappers:
@@ -57,7 +69,7 @@ An active session may call these wrappers:
 - `redeem_live`
 - `redeem_settled`
 
-Each wrapper validates the session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict function. All market parameters remain caller-selected and are validated by Predict.
+Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes that authorization into the corresponding Predict function. All market parameters remain caller-selected and are validated by Predict.
 
 ## DeepBook spot wrappers
 
@@ -69,7 +81,7 @@ An active session may call these Account-backed DeepBook spot wrappers:
 - `cancel_live_orders`
 - `withdraw_settled_amounts`
 
-Each wrapper validates the session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
+Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
 
 The session can therefore submit adverse Predict and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed.
 
@@ -99,9 +111,9 @@ Expiration emits no event, and a no-op revocation emits no event. Predict and De
 
 ## Integration requirements
 
-Before Sessions can be used, the package must be published against the intended Account, Predict, Propbook, DeepBook core, and `deepbook_core_account` package lineages. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
+Before Sessions can be used, the package must be published against the intended Account, Predict, Propbook, DeepBook core, and `deepbook_core_account` package lineages. Integrations must discover the published shared `SessionsConfig` and supply it to session authorization and every trading wrapper. `SessionsApp` must be authorized in the corresponding Account registry, while `DeepbookCoreAccountApp` must be authorized in the supplied DeepBook registry for spot order placement. Publication, registry configuration, SDK transaction construction, ephemeral-key storage, indexing, and deployment are outside this package.
 
-If the package is published with an upgrade capability, custody of that capability is part of the trust boundary because an upgrade can change the behavior of an authorized Account app.
+Custody of `SessionsAdminCap` and any package upgrade capability is part of the trust boundary: the admin cap can retire older package versions, while an upgrade can change the behavior of an authorized Account app.
 
 ## Build and test
 

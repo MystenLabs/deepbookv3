@@ -92,14 +92,15 @@ Predict reads it but does not own it.
   reads `normalized_spot()` and the read's `source_timestamp_ms`. Code module
   `propbook::pyth_feed`.
 - **`BlockScholesValueStore`** — one per-underlying store of the latest BS spot
-  and forward observations, keyed by signed series id. Predict reads `spot()` /
-  `forward(expiry_ms)` and each read's `published_at_ms` envelope time for
+  and forward observations, keyed by signed series id, plus insert-only exact minute-boundary spot
+  history. Predict reads `spot()` /
+  `forward(expiry_ms)` and each read's `source_timestamp_ms` envelope time for
   freshness and trade-event reporting — the model time stays on the stored
-  observation as calibration identity. Code
+  observation as calibration identity — and `spot_at(expiry_ms)` for settlement fallback. Code
   module `propbook::block_scholes_store`.
 - **`BlockScholesSVIStore`** — one per-underlying store of the latest BS SVI
   parameter sets, keyed by signed series id. Predict reads `svi(expiry_ms)` and
-  its `published_at_ms`, one clock for freshness, the roll-down anchor, and
+  its `source_timestamp_ms`, one clock for freshness, the roll-down anchor, and
   trade-event reporting. Code module `propbook::block_scholes_store`.
 - **SVI** — the stochastic-volatility-inspired parameterization of the implied
   volatility smile; the curve range probabilities are
@@ -168,4 +169,4 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
 | --- | --- | --- |
 | `mint` | write / open | The pool writes a new contract to the buyer at the quoted premium. |
 | `redeem_live` | sell to close / close-out | The holder sells the contract back to the writer at the current mark. |
-| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records the exact Propbook Pyth expiry spot and terminal payout liability; `redeem_settled` then pays the full `notional` in range and zero out of range without reading an oracle. |
+| `try_settle` / `redeem_settled` | cash settlement | `try_settle` records exact Pyth at expiry when available, or exact Block Scholes after the 30-second Pyth-exclusive window, plus terminal payout liability; `redeem_settled` then pays the full `notional` in range and zero out of range without reading an oracle. |
