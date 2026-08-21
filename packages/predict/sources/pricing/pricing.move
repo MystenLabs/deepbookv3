@@ -30,7 +30,7 @@ public struct Pricer has copy, drop {
     /// Timestamps of the oracle observations this snapshot validated, as trade events report
     /// them — each observation's own economic clock. Pyth carries its source timestamp (`0` only
     /// when no usable normalized observation exists); the Block Scholes reads carry their batch
-    /// envelope time (`published_at_ms`), the clock freshness gated and the SVI roll-down
+    /// envelope time (`source_timestamp_ms`), the clock freshness gated and the SVI roll-down
     /// anchored on. The provider's calibration (model) times stay on the stored observations and
     /// their ingestion events.
     pyth_spot_source_timestamp_ms: u64,
@@ -297,10 +297,10 @@ fun resolve_live_pricer(
     // model time means the same calibration republished, for SVI already rolled down to the new
     // publish — never duplicate data). Pricing therefore halts only when envelopes stop arriving
     // within the window (transport stopped), never merely because the calibration clock is quiet.
-    // The store admits an observation only when `model <= published <= recorded`. The same
+    // The store admits an observation only when `model <= source <= onchain`. The same
     // envelope time is snapshotted below, so trade events report the clock pricing validated;
     // calibration times stay on the stored observations and their ingestion events.
-    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_published_at_ms();
+    let block_scholes_spot_source_timestamp_ms = bs_spot_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_spot_source_timestamp_ms,
@@ -315,7 +315,7 @@ fun resolve_live_pricer(
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
     assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
-    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_published_at_ms();
+    let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_forward_source_timestamp_ms,
@@ -332,10 +332,10 @@ fun resolve_live_pricer(
     assert_oracle_not_written_this_tx(&svi_read.read_writer_digest(), ctx);
     // One clock serves every job: the envelope time the freshness gate accepts is also the
     // roll-down anchor and the snapshot trade events emit, so the parameters, their anchor, and
-    // the reported clock always come from the same read. The gate's `published_at <= now` bound
+    // the reported clock always come from the same read. The gate's `source_timestamp <= now` bound
     // plus the pre-expiry check keep the anchor strictly before expiry, so the roll-down's
     // `expiry - anchor` never underflows.
-    let block_scholes_svi_source_timestamp_ms = svi_read.read_published_at_ms();
+    let block_scholes_svi_source_timestamp_ms = svi_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(
             block_scholes_svi_source_timestamp_ms,
@@ -439,9 +439,14 @@ fun sigma(svi: &RawSVI): u64 {
     svi.sigma
 }
 
-fun roll_down_svi(svi: &RawSVI, published_at_ms: u64, expiry_ms: u64, clock: &Clock): PricingSVI {
+fun roll_down_svi(
+    svi: &RawSVI,
+    source_timestamp_ms: u64,
+    expiry_ms: u64,
+    clock: &Clock,
+): PricingSVI {
     let remaining_ms = expiry_ms - clock.timestamp_ms();
-    let anchor_tte_ms = expiry_ms - published_at_ms;
+    let anchor_tte_ms = expiry_ms - source_timestamp_ms;
     let a = svi.a();
     PricingSVI {
         a_magnitude: roll_down_to_1e18(a.magnitude(), remaining_ms, anchor_tte_ms),

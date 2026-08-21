@@ -16,12 +16,12 @@ A lane owns:
 An `OracleRead<Value>` wraps a value with two Propbook timestamps:
 
 - `source_timestamp_ms`: source/publisher time, converted to milliseconds.
-- `update_timestamp_ms`: Sui clock time when the update landed on chain.
+- `onchain_timestamp_ms`: Sui clock time when the update landed on chain.
 
 There are two write shapes:
 
 - `update`: latest-state update. It records the read only when
-  `source_timestamp_ms` is positive, not ahead of `update_timestamp_ms`, and
+  `source_timestamp_ms` is positive, not ahead of `onchain_timestamp_ms`, and
   strictly newer than the current latest read. Future, zero, stale, or duplicate
   reads are no-ops.
 - `insert_at`: exact timestamp insert. It records the read only when the
@@ -135,7 +135,7 @@ than its own envelope is provider garbage and is skipped, mirroring the Pyth
 lane's `EFeedTimestampAfterEnvelope`; together with the envelope-not-after-
 execution bound, that keeps Predict's SVI roll-down anchor strictly before
 any live market's expiry. The stores keep no aggregate liveness field:
-consumers assert freshness on each series' own `published_at_ms`, and
+consumers assert freshness on each series' own `source_timestamp_ms`, and
 provider-wide liveness is monitored off-chain from the per-batch
 `BlockScholesBatchIngested` events.
 
@@ -221,7 +221,7 @@ Block Scholes stores emit their dedicated event surface:
 
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
 - `BlockScholesObservationRecorded<Observation>` records every stored observation with its store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
-- `BlockScholesBatchIngested` records every verified batch with its store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
+- `BlockScholesBatchIngested` records every verified batch with its store ID, series kind (`0` spot, `1` forward, `2` SVI), provider source time, on-chain ingestion time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

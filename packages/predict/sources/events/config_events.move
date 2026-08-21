@@ -116,7 +116,7 @@ public struct ReferenceTickSet has copy, drop, store {
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
-    recorded_at_ms: u64,
+    onchain_timestamp_ms: u64,
 }
 
 /// Emitted once when a market records its terminal settlement price from the
@@ -127,7 +127,7 @@ public struct MarketSettled has copy, drop, store {
     expiry: u64,
     settlement_price: u64,
     /// On-chain landing time of the settlement, `clock.timestamp_ms()`.
-    settled_at_ms: u64,
+    onchain_timestamp_ms: u64,
 }
 
 // === Public-Package Functions ===
@@ -261,7 +261,7 @@ public(package) fun emit_reference_tick_set(
     source_timestamp_ms: u64,
     spot: u64,
     tick: u64,
-    recorded_at_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     event::emit(ReferenceTickSet {
         expiry_market_id,
@@ -269,7 +269,7 @@ public(package) fun emit_reference_tick_set(
         source_timestamp_ms,
         spot,
         tick,
-        recorded_at_ms,
+        onchain_timestamp_ms,
     });
 }
 
@@ -278,13 +278,13 @@ public(package) fun emit_market_settled(
     propbook_underlying_id: u32,
     expiry: u64,
     settlement_price: u64,
-    settled_at_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     event::emit(MarketSettled {
         expiry_market_id,
         propbook_underlying_id,
         expiry,
         settlement_price,
-        settled_at_ms,
+        onchain_timestamp_ms,
     });
 }

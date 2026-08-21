@@ -76,10 +76,10 @@ fun a_spot_observation_lands_with_all_three_clocks() {
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_EARLY);
-    assert_eq!(read.read_recorded_at_ms(), CHAIN_TIME_MS);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_EARLY);
+    assert_eq!(read.read_onchain_timestamp_ms(), CHAIN_TIME_MS);
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, _, _, _) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_SPOT);
 
     clock::destroy_for_testing(chain_clock);
@@ -115,8 +115,8 @@ fun a_stored_observation_is_what_its_event_reports() {
     assert_eq!(expiry_ms, SPOT_EXPIRY_MS);
     assert_eq!(observation.read_value(), SPOT);
     assert_eq!(observation.read_model_timestamp_ms(), MODEL_EARLY);
-    assert_eq!(observation.read_published_at_ms(), PUBLISHED_EARLY);
-    assert_eq!(observation.read_recorded_at_ms(), CHAIN_TIME_MS);
+    assert_eq!(observation.read_source_timestamp_ms(), PUBLISHED_EARLY);
+    assert_eq!(observation.read_onchain_timestamp_ms(), CHAIN_TIME_MS);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -146,7 +146,7 @@ fun a_newer_batch_replaces_the_stored_observation() {
 
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT_LATER);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -178,7 +178,7 @@ fun a_retransmission_advances_the_envelope_but_not_the_model_time() {
 
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
     assert_eq!(read.read_value(), SPOT);
 
     clock::destroy_for_testing(chain_clock);
@@ -271,7 +271,7 @@ fun an_older_batch_leaves_the_stored_observation_intact() {
 
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT_LATER);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -304,7 +304,7 @@ fun a_newer_envelope_with_an_older_model_time_cannot_roll_the_series_back() {
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_LATE);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -339,7 +339,7 @@ fun newer_model_data_in_an_older_envelope_is_skipped() {
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -393,7 +393,7 @@ fun a_monotone_provider_stream_stores_the_same_observation_in_any_order() {
     let reversed_read = store::spot(&reversed_store).destroy_some();
     assert_eq!(forward_read.read_value(), reversed_read.read_value());
     assert_eq!(forward_read.read_model_timestamp_ms(), reversed_read.read_model_timestamp_ms());
-    assert_eq!(forward_read.read_published_at_ms(), reversed_read.read_published_at_ms());
+    assert_eq!(forward_read.read_source_timestamp_ms(), reversed_read.read_source_timestamp_ms());
     assert_eq!(forward_read.read_value(), SPOT_LATER);
     assert_eq!(forward_read.read_model_timestamp_ms(), MODEL_LATE);
 
@@ -451,9 +451,9 @@ fun a_regressed_publish_stream_is_first_writer_wins() {
     let forward_read = store::spot(&forward_store).destroy_some();
     let reversed_read = store::spot(&reversed_store).destroy_some();
     assert_eq!(forward_read.read_value(), SPOT);
-    assert_eq!(forward_read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(forward_read.read_source_timestamp_ms(), PUBLISHED_LATE);
     assert_eq!(reversed_read.read_value(), SPOT_LATER);
-    assert_eq!(reversed_read.read_published_at_ms(), PUBLISHED_MID);
+    assert_eq!(reversed_read.read_source_timestamp_ms(), PUBLISHED_MID);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(forward_store);
@@ -486,7 +486,7 @@ fun a_model_time_after_its_own_envelope_is_skipped() {
     assert_eq!(store::forward(&value_store, EXPIRY_B).destroy_some().read_value(), FORWARD_B);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 2);
     assert_eq!(applied, 1);
@@ -541,7 +541,7 @@ fun resubmitting_the_same_batch_changes_nothing_and_does_not_abort() {
 
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT);
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_MID);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_MID);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -649,7 +649,7 @@ fun an_envelope_time_at_exactly_chain_time_lands() {
 
     let read = store::spot(&value_store).destroy_some();
     assert_eq!(read.read_value(), SPOT);
-    assert_eq!(read.read_published_at_ms(), CHAIN_TIME_MS);
+    assert_eq!(read.read_source_timestamp_ms(), CHAIN_TIME_MS);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
@@ -684,7 +684,7 @@ fun an_svi_batch_lands_every_parameter_source_native() {
     assert_eq!(params.svi_m_is_negative(), SVI_M_NEG);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, _, _, _) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_SVI);
 
     clock::destroy_for_testing(chain_clock);
@@ -753,7 +753,7 @@ fun an_older_svi_batch_leaves_the_stored_parameters_intact() {
     );
 
     let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_LATE);
 
     clock::destroy_for_testing(chain_clock);
@@ -785,7 +785,7 @@ fun svi_data_in_an_older_envelope_is_skipped_even_with_a_newer_model_time() {
     );
 
     let read = store::svi(&svi_store, EXPIRY_A).destroy_some();
-    assert_eq!(read.read_published_at_ms(), PUBLISHED_LATE);
+    assert_eq!(read.read_source_timestamp_ms(), PUBLISHED_LATE);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
 
     clock::destroy_for_testing(chain_clock);
@@ -829,7 +829,8 @@ fun an_ingested_batch_reports_what_it_carried_and_stored() {
     let (
         oracle_id,
         series_kind,
-        published_at_ms,
+        source_timestamp_ms,
+        onchain_timestamp_ms,
         update_count,
         applied,
     ) = store::batch_ingested_fields(
@@ -837,7 +838,8 @@ fun an_ingested_batch_reports_what_it_carried_and_stored() {
     );
     assert_eq!(oracle_id, value_id);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
-    assert_eq!(published_at_ms, PUBLISHED_MID);
+    assert_eq!(source_timestamp_ms, PUBLISHED_MID);
+    assert_eq!(onchain_timestamp_ms, CHAIN_TIME_MS);
     assert_eq!(update_count, 2);
     assert_eq!(applied, 1);
 
@@ -873,7 +875,7 @@ fun a_series_repeated_within_one_batch_resolves_by_model_time() {
     assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, series_kind, _, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 3);
     assert_eq!(applied, 2);
@@ -960,14 +962,14 @@ fun new_clock(scenario: &mut Scenario): Clock {
 
 fun apply_values(
     value_store: &mut BlockScholesValueStore,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     updates: vector<ValueUpdate>,
     chain_clock: &Clock,
     ctx: &TxContext,
 ) {
     store::apply_spot_batch(
         value_store,
-        verify::new_value_batch_for_testing(published_at_ms, updates),
+        verify::new_value_batch_for_testing(source_timestamp_ms, updates),
         chain_clock,
         ctx,
     )
@@ -975,14 +977,14 @@ fun apply_values(
 
 fun apply_svis(
     svi_store: &mut BlockScholesSVIStore,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     updates: vector<SviUpdate>,
     chain_clock: &Clock,
     ctx: &TxContext,
 ) {
     store::apply_svi_batch(
         svi_store,
-        verify::new_svi_batch_for_testing(published_at_ms, updates),
+        verify::new_svi_batch_for_testing(source_timestamp_ms, updates),
         vector[EXPIRY_A],
         chain_clock,
         ctx,
@@ -991,7 +993,7 @@ fun apply_svis(
 
 fun apply_forwards(
     value_store: &mut BlockScholesValueStore,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     updates: vector<ValueUpdate>,
     expiries_ms: vector<u64>,
     chain_clock: &Clock,
@@ -999,7 +1001,7 @@ fun apply_forwards(
 ) {
     store::apply_forward_batch(
         value_store,
-        verify::new_value_batch_for_testing(published_at_ms, updates),
+        verify::new_value_batch_for_testing(source_timestamp_ms, updates),
         expiries_ms,
         chain_clock,
         ctx,

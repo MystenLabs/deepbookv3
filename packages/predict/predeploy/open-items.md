@@ -411,7 +411,7 @@ than running one for this alone, and refresh the C-1 figures.
 **Severity:** Medium; liveness, misattributed failure.
 
 `block_scholes_store::apply` returns `false` rather than aborting when
-`published_at_ms > recorded_at_ms` — the batch's envelope time is ahead of the
+`source_timestamp_ms > onchain_timestamp_ms` — the batch's envelope time is ahead of the
 Sui `Clock` at execution. The transaction still succeeds, so the relayer sees
 success, and the only signal is `applied` reading below `update_count` in
 `BlockScholesBatchIngested`. Skipping is the right response for one unusable
@@ -423,11 +423,11 @@ halts a freshness window later on `EBlockScholesPriceStale` — an error naming
 provider staleness for what is actually clock skew on our side of the boundary.
 
 The comparison has a real duty and is not simply removable: accepting a
-future-dated envelope would let that observation win the `(model, published)`
+future-dated envelope would let that observation win the `(model, source)`
 ordering against every honest later batch at equal model time, pinning the
 series until its model time advances.
 
-**Action:** Measure the observed `published_at_ms - recorded_at_ms` distribution
+**Action:** Measure the observed `source_timestamp_ms - onchain_timestamp_ms` distribution
 against the live provider before a value-bearing deployment, and alert on
 `update_count > 0 && applied == 0` sustained across consecutive batches, which
 is what distinguishes this from a genuinely quiet feed. If the observed margin

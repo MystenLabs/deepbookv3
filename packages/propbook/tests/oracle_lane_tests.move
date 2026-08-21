@@ -33,7 +33,7 @@ fun update_accepts_newer_latest_without_exact_insert() {
 
     let latest = lane.latest_read().destroy_some();
     assert_eq!(latest.read_source_timestamp_ms(), T_MID);
-    assert_eq!(latest.read_update_timestamp_ms(), UPDATE_MID);
+    assert_eq!(latest.read_onchain_timestamp_ms(), UPDATE_MID);
     assert_eq!(read_spot(&latest), SPOT_B);
     assert!(lane.read_at(T_EARLY).is_none());
     assert!(lane.read_at(T_MID).is_none());
@@ -54,7 +54,7 @@ fun update_stale_future_and_zero_sources_are_no_ops() {
 
     let latest = lane.latest_read().destroy_some();
     assert_eq!(latest.read_source_timestamp_ms(), T_MID);
-    assert_eq!(latest.read_update_timestamp_ms(), UPDATE_MID);
+    assert_eq!(latest.read_onchain_timestamp_ms(), UPDATE_MID);
     assert_eq!(read_spot(&latest), SPOT_A);
 
     destroy(lane);
@@ -70,7 +70,7 @@ fun insert_at_records_exact_read_without_latest() {
     assert!(lane.latest_read().is_none());
     let exact = lane.read_at(T_EARLY).destroy_some();
     assert_eq!(exact.read_source_timestamp_ms(), T_EARLY);
-    assert_eq!(exact.read_update_timestamp_ms(), UPDATE_EARLY);
+    assert_eq!(exact.read_onchain_timestamp_ms(), UPDATE_EARLY);
     assert_eq!(read_spot(&exact), SPOT_A);
     assert!(lane.read_at(T_EARLY + 1).is_none());
 
@@ -112,10 +112,10 @@ fun new_lane(ctx: &mut TxContext): OracleLane<TestPayload> {
 fun new_read(
     spot: u64,
     source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     ctx: &TxContext,
 ): OracleRead<TestPayload> {
-    oracle_lane::new_read(source_timestamp_ms, update_timestamp_ms, TestPayload { spot }, ctx)
+    oracle_lane::new_read(source_timestamp_ms, onchain_timestamp_ms, TestPayload { spot }, ctx)
 }
 
 fun read_spot(read: &OracleRead<TestPayload>): u64 {

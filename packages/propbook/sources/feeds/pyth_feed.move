@@ -178,21 +178,21 @@ public(package) fun create_and_share(pyth_source_id: u32, ctx: &mut TxContext): 
 fun new_read(
     feed: &PythFeed,
     update: &LazerUpdate,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     ctx: &TxContext,
 ): OracleRead<RawSpot> {
     let raw = raw_spot_from_update(update, feed.pyth_source_id);
-    new_raw_read(raw, update_timestamp_ms, ctx)
+    new_raw_read(raw, onchain_timestamp_ms, ctx)
 }
 
 fun new_insert_read(
     feed: &PythFeed,
     update: &LazerUpdate,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     ctx: &TxContext,
 ): OracleRead<RawSpot> {
     let raw = raw_spot_from_update(update, feed.pyth_source_id);
-    new_raw_insert_read(raw, update.timestamp(), update_timestamp_ms, ctx)
+    new_raw_insert_read(raw, update.timestamp(), onchain_timestamp_ms, ctx)
 }
 
 fun raw_spot_from_update(update: &LazerUpdate, pyth_source_id: u32): RawSpot {
@@ -252,10 +252,10 @@ fun new_raw_spot(
 /// Keys `latest` by the time Pyth generated the price, so a price carried forward
 /// under a newer envelope keeps its true age and ages out of a consumer's freshness
 /// window instead of being refreshed by redelivery.
-fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64, ctx: &TxContext): OracleRead<RawSpot> {
+fun new_raw_read(raw: RawSpot, onchain_timestamp_ms: u64, ctx: &TxContext): OracleRead<RawSpot> {
     let feed_update_timestamp_us = raw.feed_update_timestamp_us;
     // Rounding source microseconds up prevents the millisecond key from preceding the observation; its apparent age can be less than the true age by under one millisecond.
-    oracle_lane::new_read(feed_update_timestamp_us.div_ceil(1000), update_timestamp_ms, raw, ctx)
+    oracle_lane::new_read(feed_update_timestamp_us.div_ceil(1000), onchain_timestamp_ms, raw, ctx)
 }
 
 /// Keys exact history by the envelope, not the generation time: the envelope at a
@@ -273,7 +273,7 @@ fun new_raw_read(raw: RawSpot, update_timestamp_ms: u64, ctx: &TxContext): Oracl
 fun new_raw_insert_read(
     raw: RawSpot,
     envelope_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     ctx: &TxContext,
 ): OracleRead<RawSpot> {
     assert!(envelope_timestamp_us % 1000 == 0, EInsertTimestampNotExactMillisecond);
@@ -282,7 +282,7 @@ fun new_raw_insert_read(
         carry_us <= constants::max_settlement_carry_ms!() * 1000,
         ESettlementCarryExceedsWindow,
     );
-    oracle_lane::new_read(envelope_timestamp_us / 1000, update_timestamp_ms, raw, ctx)
+    oracle_lane::new_read(envelope_timestamp_us / 1000, onchain_timestamp_ms, raw, ctx)
 }
 
 fun extract_lazer_price(price_outer: Option<Option<LazerI64>>): LazerI64 {
@@ -373,7 +373,7 @@ public fun record_raw_for_testing(
     exponent_is_negative: bool,
     feed_update_timestamp_us: u64,
     envelope_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     insert_at: bool,
     ctx: &TxContext,
 ) {
@@ -388,9 +388,9 @@ public fun record_raw_for_testing(
         feed_update_timestamp_us,
     );
     let read = if (insert_at) {
-        new_raw_insert_read(raw, envelope_timestamp_us, update_timestamp_ms, ctx)
+        new_raw_insert_read(raw, envelope_timestamp_us, onchain_timestamp_ms, ctx)
     } else {
-        new_raw_read(raw, update_timestamp_ms, ctx)
+        new_raw_read(raw, onchain_timestamp_ms, ctx)
     };
     let id = feed.id();
     if (insert_at) {

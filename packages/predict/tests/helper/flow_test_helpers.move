@@ -881,7 +881,7 @@ public fun write_pyth_in_current_tx_bundle(
     live_price: u64,
     source_timestamp_ms: u64,
 ) {
-    let update_timestamp_ms = self.clock.timestamp_ms();
+    let onchain_timestamp_ms = self.clock.timestamp_ms();
     pyth_feed::record_raw_for_testing(
         &mut market.pyth,
         live_price,
@@ -890,7 +890,7 @@ public fun write_pyth_in_current_tx_bundle(
         true,
         source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         false,
         self.scenario.ctx(),
     );
@@ -2294,7 +2294,7 @@ fun store_pyth_spot(
     pyth: &mut PythFeed,
     spot: u64,
     source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     let (ctx, restore) = begin_seed_tx(scenario);
     pyth_feed::record_raw_for_testing(
@@ -2305,7 +2305,7 @@ fun store_pyth_spot(
         true,
         source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         false,
         &ctx,
     );
