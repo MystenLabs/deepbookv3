@@ -1,0 +1,198 @@
+{
+    "schemaVersion": 6,
+    "deployment": "predict-testnet-8-21",
+    "network": "testnet",
+    "chainId": "4c78adac",
+    "sourceCommit": "1f79fe87ab2f6b9df40cfdc2e647c93f45e6d737",
+    "packages": {
+        "fixedMath": "0xa55ad273d714c0688354cfe057073b64cd7e89ca1807f570a1505b8ee6c1abe3",
+        "account": "0xa94ec89b6cbb3e2609c7ca65bd77885b7513f852922ebdf8e766851fb6f85259",
+        "propbook": "0xd8b402609b1728f60cf20bfaaec5255701df54350ec13e93aac39463b00bf97b",
+        "predict": "0x421041754244cf0e985fb9c9f5e1f49428caf3df4cde3a7b266d8e18ea63597b",
+        "deepbookCoreAccount": "0xcc9cf1029127e7bda6da4c2ab90164d7bef751783ff13c21c2bb804cec69ebec",
+        "sessions": "0xb74170443d6d2d37cbe95c7e530dd4a1605ef714ff4f9e88e27a7ac1455451db"
+    },
+    "coinTypes": {
+        "dusdc": "0xe95040085976bfd54a1a07225cd46c8a2b4e8e2b6732f140a0fc49850ba73e1a::dusdc::DUSDC",
+        "deep": "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP",
+        "plp": "0x421041754244cf0e985fb9c9f5e1f49428caf3df4cde3a7b266d8e18ea63597b::plp::PLP"
+    },
+    "objects": {
+        "accountRegistry": "0x5682c73d657de1546374e632369a25c82744c8a20e9b4f47e6558e3d4bde88d3",
+        "oracleRegistry": "0x715f5ae4aac0078f4d0c6bf9ea2815614e799e909a90b577aeb8de9ad8bab142",
+        "protocolConfig": "0x7ef1ac99c2f0a77e7aa2602b5ea7bff68750cff0d80f09bdf827bfb345128f33",
+        "poolVault": "0x2a31f592d8fd3d0781e2233770d02d67797890ac82c3d18796d7eb0997896602",
+        "registry": "0x3d486bd50bb5bb5450ddbcb4f74776b6135f416c09024a6674ac266e77e1870a",
+        "sessionsConfig": "0xdfb8e23246678649cfdd6f3f6610057d5cadd6a8911a21dbe8e34788abbfab93",
+        "deepbookRegistry": "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1",
+        "accumulatorRoot": "0x0000000000000000000000000000000000000000000000000000000000000acc",
+        "clock": "0x0000000000000000000000000000000000000000000000000000000000000006"
+    },
+    "underlyings": {
+        "BTC": {
+            "symbol": "BTC",
+            "name": "BTC_USD",
+            "propbookUnderlyingId": 1,
+            "pythLazerFeedId": 1,
+            "blockScholesSourceId": 1,
+            "pythFeed": "0xea8fd4624002516b28b495051c838b2c9a34a4f22ae281d328e1bec47f54cd24",
+            "blockScholesValueStore": "0x9b64cc860ac09e6dcd675fc579c1048792ddce51cc018f2ca16aeb4a1a5684a3",
+            "blockScholesSviStore": "0xd5bc586e99c8d595e0ba5e0a2ef2295e652db8934ffbeda630d60e207bedab8f"
+        }
+    },
+    "writers": {
+        "keeper": {
+            "lifecycleCap": "0xa5197bbb8bb72fcdd1cac0b0fb7154ad799da2f6f5f0be70861e8a9a97f1033b"
+        },
+        "priceUpdater": {
+            "pythLazerPackage": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+            "pythLazerState": "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
+            "blockScholesOraclePackage": "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+            "blockScholesSignerRegistry": "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414"
+        }
+    },
+    "externalAuthorizations": {
+        "deepbookCoreAccount": {
+            "authorized": false,
+            "appType": "0xcc9cf1029127e7bda6da4c2ab90164d7bef751783ff13c21c2bb804cec69ebec::account_data::DeepbookCoreAccountApp",
+            "registry": "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1"
+        }
+    },
+    "indexing": {
+        "startCheckpoint": "374460635"
+    },
+    "initialConfiguration": {
+        "verifiedAfterCheckpoint": "374463487",
+        "stateAnchors": {
+            "protocolConfig": {
+                "objectVersion": "986814031",
+                "digest": "2c7Hw6wqaRgRmBrh9ycBK6DmpfK9A65VD2yuWhNYnETb"
+            },
+            "registry": {
+                "objectVersion": "986814736",
+                "digest": "5MEBkxhMxifTuWBNYjr1L6mQw7JymtXzTXytTPcJ8jqD"
+            },
+            "oracleRegistry": {
+                "objectVersion": "4",
+                "digest": "2NuwEZg95Hh6zVFrDWEwaKjjVZXfvcXFFPbtDRbxVsAW"
+            },
+            "sessionsConfig": {
+                "objectVersion": "1",
+                "digest": "GBMzA2rAb6QDUFxbJSGVrAMPmfBvqLcdgKkbdFvP5yJ2"
+            },
+            "deepbookRegistry": {
+                "objectVersion": "982564271",
+                "digest": "Bp6ArscqERZfaQ6k65MTuxqmGPGWzcq8gQwHJLFxpzQh"
+            }
+        },
+        "units": {
+            "fixedPointScale": "1000000000",
+            "quoteCoinDecimals": 6,
+            "plpCoinDecimals": 6,
+            "deepCoinDecimals": 6,
+            "positionQuantityDecimals": 6,
+            "positionLotSize": "10000",
+            "timestampUnit": "milliseconds"
+        },
+        "liveProtocol": {
+            "pricing": {
+                "usePythSpotForForward": true,
+                "pythSpotFreshnessMs": "10000",
+                "blockScholesPriceFreshnessMs": "10000",
+                "blockScholesSviFreshnessMs": "60000"
+            },
+            "ewmaPenalty": {
+                "alpha": "10000000",
+                "zScoreThreshold": "3000000000",
+                "penaltyRate": "1000000",
+                "enabled": false
+            },
+            "protocolReserveProfitShare": "100000000",
+            "referralFeeRate": "100000000",
+            "plpSupplyFeeRate": "0",
+            "plpWithdrawFeeRate": "2000000",
+            "lpRequestLimitFlushAttempts": "1",
+            "maxLpPoolValue": "18446744073709551615"
+        },
+        "futureMarketTemplate": {
+            "backingBufferLambda": "310000000",
+            "inventoryImpactMaxRate": "0",
+            "baseFee": "100000000",
+            "minFee": "22000000",
+            "minEntryProbability": "10000000",
+            "maxEntryProbability": "990000000",
+            "expiryFeeWindowMs": "86400000",
+            "expiryFeeMaxMultiplier": "1000000000"
+        },
+        "cadences": {
+            "BTC": [
+                {
+                    "id": 0,
+                    "name": "1m",
+                    "periodMs": "60000",
+                    "enabled": true,
+                    "tickSize": "10000000",
+                    "admissionTickSize": "1000000000",
+                    "maxExpiryAllocation": "50000000000",
+                    "initialExpiryCash": "10000000000",
+                    "windowSize": "2"
+                },
+                {
+                    "id": 1,
+                    "name": "5m",
+                    "periodMs": "300000",
+                    "enabled": true,
+                    "tickSize": "10000000",
+                    "admissionTickSize": "1000000000",
+                    "maxExpiryAllocation": "50000000000",
+                    "initialExpiryCash": "10000000000",
+                    "windowSize": "2"
+                },
+                {
+                    "id": 2,
+                    "name": "1h",
+                    "periodMs": "3600000",
+                    "enabled": true,
+                    "tickSize": "10000000",
+                    "admissionTickSize": "1000000000",
+                    "maxExpiryAllocation": "250000000000",
+                    "initialExpiryCash": "50000000000",
+                    "windowSize": "2"
+                },
+                {
+                    "id": 3,
+                    "name": "1d",
+                    "periodMs": "86400000",
+                    "enabled": true,
+                    "tickSize": "10000000",
+                    "admissionTickSize": "100000000000",
+                    "maxExpiryAllocation": "250000000000",
+                    "initialExpiryCash": "50000000000",
+                    "windowSize": "2"
+                },
+                {
+                    "id": 4,
+                    "name": "1w",
+                    "periodMs": "604800000",
+                    "enabled": true,
+                    "tickSize": "10000000",
+                    "admissionTickSize": "100000000000",
+                    "maxExpiryAllocation": "250000000000",
+                    "initialExpiryCash": "50000000000",
+                    "windowSize": "2"
+                },
+                {
+                    "id": 5,
+                    "name": "1mo",
+                    "periodMs": "2592000000",
+                    "enabled": false,
+                    "tickSize": "0",
+                    "admissionTickSize": "0",
+                    "maxExpiryAllocation": "0",
+                    "initialExpiryCash": "0",
+                    "windowSize": "0"
+                }
+            ]
+        }
+    }
+}
