@@ -38,7 +38,7 @@ BEGIN
         date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0)) as bucket_time,
         FIRST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
-                  ORDER BY f.checkpoint_timestamp_ms
+                  ORDER BY f.checkpoint_timestamp_ms, f.event_digest
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as open,
         MAX(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as high,
@@ -46,7 +46,7 @@ BEGIN
             OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as low,
         LAST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
-                  ORDER BY f.checkpoint_timestamp_ms
+                  ORDER BY f.checkpoint_timestamp_ms, f.event_digest
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as close,
         SUM(f.base_quantity::numeric / POWER(10, p.base_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('minute', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as base_volume,
@@ -64,10 +64,7 @@ BEGIN
       AND f.checkpoint_timestamp_ms < end_timestamp
     ON CONFLICT (pool_id, bucket_time)
     DO UPDATE SET
-        open = CASE
-            WHEN EXCLUDED.first_trade_timestamp < ohclv_1m.first_trade_timestamp THEN EXCLUDED.open
-            ELSE ohclv_1m.open
-        END,
+        open = EXCLUDED.open,
         high = EXCLUDED.high,
         low = EXCLUDED.low,
         close = EXCLUDED.close,
@@ -80,13 +77,15 @@ BEGIN
        OR (
             EXCLUDED.last_trade_timestamp = ohclv_1m.last_trade_timestamp
             AND EXCLUDED.trade_count > ohclv_1m.trade_count
+       )
+       OR (
+            EXCLUDED.first_trade_timestamp = ohclv_1m.first_trade_timestamp
+            AND EXCLUDED.last_trade_timestamp = ohclv_1m.last_trade_timestamp
+            AND EXCLUDED.trade_count = ohclv_1m.trade_count
+            AND EXCLUDED.open IS DISTINCT FROM ohclv_1m.open
        );
 END;
 $$;
-
--- Repair the recent ranges immediately without turning the migration into a full-history scan.
-CALL update_ohclv_1m(NULL, NULL);
-CALL update_ohclv_1d(NULL, NULL);
 
 CREATE OR REPLACE PROCEDURE update_ohclv_1d(
     start_timestamp BIGINT DEFAULT NULL,
@@ -128,7 +127,7 @@ BEGIN
         date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))::DATE as bucket_time,
         FIRST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
-                  ORDER BY f.checkpoint_timestamp_ms
+                  ORDER BY f.checkpoint_timestamp_ms, f.event_digest
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as open,
         MAX(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as high,
@@ -136,7 +135,7 @@ BEGIN
             OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as low,
         LAST_VALUE(f.price::numeric / POWER(10, 9 - p.base_asset_decimals + p.quote_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))
-                  ORDER BY f.checkpoint_timestamp_ms
+                  ORDER BY f.checkpoint_timestamp_ms, f.event_digest
                   ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as close,
         SUM(f.base_quantity::numeric / POWER(10, p.base_asset_decimals))
             OVER (PARTITION BY f.pool_id, date_trunc('day', to_timestamp(f.checkpoint_timestamp_ms / 1000.0))) as base_volume,
@@ -154,10 +153,7 @@ BEGIN
       AND f.checkpoint_timestamp_ms < end_timestamp
     ON CONFLICT (pool_id, bucket_time)
     DO UPDATE SET
-        open = CASE
-            WHEN EXCLUDED.first_trade_timestamp < ohclv_1d.first_trade_timestamp THEN EXCLUDED.open
-            ELSE ohclv_1d.open
-        END,
+        open = EXCLUDED.open,
         high = EXCLUDED.high,
         low = EXCLUDED.low,
         close = EXCLUDED.close,
@@ -170,6 +166,16 @@ BEGIN
        OR (
             EXCLUDED.last_trade_timestamp = ohclv_1d.last_trade_timestamp
             AND EXCLUDED.trade_count > ohclv_1d.trade_count
+       )
+       OR (
+            EXCLUDED.first_trade_timestamp = ohclv_1d.first_trade_timestamp
+            AND EXCLUDED.last_trade_timestamp = ohclv_1d.last_trade_timestamp
+            AND EXCLUDED.trade_count = ohclv_1d.trade_count
+            AND EXCLUDED.open IS DISTINCT FROM ohclv_1d.open
        );
 END;
 $$;
+
+-- Repair the recent ranges immediately without turning the migration into a full-history scan.
+CALL update_ohclv_1m(NULL, NULL);
+CALL update_ohclv_1d(NULL, NULL);

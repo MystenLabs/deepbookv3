@@ -1,11 +1,17 @@
 use diesel::sql_types::{BigInt, Double, Integer};
 use diesel::QueryableByName;
-use diesel_async::RunQueryDsl;
+use diesel_async::{RunQueryDsl, SimpleAsyncConnection};
 use sui_pg_db::temp::TempDb;
 use sui_pg_db::{Db, DbArgs};
 use url::Url;
 
 const POOL_ID: &str = "pool-1";
+const PREVIOUS_OHLCV_MIGRATION: &str = include_str!(
+    "../../schema/migrations/2025-10-13-194059-0000_fix_ohclv_price_calculation/up.sql"
+);
+const CURRENT_OHLCV_MIGRATION: &str = include_str!(
+    "../../schema/migrations/2026-08-21-000000-0000_align_ohclv_refresh_windows/up.sql"
+);
 const DAY_START_MS: i64 = 1_700_006_400_000;
 const MINUTE_MS: i64 = 60_000;
 const DAY_MS: i64 = 86_400_000;
@@ -108,6 +114,18 @@ async fn corrupt_candle(db: &Db, table: &str, bucket_predicate: &str) {
          SET open = 10, high = 99, low = 1, close = 99,
              base_volume = 99, quote_volume = 99, trade_count = 99,
              first_trade_timestamp = 1, last_trade_timestamp = 2
+         WHERE pool_id = '{POOL_ID}' AND {bucket_predicate}"
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+}
+
+async fn store_legacy_open(db: &Db, table: &str, bucket_predicate: &str, open: i64) {
+    let mut conn = db.connect().await.unwrap();
+    diesel::sql_query(format!(
+        "UPDATE {table}
+         SET open = {open}
          WHERE pool_id = '{POOL_ID}' AND {bucket_predicate}"
     ))
     .execute(&mut conn)
@@ -396,6 +414,82 @@ async fn delayed_earlier_fill_replaces_the_opening_price() {
     assert_eq!(
         load_candle(&db, "ohclv_1m", &minute_predicate).await,
         expected(first_ms, last_ms)
+    );
+    assert_eq!(
+        load_candle(&db, "ohclv_1d", &daily_predicate).await,
+        expected(first_ms, last_ms)
+    );
+}
+
+#[tokio::test]
+async fn complete_snapshot_repairs_a_legacy_inconsistent_open() {
+    let (_temp_db, db) = setup().await;
+    let first_ms = DAY_START_MS + 5_000;
+    let last_ms = DAY_START_MS + 50_000;
+    insert_fill(&db, "legacy-open-first", first_ms, 10, 2).await;
+    insert_fill(&db, "legacy-open-last", last_ms, 12, 3).await;
+    call_materializer(&db, "update_ohclv_1m", first_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", first_ms, last_ms).await;
+
+    let minute_predicate = format!(
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
+    );
+    let daily_predicate = format!(
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
+    );
+    store_legacy_open(&db, "ohclv_1m", &minute_predicate, 12).await;
+    store_legacy_open(&db, "ohclv_1d", &daily_predicate, 12).await;
+
+    call_materializer(&db, "update_ohclv_1m", first_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", first_ms, last_ms).await;
+
+    assert_eq!(
+        load_candle(&db, "ohclv_1m", &minute_predicate).await,
+        expected(first_ms, last_ms)
+    );
+    assert_eq!(
+        load_candle(&db, "ohclv_1d", &daily_predicate).await,
+        expected(first_ms, last_ms)
+    );
+}
+
+#[tokio::test]
+async fn migration_repairs_the_oldest_day_in_its_default_range() {
+    let (_temp_db, db) = setup().await;
+    let mut migration_conn = db.connect().await.unwrap();
+    migration_conn
+        .batch_execute("SET TIME ZONE 'UTC'")
+        .await
+        .unwrap();
+    migration_conn
+        .batch_execute(PREVIOUS_OHLCV_MIGRATION)
+        .await
+        .unwrap();
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let day_start_ms = (now_ms / DAY_MS - 7) * DAY_MS;
+    let first_ms = day_start_ms;
+    let last_ms = day_start_ms + DAY_MS - 1;
+    insert_fill(&db, "upgrade-edge-first", first_ms, 10, 2).await;
+    insert_fill(&db, "upgrade-edge-last", last_ms, 12, 3).await;
+    call_materializer(
+        &db,
+        "update_ohclv_1d",
+        day_start_ms,
+        day_start_ms + DAY_MS - 1,
+    )
+    .await;
+
+    migration_conn
+        .batch_execute(CURRENT_OHLCV_MIGRATION)
+        .await
+        .unwrap();
+
+    let daily_predicate = format!(
+        "bucket_time = (to_timestamp({day_start_ms}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
     );
     assert_eq!(
         load_candle(&db, "ohclv_1d", &daily_predicate).await,
