@@ -17,7 +17,10 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     test_constants
 };
-use deepbook_sessions::sessions::{Self as sessions, SessionAuthorized, SessionRevoked, SessionsApp};
+use deepbook_sessions::{
+    session_config::{Self as session_config, SessionsConfig},
+    sessions::{Self as sessions, SessionAuthorized, SessionRevoked, SessionsApp}
+};
 use dusdc::dusdc::DUSDC;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -91,6 +94,7 @@ const ZERO_PREMIUM: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
+const FUTURE_VERSION: u64 = 2;
 
 public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
@@ -110,6 +114,7 @@ public struct SessionFlowFixture {
     market_id: ID,
     owner: address,
     wrapper_id: ID,
+    sessions_config_id: ID,
     config_id: ID,
     pyth_id: ID,
     bs_values_id: ID,
@@ -120,6 +125,7 @@ public struct LiveInputs {
     market: ExpiryMarket,
     account_registry: AccountRegistry,
     wrapper: AccountWrapper,
+    sessions_config: SessionsConfig,
     config: ProtocolConfig,
     pricer: Pricer,
     root: AccumulatorRoot,
@@ -129,20 +135,23 @@ public struct SettledInputs {
     market: ExpiryMarket,
     account_registry: AccountRegistry,
     wrapper: AccountWrapper,
+    sessions_config: SessionsConfig,
     config: ProtocolConfig,
     root: AccumulatorRoot,
 }
 
 #[test]
 fun owner_authorizes_reauthorizes_and_revokes_session() {
-    let (mut scenario, mut clock, wrapper_id) = setup_account();
+    let (mut scenario, mut clock, wrapper_id, sessions_config_id) = setup_account();
 
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     let account_id = wrapper.load_account().account_id();
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
         &clock,
@@ -160,13 +169,16 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         SESSION,
         SESSION_EXPIRES_AT_MS,
     );
+    return_shared(sessions_config);
     return_shared(wrapper);
 
     scenario.next_tx(ALICE);
     clock.set_for_testing(REAUTH_NOW_MS);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         REAUTH_DURATION_MS,
         &clock,
@@ -184,6 +196,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         SESSION,
         REAUTH_EXPIRES_AT_MS,
     );
+    return_shared(sessions_config);
     return_shared(wrapper);
 
     scenario.next_tx(ALICE);
@@ -214,12 +227,14 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
 
 #[test]
 fun maximum_session_duration_is_accepted() {
-    let (mut scenario, clock, wrapper_id) = setup_account();
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
 
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         MAX_SESSION_DURATION_MS,
         &clock,
@@ -230,6 +245,7 @@ fun maximum_session_duration_is_accepted() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(MAX_SESSION_EXPIRES_AT_MS),
     );
+    return_shared(sessions_config);
     return_shared(wrapper);
     clock.destroy_for_testing();
     scenario.end();
@@ -237,14 +253,16 @@ fun maximum_session_duration_is_accepted() {
 
 #[test]
 fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
-    let (mut scenario, mut clock, wrapper_id) = setup_account();
+    let (mut scenario, mut clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     let session_addresses = session_addresses();
     let mut index = FIRST_SESSION_INDEX;
     while (index < MAX_SESSIONS) {
         sessions::authorize_session(
             &mut wrapper,
+            &sessions_config,
             session_addresses[index],
             SESSION_DURATION_MS,
             &clock,
@@ -264,6 +282,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
     clock.set_for_testing(REAUTH_NOW_MS);
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         session_addresses[LAST_SESSION_INDEX],
         REAUTH_DURATION_MS,
         &clock,
@@ -284,6 +303,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
     );
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
         SESSION_DURATION_MS,
         &clock,
@@ -298,6 +318,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         option::some(REAUTH_EXPIRES_AT_MS),
     );
 
+    return_shared(sessions_config);
     return_shared(wrapper);
     clock.destroy_for_testing();
     scenario.end();
@@ -305,14 +326,16 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
 
 #[test, expected_failure(abort_code = sessions::ESessionLimitExceeded)]
 fun twenty_first_distinct_session_aborts() {
-    let (mut scenario, clock, wrapper_id) = setup_account();
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     let session_addresses = session_addresses();
     let mut index = FIRST_SESSION_INDEX;
     while (index < MAX_SESSIONS) {
         sessions::authorize_session(
             &mut wrapper,
+            &sessions_config,
             session_addresses[index],
             SESSION_DURATION_MS,
             &clock,
@@ -327,6 +350,7 @@ fun twenty_first_distinct_session_aborts() {
 
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
         SESSION_DURATION_MS,
         &clock,
@@ -338,12 +362,14 @@ fun twenty_first_distinct_session_aborts() {
 
 #[test, expected_failure(abort_code = sessions::EInvalidSessionDuration)]
 fun zero_session_duration_aborts() {
-    let (mut scenario, clock, wrapper_id) = setup_account();
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
 
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         ZERO_DURATION_MS,
         &clock,
@@ -355,12 +381,14 @@ fun zero_session_duration_aborts() {
 
 #[test, expected_failure(abort_code = sessions::EInvalidSessionDuration)]
 fun session_duration_above_maximum_aborts() {
-    let (mut scenario, clock, wrapper_id) = setup_account();
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
 
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         ABOVE_MAX_SESSION_DURATION_MS,
         &clock,
@@ -372,12 +400,14 @@ fun session_duration_above_maximum_aborts() {
 
 #[test, expected_failure(abort_code = account::EInvalidOwner)]
 fun non_owner_cannot_authorize_session() {
-    let (mut scenario, clock, wrapper_id) = setup_account();
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(BOB);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
 
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
         &clock,
@@ -389,16 +419,19 @@ fun non_owner_cannot_authorize_session() {
 
 #[test, expected_failure(abort_code = account::EInvalidOwner)]
 fun non_owner_cannot_revoke_session() {
-    let (mut scenario, clock, wrapper_id) = setup_account();
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     sessions::authorize_session(
         &mut wrapper,
+        &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
     );
+    return_shared(sessions_config);
     return_shared(wrapper);
 
     scenario.next_tx(BOB);
@@ -408,6 +441,63 @@ fun non_owner_cannot_revoke_session() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = session_config::EPackageVersionDisabled)]
+fun retired_package_version_cannot_authorize_session() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let mut sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    session_config::set_version_watermark_for_testing(&mut sessions_config, FUTURE_VERSION);
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun retired_package_version_keeps_reads_and_revocation_available() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(sessions_config);
+    return_shared(wrapper);
+
+    scenario.next_tx(ADMIN);
+    let mut sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    session_config::set_version_watermark_for_testing(&mut sessions_config, FUTURE_VERSION);
+    assert_eq!(sessions_config.version_watermark(), FUTURE_VERSION);
+    return_shared(sessions_config);
+
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    assert_eq!(
+        sessions::session_expiration_ms(&wrapper, SESSION),
+        option::some(SESSION_EXPIRES_AT_MS),
+    );
+    sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
+    assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
+    return_shared(wrapper);
+
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun unapproved_session_cannot_use_predict_wrapper() {
     let mut fixture = setup_flow_fixture(test_constants::default_expiry_ms());
@@ -415,6 +505,7 @@ fun unapproved_session_cannot_use_predict_wrapper() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         root,
     } = begin_settled_tx(&mut fixture, SESSION);
@@ -425,6 +516,7 @@ fun unapproved_session_cannot_use_predict_wrapper() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         MISSING_ORDER_ID,
         &root,
@@ -441,6 +533,7 @@ fun unapproved_session_cannot_mint_exact_quantity() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -452,6 +545,7 @@ fun unapproved_session_cannot_mint_exact_quantity() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         predict_helpers::strike_tick(),
@@ -475,6 +569,7 @@ fun unapproved_session_cannot_mint_exact_amount() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -486,6 +581,7 @@ fun unapproved_session_cannot_mint_exact_amount() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         predict_helpers::strike_tick(),
@@ -509,6 +605,7 @@ fun unapproved_session_cannot_redeem_live() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -520,6 +617,7 @@ fun unapproved_session_cannot_redeem_live() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         MISSING_ORDER_ID,
@@ -544,6 +642,7 @@ fun session_at_exact_expiration_cannot_use_predict_wrapper() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         root,
     } = begin_settled_tx(&mut fixture, SESSION);
@@ -554,6 +653,7 @@ fun session_at_exact_expiration_cannot_use_predict_wrapper() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         MISSING_ORDER_ID,
         &root,
@@ -572,6 +672,7 @@ fun revoked_session_cannot_use_predict_wrapper() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         root,
     } = begin_settled_tx(&mut fixture, SESSION);
@@ -582,6 +683,7 @@ fun revoked_session_cannot_use_predict_wrapper() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         MISSING_ORDER_ID,
         &root,
@@ -599,6 +701,7 @@ fun another_signer_cannot_use_an_approved_session() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         root,
     } = begin_settled_tx(&mut fixture, BOB);
@@ -609,6 +712,7 @@ fun another_signer_cannot_use_an_approved_session() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         MISSING_ORDER_ID,
         &root,
@@ -627,6 +731,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -653,6 +758,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         predict_helpers::strike_tick(),
@@ -672,13 +778,22 @@ fun session_mints_exact_quantity_and_redeems_live() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(FLOW_SESSION_EXPIRES_AT_MS),
     );
-    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+    return_live_inputs(LiveInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    });
 
     fixture.clock.set_for_testing(LIVE_REDEEM_MS);
     let LiveInputs {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -690,6 +805,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         order_id,
@@ -712,7 +828,15 @@ fun session_mints_exact_quantity_and_redeems_live() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(FLOW_SESSION_EXPIRES_AT_MS),
     );
-    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+    return_live_inputs(LiveInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    });
     finish_flow_fixture(fixture);
 }
 
@@ -725,6 +849,7 @@ fun session_mints_exact_amount() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -765,6 +890,7 @@ fun session_mints_exact_amount() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         predict_helpers::strike_tick(),
@@ -787,7 +913,15 @@ fun session_mints_exact_amount() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(FLOW_SESSION_EXPIRES_AT_MS),
     );
-    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+    return_live_inputs(LiveInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    });
     finish_flow_fixture(fixture);
 }
 
@@ -803,6 +937,7 @@ fun session_redeems_settled_order() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         pricer,
         root,
@@ -828,6 +963,7 @@ fun session_redeems_settled_order() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         &pricer,
         lower_tick,
@@ -842,7 +978,15 @@ fun session_redeems_settled_order() {
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
     assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
-    return_live_inputs(LiveInputs { market, account_registry, wrapper, config, pricer, root });
+    return_live_inputs(LiveInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        pricer,
+        root,
+    });
 
     fixture.clock.set_for_testing(expiry_ms);
     fixture.predict.set_clock_for_testing(expiry_ms);
@@ -853,6 +997,7 @@ fun session_redeems_settled_order() {
         mut market,
         account_registry,
         mut wrapper,
+        sessions_config,
         config,
         root,
     } = begin_settled_tx(&mut fixture, SESSION);
@@ -863,6 +1008,7 @@ fun session_redeems_settled_order() {
         &mut market,
         &account_registry,
         &mut wrapper,
+        &sessions_config,
         &config,
         order_id,
         &root,
@@ -879,7 +1025,14 @@ fun session_redeems_settled_order() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(SETTLEMENT_SESSION_EXPIRES_AT_MS),
     );
-    return_settled_inputs(SettledInputs { market, account_registry, wrapper, config, root });
+    return_settled_inputs(SettledInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        root,
+    });
     finish_flow_fixture(fixture);
 }
 
@@ -909,9 +1062,11 @@ fun session_addresses(): vector<address> {
     ]
 }
 
-fun setup_account(): (Scenario, Clock, ID) {
+fun setup_account(): (Scenario, Clock, ID, ID) {
     let mut scenario = test::begin(ADMIN);
     account_registry::init_for_testing(scenario.ctx());
+    let (sessions_config_id, sessions_admin_cap) = session_config::init_for_testing(scenario.ctx());
+    destroy(sessions_admin_cap);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -923,7 +1078,7 @@ fun setup_account(): (Scenario, Clock, ID) {
     return_shared(registry);
     scenario.next_tx(ADMIN);
 
-    (scenario, clock, wrapper_id)
+    (scenario, clock, wrapper_id, sessions_config_id)
 }
 
 fun assert_session_authorized_event(
@@ -953,6 +1108,10 @@ fun setup_flow_fixture(expiry_ms: u64): SessionFlowFixture {
     );
     predict.authorize_account_app<SessionsApp>();
     let owner = predict_helpers::owner(&trader);
+    let (sessions_config_id, sessions_admin_cap) = session_config::init_for_testing(predict
+        .scenario_mut()
+        .ctx());
+    destroy(sessions_admin_cap);
     let config_id = predict.config_id();
     let pyth_id = predict.pyth_id();
     let now_ms = predict.clock().timestamp_ms();
@@ -979,6 +1138,7 @@ fun setup_flow_fixture(expiry_ms: u64): SessionFlowFixture {
         market_id,
         owner,
         wrapper_id,
+        sessions_config_id,
         config_id,
         pyth_id,
         bs_values_id,
@@ -991,7 +1151,16 @@ fun authorize_flow_session(fixture: &mut SessionFlowFixture, duration_ms: u64) {
     let scenario = fixture.predict.scenario_mut();
     scenario.next_tx(fixture.owner);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id);
-    sessions::authorize_session(&mut wrapper, SESSION, duration_ms, clock, scenario.ctx());
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        duration_ms,
+        clock,
+        scenario.ctx(),
+    );
+    return_shared(sessions_config);
     return_shared(wrapper);
     scenario.next_tx(test_constants::admin());
 }
@@ -1033,6 +1202,7 @@ fun begin_live_tx(fixture: &mut SessionFlowFixture, sender: address): LiveInputs
         market,
         account_registry: scenario.take_shared<AccountRegistry>(),
         wrapper: scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id),
+        sessions_config: scenario.take_shared_by_id<SessionsConfig>(fixture.sessions_config_id),
         config,
         pricer,
         root: scenario.take_shared<AccumulatorRoot>(),
@@ -1040,10 +1210,19 @@ fun begin_live_tx(fixture: &mut SessionFlowFixture, sender: address): LiveInputs
 }
 
 fun return_live_inputs(inputs: LiveInputs) {
-    let LiveInputs { market, account_registry, wrapper, config, pricer: _, root } = inputs;
+    let LiveInputs {
+        market,
+        account_registry,
+        wrapper,
+        sessions_config,
+        config,
+        pricer: _,
+        root,
+    } = inputs;
     return_shared(market);
     return_shared(account_registry);
     return_shared(wrapper);
+    return_shared(sessions_config);
     return_shared(config);
     return_shared(root);
 }
@@ -1055,16 +1234,18 @@ fun begin_settled_tx(fixture: &mut SessionFlowFixture, sender: address): Settled
         market: scenario.take_shared_by_id<ExpiryMarket>(fixture.market_id),
         account_registry: scenario.take_shared<AccountRegistry>(),
         wrapper: scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id),
+        sessions_config: scenario.take_shared_by_id<SessionsConfig>(fixture.sessions_config_id),
         config: scenario.take_shared_by_id<ProtocolConfig>(fixture.config_id),
         root: scenario.take_shared<AccumulatorRoot>(),
     }
 }
 
 fun return_settled_inputs(inputs: SettledInputs) {
-    let SettledInputs { market, account_registry, wrapper, config, root } = inputs;
+    let SettledInputs { market, account_registry, wrapper, sessions_config, config, root } = inputs;
     return_shared(market);
     return_shared(account_registry);
     return_shared(wrapper);
+    return_shared(sessions_config);
     return_shared(config);
     return_shared(root);
 }
@@ -1103,6 +1284,7 @@ fun finish_flow_fixture(fixture: SessionFlowFixture) {
         market_id: _,
         owner: _,
         wrapper_id: _,
+        sessions_config_id: _,
         config_id: _,
         pyth_id: _,
         bs_values_id: _,
