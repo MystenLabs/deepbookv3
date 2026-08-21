@@ -64,10 +64,10 @@ const DEEP_ITM_LIVE_PRICE: u64 = 1_000_000_000_000;
 const REPRICE_MS: u64 = 121_000;
 const REPRICE_SOURCE_TS: u64 = 119_500;
 /// Empty-market cash above the 10e9 target. Valuation sweeps the 1e9 surplus to
-/// idle and leaves 10e9 active NAV. With the protocol's 40% profit exclusion on
-/// the 11e9 active+returned credit basis, the frozen LP mark is 6.61e9.
+/// idle and leaves 10e9 active NAV. With the protocol's 10% profit exclusion on
+/// the 11e9 active+returned credit basis, the frozen LP mark is 9.91e9.
 const ABOVE_MAX_PRICE_MARKET_CASH: u64 = 11_000_000_000;
-const ABOVE_MAX_PRICE_POOL_NAV: u64 = 6_610_000_000;
+const ABOVE_MAX_PRICE_POOL_NAV: u64 = 9_910_000_000;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 

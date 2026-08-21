@@ -35,7 +35,7 @@ const EInvalidReferralFeeRate: u64 = 22;
 
 /// Merged protocol + insurance reserve share of materialized terminal profit, in
 /// FLOAT_SCALING. The complement accrues to LPs.
-public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+public(package) macro fun default_protocol_reserve_profit_share(): u64 { 100_000_000 }
 
 public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
 
@@ -159,7 +159,7 @@ public(package) fun assert_max_lp_pool_value(value: u64) {
 
 // === Backing ===
 
-public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
+public(package) macro fun default_backing_buffer_lambda(): u64 { 310_000_000 }
 
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
 
@@ -199,7 +199,7 @@ public(package) fun assert_inventory_impact_max_rate(value: u64) {
 
 // === Pricing ===
 
-public(package) macro fun default_base_fee(): u64 { 20_000_000 }
+public(package) macro fun default_base_fee(): u64 { 100_000_000 }
 
 public(package) macro fun min_base_fee(): u64 { 1 }
 
@@ -209,7 +209,7 @@ public(package) fun assert_base_fee(value: u64) {
     assert!(value >= min_base_fee!() && value <= max_base_fee!(), EInvalidBaseFee);
 }
 
-public(package) macro fun default_min_fee(): u64 { 5_000_000 }
+public(package) macro fun default_min_fee(): u64 { 22_000_000 }
 
 public(package) macro fun min_min_fee(): u64 { 0 }
 

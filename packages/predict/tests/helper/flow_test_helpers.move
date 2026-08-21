@@ -60,6 +60,9 @@ use sui::{
 };
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
+/// Stable fee floor for broad flow fixtures whose accounting assertions are not
+/// tests of the production initialization policy.
+const FLOW_FIXTURE_MIN_FEE: u64 = 5_000_000;
 
 /// A representative finite strike tick the flow tests mint against. Re-exported
 /// from `test_constants` so existing call sites keep one source of truth.
@@ -158,9 +161,10 @@ public struct AccountBundle {
 
 /// Stand up a registry + protocol config + an empty PLP vault + the permanent
 /// Pyth, BS spot, BS forward, and BS SVI feeds for the default cadence's `tick`
-/// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
-/// admissible. Creation reads no spot (strikes are absolute ticks), so no spot is
-/// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
+/// size. The base fee is floored to 1 and the minimum fee is fixed at 0.005 so
+/// unrelated accounting scenarios do not move with production initialization
+/// policy. Creation reads no spot (strikes are absolute ticks), so no spot is seeded
+/// here — `prepare_live_oracle` seeds the live spot + surface for pricing.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     // The framework root constructor is a system-only test seam.
@@ -186,6 +190,7 @@ public fun setup_market(tick: u64): Fixture {
     let mut config = scenario.take_shared<ProtocolConfig>();
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
+    config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
