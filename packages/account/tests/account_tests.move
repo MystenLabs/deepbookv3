@@ -52,6 +52,7 @@ fun registry_creates_one_canonical_account_per_owner() {
     assert_eq!(account.owner(), ALICE);
     assert_eq!(account.account_id(), account_id);
     assert!(account.referrer_account_id().is_none());
+    assert!(account.referrer_receive_address().is_none());
     // Funds receive/settle at the wrapper address now (a real shared input object),
     // not the nested account_id.
     assert_eq!(account.receive_address(), wrapper_id.to_address());
@@ -73,10 +74,15 @@ fun registry_records_referrer_on_account() {
     let referrer_wrapper_id = registry.derived_wrapper_address(BOB).to_id();
     let referrer_wrapper = scenario.take_shared_by_id<AccountWrapper>(referrer_wrapper_id);
     let referrer_account_id = referrer_wrapper.load_account().account_id();
+    let referrer_receive_address = referrer_wrapper.load_account().receive_address();
     let wrapper = registry.new_with_referrer(&referrer_wrapper, scenario.ctx());
     let wrapper_id = wrapper.id();
 
     assert_eq!(wrapper.load_account().referrer_account_id(), option::some(referrer_account_id));
+    assert_eq!(
+        wrapper.load_account().referrer_receive_address(),
+        option::some(referrer_receive_address),
+    );
 
     wrapper.share();
     return_shared(referrer_wrapper);
@@ -85,6 +91,10 @@ fun registry_records_referrer_on_account() {
 
     let wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     assert_eq!(wrapper.load_account().referrer_account_id(), option::some(referrer_account_id));
+    assert_eq!(
+        wrapper.load_account().referrer_receive_address(),
+        option::some(referrer_receive_address),
+    );
 
     return_shared(wrapper);
     scenario.end();
@@ -196,6 +206,7 @@ fun object_auth_opens_self_owned_account() {
 
     assert_eq!(wrapper.load_account().owner(), owner_address);
     assert!(wrapper.load_account().referrer_account_id().is_none());
+    assert!(wrapper.load_account().referrer_receive_address().is_none());
     wrapper.share();
     return_shared(registry);
     scenario.next_tx(ADMIN);
