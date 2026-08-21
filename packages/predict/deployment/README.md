@@ -13,7 +13,7 @@ No deployment artifact contains signer key material. The workflow reads the sele
 
 ## Run
 
-Use Sui CLI 1.77.1, a clean committed deployment branch, and the Testnet client environment whose active address is the funded deployer.
+Use Sui CLI `sui 1.77.1-4e476c5c8184`, a clean committed deployment branch, and the Testnet client environment whose active address is the funded deployer. Do not set `SUI_KEYSTORE_PATH`; the CLI and SDK both use the keystore pinned by the client configuration.
 
 ```sh
 cd packages/predict
@@ -29,7 +29,9 @@ The existing DeepBook registry's consensus-owned `DeepbookAdminCap` has a differ
 
 The workflow creates and binds the BTC Pyth and Block Scholes objects, registers BTC, writes all six cadence records, bootstraps the pool with the configured DUSDC, and creates markets from longest to shortest enabled cadence. It transfers `MarketLifecycleCap` last with `sui::transfer::public_party_transfer` to a `sui::party::single_owner` party and verifies its `ConsensusAddressOwner` custody.
 
-If a run is interrupted, preserve the source commit, exact Sui binary, client configuration, gas budgets, generated `Published.toml` files, and state journal, then rerun the execute command. A successful known digest is reconciled on-chain, a definitively failed digest is checkpointed and made retryable, and an unknown CLI submission outcome fails closed until it is reconciled.
+If a run is interrupted, preserve the source commit, exact Sui binary, client configuration, gas budgets, generated `Published.toml` files, and state journal, then rerun the execute command. A successful known digest is reconciled on-chain, including reconstruction of missing publication metadata from the verified receipt; a definitively failed digest is checkpointed and made retryable, and an unknown CLI submission outcome fails closed until it is reconciled.
+
+The lifecycle capability remains with the deployer through the complete package, configuration, funding, and live-market audit. The workflow persists that audit, transfers the capability, and performs only the final custody check after handoff so a short-cadence rollover cannot strand an unaudited deployment.
 
 Commit the reviewed workflow before the first execute run; that commit is the immutable source anchor for every resume. After the final audit succeeds, commit the generated `Published.toml` files and integration manifest without changing the source anchor. Never commit the state journal or regenerated `Move.lock` files.
 
