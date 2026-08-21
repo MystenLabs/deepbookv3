@@ -211,8 +211,8 @@ class Generator:
             strike = replay.align_strike_to_tick(
                 forward * (10_000 + offset_bps) // 10_000
             )
-            settlement_at_or_above = settlement_price >= strike
-            is_up = winner == settlement_at_or_above
+            settlement_above_strike = settlement_price > strike
+            is_up = winner == settlement_above_strike
             lower, higher = replay.binary_range_bounds(strike, is_up)
             probability = replay.compute_range_price(
                 svi_for_replay(snapshot), forward, lower, higher
@@ -353,9 +353,7 @@ def read_snapshots(path: Path) -> list[dict[str, Any]]:
                 f"source dataset is missing required columns: {','.join(missing)}"
             )
         for row_number, raw in enumerate(reader, start=1):
-            if None in raw or any(
-                raw[column] is None for column in REQUIRED_SOURCE_COLUMNS
-            ):
+            if None in raw or any(value is None for value in raw.values()):
                 raise GenerationError(
                     f"source dataset row {row_number} does not match the source schema"
                 )

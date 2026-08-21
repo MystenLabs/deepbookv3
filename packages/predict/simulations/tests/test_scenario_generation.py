@@ -12,6 +12,9 @@ from pathlib import Path
 SIM_DIR = Path(__file__).resolve().parents[1]
 GENERATOR = SIM_DIR / "generate_scenario.py"
 CONFIG = SIM_DIR / "data" / "scenario_config.json"
+sys.path.insert(0, str(SIM_DIR))
+
+import generate_scenario as scenario_generator
 SOURCE_HEADER = (
     "spot,forward,a,b,rho,rho_negative,m,m_negative,sigma,"
     "svi_checkpoint_timestamp_ms,price_checkpoint_timestamp_ms\n"
@@ -167,11 +170,55 @@ class ScenarioGenerationTests(unittest.TestCase):
             }
 
             def wins(row: dict[str, str]) -> bool:
-                settlement_at_or_above = settlement_price >= int(row["strike"])
-                return (row["is_up"] == "true") == settlement_at_or_above
+                settlement_above_strike = settlement_price > int(row["strike"])
+                return (row["is_up"] == "true") == settlement_above_strike
 
             self.assertTrue(wins(positions["o_settle_winner"]))
             self.assertFalse(wins(positions["o_settle_loser"]))
+
+    def test_settlement_at_strike_makes_down_the_winner(self) -> None:
+        settlement_price = 75_000_000_000_000
+        snapshot = {
+            "spot": settlement_price,
+            "forward": settlement_price,
+            "a": 171736,
+            "b": 7449196,
+            "rho": 243059022,
+            "rho_negative": True,
+            "m": 1133202,
+            "m_negative": False,
+            "sigma": 15731214,
+            "svi_checkpoint_timestamp_ms": 1,
+            "price_checkpoint_timestamp_ms": 1,
+        }
+
+        class AtTheMoneyRng:
+            def randint(self, lower: int, _upper: int) -> int:
+                return 0 if lower < 0 else lower
+
+        generator = scenario_generator.Generator(
+            [snapshot],
+            json.loads(CONFIG.read_text()),
+            0,
+        )
+        generator.rng = AtTheMoneyRng()
+        winner = generator.settlement_mint_row(
+            11,
+            "winner",
+            winner=True,
+            settlement_price=settlement_price,
+        )
+        loser = generator.settlement_mint_row(
+            12,
+            "loser",
+            winner=False,
+            settlement_price=settlement_price,
+        )
+
+        self.assertEqual(winner["strike"], str(settlement_price))
+        self.assertEqual(winner["is_up"], "false")
+        self.assertEqual(loser["strike"], str(settlement_price))
+        self.assertEqual(loser["is_up"], "true")
 
     def test_source_schema_accepts_superset_and_rejects_missing_or_malformed(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
@@ -212,11 +259,29 @@ class ScenarioGenerationTests(unittest.TestCase):
                 check=False,
             )
 
+            short_superset_row = tmp / "short-superset-row.csv"
+            short_superset_row.write_text(
+                SOURCE_HEADER.removesuffix("\n")
+                + ",unused_feature\n"
+                + first_source_row
+                + "\n"
+            )
+            short_superset_row_run = self._generate(
+                short_superset_row,
+                tmp / "short-superset-row-out.csv",
+                0,
+                check=False,
+            )
+
             self.assertEqual(superset_run.returncode, 0)
             self.assertNotEqual(missing_run.returncode, 0)
             self.assertIn("missing required columns: spot", missing_run.stderr)
             self.assertNotEqual(malformed_run.returncode, 0)
             self.assertIn("invalid rho_negative", malformed_run.stderr)
+            self.assertNotEqual(short_superset_row_run.returncode, 0)
+            self.assertIn(
+                "does not match the source schema", short_superset_row_run.stderr
+            )
 
 
 if __name__ == "__main__":
