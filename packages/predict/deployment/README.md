@@ -21,15 +21,15 @@ corepack npm exec -- tsx deployment/deploy.ts
 corepack npm exec -- tsx deployment/deploy.ts --execute
 ```
 
-The first command builds every package, verifies the package plan and dependency identities, checks the chain, signer, external objects, capability owners, gas for the six publications and complete 32-transaction wiring plan, and DUSDC funding, and submits no transaction. The second command broadcasts.
+The first command builds every package, verifies the package plan and dependency identities, checks the chain, signer, external objects, capability owners, gas for the six publications and 32-transaction fresh wiring plan plus a bounded 20-transaction cadence-rollover reserve, and DUSDC funding, and submits no transaction. The second command broadcasts.
 
 The broadcast publishes `fixed_math`, `account`, `propbook`, `predict`, `deepbook_core_account`, and `sessions` in dependency order. All new publisher, upgrade, admin, and metadata capabilities remain owned by the deployer. The workflow authorizes Predict, the core wrapper, and Sessions on the fresh Account registry.
 
-The existing DeepBook registry's consensus-owned `DeepbookAdminCap` has a different owner. The workflow audits whether that owner has authorized the fresh `DeepbookCoreAccountApp` type, records the result in the integration manifest, and completes the deployment with that external authorization pending when it is not present. The admin-cap owner performs that one authorization separately; rerunning the deployment afterward updates the audited status without duplicating any completed work.
+The existing DeepBook registry's consensus-owned `DeepbookAdminCap` has a different owner. The workflow audits whether that owner has authorized the fresh `DeepbookCoreAccountApp` type, records the result in the integration manifest, and completes the deployment with that external authorization pending when it is not present. The admin-cap owner performs that one authorization separately after deployment; the existing DeepBook registry is the live authority after that transaction, while the committed manifest remains the audited initial deployment snapshot.
 
 The workflow creates and binds the BTC Pyth and Block Scholes objects, registers BTC, writes all six cadence records, bootstraps the pool with the configured DUSDC, and creates markets from longest to shortest enabled cadence. It transfers `MarketLifecycleCap` last with `sui::transfer::public_party_transfer` to a `sui::party::single_owner` party and verifies its `ConsensusAddressOwner` custody.
 
-If a run is interrupted, preserve the source commit, signer, client environment, generated `Published.toml` files, and state journal, then rerun the execute command. A known digest is reconciled on-chain. An unknown CLI submission outcome fails closed and must be reconciled before resuming.
+If a run is interrupted, preserve the source commit, exact Sui binary, client configuration, gas budgets, generated `Published.toml` files, and state journal, then rerun the execute command. A successful known digest is reconciled on-chain, a definitively failed digest is checkpointed and made retryable, and an unknown CLI submission outcome fails closed until it is reconciled.
 
 Commit the reviewed workflow before the first execute run; that commit is the immutable source anchor for every resume. After the final audit succeeds, commit the generated `Published.toml` files and integration manifest without changing the source anchor. Never commit the state journal or regenerated `Move.lock` files.
 

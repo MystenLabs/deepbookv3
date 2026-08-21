@@ -11,6 +11,7 @@ import {
     STATE_RELATIVE,
     assertDeploymentTarget,
     assertExactPackageGraph,
+    assertExecutionBindings,
     assertIntegrationManifest,
     assertPackagePlan,
     assertRecoverableInFlight,
@@ -20,11 +21,14 @@ import {
     checkpointRecoveredTransaction,
     createDeploymentState,
     irreversibleDeploymentSteps,
+    maximumTransactionCountPerRun,
     parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
     parsePackageMetadata,
     plannedTransactionCount,
-    remainingDeploymentSteps,
+    plannedTransactionSteps,
+    recordVerifiedTransactionFailure,
+    runBroadcastBoundary,
     sameObjectReference,
     unexpectedDeploymentPaths,
     type IntegrationManifest,
@@ -163,7 +167,141 @@ function manifestFixture(): IntegrationManifest {
     };
 }
 
-test("the default invocation is non-broadcasting", () => {
+function objectEvidence(objectId: string, version = "1", digest = `digest-${objectId}`) {
+    return {
+        objectId,
+        type: "fixture",
+        owner: "shared",
+        version,
+        digest,
+        previousTransaction: null,
+    };
+}
+
+function completeStateFixture() {
+    const manifest = manifestFixture();
+    const state = createDeploymentState();
+    state.status = "complete";
+    state.sourceCommit = manifest.sourceCommit;
+    state.completedAt = "2026-08-21T00:00:00.000Z";
+    state.verification = {
+        verifiedAt: state.completedAt,
+        chainId: manifest.chainId,
+        indexingStartCheckpoint: manifest.indexing.startCheckpoint,
+        verifiedAfterCheckpoint: manifest.initialConfiguration.verifiedAfterCheckpoint,
+        packages: {
+            fixed_math: objectEvidence(manifest.packages.fixedMath),
+            account: objectEvidence(manifest.packages.account),
+            propbook: objectEvidence(manifest.packages.propbook),
+            predict: objectEvidence(manifest.packages.predict),
+            deepbook_core_account: objectEvidence(manifest.packages.deepbookCoreAccount),
+            sessions: objectEvidence(manifest.packages.sessions),
+        },
+        linkedPackages: {
+            deepbook: objectEvidence(
+                "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24",
+            ),
+            dusdc: objectEvidence(manifest.coinTypes.dusdc.split("::")[0]),
+            deep: objectEvidence(manifest.coinTypes.deep.split("::")[0]),
+            pyth_lazer: objectEvidence(manifest.writers.priceUpdater.pythLazerPackage),
+            wormhole: objectEvidence(
+                "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2",
+            ),
+            bs_oracle: objectEvidence(manifest.writers.priceUpdater.blockScholesOraclePackage),
+            bs_sid: objectEvidence(
+                "0x6a54299d593fca24edf6b17bf8c3aff0b7ba8bc8f4276e9c1065689c50223bba",
+            ),
+        },
+        linkedObjects: {
+            clock: objectEvidence(manifest.objects.clock),
+            accumulatorRoot: objectEvidence(manifest.objects.accumulatorRoot),
+            pythLazerState: objectEvidence(manifest.writers.priceUpdater.pythLazerState),
+            wormholeState: objectEvidence(
+                "0x3c89c52e413edb9b0d9a145e02258c96916c79b1e57a12861bb61791ee5c5f81",
+            ),
+            blockScholesSignerRegistry: objectEvidence(
+                manifest.writers.priceUpdater.blockScholesSignerRegistry,
+            ),
+            deepbookRegistry: objectEvidence(
+                manifest.objects.deepbookRegistry,
+                manifest.initialConfiguration.stateAnchors.deepbookRegistry.objectVersion,
+                manifest.initialConfiguration.stateAnchors.deepbookRegistry.digest,
+            ),
+        },
+        sharedObjects: {
+            account: {
+                "account_registry::AccountRegistry": objectEvidence(
+                    manifest.objects.accountRegistry,
+                ),
+            },
+            propbook: {
+                "registry::OracleRegistry": objectEvidence(
+                    manifest.objects.oracleRegistry,
+                    manifest.initialConfiguration.stateAnchors.oracleRegistry.objectVersion,
+                    manifest.initialConfiguration.stateAnchors.oracleRegistry.digest,
+                ),
+            },
+            predict: {
+                "protocol_config::ProtocolConfig": objectEvidence(
+                    manifest.objects.protocolConfig,
+                    manifest.initialConfiguration.stateAnchors.protocolConfig.objectVersion,
+                    manifest.initialConfiguration.stateAnchors.protocolConfig.digest,
+                ),
+                "plp::PoolVault": objectEvidence(manifest.objects.poolVault),
+                "registry::Registry": objectEvidence(
+                    manifest.objects.registry,
+                    manifest.initialConfiguration.stateAnchors.registry.objectVersion,
+                    manifest.initialConfiguration.stateAnchors.registry.digest,
+                ),
+            },
+            sessions: {
+                "session_config::SessionsConfig": objectEvidence(
+                    manifest.objects.sessionsConfig,
+                    manifest.initialConfiguration.stateAnchors.sessionsConfig.objectVersion,
+                    manifest.initialConfiguration.stateAnchors.sessionsConfig.digest,
+                ),
+            },
+        },
+        ownedCaps: {},
+        oracleObjects: {
+            pythFeed: objectEvidence(manifest.underlyings.BTC.pythFeed),
+            blockScholesValueStore: objectEvidence(manifest.underlyings.BTC.blockScholesValueStore),
+            blockScholesSviStore: objectEvidence(manifest.underlyings.BTC.blockScholesSviStore),
+        },
+        account: {
+            predictAppAuthorized: true,
+            deepbookCoreAppAuthorized: true,
+            sessionsAppAuthorized: true,
+            deepbookCoreAuthorized: false,
+            accountWrapper: objectEvidence(id("a")),
+        },
+        lifecycleCap: objectEvidence(manifest.writers.keeper.lifecycleCap),
+        cadences: CADENCES.map((cadence) => ({
+            id: cadence.id,
+            name: cadence.name,
+            tickSize: cadence.tickSize.toString(),
+            admissionTickSize: cadence.admissionTickSize.toString(),
+            maxExpiryAllocation: cadence.maxExpiryAllocation.toString(),
+            initialExpiryCash: cadence.initialExpiryCash.toString(),
+            windowSize: cadence.windowSize.toString(),
+            setTx: null,
+        })),
+        protocolConfig: { ...EXPECTED_PROTOCOL_CONFIG },
+        pool: {
+            totalSupply: "0",
+            idleBalance: "0",
+            supplyRequestsPending: "0",
+            withdrawRequestsPending: "0",
+            activeMarketIds: [],
+            activeMarketCash: "0",
+            deployerAccountPlpBalance: "0",
+        },
+        markets: [],
+    };
+    return state;
+}
+
+test("the default invocation is non-broadcasting", async () => {
     assert.deepEqual(parseDeploymentArgs([]), { execute: false, sessions: false, smoke: false });
     assert.deepEqual(parseDeploymentArgs(["--execute"]), {
         execute: true,
@@ -172,6 +310,14 @@ test("the default invocation is non-broadcasting", () => {
     });
     assert.throws(() => parseDeploymentArgs(["--sessions"]), /unknown deployment arguments/);
     assert.throws(() => parseDeploymentArgs(["--smoke"]), /unknown deployment arguments/);
+    let broadcasts = 0;
+    assert.equal(
+        await runBroadcastBoundary(false, async () => {
+            broadcasts++;
+        }),
+        false,
+    );
+    assert.equal(broadcasts, 0);
 });
 
 test("operator state and integration manifest are separate artifacts", () => {
@@ -281,6 +427,7 @@ test("the package plan is complete and topological", () => {
 
 test("gas funding derives the complete fresh transaction plan", () => {
     assert.equal(plannedTransactionCount(), 32);
+    assert.equal(maximumTransactionCountPerRun(), 52);
     assert.equal(irreversibleDeploymentSteps().length, 38);
 });
 
@@ -303,7 +450,7 @@ test("target, toolchain, source, and worktree bindings fail closed", () => {
     );
     assert.throws(() => assertDeploymentTarget("testnet", "bad", id("a")), /deployment target/);
     assert.doesNotThrow(() => assertSuiCliVersion("sui 1.77.1-4e476c5c8184"));
-    assert.throws(() => assertSuiCliVersion("sui 1.78.0"), /must be 1.77.1/);
+    assert.throws(() => assertSuiCliVersion("sui 1.78.0"), /Sui CLI must be/);
     assert.doesNotThrow(() => assertSourceBinding("a".repeat(40), "a".repeat(40)));
     assert.throws(
         () => assertSourceBinding("a".repeat(40), "b".repeat(40)),
@@ -315,6 +462,29 @@ test("target, toolchain, source, and worktree bindings fail closed", () => {
             ["account"],
         ),
         ["packages/predict/sources/x.move"],
+    );
+    assert.deepEqual(unexpectedDeploymentPaths([MANIFEST_RELATIVE], [], true), []);
+    const state = createDeploymentState();
+    const bindings = {
+        suiVersion: "sui 1.77.1-4e476c5c8184",
+        suiBinaryPath: "/opt/sui",
+        suiBinaryDigest: "binary",
+        rpcUrl: "https://example.testnet.invalid",
+        clientConfigDigest: "config",
+        packageGasBudget: "5000000000",
+        transactionGasBudget: "1000000000",
+    };
+    state.suiVersion = bindings.suiVersion;
+    state.suiBinaryPath = bindings.suiBinaryPath;
+    state.suiBinaryDigest = bindings.suiBinaryDigest;
+    state.rpcUrl = bindings.rpcUrl;
+    state.clientConfigDigest = bindings.clientConfigDigest;
+    state.packageGasBudget = bindings.packageGasBudget;
+    state.transactionGasBudget = bindings.transactionGasBudget;
+    assert.doesNotThrow(() => assertExecutionBindings(state, bindings));
+    assert.throws(
+        () => assertExecutionBindings(state, { ...bindings, suiBinaryDigest: "changed" }),
+        /execution bindings changed/,
     );
 });
 
@@ -362,11 +532,25 @@ test("known-digest recovery checkpoints once and unknown outcomes fail closed", 
     );
 });
 
-test("every irreversible-step crash boundary resumes without duplicating a checkpoint", () => {
-    const plan = irreversibleDeploymentSteps();
-    for (let boundary = 0; boundary <= plan.length; boundary++) {
-        const completed = new Set(plan.slice(0, boundary));
-        assert.deepEqual(remainingDeploymentSteps(completed), plan.slice(boundary));
+test("every planned transaction label recovers verified failure and success idempotently", () => {
+    for (const label of plannedTransactionSteps()) {
+        const state = createDeploymentState();
+        const failed = {
+            kind: "transaction" as const,
+            label,
+            package: null,
+            startedAt: "2026-08-21T00:00:00.000Z",
+            digest: `failed-${label}`,
+        };
+        state.inFlight = failed;
+        recordVerifiedTransactionFailure(state, failed, "MoveAbort");
+        assert.equal(state.inFlight, null);
+        assert.equal(state.failedTransactions[label].digest, `failed-${label}`);
+        state.inFlight = { ...failed, digest: `success-${label}` };
+        checkpointRecoveredTransaction(state);
+        checkpointRecoveredTransaction(state);
+        assert.equal(state.transactions[label], `success-${label}`);
+        assert.equal(state.inFlight, null);
     }
 });
 
@@ -379,6 +563,10 @@ test("manifest validation requires all six fresh packages and mutable-state anch
     const operatorField = structuredClone(manifest) as unknown as Record<string, unknown>;
     operatorField.deployer = id("a");
     assert.throws(() => assertIntegrationManifest(operatorField), /integration manifest keys/);
+});
+
+test("a complete audited state generates the independent schema-6 fixture", () => {
+    assert.deepEqual(buildIntegrationManifest(completeStateFixture()), manifestFixture());
 });
 
 test("a manifest cannot be generated before the chain audit completes", () => {
@@ -420,9 +608,16 @@ test("published package metadata decoding preserves exact bytecode, lineage, and
         linkage: [{ originalId: dependency, upgradedId: dependency, upgradedVersion: "1" }],
         typeOrigins: [{ module: "alpha", datatype: "Thing", packageId }],
     });
-    const compiled = { modules: ["AQI=", "AwQ="], dependencies: [dependency] };
+    const compiled = {
+        modules: ["AQI=", "AwQ="],
+        dependencies: [dependency],
+        typeOrigins: [{ module: "alpha", datatype: "Thing" }],
+    };
     assert.doesNotThrow(() =>
-        assertExactPackageGraph("fixture", packageId, compiled, metadata, () => dependency),
+        assertExactPackageGraph("fixture", packageId, compiled, metadata, () => ({
+            originalId: dependency,
+            upgradedVersion: "1",
+        })),
     );
     assert.throws(
         () =>
@@ -431,20 +626,27 @@ test("published package metadata decoding preserves exact bytecode, lineage, and
                 packageId,
                 { ...compiled, dependencies: [] },
                 metadata,
-                () => dependency,
+                () => ({ originalId: dependency, upgradedVersion: "1" }),
             ),
         /linkage does not match/,
     );
     assert.throws(
-        () => assertExactPackageGraph("fixture", packageId, compiled, metadata, () => id("2")),
-        /has original/,
+        () =>
+            assertExactPackageGraph("fixture", packageId, compiled, metadata, () => ({
+                originalId: id("2"),
+                upgradedVersion: "2",
+            })),
+        /original\/version/,
     );
     const movedOrigin = structuredClone(metadata);
     movedOrigin.typeOrigins[0].packageId = id("8");
     assert.throws(
         () =>
-            assertExactPackageGraph("fixture", packageId, compiled, movedOrigin, () => dependency),
-        /invalid type origin/,
+            assertExactPackageGraph("fixture", packageId, compiled, movedOrigin, () => ({
+                originalId: dependency,
+                upgradedVersion: "1",
+            })),
+        /type origins do not match/,
     );
     assert.equal(
         sameObjectReference(

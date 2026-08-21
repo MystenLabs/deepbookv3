@@ -31,7 +31,9 @@ import {
     existsSync,
     mkdtempSync,
     openSync,
+    readdirSync,
     readFileSync,
+    realpathSync,
     renameSync,
     rmSync,
     writeFileSync,
@@ -39,7 +41,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import {
@@ -68,7 +70,7 @@ const DEPLOYMENT = "predict-testnet-8-21";
 const DEPLOYER = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
 const LIFECYCLE_CAP_RECIPIENT =
     "0xff241a369609060d3f34828b97a47a2d330644615ff57dfdd49f4f0dd299207f";
-const SUI_VERSION = /^sui 1\.77\.1(?:-|$)/;
+const SUI_VERSION = "sui 1.77.1-4e476c5c8184";
 const OBJECT_ID = /^0x[0-9a-f]{64}$/;
 const CLOCK_ID = "0x0000000000000000000000000000000000000000000000000000000000000006";
 const ACCUMULATOR_ROOT_ID = "0x0000000000000000000000000000000000000000000000000000000000000acc";
@@ -76,6 +78,7 @@ const DEEPBOOK_REGISTRY = "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a
 const DEEPBOOK_ADMIN_CAP = "0x29a62a5385c549dd8e9565312265d2bda0b8700c1560b3e34941671325daae77";
 const DEEPBOOK_ADMIN_OWNER = "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
+const MARKET_ROLLOVER_RESERVE_PER_CADENCE = 2;
 
 const PACKAGES = [
     "fixed_math",
@@ -298,6 +301,10 @@ export interface PublishedPackageMetadata {
 export interface CompiledPackageMetadata {
     modules: string[];
     dependencies: string[];
+    typeOrigins: Array<{
+        module: string;
+        datatype: string;
+    }>;
 }
 
 interface CadenceRecord {
@@ -466,6 +473,10 @@ export interface DeploymentResult {
     chainId: string;
     buildEnvironment: string;
     suiVersion: string | null;
+    suiBinaryPath: string | null;
+    suiBinaryDigest: string | null;
+    rpcUrl: string | null;
+    clientConfigDigest: string | null;
     sourceCommit: string | null;
     deployer: string;
     packageGasBudget: string | null;
@@ -481,6 +492,7 @@ export interface DeploymentResult {
     ownedCaps: Partial<Record<PackageName, Record<string, string>>>;
     publishTx: Partial<Record<PackageName, string>>;
     transactions: Record<string, string>;
+    failedTransactions: Record<string, { digest: string; error: string; recordedAt: string }>;
     wiring: WiringState;
     verification: Verification | null;
 }
@@ -518,12 +530,20 @@ export function plannedTransactionCount(): number {
     return plannedTransactionSteps().length;
 }
 
-export function irreversibleDeploymentSteps(): string[] {
-    return [...PACKAGES.map((pkg) => `publish_${pkg}`), ...plannedTransactionSteps()];
+export function maximumTransactionCountPerRun(): number {
+    const marketTransactions = CADENCES.reduce(
+        (total, cadence) =>
+            total +
+            (cadence.marketsToCreate === 0
+                ? 0
+                : (cadence.marketsToCreate + MARKET_ROLLOVER_RESERVE_PER_CADENCE) * 2),
+        0,
+    );
+    return FIXED_TRANSACTION_STEPS.length + marketTransactions;
 }
 
-export function remainingDeploymentSteps(completed: ReadonlySet<string>): string[] {
-    return irreversibleDeploymentSteps().filter((step) => !completed.has(step));
+export function irreversibleDeploymentSteps(): string[] {
+    return [...PACKAGES.map((pkg) => `publish_${pkg}`), ...plannedTransactionSteps()];
 }
 
 export interface IntegrationManifest {
@@ -673,6 +693,7 @@ interface ClientSnapshot {
     configPath: string;
     rpcUrl: string;
     keystorePath: string;
+    configDigest: string;
 }
 
 interface Runtime {
@@ -681,6 +702,8 @@ interface Runtime {
     client: SuiGrpcClient;
     signer: Ed25519Keypair;
     sourceCommit: string;
+    packageMetadataCache: Map<string, PublishedPackageMetadata>;
+    marketCreationsThisRun: Record<number, number>;
 }
 
 interface LockHandle {
@@ -1283,6 +1306,15 @@ function command(executable: string, args: string[]): string {
     }).trim();
 }
 
+function sha256(value: string | Buffer): string {
+    return createHash("sha256").update(value).digest("hex");
+}
+
+function suiBinaryIdentity(): { path: string; digest: string } {
+    const path = realpathSync(isAbsolute(SUI) ? SUI : command("which", [SUI]));
+    return { path, digest: sha256(readFileSync(path)) };
+}
+
 function git(args: string[]): string {
     return command("git", args);
 }
@@ -1312,12 +1344,16 @@ function transactionCheckpoint(snapshot: ClientSnapshot, digest: string): string
 
 export function createDeploymentState(): DeploymentResult {
     return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         status: "pending",
         network: NETWORK,
         chainId: CHAIN_ID,
         buildEnvironment: NETWORK,
         suiVersion: null,
+        suiBinaryPath: null,
+        suiBinaryDigest: null,
+        rpcUrl: null,
+        clientConfigDigest: null,
         sourceCommit: null,
         deployer: DEPLOYER,
         packageGasBudget: null,
@@ -1333,6 +1369,7 @@ export function createDeploymentState(): DeploymentResult {
         ownedCaps: {},
         publishTx: {},
         transactions: {},
+        failedTransactions: {},
         wiring: {
             version: 2,
             network: NETWORK,
@@ -1574,11 +1611,13 @@ function changedPaths(): string[] {
 export function unexpectedDeploymentPaths(
     paths: readonly string[],
     generatedPackages: readonly string[],
+    allowManifest = false,
 ): string[] {
     const allowed = new Set<string>([
         STATE_RELATIVE,
         ...generatedPackages.map((pkg) => `packages/${pkg}/Published.toml`),
     ]);
+    if (allowManifest) allowed.add(MANIFEST_RELATIVE);
     return paths.filter((path) => !allowed.has(path));
 }
 
@@ -1586,7 +1625,11 @@ function assertExpectedWorktree(result: DeploymentResult): void {
     const generatedPackages = PACKAGES.filter(
         (pkg) => result.packages[pkg] || result.inFlight?.package === pkg,
     );
-    const unexpected = unexpectedDeploymentPaths(changedPaths(), generatedPackages);
+    const unexpected = unexpectedDeploymentPaths(
+        changedPaths(),
+        generatedPackages,
+        result.status === "complete",
+    );
     if (unexpected.length > 0) {
         throw new Error(
             `deployment source is dirty outside generated artifacts: ${unexpected.join(", ")}`,
@@ -1632,13 +1675,13 @@ function cadenceMatches(actual: CadenceRecord, expected: CadenceSpec): boolean {
 
 function assertStateFile(result: DeploymentResult): void {
     if (
-        result.schemaVersion !== 2 ||
+        result.schemaVersion !== 3 ||
         result.network !== NETWORK ||
         result.chainId !== CHAIN_ID ||
         result.buildEnvironment !== NETWORK ||
         normalizeId(result.deployer) !== DEPLOYER
     ) {
-        throw new Error(`${STATE_RELATIVE} is not the expected schema-2 Testnet deployment`);
+        throw new Error(`${STATE_RELATIVE} is not the expected schema-3 Testnet deployment`);
     }
     if (JSON.stringify(result.linked) !== JSON.stringify(LINKED)) {
         throw new Error(`linked package IDs in ${STATE_RELATIVE} do not match deploy.ts`);
@@ -1758,6 +1801,7 @@ function snapshotClientConfig(): ClientSnapshot {
         configPath,
         rpcUrl: stripYamlScalar(rpc),
         keystorePath,
+        configDigest: sha256(yaml),
     };
 }
 
@@ -1853,8 +1897,37 @@ export function parsePackageMetadata(raw: unknown): PublishedPackageMetadata {
 }
 
 function packageMetadata(runtime: Runtime, id: string): ReturnType<typeof parsePackageMetadata> {
-    return parsePackageMetadata(
+    const packageId = normalizeId(id);
+    const cached = runtime.packageMetadataCache.get(packageId);
+    if (cached) return cached;
+    const metadata = parsePackageMetadata(
         JSON.parse(suiClient(runtime.snapshot, ["object", id, "--json"])) as unknown,
+    );
+    runtime.packageMetadataCache.set(packageId, metadata);
+    return metadata;
+}
+
+function moveSourceTypeOrigins(directory: string): CompiledPackageMetadata["typeOrigins"] {
+    const origins: CompiledPackageMetadata["typeOrigins"] = [];
+    const visit = (path: string): void => {
+        for (const entry of readdirSync(path, { withFileTypes: true })) {
+            const child = resolve(path, entry.name);
+            if (entry.isDirectory()) visit(child);
+            else if (entry.isFile() && entry.name.endsWith(".move")) {
+                const source = readFileSync(child, "utf8");
+                const module = source.match(/\bmodule\s+[A-Za-z0-9_]+::([A-Za-z0-9_]+)\s*;/)?.[1];
+                if (!module) throw new Error(`${child} has no Move module declaration`);
+                for (const match of source.matchAll(
+                    /^\s*(?:public(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)/gm,
+                )) {
+                    origins.push({ module, datatype: match[1] });
+                }
+            }
+        }
+    };
+    visit(resolve(directory, "sources"));
+    return origins.sort((left, right) =>
+        `${left.module}::${left.datatype}`.localeCompare(`${right.module}::${right.datatype}`),
     );
 }
 
@@ -1884,17 +1957,32 @@ function compiledPackageMetadata(pkg: PackageName): CompiledPackageMetadata {
         return {
             modules: [...raw.modules].sort(),
             dependencies: raw.dependencies.map(normalizeId).sort(),
+            typeOrigins: moveSourceTypeOrigins(directory),
         };
     });
 }
 
-function expectedOriginalDependency(result: DeploymentResult, upgradedId: string): string | null {
+function expectedDependency(
+    runtime: Runtime,
+    upgradedId: string,
+): { originalId: string; upgradedVersion: string } | null {
     const upgraded = normalizeId(upgradedId);
-    if (upgraded === normalizeId("0x1") || upgraded === normalizeId("0x2")) return upgraded;
-    if (Object.values(result.packages).includes(upgraded)) return upgraded;
-    if (upgraded === LINKED.deepbook) return DEEPBOOK_ORIGINAL;
-    if (Object.values(LINKED).includes(upgraded as never)) return upgraded;
-    return null;
+    let originalId: string | null = null;
+    if (upgraded === normalizeId("0x1") || upgraded === normalizeId("0x2")) {
+        originalId = upgraded;
+    } else if (Object.values(runtime.result.packages).includes(upgraded)) {
+        originalId = upgraded;
+    } else if (upgraded === LINKED.deepbook) {
+        originalId = DEEPBOOK_ORIGINAL;
+    } else if ((Object.values(LINKED) as string[]).includes(upgraded)) {
+        originalId = upgraded;
+    }
+    return originalId
+        ? {
+              originalId,
+              upgradedVersion: packageMetadata(runtime, upgraded).packageVersion,
+          }
+        : null;
 }
 
 export function assertExactPackageGraph(
@@ -1902,7 +1990,9 @@ export function assertExactPackageGraph(
     packageId: string,
     compiled: CompiledPackageMetadata,
     published: PublishedPackageMetadata,
-    expectedOriginal: (upgradedId: string) => string | null,
+    expectedDependencyFor: (
+        upgradedId: string,
+    ) => { originalId: string; upgradedVersion: string } | null,
 ): void {
     const id = normalizeId(packageId);
     if (published.packageVersion !== "1") {
@@ -1922,22 +2012,20 @@ export function assertExactPackageGraph(
         throw new Error(`${label} on-chain linkage contains duplicate upgraded packages`);
     }
     for (const link of published.linkage) {
-        const original = expectedOriginal(link.upgradedId);
-        if (!original || link.originalId !== normalizeId(original)) {
+        const expected = expectedDependencyFor(link.upgradedId);
+        if (
+            !expected ||
+            link.originalId !== normalizeId(expected.originalId) ||
+            link.upgradedVersion !== expected.upgradedVersion
+        ) {
             throw new Error(
-                `${label} dependency ${link.upgradedId} has original ${link.originalId}, expected ${original ?? "no dependency"}`,
+                `${label} dependency ${link.upgradedId} has original/version ${link.originalId}/${link.upgradedVersion}, expected ${expected ? `${expected.originalId}/${expected.upgradedVersion}` : "no dependency"}`,
             );
         }
     }
-    const moduleNames = new Set(Object.keys(published.modules));
-    const origins = new Set<string>();
-    for (const origin of published.typeOrigins) {
-        const key = `${origin.module}::${origin.datatype}`;
-        if (origins.has(key)) throw new Error(`${label} has duplicate type origin ${key}`);
-        origins.add(key);
-        if (!moduleNames.has(origin.module) || origin.packageId !== id) {
-            throw new Error(`${label} has invalid type origin ${key} from ${origin.packageId}`);
-        }
+    const expectedOrigins = compiled.typeOrigins.map((origin) => ({ ...origin, packageId: id }));
+    if (JSON.stringify(published.typeOrigins) !== JSON.stringify(expectedOrigins)) {
+        throw new Error(`${label} on-chain type origins do not match the reviewed source`);
     }
 }
 
@@ -1947,16 +2035,27 @@ function assertPublishedPackageGraph(runtime: Runtime, pkg: PackageName, id: str
         id,
         compiledPackageMetadata(pkg),
         packageMetadata(runtime, id),
-        (upgradedId) => expectedOriginalDependency(runtime.result, upgradedId),
+        (upgradedId) => expectedDependency(runtime, upgradedId),
     );
 }
 
-function assertAllPublishedPackageGraphs(runtime: Runtime): void {
-    assertCliTarget(runtime.snapshot);
-    assertSourceCommit(runtime.sourceCommit);
-    for (const pkg of PACKAGES) {
-        assertCompletedPackage(runtime.result, pkg);
-        assertPublishedPackageGraph(runtime, pkg, packageId(runtime.result, pkg));
+async function verifyPublishedPackageCheckpoint(runtime: Runtime, pkg: PackageName): Promise<void> {
+    assertCompletedPackage(runtime.result, pkg);
+    const id = packageId(runtime.result, pkg);
+    const packageEvidence = await objectEvidence(runtime, id, "package", null);
+    if (packageEvidence.previousTransaction !== runtime.result.publishTx[pkg]) {
+        throw new Error(`${pkg} package was not created by ${runtime.result.publishTx[pkg]}`);
+    }
+    assertPublishedPackageGraph(runtime, pkg, id);
+    const shared = runtime.result.sharedObjects[pkg] ?? {};
+    exactKeys(asRecord(shared), EXPECTED_SHARED[pkg], `${pkg} shared objects`);
+    for (const [type, objectId] of Object.entries(shared)) {
+        await objectEvidence(runtime, objectId, `${id}::${type}`, "shared");
+    }
+    const caps = runtime.result.ownedCaps[pkg] ?? {};
+    exactKeys(asRecord(caps), expectedCaps(pkg, id), `${pkg} owned capabilities`);
+    for (const [type, objectId] of Object.entries(caps)) {
+        await objectEvidence(runtime, objectId, type, DEPLOYER);
     }
 }
 
@@ -2062,8 +2161,44 @@ export function assertDeploymentTarget(
 }
 
 export function assertSuiCliVersion(version: string): void {
-    if (!SUI_VERSION.test(version)) {
-        throw new Error(`Sui CLI must be 1.77.1, got '${version}'`);
+    if (version !== SUI_VERSION) {
+        throw new Error(`Sui CLI must be '${SUI_VERSION}', got '${version}'`);
+    }
+}
+
+interface ExecutionBindings {
+    suiVersion: string;
+    suiBinaryPath: string;
+    suiBinaryDigest: string;
+    rpcUrl: string;
+    clientConfigDigest: string;
+    packageGasBudget: string;
+    transactionGasBudget: string;
+}
+
+export function assertExecutionBindings(
+    result: DeploymentResult,
+    bindings: ExecutionBindings,
+): void {
+    const recorded: ExecutionBindings = {
+        suiVersion: requiredString(result.suiVersion, "recorded Sui version"),
+        suiBinaryPath: requiredString(result.suiBinaryPath, "recorded Sui binary path"),
+        suiBinaryDigest: requiredString(result.suiBinaryDigest, "recorded Sui binary digest"),
+        rpcUrl: requiredString(result.rpcUrl, "recorded RPC URL"),
+        clientConfigDigest: requiredString(
+            result.clientConfigDigest,
+            "recorded client config digest",
+        ),
+        packageGasBudget: requiredString(result.packageGasBudget, "recorded package gas budget"),
+        transactionGasBudget: requiredString(
+            result.transactionGasBudget,
+            "recorded transaction gas budget",
+        ),
+    };
+    if (JSON.stringify(recorded) !== JSON.stringify(bindings)) {
+        throw new Error(
+            `deployment execution bindings changed: recorded=${JSON.stringify(recorded)} actual=${JSON.stringify(bindings)}`,
+        );
     }
 }
 
@@ -2251,7 +2386,11 @@ async function executeTransaction(
         throw new Error(`${label} returned digest ${receipt.digest}, expected ${digest}`);
     }
     const failure = effectsError(receipt.effects);
-    if (failure) throw new Error(`${label} failed at ${digest}: ${failure}`);
+    if (failure) {
+        recordVerifiedTransactionFailure(runtime.result, runtime.result.inFlight!, failure);
+        writeState(runtime.result);
+        throw new Error(`${label} failed at ${digest}: ${failure}; failure checkpoint cleared`);
+    }
     receipt = await settledReceipt(runtime.client, digest);
     runtime.result.transactions[label] = digest;
     runtime.result.inFlight = null;
@@ -2313,7 +2452,10 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
         ]);
         const receipt = JSON.parse(output) as Receipt;
         const failure = effectsError(receipt.effects);
-        if (failure || !receipt.digest) throw new Error(`publish ${pkg} failed: ${failure}`);
+        if (!receipt.digest) throw new Error(`publish ${pkg} returned no digest: ${failure}`);
+        runtime.result.inFlight!.digest = receipt.digest;
+        writeState(runtime.result);
+        if (failure) return receipt;
         const publishedId = normalizeId(
             (receipt.objectChanges ?? []).find((change) => change.type === "published")
                 ?.packageId ?? "",
@@ -2323,8 +2465,15 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
         copyFileSync(stagedPublished, publishedPath(pkg));
         return receipt;
     });
-    runtime.result.inFlight.digest = requiredString(receipt.digest, `${pkg} publish digest`);
-    writeState(runtime.result);
+    runtime.result.inFlight!.digest = requiredString(receipt.digest, `${pkg} publish digest`);
+    const publishFailure = effectsError(receipt.effects);
+    if (publishFailure) {
+        recordVerifiedTransactionFailure(runtime.result, runtime.result.inFlight, publishFailure);
+        writeState(runtime.result);
+        throw new Error(
+            `publish ${pkg} failed at ${receipt.digest}: ${publishFailure}; failure checkpoint cleared`,
+        );
+    }
     assertCliTarget(runtime.snapshot);
     assertPublishedIdentity(
         publishedPath(pkg),
@@ -2336,6 +2485,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     );
     recordPublish(runtime.result, pkg, receipt);
     assertCompletedPackage(runtime.result, pkg);
+    await verifyPublishedPackageCheckpoint(runtime, pkg);
     runtime.result.inFlight = null;
     writeState(runtime.result);
     console.log(`[deploy] ${pkg}: ${runtime.result.packages[pkg]} (${receipt.digest})`);
@@ -2360,6 +2510,20 @@ export function checkpointRecoveredTransaction(result: DeploymentResult): void {
     result.inFlight = null;
 }
 
+export function recordVerifiedTransactionFailure(
+    result: DeploymentResult,
+    inFlight: InFlight,
+    error: string,
+): void {
+    if (!inFlight.digest) throw new Error("verified failure is missing its transaction digest");
+    result.failedTransactions[inFlight.label] = {
+        digest: inFlight.digest,
+        error,
+        recordedAt: new Date().toISOString(),
+    };
+    result.inFlight = null;
+}
+
 async function reconcileInFlight(runtime: Runtime): Promise<void> {
     const inFlight = runtime.result.inFlight;
     if (!inFlight) return;
@@ -2374,7 +2538,13 @@ async function reconcileInFlight(runtime: Runtime): Promise<void> {
         );
     }
     const failure = effectsError(receipt.effects);
-    if (failure) throw new Error(`${inFlight.label}/${inFlight.digest} failed: ${failure}`);
+    if (failure) {
+        recordVerifiedTransactionFailure(runtime.result, inFlight, failure);
+        writeState(runtime.result);
+        throw new Error(
+            `${inFlight.label}/${inFlight.digest} failed: ${failure}; failure checkpoint cleared`,
+        );
+    }
     if (inFlight.kind === "publish") {
         if (!inFlight.package) throw new Error("in-flight publish is missing its package");
         assertPublishedIdentity(
@@ -2387,6 +2557,7 @@ async function reconcileInFlight(runtime: Runtime): Promise<void> {
         );
         recordPublish(runtime.result, inFlight.package, receipt);
         assertCompletedPackage(runtime.result, inFlight.package);
+        await verifyPublishedPackageCheckpoint(runtime, inFlight.package);
     } else {
         checkpointRecoveredTransaction(runtime.result);
     }
@@ -3681,6 +3852,13 @@ async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<
                 (market) => market.cadenceId === cadence.id,
             ).length < cadence.marketsToCreate
         ) {
+            const creationLimit = cadence.marketsToCreate + MARKET_ROLLOVER_RESERVE_PER_CADENCE;
+            const creationsThisRun = runtime.marketCreationsThisRun[cadence.id] ?? 0;
+            if (creationsThisRun >= creationLimit) {
+                throw new Error(
+                    `${cadence.name} exceeded its per-run market rollover bound (${creationLimit}); preserve the journal and resume`,
+                );
+            }
             await waitForCadenceLead(runtime, cadence);
             const tx = marketCreationTransaction(result, lifecycleCapId, cadence);
             const label = nextMarketLabel(result, cadence);
@@ -3694,6 +3872,7 @@ async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<
                 }
                 throw error;
             }
+            runtime.marketCreationsThisRun[cadence.id] = creationsThisRun + 1;
             const market = marketFromEvent(receipt, cadence);
             result.wiring.markets.push(market);
             writeState(result);
@@ -3797,12 +3976,10 @@ async function readProtocolConfig(runtime: Runtime): Promise<Verification["proto
     return config;
 }
 
-async function verifyDeployment(
-    runtime: Runtime,
-    external: Awaited<ReturnType<typeof verifyExternalDependencies>>,
-): Promise<Verification> {
+async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     const result = runtime.result;
     await assertSdkTarget(runtime);
+    const external = await verifyExternalDependencies(runtime);
     if (!result.wiring.lifecycleCap.id) throw new Error("lifecycle cap is missing");
     await assertLiveMarketWindows(runtime, result.wiring.lifecycleCap.id, false);
     const packages: Record<string, ObjectEvidence> = {};
@@ -4119,13 +4296,93 @@ async function assertFunding(runtime: Runtime): Promise<void> {
 async function assertGasFunding(runtime: Runtime): Promise<void> {
     const balance = await runtime.client.getBalance({ owner: DEPLOYER });
     const available = BigInt(balance.balance.balance);
+    const remainingPackages = PACKAGES.filter((pkg) => !runtime.result.packages[pkg]).length;
+    const remainingFixedTransactions = FIXED_TRANSACTION_STEPS.filter(
+        (label) => !runtime.result.transactions[label],
+    ).length;
+    const remainingMarketTransactions =
+        runtime.result.wiring.lifecycleCap.owner === "recipient"
+            ? 0
+            : maximumTransactionCountPerRun() - FIXED_TRANSACTION_STEPS.length;
     const required =
-        BigInt(PACKAGE_GAS_BUDGET) * BigInt(PACKAGES.length) +
-        TRANSACTION_GAS_BUDGET * BigInt(plannedTransactionCount());
+        BigInt(PACKAGE_GAS_BUDGET) * BigInt(remainingPackages) +
+        TRANSACTION_GAS_BUDGET * BigInt(remainingFixedTransactions + remainingMarketTransactions);
     if (available < required) {
         throw new Error(
-            `insufficient deployer SUI gas: have ${available}, need at least ${required}`,
+            `insufficient deployer SUI gas: have ${available}, need at least ${required} for ${remainingPackages} publications, ${remainingFixedTransactions} fixed transactions, and ${remainingMarketTransactions} bounded market transactions`,
         );
+    }
+}
+
+export async function runBroadcastBoundary(
+    execute: boolean,
+    broadcast: () => Promise<void>,
+): Promise<boolean> {
+    if (!execute) return false;
+    await broadcast();
+    return true;
+}
+
+async function executeDeployment(runtime: Runtime, bindings: ExecutionBindings): Promise<void> {
+    const result = runtime.result;
+    result.suiVersion ??= bindings.suiVersion;
+    result.suiBinaryPath ??= bindings.suiBinaryPath;
+    result.suiBinaryDigest ??= bindings.suiBinaryDigest;
+    result.rpcUrl ??= bindings.rpcUrl;
+    result.clientConfigDigest ??= bindings.clientConfigDigest;
+    result.sourceCommit ??= runtime.sourceCommit;
+    result.packageGasBudget ??= bindings.packageGasBudget;
+    result.transactionGasBudget ??= bindings.transactionGasBudget;
+    result.startedAt ??= new Date().toISOString();
+    result.completedAt = null;
+    result.lastError = null;
+    result.verification = null;
+    result.status = "publishing";
+    writeState(result);
+
+    try {
+        for (const pkg of PACKAGES) {
+            if (result.packages[pkg]) {
+                await verifyPublishedPackageCheckpoint(runtime, pkg);
+                console.log(`[deploy] ${pkg} checkpoint verified; skipping publish`);
+            } else {
+                await publishPackage(runtime, pkg);
+            }
+        }
+        result.status = "wiring";
+        writeState(result);
+
+        await ensureAccountAppsAuthorized(runtime);
+        await ensureDeepbookCoreAppAuthorized(runtime);
+        const lifecycleCapId = await ensureLifecycleCap(runtime);
+        await ensureOracleObjects(runtime);
+        await ensureUnderlyingRegistered(runtime);
+        await ensureCadences(runtime);
+        const accountWrapperId = await ensureAccountWrapper(runtime);
+        await ensureBootstrap(runtime, lifecycleCapId, accountWrapperId);
+        await ensureMarkets(runtime, lifecycleCapId);
+        await transferLifecycleCap(runtime, lifecycleCapId);
+
+        result.status = "verifying";
+        writeState(result);
+        result.verification = await verifyDeployment(runtime);
+        result.status = "complete";
+        result.completedAt = new Date().toISOString();
+        result.lastError = null;
+        writeState(result);
+        writeIntegrationManifest(buildIntegrationManifest(result));
+        console.log(`[deploy] complete state: ${STATE}`);
+        console.log(`[deploy] integration manifest: ${MANIFEST}`);
+    } catch (error) {
+        result.status = result.inFlight
+            ? "ambiguous"
+            : Object.keys(result.publishTx).length > 0 ||
+                Object.keys(result.transactions).length > 0
+              ? "partial"
+              : "failed";
+        result.lastError = error instanceof Error ? error.message : String(error);
+        writeState(result);
+        throw error;
     }
 }
 
@@ -4141,6 +4398,7 @@ async function run(execute: boolean): Promise<void> {
     if (result.sourceCommit && result.sourceCommit !== sourceCommit) {
         throw new Error(`deployment started from ${result.sourceCommit}, HEAD is ${sourceCommit}`);
     }
+    const binary = suiBinaryIdentity();
     const suiVersion = sui(["--version"]);
     assertSuiCliVersion(suiVersion);
 
@@ -4157,14 +4415,26 @@ async function run(execute: boolean): Promise<void> {
             }),
             signer,
             sourceCommit,
+            packageMetadataCache: new Map(),
+            marketCreationsThisRun: {},
         };
+        const executionBindings: ExecutionBindings = {
+            suiVersion,
+            suiBinaryPath: binary.path,
+            suiBinaryDigest: binary.digest,
+            rpcUrl: snapshot.rpcUrl,
+            clientConfigDigest: snapshot.configDigest,
+            packageGasBudget: PACKAGE_GAS_BUDGET,
+            transactionGasBudget: TRANSACTION_GAS_BUDGET.toString(),
+        };
+        if (result.startedAt) assertExecutionBindings(result, executionBindings);
         await assertSdkTarget(runtime);
         if (result.inFlight) await reconcileInFlight(runtime);
 
         console.log("[deploy] compiling Predict and proving resolved Testnet package IDs");
         assertResolvedLinkedPackages();
         assertExpectedWorktree(result);
-        const external = await verifyExternalDependencies(runtime);
+        await verifyExternalDependencies(runtime);
         await assertGasFunding(runtime);
         await assertFunding(runtime);
 
@@ -4179,66 +4449,8 @@ async function run(execute: boolean): Promise<void> {
         );
         if (!execute) {
             console.log("[deploy] preflight complete; no transactions submitted (pass --execute)");
-            return;
         }
-
-        result.suiVersion = suiVersion;
-        result.sourceCommit ??= sourceCommit;
-        result.packageGasBudget = PACKAGE_GAS_BUDGET;
-        result.transactionGasBudget = TRANSACTION_GAS_BUDGET.toString();
-        result.startedAt ??= new Date().toISOString();
-        result.completedAt = null;
-        result.lastError = null;
-        result.verification = null;
-        result.status = "publishing";
-        writeState(result);
-
-        try {
-            for (const pkg of PACKAGES) {
-                if (result.packages[pkg]) {
-                    assertCompletedPackage(result, pkg);
-                    console.log(`[deploy] ${pkg} checkpoint verified; skipping publish`);
-                } else {
-                    await publishPackage(runtime, pkg);
-                }
-            }
-            console.log("[deploy] proving exact bytecode, linkage lineage, and type origins");
-            assertAllPublishedPackageGraphs(runtime);
-            result.status = "wiring";
-            writeState(result);
-
-            await ensureAccountAppsAuthorized(runtime);
-            await ensureDeepbookCoreAppAuthorized(runtime);
-            const lifecycleCapId = await ensureLifecycleCap(runtime);
-            await ensureOracleObjects(runtime);
-            await ensureUnderlyingRegistered(runtime);
-            await ensureCadences(runtime);
-            const accountWrapperId = await ensureAccountWrapper(runtime);
-            await ensureBootstrap(runtime, lifecycleCapId, accountWrapperId);
-            await ensureMarkets(runtime, lifecycleCapId);
-            await transferLifecycleCap(runtime, lifecycleCapId);
-
-            result.status = "verifying";
-            writeState(result);
-            result.verification = await verifyDeployment(runtime, external);
-            result.status = "complete";
-            result.completedAt = new Date().toISOString();
-            result.lastError = null;
-            writeState(result);
-            writeIntegrationManifest(buildIntegrationManifest(result));
-            console.log(`[deploy] complete state: ${STATE}`);
-            console.log(`[deploy] integration manifest: ${MANIFEST}`);
-        } catch (error) {
-            result.status = result.inFlight
-                ? "ambiguous"
-                : Object.keys(result.publishTx).length > 0 ||
-                    Object.keys(result.transactions).length > 0
-                  ? "partial"
-                  : "failed";
-            result.lastError = error instanceof Error ? error.message : String(error);
-            writeState(result);
-            throw error;
-        }
+        await runBroadcastBoundary(execute, () => executeDeployment(runtime, executionBindings));
     } finally {
         rmSync(snapshot.directory, { recursive: true, force: true });
     }
