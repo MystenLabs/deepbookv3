@@ -454,6 +454,8 @@ remains open is the FIX, not the measurement. Retained for context:
 
 ## Oracle Calibration
 
+- 2026-08-21 (DBU-732): `PayoutNode` grew by a stored weight plus two `u128` summary moments (~40 bytes per dynamic-field node), and a skew-enabled mint/close adds two frozen-surface evaluations plus two `O(log n)` weighted reads. Flush traversal counts are unchanged, but the C-1 joint bound and the RP-10/C-3 batch measurements were sized on the smaller node and cheaper trade — re-measure before deploy if skew ships enabled.
+
 ### O-1: Near-expiry oracle miscalibration is exploitable
 
 **Severity:** High if near-expiry markets are enabled without recalibration.

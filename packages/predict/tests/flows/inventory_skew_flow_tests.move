@@ -32,7 +32,14 @@ fun a_concentrating_mint_pays_a_charge_into_the_skew_escrow() {
         test_constants::mint_quantity(),
     );
     let skew_charge = quote.skew_charge();
-    assert!(skew_charge > 0);
+    // Independent magnitude pin for the whole weight -> mass -> deviation -> rate
+    // composition. For one digital of quantity q and frozen mass m, the deviation
+    // is q*sqrt(m*(S-m))/S by definition. The scipy-derived reference for this
+    // fixture's ATM up price is 499,993,716 +/- 21 (pricing_reference_data), and at
+    // the ATM point the deviation is flat in m to first order, so the floored
+    // charge rate*D/S = 5e6 * 499,999,999 / 1e9 is exactly 2,499,999 across the
+    // entire reference budget (invariant even to +/-1000 raw units of m).
+    assert_eq!(skew_charge, 2_499_999);
     assert_eq!(quote.skew_rebate(), 0);
     assert_eq!(
         quote.all_in_cost(),

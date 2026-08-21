@@ -13,6 +13,7 @@ const CASH_AMOUNT: u64 = 100;
 const REQUIRED_PAYOUT_LIABILITY: u64 = 101;
 const FEE_AMOUNT: u64 = 40;
 const INVENTORY_IMPACT_CHARGE: u64 = 30;
+const SKEW_CHARGE: u64 = 20;
 const INVENTORY_IMPACT_REBATE: u64 = 12;
 /// Cash left after paying out past the earmark (5 < escrow 30).
 const CASH_BELOW_ESCROW: u64 = 5;
@@ -105,6 +106,38 @@ fun inventory_impact_rebate_cannot_spend_ordinary_cash() {
     let unexpected = cash.pay_inventory_impact_rebate(INVENTORY_IMPACT_CHARGE + 1);
     destroy(unexpected);
     abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_cash::ESkewRebateExceedsReserve)]
+fun skew_rebate_cannot_spend_ordinary_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut cash = expiry_cash::new();
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    let unexpected = cash.pay_skew_rebate(SKEW_CHARGE + 1);
+    destroy(unexpected);
+    abort 999
+}
+
+/// Both escrows fold into required cash and out of free cash, independently.
+#[test]
+fun skew_reserve_folds_into_required_and_out_of_free_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut cash = expiry_cash::new();
+    cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
+    cash.credit_inventory_impact_reserve(INVENTORY_IMPACT_CHARGE);
+    cash.credit_skew_reserve(SKEW_CHARGE);
+
+    // 1 liability + 30 impact + 20 skew = 51 required; 100 - 50 escrowed = 50 free.
+    assert_eq!(cash.required_cash(1), 1 + INVENTORY_IMPACT_CHARGE + SKEW_CHARGE);
+    assert_eq!(cash.free_cash(), CASH_AMOUNT - INVENTORY_IMPACT_CHARGE - SKEW_CHARGE);
+
+    let rebate = cash.pay_skew_rebate(SKEW_CHARGE);
+    assert_eq!(rebate.value(), SKEW_CHARGE);
+    assert_eq!(cash.skew_reserve(), 0);
+    destroy(rebate);
+    destroy(cash);
 }
 
 #[test]

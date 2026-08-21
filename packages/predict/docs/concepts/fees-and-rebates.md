@@ -189,6 +189,8 @@ flowchart TD
     L[Book payout liability L] --> PHI["inventory potential phi(L)"]
     PHI --> IMPACT["mint: charge delta / live close: rebate delta"]
     IMPACT --> IRESERVE[isolated inventory-impact reserve]
+    D[Payout profile deviation D under the frozen measure] --> SKEW["skew charge/rebate = rate * delta D"]
+    SKEW --> SRESERVE[isolated skew reserve]
 ```
 
 Cash routing at trade time:
@@ -200,6 +202,7 @@ Cash routing at trade time:
 | Congestion surcharge | add-on / withheld | expiry cash surplus, net of any mint referral share | No |
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
 | Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
+| Inventory skew | mint add-on or withdrawal reduction / close credit or withheld charge | isolated skew escrow; residual becomes surplus at settlement | No |
 
 At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge + skew_charge - skew_rebate` (at most one of the two skew amounts is nonzero); referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate + skew_rebate - skew_charge - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount, and the skew escrow is senior to fee revenue when a payout cannot cover both (the register's RP-29 owns that ordering). At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
 

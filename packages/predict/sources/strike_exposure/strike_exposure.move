@@ -71,7 +71,7 @@ public struct StrikeExposure has store {
 /// One trade's inventory-skew adjustment. A mint that flattens the book and a
 /// close that unbalances it both invert the usual direction, so the sign travels
 /// with the amount rather than being implied by the flow.
-public struct SkewAdjustment has copy, drop, store {
+public struct SkewAdjustment has copy, drop {
     amount: u64,
     is_charge: bool,
 }
@@ -83,7 +83,7 @@ public struct SkewAdjustment has copy, drop, store {
 /// of repeating the `O(log n)` traversal `range_weighted_payout_sum` costs.
 /// `surface` is set only by the quote that found no frozen measure yet: the
 /// mutation that consumes it installs the measure the same trade was priced on.
-public struct SkewTerms has copy, drop, store {
+public struct SkewTerms has copy, drop {
     adjustment: SkewAdjustment,
     terms: WeightedTerms,
     lower_weight: u64,
@@ -140,10 +140,6 @@ public(package) fun premium(terms: &MintTerms): u64 {
 
 public(package) fun quantity(terms: &MintTerms): u64 {
     terms.quantity
-}
-
-public(package) fun adjustment(skew: &SkewTerms): SkewAdjustment {
-    skew.adjustment
 }
 
 public(package) fun skew_amount(adjustment: &SkewAdjustment): u64 {
