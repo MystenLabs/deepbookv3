@@ -3,6 +3,7 @@
     "target": "es2021",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
@@ -11,6 +12,7 @@
   },
   "include": [
     "devtools/ts/**/*.ts",
+    "deployment/**/*.ts",
     "harness/ts/**/*.ts",
     "simulations/src/**/*.ts"
   ]
