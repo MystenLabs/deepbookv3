@@ -699,11 +699,11 @@ fun assert_market_id(reg: &Registry, expiry: u64, expected_id: ID) {
 /// unbound. Operates within the current (admin) transaction.
 fun bind_only_pyth(scenario: &Scenario, admin_cap: &RegistryAdminCap, pyth_id: ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         admin_cap,
-        &pyth,
+        &mut pyth,
         test_constants::propbook_underlying_id(),
     );
     return_shared(pyth);
@@ -713,11 +713,11 @@ fun bind_only_pyth(scenario: &Scenario, admin_cap: &RegistryAdminCap, pyth_id: I
 /// Bind all permanent feeds to the canonical underlying.
 fun bind_pyth_spot_and_surface(scenario: &mut Scenario, admin_cap: &RegistryAdminCap, pyth_id: ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         admin_cap,
-        &pyth,
+        &mut pyth,
         test_constants::propbook_underlying_id(),
     );
     propbook_registry::create_and_share_block_scholes_stores(

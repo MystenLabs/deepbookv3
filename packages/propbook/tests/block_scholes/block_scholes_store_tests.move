@@ -24,6 +24,7 @@ use std::{string::String, unit_test::assert_eq};
 use sui::{clock::{Self, Clock}, event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
+const BTC_UNDERLYING_ID: u32 = 1;
 const SERIES_KIND_SPOT: u8 = 0;
 const SERIES_KIND_FORWARD: u8 = 1;
 const SERIES_KIND_SVI: u8 = 2;
@@ -79,7 +80,8 @@ fun a_spot_observation_lands_with_all_three_clocks() {
     assert_eq!(read.read_published_at_ms(), PUBLISHED_EARLY);
     assert_eq!(read.read_recorded_at_ms(), CHAIN_TIME_MS);
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    let (underlying_id, _, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    assert_eq!(underlying_id, BTC_UNDERLYING_ID);
     assert_eq!(series_kind, SERIES_KIND_SPOT);
 
     clock::destroy_for_testing(chain_clock);
@@ -106,9 +108,15 @@ fun a_stored_observation_is_what_its_event_reports() {
 
     let events = event::events_by_type<store::BlockScholesObservationRecorded<BsRead<u128>>>();
     assert_eq!(events.length(), 1);
-    let (oracle_id, sid, series_kind, expiry_ms, observation) = store::observation_recorded_fields(
-        &events[0],
-    );
+    let (
+        underlying_id,
+        oracle_id,
+        sid,
+        series_kind,
+        expiry_ms,
+        observation,
+    ) = store::observation_recorded_fields(&events[0]);
+    assert_eq!(underlying_id, BTC_UNDERLYING_ID);
     assert_eq!(oracle_id, value_id);
     assert_eq!(sid, block_scholes_sid::spot(&btc()));
     assert_eq!(series_kind, SERIES_KIND_SPOT);
@@ -218,10 +226,10 @@ fun typed_batches_fill_spot_and_every_forward_expiry_independently() {
     assert_eq!(store::forward(&value_store, EXPIRY_B).destroy_some().read_value(), FORWARD_B);
     let events = event::events_by_type<store::BlockScholesObservationRecorded<BsRead<u128>>>();
     assert_eq!(events.length(), 3);
-    let (_, _, series_kind, expiry_ms, _) = store::observation_recorded_fields(&events[1]);
+    let (_, _, _, series_kind, expiry_ms, _) = store::observation_recorded_fields(&events[1]);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(expiry_ms, EXPIRY_A);
-    let (_, _, series_kind, expiry_ms, _) = store::observation_recorded_fields(&events[2]);
+    let (_, _, _, series_kind, expiry_ms, _) = store::observation_recorded_fields(&events[2]);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(expiry_ms, EXPIRY_B);
 
@@ -352,8 +360,8 @@ fun newer_model_data_in_an_older_envelope_is_skipped() {
 #[test]
 fun a_monotone_provider_stream_stores_the_same_observation_in_any_order() {
     let mut scenario = test::begin(ADMIN);
-    let forward_id = store::create_and_share_value_store(btc(), scenario.ctx());
-    let reversed_id = store::create_and_share_value_store(btc(), scenario.ctx());
+    let forward_id = store::create_and_share_value_store(BTC_UNDERLYING_ID, btc(), scenario.ctx());
+    let reversed_id = store::create_and_share_value_store(BTC_UNDERLYING_ID, btc(), scenario.ctx());
     scenario.next_tx(ADMIN);
     let mut forward_store = scenario.take_shared_by_id<BlockScholesValueStore>(forward_id);
     let mut reversed_store = scenario.take_shared_by_id<BlockScholesValueStore>(reversed_id);
@@ -411,8 +419,8 @@ fun a_monotone_provider_stream_stores_the_same_observation_in_any_order() {
 #[test]
 fun a_regressed_publish_stream_is_first_writer_wins() {
     let mut scenario = test::begin(ADMIN);
-    let forward_id = store::create_and_share_value_store(btc(), scenario.ctx());
-    let reversed_id = store::create_and_share_value_store(btc(), scenario.ctx());
+    let forward_id = store::create_and_share_value_store(BTC_UNDERLYING_ID, btc(), scenario.ctx());
+    let reversed_id = store::create_and_share_value_store(BTC_UNDERLYING_ID, btc(), scenario.ctx());
     scenario.next_tx(ADMIN);
     let mut forward_store = scenario.take_shared_by_id<BlockScholesValueStore>(forward_id);
     let mut reversed_store = scenario.take_shared_by_id<BlockScholesValueStore>(reversed_id);
@@ -486,7 +494,7 @@ fun a_model_time_after_its_own_envelope_is_skipped() {
     assert_eq!(store::forward(&value_store, EXPIRY_B).destroy_some().read_value(), FORWARD_B);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, _, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 2);
     assert_eq!(applied, 1);
@@ -684,7 +692,7 @@ fun an_svi_batch_lands_every_parameter_source_native() {
     assert_eq!(params.svi_m_is_negative(), SVI_M_NEG);
     assert_eq!(read.read_model_timestamp_ms(), MODEL_EARLY);
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
+    let (_, _, series_kind, _, _, _) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_SVI);
 
     clock::destroy_for_testing(chain_clock);
@@ -827,6 +835,7 @@ fun an_ingested_batch_reports_what_it_carried_and_stored() {
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
     assert_eq!(events.length(), 2);
     let (
+        underlying_id,
         oracle_id,
         series_kind,
         published_at_ms,
@@ -835,6 +844,7 @@ fun an_ingested_batch_reports_what_it_carried_and_stored() {
     ) = store::batch_ingested_fields(
         &events[1],
     );
+    assert_eq!(underlying_id, BTC_UNDERLYING_ID);
     assert_eq!(oracle_id, value_id);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(published_at_ms, PUBLISHED_MID);
@@ -873,7 +883,7 @@ fun a_series_repeated_within_one_batch_resolves_by_model_time() {
     assert_eq!(read.read_model_timestamp_ms(), MODEL_MID);
 
     let events = event::events_by_type<store::BlockScholesBatchIngested>();
-    let (_, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
+    let (_, _, series_kind, _, update_count, applied) = store::batch_ingested_fields(&events[0]);
     assert_eq!(series_kind, SERIES_KIND_FORWARD);
     assert_eq!(update_count, 3);
     assert_eq!(applied, 2);
@@ -946,8 +956,16 @@ fun migrating_an_svi_store_already_at_the_running_version_aborts() {
 
 fun setup_stores(): (Scenario, ID, ID) {
     let mut scenario = test::begin(ADMIN);
-    let value_id = store::create_and_share_value_store(btc(), scenario.ctx());
-    let svi_id = store::create_and_share_svi_store(btc(), scenario.ctx());
+    let value_id = store::create_and_share_value_store(
+        BTC_UNDERLYING_ID,
+        btc(),
+        scenario.ctx(),
+    );
+    let svi_id = store::create_and_share_svi_store(
+        BTC_UNDERLYING_ID,
+        btc(),
+        scenario.ctx(),
+    );
     scenario.next_tx(ADMIN);
     (scenario, value_id, svi_id)
 }
