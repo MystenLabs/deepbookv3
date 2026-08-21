@@ -35,7 +35,7 @@ How the protocol works:
   formed from the propbook Pyth spot and split Block Scholes feeds, the forward
   fallback, and freshness rules.
 - **[Fees and rebates](./concepts/fees-and-rebates.md)** — the fee components a
-  trader pays and the isolated inventory-impact charge and rebate.
+  trader pays and the isolated inventory-skew charge and rebate.
 - **[Liquidity and NAV](./concepts/liquidity-and-nav.md)** — the pool, PLP
   shares, the async supply/withdraw queues, the privileged flush, and how the
   exact pool NAV is computed.

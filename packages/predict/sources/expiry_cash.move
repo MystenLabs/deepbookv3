@@ -12,14 +12,11 @@ use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
 
 const EInsufficientCash: u64 = 0;
-const EInventoryImpactRebateExceedsReserve: u64 = 1;
-const ESkewRebateExceedsReserve: u64 = 2;
+const ESkewRebateExceedsReserve: u64 = 1;
 
 /// Cash custody for one expiry market.
 public struct ExpiryCash has store {
     cash_balance: Balance<DUSDC>,
-    /// Collected inventory-impact charges still reserved for live-close rebates.
-    inventory_impact_reserve: u64,
     /// Collected inventory-skew charges reserved for skew rebates. Cumulative
     /// collections equal the current skew potential, so a rebate can never exceed
     /// what the same book already paid in.
@@ -30,7 +27,6 @@ public struct ExpiryCash has store {
 public(package) fun new(): ExpiryCash {
     ExpiryCash {
         cash_balance: balance::zero(),
-        inventory_impact_reserve: 0,
         skew_reserve: 0,
     }
 }
@@ -39,26 +35,22 @@ public(package) fun balance(cash: &ExpiryCash): u64 {
     cash.cash_balance.value()
 }
 
-public(package) fun inventory_impact_reserve(cash: &ExpiryCash): u64 {
-    cash.inventory_impact_reserve
-}
-
 public(package) fun skew_reserve(cash: &ExpiryCash): u64 {
     cash.skew_reserve
 }
 
-/// Return the cash required to cover payout liability plus the impact escrow.
+/// Return the cash required to cover payout liability plus the skew escrow.
 public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64 {
-    payout_liability + cash.inventory_impact_reserve + cash.skew_reserve
+    payout_liability + cash.skew_reserve
 }
 
-/// Return cash net of the inventory-impact escrow, floored at zero. Pool NAV
-/// values this amount separately from payout liability.
+/// Return cash net of the skew escrow, floored at zero. Pool NAV values this
+/// amount separately from payout liability.
 public(package) fun free_cash(cash: &ExpiryCash): u64 {
-    cash.balance().saturating_sub(cash.inventory_impact_reserve + cash.skew_reserve)
+    cash.balance().saturating_sub(cash.skew_reserve)
 }
 
-/// Abort unless current cash covers payout liability plus the impact escrow.
+/// Abort unless current cash covers payout liability plus the skew escrow.
 public(package) fun assert_backing(cash: &ExpiryCash, payout_liability: u64) {
     assert!(cash.balance() >= cash.required_cash(payout_liability), EInsufficientCash);
 }
@@ -86,28 +78,6 @@ public(package) fun release_surplus(
 public(package) fun pay_authorized(cash: &mut ExpiryCash, amount: u64): Balance<DUSDC> {
     assert!(cash.balance() >= amount, EInsufficientCash);
     cash.cash_balance.split(amount)
-}
-
-/// Reserve a charge already received with the mint payment. It remains part of
-/// `cash_balance`, but cannot be swept or counted in NAV while live.
-public(package) fun credit_inventory_impact_reserve(cash: &mut ExpiryCash, amount: u64) {
-    cash.inventory_impact_reserve = cash.inventory_impact_reserve + amount;
-}
-
-/// Pay an inventory-impact rebate exclusively from its isolated escrow.
-public(package) fun pay_inventory_impact_rebate(
-    cash: &mut ExpiryCash,
-    amount: u64,
-): Balance<DUSDC> {
-    assert!(amount <= cash.inventory_impact_reserve, EInventoryImpactRebateExceedsReserve);
-    cash.inventory_impact_reserve = cash.inventory_impact_reserve - amount;
-    cash.pay_authorized(amount)
-}
-
-/// Release the residual inventory-impact escrow after settlement, when no live
-/// close can earn another rebate. Its cash then becomes normal expiry surplus.
-public(package) fun release_inventory_impact_reserve(cash: &mut ExpiryCash) {
-    cash.inventory_impact_reserve = 0;
 }
 
 public(package) fun credit_skew_reserve(cash: &mut ExpiryCash, amount: u64) {

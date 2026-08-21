@@ -14,7 +14,7 @@ use dusdc::dusdc::DUSDC;
 use std::{bcs, unit_test::assert_eq};
 use sui::event;
 
-const IMPACT_SCALE: u64 = 10_000_000_000;
+const EXPIRY_ALLOCATION: u64 = 10_000_000_000;
 /// 0.5%: the max admissible skew rate, and within twice the ordinary fee floor.
 const SKEW_RATE: u64 = 5_000_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
@@ -632,55 +632,6 @@ fun two_half_closes_drain_the_escrow_like_one_full_close() {
     fx.finish();
 }
 
-/// Skew and the inventory-impact charge stack independently: each keeps its own
-/// escrow, each telescopes on its own potential, and the backing invariant holds
-/// with both live.
-#[test]
-fun skew_and_occupancy_charges_stack_with_isolated_escrows() {
-    let mut fx = helpers::setup_market_default();
-    fx.set_template_min_fee(ORDINARY_MIN_FEE);
-    fx.set_template_inventory_skew_rate(SKEW_RATE);
-    fx.set_template_inventory_impact_max_rate(200_000_000);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
-    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
-    let trader = fx.create_funded_manager(8 * test_constants::mint_deposit());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.seed_market_cash(
-        helpers::market_mut(&mut market),
-        test_constants::default_seeded_expiry_cash(),
-    );
-
-    let quote = fx.quote_mint_bundle(
-        &market,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-    );
-    assert!(quote.skew_charge() > 0);
-    assert!(quote.inventory_impact_charge() > 0);
-    fx.mint_exact_quantity_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
-        quote.all_in_cost(),
-        std::u64::max_value!(),
-    );
-    assert_eq!(helpers::market(&market).skew_reserve(), quote.skew_charge());
-    assert_eq!(
-        helpers::market(&market).inventory_impact_reserve(),
-        quote.inventory_impact_charge(),
-    );
-    helpers::assert_market_backed_bundle(&market);
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
 /// A close whose skew charge exceeds everything the close releases aborts rather
 /// than collecting less than the potential moved (the register's RP-29). Reaching
 /// it needs a complete set — the book starts flat, so closing either leg
@@ -730,7 +681,7 @@ fun setup_skewed_market(
     let mut fx = helpers::setup_market_default();
     fx.set_template_min_fee(ORDINARY_MIN_FEE);
     fx.set_template_inventory_skew_rate(rate);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    fx.set_default_cadence_allocation(EXPIRY_ALLOCATION, constants::expiry_cash_floor!());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     // Four mint deposits: the complete-set cases fund both legs twice over.
     let trader = fx.create_funded_manager(8 * test_constants::mint_deposit());

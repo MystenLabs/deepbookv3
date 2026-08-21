@@ -28,9 +28,8 @@ const EInvalidLpRequestLimitFlushAttempts: u64 = 17;
 const EInvalidMaxLpPoolValue: u64 = 18;
 const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
-const EInvalidInventoryImpactMaxRate: u64 = 21;
-const EInvalidReferralFeeRate: u64 = 22;
-const EInvalidInventorySkewRate: u64 = 23;
+const EInvalidReferralFeeRate: u64 = 21;
+const EInvalidInventorySkewRate: u64 = 22;
 
 // === Fees ===
 
@@ -175,36 +174,13 @@ public(package) fun assert_backing_buffer_lambda(value: u64) {
     );
 }
 
-// === Inventory Impact ===
-
-/// Maximum marginal inventory-impact rate, in FLOAT_SCALING. The mechanism
-/// ships inert; a zero rate short-circuits before any payout-tree range read.
-public(package) macro fun default_inventory_impact_max_rate(): u64 { 0 }
-
-public(package) macro fun min_inventory_impact_max_rate(): u64 { 0 }
-
-/// A full-scale rate means that, above the market's inventory scale, one
-/// additional DUSDC of payout liability can cost at most one DUSDC. This is a
-/// hard representability envelope, not a recommended operating value.
-public(package) macro fun max_inventory_impact_max_rate(): u64 {
-    fixed_math::math::float_scaling!()
-}
-
-public(package) fun assert_inventory_impact_max_rate(value: u64) {
-    assert!(
-        value >= min_inventory_impact_max_rate!()
-            && value <= max_inventory_impact_max_rate!(),
-        EInvalidInventoryImpactMaxRate,
-    );
-}
-
 // === Inventory Skew ===
 
 /// Rate applied to the payout profile's probability-weighted standard deviation,
-/// in FLOAT_SCALING. Occupancy prices how much reserve a position ties up; this
-/// prices how unevenly the book's payouts sit across the settlement prices that
-/// carry probability, which occupancy cannot see. The mechanism ships inert; a
-/// zero rate short-circuits before any weight evaluation or payout-tree read.
+/// in FLOAT_SCALING: it prices how unevenly the book's payouts sit across the
+/// settlement prices that carry probability, which plain size cannot see. The
+/// mechanism ships inert; a zero rate short-circuits before any weight
+/// evaluation or payout-tree read.
 public(package) macro fun default_inventory_skew_rate(): u64 { 0 }
 
 public(package) macro fun min_inventory_skew_rate(): u64 { 0 }

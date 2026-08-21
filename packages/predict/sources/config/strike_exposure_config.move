@@ -36,9 +36,6 @@ public struct StrikeExposureConfig has store {
     expiry_fee_window_ms: u64,
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables the ramp.
     expiry_fee_max_multiplier: u64,
-    /// Maximum marginal rate of the path-independent inventory-impact curve, in
-    /// FLOAT_SCALING. `0` disables both charges and rebates.
-    inventory_impact_max_rate: u64,
     /// Rate on the payout profile's probability-weighted standard deviation.
     /// Zero disables the charge.
     inventory_skew_rate: u64,
@@ -72,10 +69,6 @@ public(package) fun expiry_fee_window_ms(config: &StrikeExposureConfig): u64 {
 
 public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u64 {
     config.expiry_fee_max_multiplier
-}
-
-public(package) fun inventory_impact_max_rate(config: &StrikeExposureConfig): u64 {
-    config.inventory_impact_max_rate
 }
 
 public(package) fun inventory_skew_rate(config: &StrikeExposureConfig): u64 {
@@ -135,7 +128,6 @@ public(package) fun new(): StrikeExposureConfig {
         max_entry_probability: config_constants::default_max_entry_probability!(),
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
-        inventory_impact_max_rate: config_constants::default_inventory_impact_max_rate!(),
         inventory_skew_rate: config_constants::default_inventory_skew_rate!(),
     }
 }
@@ -158,7 +150,6 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         max_entry_probability: config.max_entry_probability,
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
-        inventory_impact_max_rate: config.inventory_impact_max_rate,
         inventory_skew_rate: config.inventory_skew_rate,
     }
 }
@@ -199,11 +190,6 @@ public(package) fun set_expiry_fee_window_ms(config: &mut StrikeExposureConfig, 
 public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_expiry_fee_max_multiplier(value);
     config.expiry_fee_max_multiplier = value;
-}
-
-public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureConfig, value: u64) {
-    config_constants::assert_inventory_impact_max_rate(value);
-    config.inventory_impact_max_rate = value;
 }
 
 public(package) fun set_inventory_skew_rate(config: &mut StrikeExposureConfig, value: u64) {

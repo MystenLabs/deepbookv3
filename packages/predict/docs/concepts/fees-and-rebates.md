@@ -1,6 +1,6 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A referred mint redirects a configured share of the protocol-collected trading fee and congestion surcharge to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-impact charge/rebate** — risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it — and an isolated **inventory-skew charge/rebate** that prices how unevenly the book's payouts sit across likely settlement prices. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A referred mint redirects a configured share of the protocol-collected trading fee and congestion surcharge to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-skew charge/rebate** that prices how unevenly the book's payouts sit across likely settlement prices: trades that concentrate the book pay into a dedicated escrow and trades that flatten it receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
 
@@ -83,7 +83,7 @@ referral_basis = (trading_fee - sponsor_subsidy) + congestion_surcharge
 referral_fee   = floor(referral_basis * referral_fee_rate)
 ```
 
-Sponsor-funded subsidy is subtracted because it is not paid by the trader. Builder fees are already owned by the builder, and inventory-impact charges are isolated risk escrow, so neither enters the referral basis. Referrals apply only to mints; live and settled redeems do not pay referral fees.
+Sponsor-funded subsidy is subtracted because it is not paid by the trader. Builder fees are already owned by the builder, and inventory-skew adjustments are isolated risk escrow, so neither enters the referral basis. Referrals apply only to mints; live and settled redeems do not pay referral fees.
 
 The referral amount is split from the mint payment before the remaining protocol proceeds enter expiry cash. It therefore leaves `MintQuote.all_in_cost`, `max_cost`, and the trader's account debit unchanged. `MintQuote` describes what the trader pays, not how the protocol distributes those proceeds.
 
@@ -115,53 +115,9 @@ One accepted weakness: because the first observation seeds the variance directly
 
 The congestion surcharge is handled differently from the trading fee in the cash flow. It is withdrawn from the trader (at mint) or withheld from the payout (at redeem). On an unreferred mint or any redeem it rides into the expiry's cash as **surplus**; on a referred mint, the configured referral share is split from it first. It earns no builder cut. It compensates liquidity providers for transacting during congestion rather than being a fee on the contract itself.
 
-## Inventory-impact charge and rebate
-
-Inventory impact is an optional, path-independent transfer layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and uses its cadence `max_expiry_allocation` as the immutable impact scale `B`; changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
-
-### Step 1: measure the book's payout liability
-
-Let:
-
-- `M` be the largest summed net payout at any one settlement price;
-- `T` be the sum of every live order's payout (`quantity`);
-- `lambda` be `backing_buffer_lambda`.
-
-The existing live reserve liability is:
-
-```text
-L = M + lambda * (T - M)
-```
-
-A candidate range does not necessarily move `M` by its full net payout. The payout tree therefore reads the current maximum inside the range and in its complement in `O(log n)`, computes the exact prospective `M` and `T`, and evaluates the complete liability formula before and after the trade. Evaluating both complete states matters for integer arithmetic: rounding only the incremental buffer could miss a one-atom carry already accumulated in `lambda * (T-M)`. This charges overlapping exposure more than a cold disjoint range when it raises the book's worst settlement point.
-
-### Step 2: map liability to one book-level potential
-
-For maximum marginal rate `r_max` and scale `B`:
-
-```text
-phi(L) = r_max * L^2 / (2 * B)                  when L <= B
-phi(L) = r_max * B / 2 + r_max * (L - B)        when L > B
-```
-
-Below `B`, the marginal rate rises linearly from zero to `r_max`: at 25% utilization the marginal rate is 25% of `r_max`; at 100% utilization it reaches `r_max`. Above `B`, it stays capped instead of growing without bound. On chain, `phi` is defined by one exact sequence of round-down fixed-point operations. Both directions evaluate that same integer function.
-
-### Step 3: charge or rebate only the potential change
-
-```text
-mint charge       = phi(L_after)  - phi(L_before)
-live-close rebate = phi(L_before) - phi(L_after)
-```
-
-This state-function construction is the key safety property. Splitting a trade, closing it in pieces, or cycling through ranges only creates intermediate terms that cancel. For any sequence that returns the book to the same state, total inventory charges equal total inventory rebates exactly, including integer rounding. A probability-local multiplier would not have this property: changing another range could change the price/rate used on exit and make a cross-range cycle profitable.
-
-Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_reserve`. Required cash includes the earmark and free cash/NAV excludes it. A live close can spend only this reserve. Settlement releases whatever remains into ordinary expiry surplus, because no live close can occur afterward.
-
-This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
-
 ## Inventory-skew charge and rebate
 
-Inventory skew is a second isolated transfer, independent of inventory impact and layered the same way. Where occupancy prices how much gross cash a position ties up, skew prices how **unevenly** the book's payouts sit across the settlement prices that carry probability — a shape occupancy cannot see, because two books of equal size can differ arbitrarily in how one-sided they are.
+Inventory skew is an isolated transfer layered on top of the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. It prices how **unevenly** the book's payouts sit across the settlement prices that carry probability — a shape plain size cannot see, because two books of equal size can differ arbitrarily in how one-sided they are.
 
 The statistic is the probability-weighted standard deviation of the payout profile: `D(W) = sqrt(sum q(S) * W(S)^2 - (sum q(S) * W(S))^2)`, where `W(S)` is what the pool owes if settlement lands at tick `S` and `q(S)` is the probability of landing there under a surface **frozen at the market's first mint**. Freezing makes the charge a state function — a difference of one book-level potential `rate * D(W)` — so splitting, partial closes, and cycles telescope exactly, and a round trip refunds to the unit. The measure needs no measurement window: a price the market will almost never reach carries almost no weight, so nothing has to be clipped, sized, or re-derived.
 
@@ -186,9 +142,6 @@ flowchart TD
     ROUTE --> COLLECT[net fee and surcharge -> expiry cash]
     ROUTE --> REF[referred mint: configured share]
     REF --> RACCOUNT[referrer Account receive address]
-    L[Book payout liability L] --> PHI["inventory potential phi(L)"]
-    PHI --> IMPACT["mint: charge delta / live close: rebate delta"]
-    IMPACT --> IRESERVE[isolated inventory-impact reserve]
     D[Payout profile deviation D under the frozen measure] --> SKEW["skew charge/rebate = rate * delta D"]
     SKEW --> SRESERVE[isolated skew reserve]
 ```
@@ -201,10 +154,9 @@ Cash routing at trade time:
 | Builder fee | add-on to trading fee | builder code address | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus, net of any mint referral share | No |
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
-| Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
 | Inventory skew | mint add-on or withdrawal reduction / close credit or withheld charge | isolated skew escrow; residual becomes surplus at settlement | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge + skew_charge - skew_rebate` (at most one of the two skew amounts is nonzero); referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate + skew_rebate - skew_charge - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount, and the skew escrow is senior to fee revenue when a payout cannot cover both (the register's RP-29 owns that ordering). At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + skew_charge - skew_rebate` (at most one of the two skew amounts is nonzero); referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and skew adjustment on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + skew_rebate - skew_charge - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount, and the skew escrow is senior to fee revenue when a payout cannot cover both (the register's RP-29 owns that ordering). At **settled redeem**, the winning payout is paid in full with no per-trade or skew rebate.
 
 ## The LP supply/withdraw fee
 

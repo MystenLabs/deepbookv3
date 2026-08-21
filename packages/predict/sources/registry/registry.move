@@ -261,7 +261,6 @@ public fun create_and_share_expiry_market(
         tick_size,
         admission_tick_size,
         reference_tick_source_timestamp_ms,
-        max_expiry_allocation,
         ctx,
     );
     pool_vault.register_expiry(

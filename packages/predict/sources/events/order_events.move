@@ -40,8 +40,6 @@ public struct OrderMinted has copy, drop, store {
     /// Portion of the trader-paid trading fee and congestion surcharge delivered
     /// to the referrer.
     referral_fee: u64,
-    /// Separate inventory-impact charge escrowed for live-close rebates.
-    inventory_impact_charge: u64,
     /// Inventory-skew amounts for this mint; at most one is nonzero. A rebate
     /// reduces the withdrawal rather than paying the trader.
     skew_charge: u64,
@@ -86,8 +84,6 @@ public struct LiveOrderRedeemed has copy, drop, store {
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
-    /// Separate inventory-impact rebate paid from its isolated escrow.
-    inventory_impact_rebate: u64,
     /// Inventory-skew amounts for this close; at most one is nonzero. A close
     /// that unbalances the book is charged rather than rebated.
     skew_charge: u64,
@@ -136,7 +132,6 @@ public(package) fun emit_order_minted(
     builder_fee: u64,
     penalty_fee: u64,
     referral_fee: u64,
-    inventory_impact_charge: u64,
     skew_charge: u64,
     skew_rebate: u64,
     skew_reserve: u64,
@@ -158,7 +153,6 @@ public(package) fun emit_order_minted(
         builder_fee,
         penalty_fee,
         referral_fee,
-        inventory_impact_charge,
         skew_charge,
         skew_rebate,
         skew_reserve,
@@ -186,7 +180,6 @@ public(package) fun emit_live_order_redeemed(
     trading_fee: u64,
     builder_fee: u64,
     penalty_fee: u64,
-    inventory_impact_rebate: u64,
     skew_charge: u64,
     skew_rebate: u64,
     skew_reserve: u64,
@@ -205,7 +198,6 @@ public(package) fun emit_live_order_redeemed(
         trading_fee,
         builder_fee,
         penalty_fee,
-        inventory_impact_rebate,
         skew_charge,
         skew_rebate,
         skew_reserve,

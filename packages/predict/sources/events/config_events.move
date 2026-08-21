@@ -20,7 +20,6 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     max_entry_probability: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
-    inventory_impact_max_rate: u64,
     /// Inventory-skew rate applied to future markets.
     inventory_skew_rate: u64,
     onchain_timestamp_ms: u64,
@@ -87,8 +86,6 @@ public struct MarketCreated has copy, drop, store {
     max_entry_probability: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
-    /// Maximum marginal inventory-impact rate snapshotted by this market.
-    inventory_impact_max_rate: u64,
     /// Inventory-skew rate snapshotted by this market.
     inventory_skew_rate: u64,
 }
@@ -154,7 +151,6 @@ public(package) fun emit_strike_exposure_template_config_updated(
         max_entry_probability: config.max_entry_probability(),
         expiry_fee_window_ms: config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier(),
-        inventory_impact_max_rate: config.inventory_impact_max_rate(),
         inventory_skew_rate: config.inventory_skew_rate(),
         onchain_timestamp_ms,
     });
@@ -233,7 +229,6 @@ public(package) fun emit_market_created(
         max_entry_probability: strike_exposure_config.max_entry_probability(),
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
-        inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
         inventory_skew_rate: strike_exposure_config.inventory_skew_rate(),
     });
 }

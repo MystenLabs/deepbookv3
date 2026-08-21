@@ -109,7 +109,7 @@ current_nav = max(0, free_cash − live_marked_liability)
 
 where:
 
-- **`free_cash = cash_balance − inventory_impact_reserve`** — the expiry's DUSDC net of the isolated impact escrow it still owes. Inventory-impact escrow is not LP value while live.
+- **`free_cash = cash_balance − skew_reserve`** — the expiry's DUSDC net of the isolated skew escrow it still owes. Skew escrow is not LP value while live.
 - **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so there is no per-order correction term.
 
 The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding; it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
@@ -128,7 +128,7 @@ If that exact spot is not present, the market remains unsettled and the live bra
 
 Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence), and the same lock-free inner logic runs inside the flush's `value_expiry` before each market is valued.
 
-Each expiry has a **required cash** floor of `payout_liability + inventory_impact_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
+Each expiry has a **required cash** floor of `payout_liability + skew_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
 
 - `target_cash = max(required_cash × (1 + band), expiry_cash_floor)`
 - `sweep_threshold = max(required_cash × (1 + 2 × band), expiry_cash_floor)`
@@ -137,7 +137,7 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle DUSDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
-- **Settled sweep:** settlement first releases the now-unclaimable inventory-impact earmark into ordinary expiry surplus. The expiry is then deactivated, all cash above settled payout liability is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)).
+- **Settled sweep:** settlement first releases the now-unclaimable skew earmark into ordinary expiry surplus. The expiry is then deactivated, all cash above settled payout liability is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)).
 
 Funding room is bounded by the **per-expiry allocation cap** snapshotted from cadence config when the market is created. The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
 
@@ -150,7 +150,7 @@ Every cash movement is recorded in the ledger: cash sent accumulates into the pr
 The custody leaf (`ExpiryCash`) enforces, on every operation, that:
 
 ```
-cash_balance ≥ payout_liability + inventory_impact_reserve
+cash_balance ≥ payout_liability + skew_reserve
 ```
 
 For a live market, `payout_liability` is a **settlement floor plus a liquidity buffer**:

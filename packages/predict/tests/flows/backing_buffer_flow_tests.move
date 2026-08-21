@@ -157,7 +157,7 @@ fun full_close_below_remaining_reserve_aborts() {
 
 fun required_cash(market: &helpers::MarketBundle): u64 {
     let market = helpers::market(market);
-    market.payout_liability() + market.inventory_impact_reserve()
+    market.payout_liability() + market.skew_reserve()
 }
 
 fun mint_down(

@@ -66,7 +66,7 @@ Liquidity providers do not transact against a live pool price. They **queue** re
 
 These properties are designed in and hold by construction; their boundaries are detailed in [risks](./risks.md).
 
-- **Cash always backs payouts.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its inventory-impact escrow. Surplus above that line is the only cash the pool may sweep. An expiry can always pay its winners.
+- **Cash always backs payouts.** Each expiry's `ExpiryCash` enforces, on every cash movement, that its balance is at least its payout liability plus its inventory-skew escrow. Surplus above that line is the only cash the pool may sweep. An expiry can always pay its winners.
 - **Monetary math rounds in the protocol's favor.** Payouts, live redeems, and the per-expiry backing reserve use reserve-favoring rounding, so sub-unit dust accrues to the protocol rather than against its solvency. Reserve and payout reads derive from the same quantity atom, so a payout can never exceed the cash reserved to back it.
 - **The LP mark is exact and unforgeable.** A flush prices PLP supply and withdraw at one mark equal to the pool's exact recoverable NAV, and only a privileged operator can start a flush. A supplier can never over-mint and dilute incumbents, and the mark cannot be timed against a manipulated oracle.
 - **Live valuation is exact.** Each market's `current_nav` is the payout tree's boundary-linear walk (`Σ quantity × P(range)`), with no per-order correction needed, since every position is worth exactly its quantity times its range probability. See [risks](./risks.md).
@@ -78,7 +78,7 @@ These properties are designed in and hold by construction; their boundaries are 
 - [Glossary](./glossary.md) — every term technically defined and mapped to its standard options / structured-product name and code identifier.
 - [Markets and positions](./concepts/markets-and-positions.md) — per-expiry markets, the absolute tick grid and ±infinity sentinels, what an order is, and the full lifecycle.
 - [Pricing and oracles](./concepts/pricing-and-oracles.md) — the propbook Pyth and Block Scholes feeds, range-probability derivation, freshness, and the forward fallback.
-- [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, and the isolated inventory-impact charge and rebate.
+- [Fees and rebates](./concepts/fees-and-rebates.md) — the variance-based trading fee, expiry ramp, builder fee, congestion surcharge, and the isolated inventory-skew charge and rebate.
 - [Liquidity and NAV](./concepts/liquidity-and-nav.md) — the pool, the async supply/withdraw queues, the privileged flush, exact `current_nav`, pool↔expiry cash flow, and profit materialization.
 
 **Design — how the protocol is built:**

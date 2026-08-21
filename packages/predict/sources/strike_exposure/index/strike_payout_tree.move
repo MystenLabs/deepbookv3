@@ -139,25 +139,6 @@ public(package) fun range_max_payout(
     prefix_at_lower + window.max_payout_prefix_gain
 }
 
-/// Return the highest payout prefix outside `(lower_tick, higher_tick]`.
-public(package) fun complement_max_payout(
-    tree: &StrikePayoutTree,
-    lower_tick: u64,
-    higher_tick: u64,
-): u64 {
-    let left = if (lower_tick == 0) {
-        0
-    } else {
-        tree.range_max_payout(0, lower_tick)
-    };
-    let right = if (higher_tick == constants::pos_inf_tick!()) {
-        0
-    } else {
-        tree.range_max_payout(higher_tick, constants::pos_inf_tick!())
-    };
-    left.max(right)
-}
-
 /// Return raw `sum(q(S) * W(S))` over the settlement ticks `S` in
 /// `(lower_tick, higher_tick]`, where `W(S)` is the payout owed at `S` and `q`
 /// is the per-tick mass implied by the frozen boundary weights — the weighted

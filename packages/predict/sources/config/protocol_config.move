@@ -175,22 +175,6 @@ public fun set_template_backing_buffer_lambda(
     );
 }
 
-/// Set the maximum marginal inventory-impact rate snapshotted by newly created
-/// expiry markets. `0` (the default) disables both charges and rebates.
-public fun set_template_inventory_impact_max_rate(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-    clock: &Clock,
-) {
-    config.assert_version();
-    config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
-    config_events::emit_strike_exposure_template_config_updated(
-        &config.strike_exposure_template_config,
-        clock.timestamp_ms(),
-    );
-}
-
 /// Set the template rate charged on the payout profile's probability-weighted
 /// standard deviation. Existing markets keep the rate they snapshotted at
 /// creation.

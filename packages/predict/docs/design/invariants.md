@@ -12,15 +12,15 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Solvency and custody
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
-  and isolated inventory-impact reserve
-  (`cash ≥ payout_liability + inventory_impact_reserve`),
+  and isolated inventory-skew reserve
+  (`cash ≥ payout_liability + skew_reserve`),
   re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
-- **Inventory-impact escrow covers the current potential.** While live,
-  `inventory_impact_reserve ≥ phi(payout_liability)`. Mints credit exactly the
-  potential increase and voluntary live closes may withdraw only the potential
-  decrease;
-  settlement releases the residual earmark when live closes become impossible.
+- **Inventory-skew escrow covers the current potential.** While live,
+  `skew_reserve ≥ rate × D(W)` with equality — cumulative collections telescope
+  to the potential of the current book exactly; rebates may withdraw only the
+  potential decrease, and settlement releases the residual earmark when rebates
+  become impossible.
 - **Inventory cycles telescope.** Inventory charge/rebate is always the signed
   difference between two evaluations of the same deterministic integer state
   function. Therefore any sequence returning the payout book to its starting
@@ -63,7 +63,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
   free_cash − live_marked_liability`, floored at zero, where `free_cash =
-  cash − inventory_impact_reserve` and the liability is the
+  cash − skew_reserve` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree
@@ -142,7 +142,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
   min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
-- On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-impact charges are excluded. The DUSDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
+- On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-skew adjustments are excluded. The DUSDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
   `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the DUSDC leg
   **outside** the mark and retained by the pool, so it accrues to remaining
