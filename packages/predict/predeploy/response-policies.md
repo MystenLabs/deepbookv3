@@ -954,7 +954,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   that consumes the series. A stale spot affects every market on the
   underlying; a stale forward or SVI affects its expiry. Because a flush must
   value every active market, any one stale required series blocks the pool-wide
-  flush and all queued LP fills. Exact settlement does not use Block Scholes.
+  flush and all queued LP fills. Exact settlement does not use these latest-series freshness checks; its post-grace Block Scholes fallback reads insert-only exact history.
 - **Response:** fail closed on publish age — a series is usable while its
   signed batch envelope time is inside the window, and each publish is trusted
   as the provider's assertion that the carried value is current then. Spot and

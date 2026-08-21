@@ -28,7 +28,7 @@ There are two write shapes:
   timestamp is valid and no read already exists at that exact source timestamp.
   It does not mutate `latest`; invalid or duplicate inserts are no-ops.
 
-Pyth consumers should use the `source_timestamp_ms` returned on raw or normalized `OracleRead` values when they need a liveness reference. Block Scholes uses its latest-only typed stores and `BsRead` clocks described below.
+Pyth consumers should use the `source_timestamp_ms` returned on raw or normalized `OracleRead` values when they need a liveness reference. Block Scholes consumers use its typed latest stores or exact minute-boundary spot history together with the `BsRead` clocks described below.
 
 ## Canonical Propbook Reads And Raw Source Reads
 
