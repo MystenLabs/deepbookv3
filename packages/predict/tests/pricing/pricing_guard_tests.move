@@ -933,8 +933,9 @@ fun surface_with_svi_sigma_above_max_aborts() {
 
 /// A surface whose forward is tiny relative to the BS spot passes the envelope
 /// (there is no LOWER basis bound), but re-anchoring at a pyth spot far below the
-/// BS spot floors `spot * bs_forward / bs_spot` to 0, and `compute_nd2` aborts on
-/// the first finite-strike quote.
+/// BS spot floors `spot * bs_forward / bs_spot` to 0, which the pricer load rejects
+/// before it can take the forward's logarithm. The quote below is therefore
+/// unreachable; the abort happens at `load_pricer_bundle`.
 #[test, expected_failure(abort_code = pricing::EZeroForward)]
 fun re_anchored_zero_forward_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();

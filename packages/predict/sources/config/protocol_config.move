@@ -144,6 +144,16 @@ public fun set_template_inventory_impact_max_rate(
     config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
 }
 
+/// Set the frozen-grid capital scale snapshotted by newly created expiry markets.
+public fun set_template_inventory_impact_scale(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_version();
+    config.strike_exposure_template_config.set_inventory_impact_scale(value);
+}
+
 /// Set the minimum raw entry probability snapshotted by newly created expiry markets.
 public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,

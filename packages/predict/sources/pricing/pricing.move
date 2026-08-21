@@ -25,6 +25,14 @@ use sui::clock::Clock;
 public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
+    /// Natural log of the forward, 1e9-scaled with sign. Pricing reads the forward
+    /// only as `ln(strike) - ln(forward)`, so the log is taken once per pricer rather
+    /// than once per strike: a 100-bucket grid verification and a full payout-tree
+    /// walk would otherwise repeat it at every boundary they price.
+    ln_forward: I64,
+    /// The forward itself, 1e9-scaled. Pricing does not need it, but a caller
+    /// supplying forward-relative strikes does: the inventory grid materializes its
+    /// absolute boundary ladder against this exact value.
     forward: u64,
     svi: PricingSVI,
     /// Timestamps of the oracle observations this snapshot validated, as trade events report
@@ -61,7 +69,7 @@ public struct RawSVI has copy, drop {
 /// a full raw unit — which a short-dated surface cannot afford, because its whole
 /// total variance is only about ten raw units at 1e9. Keeping the rolled values at
 /// 1e18 hands `variance_sqrt_and_d2` the same domain it already computes in.
-public struct PricingSVI has copy, drop {
+public struct PricingSVI has copy, drop, store {
     /// Rolled-down SVI `a`, magnitude at 1e18, sign in `a_is_negative`.
     a_magnitude: u128,
     a_is_negative: bool,
@@ -70,6 +78,13 @@ public struct PricingSVI has copy, drop {
     rho: I64,
     m: I64,
     sigma: u64,
+}
+
+/// Immutable pricing snapshot used only by one market's frozen inventory grid.
+public struct FrozenPricer has copy, drop, store {
+    /// Carried as a log for the reason given on `Pricer.ln_forward`.
+    ln_forward: I64,
+    svi: PricingSVI,
 }
 
 const EZeroForward: u64 = 0;
@@ -114,13 +129,13 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 /// Return the current UP digital probability for a typed strike. Public PTB and
 /// devInspect reads can compose it with a transaction-local `Pricer`.
 public fun up_price(pricer: &Pricer, strike: Strike): u64 {
-    compute_up_price(&pricer.svi, pricer.forward, strike)
+    compute_up_price(&pricer.svi, &pricer.ln_forward, strike)
 }
 
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+    compute_range_price(&pricer.svi, &pricer.ln_forward, lower, higher)
 }
 
 // === Public-Package Functions ===
@@ -128,6 +143,11 @@ public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
+}
+
+/// Return the forward this pricer resolved, 1e9-scaled.
+public(package) fun forward(pricer: &Pricer): u64 {
+    pricer.forward
 }
 
 public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
@@ -144,6 +164,28 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
 
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
+}
+
+/// Freeze the probability inputs from a validated market-bound live pricer.
+public(package) fun snapshot_for_inventory(pricer: &Pricer): FrozenPricer {
+    FrozenPricer {
+        ln_forward: pricer.ln_forward,
+        svi: pricer.svi,
+    }
+}
+
+/// Return an immutable snapshot's UP digital probability for `strike`.
+///
+/// Adjacent ranges over one snapshot share a boundary, so a caller pricing a whole
+/// partition should difference this ladder itself rather than call
+/// `frozen_range_price` per cell, which prices every interior boundary twice.
+public(package) fun frozen_up_price(pricer: &FrozenPricer, strike: Strike): u64 {
+    compute_up_price(&pricer.svi, &pricer.ln_forward, strike)
+}
+
+/// Return an immutable snapshot's probability for `(lower, higher]`.
+public(package) fun frozen_range_price(pricer: &FrozenPricer, lower: Strike, higher: Strike): u64 {
+    compute_range_price(&pricer.svi, &pricer.ln_forward, lower, higher)
 }
 
 /// Scale one 1e9-scaled SVI magnitude down by the fraction of anchored time
@@ -380,9 +422,15 @@ fun resolve_live_pricer(
         // spot bounds still guarantee this multiplication and result fit in u64.
         forward = math::mul_div_down(spot, bs_forward, bs_spot);
     };
+    // `assert_inputs_pricing_safe` bounds the Block Scholes forward away from zero,
+    // but the re-anchor above is a flooring divide that can land on zero from
+    // in-envelope inputs. Guarded here rather than at the first digital because the
+    // log is taken once, and `math::ln` would otherwise abort with its own code.
+    assert!(forward > 0, EZeroForward);
 
     Pricer {
         expiry_market_id,
+        ln_forward: math::ln(forward),
         forward,
         svi,
         pyth_spot_source_timestamp_ms,
@@ -495,18 +543,18 @@ fun min_svi_variance_increment(svi: &RawSVI): u64 {
 }
 
 /// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &PricingSVI, forward: u64, lower: Strike, higher: Strike): u64 {
+fun compute_range_price(svi: &PricingSVI, ln_forward: &I64, lower: Strike, higher: Strike): u64 {
     assert!(lower.value() < higher.value(), EInvalidRange);
 
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
+    let lower_up_price = compute_up_price(svi, ln_forward, lower);
+    let higher_up_price = compute_up_price(svi, ln_forward, higher);
     // Fixed-point approximation or a non-monotone SVI surface can invert the
     // boundary prices; the range probability is floored at zero.
     lower_up_price.saturating_sub(higher_up_price)
 }
 
 /// Compute the adjusted UP digital probability for `strike`.
-fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
+fun compute_up_price(svi: &PricingSVI, ln_forward: &I64, strike: Strike): u64 {
     if (strike.is_neg_inf()) {
         return math::float_scaling!()
     };
@@ -514,7 +562,7 @@ fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
         return 0
     };
 
-    compute_nd2(svi, forward, strike.value())
+    compute_nd2(svi, ln_forward, strike.value())
 }
 
 /// Binary pricing from SVI total variance:
@@ -522,9 +570,7 @@ fun compute_up_price(svi: &PricingSVI, forward: u64, strike: Strike): u64 {
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
 /// - price = N(d2) - phi(d2) * w'(k) / (2 * sqrt(w(k)))
-fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
-    assert!(forward > 0, EZeroForward);
-
+fun compute_nd2(svi_params: &PricingSVI, ln_forward: &I64, strike: u64): u64 {
     // Log-moneyness as a DIFFERENCE of logarithms, never as `ln` of a fixed-point
     // ratio. Forming `strike * 1e9 / forward` first destroys exactly the tails it
     // is asked about: the quotient floors to zero once `strike` is a billionth of
@@ -541,7 +587,7 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     // term rather than a relative error that grows without bound as the tail
     // deepens. No strike needs a special case, and no surface has to be restricted
     // to keep a shortcut honest.
-    let k = math::ln(strike).sub(&math::ln(forward));
+    let k = math::ln(strike).sub(ln_forward);
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();

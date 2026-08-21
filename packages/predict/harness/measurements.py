@@ -32,6 +32,72 @@ def gas_by_moneyness(records: Iterable[dict[str, Any]]) -> dict[str, list[int]]:
     return dict(buckets)
 
 
+def cost_curve(
+    records: Iterable[dict[str, Any]],
+    record_type: str,
+    sizes: list[tuple[int, int, str]],
+) -> list[tuple[int, int]]:
+    """Join per-transaction computation cost to the book size in force when it ran.
+
+    `sizes` is `(ts, size, market)` in ascending `ts`, as a size-emitting strategy
+    traces it. There is no on-chain read that reports a payout tree's node count,
+    so size is carried by the actor that built the book and matched to the measured
+    transaction by timestamp, per market: the newest size at or before the
+    transaction is the book it saw. Records whose market never reported a size drop
+    out rather than being credited with someone else's book.
+    """
+    latest: dict[str, int] = {}
+    by_market: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for ts, size, market in sizes:
+        by_market[market].append((ts, size))
+    points: list[tuple[int, int]] = []
+    for record in sorted(
+        (
+            record
+            for record in records
+            if record.get("type") == record_type
+            and record.get("ts")
+            and record.get("compGas")
+            and record.get("market")
+        ),
+        key=lambda record: record["ts"],
+    ):
+        market = str(record["market"])
+        for ts, size in by_market.get(market, ()):
+            if ts <= record["ts"]:
+                latest[market] = size
+            else:
+                break
+        size = latest.get(market, 0)
+        if size > 0:
+            points.append((size, int(record["compGas"])))
+    return points
+
+
+def cap_crossing(
+    points: list[tuple[int, int]], cap: int
+) -> tuple[float, float, int] | None:
+    """Least-squares `(slope, intercept, size at which cost reaches cap)`.
+
+    None when the samples cannot place a line (fewer than two points, one distinct
+    size, or a non-increasing fit), so a caller reports the raw peak instead of
+    extrapolating a crossing from noise.
+    """
+    count = len(points)
+    if count < 2:
+        return None
+    sum_size = sum(size for size, _ in points)
+    sum_cost = sum(cost for _, cost in points)
+    denominator = count * sum(size * size for size, _ in points) - sum_size * sum_size
+    if not denominator:
+        return None
+    slope = (count * sum(size * cost for size, cost in points) - sum_size * sum_cost) / denominator
+    if slope <= 0:
+        return None
+    intercept = (sum_cost - slope * sum_size) / count
+    return slope, intercept, int((cap - intercept) / slope)
+
+
 def nav_summary(records: Iterable[dict[str, Any]]) -> dict[str, float | int] | None:
     flushes = sorted(
         (

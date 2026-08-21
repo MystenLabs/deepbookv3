@@ -127,7 +127,15 @@ public(package) fun add_position(
     let d = data_mut(account, ctx);
     let key = position_key(expiry_market_id, order_id);
     assert!(!d.positions.contains(key), EPositionAlreadyExists);
-    d.positions.add(key, Position { root_id: position_root_id, opened_at_ms });
+    d
+        .positions
+        .add(
+            key,
+            Position {
+                root_id: position_root_id,
+                opened_at_ms,
+            },
+        );
 }
 
 /// Remove an order position and return its root order ID for event attribution.

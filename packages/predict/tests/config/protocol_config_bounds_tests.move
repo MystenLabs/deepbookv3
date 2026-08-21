@@ -185,6 +185,14 @@ fun template_inventory_impact_max_rate_above_one_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = config_constants::EInvalidInventoryImpactScale)]
+fun template_inventory_impact_scale_zero_aborts() {
+    let (scenario, admin_cap, config_id) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_inventory_impact_scale(&admin_cap, 0);
+    abort 999
+}
+
 // === Strike-exposure templates: boundary values round-trip ===
 
 #[test]
@@ -218,21 +226,22 @@ fun backing_buffer_lambda_market_snapshot_freezes_at_creation() {
 fun inventory_impact_rate_and_scale_snapshot_at_creation() {
     let mut fx = helpers::setup_market_default();
     let rate = config_constants::max_inventory_impact_max_rate!();
+    let scale = 2_000_000_000;
     fx.set_template_inventory_impact_max_rate(rate);
+    fx.set_template_inventory_impact_scale(scale);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
 
     let market = fx.take_market_bundle(expiry_id);
     assert_eq!(helpers::market(&market).inventory_impact_max_rate(), rate);
-    assert_eq!(
-        helpers::market(&market).inventory_impact_scale(),
-        test_constants::default_max_expiry_allocation(),
-    );
+    assert_eq!(helpers::market(&market).inventory_impact_scale(), scale);
     helpers::return_market_bundle(market);
 
     // Later template changes do not retroactively reprice the existing book.
     fx.set_template_inventory_impact_max_rate(0);
+    fx.set_template_inventory_impact_scale(scale * 2);
     let market = fx.take_market_bundle(expiry_id);
     assert_eq!(helpers::market(&market).inventory_impact_max_rate(), rate);
+    assert_eq!(helpers::market(&market).inventory_impact_scale(), scale);
     helpers::return_market_bundle(market);
     fx.finish();
 }

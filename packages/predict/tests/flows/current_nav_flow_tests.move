@@ -4,10 +4,10 @@
 /// Differential coverage for the exact single-expiry live NAV reader
 /// (`expiry_market::current_nav`). Every test builds protocol state through the
 /// production mint flow, then asserts `current_nav` exactly equals an INDEPENDENT
-/// per-order reference (`reference_nav`): `free_cash - Σ qty·P(range)`, computed
+/// per-order reference (`reference_nav`): `cash - Σ qty·P(range)`, computed
 /// straight from each order's atoms and `pricing::range_price`. The reference
-/// reuses NONE of `walk_linear` / `live_marked_liability` / `current_nav` /
-/// `expiry_cash::free_cash`, so it is a genuine oracle (unit-tests rule 1): it
+/// reuses NONE of `walk_linear` / `live_marked_liability` / `current_nav`,
+/// so it is a genuine oracle (unit-tests rule 1): it
 /// sums per order, while the contract nets per boundary.
 ///
 /// All fixtures anchor every finite boundary at `strike_tick` (whose raw strike ==
@@ -41,7 +41,7 @@ const NON_MONOTONE_LOWER_TICK: u64 = 90;
 const NON_MONOTONE_HIGHER_TICK: u64 = 100;
 
 #[test]
-fun empty_live_market_values_at_free_cash() {
+fun empty_live_market_values_at_its_whole_cash_balance() {
     let (mut fx, expiry_id, _trader) = helpers::setup_everything();
     fx.scenario_mut().next_tx(test_constants::alice());
     let market = fx.take_market_bundle(expiry_id);
@@ -197,7 +197,7 @@ fun check_nav(
     helpers::assert_market_backed(expiry_market);
 }
 
-/// Independent NAV oracle (unit-tests rule 1): `free_cash - Σ contribution` per
+/// Independent NAV oracle (unit-tests rule 1): `cash - Σ contribution` per
 /// open order, using only order atoms and `pricing::range_price`. Every order is
 /// worth `qty·P(range)` live, so each contributes exactly that. The order's ticks
 /// are converted to raw strikes through the same `range_codec` boundary the
@@ -211,6 +211,5 @@ fun reference_nav(market: &ExpiryMarket, pricer: &Pricer, order_ids: &vector<u25
         liability =
             liability + math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
     });
-    let free_cash = market.cash_balance();
-    free_cash.saturating_sub(liability)
+    market.cash_balance().saturating_sub(liability)
 }

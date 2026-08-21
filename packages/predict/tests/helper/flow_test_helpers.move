@@ -32,6 +32,7 @@ use deepbook_predict::{
     builder_code::BuilderCode,
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
+    frozen_grid_fixture,
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
@@ -501,6 +502,40 @@ public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64
     config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the frozen-grid capital scale snapshotted by subsequently created markets.
+public fun set_template_inventory_impact_scale(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_inventory_impact_scale(&self.admin_cap, value);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Initialize a market's production frozen grid from its current validated pricer.
+public fun initialize_inventory_grid_bundle(self: &mut Fixture, market: &mut MarketBundle) {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.values(),
+            market.bs.svi(),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    let boundaries = frozen_grid_fixture::ratios();
+    let registry = self.scenario.take_shared<Registry>();
+    registry.initialize_inventory_grid(
+        &mut market.market,
+        &market.config,
+        &self.lifecycle_cap,
+        &pricer,
+        boundaries,
+    );
+    return_shared(registry);
 }
 
 /// Resize the default cadence's pool allocation terms through the production
@@ -1599,6 +1634,7 @@ public fun redeem_live(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
+    max_cost: u64,
 ): Option<u256> {
     let auth = account::generate_auth(self.scenario.ctx());
     let pricer = market.load_live_pricer(
@@ -1619,6 +1655,7 @@ public fun redeem_live(
         close_quantity,
         min_probability,
         min_proceeds,
+        max_cost,
         root,
         &self.clock,
         self.scenario.ctx(),
@@ -1647,6 +1684,7 @@ public fun redeem_live_bundle_with_pyth(
         close_quantity,
         0,
         0,
+        std::u64::max_value!(),
     )
 }
 
@@ -1670,6 +1708,7 @@ public fun redeem_live_bundle(
         close_quantity,
         0,
         0,
+        std::u64::max_value!(),
     )
 }
 
@@ -1696,6 +1735,33 @@ public fun redeem_live_bundle_with_limits(
         close_quantity,
         min_probability,
         min_proceeds,
+        std::u64::max_value!(),
+    )
+}
+
+/// Close a live order with an explicit cap on any DUSDC debit needed when
+/// deductions exceed gross redeem proceeds.
+public fun redeem_live_bundle_with_max_cost(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    order_id: u256,
+    close_quantity: u64,
+    max_cost: u64,
+): Option<u256> {
+    self.redeem_live(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        order_id,
+        close_quantity,
+        0,
+        0,
+        max_cost,
     )
 }
 
@@ -2000,11 +2066,10 @@ public fun finish_flush_bundle(
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
-/// liability plus its isolated inventory-impact escrow, mirroring the contract's
-/// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
-/// redeem / sync).
+/// liability, mirroring the contract's `expiry_cash::assert_backing`. Assert
+/// after every cash-mutating flow (mint / redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
-    assert!(market.cash_balance() >= market.payout_liability() + market.inventory_impact_reserve());
+    assert!(market.cash_balance() >= market.payout_liability());
 }
 
 /// S1 backing assertion for a market bundle.
@@ -2013,8 +2078,7 @@ public fun assert_market_backed_bundle(market: &MarketBundle) {
 }
 
 /// Expected snapshot of one expiry market's cash and payout backing, asserted in
-/// one call by `check_market_cash`. The isolated inventory-impact escrow is not a
-/// field here — it ships at a zero rate, and `assert_market_backed` covers it.
+/// one call by `check_market_cash`.
 public struct ExpectedMarketCash has copy, drop {
     /// DUSDC held by the expiry (`market.cash_balance()`).
     cash_balance: u64,

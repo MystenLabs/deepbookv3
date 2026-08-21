@@ -46,7 +46,7 @@ KEEPER_BRICK_MIN_ELAPSED_MS = 2 * SHORTEST_CADENCE_MS
 _BASE_TRACE_FIELDS = {"schema", "type", "ts"}
 _KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
     "settle": ({"market", "expiryMs"}, set()),
-    "fail": ({"tag"}, {"lane", "fatal"}),
+    "fail": ({"tag"}, {"lane", "market", "fatal"}),
     "keeper-stall": ({"consecutiveDefers", "lastError"}, set()),
     "flush": (
         {
@@ -60,6 +60,11 @@ _KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
         },
         set(),
     ),
+    # One authenticated inventory-grid cut. `initialize` runs on an empty book so it
+    # is a fixed cost; `refresh` re-queries a range-max per bucket and walks the whole
+    # payout tree, so its computation is what the book-size join below measures.
+    "gridInit": ({"market", "expiryMs", "buckets", "gas", "compGas"}, set()),
+    "gridRefresh": ({"market", "expiryMs", "buckets", "gas", "compGas"}, set()),
     "liquidate": ({"markets", "gas"}, {"budget"}),
     # One rung of the trade-liquidation-budget ladder. `requestedAtMs` is stamped before the
     # set-tx so the analysis can discard probes that ran while the in-force budget was
@@ -161,6 +166,7 @@ _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "elapsedMs",
     "requestedAtMs",
     "book",
+    "buckets",
     "compGas",
     "computationCost",
     "consecutiveDefers",
@@ -423,6 +429,44 @@ def _analyze_one(inst: Path) -> list[str]:
             print(f"  flush valued the full book ({peak}) at ~{max_c:,} comp ({pct} of the {COMP_CAP:,} cap) — the 5000 order cap binds, not NAV computation")
         else:
             print(f"  no breakpoint (computation peaked at {max_c:,} = {pct} of the {COMP_CAP:,} cap); grow the book further for the empirical limit")
+
+    # Inventory grid: refresh computation vs payout-tree size. A refresh re-cuts the
+    # 100 boundaries, re-queries one range-max per bucket, and walks the whole tree, so
+    # its cost grows with the node count the tree profile drives up. The keeper traces
+    # the cut; the trader traces the node count; they are joined per market by time.
+    grid_refreshes = [r for r in recs if r.get("type") == "gridRefresh" and r.get("_actor") == "keeper"]
+    if grid_refreshes:
+        node_sizes = sorted(
+            (
+                (r["ts"], int(r["perMarket"]), str(r["market"]))
+                for r in recs
+                if r.get("type") == "nodes" and r.get("ts") and r.get("market") and "perMarket" in r
+            ),
+        )
+        inits = [int(r["compGas"]) for r in recs if r.get("type") == "gridInit" and r.get("compGas")]
+        print(f"\ninventory grid — refresh computation vs payout-tree size ({len(grid_refreshes)} refreshes):")
+        if inits:
+            print(f"  initialize (empty book): {max(inits):,} comp ({max(inits) / COMP_CAP * 100:.0f}% of the {COMP_CAP:,} cap)")
+        pts = measurements.cost_curve(recs, "gridRefresh", node_sizes)
+        if pts:
+            lo, hi = min(pts, key=lambda p: p[0]), max(pts, key=lambda p: p[0])
+            print(f"  {lo[0]} orders -> {lo[1]:,} comp  ...  {hi[0]} orders -> {hi[1]:,} comp")
+            fit = measurements.cap_crossing(pts, COMP_CAP)
+            if fit:
+                slope, base, cross = fit
+                print(f"  ~{int(slope):,} comp/order (+{int(base):,} base) -> hits the {COMP_CAP:,} computation cap at ~{cross:,} orders")
+            peak_comp = max(c for _, c in pts)
+            print(f"  peak refresh {peak_comp:,} comp at {max(s for s, _ in pts)} orders ({peak_comp / COMP_CAP * 100:.0f}% of the cap)")
+        else:
+            # Every refresh ran against a market the trader never reported a size for,
+            # so the cost is real but unattributable to a book size.
+            measured = [int(r["compGas"]) for r in grid_refreshes if r.get("compGas")]
+            if measured:
+                print(f"  {max(measured):,} peak comp, but no node-count trace to size it against")
+        grid_fails = [f for f in keeper_fails if str(f.get("lane", "")).startswith("grid-")]
+        if grid_fails:
+            tags = sorted({str(f.get("tag", "")) for f in grid_fails})
+            print(f"  {len(grid_fails)} cut(s) deferred: {', '.join(tags)}")
 
     # Batched transaction measurements shared by the capacity and cleanup families.
     batch_samples, batch_oogs = measurements.batch_computation(recs)

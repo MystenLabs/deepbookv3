@@ -29,6 +29,7 @@ const EInvalidMaxLpPoolValue: u64 = 18;
 const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
+const EInvalidInventoryImpactScale: u64 = 22;
 
 // === Fees ===
 
@@ -178,6 +179,22 @@ public(package) fun assert_inventory_impact_max_rate(value: u64) {
         value >= min_inventory_impact_max_rate!()
             && value <= max_inventory_impact_max_rate!(),
         EInvalidInventoryImpactMaxRate,
+    );
+}
+
+/// Frozen-grid capital scale in DUSDC base units. The default is $1,000.
+public(package) macro fun default_inventory_impact_scale(): u64 { 1_000_000_000 }
+
+public(package) macro fun min_inventory_impact_scale(): u64 {
+    deepbook_predict::constants::position_lot_size!()
+}
+
+public(package) macro fun max_inventory_impact_scale(): u64 { std::u64::max_value!() }
+
+public(package) fun assert_inventory_impact_scale(value: u64) {
+    assert!(
+        value >= min_inventory_impact_scale!() && value <= max_inventory_impact_scale!(),
+        EInvalidInventoryImpactScale,
     );
 }
 

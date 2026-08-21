@@ -19,6 +19,7 @@ use deepbook_predict::{
     market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
+    pricing::Pricer,
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
@@ -261,7 +262,6 @@ public fun create_and_share_expiry_market(
         tick_size,
         admission_tick_size,
         reference_tick_source_timestamp_ms,
-        max_expiry_allocation,
         ctx,
     );
     pool_vault.register_expiry(
@@ -287,6 +287,42 @@ public fun create_and_share_expiry_market(
     );
 
     expiry_market_id
+}
+
+/// Authenticate and initialize one registered market's inventory grid.
+///
+/// `ratios` are the 99 interior bucket boundaries as `strike / forward`, 1e9-scaled;
+/// the market's own pricer supplies the forward they are measured against.
+public fun initialize_inventory_grid(
+    registry: &Registry,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    lifecycle_cap: &MarketLifecycleCap,
+    pricer: &Pricer,
+    ratios: vector<u64>,
+) {
+    config.assert_version();
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
+    config.assert_not_valuation_in_progress();
+    market.initialize_inventory_grid(pricer, ratios);
+}
+
+/// Authenticate and re-cut one registered market's inventory grid onto the
+/// current probability surface. Cadence is a keeper policy, not a contract rule:
+/// the ratios are verified against the supplied market-bound pricer, so the
+/// cap holder chooses when to refresh but never what the snapshot says.
+public fun refresh_inventory_grid(
+    registry: &Registry,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    lifecycle_cap: &MarketLifecycleCap,
+    pricer: &Pricer,
+    ratios: vector<u64>,
+) {
+    config.assert_version();
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
+    config.assert_not_valuation_in_progress();
+    market.refresh_inventory_grid(pricer, ratios);
 }
 
 /// Create a derived shared BuilderCode for the caller and index.

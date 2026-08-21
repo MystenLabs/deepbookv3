@@ -1,9 +1,9 @@
+import { FAR_MARKET_MIN_HORIZON_MS } from "../predictConfig.js";
 import { type Instruction } from "../resolver.js";
 import { type MintLeg, type Mkt, type Strategy, type StrategyCtx } from "../strategy.js";
 import { errorTag, isOog } from "../trace.js";
 
 const SCALE = 1_000_000_000n;
-const TWO_HOURS_MS = 2 * 3_600_000;
 const MAX_BOOK = 5_000;
 const FUND = 20_000_000_000_000n;
 const GAS_BUDGET = 50_000_000_000;
@@ -40,7 +40,7 @@ function farMarket(ctx: StrategyCtx): Mkt | null {
   const farthest = live.reduce((left, right) =>
     right.expiryMs > left.expiryMs ? right : left,
   );
-  return farthest.expiryMs > Date.now() + TWO_HOURS_MS ? farthest : null;
+  return farthest.expiryMs > Date.now() + FAR_MARKET_MIN_HORIZON_MS ? farthest : null;
 }
 
 function mintLeg(
@@ -121,6 +121,11 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
     maxOps: 0,
     fund: FUND,
     gasBudget: GAS_BUDGET,
+    // The tree profile is the only book big enough to price an inventory-grid
+    // refresh against a full market: the refresh now reads the inline cell mirror,
+    // and this profile still drives the node count the flush (not the refresh)
+    // hits the object-cache ceiling at.
+    inventoryGrid: profile === "tree",
     expect:
       profile === "tree"
         ? {

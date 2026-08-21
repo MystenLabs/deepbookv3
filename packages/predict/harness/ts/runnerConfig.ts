@@ -38,6 +38,21 @@ export function bigintEnv(name: string, fallback: bigint): bigint {
   return BigInt(value);
 }
 
+/** Parse a `0`/`1` env flag, defaulting to off.
+ *
+ * Validated rather than truthiness-tested for the reason `bigintEnv` gives: a
+ * launcher that passes `"false"` or `"off"` would otherwise silently enable the
+ * feature it meant to disable. */
+export function flagEnv(name: string): boolean {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return false;
+  const value = raw.trim();
+  if (value !== "0" && value !== "1") {
+    throw new Error(`${name} must be "0" or "1", got "${raw}"`);
+  }
+  return value === "1";
+}
+
 export interface BudgetRung {
   atMs: number;
   budget: bigint;

@@ -41,6 +41,14 @@ export const CADENCES: Record<number, CadenceConfig> = {
 // Genesis bootstrap supply: 10M DUSDC (lock_capital mints min_bootstrap_liquidity itself).
 export const BOOTSTRAP_SUPPLY = 10_000_000_000_000n;
 
+// Remaining life a market needs before a capacity measurement will touch it. A
+// book only reaches an interesting size if it has time to be filled, and the
+// settlement distribution has to be wide enough to partition: the width scales
+// with the square root of remaining time, so a market minutes from expiry has
+// quantiles that round onto the same raw strike. Shared so the strategy filling
+// the book and the keeper cutting its inventory grid cannot pick different markets.
+export const FAR_MARKET_MIN_HORIZON_MS = 2 * 3_600_000;
+
 // Resolver market params — all snapshotted from the contract defaults the market gets.
 // tickSize / admissionTickSize are in USD (raw / 1e9).
 export const RESOLVER_MARKET: MarketParams = {

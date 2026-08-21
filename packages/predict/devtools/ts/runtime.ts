@@ -1340,10 +1340,11 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             tx.pure.u256(BigInt(params.orderId)),
             tx.pure.u64(params.closeQuantity),
             // `min_probability` then `min_proceeds` close-side slippage floors; the
-            // benchmark never sets a floor, so pass 0 to disable both (mirrors mint's
-            // U64_MAX caps).
+            // The benchmark disables close floors and permits any inventory-impact
+            // debit if a hedge-removing close exceeds its gross proceeds.
             tx.pure.u64(0),
             tx.pure.u64(0),
+            tx.pure.u64(U64_MAX),
             // `redeem_live` loads the account and ambient-settles it (`settle<DUSDC>`)
             // before crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
             tx.object(ACCUMULATOR_ROOT_ID),
@@ -1866,6 +1867,50 @@ export function keeperSettleTx(params: {
         ],
     });
     return tx;
+}
+
+// Inputs for one authenticated inventory-grid cut. `ratios` is the 99 interior
+// quantiles as `strike / forward`, 1e9-scaled; the contract supplies the open-end
+// sentinels, materializes the absolute ladder against the forward the pricer loaded
+// in the same PTB resolves, and then verifies the per-bucket mass the caller owns.
+export interface InventoryGridParams extends OracleFeedIds {
+    expiryMarketId: string;
+    protocolConfigId: string;
+    lifecycleCapId: string;
+    ratios: bigint[];
+}
+
+// Cut a market's inventory grid, either for the first time (`initialize`, which
+// the contract only accepts on an empty book) or onto the current surface
+// (`refresh`, which re-derives the rolling state from the payout tree).
+//
+// Both are one privileged call over a pricer loaded in the same PTB, so the ratios
+// are read and verified against the surface the market prices at right now.
+// Kept as a single builder because the two entrypoints take identical arguments
+// and differ only in which contract-side precondition they assert.
+function inventoryGridTx(fn: "initialize" | "refresh", params: InventoryGridParams): Transaction {
+    const tx = new Transaction();
+    const pricer = loadLivePricer(tx, params);
+    tx.moveCall({
+        target: target("registry", `${fn}_inventory_grid`),
+        arguments: [
+            tx.object(REGISTRY_ID),
+            tx.object(params.expiryMarketId),
+            tx.object(params.protocolConfigId),
+            tx.object(params.lifecycleCapId),
+            pricer,
+            tx.pure.vector("u64", params.ratios),
+        ],
+    });
+    return tx;
+}
+
+export function initializeInventoryGridTx(params: InventoryGridParams): Transaction {
+    return inventoryGridTx("initialize", params);
+}
+
+export function refreshInventoryGridTx(params: InventoryGridParams): Transaction {
+    return inventoryGridTx("refresh", params);
 }
 
 // Create the sender's canonical derived account wrapper and share it. `new` derives

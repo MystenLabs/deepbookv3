@@ -47,6 +47,7 @@ const EMintRedeemSameTimestamp: u64 = 6;
 const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
+const ERedeemCostAboveMax: u64 = 10;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -126,10 +127,10 @@ public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
 }
 
-/// Return the isolated inventory-impact escrow for SDK and devInspect state
-/// reads.
-public fun inventory_impact_reserve(market: &ExpiryMarket): u64 {
-    market.cash.inventory_impact_reserve()
+/// Return the current frozen-grid inventory-impact potential for SDK and
+/// devInspect state reads.
+public fun inventory_impact_potential(market: &ExpiryMarket): u64 {
+    market.strike_exposure.inventory_impact_potential()
 }
 
 /// Return local fee incentives for SDK and devInspect state reads.
@@ -192,7 +193,7 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 
 /// Return required expiry cash for external accounting observability.
 public fun required_cash(market: &ExpiryMarket): u64 {
-    market.cash.required_cash(market.payout_liability())
+    market.payout_liability()
 }
 
 /// Load a PTB-local live pricing snapshot for this market.
@@ -229,16 +230,16 @@ public fun load_live_pricer(
     )
 }
 
-/// Return live marked NAV as free expiry cash minus the exposure book's marked
+/// Return live marked NAV as expiry cash minus the exposure book's marked
 /// liability, floored at zero. This read requires a market-bound pre-expiry
 /// `Pricer`; an expired but unsettled market cannot be valued through this path.
 /// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.live_marked_liability(pricer);
-    // Marked liability and free cash are computed through different rounded
+    // Marked liability and cash are computed through different rounded
     // aggregates; negative marked NAV is represented as zero.
-    market.cash.free_cash().saturating_sub(liability)
+    market.cash.balance().saturating_sub(liability)
 }
 
 /// Return one live order's full-close range value before fees. Requires a
@@ -488,12 +489,11 @@ public fun mint_exact_amount(
 /// `redeem_settled`.
 /// Returns a replacement order ID only when a partial close leaves quantity open.
 ///
-/// Two close-side slippage floors, the mirror of mint's `max_probability` /
-/// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
+/// Close-side slippage guards mirror mint's bounds. `min_probability` floors the
 /// quoted per-contract range probability (same units as mint's `max_probability`).
 /// `min_proceeds` floors the all-in net DUSDC credited to the account
-/// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
-/// of mint's all-in `max_cost`.
+/// after fees and inventory transfers. `max_cost` caps any additional account
+/// withdrawal required when a hedge-removing close costs more than its proceeds.
 public fun redeem_live(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -504,6 +504,7 @@ public fun redeem_live(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
+    max_cost: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -518,6 +519,7 @@ public fun redeem_live(
         close_quantity,
         min_probability,
         min_proceeds,
+        max_cost,
         root,
         clock,
         ctx,
@@ -653,9 +655,6 @@ public fun try_settle(
     if (spot.is_none()) return false;
     let settlement_price = spot.destroy_some();
     market.strike_exposure.record_settlement(settlement_price);
-    // Live-close rebates are no longer reachable after settlement. Release the
-    // residual inventory-impact escrow so the settled sweep returns it to LPs.
-    market.cash.release_inventory_impact_reserve();
     config_events::emit_market_settled(
         market.id(),
         market.propbook_underlying_id,
@@ -704,14 +703,33 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     released_cash
 }
 
-/// Release settled cash above payout liability and the impact escrow.
+/// Release settled cash above payout liability.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
-    let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
 
-    let returned_cash_amount = market.cash.balance() - reserved_cash;
+    let returned_cash_amount = market.cash.balance() - settled_liability;
     market.release_pool_cash(returned_cash_amount)
+}
+
+/// Initialize this market's frozen inventory grid before trading.
+public(package) fun initialize_inventory_grid(
+    market: &mut ExpiryMarket,
+    pricer: &Pricer,
+    ratios: vector<u64>,
+) {
+    market.assert_pricer_bound(pricer);
+    market.strike_exposure.initialize_inventory_grid(pricer, ratios);
+}
+
+/// Re-cut this market's inventory grid onto the current probability surface.
+public(package) fun refresh_inventory_grid(
+    market: &mut ExpiryMarket,
+    pricer: &Pricer,
+    ratios: vector<u64>,
+) {
+    market.assert_pricer_bound(pricer);
+    market.strike_exposure.refresh_inventory_grid(pricer, ratios);
 }
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
@@ -727,7 +745,6 @@ public(package) fun create_and_share(
     tick_size: u64,
     admission_tick_size: u64,
     reference_tick_source_timestamp_ms: u64,
-    inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -745,7 +762,6 @@ public(package) fun create_and_share(
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
-            inventory_impact_scale,
             ctx,
         ),
         ewma: ewma::new(ctx),
@@ -814,7 +830,14 @@ fun mint_prepared(
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
 
     let minted_order = market.strike_exposure.allocate_mint_order(terms);
-    market.settle_mint_payment(account, &minted_order, &quote, builder_code_id, clock, ctx);
+    market.settle_mint_payment(
+        account,
+        &minted_order,
+        &quote,
+        builder_code_id,
+        clock,
+        ctx,
+    );
     order_events::emit_order_minted(
         market.id(),
         account.account_id(),
@@ -907,11 +930,9 @@ fun settle_mint_payment(
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
     // The fee, its sponsor-funded subsidy, the premium, the penalty and the
-    // inventory impact all land in the same custody; the impact amount is
-    // earmarked separately once its cash has arrived.
+    // inventory impact all land in the same custody.
     payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.cash.receive(payment);
-    market.cash.credit_inventory_impact_reserve(quote.inventory_impact_charge);
 
     market.assert_cash_backing();
 }
@@ -927,6 +948,7 @@ fun redeem_live_with_auth(
     close_quantity: u64,
     min_probability: u64,
     min_proceeds: u64,
+    max_cost: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -934,7 +956,6 @@ fun redeem_live_with_auth(
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
-    let terms = market.strike_exposure.quote_live_close(pricer, &order, close_quantity);
 
     // Block an atomic mint -> oracle-update -> redeem: reject closing a position
     // in the same timestamp it was opened. A single transaction reads one
@@ -947,6 +968,7 @@ fun redeem_live_with_auth(
         order.id(),
     );
     assert!(clock.timestamp_ms() != opened_at_ms, EMintRedeemSameTimestamp);
+    let terms = market.strike_exposure.quote_live_close(pricer, &order, close_quantity);
     // Charge against the pre-trade EWMA distribution, then fold this gas price.
     let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
@@ -980,17 +1002,15 @@ fun redeem_live_with_auth(
         close_quantity,
     ).min(redeem_amount - fee_amount);
     let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
-    let inventory_impact_rebate = terms.inventory_impact_rebate();
+    let inventory_impact_charge = terms.live_close_inventory_impact_charge();
+    let deductions = fee_amount + builder_fee_amount + penalty_amount + inventory_impact_charge;
+    let additional_cost = deductions.saturating_sub(redeem_amount);
+    let net_proceeds = redeem_amount.saturating_sub(deductions);
+    assert!(additional_cost <= max_cost, ERedeemCostAboveMax);
     // Close-side all-in slippage floor: the net credited to the account is
-    // `redeem_amount` plus inventory rebate, minus fee, builder fee, and
-    // penalty. `0` disables. Mirror of mint's `max_cost`.
-    assert!(
-        redeem_amount + inventory_impact_rebate
-            - fee_amount
-            - builder_fee_amount
-            - penalty_amount >= min_proceeds,
-        ERedeemProceedsBelowMin,
-    );
+    // `redeem_amount` minus fee, builder fee, penalty, and inventory impact.
+    // `0` disables. Mirror of mint's `max_cost`.
+    assert!(net_proceeds >= min_proceeds, ERedeemProceedsBelowMin);
 
     // Apply book and account-position mutations only after all close policy
     // checks. Any later abort rolls back the earlier EWMA update.
@@ -1019,7 +1039,8 @@ fun redeem_live_with_auth(
         fee_amount,
         builder_fee_amount,
         penalty_amount,
-        inventory_impact_rebate,
+        inventory_impact_charge,
+        additional_cost,
         builder_code_id,
         ctx,
     );
@@ -1038,7 +1059,7 @@ fun redeem_live_with_auth(
         fee_amount,
         builder_fee_amount,
         penalty_amount,
-        inventory_impact_rebate,
+        inventory_impact_charge,
         clock.timestamp_ms(),
     );
     replacement_order_id
@@ -1086,10 +1107,10 @@ fun redeem_settled_with_auth(
 
 /// Settle a live redeem per an already-computed payment decomposition: pay out
 /// `redeem_amount`, route the fee and builder fee, and credit the account with
-/// the remainder plus the isolated inventory-impact rebate. The caller owns the
-/// decomposition and the `min_proceeds` guard.
+/// the remainder. The caller owns the decomposition and the `min_proceeds`
+/// guard.
 ///
-/// The EWMA penalty is withheld from the payout and kept in expiry cash
+/// The EWMA penalty and the inventory-impact charge stay in expiry cash
 /// as surplus.
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
@@ -1098,22 +1119,26 @@ fun settle_live_redeem_payment(
     fee_amount: u64,
     builder_fee_amount: u64,
     penalty_amount: u64,
-    inventory_impact_rebate: u64,
+    inventory_impact_charge: u64,
+    additional_cost: u64,
     builder_code_id: Option<ID>,
     ctx: &mut TxContext,
 ) {
-    // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
+    // The penalty stays in expiry cash, so it is never withdrawn.
     let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
-    payout.join(market.cash.pay_inventory_impact_rebate(inventory_impact_rebate));
+    if (additional_cost > 0) {
+        payout.join(account.withdraw<DUSDC>(additional_cost, ctx).into_balance());
+    };
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
+    let inventory_impact = payout.split(inventory_impact_charge);
     market.cash.receive(fee);
+    market.cash.receive(inventory_impact);
     send_builder_fee(builder_code_id, builder_fee);
     market.assert_cash_backing();
     account.deposit<DUSDC>(payout.into_coin(ctx));
 }
 
-// --- Shared by the mint and redeem flows ---
 /// Compute the congestion surcharge from pre-trade EWMA state, then fold the
 /// current gas price into the estimate.
 fun ewma_penalty(
@@ -1149,8 +1174,4 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     market.cash.assert_backing(market.payout_liability());
-    assert!(
-        market.cash.inventory_impact_reserve()
-            >= market.strike_exposure.inventory_impact_potential(),
-    );
 }

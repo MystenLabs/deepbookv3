@@ -577,6 +577,9 @@ def campaign(
                         "TRADER_DUSDC": strat_meta[strategy]["fund"],
                         "TRADER_ADDRESSES": addr,
                         "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
+                        "KEEPER_INVENTORY_GRID": (
+                            "1" if strat_meta[strategy]["inventoryGrid"] else "0"
+                        ),
                     },
                 )
                 stack.callback(cancellation.stop_process_group, keeper, keeper.pid)

@@ -146,17 +146,12 @@ fun full_close_below_remaining_reserve_aborts() {
     // The market is legally backed before the close, and the cushion is far
     // smaller than the deficit the close will open.
     assert_eq!(helpers::market(&market).cash_balance(), target_cash);
-    assert!(helpers::market(&market).cash_balance() >= required_cash(&market));
+    assert!(helpers::market(&market).cash_balance() >= helpers::market(&market).payout_liability());
     assert!(CASH_CUSHION < DISJOINT_GAP / 4);
 
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let _replacement = fx.redeem_live_bundle(&mut market, &mut account, down, QUANTITY);
     abort 999
-}
-
-fun required_cash(market: &helpers::MarketBundle): u64 {
-    let market = helpers::market(market);
-    market.payout_liability() + market.inventory_impact_reserve()
 }
 
 fun mint_down(

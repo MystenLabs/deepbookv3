@@ -25,6 +25,11 @@ public fun strike_from_tick(tick: u64, tick_size: u64): Strike {
     Strike(tick * tick_size)
 }
 
+/// Wrap a verified raw inventory-grid boundary for frozen probability pricing.
+public(package) fun strike_from_raw_boundary(raw: u64): Strike {
+    Strike(raw)
+}
+
 /// Raw value for pricing math; consumers re-enter the raw domain only through this.
 public(package) fun value(strike: Strike): u64 {
     strike.0

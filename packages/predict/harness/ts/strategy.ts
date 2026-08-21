@@ -10,7 +10,7 @@
 // need raw control (e.g. the adversarial probe sending a deliberately-over-cap order).
 import { readFileSync } from "node:fs";
 
-import { rollDownSvi } from "./pricer.js";
+import { type Snap, pricerEnvFor, readSnapshot } from "./oracleEnv.js";
 import { RESOLVER_MARKET } from "./predictConfig.js";
 import { type Instruction, type Resolved, resolveMint } from "./resolver.js";
 import { abortInfo, appendTrace, computationOf, gasBreakdownOf, gasOf } from "./trace.js";
@@ -35,16 +35,7 @@ export interface Mkt {
   id: string;
   expiryMs: number;
 }
-export interface Snap {
-  spot1e9: string;
-  bsSpot1e9: string;
-  publishedAtMs: string;
-  expiries: Record<string, {
-    forward: number;
-    sviTsMs: number;
-    svi: { alpha: number; beta: number; rho: number; m: number; sigma: number };
-  }>;
-}
+export { type Snap };
 export interface Held {
   orderId: string;
   marketId: string;
@@ -118,6 +109,10 @@ export interface Strategy {
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
   gasBudget?: number; // MIST; raise only for measurements whose PTB must reach a protocol wall
+  // Ask this strategy's keeper to cut and re-cut inventory grids. Off elsewhere: it
+  // costs an extra PTB per tick, which would move every other strategy's measured
+  // baseline, and the grid is inert at the zero inventory-impact rate they run at.
+  inventoryGrid?: boolean;
   // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
   // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
   // (e.g. the object-cache limit "cached objects limit", which bricks a normal flush but is the whole
@@ -165,40 +160,10 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
   let plpShares = 0n;
 
   const markets = (): Mkt[] => readJson(`${deps.instanceDir}/markets.json`) ?? [];
-  const snapshot = (): Snap | null => readJson(`${deps.instanceDir}/snapshot.json`);
-
-  const envFor = (market: Mkt): { pythSpot: number; bsSpot: number; bsForward: number; svi: any } | null => {
-    const snap = snapshot();
-    const exp = snap?.expiries?.[String(market.expiryMs)];
-    if (!snap || !exp) return null;
-    const spot = Number(snap.spot1e9) / 1e9;
-    const rawSvi = {
-      a: exp.svi.alpha,
-      b: exp.svi.beta,
-      rho: exp.svi.rho,
-      m: exp.svi.m,
-      sigma: exp.svi.sigma,
-    };
-    // Match load_live_pricer: use Block Scholes' own signed spot for the
-    // basis re-anchor, then roll a/b from the ON-CHAIN batch envelope to this
-    // quote's wall-clock time. The updater re-signs every push under its own
-    // clamped envelope and writes it back as the snapshot's `publishedAtMs`, so
-    // that — not the upstream provider's batch timestamp, which never reaches
-    // the chain — is the anchor the contract will use. Using Pyth as both spots
-    // and leaving SVI at its anchor made near-expiry max-probability guards
-    // reject otherwise valid strategy quotes.
-    const svi = rollDownSvi(rawSvi, Number(snap.publishedAtMs), market.expiryMs, Date.now());
-    if (!svi) return null;
-    return {
-      pythSpot: spot,
-      bsSpot: Number(snap.bsSpot1e9) / 1e9,
-      bsForward: Number(exp.forward),
-      svi,
-    };
-  };
+  const snapshot = (): Snap | null => readSnapshot(deps.instanceDir);
 
   const resolve = (inst: Instruction, market: Mkt): Resolved | null => {
-    const env = envFor(market);
+    const env = pricerEnvFor(snapshot(), market.expiryMs, Date.now());
     if (!env) return null;
     const r = resolveMint(inst, env, RESOLVER_MARKET);
     return r.feasible ? r : null;

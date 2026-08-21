@@ -38,6 +38,8 @@ public struct StrikeExposureConfig has store {
     /// Maximum marginal rate of the path-independent inventory-impact curve, in
     /// FLOAT_SCALING. `0` disables both charges and rebates.
     inventory_impact_max_rate: u64,
+    /// Capital scale of the frozen-grid inventory-impact curve, in DUSDC base units.
+    inventory_impact_scale: u64,
 }
 
 // === Public-Package Functions ===
@@ -72,6 +74,10 @@ public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u6
 
 public(package) fun inventory_impact_max_rate(config: &StrikeExposureConfig): u64 {
     config.inventory_impact_max_rate
+}
+
+public(package) fun inventory_impact_scale(config: &StrikeExposureConfig): u64 {
+    config.inventory_impact_scale
 }
 
 /// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
@@ -128,6 +134,7 @@ public(package) fun new(): StrikeExposureConfig {
         expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
         expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
         inventory_impact_max_rate: config_constants::default_inventory_impact_max_rate!(),
+        inventory_impact_scale: config_constants::default_inventory_impact_scale!(),
     }
 }
 
@@ -142,6 +149,7 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
         expiry_fee_window_ms: config.expiry_fee_window_ms,
         expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
         inventory_impact_max_rate: config.inventory_impact_max_rate,
+        inventory_impact_scale: config.inventory_impact_scale,
     }
 }
 
@@ -185,6 +193,11 @@ public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureCon
 public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_inventory_impact_max_rate(value);
     config.inventory_impact_max_rate = value;
+}
+
+public(package) fun set_inventory_impact_scale(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_inventory_impact_scale(value);
+    config.inventory_impact_scale = value;
 }
 
 /// Return the 1e9-scaled per-unit trade fee.
