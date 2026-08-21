@@ -17,6 +17,10 @@ The procedure arguments select the buckets to revisit. Each procedure expands th
 
 If executions overlap, an older aggregate cannot replace a row whose latest fill timestamp is newer or whose fill count at the same latest timestamp is greater.
 
+An existing candle keeps its opening price unless a newly observed fill has an earlier timestamp; this keeps `open` and `first_trade_timestamp` consistent when checkpoints are committed out of order without reshuffling fills that share a timestamp.
+
+The migration refreshes each procedure's default range. An execution that started before the migration can finish afterward with the previous definition, so allow one subsequent scheduled execution to finish before treating its recent scheduled range as converged; calling each procedure once after the migration commits also establishes that boundary immediately.
+
 -- Enable pg_cron 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 

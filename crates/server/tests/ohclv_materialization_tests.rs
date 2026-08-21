@@ -373,3 +373,32 @@ async fn identical_snapshot_does_not_rewrite_a_candle() {
         daily_version
     );
 }
+
+#[tokio::test]
+async fn delayed_earlier_fill_replaces_the_opening_price() {
+    let (_temp_db, db) = setup().await;
+    let first_ms = DAY_START_MS + 5_000;
+    let last_ms = DAY_START_MS + 50_000;
+    insert_fill(&db, "late-arrival-later", last_ms, 12, 3).await;
+    call_materializer(&db, "update_ohclv_1m", last_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", last_ms, last_ms).await;
+
+    insert_fill(&db, "late-arrival-earlier", first_ms, 10, 2).await;
+    call_materializer(&db, "update_ohclv_1m", first_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", first_ms, last_ms).await;
+
+    let minute_predicate = format!(
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
+    );
+    let daily_predicate = format!(
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
+    );
+    assert_eq!(
+        load_candle(&db, "ohclv_1m", &minute_predicate).await,
+        expected(first_ms, last_ms)
+    );
+    assert_eq!(
+        load_candle(&db, "ohclv_1d", &daily_predicate).await,
+        expected(first_ms, last_ms)
+    );
+}

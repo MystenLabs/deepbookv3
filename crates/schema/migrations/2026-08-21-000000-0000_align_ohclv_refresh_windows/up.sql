@@ -64,6 +64,10 @@ BEGIN
       AND f.checkpoint_timestamp_ms < end_timestamp
     ON CONFLICT (pool_id, bucket_time)
     DO UPDATE SET
+        open = CASE
+            WHEN EXCLUDED.first_trade_timestamp < ohclv_1m.first_trade_timestamp THEN EXCLUDED.open
+            ELSE ohclv_1m.open
+        END,
         high = EXCLUDED.high,
         low = EXCLUDED.low,
         close = EXCLUDED.close,
@@ -79,6 +83,10 @@ BEGIN
        );
 END;
 $$;
+
+-- Repair the recent ranges immediately without turning the migration into a full-history scan.
+CALL update_ohclv_1m(NULL, NULL);
+CALL update_ohclv_1d(NULL, NULL);
 
 CREATE OR REPLACE PROCEDURE update_ohclv_1d(
     start_timestamp BIGINT DEFAULT NULL,
@@ -146,6 +154,10 @@ BEGIN
       AND f.checkpoint_timestamp_ms < end_timestamp
     ON CONFLICT (pool_id, bucket_time)
     DO UPDATE SET
+        open = CASE
+            WHEN EXCLUDED.first_trade_timestamp < ohclv_1d.first_trade_timestamp THEN EXCLUDED.open
+            ELSE ohclv_1d.open
+        END,
         high = EXCLUDED.high,
         low = EXCLUDED.low,
         close = EXCLUDED.close,
@@ -161,7 +173,3 @@ BEGIN
        );
 END;
 $$;
-
--- Repair the recent ranges immediately without turning the migration into a full-history scan.
-CALL update_ohclv_1m(NULL, NULL);
-CALL update_ohclv_1d(NULL, NULL);
