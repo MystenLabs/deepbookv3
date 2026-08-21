@@ -15,7 +15,7 @@ import {
     bindFeedsToUnderlyingTx, clockTimestampMs, createAccountTx, createExpiryMarketTx,
     depositToAccountTx, deriveAccountWrapperId, execute, executeAndWait,
     finalizeDusdcCurrencyRegistrationTx, keeperSettleTx, lockCapitalTx,
-    mintLifecycleCapTx, nextCadenceExpiryMs, readPredictEconomicState,
+    mintLifecycleCapTx, readPredictEconomicState,
     rebalanceExpiryCashTx, redeemSettledTx, refreshOracleAndFlushTxs,
     refreshOracleAndMintTxs, refreshOracleAndRedeemTxs,
     registerUnderlyingAndCreateFeedsTx, requestSupplyTx, requestWithdrawTx,
@@ -293,10 +293,12 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     await executeAndWait(requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: accountWrapperId, amount: integer(config.capital.vault_seed, "scenario config.capital.vault_seed") }), "bootstrap_request_supply");
     await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }), "bootstrap_flush");
     await alignCreation(periodMs);
-    const expectedExpiry = await nextCadenceExpiryMs(periodMs);
     const marketResult = await executeAndWait(createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId: config.market.cadence_id }), "create_and_share_expiry_market");
     const expiryMarketId = createdObjectId(marketResult, "ExpiryMarket");
     const expiryMs = decimal(eventJson(onlyEvent(marketResult, "MarketCreated")).expiry);
+    if (marketResult.clockTimestampMs === null) throw new Error("market creation did not record its Clock timestamp");
+    const creationTimestampMs = BigInt(marketResult.clockTimestampMs);
+    const expectedExpiry = ((creationTimestampMs / periodMs) + 1n) * periodMs;
     if (BigInt(expiryMs) !== expectedExpiry) throw new Error(`expected cadence expiry ${expectedExpiry}, got ${expiryMs}`);
     await executeAndWait(await seedOracleTx({ pythFeedId, bsValueStoreId, bsSviStoreId, expiry: BigInt(expiryMs), ...oracleParams(seed) }), "seed_oracle_surface");
     await executeAndWait(rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId }), "bootstrap_rebalance_expiry_cash");
