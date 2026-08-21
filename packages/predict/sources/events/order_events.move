@@ -45,7 +45,7 @@ public struct OrderMinted has copy, drop, store {
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
-    /// Referrer credited for `referral_fee`; `none` when no referral fee was paid.
+    /// Referrer recorded on the minting account, independent of the fee paid.
     referrer_account_id: Option<ID>,
     minted_at_ms: u64,
     /// Oracle source timestamps present when this mint was priced: the provider model times the
@@ -141,7 +141,7 @@ public(package) fun emit_order_minted(
         referral_fee,
         inventory_impact_charge,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
-        referrer_account_id: if (referral_fee == 0) option::none() else referrer_account_id,
+        referrer_account_id,
         minted_at_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
