@@ -9,9 +9,10 @@
 #[test_only]
 module deepbook_predict::inventory_skew_flow_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{constants, flow_test_helpers as helpers, order_events, test_constants};
 use dusdc::dusdc::DUSDC;
-use std::unit_test::assert_eq;
+use std::{bcs, unit_test::assert_eq};
+use sui::event;
 
 const IMPACT_SCALE: u64 = 10_000_000_000;
 /// 0.5%: the max admissible skew rate, and within twice the ordinary fee floor.
@@ -294,6 +295,97 @@ fun a_zero_rate_market_charges_and_freezes_nothing() {
     );
     assert_eq!(helpers::market(&market).skew_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// BCS mirror of `OrderMinted`, field for field, so the emitted skew amounts are
+/// pinned at the byte level. Kept in sync with the source struct by the
+/// assertion itself: any drift fails the byte comparison.
+public struct ExpectedOrderMinted has copy, drop {
+    expiry_market_id: ID,
+    account_id: ID,
+    order_id: u256,
+    position_root_id: u256,
+    owner: address,
+    lower_tick: u64,
+    higher_tick: u64,
+    entry_probability: u64,
+    quantity: u64,
+    premium: u64,
+    trading_fee: u64,
+    fee_incentive_subsidy: u64,
+    builder_fee: u64,
+    penalty_fee: u64,
+    referral_fee: u64,
+    inventory_impact_charge: u64,
+    skew_charge: u64,
+    skew_rebate: u64,
+    builder_code_id: Option<ID>,
+    referrer_account_id: Option<ID>,
+    onchain_timestamp_ms: u64,
+    pyth_spot_source_timestamp_ms: u64,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// The charge the trader pays is the charge the event reports: `OrderMinted`
+/// carries the skew amounts, byte-exact, with the charge at its independently
+/// derived ATM magnitude.
+#[test]
+fun a_charging_mint_emits_the_skew_amounts() {
+    let (mut fx, mut market, mut account, trader) = setup_skewed_market(SKEW_RATE);
+
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    let order_id = fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+
+    let events = event::events_by_type<order_events::OrderMinted>();
+    assert_eq!(events.length(), 1);
+    let expected = ExpectedOrderMinted {
+        expiry_market_id: helpers::market(&market).id(),
+        account_id: helpers::account_id_bundle(&account),
+        order_id,
+        position_root_id: order_id,
+        owner: helpers::owner(&trader),
+        lower_tick: helpers::strike_tick(),
+        higher_tick: constants::pos_inf_tick!(),
+        entry_probability: quote.entry_probability(),
+        quantity: test_constants::mint_quantity(),
+        premium: quote.premium(),
+        trading_fee: ORDINARY_MIN_FEE,
+        fee_incentive_subsidy: 0,
+        builder_fee: 0,
+        penalty_fee: 0,
+        referral_fee: 0,
+        inventory_impact_charge: 0,
+        // The exact ATM magnitude the quote pin derives; see the concentrating-mint test.
+        skew_charge: 2_499_999,
+        skew_rebate: 0,
+        builder_code_id: option::none(),
+        referrer_account_id: option::none(),
+        onchain_timestamp_ms: test_constants::now_ms(),
+        pyth_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
