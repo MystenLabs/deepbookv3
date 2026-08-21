@@ -17,6 +17,9 @@ const IMPACT_SCALE: u64 = 10_000_000_000;
 /// 0.5%: the max admissible skew rate, and within twice the ordinary fee floor.
 const SKEW_RATE: u64 = 5_000_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
+/// A spot far below every strike in play, so the up-leg being closed is worthless.
+const DEEP_OUT_OF_THE_MONEY_PRICE: u64 = 50_000_000_000;
+const EUnexpectedSuccess: u64 = 999;
 
 #[test]
 fun a_concentrating_mint_pays_a_charge_into_the_skew_escrow() {
@@ -288,6 +291,142 @@ fun a_zero_rate_market_charges_and_freezes_nothing() {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+/// Partial closes commit the accumulators for exactly the closed quantity: two
+/// half-closes land where one full close lands, and the escrow follows the
+/// potential through every intermediate state.
+#[test]
+fun two_half_closes_drain_the_escrow_like_one_full_close() {
+    let (mut fx, mut market, mut account, _trader) = setup_skewed_market(SKEW_RATE);
+
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    let order_id = fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+    assert_eq!(helpers::market(&market).skew_reserve(), quote.skew_charge());
+
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    let half = test_constants::mint_quantity() / 2;
+    let replacement = fx
+        .redeem_live_bundle(&mut market, &mut account, order_id, half)
+        .destroy_some();
+    let mid_reserve = helpers::market(&market).skew_reserve();
+    // Half the book is still concentrated, so half-scale potential remains.
+    assert!(mid_reserve > 0 && mid_reserve < quote.skew_charge());
+    helpers::assert_market_backed_bundle(&market);
+
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.redeem_live_bundle(&mut market, &mut account, replacement, half);
+    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// Skew and the inventory-impact charge stack independently: each keeps its own
+/// escrow, each telescopes on its own potential, and the backing invariant holds
+/// with both live.
+#[test]
+fun skew_and_occupancy_charges_stack_with_isolated_escrows() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(ORDINARY_MIN_FEE);
+    fx.set_template_inventory_skew_rate(SKEW_RATE);
+    fx.set_template_inventory_impact_max_rate(200_000_000);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(8 * test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    assert!(quote.skew_charge() > 0);
+    assert!(quote.inventory_impact_charge() > 0);
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+    assert_eq!(helpers::market(&market).skew_reserve(), quote.skew_charge());
+    assert_eq!(
+        helpers::market(&market).inventory_impact_reserve(),
+        quote.inventory_impact_charge(),
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A close whose skew charge exceeds everything the close releases aborts rather
+/// than collecting less than the potential moved (the register's RP-29). Reaching
+/// it needs a complete set — the book starts flat, so closing either leg
+/// unbalances it and is charged — plus a spot far enough below the range that the
+/// leg being closed is worthless. The position is recoverable: it settles for
+/// zero at expiry, which is what it is already worth.
+#[
+    test,
+    expected_failure(
+        abort_code = deepbook_predict::expiry_market::ESkewChargeExceedsCloseProceeds,
+    ),
+]
+fun close_of_a_worthless_leg_that_unbalances_the_book_aborts() {
+    let (mut fx, mut market, mut account, _trader) = setup_skewed_market(SKEW_RATE);
+
+    let up_leg = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+
+    fx.advance_live_oracle_bundle(&mut market, DEEP_OUT_OF_THE_MONEY_PRICE);
+    fx.redeem_live_bundle_with_limits(
+        &mut market,
+        &mut account,
+        up_leg,
+        test_constants::mint_quantity(),
+        0,
+        0,
+    );
+    abort EUnexpectedSuccess
 }
 
 fun setup_skewed_market(
