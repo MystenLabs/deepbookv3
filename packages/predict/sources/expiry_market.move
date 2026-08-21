@@ -76,8 +76,8 @@ public struct ExpiryMarket has key {
 /// fill. `trading_fee` is the trading fee before the sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
-///`. The skew adjustment is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes.
+/// + skew_charge - skew_rebate`. The skew adjustment is isolated from every
+/// ordinary fee policy because it is escrowed for risk-reducing trades.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -716,7 +716,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     released_cash
 }
 
-/// Release settled cash above payout liability and the impact escrow.
+/// Release settled cash above payout liability and the skew escrow.
 public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
     let settled_liability = market.payout_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
@@ -1167,9 +1167,9 @@ fun redeem_settled_with_auth(
 }
 
 /// Settle a live redeem per an already-computed payment decomposition: pay out
-/// `redeem_amount`, route the fee and builder fee, and credit the account with
-/// the remainder plus the isolated inventory-impact rebate. The caller owns the
-/// decomposition and the `min_proceeds` guard.
+/// `redeem_amount`, withhold any skew charge into its escrow, route the fee and
+/// builder fee, and credit the account with the remainder plus the isolated
+/// skew rebate. The caller owns the decomposition and the `min_proceeds` guard.
 ///
 /// The EWMA penalty is withheld from the payout and kept in expiry cash
 /// as surplus.

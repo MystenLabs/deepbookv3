@@ -16,7 +16,7 @@ STATE = {
     "account_dusdc_balance": "0",
     "account_plp_balance": "0",
     "expiry_cash_balance": "0",
-    "inventory_impact_reserve": "0",
+    "skew_reserve": "0",
     "payout_liability": "0",
     "required_cash": "0",
     "fee_incentive_balance": "0",
@@ -74,7 +74,9 @@ def record(step: int, action: str) -> dict[str, object]:
                 "builder_fee",
                 "penalty_fee",
                 "referral_fee",
-                "inventory_impact_charge",
+                "skew_charge",
+                "skew_rebate",
+                "skew_reserve",
                 "onchain_timestamp_ms",
                 "pyth_spot_source_timestamp_ms",
                 "block_scholes_spot_source_timestamp_ms",
@@ -100,7 +102,9 @@ def record(step: int, action: str) -> dict[str, object]:
                 "trading_fee",
                 "builder_fee",
                 "penalty_fee",
-                "inventory_impact_rebate",
+                "skew_charge",
+                "skew_rebate",
+                "skew_reserve",
                 "onchain_timestamp_ms",
                 "pyth_spot_source_timestamp_ms",
                 "block_scholes_spot_source_timestamp_ms",
@@ -159,7 +163,12 @@ def record(step: int, action: str) -> dict[str, object]:
         input_value = {"settlement_price": "1"}
         update = decimal_update(
             "market_settled",
-            ["settlement_price", "settlement_source", "onchain_timestamp_ms"],
+            [
+                "settlement_price",
+                "settlement_source",
+                "skew_reserve_released",
+                "onchain_timestamp_ms",
+            ],
         )
         extra_updates = [
             decimal_update(

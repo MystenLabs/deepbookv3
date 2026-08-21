@@ -341,7 +341,7 @@ fun two_markets_keep_isolated_frozen_measures_and_escrows() {
     let mut fx = helpers::setup_market_default();
     fx.set_template_min_fee(ORDINARY_MIN_FEE);
     fx.set_template_inventory_skew_rate(SKEW_RATE);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    fx.set_default_cadence_allocation(EXPIRY_ALLOCATION, constants::expiry_cash_floor!());
     let e1 = fx.create_expiry(test_constants::short_expiry_ms());
     let e2 = fx.create_expiry(test_constants::short_expiry_ms() + 86_400_000);
     let trader = fx.create_funded_manager(8 * test_constants::mint_deposit());
@@ -511,7 +511,6 @@ public struct ExpectedOrderMinted has copy, drop {
     builder_fee: u64,
     penalty_fee: u64,
     referral_fee: u64,
-    inventory_impact_charge: u64,
     skew_charge: u64,
     skew_rebate: u64,
     skew_reserve: u64,
@@ -565,7 +564,6 @@ fun a_charging_mint_emits_the_skew_amounts() {
         builder_fee: 0,
         penalty_fee: 0,
         referral_fee: 0,
-        inventory_impact_charge: 0,
         // The exact ATM magnitude the quote pin derives; see the concentrating-mint test.
         skew_charge: 2_499_999,
         skew_rebate: 0,

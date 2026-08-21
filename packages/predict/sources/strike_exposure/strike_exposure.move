@@ -540,8 +540,6 @@ public(package) fun new(
 
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
 /// validation. The single pricing-prefix orchestration shared by every mint
-/// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
-/// validation. The single pricing-prefix orchestration shared by every mint
 /// quote/terms path.
 fun admitted_entry_probability(
     exposure: &StrikeExposure,

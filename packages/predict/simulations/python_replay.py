@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -71,7 +72,7 @@ SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
         "expiry_fee_window_ms": str,
         "expiry_fee_max_multiplier": str,
         "backing_buffer_lambda": str,
-        "inventory_impact_max_rate": str,
+        "inventory_skew_rate": str,
         "plp_supply_fee_rate": str,
         "plp_withdraw_fee_rate": str,
         "lp_request_limit_flush_attempts": str,
@@ -156,7 +157,7 @@ BACKING_BUFFER_LAMBDA = 250_000_000
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
 EXPIRY_FEE_MAX_MULTIPLIER = 2_000_000_000
-INVENTORY_IMPACT_MAX_RATE = 50_000_000
+INVENTORY_SKEW_RATE = 0
 PLP_SUPPLY_FEE_RATE = 1_000_000
 PLP_WITHDRAW_FEE_RATE = 2_000_000
 LP_REQUEST_LIMIT_FLUSH_ATTEMPTS = 1
@@ -263,7 +264,7 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global BACKING_BUFFER_LAMBDA
-    global INVENTORY_IMPACT_MAX_RATE
+    global INVENTORY_SKEW_RATE
     global PLP_SUPPLY_FEE_RATE
     global PLP_WITHDRAW_FEE_RATE
     global LP_REQUEST_LIMIT_FLUSH_ATTEMPTS
@@ -318,7 +319,7 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
         "protocol",
         "expiry_fee_max_multiplier",
     )
-    INVENTORY_IMPACT_MAX_RATE = _config_int(config, "protocol", "inventory_impact_max_rate")
+    INVENTORY_SKEW_RATE = _config_int(config, "protocol", "inventory_skew_rate")
     PLP_SUPPLY_FEE_RATE = _config_int(config, "protocol", "plp_supply_fee_rate")
     PLP_WITHDRAW_FEE_RATE = _config_int(config, "protocol", "plp_withdraw_fee_rate")
     LP_REQUEST_LIMIT_FLUSH_ATTEMPTS = _config_int(
@@ -1200,7 +1201,7 @@ def initial_state() -> dict[str, int]:
         "account_dusdc_balance": MANAGER_SEED,
         "account_plp_balance": INITIAL_ACCOUNT_PLP_BALANCE,
         "expiry_cash_balance": INITIAL_EXPIRY_CASH,
-        "inventory_impact_reserve": 0,
+        "skew_reserve": 0,
         "payout_liability": 0,
         "required_cash": 0,
         "fee_incentive_balance": 0,
@@ -1224,7 +1225,7 @@ def state_snapshot(state: dict[str, int]) -> dict[str, str]:
         "account_dusdc_balance",
         "account_plp_balance",
         "expiry_cash_balance",
-        "inventory_impact_reserve",
+        "skew_reserve",
         "payout_liability",
         "required_cash",
         "fee_incentive_balance",
@@ -1270,19 +1271,68 @@ def update_required_cash(model: dict[str, Any], state: dict[str, int]) -> None:
         else live_payout_liability(model)
     )
     state["payout_liability"] = liability
-    state["required_cash"] = liability + state["inventory_impact_reserve"]
+    state["required_cash"] = liability + state["skew_reserve"]
 
 
-def inventory_impact_potential(liability: int) -> int:
-    if INVENTORY_IMPACT_MAX_RATE == 0 or liability == 0:
+def freeze_skew_surface(model: dict[str, Any], oracle: dict[str, Any]) -> None:
+    """Mirror the contract: the probability measure freezes from the first
+    priced mint's own surface, and a zero-rate market never freezes."""
+    if INVENTORY_SKEW_RATE == 0 or model.get("frozen_skew_surface") is not None:
+        return
+    model["frozen_skew_surface"] = (
+        pricing_svi(oracle),
+        live_forward(oracle["spot"], oracle["forward"]),
+    )
+
+
+def skew_weight(model: dict[str, Any], tick: int, memo: dict[int, int]) -> int:
+    if tick in memo:
+        return memo[tick]
+    if tick == 0:
+        value = FLOAT_SCALING
+    elif tick >= POS_INF_TICK:
+        value = 0
+    else:
+        svi, forward = model["frozen_skew_surface"]
+        value = compute_up_price(svi, forward, tick * ORACLE_TICK_SIZE)
+    memo[tick] = value
+    return value
+
+
+def skew_deviation(model: dict[str, Any]) -> int:
+    """The probability-weighted sd of the payout profile under the frozen
+    measure, computed by the exact pairwise-intersection identity. The chain
+    accumulates the same integers through per-trade folds; the fold telescoping
+    reduces to exactly these sums, so parity is bit-level, not approximate."""
+    if INVENTORY_SKEW_RATE == 0 or model.get("frozen_skew_surface") is None:
         return 0
-    capped = min(liability, MAX_EXPIRY_ALLOCATION)
-    utilization = mul_div_round_down(capped, FLOAT_SCALING, MAX_EXPIRY_ALLOCATION)
-    marginal_rate = deepbook_mul(INVENTORY_IMPACT_MAX_RATE, utilization)
-    potential = deepbook_mul(marginal_rate, capped) // 2
-    if liability > MAX_EXPIRY_ALLOCATION:
-        potential += deepbook_mul(INVENTORY_IMPACT_MAX_RATE, liability - MAX_EXPIRY_ALLOCATION)
-    return potential
+    orders = list(model["orders"].values())
+    if not orders:
+        return 0
+    memo: dict[int, int] = {}
+    first = 0
+    second = 0
+    for a in orders:
+        mass_a = skew_weight(model, a["lower_tick"], memo) - skew_weight(
+            model,
+            a["higher_tick"],
+            memo,
+        )
+        first += a["quantity"] * max(0, mass_a)
+        for b in orders:
+            lo = max(a["lower_tick"], b["lower_tick"])
+            hi = min(a["higher_tick"], b["higher_tick"])
+            if hi > lo:
+                overlap = skew_weight(model, lo, memo) - skew_weight(model, hi, memo)
+                second += a["quantity"] * b["quantity"] * max(0, overlap)
+    numerator = FLOAT_SCALING * second - first * first
+    if numerator < 0:
+        numerator = 0
+    return math.isqrt(numerator // (FLOAT_SCALING * FLOAT_SCALING))
+
+
+def skew_potential(deviation: int) -> int:
+    return deepbook_mul(INVENTORY_SKEW_RATE, deviation)
 
 
 def apply_oracle(
@@ -1320,7 +1370,7 @@ def live_marked_liability(model: dict[str, Any]) -> int:
 def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
     if model["settlement_price"] is not None:
         return 0
-    free_cash = max(0, state["expiry_cash_balance"] - state["inventory_impact_reserve"])
+    free_cash = max(0, state["expiry_cash_balance"] - state["skew_reserve"])
     return max(0, free_cash - live_marked_liability(model))
 
 
@@ -1381,6 +1431,7 @@ def mint_order(
     oracle = model["last_oracle"]
     if oracle is None:
         raise ValueError("mint requires an oracle snapshot")
+    freeze_skew_surface(model, oracle)
     probability = price_range(row, oracle)
     assert_entry_probability_bounds(probability)
     quantity = row["quantity"]
@@ -1392,13 +1443,10 @@ def mint_order(
         quantity,
     )
     lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+    potential_before = skew_potential(skew_deviation(model))
     before = live_payout_liability(model)
     model["tree"].insert_range(lower_tick, higher_tick, quantity)
     after = live_payout_liability(model)
-    impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
-    total_cost = premium + fee + impact_charge
-    if total_cost > state["account_dusdc_balance"]:
-        raise ValueError("insufficient account balance for mint")
 
     sequence = model["next_order_sequence"]
     model["next_order_sequence"] += 1
@@ -1409,9 +1457,17 @@ def mint_order(
         "sequence": sequence,
         "position_root_sequence": sequence,
     }
+    potential_after = skew_potential(skew_deviation(model))
+    skew_charge = max(0, potential_after - potential_before)
+    skew_rebate = max(0, potential_before - potential_after)
+    if skew_rebate > premium + fee:
+        raise ValueError("skew rebate exceeds mint cost")
+    total_cost = premium + fee + skew_charge - skew_rebate
+    if total_cost > state["account_dusdc_balance"]:
+        raise ValueError("insufficient account balance for mint")
     state["account_dusdc_balance"] -= total_cost
     state["expiry_cash_balance"] += total_cost
-    state["inventory_impact_reserve"] += impact_charge
+    state["skew_reserve"] += skew_charge - skew_rebate
     update_required_cash(model, state)
     return [
         {
@@ -1428,7 +1484,9 @@ def mint_order(
             "builder_fee": "0",
             "penalty_fee": "0",
             "referral_fee": "0",
-            "inventory_impact_charge": str(impact_charge),
+            "skew_charge": str(skew_charge),
+            "skew_rebate": str(skew_rebate),
+            "skew_reserve": str(state["skew_reserve"]),
             "onchain_timestamp_ms": str(timestamp_ms),
             "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
@@ -1444,7 +1502,7 @@ def redeem_live(
     row: dict[str, Any],
     timestamp_ms: int,
 ) -> list[dict[str, Any]]:
-    order = model["orders"].pop(row["orderRef"], None)
+    order = model["orders"].get(row["orderRef"])
     if order is None:
         raise ValueError(f"unknown order_ref {row['orderRef']}")
     close_quantity = row["closeQuantity"]
@@ -1455,17 +1513,15 @@ def redeem_live(
         raise ValueError("live redeem requires an oracle snapshot")
     probability = price_range(order, oracle)
     redeem_amount = deepbook_mul(probability, close_quantity)
-    fee = min(
-        redeem_amount,
-        deepbook_mul(
-            fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
-            close_quantity,
-        ),
+    fee_raw = deepbook_mul(
+        fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
+        close_quantity,
     )
+    potential_before = skew_potential(skew_deviation(model))
+    model["orders"].pop(row["orderRef"])
     before = live_payout_liability(model)
     model["tree"].remove_range(order["lower_tick"], order["higher_tick"], close_quantity)
     after = live_payout_liability(model)
-    impact_rebate = inventory_impact_potential(before) - inventory_impact_potential(after)
     remaining = order["quantity"] - close_quantity
     replacement_ref = None
     replacement_sequence = None
@@ -1479,9 +1535,19 @@ def redeem_live(
             "sequence": replacement_sequence,
         }
 
-    state["account_dusdc_balance"] += redeem_amount + impact_rebate - fee
-    state["expiry_cash_balance"] += fee - redeem_amount - impact_rebate
-    state["inventory_impact_reserve"] -= impact_rebate
+    potential_after = skew_potential(skew_deviation(model))
+    skew_charge = max(0, potential_after - potential_before)
+    skew_rebate = max(0, potential_before - potential_after)
+    # Mirror the contract's close clamp chain: the escrow is senior to fee
+    # revenue, so the fee clamps against what the payout leaves after the charge.
+    gross_proceeds = redeem_amount + skew_rebate
+    available = min(redeem_amount, max(0, gross_proceeds - skew_charge))
+    fee = min(fee_raw, available)
+    if skew_charge + fee > gross_proceeds:
+        raise ValueError("skew charge exceeds close proceeds")
+    state["account_dusdc_balance"] += gross_proceeds - fee - skew_charge
+    state["expiry_cash_balance"] += fee + skew_charge - gross_proceeds
+    state["skew_reserve"] += skew_charge - skew_rebate
     update_required_cash(model, state)
     return [
         {
@@ -1498,7 +1564,9 @@ def redeem_live(
             "trading_fee": str(fee),
             "builder_fee": "0",
             "penalty_fee": "0",
-            "inventory_impact_rebate": str(impact_rebate),
+            "skew_charge": str(skew_charge),
+            "skew_rebate": str(skew_rebate),
+            "skew_reserve": str(state["skew_reserve"]),
             "onchain_timestamp_ms": str(timestamp_ms),
             "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
@@ -1865,7 +1933,8 @@ def settle_market(
     settlement_price = row["settlementPrice"]
     model["settlement_price"] = settlement_price
     model["settled_liability"] = model["tree"].settled_payout_liability(settlement_price)
-    state["inventory_impact_reserve"] = 0
+    skew_reserve_released = state["skew_reserve"]
+    state["skew_reserve"] = 0
     state["is_settled"] = 1
     update_required_cash(model, state)
     updates = [
@@ -1873,6 +1942,7 @@ def settle_market(
             "type": "market_settled",
             "settlement_price": str(settlement_price),
             "settlement_source": "0",
+            "skew_reserve_released": str(skew_reserve_released),
             "onchain_timestamp_ms": str(timestamp_ms),
         }
     ]

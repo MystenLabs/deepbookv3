@@ -4,7 +4,7 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate) and the
+/// expiry-fee ramp, backing buffer lambda, inventory-skew rate) and the
 /// live protocol-wide referral fee rate.
 /// Every abort test drives the real
 /// admin setter on a shared
@@ -184,8 +184,6 @@ fun backing_buffer_lambda_above_max_assert_aborts() {
     );
     abort 999
 }
-
-// === Strike-exposure templates: inventory-impact maximum marginal rate ===
 
 // === Strike-exposure templates: inventory-skew rate ===
 

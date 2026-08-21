@@ -132,7 +132,7 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
             const id = decimal(value.order_id);
             const ref = row.action === "mint" ? row.orderRef : aliases.orderRefs.get(id);
             if (!ref) throw new Error(`OrderMinted ${id} has no scenario alias`);
-            updates.push({ type: "order_minted", order_ref: ref, order_sequence: orderSequence(id), lower_tick: decimal(value.lower_tick), higher_tick: decimal(value.higher_tick), entry_probability: decimal(value.entry_probability), quantity: decimal(value.quantity), premium: decimal(value.premium), trading_fee: decimal(value.trading_fee), fee_incentive_subsidy: decimal(value.fee_incentive_subsidy), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), referral_fee: decimal(value.referral_fee), inventory_impact_charge: decimal(value.inventory_impact_charge), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
+            updates.push({ type: "order_minted", order_ref: ref, order_sequence: orderSequence(id), lower_tick: decimal(value.lower_tick), higher_tick: decimal(value.higher_tick), entry_probability: decimal(value.entry_probability), quantity: decimal(value.quantity), premium: decimal(value.premium), trading_fee: decimal(value.trading_fee), fee_incentive_subsidy: decimal(value.fee_incentive_subsidy), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), referral_fee: decimal(value.referral_fee), skew_charge: decimal(value.skew_charge), skew_rebate: decimal(value.skew_rebate), skew_reserve: decimal(value.skew_reserve), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
         } else if (name === "LiveOrderRedeemed") {
             const id = decimal(value.order_id);
             const ref = aliases.orderRefs.get(id) ?? (row.action === "redeem_live" ? row.orderRef : null);
@@ -141,7 +141,7 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
             const replacementRef = replacement !== null && row.action === "redeem_live"
                 ? row.replacementOrderRef ?? row.orderRef
                 : null;
-            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: replacementRef, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_rebate: decimal(value.inventory_impact_rebate), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
+            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: replacementRef, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), skew_charge: decimal(value.skew_charge), skew_rebate: decimal(value.skew_rebate), skew_reserve: decimal(value.skew_reserve), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
         } else if (name === "SupplyRequested") {
             updates.push({ type: "supply_requested", lp_ref: row.action === "request_supply" ? row.lpRef : "", index: decimal(value.index), amount: decimal(value.amount), min_output: decimal(value.min_plp_out), requests_pending_after: decimal(value.requests_pending_after) });
         } else if (name === "WithdrawRequested") {
@@ -197,7 +197,7 @@ async function stateSnapshot(state: SimState): Promise<Record<string, string>> {
         account_dusdc_balance: value.accountDusdcBalance.toString(),
         account_plp_balance: value.accountPlpBalance.toString(),
         expiry_cash_balance: value.expiryCashBalance.toString(),
-        inventory_impact_reserve: value.inventoryImpactReserve.toString(),
+        skew_reserve: value.skewReserve.toString(),
         payout_liability: value.payoutLiability.toString(), required_cash: value.requiredCash.toString(),
         fee_incentive_balance: value.feeIncentiveBalance.toString(),
         vault_idle_balance: value.vaultIdleBalance.toString(),
@@ -269,7 +269,7 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     await executeAndWait(setSimulationEconomicPolicyTx({
         protocolConfigId: PROTOCOL_CONFIG_ID, baseFee: policy("base_fee"), minFee: policy("min_fee"),
         minEntryProbability: policy("min_entry_probability"), maxEntryProbability: policy("max_entry_probability"),
-        backingBufferLambda: policy("backing_buffer_lambda"), inventoryImpactMaxRate: policy("inventory_impact_max_rate"),
+        backingBufferLambda: policy("backing_buffer_lambda"), inventorySkewRate: policy("inventory_skew_rate"),
         protocolReserveProfitShare: policy("protocol_reserve_profit_share"), plpSupplyFeeRate: policy("plp_supply_fee_rate"),
         plpWithdrawFeeRate: policy("plp_withdraw_fee_rate"), lpRequestLimitFlushAttempts: policy("lp_request_limit_flush_attempts"),
         maxLpPoolValue: policy("max_lp_pool_value"),

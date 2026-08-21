@@ -1,8 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Exact window/complement peak tests for inventory-impact liability deltas.
-/// These reads must agree with the payout surface at half-open range boundaries:
+/// Exact windowed peak-prefix tests for `range_max_payout`, the rotation
+/// coverage of the max-prefix aggregate that `payout_reserve_terms` reads at the
+/// root for cash backing. These reads must agree with the payout surface at
+/// half-open range boundaries:
 /// an order on `(lower, higher]` starts immediately above `lower` and still wins
 /// exactly at `higher`.
 #[test_only]
@@ -22,7 +24,7 @@ fun empty_tree_has_zero_peaks() {
 }
 
 #[test]
-fun range_and_complement_reads_match_mixed_surface() {
+fun range_reads_match_a_mixed_surface() {
     let ctx = &mut tx_context::dummy();
     let mut tree = strike_payout_tree::new(ctx);
 

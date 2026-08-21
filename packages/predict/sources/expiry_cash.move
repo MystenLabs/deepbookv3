@@ -3,9 +3,10 @@
 
 /// Expiry-local DUSDC custody and isolated reserve accounting.
 ///
-/// This leaf owns cash balance arithmetic and the inventory-impact escrow used
-/// only for live-close rebates. It does not decide payment eligibility, pool
-/// allocation, or market phase sequencing; `ExpiryMarket` owns those policies.
+/// This leaf owns cash balance arithmetic and the inventory-skew escrow that
+/// funds skew rebates on both mints and live closes. It does not decide payment
+/// eligibility, pool allocation, or market phase sequencing; `ExpiryMarket`
+/// owns those policies.
 module deepbook_predict::expiry_cash;
 
 use dusdc::dusdc::DUSDC;

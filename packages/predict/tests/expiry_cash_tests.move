@@ -13,7 +13,7 @@ const CASH_AMOUNT: u64 = 100;
 const REQUIRED_PAYOUT_LIABILITY: u64 = 101;
 const FEE_AMOUNT: u64 = 40;
 const SKEW_CHARGE: u64 = 20;
-/// Cash left after paying out past the earmark (5 < escrow 30).
+/// Cash left after paying out past the earmark (5 < escrow 20).
 const CASH_BELOW_ESCROW: u64 = 5;
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
@@ -50,16 +50,16 @@ fun receive_and_pay_authorized_updates_balance() {
 }
 
 #[test]
-fun free_cash_nets_out_the_impact_escrow_and_floors_at_zero() {
+fun free_cash_nets_out_the_skew_escrow_and_floors_at_zero() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
 
-    // Cash 40 with 30 earmarked leaves 10 free.
+    // Cash 40 with 20 earmarked leaves 20 free.
     cash.receive(coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance());
     cash.credit_skew_reserve(SKEW_CHARGE);
     assert_eq!(cash.free_cash(), FEE_AMOUNT - SKEW_CHARGE);
 
-    // Pay out past the earmark — 5 cash against a 30 escrow. Free cash floors at
+    // Pay out past the earmark — 5 cash against a 20 escrow. Free cash floors at
     // zero instead of underflowing the subtraction.
     let drained = cash.pay_authorized(FEE_AMOUNT - CASH_BELOW_ESCROW);
     assert_eq!(cash.balance(), CASH_BELOW_ESCROW);

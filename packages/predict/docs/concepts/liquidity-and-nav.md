@@ -165,7 +165,7 @@ The floor is `max_net_payout` — the maximum summed net payout at any *single* 
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
-The independent `inventory_impact_reserve` is the cumulative inventory potential collected from mints minus rebates paid to voluntary live closes. It is excluded from NAV and pool sweeps, and the market additionally asserts `inventory_impact_reserve ≥ phi(current payout_liability)`. Exact state-function differences make equality hold for ordinary mint/close paths; liquidations can only leave a surplus. Settlement releases that residual earmark because the live-rebate path is no longer reachable. See [fees and rebates](./fees-and-rebates.md#inventory-impact-charge-and-rebate).
+The independent `skew_reserve` is the cumulative skew potential collected from concentrating trades minus rebates paid to flattening ones. It is excluded from NAV and pool sweeps, and the market additionally asserts `skew_reserve ≥ rate × D(W)` — with equality, because charges and rebates are exact differences of the same floored potential. Settlement releases the residual earmark because the rebate path is no longer reachable. See [fees and rebates](./fees-and-rebates.md#inventory-skew-charge-and-rebate).
 
 ## Profit materialization at settlement
 
