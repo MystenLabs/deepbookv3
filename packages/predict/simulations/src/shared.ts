@@ -22,6 +22,42 @@ export type ScenarioActionName =
     | "settle"
     | "redeem_settled";
 
+export const REQUIRED_ACTIONS: ScenarioActionName[] = [
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "request_withdraw",
+    "flush",
+    "rebalance_expiry_cash",
+    "settle",
+    "redeem_settled",
+];
+
+export const EXPECTED_ACTION_SEQUENCE: ScenarioActionName[] = [
+    "mint",
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "flush",
+    "request_withdraw",
+    "flush",
+    "mint",
+    "redeem_live",
+    "rebalance_expiry_cash",
+    "mint",
+    "mint",
+    "settle",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "flush",
+    "request_supply",
+    "flush",
+];
+
+export const EXPECTED_SETTLED_REDEMPTION_MODES = [false, true, false, true];
+
 export interface OracleRefreshData {
     spot: bigint;
     forward: bigint;
@@ -407,6 +443,40 @@ export function parseScenarioText(text: string): ScenarioRow[] {
 
 export function loadScenario(filePath: string): ScenarioRow[] {
     return parseScenarioText(readFileSync(filePath, "utf8"));
+}
+
+export function validateCompleteScenario(rows: readonly ScenarioRow[]): void {
+    if (rows.length !== EXPECTED_ACTION_SEQUENCE.length) {
+        throw new Error(
+            `scenario must contain exactly ${EXPECTED_ACTION_SEQUENCE.length} steps, got ${rows.length}`,
+        );
+    }
+    rows.forEach((row, index) => {
+        if (row.step !== index + 1) {
+            throw new Error(`scenario step ${index + 1} must use tx ${index + 1}, got ${row.step}`);
+        }
+        if (row.action !== EXPECTED_ACTION_SEQUENCE[index]) {
+            throw new Error(
+                `scenario step ${index + 1} must be ${EXPECTED_ACTION_SEQUENCE[index]}, got ${row.action}`,
+            );
+        }
+    });
+    const settledRedemptionModes = rows
+        .filter((row): row is Extract<ScenarioRow, { action: "redeem_settled" }> =>
+            row.action === "redeem_settled",
+        )
+        .map((row) => row.permissionless);
+    if (
+        settledRedemptionModes.length !== EXPECTED_SETTLED_REDEMPTION_MODES.length ||
+        settledRedemptionModes.some(
+            (permissionless, index) =>
+                permissionless !== EXPECTED_SETTLED_REDEMPTION_MODES[index],
+        )
+    ) {
+        throw new Error(
+            "scenario settled redemptions must be owner/permissionless/owner/permissionless",
+        );
+    }
 }
 
 export function readJson<T>(filePath: string): T {

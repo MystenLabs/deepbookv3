@@ -28,6 +28,29 @@ REQUIRED_ACTIONS = [
     "settle",
     "redeem_settled",
 ]
+EXPECTED_ACTION_SEQUENCE = [
+    "mint",
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "flush",
+    "request_withdraw",
+    "flush",
+    "mint",
+    "redeem_live",
+    "rebalance_expiry_cash",
+    "mint",
+    "mint",
+    "settle",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "flush",
+    "request_supply",
+    "flush",
+]
+EXPECTED_SETTLED_REDEMPTION_MODES = [False, True, False, True]
 TOP_LEVEL_FIELDS = {"schema_version", "scenario", "records"}
 SCENARIO_FIELDS = {"quantity_scale", "required_actions", "observed_actions"}
 RECORD_FIELDS = {"step", "action", "input", "updates", "state"}
@@ -233,16 +256,17 @@ ACTION_UPDATE_TYPES = {
     },
     "redeem_settled": {"settled_order_redeemed"},
 }
-PRIMARY_UPDATE_TYPE = {
-    "mint": "order_minted",
-    "redeem_live": "live_order_redeemed",
-    "request_supply": "supply_requested",
-    "request_withdraw": "withdraw_requested",
-    "flush": "flush_executed",
-    "rebalance_expiry_cash": "expiry_cash_rebalanced",
-    "settle": "market_settled",
-    "redeem_settled": "settled_order_redeemed",
+REQUIRED_SINGLE_UPDATE_TYPES = {
+    "mint": {"order_minted"},
+    "redeem_live": {"live_order_redeemed"},
+    "request_supply": {"supply_requested"},
+    "request_withdraw": {"withdraw_requested"},
+    "flush": {"flush_executed"},
+    "rebalance_expiry_cash": {"expiry_cash_rebalanced"},
+    "settle": {"market_settled", "expiry_cash_received"},
+    "redeem_settled": {"settled_order_redeemed"},
 }
+OPTIONAL_SINGLE_UPDATE_TYPES = {"settle": {"expiry_profit_materialized"}}
 
 
 def parity_projection(payload: dict[str, Any]) -> dict[str, Any]:
@@ -319,18 +343,29 @@ def validate_economic_payload(payload: Any, label: str) -> None:
     records = root["records"]
     if not isinstance(records, list) or not records:
         _fail(label, "$.records", "must be a non-empty array")
+    if len(records) != len(EXPECTED_ACTION_SEQUENCE):
+        _fail(
+            label,
+            "$.records",
+            f"must contain exactly {len(EXPECTED_ACTION_SEQUENCE)} scenario steps",
+        )
     derived_observed: list[str] = []
-    previous_step = 0
+    settled_redemption_modes: list[bool] = []
     for index, raw_record in enumerate(records):
         path = f"$.records[{index}]"
         record = _exact_fields(raw_record, RECORD_FIELDS, label, path)
         step = record["step"]
-        if type(step) is not int or step <= previous_step:
-            _fail(label, f"{path}.step", "must be a strictly increasing positive integer")
-        previous_step = step
+        if type(step) is not int or step != index + 1:
+            _fail(label, f"{path}.step", f"must equal {index + 1}")
         action = record["action"]
         if not isinstance(action, str) or action not in REQUIRED_ACTIONS:
             _fail(label, f"{path}.action", "must be a current action")
+        if action != EXPECTED_ACTION_SEQUENCE[index]:
+            _fail(
+                label,
+                f"{path}.action",
+                f"must equal {EXPECTED_ACTION_SEQUENCE[index]}",
+            )
         if action not in derived_observed:
             derived_observed.append(action)
 
@@ -349,6 +384,8 @@ def validate_economic_payload(payload: Any, label: str) -> None:
             expected = " or ".join(str(sorted(schema)) for schema in input_schemas)
             _fail(label, f"{path}.input", f"fields must equal {expected}")
         _validate_typed_object(record["input"], matching_input, label, f"{path}.input")
+        if action == "redeem_settled":
+            settled_redemption_modes.append(record["input"]["permissionless"])
 
         updates = record["updates"]
         if not isinstance(updates, list) or not updates:
@@ -368,9 +405,20 @@ def validate_economic_payload(payload: Any, label: str) -> None:
             _validate_typed_object(raw_update, schema, label, update_path)
             if raw_update["type"] != update_type:
                 raise AssertionError("validated update type changed")
-        primary = PRIMARY_UPDATE_TYPE[action]
-        if update_types.count(primary) != 1:
-            _fail(label, f"{path}.updates", f"must contain exactly one {primary}")
+        for required_type in REQUIRED_SINGLE_UPDATE_TYPES[action]:
+            if update_types.count(required_type) != 1:
+                _fail(
+                    label,
+                    f"{path}.updates",
+                    f"must contain exactly one {required_type}",
+                )
+        for optional_type in OPTIONAL_SINGLE_UPDATE_TYPES.get(action, set()):
+            if update_types.count(optional_type) > 1:
+                _fail(
+                    label,
+                    f"{path}.updates",
+                    f"must contain at most one {optional_type}",
+                )
 
         _validate_typed_object(record["state"], STATE_FIELDS, label, f"{path}.state")
         if record["state"]["is_settled"] not in {"0", "1"}:
@@ -378,6 +426,12 @@ def validate_economic_payload(payload: Any, label: str) -> None:
 
     if observed != derived_observed:
         _fail(label, "$.scenario.observed_actions", "does not match record actions")
+    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
+        _fail(
+            label,
+            "$.records",
+            "settled redemptions must cover owner/permissionless/owner/permissionless",
+        )
     missing = [action for action in REQUIRED_ACTIONS if action not in derived_observed]
     if missing:
         _fail(label, "$.records", f"missing required actions: {','.join(missing)}")

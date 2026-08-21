@@ -18,6 +18,29 @@ FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
 LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
+EXPECTED_ACTION_SEQUENCE = (
+    "mint",
+    "mint",
+    "redeem_live",
+    "request_supply",
+    "flush",
+    "request_withdraw",
+    "flush",
+    "mint",
+    "redeem_live",
+    "rebalance_expiry_cash",
+    "mint",
+    "mint",
+    "settle",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "redeem_settled",
+    "flush",
+    "request_supply",
+    "flush",
+)
+EXPECTED_SETTLED_REDEMPTION_MODES = (False, True, False, True)
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
     "schema_version": int,
@@ -598,6 +621,29 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
 
 def parse_scenario(path: Path) -> list[dict[str, Any]]:
     return parse_scenario_text(path.read_text())
+
+
+def validate_complete_scenario(rows: list[dict[str, Any]]) -> None:
+    if len(rows) != len(EXPECTED_ACTION_SEQUENCE):
+        raise ValueError(
+            f"scenario must contain exactly {len(EXPECTED_ACTION_SEQUENCE)} steps, got {len(rows)}"
+        )
+    for index, (row, expected_action) in enumerate(
+        zip(rows, EXPECTED_ACTION_SEQUENCE, strict=True), start=1
+    ):
+        if row["step"] != index:
+            raise ValueError(f"scenario step {index} must use tx {index}, got {row['step']}")
+        if row["action"] != expected_action:
+            raise ValueError(
+                f"scenario step {index} must be {expected_action}, got {row['action']}"
+            )
+    settled_redemption_modes = tuple(
+        row["permissionless"] for row in rows if row["action"] == "redeem_settled"
+    )
+    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
+        raise ValueError(
+            "scenario settled redemptions must be owner/permissionless/owner/permissionless"
+        )
 
 
 def deepbook_div(x: int, y: int) -> int:
@@ -1951,6 +1997,7 @@ def replay(
     expiry_ms: int,
     pricing_timings: dict[tuple[int, str], dict[str, int]],
 ) -> dict[str, Any]:
+    validate_complete_scenario(rows)
     model = initial_model(expiry_ms)
     state = initial_state()
     records: list[dict[str, Any]] = []

@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import type { ScenarioRow } from "./shared.js";
 
 process.env.INSTANCE_DIR ??= tmpdir();
-const { SCENARIO_COLUMNS, parseScenarioText } = await import("./shared.js");
+const {
+    EXPECTED_ACTION_SEQUENCE,
+    EXPECTED_SETTLED_REDEMPTION_MODES,
+    SCENARIO_COLUMNS,
+    parseScenarioText,
+    validateCompleteScenario,
+} = await import("./shared.js");
 
 const oracle = {
     spot: "75000000000000",
@@ -60,4 +67,34 @@ test("scenario parser rejects a partial oracle refresh containing only the a sig
         csvRow(1, "flush", { a_negative: "true" }),
     ].join("\n");
     assert.throws(() => parseScenarioText(text), /oracle refresh fields must all be present/);
+});
+
+test("complete scenario validation rejects max-rows truncation after all action names appear", () => {
+    let redemptionIndex = 0;
+    const rows = EXPECTED_ACTION_SEQUENCE.map((action, index) => ({
+        action,
+        step: index + 1,
+        ...(action === "redeem_settled"
+            ? { permissionless: EXPECTED_SETTLED_REDEMPTION_MODES[redemptionIndex++] }
+            : {}),
+    })) as unknown as ScenarioRow[];
+
+    validateCompleteScenario(rows);
+    assert.throws(
+        () => validateCompleteScenario(rows.slice(0, 14)),
+        /must contain exactly 20 steps, got 14/,
+    );
+});
+
+test("complete scenario validation requires both settled redemption modes", () => {
+    const rows = EXPECTED_ACTION_SEQUENCE.map((action, index) => ({
+        action,
+        step: index + 1,
+        ...(action === "redeem_settled" ? { permissionless: false } : {}),
+    })) as unknown as ScenarioRow[];
+
+    assert.throws(
+        () => validateCompleteScenario(rows),
+        /must be owner\/permissionless\/owner\/permissionless/,
+    );
 });

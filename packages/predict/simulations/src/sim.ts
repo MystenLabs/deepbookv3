@@ -8,7 +8,8 @@ import {
     PYTHON_DATA_PATH, STATE_PATH, type EconomicDataFile, type EconomicRecord,
     type LocalTraceFile, type LocalTraceStep, type OracleRefreshData,
     type ScenarioActionName, type ScenarioRow, type SimState, loadScenario,
-    readJson, scenarioQuantityScale, ts, writeJson,
+    readJson, REQUIRED_ACTIONS, scenarioQuantityScale, ts, validateCompleteScenario,
+    writeJson,
 } from "./shared.js";
 import {
     POOL_VAULT_ID, PROTOCOL_CONFIG_ID, address, bareFlushTx, binaryRangeTicks,
@@ -26,11 +27,6 @@ import {
 
 const CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
 const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
-const REQUIRED_ACTIONS: ScenarioActionName[] = [
-    "mint", "redeem_live", "request_supply", "request_withdraw", "flush",
-    "rebalance_expiry_cash", "settle", "redeem_settled",
-];
-
 interface ScenarioConfig {
     schema_version: number;
     capital: { manager_seed: string; vault_seed: string };
@@ -356,9 +352,7 @@ async function main(): Promise<void> {
     if (config.schema_version !== 2) throw new Error(`unsupported scenario config schema ${config.schema_version}`);
     let rows = loadScenario(args.scenario);
     if (args.maxRows !== undefined) rows = rows.slice(0, args.maxRows);
-    if (rows.length === 0) throw new Error("scenario has no rows");
-    const missing = REQUIRED_ACTIONS.filter((action) => !rows.some((row) => row.action === action));
-    if (missing.length > 0) throw new Error(`scenario does not cover required actions: ${missing.join(",")}`);
+    validateCompleteScenario(rows);
     const seed = rows.map(oracleFor).find((value): value is OracleRefreshData => value !== null);
     if (!seed) throw new Error("scenario has no oracle snapshot for setup");
     const state = await setup(config, seed);

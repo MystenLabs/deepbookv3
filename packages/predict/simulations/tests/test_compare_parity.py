@@ -51,6 +51,7 @@ def decimal_update(update_type: str, fields: list[str]) -> dict[str, object]:
 
 
 def record(step: int, action: str) -> dict[str, object]:
+    extra_updates: list[dict[str, object]] = []
     if action == "mint":
         input_value = {
             **ORACLE_INPUT,
@@ -160,6 +161,12 @@ def record(step: int, action: str) -> dict[str, object]:
             "market_settled",
             ["settlement_price", "settlement_source", "onchain_timestamp_ms"],
         )
+        extra_updates = [
+            decimal_update(
+                "expiry_cash_received",
+                ["settlement_price", "amount"],
+            )
+        ]
     else:
         input_value = {"order_ref": "order", "permissionless": False}
         update = decimal_update(
@@ -171,24 +178,31 @@ def record(step: int, action: str) -> dict[str, object]:
         "step": step,
         "action": action,
         "input": input_value,
-        "updates": [update],
+        "updates": [update, *extra_updates],
         "state": copy.deepcopy(STATE),
     }
 
 
 def current_payload() -> dict[str, object]:
-    return {
+    payload = {
         "schema_version": compare.ECONOMIC_SCHEMA_VERSION,
         "scenario": {
             "quantity_scale": "1",
             "required_actions": list(compare.REQUIRED_ACTIONS),
             "observed_actions": list(compare.REQUIRED_ACTIONS),
         },
-        "records": [
-            record(step, action)
-            for step, action in enumerate(compare.REQUIRED_ACTIONS, start=1)
-        ],
+        "records": [],
     }
+    settled_modes = iter(compare.EXPECTED_SETTLED_REDEMPTION_MODES)
+    for step, action in enumerate(compare.EXPECTED_ACTION_SEQUENCE, start=1):
+        item = record(step, action)
+        if action == "redeem_settled":
+            item["input"]["permissionless"] = next(settled_modes)
+        payload["records"].append(item)
+    payload["scenario"]["observed_actions"] = list(
+        dict.fromkeys(compare.EXPECTED_ACTION_SEQUENCE)
+    )
+    return payload
 
 
 class ParityArtifactValidationTests(unittest.TestCase):
@@ -206,8 +220,18 @@ class ParityArtifactValidationTests(unittest.TestCase):
         payload = copy.deepcopy(current_payload())
         payload["records"] = payload["records"][:-1]
 
-        with self.assertRaisesRegex(SystemExit, "does not match record actions"):
+        with self.assertRaisesRegex(SystemExit, "must contain exactly 20 scenario steps"):
             compare.validate_economic_payload(payload, "python")
+
+    def test_rejects_truncated_scenario_after_all_action_names_appear(self) -> None:
+        payload = copy.deepcopy(current_payload())
+        payload["records"] = payload["records"][:14]
+        payload["scenario"]["observed_actions"] = list(
+            dict.fromkeys(record["action"] for record in payload["records"])
+        )
+
+        with self.assertRaisesRegex(SystemExit, "must contain exactly 20 scenario steps"):
+            compare.validate_economic_payload(payload, "local")
 
     def test_rejects_empty_records_and_missing_or_unknown_fields(self) -> None:
         empty = copy.deepcopy(current_payload())
@@ -237,6 +261,31 @@ class ParityArtifactValidationTests(unittest.TestCase):
             compare.validate_economic_payload(wrong_type, "local")
         with self.assertRaisesRegex(SystemExit, "invalid for action mint"):
             compare.validate_economic_payload(wrong_update, "local")
+
+    def test_rejects_incomplete_or_duplicated_settlement_accounting(self) -> None:
+        missing_cash = copy.deepcopy(current_payload())
+        settle = missing_cash["records"][12]
+        settle["updates"] = [
+            update for update in settle["updates"] if update["type"] != "expiry_cash_received"
+        ]
+        duplicate_profit = copy.deepcopy(current_payload())
+        settle = duplicate_profit["records"][12]
+        profit = decimal_update(
+            "expiry_profit_materialized",
+            [
+                "lp_profit",
+                "protocol_profit",
+                "protocol_reserve_balance_after",
+                "profit_basis_after",
+                "pending_protocol_profit_after",
+            ],
+        )
+        settle["updates"].extend([profit, copy.deepcopy(profit)])
+
+        with self.assertRaisesRegex(SystemExit, "exactly one expiry_cash_received"):
+            compare.validate_economic_payload(missing_cash, "local")
+        with self.assertRaisesRegex(SystemExit, "at most one expiry_profit_materialized"):
+            compare.validate_economic_payload(duplicate_profit, "python")
 
 
 if __name__ == "__main__":
