@@ -36,7 +36,7 @@ const EInvalidInventorySkewRate: u64 = 23;
 
 /// Merged protocol + insurance reserve share of materialized terminal profit, in
 /// FLOAT_SCALING. The complement accrues to LPs.
-public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+public(package) macro fun default_protocol_reserve_profit_share(): u64 { 100_000_000 }
 
 public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
 
@@ -160,7 +160,7 @@ public(package) fun assert_max_lp_pool_value(value: u64) {
 
 // === Backing ===
 
-public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
+public(package) macro fun default_backing_buffer_lambda(): u64 { 310_000_000 }
 
 public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
 
@@ -217,8 +217,8 @@ public(package) macro fun min_inventory_skew_rate(): u64 { 0 }
 /// of frozen mass `m` — independent of probability. Once `rate * c` passes a
 /// low-probability contract's premium, the wing positions this mechanism exists
 /// to price stop being mintable and, worse, stop being closable. Holding
-/// `rate <= 0.5%` keeps `rate * c` at or below `0.25%`, half the default
-/// `min_fee`, so the ordinary fee still dominates any rebate: wing trades stay
+/// `rate <= 0.5%` keeps `rate * c` at or below `0.25%`, well under the default
+/// `min_fee` of 2.2%, so the ordinary fee still dominates any rebate: wing trades stay
 /// admissible, closes stay affordable, and harvesting the escrow stays
 /// unprofitable. Raising `min_fee` or `min_entry_probability` widens that margin;
 /// lowering either narrows it.
@@ -241,7 +241,7 @@ public(package) fun assert_inventory_skew_rate(value: u64) {
 
 // === Pricing ===
 
-public(package) macro fun default_base_fee(): u64 { 20_000_000 }
+public(package) macro fun default_base_fee(): u64 { 100_000_000 }
 
 public(package) macro fun min_base_fee(): u64 { 1 }
 
@@ -251,7 +251,7 @@ public(package) fun assert_base_fee(value: u64) {
     assert!(value >= min_base_fee!() && value <= max_base_fee!(), EInvalidBaseFee);
 }
 
-public(package) macro fun default_min_fee(): u64 { 5_000_000 }
+public(package) macro fun default_min_fee(): u64 { 22_000_000 }
 
 public(package) macro fun min_min_fee(): u64 { 0 }
 

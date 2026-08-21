@@ -15,13 +15,13 @@ class VerdictTests(unittest.TestCase):
             trace = Path(directory)
             path = trace / "keeper.jsonl"
             path.write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
                 "not-json\n"
             )
             with self.assertRaisesRegex(ValueError, "malformed trace JSON"):
                 analyze._load(trace)
 
-            path.write_text('{"type":"liquidate","markets":1,"gas":10,"ts":1}\n')
+            path.write_text('{"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n')
             with self.assertRaisesRegex(ValueError, "unsupported trace schema"):
                 analyze._load(trace)
 
@@ -41,9 +41,9 @@ class VerdictTests(unittest.TestCase):
                 analyze._load(trace)
 
             path.write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","ts":1}\n'
             )
-            with self.assertRaisesRegex(ValueError, "missing=gas"):
+            with self.assertRaisesRegex(ValueError, "missing=expiryMs"):
                 analyze._load(trace)
 
             path = trace / "trader.jsonl"
@@ -95,9 +95,9 @@ class VerdictTests(unittest.TestCase):
                 "keeper.jsonl",
                 {
                     "schema": 1,
-                    "type": "liquidate",
-                    "markets": 1,
-                    "gas": 1,
+                    "type": "settle",
+                    "market": "0x1",
+                    "expiryMs": 1,
                     "ts": -1,
                 },
             ),
@@ -196,7 +196,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
                 '{"schema":1,"type":"expect","strategy":"capacity-tree","terminal":["dynamic_field:0"],"ts":2}\n'
@@ -244,7 +244,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
                 '{"schema":1,"type":"expect","strategy":"capacity-tree",'
@@ -278,7 +278,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
                 '{"schema":1,"type":"expect","strategy":"capacity-tree",'
@@ -316,7 +316,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
                 '{"schema":1,"type":"expect","strategy":"capacity-tree","terminal":["cached objects limit"],"ts":2}\n'
@@ -355,7 +355,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
                 '{"schema":1,"type":"expect","strategy":"capacity-tree","terminal":["cached objects limit"],"ts":2}\n'
@@ -397,7 +397,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
 
             self.assertEqual(analyze.analyze([str(instance)], expect=["fuzz"]), 1)
@@ -432,7 +432,7 @@ class VerdictTests(unittest.TestCase):
             trace = instance / "trace"
             trace.mkdir(parents=True)
             (trace / "keeper.jsonl").write_text(
-                '{"schema":1,"type":"liquidate","markets":1,"gas":10,"ts":1}\n'
+                '{"schema":1,"type":"settle","market":"0x1","expiryMs":10,"ts":1}\n'
             )
             (trace / "trader.jsonl").write_text(
                 '{"schema":1,"type":"supply","strategy":"fuzz","amount":1,"gas":10,"ts":2}\n'

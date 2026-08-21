@@ -937,8 +937,8 @@ class LifecycleTests(unittest.TestCase):
                 timeout=1,
                 trace_lines={
                     "keeper": (
-                        '{"schema":1,"type":"liquidate","markets":1,'
-                        '"gas":10,"ts":1}\n'
+                        '{"schema":1,"type":"settle","market":"0x1",'
+                        '"expiryMs":10,"ts":1}\n'
                     ),
                     "trader": (
                         '{"schema":1,"type":"fail","strategy":"fuzz",'

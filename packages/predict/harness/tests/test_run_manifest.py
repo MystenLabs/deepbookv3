@@ -65,7 +65,9 @@ class RunManifestTests(unittest.TestCase):
             self.assertEqual(
                 commands[0],
                 [
-                    "npx",
+                    "npm",
+                    "exec",
+                    "--",
                     "tsx",
                     "simulations/src/sim.ts",
                     "--scenario",
