@@ -814,7 +814,7 @@ public fun set_use_pyth_spot_for_forward_bundle(
     oracle: &mut OracleBundle,
     enabled: bool,
 ) {
-    oracle.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled);
+    oracle.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled, &self.clock);
 }
 
 // === Accessors ===
@@ -834,7 +834,7 @@ public fun set_pyth_spot_freshness_for_testing(
     oracle: &mut OracleBundle,
     value: u64,
 ) {
-    oracle.config.set_pyth_spot_freshness_ms(&self.admin_cap, value);
+    oracle.config.set_pyth_spot_freshness_ms(&self.admin_cap, value, &self.clock);
 }
 
 public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }

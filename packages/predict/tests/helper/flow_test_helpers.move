@@ -180,10 +180,12 @@ public fun setup_market(tick: u64): Fixture {
     let mut account_registry = scenario.take_shared<AccountRegistry>();
     account_registry.authorize_app<PredictApp>(&account_admin_cap);
     return_shared(account_registry);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(test_constants::now_ms());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     let config_id = config.id();
-    config.set_template_base_fee(&admin_cap, 1);
+    config.set_template_base_fee(&admin_cap, 1, &clock);
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -206,9 +208,6 @@ public fun setup_market(tick: u64): Fixture {
         scenario.ctx(),
     );
     return_shared(oracle_registry);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(test_constants::now_ms());
-
     // tx2: bind all pricing feeds to the canonical underlying, mint the lifecycle cap,
     // and capture the vault id.
     scenario.next_tx(test_constants::admin());
@@ -338,12 +337,12 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
 
 /// Set the PLP supply-leg fee rate through the real admin path.
 public fun set_plp_supply_fee_rate(self: &Fixture, config: &mut ProtocolConfig, rate: u64) {
-    config.set_plp_supply_fee_rate(&self.admin_cap, rate);
+    config.set_plp_supply_fee_rate(&self.admin_cap, rate, &self.clock);
 }
 
 /// Set the PLP withdraw-leg fee rate through the real admin path.
 public fun set_plp_withdraw_fee_rate(self: &Fixture, config: &mut ProtocolConfig, rate: u64) {
-    config.set_plp_withdraw_fee_rate(&self.admin_cap, rate);
+    config.set_plp_withdraw_fee_rate(&self.admin_cap, rate, &self.clock);
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
@@ -402,7 +401,7 @@ public fun set_use_pyth_spot_for_forward_bundle(
     market: &mut MarketBundle,
     enabled: bool,
 ) {
-    market.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled);
+    market.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled, &self.clock);
 }
 
 /// Tighten or widen the Pyth spot freshness window used by live pricing.
@@ -411,7 +410,7 @@ public fun set_pyth_spot_freshness_bundle(
     market: &mut MarketBundle,
     freshness_ms: u64,
 ) {
-    market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms);
+    market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms, &self.clock);
 }
 
 /// Enable the EWMA congestion penalty with explicit parameters through the
@@ -423,8 +422,8 @@ public fun set_ewma_penalty(
     z_score_threshold: u64,
     penalty_rate: u64,
 ) {
-    config.set_ewma_params(&self.admin_cap, alpha, z_score_threshold, penalty_rate);
-    config.set_ewma_enabled(&self.admin_cap, true);
+    config.set_ewma_params(&self.admin_cap, alpha, z_score_threshold, penalty_rate, &self.clock);
+    config.set_ewma_enabled(&self.admin_cap, true, &self.clock);
 }
 
 /// Enable the EWMA congestion penalty through a market bundle.
@@ -480,7 +479,7 @@ public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBund
 public fun set_template_zero_min_fee(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_min_fee(&self.admin_cap, 0);
+    config.set_template_min_fee(&self.admin_cap, 0, &self.clock);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -488,7 +487,7 @@ public fun set_template_zero_min_fee(self: &mut Fixture) {
 public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_backing_buffer_lambda(&self.admin_cap, value);
+    config.set_template_backing_buffer_lambda(&self.admin_cap, value, &self.clock);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -498,7 +497,7 @@ public fun set_template_backing_buffer_lambda(self: &mut Fixture, value: u64) {
 public fun set_template_inventory_impact_max_rate(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
-    config.set_template_inventory_impact_max_rate(&self.admin_cap, value);
+    config.set_template_inventory_impact_max_rate(&self.admin_cap, value, &self.clock);
     return_shared(config);
     self.scenario.next_tx(test_constants::admin());
 }

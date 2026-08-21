@@ -4,8 +4,50 @@
 /// Admin and configuration events for Predict.
 module deepbook_predict::config_events;
 
-use deepbook_predict::strike_exposure_config::StrikeExposureConfig;
+use deepbook_predict::{
+    ewma_config::EwmaConfig,
+    pricing_config::PricingConfig,
+    strike_exposure_config::StrikeExposureConfig
+};
 use sui::event;
+
+/// Emitted when the strike-exposure policy template for future markets changes.
+public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
+    backing_buffer_lambda: u64,
+    base_fee: u64,
+    min_fee: u64,
+    min_entry_probability: u64,
+    max_entry_probability: u64,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
+    inventory_impact_max_rate: u64,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when live pricing policy changes.
+public struct PricingConfigUpdated has copy, drop, store {
+    use_pyth_spot_for_forward: bool,
+    pyth_spot_freshness_ms: u64,
+    block_scholes_price_freshness_ms: u64,
+    block_scholes_svi_freshness_ms: u64,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when the EWMA gas-price penalty policy changes.
+public struct EwmaConfigUpdated has copy, drop, store {
+    alpha: u64,
+    z_score_threshold: u64,
+    penalty_rate: u64,
+    enabled: bool,
+    onchain_timestamp_ms: u64,
+}
+
+/// Emitted when either PLP fee rate changes.
+public struct PlpFeeRatesUpdated has copy, drop, store {
+    plp_supply_fee_rate: u64,
+    plp_withdraw_fee_rate: u64,
+    onchain_timestamp_ms: u64,
+}
 
 /// Emitted when global trading pause state changes.
 public struct TradingPausedUpdated has copy, drop, store {
@@ -89,6 +131,55 @@ public struct MarketSettled has copy, drop, store {
 }
 
 // === Public-Package Functions ===
+
+public(package) fun emit_strike_exposure_template_config_updated(
+    config: &StrikeExposureConfig,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(StrikeExposureTemplateConfigUpdated {
+        backing_buffer_lambda: config.backing_buffer_lambda(),
+        base_fee: config.base_fee(),
+        min_fee: config.min_fee(),
+        min_entry_probability: config.min_entry_probability(),
+        max_entry_probability: config.max_entry_probability(),
+        expiry_fee_window_ms: config.expiry_fee_window_ms(),
+        expiry_fee_max_multiplier: config.expiry_fee_max_multiplier(),
+        inventory_impact_max_rate: config.inventory_impact_max_rate(),
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_pricing_config_updated(config: &PricingConfig, onchain_timestamp_ms: u64) {
+    event::emit(PricingConfigUpdated {
+        use_pyth_spot_for_forward: config.use_pyth_spot_for_forward(),
+        pyth_spot_freshness_ms: config.pyth_spot_freshness_ms(),
+        block_scholes_price_freshness_ms: config.block_scholes_price_freshness_ms(),
+        block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms(),
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_ewma_config_updated(config: &EwmaConfig, onchain_timestamp_ms: u64) {
+    event::emit(EwmaConfigUpdated {
+        alpha: config.alpha(),
+        z_score_threshold: config.z_score_threshold(),
+        penalty_rate: config.penalty_rate(),
+        enabled: config.enabled(),
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_plp_fee_rates_updated(
+    plp_supply_fee_rate: u64,
+    plp_withdraw_fee_rate: u64,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(PlpFeeRatesUpdated {
+        plp_supply_fee_rate,
+        plp_withdraw_fee_rate,
+        onchain_timestamp_ms,
+    });
+}
 
 public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: bool) {
     event::emit(TradingPausedUpdated {

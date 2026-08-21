@@ -74,6 +74,8 @@ The distinction from class (A) is deliberate: live configs govern protocol-wide 
 
 The folded design: there are no standalone `fee_config`, `risk_config`, or `expiry_runtime_config` modules. The remaining scalar knobs live directly on `ProtocolConfig` with their defaults and bounds in `config_constants`. Readers should not look for those modules; this is the adopted shape.
 
+`ProtocolConfig` publishes four canonical config-history streams: `StrikeExposureTemplateConfigUpdated`, `PricingConfigUpdated`, `EwmaConfigUpdated`, and `PlpFeeRatesUpdated`. Every successful setter for one of those families emits the family's complete post-state after the mutation, with `onchain_timestamp_ms` from the Sui Clock as its only metadata; consumers can therefore reconstruct the family history without joining partial updates or inferring which sibling fields remained unchanged.
+
 ## How a tunable value is validated
 
 Every admin setter follows the same shape, which keeps creation-time and update-time validation on one path:
@@ -81,7 +83,7 @@ Every admin setter follows the same shape, which keeps creation-time and update-
 1. The setter asserts no valuation is in progress (for the global lock).
 2. The new value is validated against its `assert_*` bound in `config_constants` (a single specific error code per value), so it lands inside the upgrade-required envelope.
 3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the mint-admission probability setters require `min_entry_probability < max_entry_probability`.
-4. The value is stored and a config event is emitted reflecting the new state.
+4. For a config-history family, the value is stored and the family's complete post-state event is emitted.
 
 The grouped EWMA setter still validates each field against its own
 `config_constants` bound and then stores the updated policy together.
