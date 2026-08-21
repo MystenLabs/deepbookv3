@@ -42,11 +42,11 @@ DUSDC is the protocol's settlement currency and has 6 decimals. Custody is parti
 - **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus its inventory-impact escrow; the market re-asserts this backing invariant after every cash movement.
 - **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting account under owner auth — until the next flush drains them.
 
-Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' premiums and fees flow from account custody into `ExpiryCash`; payouts flow from `ExpiryCash` back into account custody; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees are the one outflow that leaves this mesh entirely (see below).
+Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' premiums and protocol fees flow from account custody into `ExpiryCash`; payouts flow from `ExpiryCash` back into account custody; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees leave for the builder-code address, while mint referral shares leave protocol proceeds for the referring Account's receive address and return to ordinary Account custody when settled.
 
 ## Accounts and app authorization
 
-Predict uses the reusable `account` package for custody and account-local state. `AccountWrapper` is the shared object passed into Predict entrypoints; it embeds an `Account` that holds coin balances and the dynamic-field root for app data. Predict stores its local `PredictData` under the `PredictApp` witness: open positions keyed by `(expiry_market_id, order_id)` and the sticky builder-code attribution.
+Predict uses the reusable `account` package for custody and account-local state. `AccountWrapper` is the shared object passed into Predict entrypoints; it embeds an `Account` that holds coin balances, the dynamic-field root for app data, and optional immutable referral attribution. A referred Account stores both the referrer's canonical Account ID and wrapper receive address: the ID is the attribution identity and the address is the accumulator delivery target. Predict stores its local `PredictData` under the `PredictApp` witness: open positions keyed by `(expiry_market_id, order_id)` and the sticky builder-code attribution.
 
 Account mutation authority is an `Auth` hot potato consumed by `AccountWrapper::load_account_mut`. There are two relevant sources:
 
@@ -59,12 +59,7 @@ Once an entrypoint has a mutable `Account`, coin movement and Predict-data mutat
 
 This is intentionally package-level trust. A whitelisted app can mutably load any account wrapper it is handed, so Predict entrypoints own all user-facing permissioning, solvency, market, and lifecycle checks before they mutate account state. This keeps the account package composable for future cross-product infrastructure such as account margining.
 
-**Capital ops settle first (ambient accumulator).** Account coin reads and writes
-first sweep funds delivered to the account receive address (`balance::send_funds`)
-into stored account custody, then proceed. Predict threads `AccumulatorRoot` and
-`Clock` through trade and PLP entrypoints so Account can do that settlement at the
-custody boundary. Builder fees remain an explicit claim flow because the builder
-code owner claiming accumulated rewards is the domain action.
+**Capital ops settle first (ambient accumulator).** Account coin reads and writes first sweep funds delivered to the account receive address (`balance::send_funds`) into stored account custody, then proceed. Predict threads `AccumulatorRoot` and `Clock` through trade and PLP entrypoints so Account can do that settlement at the custody boundary. Mint referral shares use the same Account receive-address and settlement flow. Builder fees remain an explicit claim flow because the builder code owner claiming accumulated rewards is the domain action.
 
 ### Settled automation
 
@@ -86,6 +81,8 @@ code owner claiming accumulated rewards is the domain action.
 **`PauseCap` is the emergency brake.** `AdminCap` mints `PauseCap`s into the registry's `allowed_pause_caps` set for trusted operators. A valid `PauseCap` can force global trading pause, force per-market mint pause, or force a protocol-wide freeze — all one-way. Unpausing and unfreezing always require `AdminCap`. The pause-cap mint and all three force paths intentionally bypass the version gate, so the kill switch stays available even when admin has misconfigured versions. (There is no version-disable authority anywhere: versioning is the admin-only monotonic watermark described below.)
 
 **`BuilderCode` attributes builder fees.** It is a derived shared object claimed from the registry per `(owner, index)` pair, with a permanent owner. A Predict account can set a sticky `builder_code_id`; trades then add a builder fee (bounded by a per-quantity rate cap — see [fees and rebates](../concepts/fees-and-rebates.md)) and route it to the code's address. The owner claims accumulated builder fees explicitly with `claim_all_builder_fees`. This keeps builder fees out of the pool/expiry custody mesh entirely.
+
+**Account referral attribution routes mint fees.** `account::account_registry::new_with_referrer` snapshots an existing Account's canonical ID and wrapper receive address into the new Account. Predict uses the live protocol referral rate on each mint, reports the canonical ID in `OrderMinted`, and sends the calculated share to the stored receive address. The relation is direct, immutable, and one level; it is Account state rather than a Predict capability.
 
 ## Capability and ownership diagram
 

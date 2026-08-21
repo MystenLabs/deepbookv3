@@ -628,3 +628,10 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 - **`MarketCreated` no longer carries `trading_loss_rebate_rate`, `max_benefit_ratio`, or the two `*_benefit_power` thresholds.** The market policy snapshot keeps the strike-exposure terms only. Off-chain consumers of those four fields must be updated with this change.
 
 `predeploy/response-policies.md` RP-11 is retired by this removal; the register carries the retirement note.
+
+## Mint referral fee distribution (2026-08-21)
+
+- **Referral rewards redistribute protocol proceeds without changing mint quotes.** A referred mint sends `referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee)`, rounded down, to the referring Account. Builder fees remain an add-on owned by the builder, while inventory-impact charges remain isolated escrow; neither enters the referral basis. `MintQuote` remains the trader-payment decomposition because referral distribution does not change `all_in_cost`.
+- **The referral rate is live protocol config.** `ProtocolConfig.referral_fee_rate` defaults to 10%, accepts 0% through 25%, and is read on every mint. Accounts and expiry markets do not snapshot it, so an admin update applies to subsequent mints protocol-wide.
+- **Account stores identity and payment routing separately.** Referral creation snapshots the existing referrer's canonical Account ID for attribution and its outer wrapper receive address for `balance::send_funds`. The relation is immutable, direct, and one level. A newly created Account cannot refer to itself because its referrer must already exist and the registry permits one canonical Account per owner; common beneficial ownership across distinct owner addresses is not checked.
+- **Mint events preserve attribution when payment is zero.** `OrderMinted` reports the calculated referral amount and the stored canonical referrer Account ID independently, so a zero rate or rounded-zero amount does not erase the referral relation from the event stream.

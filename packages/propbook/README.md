@@ -74,6 +74,12 @@ The 1e9-normalized spot reads are derived from those stored fields. This keeps
 the stored oracle data close to what Pyth actually supplied, while still exposing
 a non-aborting normalized view for consumers.
 
+The registry stamps the feed with its canonical Propbook underlying when it is first bound. Live
+and exact observation events carry that assignment as an option: permissionless updates submitted
+before binding report `none`, while updates after binding report `some(propbook_underlying_id)`.
+Replacing the active feed does not clear the old feed's sticky assignment, so off-chain consumers
+must follow `OracleBound` and `OracleRebound` to distinguish the currently active feed.
+
 Pyth Lazer `Update` values are produced by the Pyth verifier package, so the Move
 type system provides provenance for normal Pyth ingestion.
 
@@ -213,8 +219,8 @@ Use `propbook_pyth_id_for_underlying(registry, propbook_underlying_id)`. The Blo
 
 Pyth-backed sources emit generic oracle events:
 
-- `ObservationRecorded<OracleRead<Payload>>`
-- `ObservationInserted<OracleRead<Payload>>`
+- `ObservationRecorded<OracleRead<Payload>>`, including the optional canonical Propbook underlying
+- `ObservationInserted<OracleRead<Payload>>`, including the optional canonical Propbook underlying
 - `OracleSourceRegistered`
 - `OracleBound`
 - `OracleRebound`
@@ -222,9 +228,8 @@ Pyth-backed sources emit generic oracle events:
 Block Scholes stores emit their dedicated event surface:
 
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
-- `BlockScholesObservationRecorded<Observation>` records every stored observation with its store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
-- `BlockScholesObservationInserted<Observation>` records every canonical spot inserted into exact minute-boundary history with its store ID and observation payload.
-- `BlockScholesBatchIngested` records every verified batch submitted through an `apply_*` latest path with its store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
+- `BlockScholesObservationRecorded<Observation>` records every stored observation with its Propbook underlying, store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
+- `BlockScholesBatchIngested` records every verified batch with its Propbook underlying, store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

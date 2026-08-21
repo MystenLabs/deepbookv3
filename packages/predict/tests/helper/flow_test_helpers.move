@@ -262,6 +262,27 @@ public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Tra
     setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
 }
 
+/// `setup_live_market` with alice referred by bob's pre-existing account.
+public fun setup_referred_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+): (Fixture, ID, Trader, Trader) {
+    let mut fx = setup_market_default();
+    let expiry_id = fx.create_expiry(expiry_ms);
+    let referrer = fx.create_funded_manager_as(test_constants::bob(), 0);
+    let trader = fx.create_funded_manager_with_referrer_as(
+        test_constants::alice(),
+        test_constants::mint_deposit(),
+        &referrer,
+    );
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, live_price);
+    fx.seed_market_cash(&mut market.market, test_constants::default_seeded_expiry_cash());
+    return_market_bundle(market);
+    fx.scenario.next_tx(test_constants::admin());
+    (fx, expiry_id, trader, referrer)
+}
+
 /// `setup_live_market` at the far default expiry / live price with the large
 /// default trader deposit (used by the smoke + gate tests).
 public fun setup_everything(): (Fixture, ID, Trader) {
@@ -344,6 +365,11 @@ public fun set_plp_supply_fee_rate(self: &Fixture, config: &mut ProtocolConfig, 
 /// Set the PLP withdraw-leg fee rate through the real admin path.
 public fun set_plp_withdraw_fee_rate(self: &Fixture, config: &mut ProtocolConfig, rate: u64) {
     config.set_plp_withdraw_fee_rate(&self.admin_cap, rate);
+}
+
+/// Set the live protocol-wide referral fee rate through the real admin path.
+public fun set_referral_fee_rate_bundle(self: &Fixture, market: &mut MarketBundle, rate: u64) {
+    market.config.set_referral_fee_rate(&self.admin_cap, rate);
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
@@ -628,11 +654,11 @@ public fun create_and_rebind_pyth(self: &mut Fixture, source_id: u32): ID {
 
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::replace_pyth_binding_for_underlying(
         &mut oracle_registry,
         &self.propbook_admin_cap,
-        &pyth,
+        &mut pyth,
         test_constants::propbook_underlying_id(),
     );
     return_shared(pyth);
@@ -667,6 +693,29 @@ public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit:
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
     // caller's bundle takes. Sender stays `owner`, so a subsequent
     // owner auth is still valid.
+    self.scenario.next_tx(owner);
+    Trader { wrapper_id, owner }
+}
+
+/// Create and fund an account whose immutable referrer is an existing account.
+public fun create_funded_manager_with_referrer_as(
+    self: &mut Fixture,
+    owner: address,
+    deposit: u64,
+    referrer: &Trader,
+): Trader {
+    self.scenario.next_tx(owner);
+    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
+    let referrer_wrapper = self.scenario.take_shared_by_id<AccountWrapper>(referrer.wrapper_id);
+    let wrapper_id = account_registry.derived_wrapper_address(owner).to_id();
+    let mut wrapper = account_registry.new_with_referrer(&referrer_wrapper, self.scenario.ctx());
+    return_shared(referrer_wrapper);
+    return_shared(account_registry);
+    let auth = account::generate_auth(self.scenario.ctx());
+    wrapper
+        .load_account_mut(auth)
+        .deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
+    wrapper.share();
     self.scenario.next_tx(owner);
     Trader { wrapper_id, owner }
 }

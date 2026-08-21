@@ -74,6 +74,7 @@ public struct SVIParams has copy, drop, store {
 /// Scholes base asset.
 public struct BlockScholesValueStore has key {
     id: UID,
+    propbook_underlying_id: u32,
     block_scholes_base_asset: String,
     /// Package version this store runs at; writes require an exact match and `migrate` advances it
     /// forward-only after a package upgrade.
@@ -86,6 +87,7 @@ public struct BlockScholesValueStore has key {
 /// Latest SVI observations for one Block Scholes base asset.
 public struct BlockScholesSVIStore has key {
     id: UID,
+    propbook_underlying_id: u32,
     block_scholes_base_asset: String,
     version: u64,
     svis: Table<u256, BsRead<SVIParams>>,
@@ -93,6 +95,7 @@ public struct BlockScholesSVIStore has key {
 
 /// Emitted only for observations that were stored, so its presence means the series advanced.
 public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy, drop {
+    propbook_underlying_id: u32,
     propbook_oracle_id: ID,
     sid: u256,
     /// `0` = spot, `1` = forward, and `2` = SVI.
@@ -112,6 +115,7 @@ public struct BlockScholesObservationInserted<Observation: copy + drop> has copy
 /// The envelope time advances on every provider flush, so this is what shows the feed is running
 /// during a stretch where no series moved and no observation event is emitted.
 public struct BlockScholesBatchIngested has copy, drop {
+    propbook_underlying_id: u32,
     propbook_oracle_id: ID,
     /// `0` = spot, `1` = forward, and `2` = SVI.
     series_kind: u8,
@@ -343,11 +347,13 @@ public fun migrate_svi_store(store: &mut BlockScholesSVIStore) {
 
 /// Create and share a value store for one immutable Block Scholes base asset.
 public(package) fun create_and_share_value_store(
+    propbook_underlying_id: u32,
     block_scholes_base_asset: String,
     ctx: &mut TxContext,
 ): ID {
     let store = BlockScholesValueStore {
         id: object::new(ctx),
+        propbook_underlying_id,
         block_scholes_base_asset,
         version: constants::current_version!(),
         values: table::new(ctx),
@@ -360,11 +366,13 @@ public(package) fun create_and_share_value_store(
 
 /// Create and share an SVI store for one immutable Block Scholes base asset.
 public(package) fun create_and_share_svi_store(
+    propbook_underlying_id: u32,
     block_scholes_base_asset: String,
     ctx: &mut TxContext,
 ): ID {
     let store = BlockScholesSVIStore {
         id: object::new(ctx),
+        propbook_underlying_id,
         block_scholes_base_asset,
         version: constants::current_version!(),
         svis: table::new(ctx),
@@ -443,6 +451,7 @@ fun apply_checked_value_batch(
     };
 
     event::emit(BlockScholesBatchIngested {
+        propbook_underlying_id: store.propbook_underlying_id,
         propbook_oracle_id: store.value_store_id(),
         series_kind,
         published_at_ms,
@@ -511,6 +520,7 @@ fun apply_checked_svi_batch(
     };
 
     event::emit(BlockScholesBatchIngested {
+        propbook_underlying_id: store.propbook_underlying_id,
         propbook_oracle_id: store.svi_store_id(),
         series_kind: series_kind_svi!(),
         published_at_ms,
@@ -531,8 +541,10 @@ fun apply_value(
 ): bool {
     // `apply_checked_value_batch` validates the store version before entering the batch loop.
     let id = store.value_store_id();
+    let propbook_underlying_id = store.propbook_underlying_id;
     apply(
         &mut store.values,
+        propbook_underlying_id,
         id,
         sid,
         series_kind,
@@ -570,8 +582,10 @@ fun apply_svi(
 ): bool {
     // `apply_checked_svi_batch` validates the store version before entering the batch loop.
     let id = store.svi_store_id();
+    let propbook_underlying_id = store.propbook_underlying_id;
     apply(
         &mut store.svis,
+        propbook_underlying_id,
         id,
         sid,
         series_kind_svi!(),
@@ -607,8 +621,15 @@ fun read_at<Value: copy + drop + store>(
 #[test_only]
 public fun observation_recorded_fields<Observation: copy + drop>(
     event: &BlockScholesObservationRecorded<Observation>,
-): (ID, u256, u8, u64, Observation) {
-    (event.propbook_oracle_id, event.sid, event.series_kind, event.expiry_ms, event.observation)
+): (u32, ID, u256, u8, u64, Observation) {
+    (
+        event.propbook_underlying_id,
+        event.propbook_oracle_id,
+        event.sid,
+        event.series_kind,
+        event.expiry_ms,
+        event.observation,
+    )
 }
 
 #[test_only]
@@ -621,8 +642,9 @@ public fun observation_inserted_fields<Observation: copy + drop>(
 /// The batch event's fields exist for off-chain consumers, which decode them rather than calling
 /// Move, so this reader exists only so tests can assert the decoded fields are right.
 #[test_only]
-public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u8, u64, u64, u64) {
+public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (u32, ID, u8, u64, u64, u64) {
     (
+        event.propbook_underlying_id,
         event.propbook_oracle_id,
         event.series_kind,
         event.published_at_ms,
@@ -654,6 +676,7 @@ public fun set_store_versions_for_testing(
 /// anchor land on or past expiry, so it is skipped like any other unusable entry.
 fun apply<Value: copy + drop + store>(
     reads: &mut Table<u256, BsRead<Value>>,
+    propbook_underlying_id: u32,
     propbook_oracle_id: ID,
     sid: u256,
     series_kind: u8,
@@ -676,6 +699,7 @@ fun apply<Value: copy + drop + store>(
     };
 
     event::emit(BlockScholesObservationRecorded<BsRead<Value>> {
+        propbook_underlying_id,
         propbook_oracle_id,
         sid,
         series_kind,

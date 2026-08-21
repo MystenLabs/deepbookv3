@@ -23,9 +23,9 @@ fun bind_pyth_to_underlying_records_typed_lookup_and_metadata() {
     let (scenario, pyth_a_id, _pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth, BTC_UNDERLYING_ID);
 
     assert_eq!(
         registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
@@ -50,11 +50,11 @@ fun replace_pyth_binding_updates_typed_lookup_and_metadata() {
     let (scenario, pyth_a_id, pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
-    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+    let mut pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
-    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_a, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &mut pyth_b, BTC_UNDERLYING_ID);
 
     assert_eq!(
         registry.propbook_pyth_id_for_underlying(BTC_UNDERLYING_ID).destroy_some(),
@@ -81,9 +81,9 @@ fun bind_source_with_wrong_propbook_object_aborts() {
     scenario.next_tx(ADMIN);
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let rogue_pyth = scenario.take_shared_by_id<PythFeed>(rogue_pyth_id);
+    let mut rogue_pyth = scenario.take_shared_by_id<PythFeed>(rogue_pyth_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &rogue_pyth, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut rogue_pyth, BTC_UNDERLYING_ID);
 
     abort 999
 }
@@ -95,9 +95,9 @@ fun bind_unregistered_source_aborts() {
     scenario.next_tx(ADMIN);
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let unregistered_pyth = scenario.take_shared_by_id<PythFeed>(unregistered_pyth_id);
+    let mut unregistered_pyth = scenario.take_shared_by_id<PythFeed>(unregistered_pyth_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &unregistered_pyth, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut unregistered_pyth, BTC_UNDERLYING_ID);
 
     abort 999
 }
@@ -107,9 +107,9 @@ fun replace_pyth_binding_without_existing_binding_aborts() {
     let (scenario, pyth_a_id, _pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
 
-    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &mut pyth, BTC_UNDERLYING_ID);
 
     abort 999
 }
@@ -119,12 +119,12 @@ fun replace_pyth_binding_to_source_bound_to_other_underlying_aborts() {
     let (scenario, pyth_a_id, pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
-    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+    let mut pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_b, ETH_UNDERLYING_ID);
-    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_a, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_b, ETH_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &mut pyth_b, BTC_UNDERLYING_ID);
 
     abort 999
 }
@@ -134,12 +134,12 @@ fun replaced_pyth_source_stays_bound_to_original_underlying() {
     let (scenario, pyth_a_id, pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
-    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+    let mut pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
-    registry.replace_pyth_binding_for_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, ETH_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_a, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(&admin_cap, &mut pyth_b, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_a, ETH_UNDERLYING_ID);
 
     abort 999
 }
@@ -149,10 +149,10 @@ fun same_source_cannot_bind_to_two_underlyings() {
     let (scenario, pyth_a_id, _pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth, BTC_UNDERLYING_ID);
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth, ETH_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth, ETH_UNDERLYING_ID);
 
     abort 999
 }
@@ -162,11 +162,11 @@ fun rebinding_bound_underlying_aborts() {
     let (scenario, pyth_a_id, pyth_b_id) = setup_registry_with_feeds();
     let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let mut registry = scenario.take_shared<OracleRegistry>();
-    let pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
-    let pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
+    let mut pyth_a = scenario.take_shared_by_id<PythFeed>(pyth_a_id);
+    let mut pyth_b = scenario.take_shared_by_id<PythFeed>(pyth_b_id);
 
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_a, BTC_UNDERLYING_ID);
-    registry.bind_pyth_to_underlying(&admin_cap, &pyth_b, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_a, BTC_UNDERLYING_ID);
+    registry.bind_pyth_to_underlying(&admin_cap, &mut pyth_b, BTC_UNDERLYING_ID);
 
     abort 999
 }

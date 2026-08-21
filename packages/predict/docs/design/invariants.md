@@ -142,6 +142,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
   min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
+- On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-impact charges are excluded. The DUSDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
   `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the DUSDC leg
   **outside** the mark and retained by the pool, so it accrues to remaining

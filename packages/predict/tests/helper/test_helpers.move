@@ -131,11 +131,11 @@ public fun bind_feeds_to_underlying(
     pyth_id: ID,
 ): (ID, ID) {
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
-    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::bind_pyth_to_underlying(
         &mut oracle_registry,
         propbook_admin_cap,
-        &pyth,
+        &mut pyth,
         test_constants::propbook_underlying_id(),
     );
     let bs_pair = propbook_registry::create_and_share_block_scholes_stores(

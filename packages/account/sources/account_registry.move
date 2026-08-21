@@ -73,20 +73,23 @@ public fun derived_wrapper_exists(registry: &AccountRegistry, owner: address): b
 /// Creates the sender's canonical account and wrapper, aborting if either derived ID is already claimed.
 public fun new(registry: &mut AccountRegistry, ctx: &mut TxContext): AccountWrapper {
     let owner = ctx.sender();
-    registry.new_for_owner(owner, false, option::none(), ctx)
+    registry.new_for_owner(owner, false, option::none(), option::none(), ctx)
 }
 
-/// Creates the sender's canonical account and permanently records the supplied wrapper's account as its referrer.
+/// Creates the sender's canonical account and permanently records the supplied
+/// wrapper's account identity and receive address as its referrer.
 public fun new_with_referrer(
     registry: &mut AccountRegistry,
     referrer: &AccountWrapper,
     ctx: &mut TxContext,
 ): AccountWrapper {
     let owner = ctx.sender();
+    let referrer_account = referrer.load_account();
     registry.new_for_owner(
         owner,
         false,
-        option::some(referrer.load_account().account_id()),
+        option::some(referrer_account.account_id()),
+        option::some(referrer_account.receive_address()),
         ctx,
     )
 }
@@ -98,7 +101,7 @@ public fun new_self_owned(
     ctx: &mut TxContext,
 ): AccountWrapper {
     let owner = owner_uid.to_inner().to_address();
-    registry.new_for_owner(owner, true, option::none(), ctx)
+    registry.new_for_owner(owner, true, option::none(), option::none(), ctx)
 }
 
 /// Returns whether `App` may request package-issued mutable account authority.
@@ -145,6 +148,7 @@ fun new_for_owner(
     owner: address,
     self_owned: bool,
     referrer_account_id: Option<ID>,
+    referrer_receive_address: Option<address>,
     ctx: &mut TxContext,
 ): AccountWrapper {
     registry.assert_account_does_not_exist(owner);
@@ -154,6 +158,7 @@ fun new_for_owner(
         AccountKey(owner),
         owner,
         referrer_account_id,
+        referrer_receive_address,
         ctx,
     );
     account_events::emit_account_created(
