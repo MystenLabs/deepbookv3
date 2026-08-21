@@ -1553,10 +1553,14 @@ function reconstructPublishedMetadata(result: DeploymentResult, pkg: PackageName
     );
     const path = publishedPath(pkg);
     const temporaryPath = `${path}.recovery.tmp`;
-    writeFileSync(temporaryPath, publishedMetadataText(packageId, upgradeCapability), {
-        mode: 0o644,
-    });
-    renameSync(temporaryPath, path);
+    try {
+        writeFileSync(temporaryPath, publishedMetadataText(packageId, upgradeCapability), {
+            mode: 0o644,
+        });
+        renameSync(temporaryPath, path);
+    } finally {
+        rmSync(temporaryPath, { force: true });
+    }
     assertPublishedIdentity(path, packageId, pkg);
 }
 
@@ -1658,9 +1662,16 @@ export function unexpectedDeploymentPaths(
     return paths.filter((path) => !allowed.has(path));
 }
 
+export function removeRecoveryTemporaries(paths: readonly string[]): void {
+    for (const path of paths) rmSync(path, { force: true });
+}
+
 function assertExpectedWorktree(result: DeploymentResult): void {
     const generatedPackages = PACKAGES.filter(
         (pkg) => result.packages[pkg] || result.inFlight?.package === pkg,
+    );
+    removeRecoveryTemporaries(
+        generatedPackages.map((pkg) => `${publishedPath(pkg)}.recovery.tmp`),
     );
     const unexpected = unexpectedDeploymentPaths(
         changedPaths(),
@@ -2749,16 +2760,18 @@ function parseOptionId(bytes: number[]): string | null {
 interface BlockScholesStorePair {
     valueStoreId: string;
     sviStoreId: string;
+    baseAsset: string;
 }
 
 export function parseOptionBlockScholesStorePair(bytes: number[]): BlockScholesStorePair | null {
     if (bytes.length === 1 && bytes[0] === 0) return null;
-    if (bytes[0] !== 1 || bytes.length !== 65) {
+    if (bytes[0] !== 1 || bytes.length <= 65) {
         throw new Error(`invalid Option<BlockScholesStorePair> return (${bytes.length} bytes)`);
     }
     return {
         valueStoreId: parseAddress(bytes.slice(1, 33)),
         sviStoreId: parseAddress(bytes.slice(33, 65)),
+        baseAsset: parseString(bytes.slice(65)),
     };
 }
 
@@ -2854,11 +2867,12 @@ async function assertBlockScholesStoreBaseAssets(
         (tx) => [tx.object(pair.sviStoreId)],
     );
     if (
+        pair.baseAsset !== ASSET.blockScholesBaseAsset ||
         valueStoreBaseAsset !== ASSET.blockScholesBaseAsset ||
         sviStoreBaseAsset !== ASSET.blockScholesBaseAsset
     ) {
         throw new Error(
-            `Block Scholes store base assets are ${valueStoreBaseAsset}/${sviStoreBaseAsset}, expected ${ASSET.blockScholesBaseAsset}`,
+            `Block Scholes binding/store base assets are ${pair.baseAsset}/${valueStoreBaseAsset}/${sviStoreBaseAsset}, expected ${ASSET.blockScholesBaseAsset}`,
         );
     }
 }
@@ -3281,15 +3295,34 @@ async function ensureOracleObjects(runtime: Runtime): Promise<void> {
     writeState(result);
 }
 
+export function isUnderlyingNotRegisteredError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+        message.includes("MoveAbort") &&
+        message.includes("market_manager") &&
+        message.includes("underlying_config") &&
+        /},\s*0\)(?:\s|$)/.test(message)
+    );
+}
+
+async function predictUnderlyingRegistered(runtime: Runtime): Promise<boolean> {
+    const tx = new Transaction();
+    call(tx, target(runtime.result, "predict", "registry", "cadence_configs"), [
+        tx.object(sharedId(runtime.result, "predict", "registry::Registry")),
+        tx.pure.u32(ASSET.propbookUnderlyingId),
+    ]);
+    try {
+        await devInspect(runtime, "predict_underlying_registered", tx);
+        return true;
+    } catch (error) {
+        if (isUnderlyingNotRegisteredError(error)) return false;
+        throw error;
+    }
+}
+
 async function ensureUnderlyingRegistered(runtime: Runtime): Promise<void> {
     const result = runtime.result;
-    if (result.transactions.register_predict_underlying) {
-        result.wiring.asset.predictUnderlyingRegistered = true;
-        result.wiring.asset.predictUnderlyingRegisteredTx ??=
-            result.transactions.register_predict_underlying;
-        writeState(result);
-    }
-    if (!result.wiring.asset.predictUnderlyingRegistered) {
+    if (!(await predictUnderlyingRegistered(runtime))) {
         const tx = new Transaction();
         call(tx, target(result, "predict", "registry", "register_underlying"), [
             tx.object(sharedId(result, "predict", "registry::Registry")),
@@ -3299,9 +3332,14 @@ async function ensureUnderlyingRegistered(runtime: Runtime): Promise<void> {
         ]);
         const receipt = await executeTransaction(runtime, "register_predict_underlying", tx);
         result.wiring.asset.predictUnderlyingRegisteredTx = receipt.digest ?? null;
-        result.wiring.asset.predictUnderlyingRegistered = true;
-        writeState(result);
+        if (!(await predictUnderlyingRegistered(runtime))) {
+            throw new Error("Predict underlying registration did not persist on-chain");
+        }
     }
+    result.wiring.asset.predictUnderlyingRegistered = true;
+    result.wiring.asset.predictUnderlyingRegisteredTx ??=
+        result.transactions.register_predict_underlying ?? null;
+    writeState(result);
 }
 
 async function readCadence(runtime: Runtime, spec: CadenceSpec): Promise<CadenceRecord> {

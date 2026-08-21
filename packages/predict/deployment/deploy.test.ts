@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
     CADENCES,
@@ -23,6 +25,7 @@ import {
     createDeploymentState,
     irreversibleDeploymentSteps,
     irreversibleStepDigest,
+    isUnderlyingNotRegisteredError,
     maximumTransactionCountPerRun,
     parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
@@ -32,6 +35,7 @@ import {
     publishedMetadataText,
     reconcileJournaledInFlight,
     recordVerifiedTransactionFailure,
+    removeRecoveryTemporaries,
     runBroadcastBoundary,
     sameObjectReference,
     unexpectedDeploymentPaths,
@@ -653,16 +657,56 @@ test("a manifest cannot be generated before the chain audit completes", () => {
     assert.throws(() => buildIntegrationManifest(createDeploymentState()), /complete, verified/);
 });
 
-test("Block Scholes store-pair inspection decodes both IDs", () => {
+test("Block Scholes store-pair inspection decodes both IDs and the base asset", () => {
     const left = id("a");
     const right = id("b");
     const bytes = (value: string) => Array.from(Buffer.from(value.slice(2), "hex"));
-    assert.deepEqual(parseOptionBlockScholesStorePair([1, ...bytes(left), ...bytes(right)]), {
-        valueStoreId: left,
-        sviStoreId: right,
-    });
+    const baseAsset = Array.from(Buffer.from("BTC"));
+    assert.deepEqual(
+        parseOptionBlockScholesStorePair([
+            1,
+            ...bytes(left),
+            ...bytes(right),
+            baseAsset.length,
+            ...baseAsset,
+        ]),
+        {
+            valueStoreId: left,
+            sviStoreId: right,
+            baseAsset: "BTC",
+        },
+    );
     assert.equal(parseOptionBlockScholesStorePair([0]), null);
     assert.throws(() => parseOptionBlockScholesStorePair([1]), /invalid Option/);
+});
+
+test("stale publication recovery temporaries are removed before resume", () => {
+    const directory = mkdtempSync(join(tmpdir(), "predict-publish-recovery-"));
+    const temporary = join(directory, "Published.toml.recovery.tmp");
+    try {
+        writeFileSync(temporary, "partial");
+        removeRecoveryTemporaries([temporary]);
+        assert.equal(existsSync(temporary), false);
+        assert.doesNotThrow(() => removeRecoveryTemporaries([temporary]));
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test("only the Predict missing-underlying abort is treated as an absent registration", () => {
+    const missing = new Error(
+        'MoveAbort(MoveLocation { module: ModuleId { name: Identifier("market_manager") }, function_name: Some("underlying_config") }, 0) in command 0',
+    );
+    assert.equal(isUnderlyingNotRegisteredError(missing), true);
+    assert.equal(
+        isUnderlyingNotRegisteredError(
+            new Error(
+                'MoveAbort(MoveLocation { module: ModuleId { name: Identifier("market_manager") }, function_name: Some("underlying_config") }, 1) in command 0',
+            ),
+        ),
+        false,
+    );
+    assert.equal(isUnderlyingNotRegisteredError(new Error("network unavailable")), false);
 });
 
 test("published package metadata decoding preserves exact bytecode, lineage, and origins", () => {
