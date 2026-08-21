@@ -113,7 +113,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Per-expiry config is snapshotted immutable at creation**, so admin changes to
   the global template never reprice live orders.
 - **The contract defaults ARE the genesis values (AUD-002).** There is no separate
-  launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.25, caps,
+  launch checklist; `config_constants` defaults (`backing_buffer_lambda` 0.31, caps,
   budgets) ship as-is unless an open item changes one. Configured values live in
   [configuration.md](./configuration.md).
 - **Uniform round-down math** at 1e9 scale; solvency rests on bit-identical
@@ -137,14 +137,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **D030 — The live cash-backing reserve is a settlement floor plus a tunable liquidity
   buffer**: `max_net_payout + λ · (Σ net_payout − max_net_payout)`, with
-  `λ` (`backing_buffer_lambda`) an admin template value, default 0.25. The floor
+  `λ` (`backing_buffer_lambda`) an admin template value, default 0.31. The floor
   — the maximum summed payout at any *single* settlement price — pays every
   settlement winner in full on every price path, because exactly one price
   settles a market and ranges that share no price can never all win together.
   The buffer sizes how much *early-exit* demand beyond the floor is funded:
-  Monte Carlo and real-data simulation put worst-case sequential-exit demand on
-  disjoint books at 16–33% of the gap (95th percentile), so the default covers
-  it with margin while reserving ~30% of the old requirement on many-bucket
+  Monte Carlo and real-data simulation put 95th-percentile sequential-exit demand
+  across studied disjoint books at 16–33% of the gap, so the default targets the
+  upper end of that range while reserving ~31% of the old requirement on many-bucket
   books. A live redeem that would breach the reserve aborts and can retry
   smaller or later; closing a position releases λ of its own backing, so exit
   liquidity cannot be monopolized by one holder. `λ = 1` reproduces the summed

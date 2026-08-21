@@ -119,12 +119,12 @@ fun mint_without_pool_backing_aborts() {
 
 /// Closing one side of a disjoint book destroys more cash than it frees.
 ///
-/// Two disjoint one-lot orders reserve `M + λ*gap` = 1.25e9. Closing the DOWN
+/// Two disjoint one-lot orders reserve `M + λ*gap` = 1.31e9. Closing the DOWN
 /// side pays out its live value (~0.5e9 at the money) while the reserve only
 /// falls to the surviving UP order's own backing, 1e9 — so a market holding the
-/// legal minimum ends the close 0.25e9 short and must refuse it. The seed
+/// legal minimum ends the close about 0.19e9 short and must refuse it. The seed
 /// targets a cash level a little above the minimum, which keeps the fixture
-/// independent of the exact rebate basis while staying far inside the 0.25e9
+/// independent of the exact rebate basis while staying inside the 0.19e9
 /// deficit; the pre-close assertion pins that the market really was backed.
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun full_close_below_remaining_reserve_aborts() {
