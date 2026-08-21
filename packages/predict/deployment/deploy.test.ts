@@ -9,13 +9,24 @@ import {
     EXPECTED_PROTOCOL_CONFIG,
     MANIFEST_RELATIVE,
     STATE_RELATIVE,
+    assertDeploymentTarget,
+    assertExactPackageGraph,
     assertIntegrationManifest,
     assertPackagePlan,
+    assertRecoverableInFlight,
+    assertSourceBinding,
+    assertSuiCliVersion,
     buildIntegrationManifest,
+    checkpointRecoveredTransaction,
     createDeploymentState,
+    irreversibleDeploymentSteps,
     parseDeploymentArgs,
     parseOptionBlockScholesStorePair,
     parsePackageMetadata,
+    plannedTransactionCount,
+    remainingDeploymentSteps,
+    sameObjectReference,
+    unexpectedDeploymentPaths,
     type IntegrationManifest,
 } from "./deploy.ts";
 
@@ -78,12 +89,20 @@ function manifestFixture(): IntegrationManifest {
                     "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
             },
         },
+        externalAuthorizations: {
+            deepbookCoreAccount: {
+                authorized: false,
+                appType: `${id("5")}::account_data::DeepbookCoreAccountApp`,
+                registry: "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1",
+            },
+        },
         indexing: { startCheckpoint: "1" },
         initialConfiguration: {
             verifiedAfterCheckpoint: "2",
             stateAnchors: {
                 protocolConfig: { objectVersion: "1", digest: "protocol" },
                 registry: { objectVersion: "1", digest: "registry" },
+                oracleRegistry: { objectVersion: "1", digest: "oracle" },
                 sessionsConfig: { objectVersion: "1", digest: "sessions" },
                 deepbookRegistry: { objectVersion: "1", digest: "deepbook" },
             },
@@ -172,22 +191,71 @@ test("the deployment policy pins approved defaults and cadence windows", () => {
     assert.equal(EXPECTED_PROTOCOL_CONFIG.protocolReserveProfitShare, "100000000");
     assert.deepEqual(
         CADENCES.map(
-            ({ name, tickSize, admissionTickSize, maxExpiryAllocation, initialExpiryCash, windowSize }) => ({
-            name,
-            tickSize: tickSize.toString(),
-            admissionTickSize: admissionTickSize.toString(),
-            maxExpiryAllocation: maxExpiryAllocation.toString(),
-            initialExpiryCash: initialExpiryCash.toString(),
-            windowSize: windowSize.toString(),
+            ({
+                name,
+                tickSize,
+                admissionTickSize,
+                maxExpiryAllocation,
+                initialExpiryCash,
+                windowSize,
+            }) => ({
+                name,
+                tickSize: tickSize.toString(),
+                admissionTickSize: admissionTickSize.toString(),
+                maxExpiryAllocation: maxExpiryAllocation.toString(),
+                initialExpiryCash: initialExpiryCash.toString(),
+                windowSize: windowSize.toString(),
             }),
         ),
         [
-            { name: "1m", tickSize: "10000000", admissionTickSize: "1000000000", maxExpiryAllocation: "50000000000", initialExpiryCash: "10000000000", windowSize: "2" },
-            { name: "5m", tickSize: "10000000", admissionTickSize: "1000000000", maxExpiryAllocation: "50000000000", initialExpiryCash: "10000000000", windowSize: "2" },
-            { name: "1h", tickSize: "10000000", admissionTickSize: "1000000000", maxExpiryAllocation: "250000000000", initialExpiryCash: "50000000000", windowSize: "2" },
-            { name: "1d", tickSize: "10000000", admissionTickSize: "100000000000", maxExpiryAllocation: "250000000000", initialExpiryCash: "50000000000", windowSize: "2" },
-            { name: "1w", tickSize: "10000000", admissionTickSize: "100000000000", maxExpiryAllocation: "250000000000", initialExpiryCash: "50000000000", windowSize: "2" },
-            { name: "1mo", tickSize: "0", admissionTickSize: "0", maxExpiryAllocation: "0", initialExpiryCash: "0", windowSize: "0" },
+            {
+                name: "1m",
+                tickSize: "10000000",
+                admissionTickSize: "1000000000",
+                maxExpiryAllocation: "50000000000",
+                initialExpiryCash: "10000000000",
+                windowSize: "2",
+            },
+            {
+                name: "5m",
+                tickSize: "10000000",
+                admissionTickSize: "1000000000",
+                maxExpiryAllocation: "50000000000",
+                initialExpiryCash: "10000000000",
+                windowSize: "2",
+            },
+            {
+                name: "1h",
+                tickSize: "10000000",
+                admissionTickSize: "1000000000",
+                maxExpiryAllocation: "250000000000",
+                initialExpiryCash: "50000000000",
+                windowSize: "2",
+            },
+            {
+                name: "1d",
+                tickSize: "10000000",
+                admissionTickSize: "100000000000",
+                maxExpiryAllocation: "250000000000",
+                initialExpiryCash: "50000000000",
+                windowSize: "2",
+            },
+            {
+                name: "1w",
+                tickSize: "10000000",
+                admissionTickSize: "100000000000",
+                maxExpiryAllocation: "250000000000",
+                initialExpiryCash: "50000000000",
+                windowSize: "2",
+            },
+            {
+                name: "1mo",
+                tickSize: "0",
+                admissionTickSize: "0",
+                maxExpiryAllocation: "0",
+                initialExpiryCash: "0",
+                windowSize: "0",
+            },
         ],
     );
     const state = createDeploymentState();
@@ -209,6 +277,97 @@ test("the package plan is complete and topological", () => {
             ]),
         /planned before local dependency/,
     );
+});
+
+test("gas funding derives the complete fresh transaction plan", () => {
+    assert.equal(plannedTransactionCount(), 32);
+    assert.equal(irreversibleDeploymentSteps().length, 38);
+});
+
+test("target, toolchain, source, and worktree bindings fail closed", () => {
+    assert.doesNotThrow(() =>
+        assertDeploymentTarget(
+            "testnet",
+            "4c78adac",
+            "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+        ),
+    );
+    assert.throws(
+        () =>
+            assertDeploymentTarget(
+                "mainnet",
+                "4c78adac",
+                "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
+            ),
+        /deployment target/,
+    );
+    assert.throws(() => assertDeploymentTarget("testnet", "bad", id("a")), /deployment target/);
+    assert.doesNotThrow(() => assertSuiCliVersion("sui 1.77.1-4e476c5c8184"));
+    assert.throws(() => assertSuiCliVersion("sui 1.78.0"), /must be 1.77.1/);
+    assert.doesNotThrow(() => assertSourceBinding("a".repeat(40), "a".repeat(40)));
+    assert.throws(
+        () => assertSourceBinding("a".repeat(40), "b".repeat(40)),
+        /source commit changed/,
+    );
+    assert.deepEqual(
+        unexpectedDeploymentPaths(
+            [STATE_RELATIVE, "packages/account/Published.toml", "packages/predict/sources/x.move"],
+            ["account"],
+        ),
+        ["packages/predict/sources/x.move"],
+    );
+});
+
+test("known-digest recovery checkpoints once and unknown outcomes fail closed", () => {
+    const state = createDeploymentState();
+    state.inFlight = {
+        kind: "transaction",
+        label: "mint_lifecycle_cap",
+        package: null,
+        startedAt: "2026-08-21T00:00:00.000Z",
+        digest: "known-digest",
+    };
+    assert.doesNotThrow(() => assertRecoverableInFlight(state.inFlight!, true));
+    checkpointRecoveredTransaction(state);
+    checkpointRecoveredTransaction(state);
+    assert.equal(state.transactions.mint_lifecycle_cap, "known-digest");
+    assert.equal(state.inFlight, null);
+    assert.throws(
+        () =>
+            assertRecoverableInFlight(
+                {
+                    kind: "publish",
+                    label: "publish_predict",
+                    package: "predict",
+                    startedAt: "2026-08-21T00:00:00.000Z",
+                    digest: null,
+                },
+                false,
+            ),
+        /no known digest; fail closed/,
+    );
+    assert.throws(
+        () =>
+            assertRecoverableInFlight(
+                {
+                    kind: "transaction",
+                    label: "bootstrap_pool",
+                    package: null,
+                    startedAt: "2026-08-21T00:00:00.000Z",
+                    digest: "missing-digest",
+                },
+                false,
+            ),
+        /not visible; fail closed/,
+    );
+});
+
+test("every irreversible-step crash boundary resumes without duplicating a checkpoint", () => {
+    const plan = irreversibleDeploymentSteps();
+    for (let boundary = 0; boundary <= plan.length; boundary++) {
+        const completed = new Set(plan.slice(0, boundary));
+        assert.deepEqual(remainingDeploymentSteps(completed), plan.slice(boundary));
+    }
 });
 
 test("manifest validation requires all six fresh packages and mutable-state anchors", () => {
@@ -238,25 +397,74 @@ test("Block Scholes store-pair inspection decodes both IDs", () => {
     assert.throws(() => parseOptionBlockScholesStorePair([1]), /invalid Option/);
 });
 
-test("published package metadata decoding keeps module and dependency identity", () => {
-    assert.deepEqual(
-        parsePackageMetadata({
-            data: {
-                content: {
-                    disassembled: { beta: {}, alpha: {} },
-                    linkageTable: {
-                        one: { upgradedId: "0x1" },
-                        two: { originalId: "0x2" },
-                    },
+test("published package metadata decoding preserves exact bytecode, lineage, and origins", () => {
+    const packageId = id("9");
+    const dependency = id("1");
+    const metadata = parsePackageMetadata({
+        content: {
+            Package: {
+                version: 1,
+                module_map: { beta: [3, 4], alpha: [1, 2] },
+                linkage_table: {
+                    [dependency]: { upgraded_id: dependency, upgraded_version: 1 },
                 },
+                type_origin_table: [
+                    { module_name: "alpha", datatype_name: "Thing", package: packageId },
+                ],
             },
-        }),
-        {
-            modules: ["alpha", "beta"],
-            dependencies: [
-                "0x0000000000000000000000000000000000000000000000000000000000000001",
-                "0x0000000000000000000000000000000000000000000000000000000000000002",
-            ],
         },
+    });
+    assert.deepEqual(metadata, {
+        packageVersion: "1",
+        modules: { alpha: "AQI=", beta: "AwQ=" },
+        linkage: [{ originalId: dependency, upgradedId: dependency, upgradedVersion: "1" }],
+        typeOrigins: [{ module: "alpha", datatype: "Thing", packageId }],
+    });
+    const compiled = { modules: ["AQI=", "AwQ="], dependencies: [dependency] };
+    assert.doesNotThrow(() =>
+        assertExactPackageGraph("fixture", packageId, compiled, metadata, () => dependency),
+    );
+    assert.throws(
+        () =>
+            assertExactPackageGraph(
+                "fixture",
+                packageId,
+                { ...compiled, dependencies: [] },
+                metadata,
+                () => dependency,
+            ),
+        /linkage does not match/,
+    );
+    assert.throws(
+        () => assertExactPackageGraph("fixture", packageId, compiled, metadata, () => id("2")),
+        /has original/,
+    );
+    const movedOrigin = structuredClone(metadata);
+    movedOrigin.typeOrigins[0].packageId = id("8");
+    assert.throws(
+        () =>
+            assertExactPackageGraph("fixture", packageId, compiled, movedOrigin, () => dependency),
+        /invalid type origin/,
+    );
+    assert.equal(
+        sameObjectReference(
+            {
+                objectId: id("1"),
+                type: "x",
+                owner: "shared",
+                version: "1",
+                digest: "a",
+                previousTransaction: null,
+            },
+            {
+                objectId: id("1"),
+                type: "y",
+                owner: "shared",
+                version: "1",
+                digest: "a",
+                previousTransaction: "tx",
+            },
+        ),
+        true,
     );
 });

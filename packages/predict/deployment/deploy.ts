@@ -31,7 +31,6 @@ import {
     existsSync,
     mkdtempSync,
     openSync,
-    readdirSync,
     readFileSync,
     renameSync,
     rmSync,
@@ -76,6 +75,7 @@ const ACCUMULATOR_ROOT_ID = "0x0000000000000000000000000000000000000000000000000
 const DEEPBOOK_REGISTRY = "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1";
 const DEEPBOOK_ADMIN_CAP = "0x29a62a5385c549dd8e9565312265d2bda0b8700c1560b3e34941671325daae77";
 const DEEPBOOK_ADMIN_OWNER = "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e";
+const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
 
 const PACKAGES = [
     "fixed_math",
@@ -263,7 +263,7 @@ interface Receipt {
     events?: EventRecord[] | null;
 }
 
-interface InFlight {
+export interface InFlight {
     kind: "publish" | "transaction";
     label: string;
     package: PackageName | null;
@@ -278,6 +278,26 @@ interface ObjectEvidence {
     version: string;
     digest: string;
     previousTransaction: string | null;
+}
+
+export interface PublishedPackageMetadata {
+    packageVersion: string;
+    modules: Record<string, string>;
+    linkage: Array<{
+        originalId: string;
+        upgradedId: string;
+        upgradedVersion: string;
+    }>;
+    typeOrigins: Array<{
+        module: string;
+        datatype: string;
+        packageId: string;
+    }>;
+}
+
+export interface CompiledPackageMetadata {
+    modules: string[];
+    dependencies: string[];
 }
 
 interface CadenceRecord {
@@ -465,6 +485,47 @@ export interface DeploymentResult {
     verification: Verification | null;
 }
 
+const FIXED_TRANSACTION_STEPS = [
+    "authorize_predict_app",
+    "authorize_deepbook_core_app",
+    "authorize_sessions_app",
+    "mint_lifecycle_cap",
+    "create_pyth_feed",
+    "create_block_scholes_stores",
+    "bind_pyth_to_underlying",
+    "register_predict_underlying",
+    "set_cadence_configs",
+    "create_deployer_account",
+    "bootstrap_pool",
+    "transfer_lifecycle_cap_to_keeper",
+] as const;
+
+export function plannedTransactionSteps(): string[] {
+    const marketSteps = CADENCES.flatMap((cadence) =>
+        Array.from({ length: cadence.marketsToCreate }, (_, index) => [
+            `create_market_${cadence.name}_${index}`,
+            `rebalance_market_${cadence.name}_${index}`,
+        ]).flat(),
+    );
+    return [
+        ...FIXED_TRANSACTION_STEPS.slice(0, -1),
+        ...marketSteps,
+        FIXED_TRANSACTION_STEPS.at(-1)!,
+    ];
+}
+
+export function plannedTransactionCount(): number {
+    return plannedTransactionSteps().length;
+}
+
+export function irreversibleDeploymentSteps(): string[] {
+    return [...PACKAGES.map((pkg) => `publish_${pkg}`), ...plannedTransactionSteps()];
+}
+
+export function remainingDeploymentSteps(completed: ReadonlySet<string>): string[] {
+    return irreversibleDeploymentSteps().filter((step) => !completed.has(step));
+}
+
 export interface IntegrationManifest {
     schemaVersion: 6;
     deployment: string;
@@ -518,6 +579,13 @@ export interface IntegrationManifest {
             blockScholesSignerRegistry: string;
         };
     };
+    externalAuthorizations: {
+        deepbookCoreAccount: {
+            authorized: boolean;
+            appType: string;
+            registry: string;
+        };
+    };
     indexing: {
         startCheckpoint: string;
     };
@@ -529,6 +597,10 @@ export interface IntegrationManifest {
                 digest: string;
             };
             registry: {
+                objectVersion: string;
+                digest: string;
+            };
+            oracleRegistry: {
                 objectVersion: string;
                 digest: string;
             };
@@ -704,6 +776,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
         "protocol_config::ProtocolConfig",
     );
     const registryEvidence = verifiedSharedEvidence("predict", "registry::Registry");
+    const oracleRegistryEvidence = verifiedSharedEvidence("propbook", "registry::OracleRegistry");
     const sessionsConfigEvidence = verifiedSharedEvidence(
         "sessions",
         "session_config::SessionsConfig",
@@ -796,6 +869,13 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
                 blockScholesSignerRegistry: verifiedLinkedObject("blockScholesSignerRegistry"),
             },
         },
+        externalAuthorizations: {
+            deepbookCoreAccount: {
+                authorized: verification.account.deepbookCoreAuthorized,
+                appType: `${deepbookCoreAccount}::account_data::DeepbookCoreAccountApp`,
+                registry: verifiedLinkedObject("deepbookRegistry"),
+            },
+        },
         indexing: {
             startCheckpoint: verification.indexingStartCheckpoint,
         },
@@ -809,6 +889,10 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
                 registry: {
                     objectVersion: registryEvidence.version,
                     digest: registryEvidence.digest,
+                },
+                oracleRegistry: {
+                    objectVersion: oracleRegistryEvidence.version,
+                    digest: oracleRegistryEvidence.digest,
                 },
                 sessionsConfig: {
                     objectVersion: sessionsConfigEvidence.version,
@@ -880,6 +964,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
             "objects",
             "underlyings",
             "writers",
+            "externalAuthorizations",
             "indexing",
             "initialConfiguration",
         ],
@@ -986,6 +1071,23 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         throw new Error("writers.priceUpdater does not match the verified dependencies");
     }
 
+    const externalAuthorizations = asRecord(manifest.externalAuthorizations);
+    exactKeys(externalAuthorizations, ["deepbookCoreAccount"], "externalAuthorizations");
+    const deepbookCoreAccount = asRecord(externalAuthorizations.deepbookCoreAccount);
+    exactKeys(
+        deepbookCoreAccount,
+        ["authorized", "appType", "registry"],
+        "externalAuthorizations.deepbookCoreAccount",
+    );
+    if (
+        typeof deepbookCoreAccount.authorized !== "boolean" ||
+        deepbookCoreAccount.appType !==
+            `${packages.deepbookCoreAccount}::account_data::DeepbookCoreAccountApp` ||
+        deepbookCoreAccount.registry !== objects.deepbookRegistry
+    ) {
+        throw new Error("externalAuthorizations.deepbookCoreAccount is invalid");
+    }
+
     const indexing = asRecord(manifest.indexing);
     exactKeys(indexing, ["startCheckpoint"], "indexing");
     const startCheckpoint = BigInt(
@@ -1016,10 +1118,16 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
     const stateAnchors = asRecord(initial.stateAnchors);
     exactKeys(
         stateAnchors,
-        ["protocolConfig", "registry", "sessionsConfig", "deepbookRegistry"],
+        ["protocolConfig", "registry", "oracleRegistry", "sessionsConfig", "deepbookRegistry"],
         "initialConfiguration.stateAnchors",
     );
-    for (const name of ["protocolConfig", "registry", "sessionsConfig", "deepbookRegistry"]) {
+    for (const name of [
+        "protocolConfig",
+        "registry",
+        "oracleRegistry",
+        "sessionsConfig",
+        "deepbookRegistry",
+    ]) {
         const anchor = asRecord(stateAnchors[name]);
         exactKeys(anchor, ["objectVersion", "digest"], `initialConfiguration.stateAnchors.${name}`);
         if (
@@ -1397,11 +1505,7 @@ function assertPublishedIdentity(
     const chainId = publishedField(section, "chain-id", label);
     const publishedAt = normalizeId(publishedField(section, "published-at", label));
     const originalId = normalizeId(publishedField(section, "original-id", label));
-    if (
-        chainId !== CHAIN_ID ||
-        publishedAt !== expectedId ||
-        originalId !== expectedOriginalId
-    ) {
+    if (chainId !== CHAIN_ID || publishedAt !== expectedId || originalId !== expectedOriginalId) {
         throw new Error(
             `${label} metadata is ${chainId}/${publishedAt}/${originalId}, expected ${CHAIN_ID}/${expectedId}/${expectedOriginalId}`,
         );
@@ -1467,14 +1571,22 @@ function changedPaths(): string[] {
     });
 }
 
+export function unexpectedDeploymentPaths(
+    paths: readonly string[],
+    generatedPackages: readonly string[],
+): string[] {
+    const allowed = new Set<string>([
+        STATE_RELATIVE,
+        ...generatedPackages.map((pkg) => `packages/${pkg}/Published.toml`),
+    ]);
+    return paths.filter((path) => !allowed.has(path));
+}
+
 function assertExpectedWorktree(result: DeploymentResult): void {
-    const allowed = new Set<string>([STATE_RELATIVE]);
-    for (const pkg of PACKAGES) {
-        if (result.packages[pkg] || result.inFlight?.package === pkg) {
-            allowed.add(`packages/${pkg}/Published.toml`);
-        }
-    }
-    const unexpected = changedPaths().filter((path) => !allowed.has(path));
+    const generatedPackages = PACKAGES.filter(
+        (pkg) => result.packages[pkg] || result.inFlight?.package === pkg,
+    );
+    const unexpected = unexpectedDeploymentPaths(changedPaths(), generatedPackages);
     if (unexpected.length > 0) {
         throw new Error(
             `deployment source is dirty outside generated artifacts: ${unexpected.join(", ")}`,
@@ -1482,11 +1594,16 @@ function assertExpectedWorktree(result: DeploymentResult): void {
     }
 }
 
-function assertSourceCommit(expectedCommit: string): void {
-    const head = git(["rev-parse", "HEAD"]);
-    if (head !== expectedCommit) {
-        throw new Error(`deployment source commit changed from ${expectedCommit} to ${head}`);
+export function assertSourceBinding(expectedCommit: string, actualCommit: string): void {
+    if (actualCommit !== expectedCommit) {
+        throw new Error(
+            `deployment source commit changed from ${expectedCommit} to ${actualCommit}`,
+        );
     }
+}
+
+function assertSourceCommit(expectedCommit: string): void {
+    assertSourceBinding(expectedCommit, git(["rev-parse", "HEAD"]));
 }
 
 function expectedCadenceRecord(spec: CadenceSpec, setTx: string | null): CadenceRecord {
@@ -1664,27 +1781,75 @@ function debugPackageId(path: string): string {
     return normalizeId(id);
 }
 
-export function parsePackageMetadata(raw: unknown): {
-    modules: string[];
-    dependencies: string[];
-} {
+function bytecodeBase64(value: unknown, label: string): string {
+    if (
+        !Array.isArray(value) ||
+        value.some((byte) => !Number.isInteger(byte) || Number(byte) < 0 || Number(byte) > 255)
+    ) {
+        throw new Error(`${label} is not bytecode`);
+    }
+    return Buffer.from(value as number[]).toString("base64");
+}
+
+export function parsePackageMetadata(raw: unknown): PublishedPackageMetadata {
     const root = asRecord(raw);
     const data = asRecord(root.data ?? root);
     const contentRoot = asRecord(data.content ?? data);
     const content = asRecord(contentRoot.Package ?? contentRoot.package ?? contentRoot);
-    const disassembled = asRecord(
-        content.disassembled ?? content.moduleMap ?? content.module_map ?? content.modules,
+    const moduleMap = asRecord(content.moduleMap ?? content.module_map);
+    if (Object.keys(moduleMap).length === 0) throw new Error("package module_map is empty");
+    const modules = Object.fromEntries(
+        Object.entries(moduleMap)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([name, bytecode]) => [name, bytecodeBase64(bytecode, `module_map.${name}`)]),
     );
     const linkage = asRecord(content.linkageTable ?? content.linkage_table);
-    const dependencies = Object.values(linkage)
-        .map((value) => {
+    const linkageRecords = Object.entries(linkage)
+        .map(([originalId, value]) => {
             const record = asRecord(value);
-            return normalizeOptionalId(
-                record.upgradedId ?? record.upgraded_id ?? record.originalId ?? record.original_id,
-            );
+            return {
+                originalId: normalizeId(originalId),
+                upgradedId: normalizeId(
+                    requiredString(
+                        record.upgradedId ?? record.upgraded_id,
+                        `${originalId}.upgraded_id`,
+                    ),
+                ),
+                upgradedVersion: decimalString(
+                    String(record.upgradedVersion ?? record.upgraded_version),
+                    `${originalId}.upgraded_version`,
+                ),
+            };
         })
-        .filter((id): id is string => id !== null);
-    return { modules: Object.keys(disassembled).sort(), dependencies: [...new Set(dependencies)] };
+        .sort((left, right) => left.originalId.localeCompare(right.originalId));
+    const rawOrigins = content.typeOriginTable ?? content.type_origin_table;
+    if (!Array.isArray(rawOrigins)) throw new Error("package type_origin_table is missing");
+    const typeOrigins = rawOrigins
+        .map((value, index) => {
+            const record = asRecord(value);
+            return {
+                module: requiredString(
+                    record.moduleName ?? record.module_name,
+                    `type_origin_table[${index}].module_name`,
+                ),
+                datatype: requiredString(
+                    record.datatypeName ?? record.datatype_name,
+                    `type_origin_table[${index}].datatype_name`,
+                ),
+                packageId: normalizeId(
+                    requiredString(record.package, `type_origin_table[${index}].package`),
+                ),
+            };
+        })
+        .sort((left, right) =>
+            `${left.module}::${left.datatype}`.localeCompare(`${right.module}::${right.datatype}`),
+        );
+    return {
+        packageVersion: decimalString(String(content.version), "package version"),
+        modules,
+        linkage: linkageRecords,
+        typeOrigins,
+    };
 }
 
 function packageMetadata(runtime: Runtime, id: string): ReturnType<typeof parsePackageMetadata> {
@@ -1693,63 +1858,105 @@ function packageMetadata(runtime: Runtime, id: string): ReturnType<typeof parseP
     );
 }
 
-function compiledModuleNames(pkg: PackageName): string[] {
-    const manifest = readFileSync(resolve(REPO_ROOT, "packages", pkg, "Move.toml"), "utf8");
-    const packageName = manifest.match(/^name\s*=\s*"([^"]+)"$/m)?.[1];
-    if (!packageName) throw new Error(`${pkg} Move.toml has no package name`);
-    const directory = resolve(REPO_ROOT, "packages", pkg, "build", packageName, "bytecode_modules");
-    return readdirSync(directory)
-        .filter((name) => name.endsWith(".mv"))
-        .map((name) => name.slice(0, -3))
-        .sort();
+function compiledPackageMetadata(pkg: PackageName): CompiledPackageMetadata {
+    return withFreshPackageStage(pkg, (directory) => {
+        const raw = JSON.parse(
+            sui([
+                "move",
+                "build",
+                "--path",
+                directory,
+                "--build-env",
+                NETWORK,
+                "--warnings-are-errors",
+                "--force",
+                "--dump-bytecode-as-base64",
+            ]),
+        ) as Record<string, unknown>;
+        if (
+            !Array.isArray(raw.modules) ||
+            !raw.modules.every((value) => typeof value === "string") ||
+            !Array.isArray(raw.dependencies) ||
+            !raw.dependencies.every((value) => typeof value === "string")
+        ) {
+            throw new Error(`${pkg} build did not return exact bytecode metadata`);
+        }
+        return {
+            modules: [...raw.modules].sort(),
+            dependencies: raw.dependencies.map(normalizeId).sort(),
+        };
+    });
 }
 
-function directDependencyIds(result: DeploymentResult, pkg: PackageName): string[] {
-    const manifest = readFileSync(resolve(REPO_ROOT, "packages", pkg, "Move.toml"), "utf8");
-    const dependencies = manifest.match(/^\[dependencies\]\s*\n([\s\S]*?)(?=^\[|$)/m)?.[1] ?? "";
-    const names = [...dependencies.matchAll(/^([A-Za-z0-9_]+)\s*=\s*\{/gm)].map(
-        (match) => match[1],
-    );
-    const ids: Record<string, string | undefined> = {
-        fixed_math: result.packages.fixed_math,
-        account: result.packages.account,
-        propbook: result.packages.propbook,
-        deepbook_predict: result.packages.predict,
-        deepbook_core_account: result.packages.deepbook_core_account,
-        deepbook: LINKED.deepbook,
-        dusdc: LINKED.dusdc,
-        token: LINKED.deep,
-        pyth_lazer: LINKED.pyth_lazer,
-        wormhole: LINKED.wormhole,
-        bs_oracle: LINKED.bs_oracle,
-        bs_sid: LINKED.bs_sid,
-    };
-    return names.map((name) => ids[name]).filter((id): id is string => id !== undefined);
+function expectedOriginalDependency(result: DeploymentResult, upgradedId: string): string | null {
+    const upgraded = normalizeId(upgradedId);
+    if (upgraded === normalizeId("0x1") || upgraded === normalizeId("0x2")) return upgraded;
+    if (Object.values(result.packages).includes(upgraded)) return upgraded;
+    if (upgraded === LINKED.deepbook) return DEEPBOOK_ORIGINAL;
+    if (Object.values(LINKED).includes(upgraded as never)) return upgraded;
+    return null;
+}
+
+export function assertExactPackageGraph(
+    label: string,
+    packageId: string,
+    compiled: CompiledPackageMetadata,
+    published: PublishedPackageMetadata,
+    expectedOriginal: (upgradedId: string) => string | null,
+): void {
+    const id = normalizeId(packageId);
+    if (published.packageVersion !== "1") {
+        throw new Error(`${label} package version is ${published.packageVersion}, expected 1`);
+    }
+    const compiledModules = [...compiled.modules].sort();
+    const publishedModules = Object.values(published.modules).sort();
+    if (JSON.stringify(publishedModules) !== JSON.stringify(compiledModules)) {
+        throw new Error(`${label} on-chain module bytecode does not match the reviewed build`);
+    }
+    const compiledDependencies = [...compiled.dependencies].map(normalizeId).sort();
+    const publishedDependencies = published.linkage.map((entry) => entry.upgradedId).sort();
+    if (JSON.stringify(publishedDependencies) !== JSON.stringify(compiledDependencies)) {
+        throw new Error(`${label} on-chain linkage does not match the reviewed build`);
+    }
+    if (new Set(publishedDependencies).size !== publishedDependencies.length) {
+        throw new Error(`${label} on-chain linkage contains duplicate upgraded packages`);
+    }
+    for (const link of published.linkage) {
+        const original = expectedOriginal(link.upgradedId);
+        if (!original || link.originalId !== normalizeId(original)) {
+            throw new Error(
+                `${label} dependency ${link.upgradedId} has original ${link.originalId}, expected ${original ?? "no dependency"}`,
+            );
+        }
+    }
+    const moduleNames = new Set(Object.keys(published.modules));
+    const origins = new Set<string>();
+    for (const origin of published.typeOrigins) {
+        const key = `${origin.module}::${origin.datatype}`;
+        if (origins.has(key)) throw new Error(`${label} has duplicate type origin ${key}`);
+        origins.add(key);
+        if (!moduleNames.has(origin.module) || origin.packageId !== id) {
+            throw new Error(`${label} has invalid type origin ${key} from ${origin.packageId}`);
+        }
+    }
 }
 
 function assertPublishedPackageGraph(runtime: Runtime, pkg: PackageName, id: string): void {
-    const metadata = packageMetadata(runtime, id);
-    const expectedModules = compiledModuleNames(pkg);
-    if (JSON.stringify(metadata.modules) !== JSON.stringify(expectedModules)) {
-        throw new Error(
-            `${pkg} modules are ${metadata.modules.join(", ")}, expected ${expectedModules.join(", ")}`,
-        );
-    }
-    const allowed = new Set([
-        normalizeId("0x1"),
-        normalizeId("0x2"),
-        ...Object.values(runtime.result.packages),
-        ...Object.values(LINKED),
-    ]);
-    for (const dependency of metadata.dependencies) {
-        if (!allowed.has(dependency)) {
-            throw new Error(`${pkg} links unexpected package ${dependency}`);
-        }
-    }
-    for (const dependency of directDependencyIds(runtime.result, pkg)) {
-        if (!metadata.dependencies.includes(dependency)) {
-            throw new Error(`${pkg} is missing direct dependency ${dependency}`);
-        }
+    assertExactPackageGraph(
+        pkg,
+        id,
+        compiledPackageMetadata(pkg),
+        packageMetadata(runtime, id),
+        (upgradedId) => expectedOriginalDependency(runtime.result, upgradedId),
+    );
+}
+
+function assertAllPublishedPackageGraphs(runtime: Runtime): void {
+    assertCliTarget(runtime.snapshot);
+    assertSourceCommit(runtime.sourceCommit);
+    for (const pkg of PACKAGES) {
+        assertCompletedPackage(runtime.result, pkg);
+        assertPublishedPackageGraph(runtime, pkg, packageId(runtime.result, pkg));
     }
 }
 
@@ -1841,15 +2048,30 @@ async function assertSdkTarget(runtime: Runtime): Promise<void> {
     }
 }
 
+export function assertDeploymentTarget(
+    environment: string,
+    chainId: string,
+    address: string,
+): void {
+    const normalizedAddress = normalizeId(address);
+    if (environment !== NETWORK || chainId !== CHAIN_ID || normalizedAddress !== DEPLOYER) {
+        throw new Error(
+            `deployment target is ${environment}/${chainId}/${normalizedAddress}, expected ${NETWORK}/${CHAIN_ID}/${DEPLOYER}`,
+        );
+    }
+}
+
+export function assertSuiCliVersion(version: string): void {
+    if (!SUI_VERSION.test(version)) {
+        throw new Error(`Sui CLI must be 1.77.1, got '${version}'`);
+    }
+}
+
 function assertCliTarget(snapshot: ClientSnapshot): void {
     const environment = suiClient(snapshot, ["active-env"]);
     const chainId = suiClient(snapshot, ["chain-identifier"]);
-    const address = normalizeId(suiClient(snapshot, ["active-address"]));
-    if (environment !== NETWORK || chainId !== CHAIN_ID || address !== DEPLOYER) {
-        throw new Error(
-            `isolated CLI target is ${environment}/${chainId}/${address}, expected ${NETWORK}/${CHAIN_ID}/${DEPLOYER}`,
-        );
-    }
+    const address = suiClient(snapshot, ["active-address"]);
+    assertDeploymentTarget(environment, chainId, address);
 }
 
 function effectsError(effects: unknown): string | null {
@@ -2119,18 +2341,34 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     console.log(`[deploy] ${pkg}: ${runtime.result.packages[pkg]} (${receipt.digest})`);
 }
 
+export function assertRecoverableInFlight(inFlight: InFlight, digestVisible: boolean): void {
+    if (!inFlight.digest) {
+        throw new Error(`${inFlight.label} has no known digest; fail closed`);
+    }
+    if (!digestVisible) {
+        throw new Error(`${inFlight.label}/${inFlight.digest} is not visible; fail closed`);
+    }
+}
+
+export function checkpointRecoveredTransaction(result: DeploymentResult): void {
+    const inFlight = result.inFlight;
+    if (!inFlight) return;
+    if (inFlight.kind !== "transaction" || !inFlight.digest) {
+        throw new Error("only a transaction with a known digest can be checkpointed generically");
+    }
+    result.transactions[inFlight.label] = inFlight.digest;
+    result.inFlight = null;
+}
+
 async function reconcileInFlight(runtime: Runtime): Promise<void> {
     const inFlight = runtime.result.inFlight;
     if (!inFlight) return;
-    if (!inFlight.digest) {
-        throw new Error(
-            `${inFlight.label} has no known digest. Fail closed: reconcile the deployer transaction history and Published.toml before retrying`,
-        );
-    }
+    assertRecoverableInFlight(inFlight, true);
     let receipt: Receipt;
     try {
-        receipt = await settledReceipt(runtime.client, inFlight.digest, 4);
+        receipt = await settledReceipt(runtime.client, inFlight.digest!, 4);
     } catch {
+        assertRecoverableInFlight(inFlight, false);
         throw new Error(
             `${inFlight.label}/${inFlight.digest} is not visible on Testnet. Fail closed; do not retry with new transaction bytes`,
         );
@@ -2150,9 +2388,9 @@ async function reconcileInFlight(runtime: Runtime): Promise<void> {
         recordPublish(runtime.result, inFlight.package, receipt);
         assertCompletedPackage(runtime.result, inFlight.package);
     } else {
-        runtime.result.transactions[inFlight.label] = inFlight.digest;
+        checkpointRecoveredTransaction(runtime.result);
     }
-    runtime.result.inFlight = null;
+    if (inFlight.kind === "publish") runtime.result.inFlight = null;
     writeState(runtime.result);
     console.log(`[deploy] reconciled ${inFlight.label}: ${inFlight.digest}`);
 }
@@ -2438,6 +2676,30 @@ async function objectEvidence(
     };
 }
 
+export function sameObjectReference(left: ObjectEvidence, right: ObjectEvidence): boolean {
+    return (
+        left.objectId === right.objectId &&
+        left.version === right.version &&
+        left.digest === right.digest
+    );
+}
+
+async function stableObjectSnapshot<T>(
+    runtime: Runtime,
+    id: string,
+    expectedType: string,
+    read: () => Promise<T>,
+    attempts = 3,
+): Promise<{ evidence: ObjectEvidence; value: T }> {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        const before = await objectEvidence(runtime, id, expectedType, "shared");
+        const value = await read();
+        const after = await objectEvidence(runtime, id, expectedType, "shared");
+        if (sameObjectReference(before, after)) return { evidence: after, value };
+    }
+    throw new Error(`${normalizeId(id)} changed while its configuration snapshot was read`);
+}
+
 async function moveObjectFields(runtime: Runtime, id: string): Promise<Record<string, unknown>> {
     const { object } = await runtime.client.getObject({
         objectId: normalizeId(id),
@@ -2607,17 +2869,17 @@ async function deepbookCoreAppAuthorized(runtime: Runtime): Promise<boolean> {
 }
 
 async function ensureDeepbookCoreAppAuthorized(runtime: Runtime): Promise<void> {
-    if (!(await deepbookCoreAppAuthorized(runtime))) {
-        const appType = `${packageId(runtime.result, "deepbook_core_account")}::account_data::DeepbookCoreAccountApp`;
-        throw new Error(
-            `external authorization required: the ${DEEPBOOK_ADMIN_OWNER} operator must call ${LINKED.deepbook}::registry::authorize_app<${appType}> with registry ${DEEPBOOK_REGISTRY} and DeepbookAdminCap ${DEEPBOOK_ADMIN_CAP}, then rerun this deployment`,
-        );
-    }
+    const authorized = await deepbookCoreAppAuthorized(runtime);
     runtime.result.wiring.deepbook = {
-        coreAppAuthorized: true,
+        coreAppAuthorized: authorized,
         verifiedAt: new Date().toISOString(),
     };
     writeState(runtime.result);
+    if (!authorized) {
+        console.log(
+            "[deploy] DeepBook core wrapper authorization is pending external admin-cap execution",
+        );
+    }
 }
 
 async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
@@ -3567,17 +3829,26 @@ async function verifyDeployment(
     }
 
     const oracleRegistry = sharedId(result, "propbook", "registry::OracleRegistry");
-    const pythFeed = await inspectOptionId(
+    const oracleSnapshot = await stableObjectSnapshot(
         runtime,
-        "verify_pyth_binding",
-        target(result, "propbook", "registry", "propbook_pyth_id_for_underlying"),
-        (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
-    );
-    const storePair = await inspectBlockScholesStorePair(
-        runtime,
-        "verify_block_scholes_store_pair",
         oracleRegistry,
+        `${packageId(result, "propbook")}::registry::OracleRegistry`,
+        async () => ({
+            pythFeed: await inspectOptionId(
+                runtime,
+                "verify_pyth_binding",
+                target(result, "propbook", "registry", "propbook_pyth_id_for_underlying"),
+                (tx) => [tx.object(oracleRegistry), tx.pure.u32(ASSET.propbookUnderlyingId)],
+            ),
+            storePair: await inspectBlockScholesStorePair(
+                runtime,
+                "verify_block_scholes_store_pair",
+                oracleRegistry,
+            ),
+        }),
     );
+    const { pythFeed, storePair } = oracleSnapshot.value;
+    sharedObjects.propbook!["registry::OracleRegistry"] = oracleSnapshot.evidence;
     if (
         !storePair ||
         pythFeed !== result.wiring.asset.pythFeedId ||
@@ -3623,20 +3894,34 @@ async function verifyDeployment(
         "verify_sessions_app",
         `${packageId(result, "sessions")}::sessions::SessionsApp`,
     );
-    const deepbookCoreAuthorized = await deepbookCoreAppAuthorized(runtime);
+    const deepbookSnapshot = await stableObjectSnapshot(
+        runtime,
+        DEEPBOOK_REGISTRY,
+        `${LINKED.deepbook}::registry::Registry`,
+        () => deepbookCoreAppAuthorized(runtime),
+    );
+    const deepbookCoreAuthorized = deepbookSnapshot.value;
     if (
         !predictAppAuthorized ||
         !deepbookCoreAccountAppAuthorized ||
         !sessionsAppAuthorized ||
-        !deepbookCoreAuthorized ||
         !result.wiring.account.accountWrapperId
     ) {
         throw new Error("application authorization or deployment account is missing");
     }
-    const sessionsConfigFields = await moveObjectFields(
+    result.wiring.deepbook = {
+        coreAppAuthorized: deepbookCoreAuthorized,
+        verifiedAt: new Date().toISOString(),
+    };
+    const sessionsConfigId = sharedId(result, "sessions", "session_config::SessionsConfig");
+    const sessionsSnapshot = await stableObjectSnapshot(
         runtime,
-        sharedId(result, "sessions", "session_config::SessionsConfig"),
+        sessionsConfigId,
+        `${packageId(result, "sessions")}::session_config::SessionsConfig`,
+        () => moveObjectFields(runtime, sessionsConfigId),
     );
+    const sessionsConfigFields = sessionsSnapshot.value;
+    sharedObjects.sessions!["session_config::SessionsConfig"] = sessionsSnapshot.evidence;
     if (stringField(sessionsConfigFields, "version_watermark") !== "1") {
         throw new Error("SessionsConfig version watermark is not 1");
     }
@@ -3672,7 +3957,15 @@ async function verifyDeployment(
         partyOwnerLabel(LIFECYCLE_CAP_RECIPIENT),
     );
 
-    const cadences = await readCadences(runtime);
+    const registryId = sharedId(result, "predict", "registry::Registry");
+    const cadenceSnapshot = await stableObjectSnapshot(
+        runtime,
+        registryId,
+        `${packageId(result, "predict")}::registry::Registry`,
+        () => readCadences(runtime),
+    );
+    const cadences = cadenceSnapshot.value;
+    sharedObjects.predict!["registry::Registry"] = cadenceSnapshot.evidence;
     if (!cadences.every((record, index) => cadenceMatches(record, CADENCES[index]))) {
         throw new Error("verified cadence policy does not match deploy.ts");
     }
@@ -3751,6 +4044,19 @@ async function verifyDeployment(
         throw new Error("configuration verification fence precedes package publication");
     }
 
+    const protocolConfigId = sharedId(result, "predict", "protocol_config::ProtocolConfig");
+    const protocolSnapshot = await stableObjectSnapshot(
+        runtime,
+        protocolConfigId,
+        `${packageId(result, "predict")}::protocol_config::ProtocolConfig`,
+        () => readProtocolConfig(runtime),
+    );
+    sharedObjects.predict!["protocol_config::ProtocolConfig"] = protocolSnapshot.evidence;
+    const linkedObjects = {
+        ...external.objects,
+        deepbookRegistry: deepbookSnapshot.evidence,
+    };
+
     const verification: Verification = {
         verifiedAt: new Date().toISOString(),
         chainId: await shortChainId(runtime.client),
@@ -3758,7 +4064,7 @@ async function verifyDeployment(
         verifiedAfterCheckpoint,
         packages,
         linkedPackages: external.packages,
-        linkedObjects: external.objects,
+        linkedObjects,
         sharedObjects,
         ownedCaps,
         oracleObjects,
@@ -3771,7 +4077,7 @@ async function verifyDeployment(
         },
         lifecycleCap,
         cadences,
-        protocolConfig: await readProtocolConfig(runtime),
+        protocolConfig: protocolSnapshot.value,
         pool: {
             totalSupply: totalSupply.toString(),
             idleBalance: idleBalance.toString(),
@@ -3814,7 +4120,8 @@ async function assertGasFunding(runtime: Runtime): Promise<void> {
     const balance = await runtime.client.getBalance({ owner: DEPLOYER });
     const available = BigInt(balance.balance.balance);
     const required =
-        BigInt(PACKAGE_GAS_BUDGET) * BigInt(PACKAGES.length) + TRANSACTION_GAS_BUDGET * 25n;
+        BigInt(PACKAGE_GAS_BUDGET) * BigInt(PACKAGES.length) +
+        TRANSACTION_GAS_BUDGET * BigInt(plannedTransactionCount());
     if (available < required) {
         throw new Error(
             `insufficient deployer SUI gas: have ${available}, need at least ${required}`,
@@ -3835,9 +4142,7 @@ async function run(execute: boolean): Promise<void> {
         throw new Error(`deployment started from ${result.sourceCommit}, HEAD is ${sourceCommit}`);
     }
     const suiVersion = sui(["--version"]);
-    if (!SUI_VERSION.test(suiVersion)) {
-        throw new Error(`Sui CLI must be 1.77.1, got '${suiVersion}'`);
-    }
+    assertSuiCliVersion(suiVersion);
 
     const snapshot = snapshotClientConfig();
     try {
@@ -3897,6 +4202,8 @@ async function run(execute: boolean): Promise<void> {
                     await publishPackage(runtime, pkg);
                 }
             }
+            console.log("[deploy] proving exact bytecode, linkage lineage, and type origins");
+            assertAllPublishedPackageGraphs(runtime);
             result.status = "wiring";
             writeState(result);
 
