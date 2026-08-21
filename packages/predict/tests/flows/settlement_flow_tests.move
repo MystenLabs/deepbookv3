@@ -183,6 +183,7 @@ fun pyth_wins_after_grace_when_both_exact_spots_exist() {
 #[test]
 fun zero_block_scholes_fallback_spot_remains_retryable() {
     let expiry = test_constants::default_expiry_ms();
+    let recovery_price = settlement_inside_default_finite_range();
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(expiry);
     fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
@@ -194,6 +195,10 @@ fun zero_block_scholes_fallback_spot_remains_retryable() {
     assert_eq!(fx.try_settle_bundle(&mut market), false);
     assert!(!helpers::market(&market).is_settled());
 
+    fx.insert_exact_block_scholes_settlement_spot_bundle(&mut market, recovery_price as u128);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), recovery_price);
+
     helpers::return_market_bundle(market);
     fx.finish();
 }
@@ -201,6 +206,7 @@ fun zero_block_scholes_fallback_spot_remains_retryable() {
 #[test]
 fun oversized_block_scholes_fallback_spot_remains_retryable() {
     let expiry = test_constants::default_expiry_ms();
+    let recovery_price = settlement_inside_default_finite_range();
     let mut fx = helpers::setup_market_default();
     let expiry_id = fx.create_expiry(expiry);
     fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
@@ -214,6 +220,10 @@ fun oversized_block_scholes_fallback_spot_remains_retryable() {
 
     assert_eq!(fx.try_settle_bundle(&mut market), false);
     assert!(!helpers::market(&market).is_settled());
+
+    fx.insert_exact_block_scholes_settlement_spot_bundle(&mut market, recovery_price as u128);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), recovery_price);
 
     helpers::return_market_bundle(market);
     fx.finish();

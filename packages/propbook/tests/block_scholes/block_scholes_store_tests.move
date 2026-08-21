@@ -34,6 +34,8 @@ const EXPIRY_B: u64 = 1_700_200_000_000;
 
 const SPOT: u128 = 50_000_000_000_000;
 const SPOT_LATER: u128 = 49_000_000_000_000;
+const ZERO_SPOT: u128 = 0;
+const OVERSIZED_SPOT: u128 = 18_446_744_073_709_551_616;
 const FORWARD_A: u128 = 50_500_000_000_000;
 const FORWARD_B: u128 = 51_500_000_000_000;
 
@@ -216,6 +218,70 @@ fun insert_at_records_first_minute_observation_without_latest() {
         event::events_by_type<store::BlockScholesObservationInserted<BsRead<u128>>>().length(),
         ONE_EVENT,
     );
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
+fun zero_spot_from_apply_does_not_claim_exact_history() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+
+    apply_values(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        vector[spot_update(&btc(), MODEL_EARLY, ZERO_SPOT)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert_eq!(value_store.spot().destroy_some().read_value(), ZERO_SPOT);
+    assert!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).is_none());
+
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), MODEL_MID, SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert_eq!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some().read_value(), SPOT);
+    assert_eq!(value_store.spot().destroy_some().read_value(), ZERO_SPOT);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
+fun oversized_spot_from_insert_at_does_not_claim_exact_history() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), MODEL_EARLY, OVERSIZED_SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert!(value_store.spot().is_none());
+    assert!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).is_none());
+
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), MODEL_MID, SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert!(value_store.spot().is_none());
+    assert_eq!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some().read_value(), SPOT);
 
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);

@@ -5,8 +5,9 @@
 /// the latest values and canonical spot observations at exact minute boundaries. Propbook derives
 /// every accepted series id from that identity through the upstream SID package, so a valid
 /// observation for another asset cannot enter this store.
-/// Values are held exactly as the verifier produced them; scaling and signed-value interpretation
-/// belong to the reading package.
+/// Stored values are held exactly as the verifier produced them; scaling and signed-value
+/// interpretation belong to the reading package. Exact spot history additionally admits only
+/// positive `u64`-representable values so an unusable observation cannot claim a permanent key.
 /// Value and SVI observations use separate stores because the verifier exposes distinct batch and
 /// value types. The registry creates and binds both stores atomically from one base-asset input.
 module propbook::block_scholes_store;
@@ -78,7 +79,7 @@ public struct BlockScholesValueStore has key {
     /// forward-only after a package upgrade.
     version: u64,
     values: Table<u256, BsRead<u128>>,
-    /// First accepted canonical spot observation at each exact minute boundary.
+    /// First positive `u64`-representable canonical spot at each exact minute boundary.
     exact_spot_reads: Table<u64, BsRead<u128>>,
 }
 
@@ -264,8 +265,9 @@ public fun apply_spot_batch(
 }
 
 /// Insert the canonical spot batch into exact minute-boundary history without changing `latest`.
-/// A valid batch whose signed `published_at_ms` is not a minute boundary is ignored without
-/// aborting. The first valid observation at a boundary owns the key and cannot be replaced.
+/// A valid batch whose signed `published_at_ms` is not a minute boundary, or whose spot is zero or
+/// wider than `u64`, is ignored without aborting. The first admissible observation at a boundary
+/// owns the key and cannot be replaced.
 public fun insert_at(
     store: &mut BlockScholesValueStore,
     batch: ValueBatch,
@@ -543,6 +545,7 @@ fun apply_value(
 fun insert_exact_spot(store: &mut BlockScholesValueStore, read: BsRead<u128>): bool {
     if (read.published_at_ms % exact_spot_period_ms!() != 0) return false;
     if (!read.has_valid_clocks()) return false;
+    if (read.value == 0 || read.value > (std::u64::max_value!() as u128)) return false;
     if (store.exact_spot_reads.contains(read.published_at_ms)) return false;
 
     store.exact_spot_reads.add(read.published_at_ms, read);

@@ -57,8 +57,9 @@ Pyth feeds and Block Scholes value stores retain independent insert-only exact h
   of that tick, so a consumer settling at the tick resolves the right mark even when
   Pyth generated that price earlier and carried it forward.
 - Block Scholes uses the signed value-batch `published_at_ms`. `apply_spot_batch` independently inserts the canonical spot when that timestamp is a whole-minute boundary, even when the observation does not advance `latest`; `insert_at` performs the same exact-history insertion without changing `latest`. A non-minute timestamp is a no-op for exact history in both paths and does not abort.
+- Block Scholes exact history admits only positive `u64`-representable spots. Zero or over-wide values remain available to the source-native `latest` path but do not claim the permanent exact key, so a later admissible observation at that timestamp can be inserted.
 
-An exact read succeeds only when a source observation was inserted at exactly the requested timestamp; there is no nearest, rounded, interpolated, or first-transaction-after-boundary lookup. The first valid observation at a key owns it permanently, and exact insertion never rewrites `latest`.
+An exact read succeeds only when a source observation was inserted at exactly the requested timestamp; there is no nearest, rounded, interpolated, or first-transaction-after-boundary lookup. The first admissible observation at a key owns it permanently, and exact insertion never rewrites `latest`.
 
 ## Pyth Feed
 
