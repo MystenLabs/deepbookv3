@@ -2047,6 +2047,7 @@ export function assertExactPackageGraph(
     expectedDependencyFor: (
         upgradedId: string,
     ) => { originalId: string; upgradedVersion: string } | null,
+    modulesVerifiedExternally = false,
 ): void {
     const id = normalizeId(packageId);
     if (published.packageVersion !== "1") {
@@ -2054,7 +2055,10 @@ export function assertExactPackageGraph(
     }
     const compiledModules = [...compiled.modules].sort();
     const publishedModules = Object.values(published.modules).sort();
-    if (JSON.stringify(publishedModules) !== JSON.stringify(compiledModules)) {
+    if (
+        !modulesVerifiedExternally &&
+        JSON.stringify(publishedModules) !== JSON.stringify(compiledModules)
+    ) {
         throw new Error(`${label} on-chain module bytecode does not match the reviewed build`);
     }
     const compiledDependencies = [...compiled.dependencies].map(normalizeId).sort();
@@ -2083,13 +2087,29 @@ export function assertExactPackageGraph(
     }
 }
 
+function verifyPublishedSource(runtime: Runtime, pkg: PackageName): void {
+    suiClient(runtime.snapshot, [
+        "verify-source",
+        resolve(REPO_ROOT, "packages", pkg),
+        "--build-env",
+        NETWORK,
+        "--warnings-are-errors",
+        "--force",
+        "--toolchain",
+        requiredString(runtime.result.suiBinaryPath, "recorded Sui binary path"),
+        "--json",
+    ]);
+}
+
 function assertPublishedPackageGraph(runtime: Runtime, pkg: PackageName, id: string): void {
+    verifyPublishedSource(runtime, pkg);
     assertExactPackageGraph(
         pkg,
         id,
         compiledPackageMetadata(pkg),
         packageMetadata(runtime, id),
         (upgradedId) => expectedDependency(runtime, upgradedId),
+        true,
     );
 }
 
