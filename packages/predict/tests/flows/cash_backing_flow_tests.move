@@ -25,10 +25,12 @@ const DOWN_QUANTITY: u64 = 2_000_000_000;
 /// the raw Bernoulli fee round to 0; the default ramp multiplier is exactly 1.0).
 const MINT1_FEE: u64 = 5_000_000;
 const MINT2_FEE: u64 = 10_000_000;
+const DISJOINT_GAP_BUFFER: u64 = 310_000_000;
 /// Partial live close of half of order 1 at the unchanged ATM mark. The payout is
 /// measured from the manager's balance and cross-checked against expiry cash:
 /// the close moves value between the two sheets, it never creates or destroys.
 const HALF_CLOSE: u64 = 500_000_000;
+const PARTIAL_CLOSE_GAP_BUFFER: u64 = 155_000_000;
 
 #[test]
 fun cash_sheet_exact_after_every_flow() {
@@ -76,7 +78,7 @@ fun cash_sheet_exact_after_every_flow() {
 
     // --- Mint 2: DOWN complement (-inf, min_strike], quantity 2e9.
     // The two ranges are disjoint: M = max(1e9, 2e9) = 2e9, Σ = 3e9,
-    // gap = 1e9, default buffer = 250e6, reserve = 2.25e9.
+    // gap = 1e9, default buffer = 310e6, reserve = 2.31e9.
     let quote2 = fx.quote_mint_bundle(
         &market,
         constants::neg_inf!(),
@@ -105,8 +107,8 @@ fun cash_sheet_exact_after_every_flow() {
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            // λ_default = 0.25, so the gap buffer is mint_quantity / 4.
-            DOWN_QUANTITY + test_constants::mint_quantity() / 4,
+            // λ_default = 0.31, so the 1e9 gap buffer is 310e6.
+            DOWN_QUANTITY + DISJOINT_GAP_BUFFER,
         ),
     );
     let balance_after_mints = deposit - mint1_principal - MINT1_FEE - mint2_principal - MINT2_FEE;
@@ -115,7 +117,7 @@ fun cash_sheet_exact_after_every_flow() {
     // --- Partial live close of half of order 1 at the unchanged ATM quote.
     // Cash pays only the net redeem (the fee is withheld in expiry cash and
     // grows the rebate basis); cancel-and-replace leaves M = 2e9 and gap =
-    // surviving UP backing 0.5e9, so default reserve = 2.125e9. The
+    // surviving UP backing 0.5e9, so default reserve = 2.155e9. The
     // replacement keeps the position count at 2.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let replacement = fx.redeem_live_bundle(
@@ -127,8 +129,8 @@ fun cash_sheet_exact_after_every_flow() {
     let order1b = replacement.destroy_some();
     let close_net_payout = fx.account_balance_bundle<DUSDC>(&account) - balance_after_mints;
     let cash_after_close = cash_after_mints - close_net_payout;
-    // λ_default = 0.25, so the gap buffer is HALF_CLOSE / 4.
-    let liability_after_close = DOWN_QUANTITY + HALF_CLOSE / 4;
+    // λ_default = 0.31, so the 0.5e9 gap buffer is 155e6.
+    let liability_after_close = DOWN_QUANTITY + PARTIAL_CLOSE_GAP_BUFFER;
     helpers::check_market_cash_bundle(
         &market,
         helpers::expected_market_cash(cash_after_close, liability_after_close),
