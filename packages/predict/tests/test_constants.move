@@ -98,8 +98,8 @@ public fun default_strike_tick(): u64 { 100 }
 /// Default DUSDC cash seeded into expiry markets while pool funding is absent.
 public fun default_seeded_expiry_cash(): u64 { 300_000_000_000 }
 
-/// Protocol-reserve profit share the default fixture sets (40% in FLOAT_SCALING).
-public fun protocol_reserve_share(): u64 { 400_000_000 }
+/// Protocol-reserve profit share the default fixture sets (10% in FLOAT_SCALING).
+public fun protocol_reserve_share(): u64 { 100_000_000 }
 
 // === Default expiry / trade flow (for `setup_everything`) ===
 

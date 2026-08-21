@@ -5,7 +5,7 @@
 ///
 /// These tests use production mint/redeem flows and hand-derived reserve values:
 /// disjoint one-lot books have M = 1e9, Σ = 2e9, gap = 1e9, so the default
-/// reserve is 1.25e9; overlapping books have gap = 0, so reserve = M = Σ. The
+/// reserve is 1.31e9; overlapping books have gap = 0, so reserve = M = Σ. The
 /// settled-redeem legs are covered in `settlement_flow_tests`, so this file keeps
 /// the live reserve boundary focused.
 #[test_only]
@@ -22,8 +22,9 @@ use fixed_math::math::{Self, float_scaling as float};
 use std::unit_test::assert_eq;
 
 const QUANTITY: u64 = 1_000_000_000;
-const DISJOINT_MAX_LIVE: u64 = QUANTITY;
 const DISJOINT_GAP: u64 = QUANTITY;
+const DEFAULT_DISJOINT_BUFFER: u64 = 310_000_000;
+const DEFAULT_DISJOINT_RESERVE: u64 = 1_310_000_000;
 const OVERLAPPING_RESERVE: u64 = 2 * QUANTITY;
 /// Headroom over the buffered reserve, chosen to clear any rebate basis these
 /// fixtures can accrue while staying well under the close-side deficit.
@@ -49,10 +50,10 @@ fun disjoint_range_book_uses_default_gap_buffer() {
     let _down = mint_down(&mut fx, &mut market, &mut account);
     let _up = mint_up(&mut fx, &mut market, &mut account);
 
-    // M = 1e9, Σ = 2e9, λ(default) * gap = 250e6, reserve = 1.25e9.
+    // M = 1e9, Σ = 2e9, λ(default) * gap = 310e6, reserve = 1.31e9.
     assert_eq!(
         math::mul_down(config_constants::default_backing_buffer_lambda!(), DISJOINT_GAP),
-        QUANTITY / 4,
+        DEFAULT_DISJOINT_BUFFER,
     );
     assert_eq!(helpers::market(&market).payout_liability(), disjoint_buffered_reserve());
 
@@ -215,10 +216,9 @@ fun up_mint_cost(fx: &mut helpers::Fixture, market: &helpers::MarketBundle): u64
 }
 
 fun disjoint_buffered_reserve(): u64 {
-    // Independent of the production reserve formula: λ_default = 0.25, so the gap
-    // buffer is DISJOINT_GAP / 4 (line-72 assert separately pins math::mul_down(λ, gap)
-    // == QUANTITY / 4). Reserve = max-live + buffer.
-    DISJOINT_MAX_LIVE + DISJOINT_GAP / 4
+    // Independent of the production reserve formula: the configured default makes
+    // the 1e9 disjoint gap buffer 310e6. Reserve = max-live + buffer.
+    DEFAULT_DISJOINT_RESERVE
 }
 
 fun setup_live_market_with_cash(

@@ -15,6 +15,20 @@ use deepbook_predict::{
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
+const DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE: u64 = 100_000_000;
+
+#[test]
+fun new_config_seeds_protocol_reserve_profit_share() {
+    let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    assert_eq!(config.protocol_reserve_profit_share(), DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE);
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
 #[test]
 fun set_ewma_params_and_enabled_update_config() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
