@@ -15,7 +15,7 @@ python3 -m harness parity \
   --max-rows 20
 ```
 
-The checked-in synthetic fixture makes the complete 20-action parity case reproducible without private data. `--source` may instead point to a current oracle snapshot with the same schema. A row limit below 20 is rejected by action-coverage validation because it would skip current contract flows.
+The checked-in synthetic fixture makes the complete 20-action parity case reproducible without private data. `--source` may instead point to an oracle snapshot containing the required source columns; additional named dataset columns are ignored. A row limit below 20 is rejected by action-coverage validation because it would skip current contract flows.
 
 The external benchmark worker calls:
 

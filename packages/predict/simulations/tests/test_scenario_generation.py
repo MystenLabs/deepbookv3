@@ -173,15 +173,33 @@ class ScenarioGenerationTests(unittest.TestCase):
             self.assertTrue(wins(positions["o_settle_winner"]))
             self.assertFalse(wins(positions["o_settle_loser"]))
 
-    def test_source_schema_rejects_unknown_columns_and_malformed_booleans(self) -> None:
+    def test_source_schema_accepts_superset_and_rejects_missing_or_malformed(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:
             tmp = Path(raw_tmp)
-            unknown = tmp / "unknown.csv"
+            superset = tmp / "superset.csv"
             first_source_row = SOURCE_ROWS.splitlines()[0]
-            unknown.write_text(
-                SOURCE_HEADER.removesuffix("\n") + ",leverage\n" + first_source_row + ",1\n"
+            superset.write_text(
+                SOURCE_HEADER.removesuffix("\n") + ",unused_feature\n" + first_source_row + ",1\n"
             )
-            unknown_run = self._generate(unknown, tmp / "unknown-out.csv", 0, check=False)
+            superset_run = self._generate(
+                superset,
+                tmp / "superset-out.csv",
+                0,
+                check=False,
+            )
+
+            missing = tmp / "missing.csv"
+            missing.write_text(
+                SOURCE_HEADER.replace("spot,", "", 1)
+                + first_source_row.split(",", 1)[1]
+                + "\n"
+            )
+            missing_run = self._generate(
+                missing,
+                tmp / "missing-out.csv",
+                0,
+                check=False,
+            )
 
             malformed = tmp / "malformed.csv"
             malformed.write_text(
@@ -194,8 +212,9 @@ class ScenarioGenerationTests(unittest.TestCase):
                 check=False,
             )
 
-            self.assertNotEqual(unknown_run.returncode, 0)
-            self.assertIn("header must be exactly", unknown_run.stderr)
+            self.assertEqual(superset_run.returncode, 0)
+            self.assertNotEqual(missing_run.returncode, 0)
+            self.assertIn("missing required columns: spot", missing_run.stderr)
             self.assertNotEqual(malformed_run.returncode, 0)
             self.assertIn("invalid rho_negative", malformed_run.stderr)
 

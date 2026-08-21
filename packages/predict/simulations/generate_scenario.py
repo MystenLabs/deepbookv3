@@ -46,7 +46,7 @@ DATA_DIR = Path(__file__).with_name("data")
 SCENARIO_CONFIG = DATA_DIR / "scenario_config.json"
 GENERATED_DIR = DATA_DIR / "generated"
 DEFAULT_RISK_FREE_RATE = 35_000_000
-SOURCE_COLUMNS = [
+REQUIRED_SOURCE_COLUMNS = [
     "spot",
     "forward",
     "a",
@@ -344,12 +344,18 @@ def read_snapshots(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open(newline="") as file:
         reader = csv.DictReader(file)
-        if reader.fieldnames != SOURCE_COLUMNS:
+        fieldnames = reader.fieldnames or []
+        if len(fieldnames) != len(set(fieldnames)):
+            raise GenerationError("source dataset header has duplicate columns")
+        missing = [column for column in REQUIRED_SOURCE_COLUMNS if column not in fieldnames]
+        if missing:
             raise GenerationError(
-                f"source dataset header must be exactly {','.join(SOURCE_COLUMNS)}"
+                f"source dataset is missing required columns: {','.join(missing)}"
             )
         for row_number, raw in enumerate(reader, start=1):
-            if None in raw or any(raw[column] is None for column in SOURCE_COLUMNS):
+            if None in raw or any(
+                raw[column] is None for column in REQUIRED_SOURCE_COLUMNS
+            ):
                 raise GenerationError(
                     f"source dataset row {row_number} does not match the source schema"
                 )
