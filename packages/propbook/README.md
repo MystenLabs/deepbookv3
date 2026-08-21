@@ -46,18 +46,19 @@ exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
 
-For Block Scholes, latest-only typed reads expose source spot plus per-expiry forward and SVI payloads from permanent stores. Spot and forward reads return `none` when the requested observation is absent; SVI reads expose the stored provider parameters directly.
+For Block Scholes, typed reads expose the latest source spot plus per-expiry forward and SVI payloads from permanent stores, while `spot_at(timestamp_ms)` exposes exact minute-boundary spot history. Reads return `none` when the requested observation is absent; SVI reads expose the stored provider parameters directly.
 
 ## Exact Timestamp Inserts
 
-Propbook does not have a separate settlement or minute-bucket write mode. Pyth feeds can insert source-native observations into `exact_reads`, keyed by the exact source timestamp derived from the update:
+Pyth feeds and Block Scholes value stores retain independent insert-only exact history keyed by signed source timestamps:
 
 - Pyth uses the Lazer envelope timestamp in microseconds, which must already be an
   exact whole millisecond. The envelope at a tick carries Pyth's canonical price as
   of that tick, so a consumer settling at the tick resolves the right mark even when
   Pyth generated that price earlier and carried it forward.
+- Block Scholes uses the signed value-batch `published_at_ms`. `apply_spot_batch` independently inserts the canonical spot when that timestamp is a whole-minute boundary, even when the observation does not advance `latest`; `insert_at` performs the same exact-history insertion without changing `latest`. A non-minute timestamp is a no-op for exact history in both paths and does not abort.
 
-A Pyth read for `timestamp_ms` succeeds only if a source observation was inserted at exactly that timestamp and exposed by the source module's `*_at` getter. There is no first-transaction-after-minute fallback and no Propbook-specific "official resolution" policy. Block Scholes stores retain only the latest observation per series and expose no exact-history getter.
+An exact read succeeds only when a source observation was inserted at exactly the requested timestamp; there is no nearest, rounded, interpolated, or first-transaction-after-boundary lookup. The first valid observation at a key owns it permanently, and exact insertion never rewrites `latest`.
 
 ## Pyth Feed
 
@@ -113,10 +114,10 @@ A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvel
 
 Block Scholes data lives in two per-underlying shared objects:
 
-- `block_scholes_store::BlockScholesValueStore`: latest spot and forward observations for one immutable provider base asset, keyed by signed series id.
+- `block_scholes_store::BlockScholesValueStore`: latest spot and forward observations for one immutable provider base asset, keyed by signed series id, plus exact minute-boundary spot history keyed by `published_at_ms`.
 - `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets, bound to the same base asset and keyed by signed series id.
 
-Writes are permissionless and enter only through `apply_spot_batch`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
+Writes are permissionless and enter only through `apply_spot_batch`, `insert_at`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
 
 Each stored observation carries three clocks: the provider model time the
 series data is "as of" (held fixed across retransmissions of an unchanged
@@ -221,13 +222,13 @@ Block Scholes stores emit their dedicated event surface:
 
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
 - `BlockScholesObservationRecorded<Observation>` records every stored observation with its store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
-- `BlockScholesBatchIngested` records every verified batch with its store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
+- `BlockScholesObservationInserted<Observation>` records every canonical spot inserted into exact minute-boundary history with its store ID and observation payload.
+- `BlockScholesBatchIngested` records every verified batch submitted through an `apply_*` latest path with its store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 
 - `ObservationRecorded` emits for every accepted live update.
-- `exact_reads` are unbounded tables. Storage growth is paid by writers; a
-  permissionless prune flow can be added later if long-run retention needs it.
+- Pyth `exact_reads` and Block Scholes `exact_spot_reads` are unbounded tables. Storage growth is paid by writers; a permissionless prune flow can be added later if long-run retention needs it.
 - Pyth latest updates are ceil-rounded from generation microseconds to milliseconds,
   so two aggregates generated inside the same millisecond can collide at the Propbook
   freshness key and the second live update is a no-op. Exact-history inserts are

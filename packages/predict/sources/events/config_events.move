@@ -77,15 +77,28 @@ public struct ReferenceTickSet has copy, drop, store {
     recorded_at_ms: u64,
 }
 
-/// Emitted once when a market records its terminal settlement price from the
-/// exact-expiry Propbook Pyth observation.
+/// Emitted once when a market records its terminal settlement price from exact Propbook history.
 public struct MarketSettled has copy, drop, store {
     expiry_market_id: ID,
     propbook_underlying_id: u32,
     expiry: u64,
     settlement_price: u64,
+    /// `0` = Pyth and `1` = Block Scholes.
+    settlement_source: u8,
     /// On-chain landing time of the settlement, `clock.timestamp_ms()`.
     settled_at_ms: u64,
+}
+
+#[test_only]
+public fun market_settled_fields(event: &MarketSettled): (ID, u32, u64, u64, u8, u64) {
+    (
+        event.expiry_market_id,
+        event.propbook_underlying_id,
+        event.expiry,
+        event.settlement_price,
+        event.settlement_source,
+        event.settled_at_ms,
+    )
 }
 
 // === Public-Package Functions ===
@@ -187,6 +200,7 @@ public(package) fun emit_market_settled(
     propbook_underlying_id: u32,
     expiry: u64,
     settlement_price: u64,
+    settlement_source: u8,
     settled_at_ms: u64,
 ) {
     event::emit(MarketSettled {
@@ -194,6 +208,7 @@ public(package) fun emit_market_settled(
         propbook_underlying_id,
         expiry,
         settlement_price,
+        settlement_source,
         settled_at_ms,
     });
 }

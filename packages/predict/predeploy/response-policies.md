@@ -151,51 +151,18 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reopen when:** the exclusion basis becomes non-sticky, or RP-2's
   implementation changes what a zero mark means for the queues.
 
-## RP-4: Past-expiry-but-unsettled market blocks the flush (no substitute mark)
+## RP-4: Exact Block Scholes fallback bounds missing-Pyth settlement delay (resolves P-29)
 
-- **Trigger state:** an active market is past expiry but Propbook has no
-  normalized spot at the exact expiry millisecond yet.
-- **Controller:** external — resolution relayer liveness (Pyth Lazer
-  resolution endpoints supply the exact-timestamp print), and Pyth aggregate
-  liveness at the boundary, which no relayer can compensate for.
-- **Blast radius:** the whole flush aborts while the market is in the window.
-- **Response:** `pause`-with-recovery — abort and retry; the recovery path is
-  the permissionless exact-ms insert followed by `try_settle`. Standalone cash
-  rebalance is a no-op in the window, and the keeper does not flush until the
-  transition succeeds. Deliberately **no substitute
-  mark**: a settlement-dependent market has no well-defined true value, and
-  the single mark prices both queue directions — contribute-0 dilutes
-  incumbents on supply, free-cash overpays withdrawals.
-- **Recovery is not guaranteed.** `pyth_feed::insert_at` rejects a print
-  generated more than `constants::max_settlement_carry_ms` (2s) before its
-  envelope (`ESettlementCarryExceedsWindow`). Pyth publishes exactly one
-  envelope per tick and never revises it, so a boundary whose canonical print
-  was carried from beyond that window has no admissible settling row and never
-  will: the retry loop above never terminates and the pool's flush is blocked
-  permanently. The bound is deliberate — settling on an arbitrarily stale mark
-  is the worse outcome, and the window is compiled because the insert is
-  permissionless and first-writer-wins. Both window edges are pinned in
-  propbook: `packages/propbook/tests/pyth/pyth_feed_tests.move` —
-  `insert_at_carry_within_window_claims_the_key`,
-  `insert_at_carry_beyond_window_aborts`.
-- **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` (accepted
-  operational assumption, testnet evidence); grid-snap at creation makes the
-  key representable, resolution endpoints make it producible **when Pyth
-  generated a print within the carry window of that boundary**.
-- **Risk profile:** `UNMEASURED` for the unrecoverable case — the evidence in
-  `evidence/rp4-settlement-liveness.md` predates the carry bound and does not
-  cover it. Boundary carry-availability (how often Pyth carries a price across
-  a grid boundary for longer than the window) is not yet measured; measuring it
-  on testnet is a mainnet launch blocker. Residual = prolonged relayer outage
-  blocks LP fills pool-wide, plus permanent pool-wide flush blockage on a
-  beyond-window boundary; both disclosed in `risks.md`.
-- **Pinning tests:** `settlement_flow_tests.move` —
-  `try_settle_without_exact_expiry_spot_returns_false_without_mutation`,
-  `expired_unsettled_standalone_rebalance_moves_no_cash`, and
-  `explicit_settlement_unblocks_pool_valuation_sweep`.
-- **Reopen when:** settlement-v2 introduces a valuation-safe representation
-  for unsettled past-expiry markets, or boundary carry-availability
-  measurement justifies an admin settlement fallback or a different window.
+- **Trigger state:** an active market is at or past expiry and the canonical Propbook Pyth feed has no positive normalized observation at the exact expiry millisecond.
+- **Controller:** external — Pyth and Block Scholes control their signed observations; any relayer may land either verified payload through Propbook.
+- **Blast radius:** the whole flush aborts while the market remains expired and unsettled, because no substitute NAV mark exists for a settlement-dependent market.
+- **Response:** `pause`-with-deterministic-recovery. `try_settle` checks exact Pyth history first on every attempt. Pyth is exclusive until `clock.timestamp_ms() >= expiry + 30_000`; from that boundary onward, if Pyth remains unavailable, the same transition may settle from the canonical Block Scholes value store's exact spot at `expiry`. Missing, zero, or wider-than-`u64` Block Scholes values return `false` without mutation so a later attempt can retry. Settlement still records one terminal price and exact liability atomically; no latest, nearest, rounded, interpolated, or administrative mark enters valuation.
+- **Exact Block Scholes production:** `block_scholes_store::apply_spot_batch` independently inserts a signed spot into permanent exact history whenever `published_at_ms` is a whole-minute boundary, even when that observation does not advance `latest`. The dedicated `insert_at` performs the same first-writer exact insertion without changing `latest`; non-minute timestamps are no-ops. Market expiries are whole-minute aligned, so the fallback asks for a representable exact key.
+- **Race policy:** inside the grace window only Pyth can settle. After it, every individual attempt still prefers Pyth, but the first valid settlement transaction is final: a Block Scholes settlement may execute before a Pyth row that arrives later. This is the accepted liveness tradeoff; the event records whether source `0` (Pyth) or `1` (Block Scholes) won.
+- **Reasoning + evidence:** `evidence/rp4-settlement-liveness.md` owns the observed Pyth settlement latency. The deterministic second source removes the former state where one inadmissible Pyth boundary permanently blocked every future flush; a market remains blocked only while both exact sources are unavailable or unusable.
+- **Risk profile:** `BEST-GUESS` — the 30-second preference window is a compiled policy choice, and a signed Block Scholes spot becomes terminal settlement authority after it. Residual risk is source disagreement at the first-writer boundary or simultaneous absence of both exact rows.
+- **Pinning tests:** `settlement_flow_tests.move` — `block_scholes_fallback_arms_at_exact_grace_boundary`, `block_scholes_fallback_missing_after_grace_remains_retryable`, `pyth_wins_after_grace_when_both_exact_spots_exist`, `zero_block_scholes_fallback_spot_remains_retryable`, `oversized_block_scholes_fallback_spot_remains_retryable`, `block_scholes_fallback_rejects_another_underlyings_store`, `block_scholes_fallback_unblocks_pool_valuation_sweep`, and `try_settle_is_idempotent_and_keeps_settlement_price`; `block_scholes_store_tests.move` pins automatic insertion, dedicated insertion, non-minute no-op, first-writer ownership, and latest/history independence.
+- **Reopen when:** the grace period changes, expiries cease to be minute-aligned, either source changes exact-history semantics, Block Scholes source quality is no longer accepted for terminal settlement, or a valuation-safe representation for expired-unsettled markets removes the need to block the flush.
 
 ## RP-5: Oracle source quality is accepted inside the pricing envelope (resolves P-23, P-25)
 

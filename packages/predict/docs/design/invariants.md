@@ -91,9 +91,10 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Settlement
 
 - **Single explicit settlement transition.** `expiry_market::try_settle` is the sole
-  settlement-price writer. It records the exact normalized Pyth spot at the market's
-  expiry timestamp and exact terminal payout liability atomically; otherwise it
-  returns false without changing the market. Settled consumers read no oracle.
+  settlement-price writer. It records exact Pyth at the market expiry when available, or exact
+  Block Scholes after the 30-second Pyth-exclusive window, and exact terminal payout liability
+  atomically; otherwise it returns false without changing the market. Settled consumers read no
+  oracle.
 - A settled order pays its full `quantity` if the settlement price is in
   `(lower, higher]`, else 0 (`strike_exposure::process_settled_close`).
 - **R1 settlement-consistency under the tick re-encode.** Settlement compares raw

@@ -1087,12 +1087,20 @@ fun settle_flow_market(fixture: &mut SessionFlowFixture, settlement_price: u64) 
         .take_shared_by_id<ProtocolConfig>(fixture.config_id);
     let oracle_registry = fixture.predict.scenario_mut().take_shared<OracleRegistry>();
     let pyth = fixture.predict.scenario_mut().take_shared_by_id<PythFeed>(fixture.pyth_id);
-    assert_eq!(market.try_settle(&config, &oracle_registry, &pyth, &fixture.clock), true);
+    let bs_values = fixture
+        .predict
+        .scenario_mut()
+        .take_shared_by_id<BlockScholesValueStore>(fixture.bs_values_id);
+    assert_eq!(
+        market.try_settle(&config, &oracle_registry, &pyth, &bs_values, &fixture.clock),
+        true,
+    );
     assert_eq!(market.try_settlement_price(), option::some(settlement_price));
     return_shared(market);
     return_shared(config);
     return_shared(oracle_registry);
     return_shared(pyth);
+    return_shared(bs_values);
     fixture.predict.scenario_mut().next_tx(test_constants::admin());
 }
 
