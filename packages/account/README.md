@@ -28,6 +28,7 @@ public struct Account has store {
     balances: Bag,
     settlements: Bag,
     referrer_account_id: Option<ID>,
+    referrer_receive_address: Option<address>,
 }
 ```
 
@@ -41,8 +42,7 @@ the **wrapper object's address** — the accumulator/funds-receive anchor. Coins
 delivered to and settled from the wrapper address, because only a real shared
 object's UID can back an address-balance withdrawal (the nested `account_id` UID
 never can). Use `receive_address` for `balance::send_funds`, never the account ID.
-`Account.referrer_account_id()` returns the immutable canonical account ID supplied
-at referral-based creation, if any.
+`Account.referrer_account_id()` returns the immutable canonical account ID supplied at referral-based creation, if any. `Account.referrer_receive_address()` returns that referrer's wrapper receive address. Attribution uses the canonical ID; `balance::send_funds` delivery uses the receive address.
 
 ### `account::account_registry`
 
@@ -66,10 +66,7 @@ public fun new_self_owned(
 
 The returned wrapper must be shared with `account::share`.
 
-`new_with_referrer` records the supplied wrapper's canonical account ID on the created
-account and in its `AccountCreated` event. This is caller-selected attribution:
-passing a wrapper proves that it exists, not that its owner authorized or endorsed
-the referral. The package does not provide a setter or removal path.
+`new_with_referrer` records the supplied wrapper's canonical account ID and wrapper receive address on the created account, and records the canonical ID in its `AccountCreated` event. This is caller-selected attribution: passing a wrapper proves that it exists, not that its owner authorized or endorsed the referral. The package does not provide a setter or removal path. The referrer must already exist, and the registry permits only one canonical account per owner, so an account cannot name itself during its own creation.
 
 The registry exposes both derived addresses:
 
@@ -92,8 +89,7 @@ Each owner gets two derived IDs under the registry root:
 - wrapper ID: shared object handle that gates account loading; its address is the
   accumulator/funds-receive anchor (`Account.receive_address`)
 
-An account created through `new_with_referrer` also stores the supplied canonical
-account ID as immutable creation attribution and mirrors it in `AccountCreated`.
+An account created through `new_with_referrer` stores the supplied canonical account ID as immutable creation attribution, mirrors that ID in `AccountCreated`, and snapshots the supplied wrapper's receive address for future fund delivery.
 
 The canonical account ID is the account's public identity. The wrapper ID is an
 implementation detail needed because Sui shared objects are what transactions pass
