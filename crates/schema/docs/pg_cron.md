@@ -11,6 +11,8 @@ Due to our production setup being on a different database than the one the cron 
    - Note: If pg_cron is installed on the same database as your application, you can use `schedule()` instead
 3. Run the SQL commands below to schedule the OHCLV update jobs
 
+The procedure arguments select the buckets to revisit. Each procedure expands that range to complete bucket boundaries before reading `order_fills`, so overlapping jobs can safely replace an aggregate; the newest bucket is partial only because future fills do not exist yet.
+
 -- Enable pg_cron 
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 

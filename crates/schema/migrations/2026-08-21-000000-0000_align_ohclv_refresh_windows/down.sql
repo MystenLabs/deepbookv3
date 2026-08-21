@@ -1,0 +1,1 @@
+-- Keep the bucket-aligned procedures in place rather than reintroducing partial refreshes.
