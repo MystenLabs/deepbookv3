@@ -16,12 +16,12 @@ A lane owns:
 An `OracleRead<Value>` wraps a value with two Propbook timestamps:
 
 - `source_timestamp_ms`: source/publisher time, converted to milliseconds.
-- `update_timestamp_ms`: Sui clock time when the update landed on chain.
+- `onchain_timestamp_ms`: Sui clock time when the update landed on chain.
 
 There are two write shapes:
 
 - `update`: latest-state update. It records the read only when
-  `source_timestamp_ms` is positive, not ahead of `update_timestamp_ms`, and
+  `source_timestamp_ms` is positive, not ahead of `onchain_timestamp_ms`, and
   strictly newer than the current latest read. Future, zero, stale, or duplicate
   reads are no-ops.
 - `insert_at`: exact timestamp insert. It records the read only when the
@@ -56,7 +56,7 @@ Pyth feeds and Block Scholes value stores retain independent insert-only exact h
   exact whole millisecond. The envelope at a tick carries Pyth's canonical price as
   of that tick, so a consumer settling at the tick resolves the right mark even when
   Pyth generated that price earlier and carried it forward.
-- Block Scholes uses the signed value-batch `published_at_ms`. `apply_spot_batch` independently inserts the canonical spot when that timestamp is a whole-minute boundary, even when the observation does not advance `latest`; `insert_at` performs the same exact-history insertion without changing `latest`. A non-minute timestamp is a no-op for exact history in both paths and does not abort.
+- Block Scholes uses the signed value-batch `source_timestamp_ms`. `apply_spot_batch` independently inserts the canonical spot when that timestamp is a whole-minute boundary, even when the observation does not advance `latest`; `insert_at` performs the same exact-history insertion without changing `latest`. A non-minute timestamp is a no-op for exact history in both paths and does not abort.
 - Block Scholes exact history admits only positive `u64`-representable spots. Zero or over-wide values remain available to the source-native `latest` path but do not claim the permanent exact key, so a later admissible observation at that timestamp can be inserted.
 
 An exact read succeeds only when a source observation was inserted at exactly the requested timestamp; there is no nearest, rounded, interpolated, or first-transaction-after-boundary lookup. The first admissible observation at a key owns it permanently, and exact insertion never rewrites `latest`.
@@ -121,7 +121,7 @@ A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvel
 
 Block Scholes data lives in two per-underlying shared objects:
 
-- `block_scholes_store::BlockScholesValueStore`: latest spot and forward observations for one immutable provider base asset, keyed by signed series id, plus exact minute-boundary spot history keyed by `published_at_ms`.
+- `block_scholes_store::BlockScholesValueStore`: latest spot and forward observations for one immutable provider base asset, keyed by signed series id, plus exact minute-boundary spot history keyed by `source_timestamp_ms`.
 - `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets, bound to the same base asset and keyed by signed series id.
 
 Writes are permissionless and enter only through `apply_spot_batch`, `insert_at`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
@@ -143,7 +143,7 @@ than its own envelope is provider garbage and is skipped, mirroring the Pyth
 lane's `EFeedTimestampAfterEnvelope`; together with the envelope-not-after-
 execution bound, that keeps Predict's SVI roll-down anchor strictly before
 any live market's expiry. The stores keep no aggregate liveness field:
-consumers assert freshness on each series' own `published_at_ms`, and
+consumers assert freshness on each series' own `source_timestamp_ms`, and
 provider-wide liveness is monitored off-chain from the per-batch
 `BlockScholesBatchIngested` events.
 
@@ -229,7 +229,8 @@ Block Scholes stores emit their dedicated event surface:
 
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
 - `BlockScholesObservationRecorded<Observation>` records every stored observation with its Propbook underlying, store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
-- `BlockScholesBatchIngested` records every verified batch with its Propbook underlying, store ID, series kind (`0` spot, `1` forward, `2` SVI), provider publication time, verified update count, and applied update count, including batches where no series advanced.
+- `BlockScholesObservationInserted<Observation>` records every canonical spot inserted into exact minute-boundary history with its store ID and observation payload.
+- `BlockScholesBatchIngested` records every verified batch with its Propbook underlying, store ID, series kind (`0` spot, `1` forward, `2` SVI), provider source time, on-chain ingestion time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

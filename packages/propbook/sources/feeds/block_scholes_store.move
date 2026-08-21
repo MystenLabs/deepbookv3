@@ -34,7 +34,7 @@ macro fun spot_batch_length(): u64 { 1 }
 
 /// One accepted observation and the three clocks that describe it.
 /// The clocks answer different questions and are not interchangeable: a calibration that has not
-/// changed republishes under its original model time, so only `published_at_ms` distinguishes a
+/// changed republishes under its original model time, so only `source_timestamp_ms` distinguishes a
 /// quiet feed from a stopped one.
 public struct BsRead<Value: copy + drop + store> has copy, drop, store {
     /// Provider calibration time — when the series was last re-derived, held fixed across
@@ -47,9 +47,9 @@ public struct BsRead<Value: copy + drop + store> has copy, drop, store {
     /// and never regressing once stored (see `apply`). The economic clock: consumers gate
     /// freshness on it and the SVI roll-down anchors on it, so a republished unchanged value is
     /// re-asserted as current at its new envelope time.
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     /// Sui clock time when the accepting transaction executed.
-    recorded_at_ms: u64,
+    onchain_timestamp_ms: u64,
     /// Digest of the transaction that accepted this observation.
     writer_digest: vector<u8>,
     value: Value,
@@ -119,7 +119,9 @@ public struct BlockScholesBatchIngested has copy, drop {
     propbook_oracle_id: ID,
     /// `0` = spot, `1` = forward, and `2` = SVI.
     series_kind: u8,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
+    /// Sui clock time when the batch ingestion transaction executed.
+    onchain_timestamp_ms: u64,
     /// Verified observations carried by the batch.
     update_count: u64,
     /// Observations that became their series' latest.
@@ -193,12 +195,12 @@ public fun read_model_timestamp_ms<Value: copy + drop + store>(read: &BsRead<Val
     read.model_timestamp_ms
 }
 
-public fun read_published_at_ms<Value: copy + drop + store>(read: &BsRead<Value>): u64 {
-    read.published_at_ms
+public fun read_source_timestamp_ms<Value: copy + drop + store>(read: &BsRead<Value>): u64 {
+    read.source_timestamp_ms
 }
 
-public fun read_recorded_at_ms<Value: copy + drop + store>(read: &BsRead<Value>): u64 {
-    read.recorded_at_ms
+public fun read_onchain_timestamp_ms<Value: copy + drop + store>(read: &BsRead<Value>): u64 {
+    read.onchain_timestamp_ms
 }
 
 public fun read_writer_digest<Value: copy + drop + store>(read: &BsRead<Value>): vector<u8> {
@@ -260,16 +262,18 @@ public fun apply_spot_batch(
     let stored = store.apply_value(expected_sid, series_kind_spot!(), 0, read);
     let _ = store.insert_exact_spot(read);
     event::emit(BlockScholesBatchIngested {
+        propbook_underlying_id: store.propbook_underlying_id,
         propbook_oracle_id: store.value_store_id(),
         series_kind: series_kind_spot!(),
-        published_at_ms: read.published_at_ms,
+        source_timestamp_ms: read.source_timestamp_ms,
+        onchain_timestamp_ms: read.onchain_timestamp_ms,
         update_count: spot_batch_length!(),
         applied: if (stored) spot_batch_length!() else 0,
     });
 }
 
 /// Insert the canonical spot batch into exact minute-boundary history without changing `latest`.
-/// A valid batch whose signed `published_at_ms` is not a minute boundary, or whose spot is zero or
+/// A valid batch whose signed `source_timestamp_ms` is not a minute boundary, or whose spot is zero or
 /// wider than `u64`, is ignored without aborting. The first admissible observation at a boundary
 /// owns the key and cannot be replaced.
 public fun insert_at(
@@ -392,15 +396,15 @@ fun checked_spot_read(
     ctx: &TxContext,
 ): BsRead<u128> {
     assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = batch.value_batch_timestamp();
+    let source_timestamp_ms = batch.value_batch_timestamp();
     let updates = batch.into_value_updates();
     assert!(updates.length() == spot_batch_length!(), EUnexpectedBatchLength);
     let update = &updates[0];
     assert!(update.value_sid() == expected_sid, ESeriesIdMismatch);
     BsRead {
         model_timestamp_ms: update.value_timestamp(),
-        published_at_ms,
-        recorded_at_ms: clock.timestamp_ms(),
+        source_timestamp_ms,
+        onchain_timestamp_ms: clock.timestamp_ms(),
         writer_digest: *ctx.digest(),
         value: update.value_v(),
     }
@@ -416,7 +420,7 @@ fun apply_checked_value_batch(
     ctx: &TxContext,
 ) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = batch.value_batch_timestamp();
+    let source_timestamp_ms = batch.value_batch_timestamp();
     let updates = batch.into_value_updates();
     let update_count = updates.length();
     assert!(update_count == expected_sids.length(), EUnexpectedBatchLength);
@@ -428,7 +432,7 @@ fun apply_checked_value_batch(
         i = i + 1;
     };
 
-    let recorded_at_ms = clock.timestamp_ms();
+    let onchain_timestamp_ms = clock.timestamp_ms();
     let writer_digest = *ctx.digest();
     let mut applied = 0;
     i = 0;
@@ -440,8 +444,8 @@ fun apply_checked_value_batch(
             expiries_ms[i],
             BsRead {
                 model_timestamp_ms: update.value_timestamp(),
-                published_at_ms,
-                recorded_at_ms,
+                source_timestamp_ms,
+                onchain_timestamp_ms,
                 writer_digest: copy writer_digest,
                 value: update.value_v(),
             },
@@ -454,7 +458,8 @@ fun apply_checked_value_batch(
         propbook_underlying_id: store.propbook_underlying_id,
         propbook_oracle_id: store.value_store_id(),
         series_kind,
-        published_at_ms,
+        source_timestamp_ms,
+        onchain_timestamp_ms,
         update_count,
         applied,
     });
@@ -469,7 +474,7 @@ fun apply_checked_svi_batch(
     ctx: &TxContext,
 ) {
     assert!(store.version == constants::current_version!(), EWrongVersion);
-    let published_at_ms = batch.svi_batch_timestamp();
+    let source_timestamp_ms = batch.svi_batch_timestamp();
     let updates = batch.into_svi_updates();
     let update_count = updates.length();
     assert!(update_count == expected_sids.length(), EUnexpectedBatchLength);
@@ -481,7 +486,7 @@ fun apply_checked_svi_batch(
         i = i + 1;
     };
 
-    let recorded_at_ms = clock.timestamp_ms();
+    let onchain_timestamp_ms = clock.timestamp_ms();
     let writer_digest = *ctx.digest();
     let mut applied = 0;
     i = 0;
@@ -501,8 +506,8 @@ fun apply_checked_svi_batch(
             update.svi_sid(),
             expiries_ms[i],
             update.svi_timestamp(),
-            published_at_ms,
-            recorded_at_ms,
+            source_timestamp_ms,
+            onchain_timestamp_ms,
             copy writer_digest,
             SVIParams {
                 a_magnitude,
@@ -523,7 +528,8 @@ fun apply_checked_svi_batch(
         propbook_underlying_id: store.propbook_underlying_id,
         propbook_oracle_id: store.svi_store_id(),
         series_kind: series_kind_svi!(),
-        published_at_ms,
+        source_timestamp_ms,
+        onchain_timestamp_ms,
         update_count,
         applied,
     });
@@ -555,12 +561,12 @@ fun apply_value(
 
 /// Insert one verified canonical spot at its exact signed minute-boundary timestamp.
 fun insert_exact_spot(store: &mut BlockScholesValueStore, read: BsRead<u128>): bool {
-    if (read.published_at_ms % exact_spot_period_ms!() != 0) return false;
+    if (read.source_timestamp_ms % exact_spot_period_ms!() != 0) return false;
     if (!read.has_valid_clocks()) return false;
     if (read.value == 0 || read.value > (std::u64::max_value!() as u128)) return false;
-    if (store.exact_spot_reads.contains(read.published_at_ms)) return false;
+    if (store.exact_spot_reads.contains(read.source_timestamp_ms)) return false;
 
-    store.exact_spot_reads.add(read.published_at_ms, read);
+    store.exact_spot_reads.add(read.source_timestamp_ms, read);
     event::emit(BlockScholesObservationInserted<BsRead<u128>> {
         propbook_oracle_id: store.value_store_id(),
         observation: read,
@@ -575,8 +581,8 @@ fun apply_svi(
     sid: u256,
     expiry_ms: u64,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
-    recorded_at_ms: u64,
+    source_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     writer_digest: vector<u8>,
     value: SVIParams,
 ): bool {
@@ -590,7 +596,13 @@ fun apply_svi(
         sid,
         series_kind_svi!(),
         expiry_ms,
-        BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, writer_digest, value },
+        BsRead {
+            model_timestamp_ms,
+            source_timestamp_ms,
+            onchain_timestamp_ms,
+            writer_digest,
+            value,
+        },
     )
 }
 
@@ -642,12 +654,15 @@ public fun observation_inserted_fields<Observation: copy + drop>(
 /// The batch event's fields exist for off-chain consumers, which decode them rather than calling
 /// Move, so this reader exists only so tests can assert the decoded fields are right.
 #[test_only]
-public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (u32, ID, u8, u64, u64, u64) {
+public fun batch_ingested_fields(
+    event: &BlockScholesBatchIngested,
+): (u32, ID, u8, u64, u64, u64, u64) {
     (
         event.propbook_underlying_id,
         event.propbook_oracle_id,
         event.series_kind,
-        event.published_at_ms,
+        event.source_timestamp_ms,
+        event.onchain_timestamp_ms,
         event.update_count,
         event.applied,
     )
@@ -668,7 +683,7 @@ public fun set_store_versions_for_testing(
 /// regresses. The provider names the per-series model time as the replay key and the envelope as
 /// transport, so newer model data wins and an equal model time advances only with a fresher
 /// envelope (a retransmission updates transport metadata). The envelope floor exists because
-/// consumers price from the stored `published_at_ms` — it gates freshness and anchors the SVI
+/// consumers price from the stored `source_timestamp_ms` — it gates freshness and anchors the SVI
 /// roll-down — so a read that would move it backwards (a delayed batch whose newer model time
 /// arrived in an older envelope: the provider's own publish stream regressed) is skipped rather
 /// than allowed to stretch the anchor. A model time after its own envelope is provider garbage —
@@ -688,10 +703,10 @@ fun apply<Value: copy + drop + store>(
     if (reads.contains(sid)) {
         let latest = reads.borrow_mut(sid);
         let advances =
-            (read.published_at_ms >= latest.published_at_ms &&
+            (read.source_timestamp_ms >= latest.source_timestamp_ms &&
                 read.model_timestamp_ms > latest.model_timestamp_ms) ||
             (read.model_timestamp_ms == latest.model_timestamp_ms &&
-                read.published_at_ms > latest.published_at_ms);
+                read.source_timestamp_ms > latest.source_timestamp_ms);
         if (!advances) return false;
         *latest = read;
     } else {
@@ -710,7 +725,7 @@ fun apply<Value: copy + drop + store>(
 }
 
 fun has_valid_clocks<Value: copy + drop + store>(read: &BsRead<Value>): bool {
-    read.published_at_ms > 0 &&
-        read.published_at_ms <= read.recorded_at_ms &&
-        read.model_timestamp_ms <= read.published_at_ms
+    read.source_timestamp_ms > 0 &&
+        read.source_timestamp_ms <= read.onchain_timestamp_ms &&
+        read.model_timestamp_ms <= read.source_timestamp_ms
 }

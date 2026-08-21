@@ -47,9 +47,10 @@ public struct OrderMinted has copy, drop, store {
     builder_code_id: Option<ID>,
     /// Referrer recorded on the minting account, independent of the fee paid.
     referrer_account_id: Option<ID>,
-    minted_at_ms: u64,
-    /// Oracle source timestamps present when this mint was priced: the provider model times the
-    /// data is "as of" (the SVI one is also the roll-down anchor). Pyth is `0` only when unusable.
+    onchain_timestamp_ms: u64,
+    /// Oracle source timestamps present when this mint was priced: Pyth's canonical source time
+    /// and the Block Scholes batch-envelope times used for freshness. The SVI one is also the
+    /// roll-down anchor. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
@@ -81,10 +82,10 @@ public struct LiveOrderRedeemed has copy, drop, store {
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
-    redeemed_at_ms: u64,
-    /// Oracle source timestamps present when this redemption was priced: the provider model times
-    /// the data is "as of" (the SVI one is also the roll-down anchor). Pyth is `0` only when
-    /// unusable.
+    onchain_timestamp_ms: u64,
+    /// Oracle source timestamps present when this redemption was priced: Pyth's canonical source
+    /// time and the Block Scholes batch-envelope times used for freshness. The SVI one is also the
+    /// roll-down anchor. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
@@ -100,7 +101,7 @@ public struct SettledOrderRedeemed has copy, drop, store {
     position_root_id: u256,
     owner: address,
     payout_amount: u64,
-    redeemed_at_ms: u64,
+    onchain_timestamp_ms: u64,
 }
 
 // === Public-Package Functions ===
@@ -121,7 +122,7 @@ public(package) fun emit_order_minted(
     penalty_fee: u64,
     referral_fee: u64,
     inventory_impact_charge: u64,
-    minted_at_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     event::emit(OrderMinted {
         expiry_market_id,
@@ -142,7 +143,7 @@ public(package) fun emit_order_minted(
         inventory_impact_charge,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         referrer_account_id,
-        minted_at_ms,
+        onchain_timestamp_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
         block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
@@ -165,7 +166,7 @@ public(package) fun emit_live_order_redeemed(
     builder_fee: u64,
     penalty_fee: u64,
     inventory_impact_rebate: u64,
-    redeemed_at_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     event::emit(LiveOrderRedeemed {
         expiry_market_id,
@@ -182,7 +183,7 @@ public(package) fun emit_live_order_redeemed(
         penalty_fee,
         inventory_impact_rebate,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
-        redeemed_at_ms,
+        onchain_timestamp_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
         block_scholes_spot_source_timestamp_ms: pricer.block_scholes_spot_source_timestamp_ms(),
         block_scholes_forward_source_timestamp_ms: pricer.block_scholes_forward_source_timestamp_ms(),
@@ -197,7 +198,7 @@ public(package) fun emit_settled_order_redeemed(
     order: &Order,
     position_root_id: u256,
     payout_amount: u64,
-    redeemed_at_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     event::emit(SettledOrderRedeemed {
         expiry_market_id,
@@ -206,6 +207,6 @@ public(package) fun emit_settled_order_redeemed(
         position_root_id,
         owner,
         payout_amount,
-        redeemed_at_ms,
+        onchain_timestamp_ms,
     });
 }

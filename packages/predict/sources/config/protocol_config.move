@@ -18,6 +18,7 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
+use sui::clock::Clock;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -100,15 +101,33 @@ public fun referral_fee_rate(config: &ProtocolConfig): u64 {
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
-public fun set_template_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+public fun set_template_base_fee(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    fee: u64,
+    clock: &Clock,
+) {
     config.assert_version();
     config.strike_exposure_template_config.set_base_fee(fee);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the minimum fee floor snapshotted by newly created expiry markets.
-public fun set_template_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+public fun set_template_min_fee(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    fee: u64,
+    clock: &Clock,
+) {
     config.assert_version();
     config.strike_exposure_template_config.set_min_fee(fee);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the expiry-fee ramp window snapshotted by newly created expiry markets.
@@ -116,9 +135,14 @@ public fun set_template_expiry_fee_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the expiry-fee max multiplier snapshotted by newly created expiry markets.
@@ -126,9 +150,14 @@ public fun set_template_expiry_fee_max_multiplier(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the backing-buffer lambda snapshotted by newly created expiry markets.
@@ -136,9 +165,14 @@ public fun set_template_backing_buffer_lambda(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_backing_buffer_lambda(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the maximum marginal inventory-impact rate snapshotted by newly created
@@ -147,9 +181,14 @@ public fun set_template_inventory_impact_max_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_inventory_impact_max_rate(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the minimum raw entry probability snapshotted by newly created expiry markets.
@@ -157,9 +196,14 @@ public fun set_template_min_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_min_entry_probability(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the maximum raw entry probability snapshotted by newly created expiry markets.
@@ -167,9 +211,14 @@ public fun set_template_max_entry_probability(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.strike_exposure_template_config.set_max_entry_probability(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        &config.strike_exposure_template_config,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Select which source the live forward is built from: `true` carries the Block
@@ -179,10 +228,12 @@ public fun set_use_pyth_spot_for_forward(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     enabled: bool,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_use_pyth_spot_for_forward(enabled);
+    config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Pyth spot freshness threshold.
@@ -190,10 +241,12 @@ public fun set_pyth_spot_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
+    config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Block Scholes spot/forward freshness threshold.
@@ -201,10 +254,12 @@ public fun set_block_scholes_price_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_price_freshness_ms(value);
+    config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set the live Block Scholes SVI freshness threshold.
@@ -212,10 +267,12 @@ public fun set_block_scholes_svi_freshness_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
+    config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
 
 /// Set how many frozen-mark attempts a queued LP request gets before it is
@@ -259,15 +316,23 @@ public fun set_ewma_params(
     alpha: u64,
     z_score_threshold: u64,
     penalty_rate: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.ewma_config.set_params(alpha, z_score_threshold, penalty_rate);
+    config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
 }
 
 /// Enable or disable the EWMA gas-price penalty.
-public fun set_ewma_enabled(config: &mut ProtocolConfig, _admin_cap: &AdminCap, enabled: bool) {
+public fun set_ewma_enabled(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    enabled: bool,
+    clock: &Clock,
+) {
     config.assert_version();
     config.ewma_config.set_enabled(enabled);
+    config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
 }
 
 /// Set whether trading is paused.
@@ -320,11 +385,21 @@ public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &Admin
 /// Set the fee charged on executed PLP supply fills. Admin-gated and validated
 /// against its config-constants envelope. Locked during valuation so the rate a
 /// flush froze into its mark cannot change midway through that flush.
-public fun set_plp_supply_fee_rate(config: &mut ProtocolConfig, _admin_cap: &AdminCap, rate: u64) {
+public fun set_plp_supply_fee_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config_constants::assert_plp_supply_fee_rate(rate);
     config.plp_supply_fee_rate = rate;
+    config_events::emit_plp_fee_rates_updated(
+        config.plp_supply_fee_rate,
+        config.plp_withdraw_fee_rate,
+        clock.timestamp_ms(),
+    );
 }
 
 /// Set the fee charged on executed PLP withdraw fills. Same gating as the supply
@@ -333,11 +408,17 @@ public fun set_plp_withdraw_fee_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     rate: u64,
+    clock: &Clock,
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
     config_constants::assert_plp_withdraw_fee_rate(rate);
     config.plp_withdraw_fee_rate = rate;
+    config_events::emit_plp_fee_rates_updated(
+        config.plp_supply_fee_rate,
+        config.plp_withdraw_fee_rate,
+        clock.timestamp_ms(),
+    );
 }
 
 // === Public-Package Functions ===
