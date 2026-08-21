@@ -887,12 +887,6 @@ export async function nextOneMonthExpiryMs(): Promise<bigint> {
     return ((now / ONE_MONTH_MS) + 1n) * ONE_MONTH_MS;
 }
 
-export async function nextCadenceExpiryMs(periodMs: bigint): Promise<bigint> {
-    if (periodMs <= 0n) throw new Error("cadence period must be positive");
-    const now = await clockTimestampMs();
-    return ((now / periodMs) + 1n) * periodMs;
-}
-
 // One oracle refresh writes all Propbook slots: a permissionless Pyth Lazer spot
 // update, then separate Block Scholes spot, forward, and SVI batches. The expiry
 // batches carry descriptor witnesses, and the two per-underlying stores are the

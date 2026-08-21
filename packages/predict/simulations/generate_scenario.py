@@ -84,7 +84,7 @@ def oracle_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
         "spot": snapshot["spot"],
         "forward": snapshot["forward"],
         "a": snapshot["a"],
-        "a_negative": False,
+        "a_negative": snapshot["a_negative"],
         "b": snapshot["b"],
         "rho": snapshot["rho"],
         "rho_negative": snapshot["rho_negative"],
@@ -101,7 +101,7 @@ def oracle_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
 def svi_for_replay(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "a": snapshot["a"],
-        "aNegative": False,
+        "aNegative": snapshot["a_negative"],
         "b": snapshot["b"],
         "rho": snapshot["rho"],
         "rhoNegative": snapshot["rho_negative"],
@@ -125,7 +125,8 @@ class Generator:
         self.order_quantities: dict[str, int] = {}
 
     def snapshot(self, step: int) -> dict[str, Any]:
-        index = round((step - 1) * (len(self.snapshots) - 1) / 19)
+        last_step = self.config["generation"]["rows"] - 1
+        index = round((step - 1) * (len(self.snapshots) - 1) / last_step)
         return self.snapshots[index]
 
     def mint_row(
@@ -331,8 +332,16 @@ class Generator:
         return rows
 
 
-def source_bool(raw: dict[str, str], column: str, row_number: int) -> bool:
-    value = raw[column]
+def source_bool(
+    raw: dict[str, str],
+    column: str,
+    row_number: int,
+    *,
+    default: bool | None = None,
+) -> bool:
+    value = raw.get(column)
+    if value is None and default is not None:
+        return default
     if value not in {"true", "false"}:
         raise GenerationError(
             f"source dataset row {row_number} has invalid {column}: {value!r}"
@@ -362,6 +371,12 @@ def read_snapshots(path: Path) -> list[dict[str, Any]]:
                     "spot": int(raw["spot"]),
                     "forward": int(raw["forward"]),
                     "a": int(raw["a"]),
+                    "a_negative": source_bool(
+                        raw,
+                        "a_negative",
+                        row_number,
+                        default=False,
+                    ),
                     "b": int(raw["b"]),
                     "rho": int(raw["rho"]),
                     "rho_negative": source_bool(raw, "rho_negative", row_number),

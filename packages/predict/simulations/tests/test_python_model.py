@@ -65,5 +65,17 @@ class BootstrapAccountingTests(unittest.TestCase):
         self.assertTrue(svi["at1e18"])
 
 
+class ScenarioParserTests(unittest.TestCase):
+    def test_partial_oracle_refresh_with_only_a_sign_is_rejected(self) -> None:
+        row = {column: "" for column in replay.SCENARIO_COLUMNS}
+        row.update({"tx": "1", "action": "flush", "a_negative": "true"})
+        text = ",".join(replay.SCENARIO_COLUMNS) + "\n" + ",".join(
+            row[column] for column in replay.SCENARIO_COLUMNS
+        )
+
+        with self.assertRaisesRegex(ValueError, "oracle refresh fields must all be present"):
+            replay.parse_scenario_text(text)
+
+
 if __name__ == "__main__":
     unittest.main()

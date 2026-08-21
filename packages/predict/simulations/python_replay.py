@@ -59,6 +59,7 @@ ORACLE_REFRESH_FIELDS = (
     "spot",
     "forward",
     "a",
+    "a_negative",
     "b",
     "rho",
     "rho_negative",

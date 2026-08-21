@@ -328,14 +328,15 @@ async function replay(rows: ScenarioRow[], state: SimState, scenario: string, ma
     const trace = (): LocalTraceFile => ({ schema_version: LOCAL_TRACE_SCHEMA_VERSION, steps });
     try {
         for (const row of rows) {
-            if (!observed.includes(row.action)) observed.push(row.action);
             const started = performance.now();
             const receipt = await executeRow(row, state, aliases);
+            const step = traceStep(row, receipt, performance.now() - started, receipt.clockTimestampMs ?? 0);
+            steps.push(step);
+            if (receipt.clockTimestampMs === null) step.pricingTimestampMs = Number(await clockTimestampMs());
             const updates = normalizeUpdates(row, receipt, aliases);
             updateAliases(row, receipt, aliases);
             records.push({ step: row.step, action: row.action, input: rowInput(row, BigInt(state.tickSize)), updates, state: await stateSnapshot(state) });
-            const timestampMs = receipt.clockTimestampMs ?? Number(await clockTimestampMs());
-            steps.push(traceStep(row, receipt, performance.now() - started, timestampMs));
+            if (!observed.includes(row.action)) observed.push(row.action);
             console.log(`[${ts()}] [${row.step}/${rows.length}] ${row.action}`);
         }
     } catch (error) {
@@ -356,6 +357,8 @@ async function main(): Promise<void> {
     let rows = loadScenario(args.scenario);
     if (args.maxRows !== undefined) rows = rows.slice(0, args.maxRows);
     if (rows.length === 0) throw new Error("scenario has no rows");
+    const missing = REQUIRED_ACTIONS.filter((action) => !rows.some((row) => row.action === action));
+    if (missing.length > 0) throw new Error(`scenario does not cover required actions: ${missing.join(",")}`);
     const seed = rows.map(oracleFor).find((value): value is OracleRefreshData => value !== null);
     if (!seed) throw new Error("scenario has no oracle snapshot for setup");
     const state = await setup(config, seed);

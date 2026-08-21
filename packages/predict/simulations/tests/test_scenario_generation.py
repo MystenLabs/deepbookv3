@@ -182,6 +182,7 @@ class ScenarioGenerationTests(unittest.TestCase):
             "spot": settlement_price,
             "forward": settlement_price,
             "a": 171736,
+            "a_negative": False,
             "b": 7449196,
             "rho": 243059022,
             "rho_negative": True,
@@ -282,6 +283,34 @@ class ScenarioGenerationTests(unittest.TestCase):
             self.assertIn(
                 "does not match the source schema", short_superset_row_run.stderr
             )
+
+    def test_source_a_sign_is_preserved_when_present_and_defaults_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            tmp = Path(raw_tmp)
+            unsigned = tmp / "unsigned.csv"
+            unsigned.write_text(SOURCE_HEADER + SOURCE_ROWS.splitlines()[0] + "\n")
+            signed = tmp / "signed.csv"
+            signed.write_text(
+                SOURCE_HEADER.removesuffix("\n").replace("a,b", "a,a_negative,b")
+                + "\n"
+                + SOURCE_ROWS.splitlines()[0].replace("171736,7449196", "171736,true,7449196")
+                + "\n"
+            )
+            malformed = tmp / "malformed-sign.csv"
+            malformed.write_text(signed.read_text().replace("171736,true", "171736,treu"))
+
+            positive = scenario_generator.read_snapshots(unsigned)[0]
+            negative = scenario_generator.read_snapshots(signed)[0]
+
+            self.assertFalse(positive["a_negative"])
+            self.assertTrue(negative["a_negative"])
+            self.assertTrue(scenario_generator.oracle_fields(negative)["a_negative"])
+            self.assertTrue(scenario_generator.svi_for_replay(negative)["aNegative"])
+            with self.assertRaisesRegex(
+                scenario_generator.GenerationError,
+                "invalid a_negative",
+            ):
+                scenario_generator.read_snapshots(malformed)
 
 
 if __name__ == "__main__":

@@ -144,9 +144,7 @@ _BOOLEAN_TRACE_FIELDS = {"fatal", "partial", "oog"}
 _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "attempt",
     "batch",
-    "budget",
     "elapsedMs",
-    "requestedAtMs",
     "book",
     "compGas",
     "computationCost",
@@ -157,7 +155,6 @@ _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "n",
     "nodeCount",
     "nonRefundableStorageFee",
-    "nLiquidated",
     "nSettled",
     "nTarget",
     "perMarket",

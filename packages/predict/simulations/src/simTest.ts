@@ -53,3 +53,11 @@ test("scenario parser rejects removed leverage-era actions", () => {
     const text = [SCENARIO_COLUMNS.join(","), csvRow(1, "liquidate")].join("\n");
     assert.throws(() => parseScenarioText(text), /unsupported action/);
 });
+
+test("scenario parser rejects a partial oracle refresh containing only the a sign", () => {
+    const text = [
+        SCENARIO_COLUMNS.join(","),
+        csvRow(1, "flush", { a_negative: "true" }),
+    ].join("\n");
+    assert.throws(() => parseScenarioText(text), /oracle refresh fields must all be present/);
+});
