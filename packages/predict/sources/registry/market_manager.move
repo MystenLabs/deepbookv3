@@ -391,7 +391,7 @@ fun assert_cadence_config(config: &CadenceConfig) {
         EInvalidCadenceConfig,
     );
     config_constants::assert_market_tick_size_bounds(tick_size);
-    config_constants::assert_market_tick_size_bounds(admission_tick_size);
+    config_constants::assert_admission_tick_size_bounds(admission_tick_size);
     assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
     assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
     config_constants::assert_cadence_window_size(window_size);

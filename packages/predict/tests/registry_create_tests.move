@@ -11,6 +11,7 @@ const UNDERLYING_BTC: u32 = 100;
 const UNDERLYING_ETH: u32 = 200;
 const BTC_TICK_SIZE: u64 = 1_000_000_000;
 const BTC_ADMISSION_TICK_SIZE: u64 = 10_000_000_000;
+const LARGE_ADMISSION_TICK_SIZE: u64 = 100_000_000_000;
 const BTC_MAX_EXPIRY_ALLOCATION: u64 = 250_000_000_000;
 const BTC_INITIAL_EXPIRY_CASH: u64 = 50_000_000_000;
 const ETH_TICK_SIZE: u64 = 2_000_000_000;
@@ -151,6 +152,28 @@ fun set_cadence_config_admission_tick_size_not_multiple_aborts() {
         WINDOW_SIZE_THREE,
     );
     abort EUnexpectedSuccess
+}
+
+#[test]
+fun set_cadence_config_large_admission_tick_size_succeeds() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        market_manager::cadence_one_day!(),
+        10_000_000,
+        LARGE_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_TWO,
+    );
+
+    let cadence = reg.cadence_config(UNDERLYING_BTC, market_manager::cadence_one_day!());
+    assert_eq!(cadence.cadence_admission_tick_size(), LARGE_ADMISSION_TICK_SIZE);
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidCadenceWindowSize)]

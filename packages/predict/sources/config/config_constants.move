@@ -275,6 +275,13 @@ public(package) fun assert_market_tick_size_bounds(value: u64) {
     );
 }
 
+public(package) fun assert_admission_tick_size_bounds(value: u64) {
+    assert!(
+        value > 0 && value % deepbook_predict::constants::market_tick_size_unit!() == 0,
+        EInvalidMarketTickSize,
+    );
+}
+
 public(package) macro fun max_cadence_window_size(): u64 { 10 }
 
 public(package) fun assert_cadence_window_size(value: u64) {
