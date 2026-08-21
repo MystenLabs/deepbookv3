@@ -16,7 +16,7 @@ public struct OracleRead<Value: copy + drop + store> has copy, drop, store {
     /// Source publication time in Unix milliseconds and the key used for exact reads.
     source_timestamp_ms: u64,
     /// Sui clock time in Unix milliseconds when the update transaction executed.
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     /// Digest of the transaction that wrote this observation.
     writer_digest: vector<u8>,
     value: Value,
@@ -33,6 +33,8 @@ public struct OracleLane<Payload: copy + drop + store> has store {
 /// Emitted when a feed accepts a source-native observation into its live oracle
 /// state.
 public struct ObservationRecorded<Observation: copy + drop> has copy, drop {
+    /// Canonical Propbook underlying when this source wrapper has been bound.
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
     observation: Observation,
 }
@@ -40,6 +42,8 @@ public struct ObservationRecorded<Observation: copy + drop> has copy, drop {
 /// Emitted when a feed inserts source-native data keyed by exact source
 /// timestamp.
 public struct ObservationInserted<Observation: copy + drop> has copy, drop {
+    /// Canonical Propbook underlying when this source wrapper has been bound.
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
     observation: Observation,
 }
@@ -52,8 +56,8 @@ public fun read_source_timestamp_ms<Value: copy + drop + store>(read: &OracleRea
     read.source_timestamp_ms
 }
 
-public fun read_update_timestamp_ms<Value: copy + drop + store>(read: &OracleRead<Value>): u64 {
-    read.update_timestamp_ms
+public fun read_onchain_timestamp_ms<Value: copy + drop + store>(read: &OracleRead<Value>): u64 {
+    read.onchain_timestamp_ms
 }
 
 public fun read_writer_digest<Value: copy + drop + store>(read: &OracleRead<Value>): vector<u8> {
@@ -86,7 +90,7 @@ public(package) fun read_at<Payload: copy + drop + store>(
 public(package) fun read_has_valid_timestamp<Value: copy + drop + store>(
     read: &OracleRead<Value>,
 ): bool {
-    read.source_timestamp_ms > 0 && read.source_timestamp_ms <= read.update_timestamp_ms
+    read.source_timestamp_ms > 0 && read.source_timestamp_ms <= read.onchain_timestamp_ms
 }
 
 // === Public-Package Constructor Functions ===
@@ -101,13 +105,13 @@ public(package) fun new<Payload: copy + drop + store>(ctx: &mut TxContext): Orac
 /// Build a new observation envelope stamped with the current transaction's digest.
 public(package) fun new_read<Value: copy + drop + store>(
     source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
     value: Value,
     ctx: &TxContext,
 ): OracleRead<Value> {
     OracleRead {
         source_timestamp_ms,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         writer_digest: *ctx.digest(),
         value,
     }
@@ -122,7 +126,7 @@ public(package) fun project_read<FromValue: copy + drop + store, ToValue: copy +
 ): OracleRead<ToValue> {
     OracleRead {
         source_timestamp_ms: read.source_timestamp_ms,
-        update_timestamp_ms: read.update_timestamp_ms,
+        onchain_timestamp_ms: read.onchain_timestamp_ms,
         writer_digest: read.writer_digest,
         value,
     }
@@ -135,6 +139,7 @@ public(package) fun project_read<FromValue: copy + drop + store, ToValue: copy +
 public(package) fun update<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
     read: OracleRead<Payload>,
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
 ) {
     if (!read.read_has_valid_timestamp()) return;
@@ -144,6 +149,7 @@ public(package) fun update<Payload: copy + drop + store>(
 
     lane.latest = option::some(read);
     event::emit(ObservationRecorded<OracleRead<Payload>> {
+        propbook_underlying_id,
         propbook_oracle_id,
         observation: read,
     });
@@ -154,6 +160,7 @@ public(package) fun update<Payload: copy + drop + store>(
 public(package) fun insert_at<Payload: copy + drop + store>(
     lane: &mut OracleLane<Payload>,
     read: OracleRead<Payload>,
+    propbook_underlying_id: Option<u32>,
     propbook_oracle_id: ID,
 ) {
     if (!read.read_has_valid_timestamp()) return;
@@ -161,7 +168,22 @@ public(package) fun insert_at<Payload: copy + drop + store>(
 
     lane.exact_reads.add(read.source_timestamp_ms, read);
     event::emit(ObservationInserted<OracleRead<Payload>> {
+        propbook_underlying_id,
         propbook_oracle_id,
         observation: read,
     });
+}
+
+#[test_only]
+public fun observation_recorded_fields<Observation: copy + drop>(
+    event: &ObservationRecorded<Observation>,
+): (Option<u32>, ID, Observation) {
+    (event.propbook_underlying_id, event.propbook_oracle_id, event.observation)
+}
+
+#[test_only]
+public fun observation_inserted_fields<Observation: copy + drop>(
+    event: &ObservationInserted<Observation>,
+): (Option<u32>, ID, Observation) {
+    (event.propbook_underlying_id, event.propbook_oracle_id, event.observation)
 }

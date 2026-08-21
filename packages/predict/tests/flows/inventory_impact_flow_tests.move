@@ -16,10 +16,11 @@ const IMPACT_MAX_RATE: u64 = 200_000_000; // 20%
 const BACKING_BUFFER_LAMBDA: u64 = 500_000_000;
 const EXPECTED_SINGLE_ORDER_CHARGE: u64 = 10_000_000;
 const ORDINARY_MIN_FEE: u64 = 5_000_000;
+const EXPECTED_REFERRAL_FEE: u64 = 500_000;
 
 #[test]
 fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
-    let (mut fx, expiry_id, trader) = setup_enabled_market();
+    let (mut fx, expiry_id, trader) = setup_enabled_referred_market();
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
@@ -66,7 +67,8 @@ fun mint_charge_and_live_close_rebate_use_isolated_escrow() {
             + quote.premium()
             + quote.trading_fee()
             + quote.penalty_fee()
-            + EXPECTED_SINGLE_ORDER_CHARGE,
+            + EXPECTED_SINGLE_ORDER_CHARGE
+            - EXPECTED_REFERRAL_FEE,
     );
     assert_eq!(helpers::market(&market).inventory_impact_reserve(), EXPECTED_SINGLE_ORDER_CHARGE);
     helpers::assert_market_backed_bundle(&market);
@@ -161,5 +163,20 @@ fun setup_enabled_market(): (helpers::Fixture, ID, helpers::Trader) {
     fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    (fx, expiry_id, trader)
+}
+
+fun setup_enabled_referred_market(): (helpers::Fixture, ID, helpers::Trader) {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
+    fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let referrer = fx.create_funded_manager_as(test_constants::bob(), 0);
+    let trader = fx.create_funded_manager_with_referrer_as(
+        test_constants::alice(),
+        test_constants::mint_deposit(),
+        &referrer,
+    );
     (fx, expiry_id, trader)
 }

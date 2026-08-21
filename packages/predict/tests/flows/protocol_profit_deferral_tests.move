@@ -107,8 +107,8 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     let mut m_b = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e_b);
     fx.insert_exact_settlement_spot(&mut pyth, m_a.expiry(), test_constants::default_live_price());
     fx.insert_exact_settlement_spot(&mut pyth, m_b.expiry(), test_constants::default_live_price());
-    assert!(fx.try_settle(&mut m_a, &config, &oracle_registry, &pyth));
-    assert!(fx.try_settle(&mut m_b, &config, &oracle_registry, &pyth));
+    assert!(fx.try_settle(&mut m_a, &config, &oracle_registry, &pyth, bs.values()));
+    assert!(fx.try_settle(&mut m_b, &config, &oracle_registry, &pyth, bs.values()));
 
     let mut val = fx.start_flush(&mut config, &vault);
     fx.value_expiry(&mut val, &mut vault, &mut m_a, &config, &oracle_registry, &pyth, &bs);
@@ -183,6 +183,7 @@ fun settle_market(fx: &mut helpers::Fixture, expiry_id: ID): (u64, u64, u64, u64
     fx.scenario_mut().next_tx(test_constants::admin());
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
     let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut market = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(expiry_id);
@@ -191,13 +192,14 @@ fun settle_market(fx: &mut helpers::Fixture, expiry_id: ID): (u64, u64, u64, u64
         market.expiry(),
         test_constants::default_live_price(),
     );
-    assert!(fx.try_settle(&mut market, &config, &oracle_registry, &pyth));
+    assert!(fx.try_settle(&mut market, &config, &oracle_registry, &pyth, bs.values()));
     fx.rebalance_expiry_cash(&mut vault, &mut market, &config);
     let (idle, pending, reserve, active) = vault_snapshot(&vault);
     return_shared(market);
     return_shared(vault);
     return_shared(oracle_registry);
     return_shared(pyth);
+    helpers::return_bs(bs);
     return_shared(config);
     (idle, pending, reserve, active)
 }

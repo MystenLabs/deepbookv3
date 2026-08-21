@@ -219,11 +219,11 @@ public fun create_and_rebind_oracle(self: &mut OracleFixture, source_id: u32): O
 
     self.scenario.next_tx(test_constants::admin());
     let mut oracle_registry = self.scenario.take_shared<OracleRegistry>();
-    let pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let mut pyth = self.scenario.take_shared_by_id<PythFeed>(pyth_id);
     propbook_registry::replace_pyth_binding_for_underlying(
         &mut oracle_registry,
         &self.propbook_admin_cap,
-        &pyth,
+        &mut pyth,
         test_constants::propbook_underlying_id(),
     );
     return_shared(pyth);
@@ -574,14 +574,14 @@ public fun retransmit_bs_spot_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     spot: u64,
 ) {
     apply_spot_batch(
         &mut self.scenario,
         &mut oracle.bs,
         model_timestamp_ms,
-        published_at_ms,
+        source_timestamp_ms,
         spot,
         &self.clock,
     );
@@ -593,7 +593,7 @@ public fun retransmit_bs_forward_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     forward: u64,
 ) {
     apply_forward_batch(
@@ -601,7 +601,7 @@ public fun retransmit_bs_forward_for_testing(
         &mut oracle.bs,
         self.expiry,
         model_timestamp_ms,
-        published_at_ms,
+        source_timestamp_ms,
         forward,
         &self.clock,
     );
@@ -686,7 +686,7 @@ public fun retransmit_bs_svi_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     svi_a_magnitude: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -699,7 +699,7 @@ public fun retransmit_bs_svi_for_testing(
     self.apply_svi_batch(
         &mut oracle.bs,
         model_timestamp_ms,
-        published_at_ms,
+        source_timestamp_ms,
         svi_a_magnitude,
         svi_a_is_negative,
         svi_b,
@@ -814,7 +814,7 @@ public fun set_use_pyth_spot_for_forward_bundle(
     oracle: &mut OracleBundle,
     enabled: bool,
 ) {
-    oracle.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled);
+    oracle.config.set_use_pyth_spot_for_forward(&self.admin_cap, enabled, &self.clock);
 }
 
 // === Accessors ===
@@ -834,7 +834,7 @@ public fun set_pyth_spot_freshness_for_testing(
     oracle: &mut OracleBundle,
     value: u64,
 ) {
-    oracle.config.set_pyth_spot_freshness_ms(&self.admin_cap, value);
+    oracle.config.set_pyth_spot_freshness_ms(&self.admin_cap, value, &self.clock);
 }
 
 public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }
@@ -884,13 +884,13 @@ fun apply_spot_batch(
     scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     value: u64,
     clock: &Clock,
 ) {
     let sid = bs.values().spot_sid();
     let batch = verify::new_value_batch_for_testing(
-        published_at_ms,
+        source_timestamp_ms,
         vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
     );
     let (ctx, restore) = begin_seed_tx(scenario);
@@ -904,13 +904,13 @@ fun apply_forward_batch(
     bs: &mut BlockScholesFeed,
     expiry_ms: u64,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     value: u64,
     clock: &Clock,
 ) {
     let sid = bs.values().forward_sid(expiry_ms);
     let batch = verify::new_value_batch_for_testing(
-        published_at_ms,
+        source_timestamp_ms,
         vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
     );
     let (ctx, restore) = begin_seed_tx(scenario);
@@ -923,7 +923,7 @@ fun apply_svi_batch(
     self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
     model_timestamp_ms: u64,
-    published_at_ms: u64,
+    source_timestamp_ms: u64,
     svi_a_magnitude: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -939,7 +939,7 @@ fun apply_svi_batch(
         .svi_mut()
         .apply_svi_batch(
             verify::new_svi_batch_for_testing(
-                published_at_ms,
+                source_timestamp_ms,
                 vector[
                     verify::new_svi_for_testing(
                         sid,
@@ -1025,7 +1025,7 @@ fun store_pyth_spot(
     pyth: &mut PythFeed,
     spot: u64,
     source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     let (ctx, restore) = begin_seed_tx(scenario);
     pyth_feed::record_raw_for_testing(
@@ -1036,7 +1036,7 @@ fun store_pyth_spot(
         true,
         source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         false,
         &ctx,
     );

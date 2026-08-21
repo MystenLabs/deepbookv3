@@ -120,7 +120,7 @@ The aggregate is netted per boundary rather than summed per order, so it can dif
 
 ### Past-expiry settlement liveness
 
-`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Settlement is a separate PTB command: the keeper inserts the exact normalized Pyth spot and calls `try_settle` before `value_expiry`. A settled market is swept off the active set and contributes `0`; an expired unsettled market moves no cash and then aborts through `current_nav` until settlement succeeds.
+`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Settlement is a separate PTB command: the keeper calls `try_settle` before `value_expiry`, supplying the canonical exact-history Pyth and Block Scholes stores; Pyth is checked first, while Block Scholes is eligible only after the 30-second grace period. A settled market is swept off the active set and contributes `0`; an expired unsettled market moves no cash and then aborts through `current_nav` until settlement succeeds.
 
 If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
 

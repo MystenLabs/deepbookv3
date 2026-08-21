@@ -25,7 +25,7 @@ public struct ExpectedSettledOrderRedeemed has copy, drop {
     position_root_id: u256,
     owner: address,
     payout_amount: u64,
-    redeemed_at_ms: u64,
+    onchain_timestamp_ms: u64,
 }
 
 #[test]
@@ -125,7 +125,7 @@ fun partial_close_replacement_redeems_settled_under_original_root() {
         position_root_id: original_order_id,
         owner: helpers::owner(&trader),
         payout_amount: REMAINING_AFTER_FIRST_CLOSE,
-        redeemed_at_ms: test_constants::short_expiry_ms(),
+        onchain_timestamp_ms: test_constants::short_expiry_ms(),
     };
     assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
 

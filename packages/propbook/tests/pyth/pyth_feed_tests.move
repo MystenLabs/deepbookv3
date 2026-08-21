@@ -4,12 +4,20 @@
 #[test_only]
 module propbook::pyth_feed_tests;
 
-use propbook::{constants, pyth_feed::{Self, PythFeed}, registry::{Self, OracleRegistry}};
-use std::unit_test::assert_eq;
-use sui::test_scenario::{Self as test, Scenario, return_shared};
+use propbook::{
+    constants,
+    oracle_lane::{Self, OracleRead},
+    pyth_feed::{Self, PythFeed, RawSpot},
+    registry::{Self, OracleRegistry, RegistryAdminCap}
+};
+use std::unit_test::{assert_eq, destroy};
+use sui::{event, test_scenario::{Self as test, Scenario, return_shared}};
 
 const ADMIN: address = @0xAD;
+const BTC_UNDERLYING_ID: u32 = 1;
+const ETH_UNDERLYING_ID: u32 = 2;
 const BTC_SOURCE_ID: u32 = 1;
+const BTC_REPLACEMENT_SOURCE_ID: u32 = 2;
 const UNKNOWN_SOURCE_ID: u32 = 999;
 const SPOT_65K: u64 = 65_000_000_000_000;
 const BTC_PYTH_MAGNITUDE: u64 = 6_500_012_345_678;
@@ -66,6 +74,150 @@ fun registry_records_created_pyth_source() {
 
     return_shared(registry);
     scenario.end();
+}
+
+#[test]
+fun bound_feed_observation_events_include_the_underlying() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &mut feed, BTC_UNDERLYING_ID);
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    insert_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_2_US,
+        UPDATE_2_MS,
+    );
+
+    let recorded = event::events_by_type<oracle_lane::ObservationRecorded<OracleRead<RawSpot>>>();
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(&recorded[0]);
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, feed_obj_id);
+
+    let inserted = event::events_by_type<oracle_lane::ObservationInserted<OracleRead<RawSpot>>>();
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_inserted_fields(&inserted[0]);
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, feed_obj_id);
+
+    return_shared(feed);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test]
+fun unbound_feed_observation_event_has_no_underlying() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    store_raw(
+        &mut feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+
+    let recorded = event::events_by_type<oracle_lane::ObservationRecorded<OracleRead<RawSpot>>>();
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(&recorded[0]);
+    assert!(underlying_id.is_none());
+    assert_eq!(oracle_id, feed_obj_id);
+
+    return_shared(feed);
+    scenario.end();
+}
+
+#[test]
+fun replacement_and_replaced_feed_observations_keep_the_underlying() {
+    let (mut scenario, replaced_feed_id) = setup_feed();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let replacement_feed_id = registry::create_and_share_pyth_feed(
+        &mut registry,
+        BTC_REPLACEMENT_SOURCE_ID,
+        scenario.ctx(),
+    );
+    return_shared(registry);
+    scenario.next_tx(ADMIN);
+
+    let admin_cap = scenario.take_from_sender<RegistryAdminCap>();
+    let mut registry = scenario.take_shared<OracleRegistry>();
+    let mut replaced_feed = scenario.take_shared_by_id<PythFeed>(replaced_feed_id);
+    let mut replacement_feed = scenario.take_shared_by_id<PythFeed>(replacement_feed_id);
+
+    registry.bind_pyth_to_underlying(&admin_cap, &mut replaced_feed, BTC_UNDERLYING_ID);
+    registry.replace_pyth_binding_for_underlying(
+        &admin_cap,
+        &mut replacement_feed,
+        BTC_UNDERLYING_ID,
+    );
+    store_raw(
+        &mut replaced_feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_1_US,
+        UPDATE_1_MS,
+    );
+    store_raw(
+        &mut replacement_feed,
+        SPOT_65K,
+        false,
+        EXPONENT_NEG_9,
+        true,
+        SOURCE_TS_2_US,
+        UPDATE_2_MS,
+    );
+
+    let mut recorded = event::events_by_type<
+        oracle_lane::ObservationRecorded<OracleRead<RawSpot>>,
+    >();
+    let replacement_event = recorded.pop_back();
+    let replaced_event = recorded.pop_back();
+    assert!(recorded.is_empty());
+
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(&replaced_event);
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, replaced_feed_id);
+
+    let (underlying_id, oracle_id, _) = oracle_lane::observation_recorded_fields(
+        &replacement_event,
+    );
+    assert_eq!(underlying_id.destroy_some(), BTC_UNDERLYING_ID);
+    assert_eq!(oracle_id, replacement_feed_id);
+
+    return_shared(replacement_feed);
+    return_shared(replaced_feed);
+    return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = pyth_feed::EUnderlyingAlreadyAssigned)]
+fun assigning_feed_to_a_different_underlying_aborts() {
+    let (scenario, feed_obj_id) = setup_feed();
+    let mut feed = scenario.take_shared_by_id<PythFeed>(feed_obj_id);
+
+    feed.assign_underlying(BTC_UNDERLYING_ID);
+    feed.assign_underlying(ETH_UNDERLYING_ID);
+
+    abort 999
 }
 
 #[test, expected_failure(abort_code = registry::ESourceAlreadyExists)]
@@ -159,7 +311,7 @@ fun update_flows_into_raw_and_normalized_latest_getters() {
 
     let raw_read = feed.raw_spot();
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(raw_read.read_onchain_timestamp_ms(), UPDATE_1_MS);
     let raw = raw_read.read_value();
     assert_eq!(pyth_feed::raw_pyth_source_id(&raw), BTC_SOURCE_ID);
     assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
@@ -352,14 +504,14 @@ fun insert_at_records_exact_read_without_latest() {
 
     let raw_read = feed.raw_spot_at(SOURCE_TS_1_MS);
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(raw_read.read_onchain_timestamp_ms(), UPDATE_1_MS);
     let raw = raw_read.read_value();
     assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw), SOURCE_TS_1_US);
     assert_eq!(pyth_feed::raw_price_magnitude(&raw), SPOT_65K);
 
     let normalized = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
     assert_eq!(normalized.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(normalized.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(normalized.read_onchain_timestamp_ms(), UPDATE_1_MS);
     assert_eq!(normalized.read_value(), SPOT_65K);
 
     return_shared(feed);
@@ -409,7 +561,7 @@ fun carried_price_does_not_refresh_latest() {
     // `latest` still ages from generation time (1ms), not from the envelope (5ms).
     let raw_read = feed.raw_spot();
     assert_eq!(raw_read.read_source_timestamp_ms(), SOURCE_TS_1_MS);
-    assert_eq!(raw_read.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(raw_read.read_onchain_timestamp_ms(), UPDATE_1_MS);
     assert_eq!(pyth_feed::raw_feed_update_timestamp_us(&raw_read.read_value()), SOURCE_TS_1_US);
 
     return_shared(feed);
@@ -633,7 +785,7 @@ fun duplicate_future_and_zero_exact_inserts_are_no_ops() {
 
     let exact = feed.normalized_spot_at(SOURCE_TS_1_MS).destroy_some();
     assert_eq!(exact.read_value(), SPOT_65K);
-    assert_eq!(exact.read_update_timestamp_ms(), UPDATE_1_MS);
+    assert_eq!(exact.read_onchain_timestamp_ms(), UPDATE_1_MS);
     assert!(feed.normalized_spot_at(SOURCE_TS_FUTURE_MS).is_none());
     assert!(feed.normalized_spot_at(SOURCE_TS_ZERO_MS).is_none());
     assert!(feed.normalized_spot().is_none());
@@ -660,7 +812,7 @@ fun store_raw(
     exponent_magnitude: u16,
     exponent_is_negative: bool,
     source_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     store_raw_carried(
         feed,
@@ -670,7 +822,7 @@ fun store_raw(
         exponent_is_negative,
         source_timestamp_us,
         source_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
     );
 }
 
@@ -683,7 +835,7 @@ fun store_raw_carried(
     exponent_is_negative: bool,
     feed_update_timestamp_us: u64,
     envelope_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     let ctx = tx_context::dummy();
     pyth_feed::record_raw_for_testing(
@@ -694,7 +846,7 @@ fun store_raw_carried(
         exponent_is_negative,
         feed_update_timestamp_us,
         envelope_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         false,
         &ctx,
     );
@@ -707,7 +859,7 @@ fun insert_raw(
     exponent_magnitude: u16,
     exponent_is_negative: bool,
     source_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     insert_raw_carried(
         feed,
@@ -717,7 +869,7 @@ fun insert_raw(
         exponent_is_negative,
         source_timestamp_us,
         source_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
     );
 }
 
@@ -731,7 +883,7 @@ fun insert_raw_carried(
     exponent_is_negative: bool,
     feed_update_timestamp_us: u64,
     envelope_timestamp_us: u64,
-    update_timestamp_ms: u64,
+    onchain_timestamp_ms: u64,
 ) {
     let ctx = tx_context::dummy();
     pyth_feed::record_raw_for_testing(
@@ -742,7 +894,7 @@ fun insert_raw_carried(
         exponent_is_negative,
         feed_update_timestamp_us,
         envelope_timestamp_us,
-        update_timestamp_ms,
+        onchain_timestamp_ms,
         true,
         &ctx,
     );
@@ -752,11 +904,11 @@ fun assert_latest_normalized(
     feed: &PythFeed,
     expected_spot: u64,
     expected_source_timestamp_ms: u64,
-    expected_update_timestamp_ms: u64,
+    expected_onchain_timestamp_ms: u64,
 ) {
     let normalized = feed.normalized_spot().destroy_some();
     assert_eq!(normalized.read_source_timestamp_ms(), expected_source_timestamp_ms);
-    assert_eq!(normalized.read_update_timestamp_ms(), expected_update_timestamp_ms);
+    assert_eq!(normalized.read_onchain_timestamp_ms(), expected_onchain_timestamp_ms);
     assert_eq!(normalized.read_value(), expected_spot);
 }
 
