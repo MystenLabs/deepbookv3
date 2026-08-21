@@ -136,7 +136,7 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
             const id = decimal(value.order_id);
             const ref = row.action === "mint" ? row.orderRef : aliases.orderRefs.get(id);
             if (!ref) throw new Error(`OrderMinted ${id} has no scenario alias`);
-            updates.push({ type: "order_minted", order_ref: ref, order_sequence: orderSequence(id), lower_tick: decimal(value.lower_tick), higher_tick: decimal(value.higher_tick), entry_probability: decimal(value.entry_probability), quantity: decimal(value.quantity), premium: decimal(value.premium), trading_fee: decimal(value.trading_fee), fee_incentive_subsidy: decimal(value.fee_incentive_subsidy), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_charge: decimal(value.inventory_impact_charge), minted_at_ms: decimal(value.minted_at_ms), ...sourceTimestamps(value) });
+            updates.push({ type: "order_minted", order_ref: ref, order_sequence: orderSequence(id), lower_tick: decimal(value.lower_tick), higher_tick: decimal(value.higher_tick), entry_probability: decimal(value.entry_probability), quantity: decimal(value.quantity), premium: decimal(value.premium), trading_fee: decimal(value.trading_fee), fee_incentive_subsidy: decimal(value.fee_incentive_subsidy), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), referral_fee: decimal(value.referral_fee), inventory_impact_charge: decimal(value.inventory_impact_charge), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
         } else if (name === "LiveOrderRedeemed") {
             const id = decimal(value.order_id);
             const ref = aliases.orderRefs.get(id) ?? (row.action === "redeem_live" ? row.orderRef : null);
@@ -145,7 +145,7 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
             const replacementRef = replacement !== null && row.action === "redeem_live"
                 ? row.replacementOrderRef ?? row.orderRef
                 : null;
-            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: replacementRef, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_rebate: decimal(value.inventory_impact_rebate), redeemed_at_ms: decimal(value.redeemed_at_ms), ...sourceTimestamps(value) });
+            updates.push({ type: "live_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), quantity_closed: decimal(value.quantity_closed), remaining_quantity: decimal(value.remaining_quantity), replacement_order_ref: replacementRef, replacement_order_sequence: replacement === null ? null : orderSequence(replacement), redeem_amount: decimal(value.redeem_amount), trading_fee: decimal(value.trading_fee), builder_fee: decimal(value.builder_fee), penalty_fee: decimal(value.penalty_fee), inventory_impact_rebate: decimal(value.inventory_impact_rebate), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms), ...sourceTimestamps(value) });
         } else if (name === "SupplyRequested") {
             updates.push({ type: "supply_requested", lp_ref: row.action === "request_supply" ? row.lpRef : "", index: decimal(value.index), amount: decimal(value.amount), min_output: decimal(value.min_plp_out), requests_pending_after: decimal(value.requests_pending_after) });
         } else if (name === "WithdrawRequested") {
@@ -161,7 +161,7 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
         } else if (name === "ExpiryCashRebalanced") {
             updates.push({ type: "expiry_cash_rebalanced", amount: decimal(value.amount), to_expiry: boolean(value.to_expiry), target_cash: decimal(value.target_cash), protocol_profit_realized: decimal(value.protocol_profit_realized) });
         } else if (name === "MarketSettled") {
-            updates.push({ type: "market_settled", settlement_price: decimal(value.settlement_price), settled_at_ms: decimal(value.settled_at_ms) });
+            updates.push({ type: "market_settled", settlement_price: decimal(value.settlement_price), settlement_source: decimal(value.settlement_source), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms) });
         } else if (name === "ExpiryCashReceived") {
             updates.push({ type: "expiry_cash_received", settlement_price: decimal(value.settlement_price), amount: decimal(value.amount) });
         } else if (name === "ExpiryProfitMaterialized") {
@@ -170,7 +170,7 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
             const id = decimal(value.order_id);
             const ref = aliases.orderRefs.get(id) ?? (row.action === "redeem_settled" ? row.orderRef : null);
             if (!ref) throw new Error(`SettledOrderRedeemed ${id} has no scenario alias`);
-            updates.push({ type: "settled_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), payout_amount: decimal(value.payout_amount), redeemed_at_ms: decimal(value.redeemed_at_ms) });
+            updates.push({ type: "settled_order_redeemed", order_ref: ref, order_sequence: orderSequence(id), payout_amount: decimal(value.payout_amount), onchain_timestamp_ms: decimal(value.onchain_timestamp_ms) });
         }
     }
     return updates;
@@ -241,7 +241,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): 
     if (row.action === "rebalance_expiry_cash") return execute(() => rebalanceExpiryCashTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, expiryMarketId: state.expiryMarketId }), `scenario_${row.step}_rebalance_expiry_cash`);
     if (row.action === "settle") {
         while ((await clockTimestampMs()) < BigInt(state.expiryMs)) await new Promise((resolve) => setTimeout(resolve, 100));
-        return execute(() => keeperSettleTx({ pythFeedId: state.pythFeedId, expiryMs: BigInt(state.expiryMs), price: row.settlementPrice, marketId: state.expiryMarketId, poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId }), `scenario_${row.step}_settle`);
+        return execute(() => keeperSettleTx({ pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, expiryMs: BigInt(state.expiryMs), price: row.settlementPrice, marketId: state.expiryMarketId, poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId }), `scenario_${row.step}_settle`);
     }
     const orderId = aliases.orderIds.get(row.orderRef);
     if (!orderId) throw new Error(`unknown order_ref ${row.orderRef}`);

@@ -84,7 +84,7 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
     try {
       const price = await fetchExactSpot1e9(m.expiryMs);
       await executeAndWait(
-        keeperSettleTx({ pythFeedId: feeds.pythFeedId, expiryMs: BigInt(m.expiryMs), price, marketId: m.id, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID }),
+        keeperSettleTx({ pythFeedId: feeds.pythFeedId, bsValueStoreId: feeds.bsValueStoreId, expiryMs: BigInt(m.expiryMs), price, marketId: m.id, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID }),
         "settle",
       );
       expiryCache.delete(m.id); funded.delete(m.id); // swept off-chain; forget

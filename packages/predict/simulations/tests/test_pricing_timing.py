@@ -44,8 +44,8 @@ class PricingTimingTests(unittest.TestCase):
                                         "parsedJson": {
                                             "observation": {
                                                 "model_timestamp_ms": "90",
-                                                "published_at_ms": "90",
-                                                "recorded_at_ms": "100",
+                                                "source_timestamp_ms": "90",
+                                                "onchain_timestamp_ms": "100",
                                             },
                                             "series_kind": 2,
                                         },

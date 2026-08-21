@@ -1166,7 +1166,7 @@ function addPythFeedInsert(tx: Transaction, pythFeedId: string, spot: bigint, ex
 
 function addTrySettle(
     tx: Transaction,
-    params: { marketId: string; protocolConfigId: string; pythFeedId: string },
+    params: { marketId: string; protocolConfigId: string; pythFeedId: string; bsValueStoreId: string },
 ): void {
     tx.moveCall({
         target: target("expiry_market", "try_settle"),
@@ -1175,6 +1175,7 @@ function addTrySettle(
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
             tx.object(params.pythFeedId),
+            tx.object(params.bsValueStoreId),
             tx.object(CLOCK_ID),
         ],
     });
@@ -1685,15 +1686,25 @@ export function setSimulationEconomicPolicyTx(params: {
                 tx.pure.u64(value),
             ],
         });
-    call("set_template_base_fee", params.baseFee);
-    call("set_template_min_fee", params.minFee);
-    call("set_template_min_entry_probability", params.minEntryProbability);
-    call("set_template_max_entry_probability", params.maxEntryProbability);
-    call("set_template_backing_buffer_lambda", params.backingBufferLambda);
-    call("set_template_inventory_impact_max_rate", params.inventoryImpactMaxRate);
+    const callWithClock = (fn: string, value: bigint) =>
+        tx.moveCall({
+            target: target("protocol_config", fn),
+            arguments: [
+                tx.object(params.protocolConfigId),
+                tx.object(ADMIN_CAP_ID),
+                tx.pure.u64(value),
+                tx.object(CLOCK_ID),
+            ],
+        });
+    callWithClock("set_template_base_fee", params.baseFee);
+    callWithClock("set_template_min_fee", params.minFee);
+    callWithClock("set_template_min_entry_probability", params.minEntryProbability);
+    callWithClock("set_template_max_entry_probability", params.maxEntryProbability);
+    callWithClock("set_template_backing_buffer_lambda", params.backingBufferLambda);
+    callWithClock("set_template_inventory_impact_max_rate", params.inventoryImpactMaxRate);
     call("set_protocol_reserve_profit_share", params.protocolReserveProfitShare);
-    call("set_plp_supply_fee_rate", params.plpSupplyFeeRate);
-    call("set_plp_withdraw_fee_rate", params.plpWithdrawFeeRate);
+    callWithClock("set_plp_supply_fee_rate", params.plpSupplyFeeRate);
+    callWithClock("set_plp_withdraw_fee_rate", params.plpWithdrawFeeRate);
     call("set_lp_request_limit_flush_attempts", params.lpRequestLimitFlushAttempts);
     call("set_max_lp_pool_value", params.maxLpPoolValue);
     return tx;
@@ -1965,6 +1976,7 @@ export function keeperFlushTx(params: {
             marketId: s.marketId,
             protocolConfigId: params.protocolConfigId,
             pythFeedId: params.feeds.pythFeedId,
+            bsValueStoreId: params.feeds.bsValueStoreId,
         });
     }
     const proof = tx.moveCall({
@@ -2012,6 +2024,7 @@ export function keeperFlushTx(params: {
 // decision 0010). Per-market so one bad market's settle fails alone.
 export function keeperSettleTx(params: {
     pythFeedId: string;
+    bsValueStoreId: string;
     expiryMs: bigint;
     price: bigint;
     marketId: string;
@@ -2024,6 +2037,7 @@ export function keeperSettleTx(params: {
         marketId: params.marketId,
         protocolConfigId: params.protocolConfigId,
         pythFeedId: params.pythFeedId,
+        bsValueStoreId: params.bsValueStoreId,
     });
     tx.moveCall({
         target: target("plp", "rebalance_expiry_cash"),

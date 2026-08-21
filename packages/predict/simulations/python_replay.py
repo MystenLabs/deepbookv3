@@ -1380,8 +1380,9 @@ def mint_order(
             "fee_incentive_subsidy": "0",
             "builder_fee": "0",
             "penalty_fee": "0",
+            "referral_fee": "0",
             "inventory_impact_charge": str(impact_charge),
-            "minted_at_ms": str(timestamp_ms),
+            "onchain_timestamp_ms": str(timestamp_ms),
             "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_forward_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
@@ -1451,7 +1452,7 @@ def redeem_live(
             "builder_fee": "0",
             "penalty_fee": "0",
             "inventory_impact_rebate": str(impact_rebate),
-            "redeemed_at_ms": str(timestamp_ms),
+            "onchain_timestamp_ms": str(timestamp_ms),
             "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_forward_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
@@ -1824,7 +1825,8 @@ def settle_market(
         {
             "type": "market_settled",
             "settlement_price": str(settlement_price),
-            "settled_at_ms": str(timestamp_ms),
+            "settlement_source": "0",
+            "onchain_timestamp_ms": str(timestamp_ms),
         }
     ]
 
@@ -1904,7 +1906,7 @@ def redeem_settled(
             "order_ref": row["orderRef"],
             "order_sequence": str(order["sequence"]),
             "payout_amount": str(payout),
-            "redeemed_at_ms": str(timestamp_ms),
+            "onchain_timestamp_ms": str(timestamp_ms),
         }
     ]
 
@@ -1925,9 +1927,9 @@ def load_pricing_timings(path: Path) -> dict[tuple[int, str], dict[str, int]]:
             if parsed.get("series_kind") != 2:
                 continue
             observation = parsed.get("observation", {})
-            published_at_ms = observation.get("published_at_ms")
-            if isinstance(published_at_ms, str) and published_at_ms.isdecimal():
-                timing["svi_source_timestamp_ms"] = int(published_at_ms)
+            source_timestamp_ms = observation.get("source_timestamp_ms")
+            if isinstance(source_timestamp_ms, str) and source_timestamp_ms.isdecimal():
+                timing["svi_source_timestamp_ms"] = int(source_timestamp_ms)
                 break
         timings[(step["step"], step["action"])] = timing
     return timings

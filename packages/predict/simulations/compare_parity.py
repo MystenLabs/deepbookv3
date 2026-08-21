@@ -11,8 +11,7 @@ from typing import Any
 
 
 OBSERVATIONAL_EVENT_FIELDS = {
-    "minted_at_ms",
-    "redeemed_at_ms",
+    "onchain_timestamp_ms",
     "pyth_spot_source_timestamp_ms",
     "block_scholes_spot_source_timestamp_ms",
     "block_scholes_forward_source_timestamp_ms",
