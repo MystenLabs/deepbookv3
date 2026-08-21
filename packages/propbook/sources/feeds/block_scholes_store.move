@@ -1,11 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stores the latest verifier-authenticated Block Scholes observations for one immutable base
-/// asset. Propbook derives every accepted series id from that identity through the upstream SID
-/// package, so a valid observation for another asset cannot enter this store.
-/// Values are held exactly as the verifier produced them; scaling and signed-value interpretation
-/// belong to the reading package.
+/// Stores verifier-authenticated Block Scholes observations for one immutable base asset, including
+/// the latest values and canonical spot observations at exact minute boundaries. Propbook derives
+/// every accepted series id from that identity through the upstream SID package, so a valid
+/// observation for another asset cannot enter this store.
+/// Stored values are held exactly as the verifier produced them; scaling and signed-value
+/// interpretation belong to the reading package. Exact spot history additionally admits only
+/// positive `u64`-representable values so an unusable observation cannot claim a permanent key.
 /// Value and SVI observations use separate stores because the verifier exposes distinct batch and
 /// value types. The registry creates and binds both stores atomically from one base-asset input.
 module propbook::block_scholes_store;
@@ -25,6 +27,10 @@ macro fun series_kind_spot(): u8 { 0 }
 macro fun series_kind_forward(): u8 { 1 }
 
 macro fun series_kind_svi(): u8 { 2 }
+
+macro fun exact_spot_period_ms(): u64 { 60_000 }
+
+macro fun spot_batch_length(): u64 { 1 }
 
 /// One accepted observation and the three clocks that describe it.
 /// The clocks answer different questions and are not interchangeable: a calibration that has not
@@ -64,7 +70,8 @@ public struct SVIParams has copy, drop, store {
     m_is_negative: bool,
 }
 
-/// Latest spot and forward observations for one Block Scholes base asset.
+/// Latest spot and forward observations plus exact minute-boundary spot history for one Block
+/// Scholes base asset.
 public struct BlockScholesValueStore has key {
     id: UID,
     propbook_underlying_id: u32,
@@ -73,6 +80,8 @@ public struct BlockScholesValueStore has key {
     /// forward-only after a package upgrade.
     version: u64,
     values: Table<u256, BsRead<u128>>,
+    /// First positive `u64`-representable canonical spot at each exact minute boundary.
+    exact_spot_reads: Table<u64, BsRead<u128>>,
 }
 
 /// Latest SVI observations for one Block Scholes base asset.
@@ -96,7 +105,13 @@ public struct BlockScholesObservationRecorded<Observation: copy + drop> has copy
     observation: Observation,
 }
 
-/// Emitted once per ingested batch, whether or not anything was stored.
+/// Emitted when the canonical spot is inserted into exact minute-boundary history.
+public struct BlockScholesObservationInserted<Observation: copy + drop> has copy, drop {
+    propbook_oracle_id: ID,
+    observation: Observation,
+}
+
+/// Emitted once per latest-path batch, whether or not anything was stored.
 /// The envelope time advances on every provider flush, so this is what shows the feed is running
 /// during a stretch where no series moved and no observation event is emitted.
 public struct BlockScholesBatchIngested has copy, drop {
@@ -157,6 +172,11 @@ public fun svi_sid(store: &BlockScholesSVIStore, expiry_ms: u64): u256 {
 /// Returns the latest canonical spot observation, or `none` if none has landed.
 public fun spot(store: &BlockScholesValueStore): Option<BsRead<u128>> {
     read(&store.values, store.spot_sid())
+}
+
+/// Returns the canonical spot observation published at exactly `source_timestamp_ms`.
+public fun spot_at(store: &BlockScholesValueStore, source_timestamp_ms: u64): Option<BsRead<u128>> {
+    read_at(&store.exact_spot_reads, source_timestamp_ms)
 }
 
 /// Returns the latest canonical forward observation at `expiry_ms`.
@@ -231,14 +251,41 @@ public fun apply_spot_batch(
     ctx: &TxContext,
 ) {
     let expected_sid = store.spot_sid();
-    store.apply_checked_value_batch(
+    let read = store.checked_spot_read(
         batch,
-        vector[expected_sid],
-        vector[0],
-        series_kind_spot!(),
+        expected_sid,
         clock,
         ctx,
-    )
+    );
+    let stored = store.apply_value(expected_sid, series_kind_spot!(), 0, read);
+    let _ = store.insert_exact_spot(read);
+    event::emit(BlockScholesBatchIngested {
+        propbook_oracle_id: store.value_store_id(),
+        series_kind: series_kind_spot!(),
+        published_at_ms: read.published_at_ms,
+        update_count: spot_batch_length!(),
+        applied: if (stored) spot_batch_length!() else 0,
+    });
+}
+
+/// Insert the canonical spot batch into exact minute-boundary history without changing `latest`.
+/// A valid batch whose signed `published_at_ms` is not a minute boundary, or whose spot is zero or
+/// wider than `u64`, is ignored without aborting. The first admissible observation at a boundary
+/// owns the key and cannot be replaced.
+public fun insert_at(
+    store: &mut BlockScholesValueStore,
+    batch: ValueBatch,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let expected_sid = store.spot_sid();
+    let read = store.checked_spot_read(
+        batch,
+        expected_sid,
+        clock,
+        ctx,
+    );
+    let _ = store.insert_exact_spot(read);
 }
 
 /// Ingest canonical forwards for this store's base asset.
@@ -310,6 +357,7 @@ public(package) fun create_and_share_value_store(
         block_scholes_base_asset,
         version: constants::current_version!(),
         values: table::new(ctx),
+        exact_spot_reads: table::new(ctx),
     };
     let id = store.value_store_id();
     transfer::share_object(store);
@@ -335,6 +383,28 @@ public(package) fun create_and_share_svi_store(
 }
 
 // === Private Functions ===
+
+fun checked_spot_read(
+    store: &BlockScholesValueStore,
+    batch: ValueBatch,
+    expected_sid: u256,
+    clock: &Clock,
+    ctx: &TxContext,
+): BsRead<u128> {
+    assert!(store.version == constants::current_version!(), EWrongVersion);
+    let published_at_ms = batch.value_batch_timestamp();
+    let updates = batch.into_value_updates();
+    assert!(updates.length() == spot_batch_length!(), EUnexpectedBatchLength);
+    let update = &updates[0];
+    assert!(update.value_sid() == expected_sid, ESeriesIdMismatch);
+    BsRead {
+        model_timestamp_ms: update.value_timestamp(),
+        published_at_ms,
+        recorded_at_ms: clock.timestamp_ms(),
+        writer_digest: *ctx.digest(),
+        value: update.value_v(),
+    }
+}
 
 fun apply_checked_value_batch(
     store: &mut BlockScholesValueStore,
@@ -368,11 +438,13 @@ fun apply_checked_value_batch(
             update.value_sid(),
             series_kind,
             expiries_ms[i],
-            update.value_timestamp(),
-            published_at_ms,
-            recorded_at_ms,
-            copy writer_digest,
-            update.value_v(),
+            BsRead {
+                model_timestamp_ms: update.value_timestamp(),
+                published_at_ms,
+                recorded_at_ms,
+                writer_digest: copy writer_digest,
+                value: update.value_v(),
+            },
         );
         if (stored) applied = applied + 1;
         i = i + 1;
@@ -465,11 +537,7 @@ fun apply_value(
     sid: u256,
     series_kind: u8,
     expiry_ms: u64,
-    model_timestamp_ms: u64,
-    published_at_ms: u64,
-    recorded_at_ms: u64,
-    writer_digest: vector<u8>,
-    value: u128,
+    read: BsRead<u128>,
 ): bool {
     // `apply_checked_value_batch` validates the store version before entering the batch loop.
     let id = store.value_store_id();
@@ -481,8 +549,23 @@ fun apply_value(
         sid,
         series_kind,
         expiry_ms,
-        BsRead { model_timestamp_ms, published_at_ms, recorded_at_ms, writer_digest, value },
+        read,
     )
+}
+
+/// Insert one verified canonical spot at its exact signed minute-boundary timestamp.
+fun insert_exact_spot(store: &mut BlockScholesValueStore, read: BsRead<u128>): bool {
+    if (read.published_at_ms % exact_spot_period_ms!() != 0) return false;
+    if (!read.has_valid_clocks()) return false;
+    if (read.value == 0 || read.value > (std::u64::max_value!() as u128)) return false;
+    if (store.exact_spot_reads.contains(read.published_at_ms)) return false;
+
+    store.exact_spot_reads.add(read.published_at_ms, read);
+    event::emit(BlockScholesObservationInserted<BsRead<u128>> {
+        propbook_oracle_id: store.value_store_id(),
+        observation: read,
+    });
+    true
 }
 
 /// Store one verified SVI observation, returning whether it was kept. Same skip rules as
@@ -522,6 +605,17 @@ fun read<Value: copy + drop + store>(
     }
 }
 
+fun read_at<Value: copy + drop + store>(
+    reads: &Table<u64, BsRead<Value>>,
+    source_timestamp_ms: u64,
+): Option<BsRead<Value>> {
+    if (!reads.contains(source_timestamp_ms)) {
+        option::none()
+    } else {
+        option::some(*reads.borrow(source_timestamp_ms))
+    }
+}
+
 /// Same off-chain-consumer reasoning as `batch_ingested_fields`: this reader exists only so tests
 /// can assert the emitted observation is the one that was stored.
 #[test_only]
@@ -536,6 +630,13 @@ public fun observation_recorded_fields<Observation: copy + drop>(
         event.expiry_ms,
         event.observation,
     )
+}
+
+#[test_only]
+public fun observation_inserted_fields<Observation: copy + drop>(
+    event: &BlockScholesObservationInserted<Observation>,
+): (ID, Observation) {
+    (event.propbook_oracle_id, event.observation)
 }
 
 /// The batch event's fields exist for off-chain consumers, which decode them rather than calling
@@ -582,8 +683,7 @@ fun apply<Value: copy + drop + store>(
     expiry_ms: u64,
     read: BsRead<Value>,
 ): bool {
-    if (read.published_at_ms == 0 || read.published_at_ms > read.recorded_at_ms) return false;
-    if (read.model_timestamp_ms > read.published_at_ms) return false;
+    if (!read.has_valid_clocks()) return false;
 
     if (reads.contains(sid)) {
         let latest = reads.borrow_mut(sid);
@@ -607,4 +707,10 @@ fun apply<Value: copy + drop + store>(
         observation: read,
     });
     true
+}
+
+fun has_valid_clocks<Value: copy + drop + store>(read: &BsRead<Value>): bool {
+    read.published_at_ms > 0 &&
+        read.published_at_ms <= read.recorded_at_ms &&
+        read.model_timestamp_ms <= read.published_at_ms
 }

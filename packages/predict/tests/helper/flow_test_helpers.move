@@ -1834,8 +1834,9 @@ public fun try_settle(
     config: &ProtocolConfig,
     oracle_registry: &OracleRegistry,
     pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
 ): bool {
-    market.try_settle(config, oracle_registry, pyth, &self.clock)
+    market.try_settle(config, oracle_registry, pyth, bs_values, &self.clock)
 }
 
 /// Try the explicit settlement transition through a market bundle.
@@ -1845,6 +1846,7 @@ public fun try_settle_bundle(self: &Fixture, market: &mut MarketBundle): bool {
         &market.config,
         &market.oracle_registry,
         &market.pyth,
+        market.bs.values(),
     )
 }
 
@@ -1860,6 +1862,23 @@ public fun try_settle_bundle_with_pyth(
         &market.config,
         &market.oracle_registry,
         pyth,
+        market.bs.values(),
+    )
+}
+
+/// Try settlement through a market bundle while substituting an explicit Block Scholes value
+/// store for binding-guard tests.
+public fun try_settle_bundle_with_bs_values(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    bs_values: &BlockScholesValueStore,
+): bool {
+    self.try_settle(
+        &mut market.market,
+        &market.config,
+        &market.oracle_registry,
+        &market.pyth,
+        bs_values,
     )
 }
 
@@ -2225,6 +2244,24 @@ public fun insert_exact_settlement_spot_bundle(
     spot: u64,
 ) {
     self.insert_exact_settlement_spot(&mut market.pyth, market.market.expiry(), spot);
+}
+
+/// Insert an exact Block Scholes spot for the bundled market expiry without changing its latest
+/// observation.
+public fun insert_exact_block_scholes_settlement_spot_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    spot: u128,
+) {
+    let expiry_ms = market.market.expiry();
+    let sid = market.bs.values().spot_sid();
+    let batch = verify::new_value_batch_for_testing(
+        expiry_ms,
+        vector[verify::new_value_update_for_testing(sid, expiry_ms, spot)],
+    );
+    let (ctx, restore) = begin_seed_tx(&mut self.scenario);
+    market.bs.values_mut().insert_at(batch, &self.clock, &ctx);
+    end_seed_tx(restore);
 }
 
 public fun config_id(self: &Fixture): ID { self.config_id }

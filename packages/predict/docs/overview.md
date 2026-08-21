@@ -20,7 +20,7 @@ Live prices come from standalone, Predict-unaware feeds in the **propbook** pack
 
 ### Settlement is explicit
 
-Terminal settlement is one permissionless public transition, `expiry_market::try_settle`. It records the exact normalized Pyth spot at the market's expiry timestamp from Propbook exact timestamp history and immediately caches the corresponding terminal payout liability. Settled redeem, pool cash rebalance, and flush valuation consume the recorded state without reading an oracle; transaction builders call `try_settle` first when settlement may be due. If the exact expiry spot is not present yet, `try_settle` returns false, standalone rebalance moves no cash, and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
+Terminal settlement is one permissionless public transition, `expiry_market::try_settle`. It checks the exact normalized Pyth spot at the market expiry first; if Pyth is unavailable at least 30 seconds after expiry, it may use the exact Block Scholes minute-boundary spot. The transition immediately caches the terminal price and corresponding payout liability, while `MarketSettled` records the source. Settled redeem, pool cash rebalance, and flush valuation consume recorded state without reading an oracle. If neither exact source is usable, `try_settle` returns false, standalone rebalance moves no cash, and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
 
 The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability.
 
@@ -49,7 +49,7 @@ stateDiagram-v2
   MarketCreated --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
-  Live --> Settled: try_settle records exact expiry spot + liability
+  Live --> Settled: try_settle records exact Pyth or BS expiry spot + liability
   Settled --> [*]: settled redeem (SettledOrderRedeemed)
 ```
 

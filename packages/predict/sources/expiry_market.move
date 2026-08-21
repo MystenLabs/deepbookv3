@@ -629,28 +629,41 @@ public fun set_mint_paused(
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
-/// Settle from Propbook's exact positive normalized Pyth spot at expiry and
-/// materialize terminal payout liability. Permissionless and idempotent; a missing
-/// or non-normalizable observation leaves the market unsettled.
+/// Settle from Propbook's exact positive Pyth spot at expiry, or from the exact Block Scholes
+/// minute-boundary spot when Pyth remains unavailable after the compiled grace period.
+/// Permissionless and idempotent; missing or unusable observations leave the market unsettled.
 public fun try_settle(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
     pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
     clock: &Clock,
 ): bool {
     config.assert_version();
     if (market.is_settled()) return true;
-    if (clock.timestamp_ms() < market.expiry) return false;
+    let now = clock.timestamp_ms();
+    if (now < market.expiry) return false;
 
-    let spot = pricing::load_exact_spot(
+    let pyth_spot = pricing::load_exact_spot(
         propbook_registry,
         pyth,
         market.propbook_underlying_id,
         market.expiry,
     );
-    if (spot.is_none()) return false;
-    let settlement_price = spot.destroy_some();
+    let (settlement_price, settlement_source) = if (pyth_spot.is_some()) {
+        (pyth_spot.destroy_some(), constants::settlement_source_pyth!())
+    } else {
+        if (now - market.expiry < constants::settlement_fallback_grace_ms!()) return false;
+        let block_scholes_spot = pricing::load_exact_block_scholes_spot(
+            propbook_registry,
+            bs_values,
+            market.propbook_underlying_id,
+            market.expiry,
+        );
+        if (block_scholes_spot.is_none()) return false;
+        (block_scholes_spot.destroy_some(), constants::settlement_source_block_scholes!())
+    };
     market.strike_exposure.record_settlement(settlement_price);
     // Live-close rebates are no longer reachable after settlement. Release the
     // residual inventory-impact escrow so the settled sweep returns it to LPs.
@@ -660,7 +673,8 @@ public fun try_settle(
         market.propbook_underlying_id,
         market.expiry,
         settlement_price,
-        clock.timestamp_ms(),
+        settlement_source,
+        now,
     );
     true
 }
