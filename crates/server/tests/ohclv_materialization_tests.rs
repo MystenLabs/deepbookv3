@@ -133,6 +133,18 @@ async fn store_legacy_open(db: &Db, table: &str, bucket_predicate: &str, open: i
     .unwrap();
 }
 
+async fn store_legacy_close(db: &Db, table: &str, bucket_predicate: &str, close: i64) {
+    let mut conn = db.connect().await.unwrap();
+    diesel::sql_query(format!(
+        "UPDATE {table}
+         SET close = {close}
+         WHERE pool_id = '{POOL_ID}' AND {bucket_predicate}"
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+}
+
 async fn store_newer_candle(
     db: &Db,
     table: &str,
@@ -450,6 +462,63 @@ async fn complete_snapshot_repairs_a_legacy_inconsistent_open() {
     assert_eq!(
         load_candle(&db, "ohclv_1d", &daily_predicate).await,
         expected(first_ms, last_ms)
+    );
+}
+
+#[tokio::test]
+async fn complete_snapshot_repairs_a_legacy_tied_close_once() {
+    let (_temp_db, db) = setup().await;
+    let first_ms = DAY_START_MS + 5_000;
+    let last_ms = DAY_START_MS + 50_000;
+    insert_fill(&db, "legacy-close-first", first_ms, 10, 2).await;
+    insert_fill(&db, "legacy-close-latest-a", last_ms, 11, 1).await;
+    insert_fill(&db, "legacy-close-latest-b", last_ms, 12, 2).await;
+    call_materializer(&db, "update_ohclv_1m", first_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", first_ms, last_ms).await;
+
+    let minute_predicate = format!(
+        "bucket_time = date_trunc('minute', to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')"
+    );
+    let daily_predicate = format!(
+        "bucket_time = (to_timestamp({DAY_START_MS}::DOUBLE PRECISION / 1000) AT TIME ZONE 'UTC')::DATE"
+    );
+    store_legacy_close(&db, "ohclv_1m", &minute_predicate, 11).await;
+    store_legacy_close(&db, "ohclv_1d", &daily_predicate, 11).await;
+
+    call_materializer(&db, "update_ohclv_1m", first_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", first_ms, last_ms).await;
+
+    let expected = CandleAggregate {
+        open: 10.0,
+        high: 12.0,
+        low: 10.0,
+        close: 12.0,
+        base_volume: 5.0,
+        quote_volume: 55.0,
+        trade_count: 3,
+        first_trade_timestamp: first_ms,
+        last_trade_timestamp: last_ms,
+    };
+    assert_eq!(
+        load_candle(&db, "ohclv_1m", &minute_predicate).await,
+        expected
+    );
+    assert_eq!(
+        load_candle(&db, "ohclv_1d", &daily_predicate).await,
+        expected
+    );
+    let minute_version = load_row_version(&db, "ohclv_1m", &minute_predicate).await;
+    let daily_version = load_row_version(&db, "ohclv_1d", &daily_predicate).await;
+
+    call_materializer(&db, "update_ohclv_1m", first_ms, last_ms).await;
+    call_materializer(&db, "update_ohclv_1d", first_ms, last_ms).await;
+    assert_eq!(
+        load_row_version(&db, "ohclv_1m", &minute_predicate).await,
+        minute_version
+    );
+    assert_eq!(
+        load_row_version(&db, "ohclv_1d", &daily_predicate).await,
+        daily_version
     );
 }
 

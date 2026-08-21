@@ -82,7 +82,10 @@ BEGIN
             EXCLUDED.first_trade_timestamp = ohclv_1m.first_trade_timestamp
             AND EXCLUDED.last_trade_timestamp = ohclv_1m.last_trade_timestamp
             AND EXCLUDED.trade_count = ohclv_1m.trade_count
-            AND EXCLUDED.open IS DISTINCT FROM ohclv_1m.open
+            AND (
+                EXCLUDED.open IS DISTINCT FROM ohclv_1m.open
+                OR EXCLUDED.close IS DISTINCT FROM ohclv_1m.close
+            )
        );
 END;
 $$;
@@ -171,7 +174,10 @@ BEGIN
             EXCLUDED.first_trade_timestamp = ohclv_1d.first_trade_timestamp
             AND EXCLUDED.last_trade_timestamp = ohclv_1d.last_trade_timestamp
             AND EXCLUDED.trade_count = ohclv_1d.trade_count
-            AND EXCLUDED.open IS DISTINCT FROM ohclv_1d.open
+            AND (
+                EXCLUDED.open IS DISTINCT FROM ohclv_1d.open
+                OR EXCLUDED.close IS DISTINCT FROM ohclv_1d.close
+            )
        );
 END;
 $$;
