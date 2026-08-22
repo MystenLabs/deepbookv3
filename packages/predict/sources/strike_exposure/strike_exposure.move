@@ -315,7 +315,7 @@ public(package) fun quote_mint_terms(
         let change = exposure
             .inventory_grid
             .borrow()
-            .quote_open(lower_tick, higher_tick, quantity, exposure.tick_size);
+            .quote_open(pricer, lower_tick, higher_tick, quantity, exposure.tick_size);
         let charge = exposure.inventory_impact_charge_for(&change);
         (charge, change.frozen_expected_payout_delta())
     };
@@ -354,8 +354,8 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
     exposure.payout.insert_range(lower_tick, higher_tick, quantity);
     // Mirrored whenever a grid exists, not only when the rate is nonzero. The
     // mirror is the grid's only record of the book, so a trade that skipped it
-    // would be invisible forever; the centering term, by contrast, is rebuilt from
-    // the mirror on the next refresh and so tolerates being left behind here.
+    // would be invisible forever; the centering term is re-integrated from the
+    // mirror on the next quote and so tolerates being left behind here.
     if (exposure.inventory_grid.is_some()) {
         exposure
             .inventory_grid
@@ -396,6 +396,7 @@ public(package) fun quote_live_close(
             .inventory_grid
             .borrow()
             .quote_close(
+                pricer,
                 order.lower_tick(),
                 order.higher_tick(),
                 close_quantity,
@@ -477,20 +478,6 @@ public(package) fun initialize_inventory_grid(
     let (_, total_payout) = exposure.payout.payout_reserve_terms();
     assert!(total_payout == 0, EInventoryGridBookNotEmpty);
     exposure.inventory_grid.fill(inventory_grid::initialize(pricer, ratios));
-}
-
-/// Re-cut the inventory grid onto the supplied snapshot.
-///
-/// The payout book is not read: the grid carries its own inline mirror of it, which
-/// is what keeps a refresh clear of the per-node object-cache ceiling.
-public(package) fun refresh_inventory_grid(
-    exposure: &mut StrikeExposure,
-    pricer: &Pricer,
-    ratios: vector<u64>,
-) {
-    assert!(!exposure.is_settled(), EInventoryGridMarketSettled);
-    assert!(exposure.inventory_grid.is_some(), EInventoryGridNotInitialized);
-    exposure.inventory_grid.borrow_mut().refresh(pricer, ratios);
 }
 
 /// Enter the settled phase by recording the terminal price and aggregate payout

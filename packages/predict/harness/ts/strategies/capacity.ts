@@ -8,7 +8,7 @@ const MAX_BOOK = 5_000;
 const FUND = 20_000_000_000_000n;
 const GAS_BUDGET = 50_000_000_000;
 
-export type CapacityProfile = "single" | "pool" | "tree";
+export type CapacityProfile = "single" | "pool" | "tree" | "user-off" | "user-on";
 
 interface CapacityConfig {
   profile: CapacityProfile;
@@ -32,7 +32,25 @@ const CONFIG: Record<CapacityProfile, CapacityConfig> = {
     batchSize: 12,
     probability: [0.02, 0.98],
   },
+  // Single-leg mints on one far market. `user-off` is the no-grid control;
+  // `user-on` cuts a grid and snapshots a 2% max marginal rate so the quote
+  // walks capital. maxCost is uncapped on both so a growing charge cannot
+  // abort the measurement.
+  "user-off": {
+    profile: "user-off",
+    batchSize: 1,
+    probability: [0.45, 0.6],
+  },
+  "user-on": {
+    profile: "user-on",
+    batchSize: 1,
+    probability: [0.45, 0.6],
+  },
 };
+
+const USER_PROFILES = new Set<CapacityProfile>(["user-off", "user-on"]);
+const USER_MAX_COST = 1_000_000_000_000_000n;
+const USER_IMPACT_RATE = 20_000_000n; // 2%, 1e9-scaled
 
 function farMarket(ctx: StrategyCtx): Mkt | null {
   const live = ctx.markets();
@@ -118,14 +136,15 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
   return {
     name: `capacity-${profile}`,
     tickMs: profile === "tree" ? 1_200 : 1_500,
-    maxOps: 0,
     fund: FUND,
     gasBudget: GAS_BUDGET,
     // The tree profile is the only book big enough to price an inventory-grid
     // refresh against a full market: the refresh now reads the inline cell mirror,
     // and this profile still drives the node count the flush (not the refresh)
     // hits the object-cache ceiling at.
-    inventoryGrid: profile === "tree",
+    inventoryGrid: profile === "tree" || profile === "user-on",
+    inventoryImpactMaxRate: profile === "user-on" ? USER_IMPACT_RATE : 0n,
+    maxOps: USER_PROFILES.has(profile) ? 40 : 0,
     expect:
       profile === "tree"
         ? {
@@ -154,7 +173,10 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
                 market,
                 ctx.rand(minimum, maximum),
               );
-        if (leg) legs.push(leg);
+        if (leg) {
+          if (USER_PROFILES.has(profile)) leg.maxCost = USER_MAX_COST;
+          legs.push(leg);
+        }
       }
       if (!legs.length) return null;
 

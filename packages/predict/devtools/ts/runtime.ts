@@ -1506,6 +1506,22 @@ export function bindFeedsToUnderlyingTx(params: { pythFeedId: string }): Transac
     return tx;
 }
 
+export function setTemplateInventoryImpactMaxRateTx(
+    protocolConfigId: string,
+    maxRate: bigint,
+): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_template_inventory_impact_max_rate"),
+        arguments: [
+            tx.object(protocolConfigId),
+            tx.object(ADMIN_CAP_ID),
+            tx.pure.u64(maxRate),
+        ],
+    });
+    return tx;
+}
+
 export function setTemplateExpiryFeeConfigTx(
     protocolConfigId: string,
     expiryFeeWindowMs: bigint,
@@ -1880,19 +1896,16 @@ export interface InventoryGridParams extends OracleFeedIds {
     ratios: bigint[];
 }
 
-// Cut a market's inventory grid, either for the first time (`initialize`, which
-// the contract only accepts on an empty book) or onto the current surface
-// (`refresh`, which re-derives the rolling state from the payout tree).
+// Initialize a market's inventory-grid ratio ladder (`initialize` only accepts
+// an empty book). Dollar rungs slide with the live forward on every quote.
 //
-// Both are one privileged call over a pricer loaded in the same PTB, so the ratios
+// One privileged call over a pricer loaded in the same PTB, so the ratios
 // are read and verified against the surface the market prices at right now.
-// Kept as a single builder because the two entrypoints take identical arguments
-// and differ only in which contract-side precondition they assert.
-function inventoryGridTx(fn: "initialize" | "refresh", params: InventoryGridParams): Transaction {
+export function initializeInventoryGridTx(params: InventoryGridParams): Transaction {
     const tx = new Transaction();
     const pricer = loadLivePricer(tx, params);
     tx.moveCall({
-        target: target("registry", `${fn}_inventory_grid`),
+        target: target("registry", "initialize_inventory_grid"),
         arguments: [
             tx.object(REGISTRY_ID),
             tx.object(params.expiryMarketId),
@@ -1903,14 +1916,6 @@ function inventoryGridTx(fn: "initialize" | "refresh", params: InventoryGridPara
         ],
     });
     return tx;
-}
-
-export function initializeInventoryGridTx(params: InventoryGridParams): Transaction {
-    return inventoryGridTx("initialize", params);
-}
-
-export function refreshInventoryGridTx(params: InventoryGridParams): Transaction {
-    return inventoryGridTx("refresh", params);
 }
 
 // Create the sender's canonical derived account wrapper and share it. `new` derives

@@ -113,6 +113,9 @@ export interface Strategy {
   // costs an extra PTB per tick, which would move every other strategy's measured
   // baseline, and the grid is inert at the zero inventory-impact rate they run at.
   inventoryGrid?: boolean;
+  // Template `inventory_impact_max_rate` snapshotted onto markets this arm creates.
+  // 1e9-scaled. Zero is the protocol default and skips the quote capital walk.
+  inventoryImpactMaxRate?: bigint;
   // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
   // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
   // (e.g. the object-cache limit "cached objects limit", which bricks a normal flush but is the whole

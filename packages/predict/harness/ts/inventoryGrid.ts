@@ -1,10 +1,11 @@
 // Inventory-grid boundary generator.
 //
-// `inventory_grid::materialized_ladder` takes the 99 interior bucket boundaries as
+// `inventory_grid::initialize` takes the 99 interior bucket boundaries as
 // `strike / forward`, 1e9-scaled, multiplies each by the forward the transaction
 // itself resolves, and then accepts the partition only if every one of the 100
 // buckets carries 1% of the settlement distribution's probability mass (1e7 of 1e9)
-// within 1e5. So the job here is the 1%..99% quantiles of that distribution
+// within 1e5. Later quotes rematerialize the same stored ratios against the live
+// forward. So the job here is the 1%..99% quantiles of that distribution
 // expressed relative to the forward.
 //
 // Submitting ratios rather than absolute prices is what makes the cut operable at

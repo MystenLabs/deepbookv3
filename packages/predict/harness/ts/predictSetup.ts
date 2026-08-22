@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { atomicWriteFile } from "./io.js";
 import { BOOTSTRAP_SUPPLY, CADENCES } from "./predictConfig.js";
-import { requiredEnv } from "./runnerConfig.js";
+import { bigintEnv, requiredEnv } from "./runnerConfig.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -26,6 +26,7 @@ import {
   requestSupplyTx,
   setBlockScholesSignerTx,
   setCadenceConfigTx,
+  setTemplateInventoryImpactMaxRateTx,
   updatePythTrustedSignerTx,
 } from "../../devtools/ts/runtime.js";
 
@@ -73,6 +74,13 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   for (const cadenceId of cadenceIds) {
     await executeAndWait(setCadenceConfigTx({ cadenceId, ...CADENCES[cadenceId] }), `cadence-${cadenceId}`);
   }
+  // Markets snapshot the template rate at creation. The default is zero; a
+  // measurement arm that wants the quote walk on must set this before the first roll.
+  const inventoryImpactMaxRate = bigintEnv("INVENTORY_IMPACT_MAX_RATE", 0n);
+  await executeAndWait(
+    setTemplateInventoryImpactMaxRateTx(PROTOCOL_CONFIG_ID, inventoryImpactMaxRate),
+    "inventory-rate",
+  );
   return { feeds, lifecycleCapId };
 }
 

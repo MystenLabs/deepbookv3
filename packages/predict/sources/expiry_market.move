@@ -722,16 +722,6 @@ public(package) fun initialize_inventory_grid(
     market.strike_exposure.initialize_inventory_grid(pricer, ratios);
 }
 
-/// Re-cut this market's inventory grid onto the current probability surface.
-public(package) fun refresh_inventory_grid(
-    market: &mut ExpiryMarket,
-    pricer: &Pricer,
-    ratios: vector<u64>,
-) {
-    market.assert_pricer_bound(pricer);
-    market.strike_exposure.refresh_inventory_grid(pricer, ratios);
-}
-
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
 /// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and

@@ -129,17 +129,17 @@ fun a_partial_close_leaves_a_disjoint_peak_standing() {
     let (a_lower, a_higher, a_quantity) = (10_000_000, 10_000_080, ONE_ORDER);
     let (b_lower, b_higher, b_quantity) = (10_000_160, 10_000_240, 900_000_000);
 
-    open_range(&mut grid, a_lower, a_higher, a_quantity);
-    open_range(&mut grid, b_lower, b_higher, b_quantity);
-    assert_eq!(book_peak(&grid), ONE_ORDER);
+    open_range(&mut grid, &pricer, a_lower, a_higher, a_quantity);
+    open_range(&mut grid, &pricer, b_lower, b_higher, b_quantity);
+    assert_eq!(grid.book_peak(), ONE_ORDER);
 
     let a_close_quantity = a_quantity / 2;
-    let a_close_expected = close_range(&mut grid, a_lower, a_higher, a_close_quantity);
+    let a_close_expected = close_range(&mut grid, &pricer, a_lower, a_higher, a_close_quantity);
 
     // Naively subtracting A's close from a book-level maximum would report 500m.
     // Because payout is held per region, B's independent 900m peak is what remains.
-    assert_eq!(book_peak(&grid), b_quantity);
-    assert!(book_peak(&grid) != ONE_ORDER - a_close_quantity);
+    assert_eq!(grid.book_peak(), b_quantity);
+    assert!(grid.book_peak() != ONE_ORDER - a_close_quantity);
 
     let a_open_expected = grid.frozen_expected_payout(
         a_lower,
@@ -155,8 +155,8 @@ fun a_partial_close_leaves_a_disjoint_peak_standing() {
         false,
         TEST_TICK_SIZE,
     );
-    close_range(&mut grid, b_lower, b_higher, b_quantity);
-    assert_eq!(book_peak(&grid), 0);
+    close_range(&mut grid, &pricer, b_lower, b_higher, b_quantity);
+    assert_eq!(grid.book_peak(), 0);
     assert_eq!(grid.current_frozen_expected_payout(), 0);
     assert_eq!(grid.k95(), 0);
 
@@ -312,21 +312,12 @@ fun grid_initialization_rejects_a_settled_market() {
 }
 
 #[test]
-fun re_cutting_onto_the_same_snapshot_reproduces_the_grid() {
+fun draining_a_seeded_book_clears_expected_payout() {
     let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
     let mut grid = seeded_grid(&pricer);
 
-    // A refresh re-cuts the boundaries and re-integrates the centering term over the
-    // mirror. Re-cutting onto the snapshot already in force must therefore be
-    // indistinguishable, bucket for bucket.
-    let before_maxima = every_bucket_maximum(&grid);
-    let before_k = grid.k95();
-    grid.refresh(&pricer, frozen_grid_fixture::ratios());
-    assert_eq!(every_bucket_maximum(&grid), before_maxima);
-    assert_eq!(grid.k95(), before_k);
-
-    close_seeded_orders(&mut grid);
+    close_seeded_orders(&mut grid, &pricer);
     assert_eq!(grid.current_frozen_expected_payout(), 0);
     assert_eq!(grid.k95(), 0);
 
@@ -335,25 +326,7 @@ fun re_cutting_onto_the_same_snapshot_reproduces_the_grid() {
 }
 
 #[test]
-fun a_close_after_a_refresh_cannot_underflow_expected_payout() {
-    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let mut grid = seeded_grid(&pricer);
-
-    // A refresh installs the mirror's own netted integral, while closes subtract
-    // per-order floors computed from exact range probabilities. The two groupings
-    // round differently, so draining the book must floor the centering term rather
-    // than abort a close.
-    grid.refresh(&pricer, frozen_grid_fixture::ratios());
-    close_seeded_orders(&mut grid);
-    assert_eq!(grid.current_frozen_expected_payout(), 0);
-
-    destroy(grid);
-    cleanup(fx, oracle, harness);
-}
-
-#[test]
-fun refresh_rebuilds_a_loaded_book_without_reading_the_payout_tree() {
+fun a_loaded_book_scores_from_the_cell_mirror_without_the_payout_tree() {
     let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
     let mut grid = inventory_grid::initialize(&pricer, frozen_grid_fixture::ratios());
@@ -366,14 +339,13 @@ fun refresh_rebuilds_a_loaded_book_without_reading_the_payout_tree() {
     while (index < MANY_ORDERS) {
         open_range(
             &mut grid,
+            &pricer,
             MANY_ORDER_BASE_TICK + index * MANY_ORDER_TICK_STRIDE,
             constants::pos_inf_tick!(),
             MANY_ORDER_QUANTITY,
         );
         index = index + 1;
     };
-
-    grid.refresh(&pricer, frozen_grid_fixture::ratios());
 
     let whole_book = MANY_ORDERS * MANY_ORDER_QUANTITY;
     let mut bucket = 100 - 5;
@@ -388,86 +360,34 @@ fun refresh_rebuilds_a_loaded_book_without_reading_the_payout_tree() {
     cleanup(fx, oracle, harness);
 }
 
-#[test, expected_failure(abort_code = inventory_grid::EInvalidBucketMass)]
-fun refresh_verifies_bucket_mass_against_the_supplied_snapshot() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
-    let mut boundaries = frozen_grid_fixture::ratios();
-    *boundaries.borrow_mut(1) = (boundaries[1] + boundaries[2]) / 2;
-    harness.exposure.refresh_inventory_grid(&pricer, boundaries);
-    abort 999
-}
-
 #[test]
-fun one_ratio_ladder_stays_valid_after_the_forward_moves() {
-    let (mut fx, mut oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let ratios = frozen_grid_fixture::ratios();
+fun the_same_ratio_ladder_charges_after_the_forward_moves() {
+    let (mut fx, mut oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let opening = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&opening, ratios);
+    let grid = inventory_grid::initialize(&opening, frozen_grid_fixture::ratios());
 
-    // Move the forward 1%: four hundred times the drift an absolute-price ladder
-    // survives, because a bucket of equal probability mass is only basis points of
-    // the forward wide. Ratios are read against whatever forward the transaction
-    // resolves, so the same ladder must still verify.
-    let moved_forward = test_constants::default_live_price() * 101 / 100;
-    // Republished under the unchanged clock, so the SVI anchor and remaining time are
-    // untouched and the forward is the only thing that moves.
+    // 1bp forward move — inside the cell span of this short-dated fixture, and
+    // still wider than the absolute-price race that used to invalidate a cut.
+    // Dollar rungs slide with the live forward, so the same stored ratios still
+    // raise K on an ATM-relative pile without a keeper re-cut.
+    let moved_forward = test_constants::default_live_price() * 10_001 / 10_000;
     let moved_at = fx.clock().timestamp_ms();
     fx.set_bs_forward_for_testing_bundle(&mut oracle, moved_at, moved_forward);
     let moved = fx.load_pricer_bundle(&oracle);
     assert_eq!(moved.forward(), moved_forward);
 
-    harness.exposure.refresh_inventory_grid(&moved, ratios);
-    cleanup(fx, oracle, harness);
-}
-
-/// The companion to the test above: the same forward move applied to a ladder that
-/// names absolute prices does abort, which is what made off-chain boundary
-/// generation inoperable against a live pricer.
-#[test, expected_failure(abort_code = inventory_grid::EInvalidBucketMass)]
-fun the_same_move_invalidates_a_ladder_of_absolute_prices() {
-    let (mut fx, mut oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let ratios = frozen_grid_fixture::ratios();
-    let opening = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&opening, ratios);
-
-    let moved_at = fx.clock().timestamp_ms();
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        moved_at,
-        test_constants::default_live_price() * 101 / 100,
+    let atm_tick = moved_forward / TEST_TICK_SIZE;
+    let after_move = grid.quote_open(
+        &moved,
+        atm_tick,
+        constants::pos_inf_tick!(),
+        ONE_ORDER,
+        TEST_TICK_SIZE,
     );
-    let moved = fx.load_pricer_bundle(&oracle);
+    assert!(after_move.after_k() > after_move.before_k());
 
-    // Rescale so the ladder materializes back to the pre-move absolute prices: the
-    // grid an absolute interface would have received after the forward moved 1%.
-    let mut stale = vector[];
-    let mut index = 0;
-    while (index < ratios.length()) {
-        stale.push_back(math::mul_div_down(ratios[index], opening.forward(), moved.forward()));
-        index = index + 1;
-    };
-    harness.exposure.refresh_inventory_grid(&moved, stale);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInventoryGridNotInitialized)]
-fun refresh_requires_an_initialized_grid() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.refresh_inventory_grid(&pricer, frozen_grid_fixture::ratios());
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInventoryGridMarketSettled)]
-fun refresh_rejects_a_settled_market() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
-    harness.exposure.record_settlement(test_constants::default_live_price());
-    harness.exposure.refresh_inventory_grid(&pricer, frozen_grid_fixture::ratios());
-    abort 999
+    destroy(grid);
+    cleanup(fx, oracle, harness);
 }
 
 #[test]
@@ -563,69 +483,58 @@ fun mint_and_total_charge(fx: &mut OracleFixture, pricer: &Pricer, slices: vecto
 }
 
 /// Quote and commit one open, returning the centering delta it moved.
-fun open_range(grid: &mut InventoryGrid, lower: u64, higher: u64, quantity: u64): u64 {
+fun open_range(
+    grid: &mut InventoryGrid,
+    pricer: &Pricer,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+): u64 {
     let expected = grid
-        .quote_open(lower, higher, quantity, TEST_TICK_SIZE)
+        .quote_open(pricer, lower, higher, quantity, TEST_TICK_SIZE)
         .frozen_expected_payout_delta();
     grid.apply_change(lower, higher, quantity, expected, true, TEST_TICK_SIZE);
     expected
 }
 
 /// Quote and commit one close, returning the centering delta it moved.
-fun close_range(grid: &mut InventoryGrid, lower: u64, higher: u64, quantity: u64): u64 {
+fun close_range(
+    grid: &mut InventoryGrid,
+    pricer: &Pricer,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+): u64 {
     let expected = grid
-        .quote_close(lower, higher, quantity, TEST_TICK_SIZE)
+        .quote_close(pricer, lower, higher, quantity, TEST_TICK_SIZE)
         .frozen_expected_payout_delta();
     grid.apply_change(lower, higher, quantity, expected, false, TEST_TICK_SIZE);
     expected
 }
 
-/// Largest payout any bucket carries, which is the book's peak as the grid sees it.
-fun book_peak(grid: &InventoryGrid): u64 {
-    let mut peak = 0;
-    let mut index = 0;
-    while (index < 100) {
-        let maximum = grid.bucket_maximum(index);
-        if (maximum > peak) peak = maximum;
-        index = index + 1;
-    };
-    peak
-}
-
-/// Two overlapping ranges opened through the ordinary incremental path, so a
-/// refresh has a real book to re-integrate.
+/// Two overlapping ranges opened through the ordinary incremental path.
 fun seeded_grid(pricer: &Pricer): InventoryGrid {
     let mut grid = inventory_grid::initialize(pricer, frozen_grid_fixture::ratios());
     let (lower, higher) = seeded_order_range();
     let mut index = 0;
     while (index < 2) {
-        open_range(&mut grid, lower + index, higher, ONE_ORDER);
+        open_range(&mut grid, pricer, lower + index, higher, ONE_ORDER);
         index = index + 1;
     };
     grid
 }
 
-fun close_seeded_orders(grid: &mut InventoryGrid) {
+fun close_seeded_orders(grid: &mut InventoryGrid, pricer: &Pricer) {
     let (lower, higher) = seeded_order_range();
     let mut index = 0;
     while (index < 2) {
-        close_range(grid, lower + index, higher, ONE_ORDER);
+        close_range(grid, pricer, lower + index, higher, ONE_ORDER);
         index = index + 1;
     };
 }
 
 fun seeded_order_range(): (u64, u64) {
     (test_constants::default_live_price() / TEST_TICK_SIZE, constants::pos_inf_tick!() - 1)
-}
-
-fun every_bucket_maximum(grid: &InventoryGrid): vector<u64> {
-    let mut maxima = vector[];
-    let mut index = 0;
-    while (index < 100) {
-        maxima.push_back(grid.bucket_maximum(index));
-        index = index + 1;
-    };
-    maxima
 }
 
 fun new_harness(config: StrikeExposureConfig): (OracleFixture, OracleBundle, ExposureHarness) {

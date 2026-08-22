@@ -101,18 +101,18 @@ The pool NAV above is just `idle + Σ current_nav`. The substance is `current_na
 
 ### An active expiry's exact NAV
 
-`current_nav` is a pure read: free cash minus the exact per-order live liability, floored at zero.
+`current_nav` is a pure read: cash minus the exact per-order live liability, floored at zero.
 
 ```
-current_nav = max(0, free_cash − live_marked_liability)
+current_nav = max(0, cash_balance − live_marked_liability)
 ```
 
 where:
 
-- **`free_cash = cash_balance − inventory_impact_reserve`** — the expiry's DUSDC net of the isolated impact escrow it still owes. Inventory-impact escrow is not LP value while live.
+- **`cash_balance`** is the expiry's whole DUSDC custody. Every fee and charge it has collected, including the inventory-impact charge, is LP value from the moment it arrives; nothing is held back in an escrow.
 - **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so there is no per-order correction term.
 
-The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding; it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
+The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding; it is clamped at zero once, inside the walk. `cash_balance − liability` is exactly the cash the pool keeps once every open contract is marked.
 
 `current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
 
@@ -128,7 +128,7 @@ If that exact spot is not present, the market remains unsettled and the live bra
 
 Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence), and the same lock-free inner logic runs inside the flush's `value_expiry` before each market is valued.
 
-Each expiry has a **required cash** floor of `payout_liability + inventory_impact_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
+Each expiry has a **required cash** floor of its `payout_liability`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
 
 - `target_cash = max(required_cash × (1 + band), expiry_cash_floor)`
 - `sweep_threshold = max(required_cash × (1 + 2 × band), expiry_cash_floor)`
@@ -137,7 +137,7 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle DUSDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
-- **Settled sweep:** settlement first releases the now-unclaimable inventory-impact earmark into ordinary expiry surplus. The expiry is then deactivated, all cash above settled payout liability is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)).
+- **Settled sweep:** the expiry is deactivated, all cash above settled payout liability is returned, and terminal profit from that returned cash is materialized (see [Profit materialization](#profit-materialization-at-settlement)).
 
 Funding room is bounded by the **per-expiry allocation cap** snapshotted from cadence config when the market is created. The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap, bounding how much LP capital a single expiry can put at risk.
 
@@ -150,7 +150,7 @@ Every cash movement is recorded in the ledger: cash sent accumulates into the pr
 The custody leaf (`ExpiryCash`) enforces, on every operation, that:
 
 ```
-cash_balance ≥ payout_liability + inventory_impact_reserve
+cash_balance ≥ payout_liability
 ```
 
 For a live market, `payout_liability` is a **settlement floor plus a liquidity buffer**:
@@ -165,7 +165,7 @@ The floor is `max_net_payout` — the maximum summed net payout at any *single* 
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.
 - **Settled cash release** computes the terminal liability, asserts backing, and returns only the strict excess.
 
-The independent `inventory_impact_reserve` is the cumulative inventory potential collected from mints minus rebates paid to voluntary live closes. It is excluded from NAV and pool sweeps, and the market additionally asserts `inventory_impact_reserve ≥ phi(current payout_liability)`. Exact state-function differences make equality hold for ordinary mint/close paths; liquidations can only leave a surplus. Settlement releases that residual earmark because the live-rebate path is no longer reachable. See [fees and rebates](./fees-and-rebates.md#inventory-impact-charge-and-rebate).
+Inventory-impact charges are not held apart from this. No flow refunds them, so they join expiry cash on arrival, count in NAV, and are swept like any other surplus above payout backing. See [fees and rebates](./fees-and-rebates.md#inventory-impact-charge).
 
 ## Profit materialization at settlement
 

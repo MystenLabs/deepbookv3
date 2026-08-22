@@ -307,24 +307,6 @@ public fun initialize_inventory_grid(
     market.initialize_inventory_grid(pricer, ratios);
 }
 
-/// Authenticate and re-cut one registered market's inventory grid onto the
-/// current probability surface. Cadence is a keeper policy, not a contract rule:
-/// the ratios are verified against the supplied market-bound pricer, so the
-/// cap holder chooses when to refresh but never what the snapshot says.
-public fun refresh_inventory_grid(
-    registry: &Registry,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    lifecycle_cap: &MarketLifecycleCap,
-    pricer: &Pricer,
-    ratios: vector<u64>,
-) {
-    config.assert_version();
-    registry.assert_valid_lifecycle_cap(lifecycle_cap);
-    config.assert_not_valuation_in_progress();
-    market.refresh_inventory_grid(pricer, ratios);
-}
-
 /// Create a derived shared BuilderCode for the caller and index.
 public fun create_and_share_builder_code(
     registry: &mut Registry,

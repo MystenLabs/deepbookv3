@@ -11,6 +11,8 @@ const capacity = [
   createCapacityStrategy("single"),
   createCapacityStrategy("pool"),
   createCapacityStrategy("tree"),
+  createCapacityStrategy("user-off"),
+  createCapacityStrategy("user-on"),
 ];
 const cleanup = [createCleanupStrategy("survivor")];
 

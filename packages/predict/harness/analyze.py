@@ -723,6 +723,33 @@ def has_strategy_progress(instance: Path, strategy: str) -> bool:
     )
 
 
+def _print_user_mint_increment(insts: list[Path]) -> None:
+    """Compare single-leg mint computation with the grid+rate off versus on."""
+    by_profile: dict[str, list[int]] = {}
+    for inst in insts:
+        samples, _ = measurements.batch_computation(_load(inst / "trace"))
+        for profile, size, mean, _count in samples:
+            if size != 1:
+                continue
+            if profile.endswith("user-off") or profile.endswith("user-on"):
+                by_profile.setdefault(profile, []).append(mean)
+    off = by_profile.get("capacity/user-off") or by_profile.get("user-off")
+    on = by_profile.get("capacity/user-on") or by_profile.get("user-on")
+    if not off or not on:
+        return
+    off_mean = sum(off) // len(off)
+    on_mean = sum(on) // len(on)
+    delta = on_mean - off_mean
+    print("user mint computation (single-leg PTB, rate 2% vs no grid):")
+    print(f"  off (no grid, rate 0): {off_mean:>14,} comp")
+    print(f"  on  (grid, rate 2%):   {on_mean:>14,} comp")
+    print(
+        f"  increment:              {delta:>14,} comp "
+        f"({delta / COMP_CAP * 100:.2f}% of the {COMP_CAP:,} cap)"
+    )
+    print()
+
+
 def analyze(
     instances: list[str] | None = None,
     expect: list[str] | None = None,
@@ -765,6 +792,7 @@ def analyze(
     for inst in sorted(insts, key=lambda d: d.name):
         signals += _analyze_one(inst)
         print()
+    _print_user_mint_increment(insts)
     if len(insts) > 1 or expect:
         print(f"=== aggregate verdict over {len(insts)} instance(s): {'FAIL' if signals else 'clean'} ===")
     # Non-zero exit so background/autonomous runs have a programmatic failure signal.

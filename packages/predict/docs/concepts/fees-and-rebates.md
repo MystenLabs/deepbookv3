@@ -1,8 +1,8 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A market may additionally run an isolated **inventory-impact charge/rebate**: risk-increasing mints pay into a dedicated escrow and voluntary risk-reducing live closes receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A market may additionally run an **inventory-impact charge** on any trade that raises the pool's capital at risk. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
-Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
+Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no rebate of any kind: the trading fee is a function of the contract and the market, never of who is trading it, and no charge is ever returned.
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
@@ -42,6 +42,8 @@ base_fee_rate = max( raw_fee_rate , min_fee )
 ```
 
 As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
+
+The floor covers more of the probability range than it first appears. At the defaults of `base_fee = 2%` and `min_fee = 0.5%`, the variance term falls below the floor for every `p` outside roughly `[6.7%, 93.3%]`, so the floor rather than the variance term is what prices the tails. Retuning `min_fee` for dust or rounding reasons therefore reprices the pool's deep-tail exposure.
 
 Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
 
@@ -97,49 +99,38 @@ One accepted weakness: because the first observation seeds the variance directly
 
 The congestion surcharge is handled differently from the trading fee in the cash flow. It is withdrawn from the trader (at mint) or withheld from the payout (at redeem), but it then rides into the expiry's cash as **surplus**: it earns no builder cut. It compensates liquidity providers for transacting during congestion rather than being a fee on the contract itself.
 
-## Inventory-impact charge and rebate
+## Inventory-impact charge
 
-Inventory impact is an optional, path-independent transfer layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and uses its cadence `max_expiry_allocation` as the immutable impact scale `B`; changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
+Inventory impact is an optional charge layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and scale at creation, so changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
 
-### Step 1: measure the book's payout liability
+It compensates liquidity providers for a risk the contract fee cannot see. Two contracts priced perfectly can leave the pool in very different positions depending on whether their payouts land on the same settlement outcomes. [The inventory-impact reference](../design/inventory_impact_reference.md) explains the mechanism and the reasoning; this section describes only how the charge is computed and where the cash goes.
 
-Let:
+### Step 1: measure the book's capital at risk
 
-- `M` be the largest summed net payout at any one settlement price;
-- `T` be the sum of every live order's payout (`quantity`);
-- `lambda` be `backing_buffer_lambda`.
+The market snapshots its probability distribution at creation and cuts it into 100 equally likely settlement buckets. `K` is the average payout across the five worst buckets, minus the book's expected payout: the amount by which a bad settlement exceeds an ordinary one. A trade's effect on `K` depends on where its payout lands relative to the exposure the book already carries, so piling onto the current worst outcomes raises `K` while a genuinely offsetting range does not.
 
-The existing live reserve liability is:
+### Step 2: map capital to one book-level potential
 
-```text
-L = M + lambda * (T - M)
-```
-
-A candidate range does not necessarily move `M` by its full net payout. The payout tree therefore reads the current maximum inside the range and in its complement in `O(log n)`, computes the exact prospective `M` and `T`, and evaluates the complete liability formula before and after the trade. Evaluating both complete states matters for integer arithmetic: rounding only the incremental buffer could miss a one-atom carry already accumulated in `lambda * (T-M)`. This charges overlapping exposure more than a cold disjoint range when it raises the book's worst settlement point.
-
-### Step 2: map liability to one book-level potential
-
-For maximum marginal rate `r_max` and scale `B`:
+For maximum marginal rate `r_max` and capital scale `B`:
 
 ```text
-phi(L) = r_max * L^2 / (2 * B)                  when L <= B
-phi(L) = r_max * B / 2 + r_max * (L - B)        when L > B
+phi(K) = r_max * K^2 / (2 * B)                  when K <= B
+phi(K) = r_max * B / 2 + r_max * (K - B)        when K > B
 ```
 
-Below `B`, the marginal rate rises linearly from zero to `r_max`: at 25% utilization the marginal rate is 25% of `r_max`; at 100% utilization it reaches `r_max`. Above `B`, it stays capped instead of growing without bound. On chain, `phi` is defined by one exact sequence of round-down fixed-point operations. Both directions evaluate that same integer function.
+Below `B`, the marginal rate rises linearly from zero to `r_max`: at 25% of the scale the marginal rate is 25% of `r_max`; at the scale it reaches `r_max`. Above `B`, it stays capped instead of growing without bound. On chain, `phi` is defined by one exact sequence of round-down fixed-point operations.
 
-### Step 3: charge or rebate only the potential change
+### Step 3: charge the potential increase, and never refund a decrease
 
 ```text
-mint charge       = phi(L_after)  - phi(L_before)
-live-close rebate = phi(L_before) - phi(L_after)
+charge = max(0, phi(K_after) - phi(K_before))
 ```
 
-This state-function construction is the key safety property. Splitting a trade, closing it in pieces, or cycling through ranges only creates intermediate terms that cancel. For any sequence that returns the book to the same state, total inventory charges equal total inventory rebates exactly, including integer rounding. A probability-local multiplier would not have this property: changing another range could change the price/rate used on exit and make a cross-range cycle profitable.
+Both mints and live closes use this expression, so closing a position that was hedging the book pays a charge just as opening the risk would have. A trade that lowers `K` is free, but nothing is paid back: there is no rebate. Charging the difference of one state function is what makes splitting safe. Slicing a risk-increasing trade collects exactly the combined charge, and a path that dips and recovers collects more than the direct trade rather than less.
 
-Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_reserve`. Required cash includes the earmark and free cash/NAV excludes it. A live close can spend only this reserve. Settlement releases whatever remains into ordinary expiry surplus, because no live close can occur afterward.
+The charge is ordinary expiry cash the moment it is collected. It counts in NAV, it is not earmarked, and no later trade or settlement returns it.
 
-This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
+This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `K`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
 
 ## How the components combine
 
@@ -155,9 +146,9 @@ flowchart TD
     FEE --> COLLECT[fee -> expiry cash]
     BUILD --> BUILDER[builder fee -> builder code address]
     CONG --> SURPLUS[surcharge -> expiry cash surplus]
-    L[Book payout liability L] --> PHI["inventory potential phi(L)"]
-    PHI --> IMPACT["mint: charge delta / live close: rebate delta"]
-    IMPACT --> IRESERVE[isolated inventory-impact reserve]
+    K[Book capital at risk K] --> PHI["inventory potential phi(K)"]
+    PHI --> IMPACT["charge = max(0, phi increase)"]
+    IMPACT --> ICASH[expiry cash surplus]
 ```
 
 Cash routing at trade time:
@@ -167,9 +158,9 @@ Cash routing at trade time:
 | Trading fee | mint price / redeem payout | expiry cash (LP + protocol) | — |
 | Builder fee | add-on to trading fee | builder code address | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No |
-| Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
+| Inventory impact | add-on at mint or live close | expiry cash surplus | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee + builder_fee + congestion_surcharge + inventory_impact_charge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+At **mint**, the trader's withdrawal is `premium + trading_fee + builder_fee + congestion_surcharge + inventory_impact_charge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount - trading_fee - builder_fee - congestion_surcharge - inventory_impact_charge`; `min_proceeds` protects that final net amount, and `max_cost` covers the case where those deductions exceed the payout. At **settled redeem**, the winning payout is paid in full with no inventory-impact charge.
 
 ## The LP supply/withdraw fee
 

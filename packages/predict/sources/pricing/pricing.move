@@ -81,9 +81,15 @@ public struct PricingSVI has copy, drop, store {
 }
 
 /// Immutable pricing snapshot used only by one market's frozen inventory grid.
+///
+/// The SVI is the shape freeze. `forward` / `ln_forward` are the creation
+/// anchor used to verify the ratio ladder; a quote rematerializes those ratios
+/// against the live forward and prices the shape at that live `ln_forward`.
 public struct FrozenPricer has copy, drop, store {
     /// Carried as a log for the reason given on `Pricer.ln_forward`.
     ln_forward: I64,
+    /// The forward the shape was verified against, 1e9-scaled.
+    forward: u64,
     svi: PricingSVI,
 }
 
@@ -170,7 +176,23 @@ public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 
 public(package) fun snapshot_for_inventory(pricer: &Pricer): FrozenPricer {
     FrozenPricer {
         ln_forward: pricer.ln_forward,
+        forward: pricer.forward,
         svi: pricer.svi,
+    }
+}
+
+/// The creation-time forward the shape snapshot was verified against.
+public(package) fun frozen_forward(pricer: &FrozenPricer): u64 {
+    pricer.forward
+}
+
+/// Frozen SVI shape priced at the live forward. Bucket masses in moneyness are
+/// unchanged; dollar rungs slide with `live`.
+public(package) fun inventory_view(shape: &FrozenPricer, live: &Pricer): FrozenPricer {
+    FrozenPricer {
+        ln_forward: live.ln_forward,
+        forward: live.forward,
+        svi: shape.svi,
     }
 }
 

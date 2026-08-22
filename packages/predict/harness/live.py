@@ -580,6 +580,9 @@ def campaign(
                         "KEEPER_INVENTORY_GRID": (
                             "1" if strat_meta[strategy]["inventoryGrid"] else "0"
                         ),
+                        "INVENTORY_IMPACT_MAX_RATE": str(
+                            strat_meta[strategy].get("inventoryImpactMaxRate", "0")
+                        ),
                     },
                 )
                 stack.callback(cancellation.stop_process_group, keeper, keeper.pid)
