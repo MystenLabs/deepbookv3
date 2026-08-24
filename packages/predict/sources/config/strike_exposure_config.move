@@ -140,21 +140,14 @@ public(package) fun new(): StrikeExposureConfig {
     }
 }
 
-/// Snapshot a strike-exposure config into an independent live copy — the only
-/// point where the skew rate and the fee floor are fixed together, so it is
-/// where their relationship is checked.
+/// Snapshot a strike-exposure config into an independent live copy.
 ///
-/// A skew rebate is bounded by `rate * quantity / 2` — the deviation of a payout
-/// profile moves by at most half the quantity added — while the ordinary fee is
-/// bounded below by `min_fee * quantity`, since the `base_fee * sqrt(p(1-p))`
-/// term vanishes at both probability extremes. Once `rate` passes twice the
-/// floor, a trade that flattens the book earns more than it pays and the rebate
-/// becomes farmable, which is exactly what `max_inventory_skew_rate` was sized to
-/// prevent.
-///
-/// Checked at runtime rather than pinned by a test because `min_fee` is
-/// admin-tunable with a floor of zero: unlike the premium relation, whose both
-/// sides are upgrade-required constants, this one is reachable through config.
+/// The rate/fee-floor relation re-asserted here is maintained by both setters
+/// (`assert_skew_rate_within_fee_floor`), so the template can never hold the
+/// bad pairing and this is a structurally unreachable tripwire — kept because
+/// creation is the moment the pairing freezes into a market for life, and an
+/// unreachable abort here is cheaper than a reachable bad snapshot. No
+/// `expected_failure` test per unit-tests rule 4.
 public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfig {
     assert!(config.inventory_skew_rate <= 2 * config.min_fee, ESkewRateExceedsFeeFloor);
     StrikeExposureConfig {
@@ -182,6 +175,7 @@ public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) 
 
 public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_min_fee(value);
+    config.assert_skew_rate_within_fee_floor(config.inventory_skew_rate, value);
     config.min_fee = value;
 }
 
@@ -214,6 +208,7 @@ public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureCon
 
 public(package) fun set_inventory_skew_rate(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_inventory_skew_rate(value);
+    config.assert_skew_rate_within_fee_floor(value, config.min_fee);
     config.inventory_skew_rate = value;
 }
 
@@ -254,4 +249,23 @@ fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64)
         config.expiry_fee_window_ms,
     );
     math::float_scaling!() + ramp
+}
+
+/// The rate/fee-floor relation, enforced at every write to either side so the
+/// template can never hold a pairing that would abort market creation.
+///
+/// A skew rebate is bounded by `rate * quantity / 2` — the deviation of a payout
+/// profile moves by at most half the quantity added — while the ordinary fee is
+/// bounded below by `min_fee * quantity`, since the `base_fee * sqrt(p(1-p))`
+/// term vanishes at both probability extremes. Once `rate` passes twice the
+/// floor, a trade that flattens the book earns more than it pays and the rebate
+/// becomes farmable, which is exactly what `max_inventory_skew_rate` was sized
+/// to prevent. Enforced relationally rather than by constants because `min_fee`
+/// is admin-tunable with a floor of zero.
+fun assert_skew_rate_within_fee_floor(
+    _config: &StrikeExposureConfig,
+    inventory_skew_rate: u64,
+    min_fee: u64,
+) {
+    assert!(inventory_skew_rate <= 2 * min_fee, ESkewRateExceedsFeeFloor);
 }

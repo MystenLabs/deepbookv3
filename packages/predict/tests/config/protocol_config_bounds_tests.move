@@ -242,19 +242,37 @@ fun a_skew_rate_at_exactly_twice_the_fee_floor_snapshots() {
 }
 
 /// A skew rebate is bounded by `rate * quantity / 2` while the ordinary fee is
-/// bounded below by `min_fee * quantity`. `min_fee` is admin-tunable down to zero,
-/// so an admin can drive the fee under the rebate ceiling and make flattening the
-/// book pay more than it costs. Market creation refuses the pairing.
+/// bounded below by `min_fee * quantity`, so a rate above twice the floor makes
+/// flattening the book pay more than it costs. Both setters enforce the
+/// relation, so the template can never hold a pairing that would abort market
+/// creation — the raising side:
 #[test, expected_failure(abort_code = strike_exposure_config::ESkewRateExceedsFeeFloor)]
-fun a_skew_rate_above_twice_the_fee_floor_cannot_be_snapshotted() {
+fun a_skew_rate_above_twice_the_fee_floor_cannot_be_set() {
     let (scenario, admin_cap, config_id, clock) = new_shared_config();
     let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
 
-    // Each value is individually admissible; only the pairing is not.
     config.set_template_min_fee(&admin_cap, config_constants::min_min_fee!(), &clock);
     config.set_template_inventory_skew_rate(&admin_cap, 1, &clock);
-    destroy(config.strike_exposure_template_config().snapshot());
+    abort EUnexpectedSuccess
+}
 
+/// ...and the lowering side: a fee floor cannot drop below half an already-set
+/// rate; the rate must come down first.
+#[test, expected_failure(abort_code = strike_exposure_config::ESkewRateExceedsFeeFloor)]
+fun a_fee_floor_below_half_the_skew_rate_cannot_be_set() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    config.set_template_inventory_skew_rate(
+        &admin_cap,
+        config_constants::max_inventory_skew_rate!(),
+        &clock,
+    );
+    config.set_template_min_fee(
+        &admin_cap,
+        config_constants::max_inventory_skew_rate!() / 2 - 1,
+        &clock,
+    );
     abort EUnexpectedSuccess
 }
 
