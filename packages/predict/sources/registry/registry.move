@@ -19,7 +19,6 @@ use deepbook_predict::{
     market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
-    pricing::Pricer,
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
@@ -287,24 +286,6 @@ public fun create_and_share_expiry_market(
     );
 
     expiry_market_id
-}
-
-/// Authenticate and initialize one registered market's inventory grid.
-///
-/// `ratios` are the 99 interior bucket boundaries as `strike / forward`, 1e9-scaled;
-/// the market's own pricer supplies the forward they are measured against.
-public fun initialize_inventory_grid(
-    registry: &Registry,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    lifecycle_cap: &MarketLifecycleCap,
-    pricer: &Pricer,
-    ratios: vector<u64>,
-) {
-    config.assert_version();
-    registry.assert_valid_lifecycle_cap(lifecycle_cap);
-    config.assert_not_valuation_in_progress();
-    market.initialize_inventory_grid(pricer, ratios);
 }
 
 /// Create a derived shared BuilderCode for the caller and index.

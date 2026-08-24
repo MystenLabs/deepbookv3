@@ -577,9 +577,6 @@ def campaign(
                         "TRADER_DUSDC": strat_meta[strategy]["fund"],
                         "TRADER_ADDRESSES": addr,
                         "SIM_GAS_BUDGET": str(KEEPER_GAS_BUDGET),
-                        "KEEPER_INVENTORY_GRID": (
-                            "1" if strat_meta[strategy]["inventoryGrid"] else "0"
-                        ),
                         "INVENTORY_IMPACT_MAX_RATE": str(
                             strat_meta[strategy].get("inventoryImpactMaxRate", "0")
                         ),

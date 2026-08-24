@@ -189,14 +189,17 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the 99 rungs are stored as `strike / forward` and rematerialized as
   `ratio × F_live` on every quote, so the 1% buckets stay on the frozen SVI
   shape as spot moves and no keeper re-cut is required for forward drift. The
-  lifecycle cap still submits the ratios once on an empty book; later ticks do
-  not refresh. A close re-derives its expected-payout delta from that live
-  rematerialization rather than a value stored at mint. *Rejected:* holding
-  charges in escrow until settlement, which defers LP compensation for no
-  benefit and lets an LP supply just before the release to capture a NAV jump.
-  Also rejected: a keeper cadence that re-cuts dollar boundaries after every
-  spot move, which the ratio axis already absorbs, and an on-chain
-  minimum-interval gate on that removed refresh.
+  first charged mint inverts the live 1% CDF on-chain and stores the ratios;
+  init and that trade are one transaction, so there is no empty-book race and
+  no grid keeper. A surface that cannot invert aborts that mint. A close
+  re-derives its expected-payout delta from that live rematerialization rather
+  than a value stored at mint. *Rejected:* holding charges in escrow until
+  settlement, which defers LP compensation for no benefit and lets an LP
+  supply just before the release to capture a NAV jump. Also rejected: a
+  keeper cadence that re-cuts dollar boundaries after every spot move, which
+  the ratio axis already absorbs, and an off-chain lifecycle-cap cut of the
+  same ladder, which reintroduced the empty-book race the on-chain invert
+  removes.
 - **D032 — Inventory impact is the difference of one capped book-level potential.**
   *SUPERSEDED by D033 — the risk coordinate moved from `L` to `K`, and the rebate
   and its escrow were removed. The capped convex potential and the

@@ -11,6 +11,7 @@ use deepbook_predict::{
     inventory_grid::{Self, InventoryGrid},
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::Pricer,
+    range_codec,
     strike_exposure::{Self, StrikeExposure},
     strike_exposure_config::{Self, StrikeExposureConfig},
     test_constants
@@ -80,14 +81,12 @@ fun five_bucket_coordinate_matches_independent_reference() {
 fun quantile_grid_pile_on_round_trips_frozen_capital() {
     let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
-    let ratios = frozen_grid_fixture::ratios();
-    // Interior ratio 4 is the 5% quantile; the grid reads it against this pricer's
-    // forward, so the absolute price it names is the same product.
-    let five_percent_boundary = math::mul_down(ratios[4], pricer.forward());
+    harness.exposure.ensure_inventory_grid(&pricer);
+    // Interior boundary 5 is the 5% quantile rematerialized against this forward.
+    let five_percent_boundary = harness.exposure.test_inventory_grid().boundary(5);
     let five_percent_boundary_tick =
         five_percent_boundary / TEST_TICK_SIZE
             + if (five_percent_boundary % TEST_TICK_SIZE == 0) 0 else 1;
-    harness.exposure.initialize_inventory_grid(&pricer, ratios);
 
     let terms = harness
         .exposure
@@ -168,7 +167,7 @@ fun a_partial_close_leaves_a_disjoint_peak_standing() {
 fun closing_a_hedge_pays_the_same_potential_increase_as_opening_risk() {
     let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
+    harness.exposure.ensure_inventory_grid(&pricer);
 
     let median_tick = test_constants::default_live_price() / TEST_TICK_SIZE;
     let risky_terms = harness
@@ -206,87 +205,14 @@ fun closing_a_hedge_pays_the_same_potential_increase_as_opening_risk() {
     cleanup(fx, oracle, harness);
 }
 
-#[test, expected_failure(abort_code = strike_exposure::EInventoryGridNotInitialized)]
-fun nonzero_rate_requires_initialized_grid() {
-    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    harness
-        .exposure
-        .quote_mint_terms(
-            &pricer,
-            test_constants::default_live_price() / TEST_TICK_SIZE,
-            constants::pos_inf_tick!(),
-            0,
-            ONE_ORDER,
-            true,
-        );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = inventory_grid::EInvalidBoundaryCount)]
-fun grid_boundary_count_is_exact() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let mut boundaries = frozen_grid_fixture::ratios();
-    boundaries.pop_back();
-    harness.exposure.initialize_inventory_grid(&pricer, boundaries);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = inventory_grid::EInvalidBoundary)]
-fun grid_ratios_must_strictly_increase() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let mut ratios = frozen_grid_fixture::ratios();
-    // Two adjacent quantiles collapsed onto one value, which is how a real ladder
-    // fails: near expiry the distribution narrows until neighbours round together.
-    // Every earlier bucket still carries its 1%, so the ordering rule is what fires.
-    *ratios.borrow_mut(11) = ratios[10];
-    harness.exposure.initialize_inventory_grid(&pricer, ratios);
-    abort 999
-}
-
 #[test]
-fun the_grid_ladder_closes_both_ends_and_is_read_against_the_forward() {
-    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    let grid = inventory_grid::initialize(&pricer, frozen_grid_fixture::ratios());
-
-    // Callers supply interior ratios only, so no input can leave a settlement price
-    // outside every bucket: the open ends are the grid's own sentinels.
-    assert_eq!(grid.boundary(0), constants::neg_inf!());
-    assert_eq!(grid.boundary(100), constants::pos_inf!());
-    // The fixture's median ratio is exactly 1.0, so the bucket boundary it lands on
-    // is the forward itself — the ladder is relative to the forward, not absolute.
-    assert_eq!(grid.boundary(50), pricer.forward());
-
-    destroy(grid);
-    cleanup(fx, oracle, harness);
-}
-
-#[test, expected_failure(abort_code = inventory_grid::EInvalidBucketMass)]
-fun grid_rejects_a_bucket_outside_mass_tolerance() {
+fun first_mint_inverts_and_charges_without_a_prior_cut() {
     let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
-    let mut boundaries = frozen_grid_fixture::ratios();
-    *boundaries.borrow_mut(1) = (boundaries[1] + boundaries[2]) / 2;
-    harness.exposure.initialize_inventory_grid(&pricer, boundaries);
-    abort 999
-}
+    assert!(!harness.exposure.has_inventory_grid());
 
-#[test, expected_failure(abort_code = strike_exposure::EInventoryGridAlreadyInitialized)]
-fun grid_can_only_be_initialized_once() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
-    let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInventoryGridBookNotEmpty)]
-fun grid_initialization_rejects_a_nonempty_book() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(0));
-    let pricer = fx.load_pricer_bundle(&oracle);
+    harness.exposure.ensure_inventory_grid(&pricer);
+    assert!(harness.exposure.has_inventory_grid());
     let terms = harness
         .exposure
         .quote_mint_terms(
@@ -297,17 +223,89 @@ fun grid_initialization_rejects_a_nonempty_book() {
             ONE_ORDER,
             true,
         );
+    let charge = terms.inventory_impact_charge();
+    assert!(charge > 0);
     harness.exposure.allocate_mint_order(terms);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
+    assert_eq!(harness.exposure.inventory_impact_potential(), charge);
+
+    cleanup(fx, oracle, harness);
+}
+
+#[test, expected_failure(abort_code = inventory_grid::EInvalidBoundaryCount)]
+fun grid_boundary_count_is_exact() {
+    let (mut fx, oracle, _harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let mut boundaries = frozen_grid_fixture::ratios();
+    boundaries.pop_back();
+    destroy(inventory_grid::initialize(&pricer, boundaries));
     abort 999
 }
 
-#[test, expected_failure(abort_code = strike_exposure::EInventoryGridMarketSettled)]
-fun grid_initialization_rejects_a_settled_market() {
-    let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+#[test, expected_failure(abort_code = inventory_grid::EInvalidBoundary)]
+fun grid_ratios_must_strictly_increase() {
+    let (mut fx, oracle, _harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.record_settlement(test_constants::default_live_price());
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
+    let mut ratios = frozen_grid_fixture::ratios();
+    // Two adjacent quantiles collapsed onto one value, which is how a real ladder
+    // fails: near expiry the distribution narrows until neighbours round together.
+    // Every earlier bucket still carries its 1%, so the ordering rule is what fires.
+    *ratios.borrow_mut(11) = ratios[10];
+    destroy(inventory_grid::initialize(&pricer, ratios));
+    abort 999
+}
+
+#[test]
+fun the_grid_ladder_closes_both_ends_and_is_read_against_the_forward() {
+    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let grid = inventory_grid::from_pricer(&pricer);
+
+    // Invert supplies interior ratios only, so no settlement price sits outside
+    // every bucket: the open ends are the grid's own sentinels.
+    assert_eq!(grid.boundary(0), constants::neg_inf!());
+    assert_eq!(grid.boundary(100), constants::pos_inf!());
+    // The 50% survival strike is ATM, so the median rematerialized rung is the
+    // forward to within a tick of this short-dated fixture.
+    assert!(grid.boundary(50).diff(pricer.forward()) < TEST_TICK_SIZE);
+
+    destroy(grid);
+    cleanup(fx, oracle, harness);
+}
+
+#[test]
+fun from_pricer_hits_the_specified_quantile_targets() {
+    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let grid = inventory_grid::from_pricer(&pricer);
+    let ratios = grid.ratios();
+    assert_eq!(ratios.length(), 99);
+
+    // Targets are the specified 1% ladder, not the invert's own output. Each
+    // rematerialized strike must price to its survival quantile inside the same
+    // 1bp envelope the mass check uses.
+    let mut index = 1;
+    while (index < 100) {
+        let strike = math::mul_div_down(ratios[index - 1], pricer.forward(), math::float_scaling!());
+        let up = pricer.up_price(range_codec::strike_from_raw_boundary(strike));
+        let target = math::float_scaling!() - index * 10_000_000;
+        assert!(up.diff(target) <= 100_000);
+        if (index > 1) {
+            assert!(ratios[index - 1] > ratios[index - 2]);
+        };
+        index = index + 1;
+    };
+
+    destroy(grid);
+    cleanup(fx, oracle, harness);
+}
+
+#[test, expected_failure(abort_code = inventory_grid::EInvalidBucketMass)]
+fun grid_rejects_a_bucket_outside_mass_tolerance() {
+    let (mut fx, oracle, _harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let mut boundaries = frozen_grid_fixture::ratios();
+    *boundaries.borrow_mut(1) = (boundaries[1] + boundaries[2]) / 2;
+    destroy(inventory_grid::initialize(&pricer, boundaries));
     abort 999
 }
 
@@ -410,7 +408,7 @@ fun slicing_one_order_collects_the_same_charge_as_minting_it_whole() {
 fun a_book_that_pays_the_same_everywhere_carries_almost_no_capital() {
     let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
+    harness.exposure.ensure_inventory_grid(&pricer);
     let median_tick = test_constants::default_live_price() / TEST_TICK_SIZE;
 
     let below = harness.exposure.quote_mint_terms(&pricer, 0, median_tick, 0, ONE_ORDER, true);
@@ -434,7 +432,7 @@ fun a_book_that_pays_the_same_everywhere_carries_almost_no_capital() {
 fun placing_away_from_the_peak_costs_less_than_piling_onto_it() {
     let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
-    harness.exposure.initialize_inventory_grid(&pricer, frozen_grid_fixture::ratios());
+    harness.exposure.ensure_inventory_grid(&pricer);
     let (peak_lower, peak_higher) = seeded_order_range();
     let peak = harness
         .exposure
@@ -468,7 +466,7 @@ fun mint_and_total_charge(fx: &mut OracleFixture, pricer: &Pricer, slices: vecto
         expiry_ms - test_constants::default_cadence_period_ms(),
         fx.scenario_mut().ctx(),
     );
-    exposure.initialize_inventory_grid(pricer, frozen_grid_fixture::ratios());
+    exposure.fill_inventory_grid(inventory_grid::initialize(pricer, frozen_grid_fixture::ratios()));
     let (lower, higher) = seeded_order_range();
 
     let mut total = 0;

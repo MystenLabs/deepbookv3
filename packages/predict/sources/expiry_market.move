@@ -712,16 +712,6 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
     market.release_pool_cash(returned_cash_amount)
 }
 
-/// Initialize this market's frozen inventory grid before trading.
-public(package) fun initialize_inventory_grid(
-    market: &mut ExpiryMarket,
-    pricer: &Pricer,
-    ratios: vector<u64>,
-) {
-    market.assert_pricer_bound(pricer);
-    market.strike_exposure.initialize_inventory_grid(pricer, ratios);
-}
-
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
 /// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
@@ -802,6 +792,7 @@ fun mint_prepared(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
+    market.strike_exposure.ensure_inventory_grid(pricer);
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -1164,4 +1155,9 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     market.cash.assert_backing(market.payout_liability());
+}
+
+#[test_only]
+public(package) fun ensure_inventory_grid_for_testing(market: &mut ExpiryMarket, pricer: &Pricer) {
+    market.strike_exposure.ensure_inventory_grid(pricer);
 }

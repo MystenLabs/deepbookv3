@@ -1885,39 +1885,6 @@ export function keeperSettleTx(params: {
     return tx;
 }
 
-// Inputs for one authenticated inventory-grid cut. `ratios` is the 99 interior
-// quantiles as `strike / forward`, 1e9-scaled; the contract supplies the open-end
-// sentinels, materializes the absolute ladder against the forward the pricer loaded
-// in the same PTB resolves, and then verifies the per-bucket mass the caller owns.
-export interface InventoryGridParams extends OracleFeedIds {
-    expiryMarketId: string;
-    protocolConfigId: string;
-    lifecycleCapId: string;
-    ratios: bigint[];
-}
-
-// Initialize a market's inventory-grid ratio ladder (`initialize` only accepts
-// an empty book). Dollar rungs slide with the live forward on every quote.
-//
-// One privileged call over a pricer loaded in the same PTB, so the ratios
-// are read and verified against the surface the market prices at right now.
-export function initializeInventoryGridTx(params: InventoryGridParams): Transaction {
-    const tx = new Transaction();
-    const pricer = loadLivePricer(tx, params);
-    tx.moveCall({
-        target: target("registry", "initialize_inventory_grid"),
-        arguments: [
-            tx.object(REGISTRY_ID),
-            tx.object(params.expiryMarketId),
-            tx.object(params.protocolConfigId),
-            tx.object(params.lifecycleCapId),
-            pricer,
-            tx.pure.vector("u64", params.ratios),
-        ],
-    });
-    return tx;
-}
-
 // Create the sender's canonical derived account wrapper and share it. `new` derives
 // the wrapper at a deterministic address (see `deriveAccountWrapperId`); `share`
 // publishes the shared object the trade flows borrow against.

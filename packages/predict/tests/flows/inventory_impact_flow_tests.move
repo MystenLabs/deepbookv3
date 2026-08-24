@@ -29,7 +29,7 @@ fun mint_charge_stays_with_the_pool_and_a_full_close_refunds_nothing() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.initialize_inventory_grid_bundle(&mut market);
+    fx.ensure_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),
@@ -111,7 +111,6 @@ fun partial_closes_unwind_the_potential_without_a_stored_position_payout() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.initialize_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),
@@ -153,7 +152,7 @@ fun settlement_leaves_the_collected_charge_in_market_cash() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.initialize_inventory_grid_bundle(&mut market);
+    fx.ensure_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),
@@ -196,7 +195,7 @@ fun live_close_that_removes_a_hedge_collects_inventory_charge() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.initialize_inventory_grid_bundle(&mut market);
+    fx.ensure_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),
@@ -277,7 +276,6 @@ fun live_close_inventory_debit_obeys_max_cost() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.initialize_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),

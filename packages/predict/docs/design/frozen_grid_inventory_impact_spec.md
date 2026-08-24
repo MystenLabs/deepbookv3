@@ -32,9 +32,9 @@ Range maxima must not feed the centering term. If a narrow non-tail spike raised
 
 ## Market initialization
 
-Before trading is enabled, an authenticated initializer supplies the 99 interior quantile boundaries as `strike / forward` ratios, 1e9-scaled, together with a valid live pricer bound to that market. The contract supplies the two open-end sentinels itself, multiplies each ratio by the forward that pricer resolved, snapshots the SVI shape, independently evaluates the CDF at every rematerialized boundary, and rejects initialization unless every adjacent bucket has probability mass within one basis point of the 1% target: each mass must lie in `[0.99%, 1.01%]`. The stored pointer is the ratios, not the raw-price ladder.
+The first charged mint inverts the live 1% CDF on-chain. For each interior rung it geometrically bisects strike until `up_price` matches the target survival `1 − i/100`, stores `strike / forward` (1e9-scaled), supplies the two open-end sentinels itself, snapshots the SVI shape, and rejects the mint unless every adjacent bucket has probability mass within one basis point of the 1% target: each mass must lie in `[0.99%, 1.01%]`. The stored pointer is the ratios, not the raw-price ladder.
 
-Boundaries are supplied relative to the forward rather than as absolute prices because pricing reads a strike only as `ln(strike) - ln(forward)`. A bucket's mass is therefore a function of the ratios alone, and a caller's ladder verifies identically no matter where the forward moved between pricing it off-chain and the transaction executing. An equal-mass bucket is only a couple of basis points of the forward wide, so an absolute ladder loses that race against spot within a second and most cuts would abort the mass check.
+Init and that first trade are one transaction, so there is no empty-book race and no lifecycle-cap cut. A surface that cannot invert aborts the mint. The default rate is zero, so markets that left the charge off never invert.
 
 Every later quote rematerializes `boundary_i = ratio_i × F_live` against the frozen SVI shape. Live oracle updates continue to price trades and drive ordinary fees, admission, valuation, and settlement; they also slide the dollar rungs so ATM stays in the body after a spot jump. There is no keeper refresh: the same stored ratios are the pointer for the market's life. Time-decay of the smile can still unbalance rung masses on long markets; that is a shape-stickiness question, not a spot-cut question.
 
@@ -107,7 +107,7 @@ The stored ratios keep the potential on one SVI shape, while the live forward sl
 
 ## Acceptance before enabling a nonzero rate
 
-- Grid initialization is authenticated and independently verifies each bucket on-chain within the fixed one-basis-point mass tolerance; initialization is required before trading.
+- The first charged mint inverts the 1% ladder on-chain and independently verifies each bucket within the fixed one-basis-point mass tolerance; a surface that cannot invert aborts that mint.
 - Prospective bucket updates match full recomputation across narrow, broad, open-ended, overlapping, partial-close, and cross-bucket transitions.
 - Top-five and `E_frozen` arithmetic match an independent reference under all tie and rounding cases.
 - Repeated narrow spikes outside the top five cannot lower `K95_grid` beyond their actual frozen expected-payout contribution.

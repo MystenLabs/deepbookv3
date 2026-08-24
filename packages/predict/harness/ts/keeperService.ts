@@ -10,14 +10,12 @@
 // keeper fetches each expiry's EXACT spot from the Pyth Lazer history endpoint), so a BS
 // live-pricing outage defers only the flush, never settlement. Each tick step is isolated so
 // one transient sub-step abort can't skip the rest of the tick.
-import { CADENCES, FAR_MARKET_MIN_HORIZON_MS } from "./predictConfig.js";
+import { CADENCES } from "./predictConfig.js";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
-import { GRID_BUCKETS, gridBoundaries } from "./inventoryGrid.js";
 import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
-import { forwardFor, pricerEnvFor, readSnapshot } from "./oracleEnv.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
-import { definedEnv, flagEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
+import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
@@ -25,7 +23,6 @@ import {
   clockTimestampMs,
   executeAndWait,
   fundAddressDusdcTx,
-  initializeInventoryGridTx,
   keeperFlushTx,
   keeperSettleTx,
   readActiveMarketIds,
@@ -45,10 +42,6 @@ const INSTANCE_DIR = requiredEnv("INSTANCE_DIR");
 const MARKETS_PATH = `${INSTANCE_DIR}/markets.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
 const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
-// Cut and re-cut inventory grids. Off by default: the grid is keeper policy, not
-// a contract requirement at the zero rate every other strategy runs at, and the
-// extra PTB per market per tick would move their measured baselines.
-const INVENTORY_GRID = flagEnv("KEEPER_INVENTORY_GRID");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -61,14 +54,6 @@ let consecutiveSettleDefers = 0; // ticks in a row with an unsettled expired mar
 // successful rebalance, removed when the market settles; any active market not in here is retried
 // each tick (a roll whose rebalance failed, or one picked up from chain after a restart).
 const funded = new Set<string>();
-// Markets whose inventory grid has been cut. `initialize` only accepts an empty
-// book, so a market enters this set on the tick it is rolled and leaves it when
-// it settles; everything after that is a `refresh`.
-const gridded = new Set<string>();
-// Markets that can no longer be cut. `initialize` requires an empty book, so a
-// market that took an order before its grid landed is permanently un-griddable
-// and retrying it every tick would just burn a transaction per tick forever.
-const ungriddable = new Set<string>();
 
 async function expiryOf(marketId: string): Promise<number> {
   const cached = expiryCache.get(marketId);
@@ -103,7 +88,7 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
         keeperSettleTx({ pythFeedId: feeds.pythFeedId, expiryMs: BigInt(m.expiryMs), price, marketId: m.id, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID }),
         "settle",
       );
-      expiryCache.delete(m.id); funded.delete(m.id); gridded.delete(m.id); // swept off-chain; forget
+      expiryCache.delete(m.id); funded.delete(m.id); // swept off-chain; forget
       appendTrace("keeper", { type: "settle", market: m.id, expiryMs: m.expiryMs });
     } catch (e) {
       ok = false;
@@ -113,63 +98,6 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
     }
   }
   return { ok, lastErr, count: expired.length };
-}
-
-// Initialize each far market's ratio ladder once (`KEEPER_INVENTORY_GRID=1`).
-// Dollar rungs are `ratio × F_live` on every quote, so later ticks do not
-// re-cut. A market is initialized on the tick it is rolled, because
-// `initialize` only accepts an empty book.
-//
-// Scoped to markets at least FAR_MARKET_MIN_HORIZON_MS out, which is the same
-// set a capacity strategy fills. A near-expiry market cannot be partitioned
-// into equal-mass buckets — its quantiles collapse onto the forward, and the
-// ones that do not sit on a surface whose roll-down is fast enough that clock
-// skew between this process and the on-chain `Clock` fails the mass check.
-async function cutGrids(feeds: Feeds, lifecycleCapId: string, live: Mkt[]): Promise<void> {
-  const snapshot = readSnapshot(INSTANCE_DIR);
-  const horizon = Date.now() + FAR_MARKET_MIN_HORIZON_MS;
-  for (const m of live) {
-    if (gridded.has(m.id) || ungriddable.has(m.id) || m.expiryMs <= horizon) continue;
-    const env = pricerEnvFor(snapshot, m.expiryMs, Date.now());
-    if (!env) continue; // cold snapshot for this expiry — retried next tick
-    const ratios = gridBoundaries(env.svi, forwardFor(env));
-    // Near expiry the quantiles collapse onto the forward and adjacent ratios
-    // round to one value, which the contract rejects. Skipping leaves the
-    // market un-gridded until a later tick can invert a non-degenerate surface.
-    if (!ratios) continue;
-    try {
-      const result = await executeAndWait(
-        initializeInventoryGridTx({
-          ...feeds,
-          expiryMarketId: m.id,
-          protocolConfigId: PROTOCOL_CONFIG_ID,
-          lifecycleCapId,
-          ratios,
-        }),
-        "grid-init",
-      );
-      gridded.add(m.id);
-      appendTrace("keeper", {
-        type: "gridInit",
-        market: m.id,
-        expiryMs: m.expiryMs,
-        buckets: GRID_BUCKETS,
-        gas: gasOf(result),
-        compGas: computationOf(result),
-      });
-    } catch (e) {
-      const tag = errorTag(e);
-      // A keeper restart re-reads the active set from chain, so a market whose
-      // grid was cut by the previous process reports back as un-gridded. The
-      // contract's own already-initialized guard is the authority on that.
-      if (tag === "strike_exposure:9") gridded.add(m.id);
-      // EInventoryGridBookNotEmpty: an order beat the cut, so this market can
-      // never be gridded. Give up on it rather than retrying every tick.
-      if (tag === "strike_exposure:8") ungriddable.add(m.id);
-      appendTrace("keeper", { type: "fail", lane: "grid-init", market: m.id, tag });
-      console.warn(`[keeper] grid init deferred ${m.id.slice(0, 10)}: ${e instanceof Error ? e.message.slice(0, 120) : e}`);
-    }
-  }
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string) {
@@ -273,21 +201,13 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     }
   }
 
-  // 4. Inventory grids, before the markets are advertised: a market rolled this tick must be
-  //    gridded while its book is still empty, which is the only state `initialize` accepts.
-  if (INVENTORY_GRID) await cutGrids(feeds, lifecycleCapId, live.filter((m) => funded.has(m.id)));
-
   // Publish only the FUNDED live markets for the trade generator (never advertise unfunded).
-  // Under KEEPER_INVENTORY_GRID a market must also be gridded first: one order landing before
-  // the cut makes the market permanently un-griddable, which silently costs the run its
-  // measurement target. That narrows the advertised set to the far markets the grid lane cuts,
-  // which is the set the strategy asking for grids draws from anyway.
-  const advertised = live.filter((m) => funded.has(m.id) && (!INVENTORY_GRID || gridded.has(m.id)));
+  const advertised = live.filter((m) => funded.has(m.id));
   atomicWriteFile(MARKETS_PATH, JSON.stringify(advertised.map((m) => ({ id: m.id, expiryMs: m.expiryMs }))));
 }
 
 async function main() {
-  console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms inventoryGrid=${INVENTORY_GRID} inventoryImpactMaxRate=${process.env.INVENTORY_IMPACT_MAX_RATE ?? "0"}`);
+  console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms inventoryImpactMaxRate=${process.env.INVENTORY_IMPACT_MAX_RATE ?? "0"}`);
   const { feeds, lifecycleCapId } = await setupFeedsAndConfig(CADENCE_IDS);
   await bootstrapPool(lifecycleCapId);
   for (const addr of TRADER_ADDRESSES) {

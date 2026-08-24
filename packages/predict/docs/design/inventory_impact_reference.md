@@ -195,11 +195,11 @@ Those two groupings floor at different points, so a close subtracts saturating, 
 
 Walking the tree is what hits the 1,000-node wall. Each distinct strike is a dynamic-field child, and the per-transaction object-cache ceiling sits at the same 1,000 nodes the tree is allowed to reach. A market at its permitted maximum therefore cannot be valued by reading that tree in one transaction. The array lives inline in the market object — 16 KB, zero children — so a quote loads no payout-tree nodes at all. That removes the ceiling by construction rather than by tuning. The flush still has the problem, because it still needs the exact tree.
 
-### The keeper owns initialize, not a cadence
+### The first mint owns initialize
 
-The contract will not invent a ladder. A lifecycle-cap holder has to submit the 99 ratios once, on an empty book. That is the only keeper cut.
+The first charged mint already has a live pricer. That transaction inverts the 1% CDF (99 geometric bisections), stores the ratios, and then quotes and allocates against them. Init and the first trade are one PTB, so there is no empty-book race and no grid keeper.
 
-The keeper prices the current SVI, emits the ratio ladder, and sends `initialize_inventory_grid` on the tick a far market is rolled, before the market is advertised. One order landing first makes the market permanently un-griddable, because initialization requires an empty book and there is no bulk import from the tree. Later ticks do not re-cut: dollar rungs are `ratio × F_live` on the quote itself. Near-expiry markets that cannot invert a 1% ladder stay un-gridded until a later tick can.
+A surface that cannot invert — near expiry the quantiles collapse onto the forward and adjacent ratios round together — aborts that mint. The default rate is zero, so this only hits markets that turned the charge on. Later quotes rematerialize `ratio × F_live`; they do not re-invert.
 
 ### Why the pointer is ratios
 

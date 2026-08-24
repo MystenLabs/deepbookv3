@@ -32,7 +32,6 @@ use deepbook_predict::{
     builder_code::BuilderCode,
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
-    frozen_grid_fixture,
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
@@ -513,8 +512,8 @@ public fun set_template_inventory_impact_scale(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
-/// Initialize a market's production frozen grid from its current validated pricer.
-public fun initialize_inventory_grid_bundle(self: &mut Fixture, market: &mut MarketBundle) {
+/// Persist the first-mint invert so a later read-only quote does not invert again.
+public fun ensure_inventory_grid_bundle(self: &mut Fixture, market: &mut MarketBundle) {
     let pricer = market
         .market
         .load_live_pricer(
@@ -526,16 +525,7 @@ public fun initialize_inventory_grid_bundle(self: &mut Fixture, market: &mut Mar
             &self.clock,
             self.scenario.ctx(),
         );
-    let boundaries = frozen_grid_fixture::ratios();
-    let registry = self.scenario.take_shared<Registry>();
-    registry.initialize_inventory_grid(
-        &mut market.market,
-        &market.config,
-        &self.lifecycle_cap,
-        &pricer,
-        boundaries,
-    );
-    return_shared(registry);
+    market.market.ensure_inventory_grid_for_testing(&pricer);
 }
 
 /// Resize the default cadence's pool allocation terms through the production

@@ -483,7 +483,7 @@ class LifecycleTests(unittest.TestCase):
         metadata = {
             # Fields the campaign reads but these orchestration cases do not
             # exercise are defaulted here so each case declares only what it asserts on.
-            "strategies": {strategy: {"inventoryGrid": False, **strategy_metadata}},
+            "strategies": {strategy: {**strategy_metadata}},
             "cadences": [],
         }
         with contextlib.ExitStack() as patches:

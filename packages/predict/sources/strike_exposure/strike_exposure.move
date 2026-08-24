@@ -29,10 +29,6 @@ const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
-const EInventoryGridMarketSettled: u64 = 6;
-const EInventoryGridNotInitialized: u64 = 7;
-const EInventoryGridBookNotEmpty: u64 = 8;
-const EInventoryGridAlreadyInitialized: u64 = 9;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -48,7 +44,7 @@ public struct StrikeExposure has store {
     reference_tick: Option<u64>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
-    /// Immutable probability snapshot and rolling frozen-grid capital state.
+    /// Ratio ladder inverted on the first charged mint, plus the cell mirror.
     inventory_grid: Option<InventoryGrid>,
     next_order_sequence: u64,
     /// Terminal settlement price once the exposure has entered its settled phase.
@@ -262,8 +258,6 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     // Preserve the zero-rate kill switch through the post-trade backing check:
     // disabled markets do not perform a second payout-tree read here.
     if (exposure.is_settled() || exposure.config.inventory_impact_max_rate() == 0) return 0;
-    // A nonzero-rate market may be funded before its authenticated grid is
-    // initialized; no order can enter that state because quote paths require it.
     if (exposure.inventory_grid.is_none()) return 0;
     exposure.inventory_impact_potential_for_capital(exposure.inventory_grid.borrow().k95())
 }
@@ -306,19 +300,12 @@ public(package) fun quote_mint_terms(
     let premium = exposure.config.assert_mint_admission(entry_probability, quantity);
     // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
-    let (inventory_impact_charge, frozen_expected_payout) = if (
-        exposure.config.inventory_impact_max_rate() == 0
-    ) {
-        (0, 0)
-    } else {
-        assert!(exposure.inventory_grid.is_some(), EInventoryGridNotInitialized);
-        let change = exposure
-            .inventory_grid
-            .borrow()
-            .quote_open(pricer, lower_tick, higher_tick, quantity, exposure.tick_size);
-        let charge = exposure.inventory_impact_charge_for(&change);
-        (charge, change.frozen_expected_payout_delta())
-    };
+    let (inventory_impact_charge, frozen_expected_payout) = exposure.quote_open_inventory(
+        pricer,
+        lower_tick,
+        higher_tick,
+        quantity,
+    );
     MintTerms {
         expiry_market_id: exposure.expiry_market_id,
         lower_tick,
@@ -386,12 +373,13 @@ public(package) fun quote_live_close(
     assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
 
     let range_probability = exposure.order_range_price(pricer, order);
+    // A charged book always has a grid: the first mint inverted it. Rate-zero
+    // books never grow one, so a close against them cannot raise K.
     let (inventory_impact_charge, frozen_expected_payout) = if (
-        exposure.config.inventory_impact_max_rate() == 0
+        exposure.config.inventory_impact_max_rate() == 0 || exposure.inventory_grid.is_none()
     ) {
         (0, 0)
     } else {
-        assert!(exposure.inventory_grid.is_some(), EInventoryGridNotInitialized);
         let change = exposure
             .inventory_grid
             .borrow()
@@ -467,17 +455,14 @@ public(package) fun process_settled_close(exposure: &mut StrikeExposure, order: 
     payout
 }
 
-/// Initialize the frozen probability grid before the first order.
-public(package) fun initialize_inventory_grid(
-    exposure: &mut StrikeExposure,
-    pricer: &Pricer,
-    ratios: vector<u64>,
-) {
-    assert!(!exposure.is_settled(), EInventoryGridMarketSettled);
-    assert!(exposure.inventory_grid.is_none(), EInventoryGridAlreadyInitialized);
-    let (_, total_payout) = exposure.payout.payout_reserve_terms();
-    assert!(total_payout == 0, EInventoryGridBookNotEmpty);
-    exposure.inventory_grid.fill(inventory_grid::initialize(pricer, ratios));
+/// Invert the live 1% ladder on the first charged mint and persist it.
+///
+/// The rate is snapshotted at market creation, so the first charged mint is
+/// always an empty book. A later call is a no-op. Rate zero never builds a grid.
+public(package) fun ensure_inventory_grid(exposure: &mut StrikeExposure, pricer: &Pricer) {
+    if (exposure.config.inventory_impact_max_rate() == 0) return;
+    if (exposure.inventory_grid.is_some()) return;
+    exposure.inventory_grid.fill(inventory_grid::from_pricer(pricer));
 }
 
 /// Enter the settled phase by recording the terminal price and aggregate payout
@@ -544,6 +529,42 @@ fun admitted_entry_probability(
     pricer.range_price(lower, higher)
 }
 
+/// Charge one prospective open. A stored grid is the book; a missing grid is
+/// inverted ephemerally so a read-only quote before the first mint still prices
+/// the charge the mutation will persist.
+fun quote_open_inventory(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+): (u64, u64) {
+    if (exposure.config.inventory_impact_max_rate() == 0) return (0, 0);
+    if (exposure.inventory_grid.is_some()) {
+        return exposure.charge_open_on(
+            exposure.inventory_grid.borrow(),
+            pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+        )
+    };
+    let grid = inventory_grid::from_pricer(pricer);
+    exposure.charge_open_on(&grid, pricer, lower_tick, higher_tick, quantity)
+}
+
+fun charge_open_on(
+    exposure: &StrikeExposure,
+    grid: &InventoryGrid,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+): (u64, u64) {
+    let change = grid.quote_open(pricer, lower_tick, higher_tick, quantity, exposure.tick_size);
+    (exposure.inventory_impact_charge_for(&change), change.frozen_expected_payout_delta())
+}
+
 fun inventory_impact_potential_for_capital(exposure: &StrikeExposure, capital: u64): u64 {
     let max_rate = exposure.config.inventory_impact_max_rate();
     if (max_rate == 0 || capital == 0) return 0;
@@ -606,4 +627,19 @@ fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order)
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )
+}
+
+#[test_only]
+public(package) fun fill_inventory_grid(exposure: &mut StrikeExposure, grid: InventoryGrid) {
+    exposure.inventory_grid.fill(grid);
+}
+
+#[test_only]
+public(package) fun has_inventory_grid(exposure: &StrikeExposure): bool {
+    exposure.inventory_grid.is_some()
+}
+
+#[test_only]
+public(package) fun test_inventory_grid(exposure: &StrikeExposure): &InventoryGrid {
+    exposure.inventory_grid.borrow()
 }

@@ -138,11 +138,9 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
     tickMs: profile === "tree" ? 1_200 : 1_500,
     fund: FUND,
     gasBudget: GAS_BUDGET,
-    // The tree profile is the only book big enough to price an inventory-grid
-    // refresh against a full market: the refresh now reads the inline cell mirror,
-    // and this profile still drives the node count the flush (not the refresh)
-    // hits the object-cache ceiling at.
-    inventoryGrid: profile === "tree" || profile === "user-on",
+    // The tree profile still drives the node count the flush hits the
+    // object-cache ceiling at. user-on turns the inventory-impact rate on;
+    // the first mint inverts the grid, so there is no keeper cut.
     inventoryImpactMaxRate: profile === "user-on" ? USER_IMPACT_RATE : 0n,
     maxOps: USER_PROFILES.has(profile) ? 40 : 0,
     expect:

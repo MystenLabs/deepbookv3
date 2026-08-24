@@ -8,9 +8,9 @@
 /// `1_000_000_000` is the forward itself. The open ends are the grid's own
 /// sentinels and are not supplied here.
 ///
-/// These are initializer inputs, not expected economic outputs. They were generated
-/// against the pinned Move pricer; the production initializer still independently
-/// verifies every adjacent frozen probability mass on-chain.
+/// These are inject-ladder inputs for mass and ordering guards, not the production
+/// invert. They were generated against the pinned Move pricer so a well-formed
+/// ladder still verifies on-chain; production first-mint invert builds its own.
 #[test_only]
 module deepbook_predict::frozen_grid_fixture;
 

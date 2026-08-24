@@ -109,10 +109,6 @@ export interface Strategy {
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
   fund: bigint; // DUSDC the keeper should fund this strategy's trader
   gasBudget?: number; // MIST; raise only for measurements whose PTB must reach a protocol wall
-  // Ask this strategy's keeper to cut and re-cut inventory grids. Off elsewhere: it
-  // costs an extra PTB per tick, which would move every other strategy's measured
-  // baseline, and the grid is inert at the zero inventory-impact rate they run at.
-  inventoryGrid?: boolean;
   // Template `inventory_impact_max_rate` snapshotted onto markets this arm creates.
   // 1e9-scaled. Zero is the protocol default and skips the quote capital walk.
   inventoryImpactMaxRate?: bigint;

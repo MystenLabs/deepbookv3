@@ -1,12 +1,9 @@
-// Inventory-grid boundary generator.
+// Off-chain replica of the on-chain 1% invert.
 //
-// `inventory_grid::initialize` takes the 99 interior bucket boundaries as
-// `strike / forward`, 1e9-scaled, multiplies each by the forward the transaction
-// itself resolves, and then accepts the partition only if every one of the 100
-// buckets carries 1% of the settlement distribution's probability mass (1e7 of 1e9)
-// within 1e5. Later quotes rematerialize the same stored ratios against the live
-// forward. So the job here is the 1%..99% quantiles of that distribution
-// expressed relative to the forward.
+// The first charged mint inverts the live surface on-chain and stores the 99
+// interior `strike / forward` ratios, 1e9-scaled. Later quotes rematerialize
+// those ratios against the live forward. This module is the float twin of that
+// invert, used by simulations and analysis rather than submitted to the chain.
 //
 // Submitting ratios rather than absolute prices is what makes the cut operable at
 // all. Pricing reads a strike only as `ln(strike) - ln(forward)`, so a bucket's mass
@@ -55,10 +52,10 @@ function strikeAtUpPrice(svi: Svi, forward: number, target: number): number {
  * The 99 interior boundaries cutting `svi`/`forward` into 100 equal-mass buckets,
  * as 1e9-scaled multiples of the forward, or null if the surface is degenerate.
  *
- * Returns null rather than throwing so a caller on a tick loop defers the cut
- * instead of dying: as remaining time goes to zero the distribution collapses
- * onto the forward and adjacent quantiles round to the same ratio, which the
- * contract rejects as a non-increasing boundary.
+ * Returns null rather than throwing so a caller can skip a degenerate surface:
+ * as remaining time goes to zero the distribution collapses onto the forward
+ * and adjacent quantiles round to the same ratio, which the contract rejects
+ * as a non-increasing boundary.
  */
 export function gridBoundaries(svi: Svi, forward: number): bigint[] | null {
   if (!Number.isFinite(forward) || forward <= 0) return null;

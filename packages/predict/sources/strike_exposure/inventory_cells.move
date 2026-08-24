@@ -70,7 +70,7 @@ macro fun min_step_ln(): u64 { 4_000 }
 /// resolution wherever the forward has moved to, so fidelity is invariant to spot
 /// inside the span. This is the same property that makes the boundary ratios work,
 /// arriving for the same reason.
-public struct InventoryCells has store {
+public struct InventoryCells has drop, store {
     anchor_ln: I64,
     step_ln: u64,
     values: vector<u64>,

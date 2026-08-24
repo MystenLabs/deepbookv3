@@ -1,9 +1,8 @@
 // The updater-maintained oracle snapshot and its mapping onto the pricing inputs
 // the contract will use.
 //
-// Owned here rather than in either consumer because both the trader (strategy
-// resolution) and the keeper (inventory-grid boundaries) have to price against
-// the same surface the chain does; two copies of this derivation would drift.
+// Owned here rather than in the trader so strategy resolution prices against
+// the same surface the chain does; a second copy of this derivation would drift.
 import { readFileSync } from "node:fs";
 
 import { forwardPrice, rollDownSvi } from "./pricer.js";

@@ -3,10 +3,11 @@
 
 /// Ratio-axis 1%-probability inventory grid for one expiry exposure book.
 ///
-/// The 99 `strike / forward` rungs are the shape freeze. A quote multiplies them
-/// by the live forward and reads the book through the inline cell mirror, so spot
-/// moving does not require a keeper re-cut. The grid never touches the payout
-/// tree: the tree is the source of truth for settlement backing and NAV.
+/// The first mint with a nonzero rate inverts the live 1% CDF, stores the 99
+/// `strike / forward` rungs, and freezes the SVI shape. Later quotes rematerialize
+/// those ratios against the live forward and read the book through the inline cell
+/// mirror, so spot moving does not require a keeper. The grid never touches the
+/// payout tree: the tree is the source of truth for settlement backing and NAV.
 module deepbook_predict::inventory_grid;
 
 use deepbook_predict::{
@@ -29,6 +30,12 @@ macro fun target_bucket_mass(): u64 { 10_000_000 }
 
 macro fun bucket_mass_tolerance(): u64 { 100_000 }
 
+macro fun bisection_passes(): u64 { 40 }
+
+macro fun invert_price_tolerance(): u64 { 1_000 }
+
+macro fun bracket_multiple(): u64 { 10_000 }
+
 /// One ratio ladder plus the payout mirror read under it.
 ///
 /// `ratios` stay fixed after initialize. Dollar rungs are `ratio × F` at quote
@@ -38,7 +45,7 @@ macro fun bucket_mass_tolerance(): u64 { 100_000 }
 /// `frozen_expected_payout` is only a centering term: opens and closes move it
 /// by the snapped cell-span mass under the quote's (frozen shape, live forward)
 /// view. A close that empties the mirror clears the term outright.
-public struct InventoryGrid has store {
+public struct InventoryGrid has drop, store {
     /// Interior 1%..99% rungs as `strike / forward`, 1e9-scaled.
     ratios: vector<u64>,
     frozen_pricer: FrozenPricer,
@@ -88,6 +95,13 @@ public(package) fun frozen_expected_payout(
     math::mul_down(probability, quantity)
 }
 
+/// Invert the live surface into the 99 interior 1% rungs and freeze them.
+public(package) fun from_pricer(pricer: &Pricer): InventoryGrid {
+    initialize(pricer, invert_quantile_ratios(pricer))
+}
+
+/// Freeze a supplied ratio ladder. Production calls `from_pricer`; this path
+/// exists so tests can inject a bad ladder into the mass and ordering guards.
 public(package) fun initialize(pricer: &Pricer, ratios: vector<u64>): InventoryGrid {
     let boundaries = materialized_ladder(pricer.forward(), &ratios);
     let frozen_pricer = verified_snapshot(pricer, &boundaries);
@@ -252,13 +266,76 @@ public(package) fun capital_from_components(
     tail_average.saturating_sub(frozen_expected_payout)
 }
 
+/// Invert the 1%..99% survival targets as `strike / forward`, 1e9-scaled.
+///
+/// UP price is monotone in strike, so each quantile is a geometric bisection
+/// against the live pricer. The first mint runs this once; later quotes
+/// rematerialize the stored ratios against `F_live`.
+fun invert_quantile_ratios(pricer: &Pricer): vector<u64> {
+    let forward = pricer.forward();
+    let scale = math::float_scaling!();
+    let high_cap = high_bracket(scale);
+    let mut search_low = (scale / bracket_multiple!()).max(1);
+    let mut ratios = vector[];
+    let mut index = 1;
+    while (index < bucket_count!()) {
+        let target = scale - index * target_bucket_mass!();
+        // Bisect the stored ratio, and price the rematerialized strike
+        // `mul_down(ratio, forward)` so the mass check sees the same rung.
+        let ratio = ratio_at_up_price(pricer, forward, target, search_low, high_cap);
+        assert!(ratio > 0, EInvalidBoundary);
+        if (ratios.length() > 0) {
+            assert!(ratio > ratios[ratios.length() - 1], EInvalidBoundary);
+        };
+        ratios.push_back(ratio);
+        search_low = ratio;
+        index = index + 1;
+    };
+    ratios
+}
+
+fun ratio_at_up_price(
+    pricer: &Pricer,
+    forward: u64,
+    target: u64,
+    mut low: u64,
+    mut high: u64,
+): u64 {
+    let mut pass = 0;
+    while (pass < bisection_passes!()) {
+        if (high - low <= 1) return geometric_mid(low, high);
+        let mid = geometric_mid(low, high);
+        if (mid == low || mid == high) return mid;
+        let up = pricer.up_price(
+            range_codec::strike_from_raw_boundary(math::mul_down(mid, forward)),
+        );
+        if (up.diff(target) <= invert_price_tolerance!()) return mid;
+        if (up > target) {
+            low = mid;
+        } else {
+            high = mid;
+        };
+        pass = pass + 1;
+    };
+    geometric_mid(low, high)
+}
+
+fun high_bracket(scale: u64): u64 {
+    let max = std::u64::max_value!();
+    if (scale > max / bracket_multiple!()) max else scale * bracket_multiple!()
+}
+
+fun geometric_mid(low: u64, high: u64): u64 {
+    (math::sqrt_u128_down((low as u128) * (high as u128)) as u64)
+}
+
 /// Turn stored forward-relative quantiles into dollar rungs at `forward`.
 ///
-/// Callers submit the 99 interior boundaries as `strike / forward`, 1e9-scaled, and
-/// the open ends are supplied by the sentinels rather than by the caller. Pricing
-/// reads a strike only as `ln(strike) - ln(forward)`, so a bucket's mass is a
-/// function of these ratios alone. Initialize verifies that once; every later
-/// quote rematerializes the same ratios against the live forward.
+/// The 99 interior boundaries are `strike / forward`, 1e9-scaled, and the open
+/// ends are the sentinels. Pricing reads a strike only as `ln(strike) - ln(forward)`,
+/// so a bucket's mass is a function of these ratios alone. Initialize verifies
+/// that once; every later quote rematerializes the same ratios against the live
+/// forward.
 fun materialized_ladder(forward: u64, ratios: &vector<u64>): vector<u64> {
     assert!(ratios.length() == bucket_count!() - 1, EInvalidBoundaryCount);
     let mut boundaries = vector[constants::neg_inf!()];
@@ -286,7 +363,7 @@ fun verified_snapshot(pricer: &Pricer, boundaries: &vector<u64>): FrozenPricer {
     // The buckets partition the line, so each interior boundary is one bucket's top
     // and the next one's bottom. Carrying its UP price down the ladder prices every
     // boundary once; a `frozen_range_price` per bucket prices all 99 finite ones
-    // twice, and this runs on every refresh.
+    // twice.
     let mut lower_up_price = frozen_pricer.frozen_up_price(
         range_codec::strike_from_raw_boundary(boundaries[0]),
     );
@@ -380,4 +457,9 @@ public(package) fun current_frozen_expected_payout(grid: &InventoryGrid): u64 {
 #[test_only]
 public(package) fun cells(grid: &InventoryGrid): &InventoryCells {
     &grid.cells
+}
+
+#[test_only]
+public(package) fun ratios(grid: &InventoryGrid): vector<u64> {
+    grid.ratios
 }
