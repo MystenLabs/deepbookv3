@@ -372,18 +372,21 @@ public fun seal_valuation_snapshot(
 /// already folded — as-of-snapshot semantics either way).
 ///
 /// This is the resumable stage: any transaction after the seal, one market per
-/// transaction (see `constants::max_payout_tree_nodes`), reading no oracle — the
-/// frozen snapshot alone decides both the branch and the mark. A still-live
-/// market is rebalanced toward its cash target first; one that expired mid-window
-/// is valued as-is (live rebalancing must not run for expired markets), and its
-/// settlement waits only for this call to clear the stamp. Cash the rebalance
-/// moves is conserved between vault idle and the market row, so it cannot change
-/// the pool total the flush prices.
+/// transaction (see `constants::max_payout_tree_nodes`), reading no oracle and no
+/// clock — the frozen snapshot alone decides both the branch and the mark. For a
+/// live market this stage is MEASUREMENT-ONLY: cash maintenance is decoupled from
+/// the flush (the standalone permissionless `rebalance_expiry_cash` runs before a
+/// flush starts or after it finishes, never inside the window), so no unrecorded
+/// cash movement can sit between the stamp's rollback and the zero floors it
+/// feeds — the snapshot formula holds exactly in every regime, including a
+/// floor-clamped market. Only the settled sweep moves cash here, and its return
+/// lands in idle, which the finish measures. A market that expired mid-window is
+/// valued at its frozen pre-expiry mark, and its settlement waits only for this
+/// call to clear the stamp.
 public fun value_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    clock: &Clock,
     ctx: &TxContext,
 ) {
     config.assert_version();
@@ -411,9 +414,6 @@ public fun value_expiry(
         vault.sweep_settled_expiry(market, config);
         0
     } else {
-        if (clock.timestamp_ms() < market.expiry()) {
-            vault.rebalance_live_expiry(market, expiry_market_id);
-        };
         let nav = market.snapshot_nav(frozen.borrow());
         market.clear_valuation_stamp();
         nav
@@ -555,8 +555,8 @@ public fun finish_flush(
 ///
 /// Partial NAV is discarded rather than reused: the frozen marks are only sound
 /// as a simultaneous set, so a later flush must re-snapshot. Cash already moved
-/// by `value_expiry`'s rebalance/sweep stays moved — those are
-/// invariant-preserving per-market operations that stand on their own. Market
+/// by `value_expiry`'s settled sweeps stays moved — the sweep is an
+/// invariant-preserving per-market operation that stands on its own. Market
 /// stamps are not visited: releasing the flag makes every one of them stale, and
 /// the next trade or settle on each market discards it.
 public fun abort_valuation(vault: &mut PoolVault, config: &mut ProtocolConfig, clock: &Clock) {

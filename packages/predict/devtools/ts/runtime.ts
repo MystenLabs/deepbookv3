@@ -1422,7 +1422,6 @@ function valueExpiryTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
-            tx.object(CLOCK_ID),
         ],
     });
     return tx;
@@ -2028,8 +2027,8 @@ export function bareFlushTx(params: {
 // (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
 // are only the boundary-race STRAGGLERS that expired since. Their exact-expiry
 // observations are inserted and explicitly settled before the snapshot in the SAME
-// transaction — `try_settle` refuses a snapshotted-and-not-yet-valued market, so it must
-// run before `start_pool_valuation` engages the lock (it does here, earlier in the PTB).
+// transaction — `try_settle` refuses a market once `snapshot_expiry_pricer` stamps it,
+// so the settle commands run earlier in this PTB than the stamping commands do.
 // These commands are race-avoidance, not the durable path: a BS outage aborts the
 // snapshot PTB (reverting them), but the settlement lane already settled durably, so no
 // brick. Live-market valuation reads the updater-maintained fresh BS feed via the

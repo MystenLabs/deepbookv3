@@ -97,6 +97,10 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
+    // Cash maintenance is decoupled from the flush: the keeper rebalances each
+    // market to its band BEFORE starting; the flush itself moves no live cash.
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    fx.rebalance_expiry_cash(&mut vault, &mut m2, &config);
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
@@ -1102,6 +1106,9 @@ fun a_stale_market_alongside_a_live_one_is_skipped_and_the_live_one_still_values
 
     // Drive BOTH through both stages, exactly as a caller holding a stale list would.
     // `expected` is {live}; `doomed` is skipped by each stage without failing the flush.
+    // Cash maintenance is decoupled from the flush: rebalance the live market to
+    // its band BEFORE starting; the flush itself moves no live cash.
+    fx.rebalance_expiry_cash(&mut vault, &mut m_live, &config);
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(
         &stage,

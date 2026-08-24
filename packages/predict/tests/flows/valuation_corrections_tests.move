@@ -470,6 +470,38 @@ fun a_stale_stamp_is_discarded_by_the_next_trade() {
     fx.finish();
 }
 
+#[test]
+fun value_expiry_moves_no_cash_for_a_live_market() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    // Measurement-only: a live market's valuation reads the books and moves
+    // nothing, so no unrecorded cash sits between the stamp rollback and the
+    // reconstruction's zero floors. Cash maintenance runs outside the window.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    let idle_before = helpers::vault(&market).idle_balance();
+    let cash_before = helpers::market(&market).cash_balance();
+    fx.value_expiry_bundle(&mut market);
+    assert_eq!(helpers::vault(&market).idle_balance(), idle_before);
+    assert_eq!(helpers::market(&market).cash_balance(), cash_before);
+    fx.finish_flush_bundle(&mut market, option::none(), option::none());
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 // === The delta-log cap ===
 
 #[test, expected_failure(abort_code = expiry_market::EValuationLogFull)]

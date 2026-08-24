@@ -782,9 +782,18 @@ public(package) fun clear_valuation_stamp(market: &mut ExpiryMarket) {
 /// free cash (balance net of the impact escrow, floored) minus the marked
 /// liability of the snapshot-instant book, floored at zero. Reconstruction
 /// `(live + removed) - added` cannot underflow: the snapshot quantity was a valid
-/// u64, so `live + removed = snapshot + added >= added`.
+/// u64, so `live + removed = snapshot + added >= added`. The zero floor is exact,
+/// not a distortion surface: `value_expiry` is measurement-only for live markets
+/// (no unrecorded cash moves between the rollback and this floor), and the cash
+/// backing invariant keeps the pre-floor value above zero anyway, up to P-13's
+/// per-boundary rounding dust (marked liability never exceeds the payout
+/// liability that backing requires cash to cover).
 public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
+    // Defensive, structurally unreachable: the only caller is `plp::value_expiry`
+    // on a frozen-live market, which its own flush's snapshot stage stamped, and
+    // the stamp cannot go stale while that flush is still in flight (unit-tests
+    // rule 4: documented in lieu of a bypass test).
     assert!(market.valuation_stamp.is_some(), EMarketNotPendingValuation);
     let stamp = market.valuation_stamp.borrow();
     let snapshot_cash = market.cash.balance() + stamp.cash_removed - stamp.cash_added;

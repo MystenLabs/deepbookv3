@@ -1994,7 +1994,7 @@ public fun value_expiry(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
 ) {
-    vault.value_expiry(market, config, &self.clock, self.scenario.ctx());
+    vault.value_expiry(market, config, self.scenario.ctx());
 }
 
 /// Value one expiry through a market bundle.

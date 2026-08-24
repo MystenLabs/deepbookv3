@@ -297,9 +297,10 @@ true of the generator but not of the committed data.
 **Severity:** Low, but it compounds. Not a defect; a stale measurement.
 
 RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
-`walk_linear` pays that per payout-tree node and the pool-wide flush prices every
-active market in one PTB, so the increment lands directly on the C-1 computation
-budget — last measured at ~51% of the wall.
+`walk_linear` pays that per payout-tree node; since RP-29 the flush prices one
+market per transaction (C-1 — resolved — owned the old joint budget), so the
+increment lands on the per-transaction valuation compute that C-5 measures —
+last measured at ~51% of the wall for a full single-market book.
 
 Precedent for sizing it: `evidence/c1-skew-gas-2026-07-09.md` records that the
 previous comparable addition (one `normal_pdf`, i.e. one `exp`) cost +2.2%
@@ -308,8 +309,8 @@ comparable increment is expected — not near a cliff, but unmeasured. Move
 unit-test metering put the difference under 0.01% of a test's gas; that is not
 on-chain compute and should not be cited as the answer.
 
-**Action:** fold a re-measurement into the next localnet capacity campaign rather
-than running one for this alone, and refresh the C-1 figures.
+**Action:** fold a re-measurement into the C-5 localnet campaign rather than
+running one for this alone.
 
 ### P-31: A provider envelope ahead of the Sui clock silently empties the feed
 
