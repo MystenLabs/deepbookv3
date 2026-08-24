@@ -792,9 +792,7 @@ public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
         market.cash.inventory_impact_reserve() + stamp.impact_reserve_removed
         - stamp.impact_reserve_added;
     let snapshot_free_cash = snapshot_cash.saturating_sub(snapshot_reserve);
-    let liability = market
-        .strike_exposure
-        .snapshot_marked_liability(pricer, &stamp.range_deltas);
+    let liability = market.strike_exposure.snapshot_marked_liability(pricer, &stamp.range_deltas);
     snapshot_free_cash.saturating_sub(liability)
 }
 
@@ -917,20 +915,21 @@ fun record_trade_deltas(
     let stamp = market.valuation_stamp.borrow_mut();
     stamp
         .range_deltas
-        .push_back(strike_payout_tree::new_range_delta(
-            lower_tick,
-            higher_tick,
-            quantity,
-            is_insert,
-        ));
+        .push_back(
+            strike_payout_tree::new_range_delta(
+                lower_tick,
+                higher_tick,
+                quantity,
+                is_insert,
+            ),
+        );
     if (cash_after >= cash_before) {
         stamp.cash_added = stamp.cash_added + (cash_after - cash_before);
     } else {
         stamp.cash_removed = stamp.cash_removed + (cash_before - cash_after);
     };
     if (reserve_after >= reserve_before) {
-        stamp.impact_reserve_added =
-            stamp.impact_reserve_added + (reserve_after - reserve_before);
+        stamp.impact_reserve_added = stamp.impact_reserve_added + (reserve_after - reserve_before);
     } else {
         stamp.impact_reserve_removed =
             stamp.impact_reserve_removed + (reserve_before - reserve_after);

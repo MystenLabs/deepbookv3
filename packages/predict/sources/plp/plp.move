@@ -318,10 +318,7 @@ public fun snapshot_expiry_pricer(
     // `expected_expiry_markets` is read on-chain here, not supplied: see
     // `seal_valuation_snapshot` for why nothing real can be skipped.
     if (!valuation.expected_expiry_markets.contains(&expiry_market_id)) return;
-    assert!(
-        !valuation.frozen_pricers.contains(&expiry_market_id),
-        EExpiryPricerAlreadySnapshotted,
-    );
+    assert!(!valuation.frozen_pricers.contains(&expiry_market_id), EExpiryPricerAlreadySnapshotted);
 
     let frozen = if (market.is_settled()) {
         option::none()
@@ -474,7 +471,7 @@ public fun finish_flush(
         valued_expiry_markets,
         supply_request_cutoff,
         withdraw_request_cutoff,
-        ..
+        ..,
     } = valuation;
 
     let idle_balance_before = vault.expiry_accounting.idle_balance();
@@ -563,8 +560,7 @@ public fun finish_flush(
 public fun abort_valuation(vault: &mut PoolVault, config: &mut ProtocolConfig, clock: &Clock) {
     config.assert_version();
     config.assert_valuation_in_progress();
-    let deadline =
-        vault.valuation.borrow().started_at_ms + config.max_valuation_window_ms();
+    let deadline = vault.valuation.borrow().started_at_ms + config.max_valuation_window_ms();
     assert!(clock.timestamp_ms() >= deadline, EValuationDeadlineNotReached);
     vault.abort_valuation_internal(config);
 }
