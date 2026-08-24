@@ -291,3 +291,40 @@ fun set_max_valuation_window_during_valuation_aborts() {
     );
     abort 999
 }
+
+#[test]
+fun max_valuation_log_ops_ships_at_default_and_is_tunable_mid_flush() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    assert_eq!(config.max_valuation_log_ops(), config_constants::default_max_valuation_log_ops!());
+    // Deliberately settable while a flush is in flight: raising the cap is the
+    // live remedy for a hot market filling its log under a stalled keeper.
+    config.begin_valuation();
+    config.set_max_valuation_log_ops(&admin_cap, config_constants::max_max_valuation_log_ops!());
+    assert_eq!(config.max_valuation_log_ops(), config_constants::max_max_valuation_log_ops!());
+    config.end_valuation();
+
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxValuationLogOps)]
+fun max_valuation_log_ops_below_the_floor_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_max_valuation_log_ops(
+        &admin_cap,
+        config_constants::min_max_valuation_log_ops!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidMaxValuationLogOps)]
+fun max_valuation_log_ops_above_the_ceiling_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_max_valuation_log_ops(
+        &admin_cap,
+        config_constants::max_max_valuation_log_ops!() + 1,
+    );
+    abort 999
+}
