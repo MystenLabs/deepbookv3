@@ -471,6 +471,7 @@ public fun finish_flush(
         valued_expiry_markets,
         supply_request_cutoff,
         withdraw_request_cutoff,
+        started_at_ms,
         ..,
     } = valuation;
 
@@ -533,6 +534,7 @@ public fun finish_flush(
         total_supply_after,
         supply_request_cutoff,
         withdraw_request_cutoff,
+        started_at_ms,
     );
     pool_nav
 }

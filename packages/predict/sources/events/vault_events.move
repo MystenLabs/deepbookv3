@@ -181,6 +181,10 @@ public struct FlushExecuted has copy, drop, store {
     /// filled only requests indexed strictly below these.
     supply_request_cutoff: u64,
     withdraw_request_cutoff: u64,
+    /// Clock instant the snapshot stage froze every market's pricer — the moment
+    /// the mark prices the pool at. Fills execute later in the same flush; this
+    /// is the timestamp they were priced as of.
+    snapshot_timestamp_ms: u64,
 }
 
 /// An in-flight full-pool valuation was discarded without draining any queue —
@@ -435,6 +439,7 @@ public(package) fun emit_flush_executed(
     total_supply_after: u64,
     supply_request_cutoff: u64,
     withdraw_request_cutoff: u64,
+    snapshot_timestamp_ms: u64,
 ) {
     event::emit(FlushExecuted {
         pool_vault_id,
@@ -453,6 +458,7 @@ public(package) fun emit_flush_executed(
         total_supply_after,
         supply_request_cutoff,
         withdraw_request_cutoff,
+        snapshot_timestamp_ms,
     });
 }
 
