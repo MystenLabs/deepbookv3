@@ -7,6 +7,7 @@ module deepbook_margin::margin_manager_borrow_share_tests;
 use deepbook::{pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
+    margin_manager_upgraded,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
     test_constants::{Self, USDC, BTC, btc_multiplier},
@@ -14,8 +15,8 @@ use deepbook_margin::{
         setup_btc_usd_deepbook_margin,
         cleanup_margin_test,
         mint_coin,
-        build_demo_usdc_price_info_object,
-        build_btc_price_info_object,
+        build_demo_usdc_price_info_object_upgraded,
+        build_btc_price_info_object_upgraded,
         destroy_2,
         return_shared_2,
         return_shared_3,
@@ -70,14 +71,15 @@ fun test_multiple_borrows_accumulate_shares_base() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     // Deposit significant USDC as collateral
     let deposit_coin = mint_coin<USDC>(
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm.deposit<BTC, USDC, USDC>(
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm,
         &registry,
         &btc_price,
         &usdc_price,
@@ -95,10 +97,11 @@ fun test_multiple_borrows_accumulate_shares_base() {
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.borrow_base<BTC, USDC>(
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
         &registry,
         &mut btc_pool,
         &btc_price,
@@ -114,7 +117,8 @@ fun test_multiple_borrows_accumulate_shares_base() {
     assert!(borrowed_base_shares_after_first == 10 * btc_multiplier());
 
     // Second borrow: 15 BTC more
-    mm.borrow_base<BTC, USDC>(
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm,
         &registry,
         &mut btc_pool,
         &btc_price,
@@ -181,11 +185,12 @@ fun test_multiple_borrows_accumulate_shares_quote() {
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     // Deposit significant BTC as collateral
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm.deposit<BTC, USDC, BTC>(
+    margin_manager_upgraded::deposit<BTC, USDC, BTC>(
+        &mut mm,
         &registry,
         &btc_price,
         &usdc_price,
@@ -203,10 +208,11 @@ fun test_multiple_borrows_accumulate_shares_quote() {
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm.borrow_quote<BTC, USDC>(
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm,
         &registry,
         &mut usdc_pool,
         &btc_price,
@@ -222,7 +228,8 @@ fun test_multiple_borrows_accumulate_shares_quote() {
     assert!(borrowed_quote_shares_after_first == 10 * test_constants::usdc_multiplier());
 
     // Second borrow: 15 USDC more
-    mm.borrow_quote<BTC, USDC>(
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm,
         &registry,
         &mut usdc_pool,
         &btc_price,
@@ -289,13 +296,14 @@ fun test_user_shares_isolated_from_other_users_base() {
     scenario.next_tx(test_constants::user1());
     let mut mm1 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let deposit_coin = mint_coin<USDC>(
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm1.deposit<BTC, USDC, USDC>(
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm1,
         &registry,
         &btc_price,
         &usdc_price,
@@ -313,10 +321,11 @@ fun test_user_shares_isolated_from_other_users_base() {
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm1.borrow_base<BTC, USDC>(
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm1,
         &registry,
         &mut btc_pool,
         &btc_price,
@@ -355,13 +364,14 @@ fun test_user_shares_isolated_from_other_users_base() {
     scenario.next_tx(test_constants::user2());
     let mut mm2 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let deposit_coin = mint_coin<USDC>(
         5_000_000 * test_constants::usdc_multiplier(),
         scenario.ctx(),
     );
-    mm2.deposit<BTC, USDC, USDC>(
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
+        &mut mm2,
         &registry,
         &btc_price,
         &usdc_price,
@@ -379,10 +389,11 @@ fun test_user_shares_isolated_from_other_users_base() {
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm2.borrow_base<BTC, USDC>(
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
+        &mut mm2,
         &registry,
         &mut btc_pool,
         &btc_price,
@@ -456,10 +467,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     scenario.next_tx(test_constants::user1());
     let mut mm1 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm1.deposit<BTC, USDC, BTC>(
+    margin_manager_upgraded::deposit<BTC, USDC, BTC>(
+        &mut mm1,
         &registry,
         &btc_price,
         &usdc_price,
@@ -477,10 +489,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm1.borrow_quote<BTC, USDC>(
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm1,
         &registry,
         &mut usdc_pool,
         &btc_price,
@@ -519,10 +532,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     scenario.next_tx(test_constants::user2());
     let mut mm2 = scenario.take_shared<MarginManager<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
     let deposit_coin = mint_coin<BTC>(10 * btc_multiplier(), scenario.ctx());
-    mm2.deposit<BTC, USDC, BTC>(
+    margin_manager_upgraded::deposit<BTC, USDC, BTC>(
+        &mut mm2,
         &registry,
         &btc_price,
         &usdc_price,
@@ -540,10 +554,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc_price = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    mm2.borrow_quote<BTC, USDC>(
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
+        &mut mm2,
         &registry,
         &mut usdc_pool,
         &btc_price,

@@ -8,7 +8,6 @@ use deepbook_margin::{
     margin_registry::{Self, MarginRegistry},
     oracle::{
         Self,
-        read_price,
         read_price_upgraded,
         read_price_upgraded_unsafe,
         calculate_price,
@@ -20,7 +19,6 @@ use deepbook_margin::{
     },
     test_constants::{Self, SUI, USDC},
     test_helpers::{
-        build_pyth_price_info_object,
         build_pyth_upgraded_price_info_object,
         build_pyth_upgraded_price_info_with_ewma,
         create_test_pyth_config,
@@ -257,7 +255,7 @@ fun test_calculate_usd_price_invalid_confidence_too_high() {
     // Price = $100 (10000000000 with 8 decimals: 100 * 10^8)
     // Max allowed conf = 1000 * 10000000000 / 10_000 = 1_000_000_000
     // We set conf = 1_500_000_000 which is > 10% (15%)
-    let price_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000, // $100 price (100 * 10^8)
@@ -268,7 +266,7 @@ fun test_calculate_usd_price_invalid_confidence_too_high() {
 
     // This should fail with EInvalidPythPriceConf
     calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -301,7 +299,7 @@ fun test_calculate_usd_price_valid_confidence_at_limit() {
     // Price = $100 (10000000000 with 8 decimals: 100 * 10^8)
     // Max allowed conf = 1000 * 10000000000 / 10_000 = 1_000_000_000
     // We set conf = 1_000_000_000 which is exactly at 10%
-    let price_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         10000000000, // $100 price (100 * 10^8)
@@ -312,7 +310,7 @@ fun test_calculate_usd_price_valid_confidence_at_limit() {
 
     // This should succeed
     let usd_price = calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -348,7 +346,7 @@ fun test_calculate_target_amount_invalid_confidence() {
     // Price = $50 (5000000000 with 8 decimals: 50 * 10^8)
     // Max allowed conf = 1000 * 5000000000 / 10_000 = 500_000_000
     // We set conf = 750_000_000 which is 15% (exceeds 10% threshold)
-    let price_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         5000000000, // $50 price (50 * 10^8)
@@ -359,7 +357,7 @@ fun test_calculate_target_amount_invalid_confidence() {
 
     // This should fail with EInvalidPythPriceConf
     calculate_target_amount<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         100_000_000_000, // $100 USD (9 decimals)
     );
@@ -369,38 +367,6 @@ fun test_calculate_target_amount_invalid_confidence() {
     test_scenario::return_shared(registry);
     test_scenario::return_shared(clock);
     scenario.end();
-}
-
-/// Helper to build a price info object with separate pyth price and EWMA price
-fun build_pyth_price_info_with_ewma(
-    scenario: &mut Scenario,
-    id: vector<u8>,
-    price_value: u64,
-    ewma_price_value: u64,
-    conf_value: u64,
-    exp_value: u64,
-    timestamp: u64,
-): PriceInfoObject {
-    let price_id = price_identifier::from_byte_vec(id);
-    let price = price::new(
-        i64::new(price_value, false), // positive price
-        conf_value,
-        i64::new(exp_value, true), // negative exponent
-        timestamp,
-    );
-    let ewma_price = price::new(
-        i64::new(ewma_price_value, false), // positive EWMA price
-        conf_value,
-        i64::new(exp_value, true), // negative exponent
-        timestamp,
-    );
-    let price_feed = price_feed::new(price_id, price, ewma_price);
-    let price_info = price_info::new_price_info(
-        timestamp - 2, // attestation_time
-        timestamp - 1, // arrival_time
-        price_feed,
-    );
-    price_info::new_price_info_object_for_test(price_info, scenario.ctx())
 }
 
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
@@ -423,7 +389,7 @@ fun test_ewma_price_difference_too_high() {
     // Create price info where pyth price is 20% higher than EWMA (exceeds 15% threshold)
     // EWMA price = $100 (10000000000 with 8 decimals)
     // Pyth price = $120 (12000000000 with 8 decimals) - 20% higher
-    let price_info = build_pyth_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         12000000000, // $120 pyth price
@@ -435,7 +401,7 @@ fun test_ewma_price_difference_too_high() {
 
     // This should fail with EInvalidPythPrice
     calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -467,7 +433,7 @@ fun test_ewma_price_difference_too_low() {
     // Create price info where pyth price is 20% lower than EWMA (exceeds 15% threshold)
     // EWMA price = $100 (10000000000 with 8 decimals)
     // Pyth price = $80 (8000000000 with 8 decimals) - 20% lower
-    let price_info = build_pyth_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         8000000000, // $80 pyth price
@@ -479,7 +445,7 @@ fun test_ewma_price_difference_too_low() {
 
     // This should fail with EInvalidPythPrice
     calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -511,7 +477,7 @@ fun test_ewma_price_difference_at_upper_limit() {
     // Create price info where pyth price is exactly 15% higher than EWMA
     // EWMA price = $100 (10000000000 with 8 decimals)
     // Pyth price = $115 (11500000000 with 8 decimals) - exactly 15% higher
-    let price_info = build_pyth_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         11500000000, // $115 pyth price
@@ -523,7 +489,7 @@ fun test_ewma_price_difference_at_upper_limit() {
 
     // This should succeed
     let usd_price = calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -558,7 +524,7 @@ fun test_ewma_price_difference_at_lower_limit() {
     // Create price info where pyth price is exactly 15% lower than EWMA
     // EWMA price = $100 (10000000000 with 8 decimals)
     // Pyth price = $85 (8500000000 with 8 decimals) - exactly 15% lower
-    let price_info = build_pyth_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         8500000000, // $85 pyth price
@@ -570,7 +536,7 @@ fun test_ewma_price_difference_at_lower_limit() {
 
     // This should succeed
     let usd_price = calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -607,7 +573,7 @@ fun test_confidence_check_with_high_price_no_overflow() {
     // With u64, max_conf_bps * pyth_price = 1000 * 100000000000000 = 10^17 (safe)
     // Max allowed conf = 1000 * 100000000000000 / 10_000 = 10_000_000_000_000
     // We set conf = 5_000_000_000_000 which is 5% (within 10% threshold)
-    let price_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         100000000000000, // $1M price (1M * 10^8)
@@ -618,7 +584,7 @@ fun test_confidence_check_with_high_price_no_overflow() {
 
     // This should succeed with u128 casting preventing overflow
     let usd_price = calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -655,7 +621,7 @@ fun test_ewma_check_with_high_price_no_overflow() {
     // With u64: ewma_price * (10_000 + 1500) = 100000000000000 * 11500
     // = 1.15 * 10^18 which exceeds u64 max (~1.8 * 10^19) but is close
     // Pyth price = $1,100,000 (110000000000000) - 10% higher (within 15%)
-    let price_info = build_pyth_price_info_with_ewma(
+    let price_info = build_pyth_upgraded_price_info_with_ewma(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         110000000000000, // $1.1M pyth price
@@ -667,7 +633,7 @@ fun test_ewma_check_with_high_price_no_overflow() {
 
     // This should succeed with u128 casting preventing overflow
     let usd_price = calculate_usd_price<USDC>(
-        read_price<USDC>(&price_info, &registry, &clock),
+        read_price_upgraded<USDC>(&price_info, &registry, &clock),
         &registry,
         1000000, // 1 USDC (6 decimals)
     );
@@ -682,12 +648,13 @@ fun test_ewma_check_with_high_price_no_overflow() {
     scenario.end();
 }
 
-// === Pyth's upgraded Core reader parity ===
-// Pyth's upgraded Core is a separate published package, so its feed is a distinct Move type.
-// These pin that `read_price_upgraded` enforces exactly the policy `read_price` does.
+// === The upgraded-Core reader's policy ===
+// `read_price_upgraded` is the only validated reader left: the legacy-Core readers were
+// removed with the entrypoints that called them. These pin the policy it enforces —
+// staleness, feed id, EWMA divergence — and where the confidence bound is applied.
 
 #[test]
-fun test_read_price_upgraded_matches_legacy_reader() {
+fun test_read_price_upgraded_prices_a_fresh_feed() {
     let mut scenario = test_scenario::begin(test_constants::admin());
 
     scenario.next_tx(test_constants::admin());
@@ -702,39 +669,25 @@ fun test_read_price_upgraded_matches_legacy_reader() {
     let pyth_config = create_test_pyth_config(); // max_conf_bps = 1000 (10%)
     registry.add_config(&admin_cap, pyth_config);
 
-    // Same feed id, price, conf, exponent and timestamp through both packages. The
-    // two readers must produce an identical `PythReading`, or the upgraded entrypoints
-    // price differently from the legacy ones they shadow.
-    let legacy_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
-        10000000000, // $100
+        10000000000, // $100, 8 decimals
         1000000, // well inside the confidence bound
         8,
         clock.timestamp_ms() / 1000,
     );
-    let upgraded_info = build_pyth_upgraded_price_info_object(
-        &mut scenario,
-        test_constants::usdc_price_feed_id(),
-        10000000000,
-        1000000,
-        8,
-        clock.timestamp_ms() / 1000,
-    );
 
-    let legacy_reading = read_price<USDC>(&legacy_info, &registry, &clock);
-    let upgraded_reading = read_price_upgraded<USDC>(&upgraded_info, &registry, &clock);
-    assert!(upgraded_reading.price() == legacy_reading.price());
-    assert!(upgraded_reading.decimals() == legacy_reading.decimals());
+    let reading = read_price_upgraded<USDC>(&price_info, &registry, &clock);
+    assert!(reading.price() == 10000000000);
+    assert!(reading.decimals() == 8);
 
-    let legacy_usd = calculate_usd_price<USDC>(legacy_reading, &registry, 1000000);
-    let upgraded_usd = calculate_usd_price<USDC>(upgraded_reading, &registry, 1000000); // 1 USDC
-    assert!(upgraded_usd == legacy_usd);
-    assert!(upgraded_usd == 100_000_000_000);
+    // 1 USDC (6 decimals) at $100, expressed with 9 USD decimals: 100 * 10^9.
+    let usd = calculate_usd_price<USDC>(reading, &registry, 1000000);
+    assert!(usd == 100_000_000_000);
 
     destroy(admin_cap);
-    destroy(legacy_info);
-    destroy(upgraded_info);
+    destroy(price_info);
     test_scenario::return_shared(registry);
     test_scenario::return_shared(clock);
     scenario.end();
@@ -1030,7 +983,7 @@ fun test_reading_consumed_as_the_wrong_asset_aborts() {
 
     // A completely valid SUI reading: right feed id, fresh, tight confidence, EWMA in
     // band. Nothing about it is malformed - it is simply not a USDC price.
-    let price_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::sui_price_feed_id(),
         10000000000,
@@ -1038,7 +991,7 @@ fun test_reading_consumed_as_the_wrong_asset_aborts() {
         8,
         clock.timestamp_ms() / 1000,
     );
-    let sui_reading = read_price<SUI>(&price_info, &registry, &clock);
+    let sui_reading = read_price_upgraded<SUI>(&price_info, &registry, &clock);
 
     let _ = calculate_usd_price<USDC>(sui_reading, &registry, 1000000);
 
@@ -1066,7 +1019,7 @@ fun test_reading_consumed_as_its_own_asset_prices_normally() {
     let clock = scenario.take_shared<Clock>();
     registry.add_config(&admin_cap, create_test_pyth_config());
 
-    let price_info = build_pyth_price_info_object(
+    let price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::sui_price_feed_id(),
         10000000000, // $100
@@ -1074,7 +1027,7 @@ fun test_reading_consumed_as_its_own_asset_prices_normally() {
         8,
         clock.timestamp_ms() / 1000,
     );
-    let sui_reading = read_price<SUI>(&price_info, &registry, &clock);
+    let sui_reading = read_price_upgraded<SUI>(&price_info, &registry, &clock);
 
     // SUI carries 9 decimals in the test config, so 1 SUI is 1_000_000_000.
     let usd = calculate_usd_price<SUI>(sui_reading, &registry, 1_000_000_000);
@@ -1108,7 +1061,7 @@ fun test_calculate_price_rejects_a_ratio_past_the_max_price_ceiling() {
     let clock = scenario.take_shared<Clock>();
     registry.add_config(&admin_cap, create_test_pyth_config());
 
-    let usdc_price_info = build_pyth_price_info_object(
+    let usdc_price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::usdc_price_feed_id(),
         100000000, // $1.00
@@ -1118,7 +1071,7 @@ fun test_calculate_price_rejects_a_ratio_past_the_max_price_ceiling() {
     );
     // SUI at the smallest representable price, 1e-8. Confidence must be 0 to stay
     // inside the 10% bound at this magnitude.
-    let sui_price_info = build_pyth_price_info_object(
+    let sui_price_info = build_pyth_upgraded_price_info_object(
         &mut scenario,
         test_constants::sui_price_feed_id(),
         1,
@@ -1127,8 +1080,8 @@ fun test_calculate_price_rejects_a_ratio_past_the_max_price_ceiling() {
         clock.timestamp_ms() / 1000,
     );
 
-    let usdc_reading = read_price<USDC>(&usdc_price_info, &registry, &clock);
-    let sui_reading = read_price<SUI>(&sui_price_info, &registry, &clock);
+    let usdc_reading = read_price_upgraded<USDC>(&usdc_price_info, &registry, &clock);
+    let sui_reading = read_price_upgraded<SUI>(&sui_price_info, &registry, &clock);
 
     let _ = calculate_price<USDC, SUI>(&registry, usdc_reading, sui_reading);
 

@@ -6,7 +6,6 @@ module deepbook_margin::oracle;
 
 use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
-use pyth::{price_info::PriceInfoObject, pyth};
 use pyth_upgraded::{
     price_info::PriceInfoObject as PriceInfoObjectUpgraded,
     pyth as pyth_upgraded_api
@@ -49,11 +48,11 @@ public struct ConversionConfig has copy, drop {
     pyth_decimals: u8,
 }
 
-/// A normalized price read from a Pyth `PriceInfoObject`. Carrying the value rather
-/// than the object lets the legacy feed and Pyth's upgraded Core share one pricing
-/// path even though their `PriceInfoObject`s are distinct Move types. Safe readers
-/// enforce staleness, feed id, and EWMA deviation; pricing later enforces the asset
-/// binding and confidence interval before performing arithmetic.
+/// A normalized price read from an upgraded-Core `PriceInfoObject`. Carrying the value
+/// rather than the object keeps the pricing path independent of the reader, which is why
+/// the entrypoint families could be migrated one at a time. Safe readers enforce
+/// staleness, feed id, and EWMA deviation; pricing later enforces the asset binding and
+/// confidence interval before performing arithmetic.
 public struct PythReading has copy, drop {
     price: u64,
     decimals: u8,
@@ -312,56 +311,12 @@ fun price_config<T>(
     }
 }
 
-/// Reads the legacy Pyth feed with staleness, feed-id, and EWMA checks, carrying its
+/// Reads Pyth's upgraded Core with staleness, feed-id, and EWMA checks, carrying its
 /// confidence interval for validation when the reading is converted to a price.
-public(package) fun read_price<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    clock: &Clock,
-): PythReading {
-    let config = registry.get_config<PythConfig>();
-    let type_config = registry.get_config_for_type<T>();
-
-    let price = pyth::get_price_no_older_than(
-        price_info_object,
-        clock,
-        config.max_age_secs,
-    );
-    let price_info = price_info_object.get_price_info_from_price_info_object();
-    let ewma_price_object = price_info.get_price_feed().get_ema_price();
-
-    validate_reading(
-        price_info.get_price_identifier().get_bytes(),
-        price.get_price().get_magnitude_if_positive(),
-        price.get_expo().get_magnitude_if_negative() as u8,
-        price.get_conf(),
-        ewma_price_object.get_price().get_magnitude_if_positive(),
-        type_config,
-    )
-}
-
-/// Legacy Pyth feed without staleness, confidence, or EWMA validation.
-/// Only the price feed id is checked.
-public(package) fun read_price_unsafe<T>(
-    price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-): PythReading {
-    let type_config = registry.get_config_for_type<T>();
-    let price = pyth::get_price_unsafe(price_info_object);
-    let price_info = price_info_object.get_price_info_from_price_info_object();
-
-    validate_feed_id(price_info.get_price_identifier().get_bytes(), type_config);
-
-    PythReading {
-        price: price.get_price().get_magnitude_if_positive(),
-        decimals: price.get_expo().get_magnitude_if_negative() as u8,
-        conf: option::none(),
-        coin_type: type_config.type_name,
-    }
-}
-
-/// `read_price` against Pyth's upgraded Core. Pyth's upgraded Core is a separate published package, so its
-/// `PriceInfoObject` is a distinct Move type; the validation is identical.
+///
+/// There is no legacy-Core counterpart: the readers that took a legacy `PriceInfoObject`
+/// were removed when the legacy entrypoints were retired, so no code path in this package
+/// can price a position off a feed Pyth no longer maintains for us.
 public(package) fun read_price_upgraded<T>(
     price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
@@ -388,7 +343,8 @@ public(package) fun read_price_upgraded<T>(
     )
 }
 
-/// `read_price_unsafe` against Pyth's upgraded Core.
+/// Pyth's upgraded Core without staleness, confidence, or EWMA validation.
+/// Only the price feed id is checked.
 public(package) fun read_price_upgraded_unsafe<T>(
     price_info_object: &PriceInfoObjectUpgraded,
     registry: &MarginRegistry,
@@ -407,7 +363,7 @@ public(package) fun read_price_upgraded_unsafe<T>(
     }
 }
 
-/// Shared guards for a validated reading, so both feeds enforce one policy.
+/// Guards applied to every validated reading.
 fun validate_reading(
     price_feed_id: vector<u8>,
     pyth_price: u64,
