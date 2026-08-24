@@ -1113,13 +1113,12 @@ fun abort_valuation_internal(vault: &mut PoolVault, config: &mut ProtocolConfig)
 
 /// Abort unless `ctx.sender()` started the in-flight flush.
 ///
-/// On main, `finish_flush` consumed a hot potato only the starter could hold, so
-/// completion was starter-scoped by construction. With the valuation held on the
-/// vault, `value_expiry` and `finish_flush` would otherwise be permissionless —
-/// and a third party could finish an operator's flush with zero drain budgets,
-/// retiring the frozen mark with no LP request filled. There is deliberately no
-/// permissionless completion path: an abandoned flush is discarded
-/// (`abort_valuation`), never finished by a stranger.
+/// With the valuation held on the vault rather than in a hot potato only the
+/// starter could hold, `value_expiry` and `finish_flush` would otherwise be
+/// permissionless — and a third party could finish an operator's flush with zero
+/// drain budgets, retiring the frozen mark with no LP request filled. There is
+/// deliberately no permissionless completion path: an abandoned flush is
+/// discarded (`abort_valuation`), never finished by a stranger.
 fun assert_valuation_starter(vault: &PoolVault, ctx: &TxContext) {
     assert!(vault.valuation.borrow().started_by == ctx.sender(), ENotValuationStarter);
 }
