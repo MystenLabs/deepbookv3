@@ -2085,8 +2085,10 @@ public fun finish_flush_bundle(
 /// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
-    assert!(market.cash_balance()
-            >= market.payout_liability() + market.skew_reserve());
+    assert!(
+        market.cash_balance()
+            >= market.payout_liability() + market.inventory_reserve(),
+    );
 }
 
 /// S1 backing assertion for a market bundle.

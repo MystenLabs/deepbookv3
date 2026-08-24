@@ -272,7 +272,7 @@ public(package) fun trading_fee(
 
 /// Return the skew escrow the current book must be backed by. Settled books and
 /// a zero rate carry none, which is what lets settlement release the residual.
-public(package) fun skew_potential(exposure: &StrikeExposure): u64 {
+public(package) fun inventory_potential(exposure: &StrikeExposure): u64 {
     if (exposure.is_settled() || exposure.config.inventory_skew_rate() == 0) return 0;
     math::mul_down(exposure.config.inventory_skew_rate(), exposure.skew_terms.deviation())
 }

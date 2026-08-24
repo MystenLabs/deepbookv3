@@ -13,11 +13,11 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
   and isolated inventory-skew reserve
-  (`cash ≥ payout_liability + skew_reserve`),
+  (`cash ≥ payout_liability + inventory_reserve`),
   re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
 - **Inventory-skew escrow covers the current potential.** While live,
-  `skew_reserve ≥ rate × D(W)` with equality — cumulative collections telescope
+  `inventory_reserve ≥ rate × D(W)` with equality — cumulative collections telescope
   to the potential of the current book exactly; rebates may withdraw only the
   potential decrease, and settlement releases the residual earmark when rebates
   become impossible.
@@ -63,7 +63,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
   free_cash − live_marked_liability`, floored at zero, where `free_cash =
-  cash − skew_reserve` and the liability is the
+  cash − inventory_reserve` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree

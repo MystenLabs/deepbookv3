@@ -56,7 +56,7 @@ fun free_cash_nets_out_the_skew_escrow_and_floors_at_zero() {
 
     // Cash 40 with 20 earmarked leaves 20 free.
     cash.receive(coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance());
-    cash.credit_skew_reserve(SKEW_CHARGE);
+    cash.credit_inventory_reserve(SKEW_CHARGE);
     assert_eq!(cash.free_cash(), FEE_AMOUNT - SKEW_CHARGE);
 
     // Pay out past the earmark — 5 cash against a 20 escrow. Free cash floors at
@@ -69,14 +69,14 @@ fun free_cash_nets_out_the_skew_escrow_and_floors_at_zero() {
     destroy(cash);
 }
 
-#[test, expected_failure(abort_code = expiry_cash::ESkewRebateExceedsReserve)]
+#[test, expected_failure(abort_code = expiry_cash::EInventoryRebateExceedsReserve)]
 fun skew_rebate_cannot_spend_ordinary_cash() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
     cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
-    cash.credit_skew_reserve(SKEW_CHARGE);
+    cash.credit_inventory_reserve(SKEW_CHARGE);
 
-    let unexpected = cash.pay_skew_rebate(SKEW_CHARGE + 1);
+    let unexpected = cash.pay_inventory_rebate(SKEW_CHARGE + 1);
     destroy(unexpected);
     abort 999
 }
@@ -87,15 +87,15 @@ fun skew_reserve_folds_into_required_and_out_of_free_cash() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
     cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
-    cash.credit_skew_reserve(SKEW_CHARGE);
+    cash.credit_inventory_reserve(SKEW_CHARGE);
 
     // 1 liability + 20 skew = 21 required; 100 - 20 escrowed = 80 free.
     assert_eq!(cash.required_cash(1), 1 + SKEW_CHARGE);
     assert_eq!(cash.free_cash(), CASH_AMOUNT - SKEW_CHARGE);
 
-    let rebate = cash.pay_skew_rebate(SKEW_CHARGE);
+    let rebate = cash.pay_inventory_rebate(SKEW_CHARGE);
     assert_eq!(rebate.value(), SKEW_CHARGE);
-    assert_eq!(cash.skew_reserve(), 0);
+    assert_eq!(cash.inventory_reserve(), 0);
     destroy(rebate);
     destroy(cash);
 }
@@ -105,11 +105,11 @@ fun settlement_release_turns_residual_escrow_into_surplus() {
     let ctx = &mut tx_context::dummy();
     let mut cash = expiry_cash::new();
     cash.receive(coin::mint_for_testing<DUSDC>(SKEW_CHARGE, ctx).into_balance());
-    cash.credit_skew_reserve(SKEW_CHARGE);
+    cash.credit_inventory_reserve(SKEW_CHARGE);
 
-    cash.release_skew_reserve();
+    cash.release_inventory_reserve();
 
-    assert_eq!(cash.skew_reserve(), 0);
+    assert_eq!(cash.inventory_reserve(), 0);
     assert_eq!(cash.free_cash(), SKEW_CHARGE);
     let released = cash.release_surplus(SKEW_CHARGE, 0);
     assert_eq!(released.value(), SKEW_CHARGE);

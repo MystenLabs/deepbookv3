@@ -32,7 +32,7 @@ fun a_concentrating_mint_pays_a_charge_into_the_skew_escrow() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    let skew_charge = quote.skew_charge();
+    let inventory_charge = quote.inventory_charge();
     // Independent magnitude pin for the whole weight -> mass -> deviation -> rate
     // composition. For one digital of quantity q and frozen mass m, the deviation
     // is q*sqrt(m*(S-m))/S by definition. The scipy-derived reference for this
@@ -40,15 +40,15 @@ fun a_concentrating_mint_pays_a_charge_into_the_skew_escrow() {
     // the ATM point the deviation is flat in m to first order, so the floored
     // charge rate*D/S = 5e6 * 499,999,999 / 1e9 is exactly 2,499,999 across the
     // entire reference budget (invariant even to +/-1000 raw units of m).
-    assert_eq!(skew_charge, 2_499_999);
-    assert_eq!(quote.skew_rebate(), 0);
+    assert_eq!(inventory_charge, 2_499_999);
+    assert_eq!(quote.inventory_rebate(), 0);
     assert_eq!(
         quote.all_in_cost(),
         quote.premium()
             + (quote.trading_fee() - quote.fee_incentive_subsidy())
             + quote.builder_fee()
             + quote.penalty_fee()
-            + skew_charge,
+            + inventory_charge,
     );
 
     let balance_before = fx.account_balance_bundle<DUSDC>(&account);
@@ -63,7 +63,7 @@ fun a_concentrating_mint_pays_a_charge_into_the_skew_escrow() {
     );
 
     assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_before - quote.all_in_cost());
-    assert_eq!(helpers::market(&market).skew_reserve(), skew_charge);
+    assert_eq!(helpers::market(&market).inventory_reserve(), inventory_charge);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -93,7 +93,7 @@ fun completing_a_set_rebates_the_first_legs_charge_exactly() {
         first.all_in_cost(),
         std::u64::max_value!(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), first.skew_charge());
+    assert_eq!(helpers::market(&market).inventory_reserve(), first.inventory_charge());
 
     let second = fx.quote_mint_bundle(
         &market,
@@ -101,8 +101,8 @@ fun completing_a_set_rebates_the_first_legs_charge_exactly() {
         helpers::strike_tick(),
         test_constants::mint_quantity(),
     );
-    assert_eq!(second.skew_charge(), 0);
-    assert_eq!(second.skew_rebate(), first.skew_charge());
+    assert_eq!(second.inventory_charge(), 0);
+    assert_eq!(second.inventory_rebate(), first.inventory_charge());
     fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -113,7 +113,7 @@ fun completing_a_set_rebates_the_first_legs_charge_exactly() {
         std::u64::max_value!(),
     );
 
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -145,7 +145,7 @@ fun a_round_trip_refunds_the_charge_exactly_across_an_oracle_move() {
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), quote.skew_charge());
+    assert_eq!(helpers::market(&market).inventory_reserve(), quote.inventory_charge());
 
     // Reprice one millisecond later at a moved spot: live prices change, frozen
     // weights do not.
@@ -161,9 +161,9 @@ fun a_round_trip_refunds_the_charge_exactly_across_an_oracle_move() {
 
     assert_eq!(
         fx.account_balance_bundle<DUSDC>(&account),
-        balance_before_close + gross + quote.skew_charge() - ORDINARY_MIN_FEE,
+        balance_before_close + gross + quote.inventory_charge() - ORDINARY_MIN_FEE,
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -198,7 +198,7 @@ fun a_close_that_unbalances_the_book_is_charged_and_the_drain_refunds_it() {
         std::u64::max_value!(),
     );
     // A complete set is flat: the two legs' adjustments cancelled through custody.
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
 
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let first_gross = fx.live_order_value_bundle(&market, first_order);
@@ -209,7 +209,7 @@ fun a_close_that_unbalances_the_book_is_charged_and_the_drain_refunds_it() {
         first_order,
         test_constants::mint_quantity(),
     );
-    let close_charge = helpers::market(&market).skew_reserve();
+    let close_charge = helpers::market(&market).inventory_reserve();
     // The surviving book is the down leg alone, mass S - m; sqrt(m(S-m)) is
     // symmetric in m <-> S - m, so the close charge equals the mint-side ATM
     // pin exactly, flat across the whole reference budget by the same argument.
@@ -228,7 +228,7 @@ fun a_close_that_unbalances_the_book_is_charged_and_the_drain_refunds_it() {
         second_order,
         test_constants::mint_quantity(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -255,7 +255,7 @@ fun a_remint_after_a_full_drain_repays_the_frozen_atm_charge_exactly() {
     );
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.redeem_live_bundle(&mut market, &mut account, order_id, test_constants::mint_quantity());
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
 
     // Move the live surface off the frozen one before re-minting — far enough
     // that a live measure would floor to a different charge, near enough that
@@ -272,7 +272,7 @@ fun a_remint_after_a_full_drain_repays_the_frozen_atm_charge_exactly() {
     );
     // The frozen ATM pin again: only the measure frozen at the FIRST mint can
     // reproduce it after the book emptied and the live surface moved.
-    assert_eq!(requote.skew_charge(), 2_499_999);
+    assert_eq!(requote.inventory_charge(), 2_499_999);
     fx.mint_exact_quantity_bundle(
         &mut market,
         &mut account,
@@ -282,7 +282,7 @@ fun a_remint_after_a_full_drain_repays_the_frozen_atm_charge_exactly() {
         requote.all_in_cost(),
         std::u64::max_value!(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), 2_499_999);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 2_499_999);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -305,7 +305,7 @@ fun a_worthless_close_that_flattens_the_book_collects_the_full_rebate() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), 2_499_999);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 2_499_999);
 
     // Deep below the strike the up leg's payout clamps to zero, and closing it
     // flattens the (single-leg) book, so the whole escrow comes back.
@@ -324,7 +324,7 @@ fun a_worthless_close_that_flattens_the_book_collects_the_full_rebate() {
     // Fee, builder fee and penalty all clamp to the zero payout; the rebate is
     // untouched by any of them.
     assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_before + 2_499_999);
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -363,7 +363,7 @@ fun two_markets_keep_isolated_frozen_measures_and_escrows() {
         std::u64::max_value!(),
         std::u64::max_value!(),
     );
-    assert_eq!(helpers::market(&market_one).skew_reserve(), 2_499_999);
+    assert_eq!(helpers::market(&market_one).inventory_reserve(), 2_499_999);
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market_one);
 
@@ -394,8 +394,8 @@ fun two_markets_keep_isolated_frozen_measures_and_escrows() {
         two_quote.all_in_cost(),
         std::u64::max_value!(),
     );
-    let two_reserve = helpers::market(&market_two).skew_reserve();
-    assert_eq!(two_reserve, two_quote.skew_charge());
+    let two_reserve = helpers::market(&market_two).inventory_reserve();
+    assert_eq!(two_reserve, two_quote.inventory_charge());
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market_two);
 
@@ -406,20 +406,20 @@ fun two_markets_keep_isolated_frozen_measures_and_escrows() {
     let mut account = fx.take_account_bundle(&trader);
     fx.advance_live_oracle_bundle(&mut market_one, test_constants::default_live_price());
     fx.redeem_live_bundle(&mut market_one, &mut account, one, test_constants::mint_quantity());
-    assert_eq!(helpers::market(&market_one).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market_one).inventory_reserve(), 0);
     let requote = fx.quote_mint_bundle(
         &market_one,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    assert_eq!(requote.skew_charge(), 2_499_999);
+    assert_eq!(requote.inventory_charge(), 2_499_999);
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market_one);
 
     fx.scenario_mut().next_tx(test_constants::alice());
     let market_two = fx.take_market_bundle(e2);
-    assert_eq!(helpers::market(&market_two).skew_reserve(), two_reserve);
+    assert_eq!(helpers::market(&market_two).inventory_reserve(), two_reserve);
     helpers::return_market_bundle(market_two);
     fx.finish();
 }
@@ -446,12 +446,12 @@ fun settlement_releases_the_residual_skew_escrow() {
         std::u64::max_value!(),
     );
     let cash_before = helpers::market(&market).cash_balance();
-    assert_eq!(helpers::market(&market).skew_reserve(), quote.skew_charge());
+    assert_eq!(helpers::market(&market).inventory_reserve(), quote.inventory_charge());
 
     fx.set_clock_for_testing(test_constants::short_expiry_ms());
     fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
     assert_eq!(fx.try_settle_bundle(&mut market), true);
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     // Release moves nothing: the collected charge simply stops being earmarked.
     assert_eq!(helpers::market(&market).cash_balance(), cash_before);
 
@@ -472,8 +472,8 @@ fun a_zero_rate_market_charges_and_freezes_nothing() {
         constants::pos_inf_tick!(),
         test_constants::mint_quantity(),
     );
-    assert_eq!(quote.skew_charge(), 0);
-    assert_eq!(quote.skew_rebate(), 0);
+    assert_eq!(quote.inventory_charge(), 0);
+    assert_eq!(quote.inventory_rebate(), 0);
 
     fx.mint_exact_quantity_bundle(
         &mut market,
@@ -484,7 +484,7 @@ fun a_zero_rate_market_charges_and_freezes_nothing() {
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -511,9 +511,9 @@ public struct ExpectedOrderMinted has copy, drop {
     builder_fee: u64,
     penalty_fee: u64,
     referral_fee: u64,
-    skew_charge: u64,
-    skew_rebate: u64,
-    skew_reserve: u64,
+    inventory_charge: u64,
+    inventory_rebate: u64,
+    inventory_reserve: u64,
     builder_code_id: Option<ID>,
     referrer_account_id: Option<ID>,
     onchain_timestamp_ms: u64,
@@ -565,10 +565,10 @@ fun a_charging_mint_emits_the_skew_amounts() {
         penalty_fee: 0,
         referral_fee: 0,
         // The exact ATM magnitude the quote pin derives; see the concentrating-mint test.
-        skew_charge: 2_499_999,
-        skew_rebate: 0,
+        inventory_charge: 2_499_999,
+        inventory_rebate: 0,
         // Post-settlement escrow: exactly the charge, on a fresh market.
-        skew_reserve: 2_499_999,
+        inventory_reserve: 2_499_999,
         builder_code_id: option::none(),
         referrer_account_id: option::none(),
         onchain_timestamp_ms: test_constants::now_ms(),
@@ -606,14 +606,14 @@ fun two_half_closes_drain_the_escrow_like_one_full_close() {
         quote.all_in_cost(),
         std::u64::max_value!(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), quote.skew_charge());
+    assert_eq!(helpers::market(&market).inventory_reserve(), quote.inventory_charge());
 
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let half = test_constants::mint_quantity() / 2;
     let replacement = fx
         .redeem_live_bundle(&mut market, &mut account, order_id, half)
         .destroy_some();
-    let mid_reserve = helpers::market(&market).skew_reserve();
+    let mid_reserve = helpers::market(&market).inventory_reserve();
     // D(q/2) = floor((q/2) * sqrt(m(S-m)) / S) = 249,999,999 at the ATM mass, so
     // the midpoint potential is floor(5e6 * 249,999,999 / 1e9) = 1,249,999 —
     // flat across the reference budget (the sqrt moves by ~6e-3 per raw unit).
@@ -622,7 +622,7 @@ fun two_half_closes_drain_the_escrow_like_one_full_close() {
 
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.redeem_live_bundle(&mut market, &mut account, replacement, half);
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -639,7 +639,7 @@ fun two_half_closes_drain_the_escrow_like_one_full_close() {
 #[
     test,
     expected_failure(
-        abort_code = deepbook_predict::expiry_market::ESkewChargeExceedsCloseProceeds,
+        abort_code = deepbook_predict::expiry_market::EInventoryChargeExceedsCloseProceeds,
     ),
 ]
 fun close_of_a_worthless_leg_that_unbalances_the_book_aborts() {
@@ -659,7 +659,7 @@ fun close_of_a_worthless_leg_that_unbalances_the_book_aborts() {
         helpers::strike_tick(),
         test_constants::mint_quantity(),
     );
-    assert_eq!(helpers::market(&market).skew_reserve(), 0);
+    assert_eq!(helpers::market(&market).inventory_reserve(), 0);
 
     fx.advance_live_oracle_bundle(&mut market, DEEP_OUT_OF_THE_MONEY_PRICE);
     fx.redeem_live_bundle_with_limits(

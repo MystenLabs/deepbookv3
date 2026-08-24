@@ -1201,7 +1201,7 @@ def initial_state() -> dict[str, int]:
         "account_dusdc_balance": MANAGER_SEED,
         "account_plp_balance": INITIAL_ACCOUNT_PLP_BALANCE,
         "expiry_cash_balance": INITIAL_EXPIRY_CASH,
-        "skew_reserve": 0,
+        "inventory_reserve": 0,
         "payout_liability": 0,
         "required_cash": 0,
         "fee_incentive_balance": 0,
@@ -1225,7 +1225,7 @@ def state_snapshot(state: dict[str, int]) -> dict[str, str]:
         "account_dusdc_balance",
         "account_plp_balance",
         "expiry_cash_balance",
-        "skew_reserve",
+        "inventory_reserve",
         "payout_liability",
         "required_cash",
         "fee_incentive_balance",
@@ -1271,7 +1271,7 @@ def update_required_cash(model: dict[str, Any], state: dict[str, int]) -> None:
         else live_payout_liability(model)
     )
     state["payout_liability"] = liability
-    state["required_cash"] = liability + state["skew_reserve"]
+    state["required_cash"] = liability + state["inventory_reserve"]
 
 
 def freeze_skew_surface(model: dict[str, Any], oracle: dict[str, Any]) -> None:
@@ -1331,7 +1331,7 @@ def skew_deviation(model: dict[str, Any]) -> int:
     return math.isqrt(numerator // (FLOAT_SCALING * FLOAT_SCALING))
 
 
-def skew_potential(deviation: int) -> int:
+def inventory_potential(deviation: int) -> int:
     return deepbook_mul(INVENTORY_SKEW_RATE, deviation)
 
 
@@ -1370,7 +1370,7 @@ def live_marked_liability(model: dict[str, Any]) -> int:
 def current_nav(model: dict[str, Any], state: dict[str, int]) -> int:
     if model["settlement_price"] is not None:
         return 0
-    free_cash = max(0, state["expiry_cash_balance"] - state["skew_reserve"])
+    free_cash = max(0, state["expiry_cash_balance"] - state["inventory_reserve"])
     return max(0, free_cash - live_marked_liability(model))
 
 
@@ -1443,7 +1443,7 @@ def mint_order(
         quantity,
     )
     lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
-    potential_before = skew_potential(skew_deviation(model))
+    potential_before = inventory_potential(skew_deviation(model))
     before = live_payout_liability(model)
     model["tree"].insert_range(lower_tick, higher_tick, quantity)
     after = live_payout_liability(model)
@@ -1457,17 +1457,17 @@ def mint_order(
         "sequence": sequence,
         "position_root_sequence": sequence,
     }
-    potential_after = skew_potential(skew_deviation(model))
-    skew_charge = max(0, potential_after - potential_before)
-    skew_rebate = max(0, potential_before - potential_after)
-    if skew_rebate > premium + fee:
+    potential_after = inventory_potential(skew_deviation(model))
+    inventory_charge = max(0, potential_after - potential_before)
+    inventory_rebate = max(0, potential_before - potential_after)
+    if inventory_rebate > premium + fee:
         raise ValueError("skew rebate exceeds mint cost")
-    total_cost = premium + fee + skew_charge - skew_rebate
+    total_cost = premium + fee + inventory_charge - inventory_rebate
     if total_cost > state["account_dusdc_balance"]:
         raise ValueError("insufficient account balance for mint")
     state["account_dusdc_balance"] -= total_cost
     state["expiry_cash_balance"] += total_cost
-    state["skew_reserve"] += skew_charge - skew_rebate
+    state["inventory_reserve"] += inventory_charge - inventory_rebate
     update_required_cash(model, state)
     return [
         {
@@ -1484,9 +1484,9 @@ def mint_order(
             "builder_fee": "0",
             "penalty_fee": "0",
             "referral_fee": "0",
-            "skew_charge": str(skew_charge),
-            "skew_rebate": str(skew_rebate),
-            "skew_reserve": str(state["skew_reserve"]),
+            "inventory_charge": str(inventory_charge),
+            "inventory_rebate": str(inventory_rebate),
+            "inventory_reserve": str(state["inventory_reserve"]),
             "onchain_timestamp_ms": str(timestamp_ms),
             "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
@@ -1517,7 +1517,7 @@ def redeem_live(
         fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
         close_quantity,
     )
-    potential_before = skew_potential(skew_deviation(model))
+    potential_before = inventory_potential(skew_deviation(model))
     model["orders"].pop(row["orderRef"])
     before = live_payout_liability(model)
     model["tree"].remove_range(order["lower_tick"], order["higher_tick"], close_quantity)
@@ -1535,19 +1535,19 @@ def redeem_live(
             "sequence": replacement_sequence,
         }
 
-    potential_after = skew_potential(skew_deviation(model))
-    skew_charge = max(0, potential_after - potential_before)
-    skew_rebate = max(0, potential_before - potential_after)
+    potential_after = inventory_potential(skew_deviation(model))
+    inventory_charge = max(0, potential_after - potential_before)
+    inventory_rebate = max(0, potential_before - potential_after)
     # Mirror the contract's close clamp chain: the escrow is senior to fee
     # revenue, so the fee clamps against what the payout leaves after the charge.
-    gross_proceeds = redeem_amount + skew_rebate
-    available = min(redeem_amount, max(0, gross_proceeds - skew_charge))
+    gross_proceeds = redeem_amount + inventory_rebate
+    available = min(redeem_amount, max(0, gross_proceeds - inventory_charge))
     fee = min(fee_raw, available)
-    if skew_charge + fee > gross_proceeds:
+    if inventory_charge + fee > gross_proceeds:
         raise ValueError("skew charge exceeds close proceeds")
-    state["account_dusdc_balance"] += gross_proceeds - fee - skew_charge
-    state["expiry_cash_balance"] += fee + skew_charge - gross_proceeds
-    state["skew_reserve"] += skew_charge - skew_rebate
+    state["account_dusdc_balance"] += gross_proceeds - fee - inventory_charge
+    state["expiry_cash_balance"] += fee + inventory_charge - gross_proceeds
+    state["inventory_reserve"] += inventory_charge - inventory_rebate
     update_required_cash(model, state)
     return [
         {
@@ -1564,9 +1564,9 @@ def redeem_live(
             "trading_fee": str(fee),
             "builder_fee": "0",
             "penalty_fee": "0",
-            "skew_charge": str(skew_charge),
-            "skew_rebate": str(skew_rebate),
-            "skew_reserve": str(state["skew_reserve"]),
+            "inventory_charge": str(inventory_charge),
+            "inventory_rebate": str(inventory_rebate),
+            "inventory_reserve": str(state["inventory_reserve"]),
             "onchain_timestamp_ms": str(timestamp_ms),
             "pyth_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
             "block_scholes_spot_source_timestamp_ms": str(row["priceSourceTimestampMs"]),
@@ -1933,8 +1933,8 @@ def settle_market(
     settlement_price = row["settlementPrice"]
     model["settlement_price"] = settlement_price
     model["settled_liability"] = model["tree"].settled_payout_liability(settlement_price)
-    skew_reserve_released = state["skew_reserve"]
-    state["skew_reserve"] = 0
+    inventory_reserve_released = state["inventory_reserve"]
+    state["inventory_reserve"] = 0
     state["is_settled"] = 1
     update_required_cash(model, state)
     updates = [
@@ -1942,7 +1942,7 @@ def settle_market(
             "type": "market_settled",
             "settlement_price": str(settlement_price),
             "settlement_source": "0",
-            "skew_reserve_released": str(skew_reserve_released),
+            "inventory_reserve_released": str(inventory_reserve_released),
             "onchain_timestamp_ms": str(timestamp_ms),
         }
     ]
