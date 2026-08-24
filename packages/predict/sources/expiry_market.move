@@ -76,8 +76,8 @@ public struct ExpiryMarket has key {
 /// fill. `trading_fee` is the trading fee before the sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
-/// + inventory_charge - inventory_rebate`. The skew adjustment is isolated from every
-/// ordinary fee policy because it is escrowed for risk-reducing trades.
+/// + inventory_charge`. The inventory charge is isolated from every ordinary fee
+/// policy: it prices what the trade did to the book, not the contract.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -86,10 +86,8 @@ public struct MintQuote has copy, drop {
     fee_incentive_subsidy: u64,
     builder_fee: u64,
     penalty_fee: u64,
-    /// Inventory-skew amounts, at most one of which is nonzero. A rebate reduces
-    /// the withdrawal rather than paying the trader, so a mint stays a withdrawal.
+    /// Inventory charge added to the withdrawal.
     inventory_charge: u64,
-    inventory_rebate: u64,
     all_in_cost: u64,
 }
 
@@ -130,11 +128,6 @@ public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
 /// Return expiry DUSDC custody for SDK and devInspect state reads.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
-}
-
-/// Return the isolated inventory-skew escrow for SDK and devInspect state reads.
-public fun inventory_reserve(market: &ExpiryMarket): u64 {
-    market.cash.inventory_reserve()
 }
 
 /// Return local fee incentives for SDK and devInspect state reads.
@@ -364,14 +357,9 @@ public fun penalty_fee(quote: &MintQuote): u64 {
     quote.penalty_fee
 }
 
-/// Return the inventory-skew amounts for SDK and devInspect quote reads. At most
-/// one is nonzero: a mint that flattens the book carries a rebate, not a charge.
+/// Return the inventory charge for SDK and devInspect quote reads.
 public fun inventory_charge(quote: &MintQuote): u64 {
     quote.inventory_charge
-}
-
-public fun inventory_rebate(quote: &MintQuote): u64 {
-    quote.inventory_rebate
 }
 
 /// Return the total quoted account withdrawal for SDK and devInspect consumers.
@@ -662,17 +650,12 @@ public fun try_settle(
         (block_scholes_spot.destroy_some(), constants::settlement_source_block_scholes!())
     };
     market.strike_exposure.record_settlement(settlement_price);
-    // Live-close rebates are no longer reachable after settlement. Release the
-    // residual skew escrow so the settled sweep returns it to LPs.
-    let inventory_reserve_released = market.cash.inventory_reserve();
-    market.cash.release_inventory_reserve();
     config_events::emit_market_settled(
         market.id(),
         market.propbook_underlying_id,
         market.expiry,
         settlement_price,
         settlement_source,
-        inventory_reserve_released,
         now,
     );
     true
@@ -859,9 +842,6 @@ fun mint_prepared(
         quote.penalty_fee,
         referral_fee,
         quote.inventory_charge,
-        quote.inventory_rebate,
-        // Post-settlement sample: the escrow already holds this mint's charge.
-        market.cash.inventory_reserve(),
         clock.timestamp_ms(),
     );
     minted_order.id()
@@ -883,25 +863,12 @@ fun compute_mint_quote(
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let premium = terms.premium();
-    let skew = terms.mint_skew_adjustment();
-    let (inventory_charge, inventory_rebate) = if (skew.skew_is_charge()) {
-        (skew.skew_amount(), 0)
-    } else {
-        (0, skew.skew_amount())
-    };
+    let inventory_charge = terms.mint_inventory_charge();
     let gross_cost =
         premium
         + (trading_fee - fee_incentive_subsidy)
         + builder_fee
         + penalty_fee;
-    // A mint has no outbound leg, so a skew rebate can only reduce what the trader
-    // pays. Aborting rather than clamping keeps the escrow equal to the potential:
-    // a clamp would move the potential without crediting the trader the difference.
-    // Unreachable at any admissible rate — the rebate is bounded by half the rate
-    // against a premium of at least the entry-probability floor; the margin is
-    // pinned by `protocol_config_bounds_tests::max_skew_rebate_stays_below_the_minimum_premium`
-    // and recorded in RP-29, so there is no `expected_failure` test to write.
-    assert!(inventory_rebate <= gross_cost, EInventoryRebateExceedsMintCost);
 
     MintQuote {
         quantity,
@@ -912,8 +879,7 @@ fun compute_mint_quote(
         builder_fee,
         penalty_fee,
         inventory_charge,
-        inventory_rebate,
-        all_in_cost: gross_cost + inventory_charge - inventory_rebate,
+        all_in_cost: gross_cost + inventory_charge,
     }
 }
 
@@ -953,11 +919,6 @@ fun settle_mint_payment(
         ctx,
     );
     let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
-    // The rebate is the part of the gross cost the escrow covers instead of the
-    // trader, so it rejoins the payment before any split reads it.
-    if (quote.inventory_rebate > 0) {
-        payment.join(market.cash.pay_inventory_rebate(quote.inventory_rebate));
-    };
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
     let referral_fee_payment = payment.split(referral_fee);
@@ -966,7 +927,6 @@ fun settle_mint_payment(
     // custody; the skew amount is earmarked separately once its cash has arrived.
     payment.join(market.fee_incentive_balance.split(quote.fee_incentive_subsidy));
     market.cash.receive(payment);
-    market.cash.credit_inventory_reserve(quote.inventory_charge);
 
     market.assert_cash_backing();
 }
@@ -1010,31 +970,10 @@ fun redeem_live_with_auth(
     // Close-side slippage floor: reject if the quoted per-contract probability
     // has slipped below the caller's bound. `0` disables.
     assert!(range_probability >= min_probability, ERedeemProbabilityBelowMin);
-    let skew = terms.close_skew_adjustment();
-    let (inventory_charge, inventory_rebate) = if (skew.skew_is_charge()) {
-        (skew.skew_amount(), 0)
-    } else {
-        (0, skew.skew_amount())
-    };
-    // Everything the close releases. The rebate is the trader's, so it counts
-    // toward covering the deductions even though the fee is not charged on it.
-    let gross_proceeds = redeem_amount + inventory_rebate;
-    // The pot the fee, builder fee and penalty share. Two caps, and each one is a
-    // separate rule:
-    //
-    // `redeem_amount` is the payout the fee is charged against — an expiry-ramped
-    // fee can exceed a deep out-of-the-money redeem, and a close must never cost
-    // more than it releases. Capping here also keeps the fee out of the skew
-    // rebate, which is the trader's own escrowed money coming back.
-    //
-    // `gross_proceeds - inventory_charge` makes the escrow senior to fee revenue: the
-    // escrow backs future rebates rather than being revenue, so it is the first
-    // claim on the payout. Without it a close whose fee already consumed the
-    // payout would abort rather than collect, stranding a position the first cap
-    // exists to keep closable. It binds only when the payout alone cannot cover
-    // both, so a close with a rebate large enough to absorb the charge pays
-    // exactly the fee it would have paid before.
-    let available = redeem_amount.min(gross_proceeds.saturating_sub(inventory_charge));
+    // The fee is charged against the payout, and the inventory charge takes what
+    // the payout still has after it. Both clamp rather than abort: the charge is
+    // revenue, not escrow backing a later refund, so collecting less than the
+    // measure moved costs the pool a little signal and never breaks an invariant.
     let fee_amount = market
         .strike_exposure
         .trading_fee(
@@ -1043,7 +982,7 @@ fun redeem_live_with_auth(
             close_quantity,
             clock,
         )
-        .min(available);
+        .min(redeem_amount);
 
     // The redeem payment decomposition, computed in full before any cash moves.
     // The single `builder_code_id` read feeds the fee amount, the routing
@@ -1053,17 +992,18 @@ fun redeem_live_with_auth(
         &builder_code_id,
         fee_amount,
         close_quantity,
-    ).min(available - fee_amount);
-    let penalty_amount = penalty_amount.min(available - fee_amount - builder_fee_amount);
-    // Reachable only when the charge exceeds everything the close releases: the
-    // clamps above already hold the three deductions to `available`, which is at
-    // most `gross_proceeds - inventory_charge` whenever that is non-zero.
+    ).min(redeem_amount - fee_amount);
+    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
+    // What the payout still holds once the ordinary deductions are taken. The
+    // inventory charge is junior to all of them, so a close can always pay its
+    // fee and can never be blocked by the charge.
+    let inventory_charge = terms
+        .close_inventory_charge()
+        .min(redeem_amount - fee_amount - builder_fee_amount - penalty_amount);
+    // Close-side all-in slippage floor: the net credited to the account, after
+    // every deduction. `0` disables. Mirror of mint's `max_cost`.
     assert!(
-        inventory_charge + fee_amount + builder_fee_amount + penalty_amount <= gross_proceeds,
-        EInventoryChargeExceedsCloseProceeds,
-    );
-    assert!(
-        gross_proceeds
+        redeem_amount
             - fee_amount
             - builder_fee_amount
             - penalty_amount
@@ -1099,7 +1039,6 @@ fun redeem_live_with_auth(
         builder_fee_amount,
         penalty_amount,
         inventory_charge,
-        inventory_rebate,
         builder_code_id,
         ctx,
     );
@@ -1119,8 +1058,6 @@ fun redeem_live_with_auth(
         builder_fee_amount,
         penalty_amount,
         inventory_charge,
-        inventory_rebate,
-        market.cash.inventory_reserve(),
         clock.timestamp_ms(),
     );
     replacement_order_id
@@ -1181,18 +1118,15 @@ fun settle_live_redeem_payment(
     builder_fee_amount: u64,
     penalty_amount: u64,
     inventory_charge: u64,
-    inventory_rebate: u64,
     builder_code_id: Option<ID>,
     ctx: &mut TxContext,
 ) {
     // The penalty stays in expiry cash, so it is never withdrawn: pay out net of it.
     let mut payout = market.cash.pay_authorized(redeem_amount - penalty_amount);
-    payout.join(market.cash.pay_inventory_rebate(inventory_rebate));
     // A skew charge is withheld from the payout and earmarked, the mirror of a
     // mint charge arriving with the payment.
     let skew_collected = payout.split(inventory_charge);
     market.cash.receive(skew_collected);
-    market.cash.credit_inventory_reserve(inventory_charge);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     market.cash.receive(fee);
@@ -1245,13 +1179,4 @@ fun send_referral_fee(referrer_receive_address: Option<address>, fee: Balance<DU
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     market.cash.assert_backing(market.payout_liability());
-    // Structurally unreachable, kept as a protocol-invariant tripwire: every
-    // trade collects or refunds exactly the difference of floored potentials
-    // (`strike_exposure::inventory_skew`), so cumulative collections telescope
-    // to the current potential with equality, and settled or zero-rate books
-    // carry zero potential. No `expected_failure` test per unit-tests rule 4.
-    assert!(
-        market.cash.inventory_reserve() >= market.strike_exposure.inventory_potential(),
-        EInsufficientInventoryEscrow,
-    );
 }

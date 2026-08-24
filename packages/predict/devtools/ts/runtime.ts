@@ -784,7 +784,6 @@ export interface PredictEconomicState {
     accountDusdcBalance: bigint;
     accountPlpBalance: bigint;
     expiryCashBalance: bigint;
-    inventoryReserve: bigint;
     payoutLiability: bigint;
     requiredCash: bigint;
     feeIncentiveBalance: bigint;
@@ -820,7 +819,6 @@ export async function readPredictEconomicState(params: {
     tx.moveCall({ target: target("plp", "supply_requests_pending"), arguments: [vault] });
     tx.moveCall({ target: target("plp", "withdraw_requests_pending"), arguments: [vault] });
     tx.moveCall({ target: target("expiry_market", "cash_balance"), arguments: [market] });
-    tx.moveCall({ target: target("expiry_market", "inventory_reserve"), arguments: [market] });
     tx.moveCall({ target: target("expiry_market", "payout_liability"), arguments: [market] });
     tx.moveCall({ target: target("expiry_market", "required_cash"), arguments: [market] });
     tx.moveCall({ target: target("expiry_market", "fee_incentive_balance"), arguments: [market] });
@@ -858,7 +856,6 @@ export async function readPredictEconomicState(params: {
         supplyRequestsPending: u64(6),
         withdrawRequestsPending: u64(7),
         expiryCashBalance: u64(8),
-        inventoryReserve: u64(9),
         payoutLiability: u64(10),
         requiredCash: u64(11),
         feeIncentiveBalance: u64(12),

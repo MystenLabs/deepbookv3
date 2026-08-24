@@ -12,20 +12,13 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Solvency and custody
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
-  and isolated inventory-skew reserve
-  (`cash ≥ payout_liability + inventory_reserve`),
+  (`cash ≥ payout_liability`),
   re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
-- **Inventory-skew escrow covers the current potential.** While live,
-  `inventory_reserve ≥ rate × D(W)` with equality — cumulative collections telescope
-  to the potential of the current book exactly; rebates may withdraw only the
-  potential decrease, and settlement releases the residual earmark when rebates
-  become impossible.
-- **Inventory cycles telescope.** Inventory charge/rebate is always the signed
-  difference between two evaluations of the same deterministic integer state
-  function. Therefore any sequence returning the payout book to its starting
-  state has exactly zero net inventory transfer, including rounding and
-  cross-range reorderings.
+- **The inventory charge prices one trade under one anchor.** A trade pays
+  `rate × (D_after − D_before)` with both sides read at the same forward, so it
+  is charged for the risk it added and never for the anchor moving between
+  trades. Charge-only: a trade that lowers the measure is free.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed payout at any *single* settlement price, read
   from `StrikePayoutTree::payout_reserve_terms`; the buffer is
@@ -63,7 +56,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
   free_cash − live_marked_liability`, floored at zero, where `free_cash =
-  cash − inventory_reserve` and the liability is the
+  cash` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree

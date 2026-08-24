@@ -79,7 +79,7 @@ fun inversion_on_a_cancelling_last_boundary_still_aborts() {
 
     // A = (90, 100], B = (100, +inf], equal quantity: tick 100's start and end
     // cancel, and it is the only node after 90.
-    tree.insert_range(CANCEL_LOWER_TICK, CANCEL_SHARED_TICK, CANCEL_QUANTITY, 0, 0);
+    tree.insert_range(CANCEL_LOWER_TICK, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
     insert_up(&mut tree, CANCEL_SHARED_TICK, CANCEL_QUANTITY);
 
     tree.walk_linear(&pricer, tick_size());
@@ -138,8 +138,8 @@ fun walk_linear_clamps_boundary_aggregation_dust() {
     // flat tail the end-side floor at the shared boundary aggregates 1 ulp above the
     // two start-side floors (199_999 vs 99_999+99_999), so the raw
     // base+start-end would underflow to -1 and abort. The clamp returns 0.
-    tree.insert_range(lower_a, higher, DUST_QUANTITY, 0, 0);
-    tree.insert_range(lower_b, higher, DUST_QUANTITY, 0, 0);
+    tree.insert_range(lower_a, higher, DUST_QUANTITY);
+    tree.insert_range(lower_b, higher, DUST_QUANTITY);
 
     // Independent per-order reference: both ranges' values round to 0, so true
     // linear liability is 0 — the clamped walk agrees (the floored dust was spurious).
@@ -158,17 +158,17 @@ fun gc_mutated_tree_walk_matches_rebuilt_survivor_tree() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0, 0);
-    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY, 0, 0);
-    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0, 0);
+    tree.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
+    tree.insert_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
+    tree.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     // Removing the middle range deletes two interior boundary nodes through GC; the walk, settlement,
     // and rebuilt-tree assertions below prove those boundaries left no trace.
     tree.remove_range(GC_REMOVED_LOWER, GC_REMOVED_HIGHER, GC_REMOVED_QUANTITY);
 
     let mut rebuilt = strike_payout_tree::new(fixture.scenario_mut().ctx());
-    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY, 0, 0);
-    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY, 0, 0);
+    rebuilt.insert_range(GC_SURVIVOR_A_LOWER, GC_SURVIVOR_A_HIGHER, GC_SURVIVOR_A_QUANTITY);
+    rebuilt.insert_range(GC_SURVIVOR_C_LOWER, GC_SURVIVOR_C_HIGHER, GC_SURVIVOR_C_QUANTITY);
 
     let settlement_a_only = GC_SETTLEMENT_A_ONLY_TICK * tick_size();
     let settled_a_only = tree.settled_payout_liability(settlement_a_only, tick_size());
@@ -236,7 +236,7 @@ fun clustered_ticks(): (u64, u64, u64) {
 /// Insert a one-sided up range `(tick, pos_inf]` carrying `quantity`;
 /// `walk_linear` reads only the quantity.
 fun insert_up(tree: &mut StrikePayoutTree, tick: u64, quantity: u64) {
-    tree.insert_range(tick, constants::pos_inf_tick!(), quantity, 0, 0);
+    tree.insert_range(tick, constants::pos_inf_tick!(), quantity);
 }
 
 /// Independent linear reference: `Σ mul(range_price(tick·ts, +inf), quantity)`.

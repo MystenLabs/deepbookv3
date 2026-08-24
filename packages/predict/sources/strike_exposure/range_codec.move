@@ -25,6 +25,13 @@ public fun strike_from_tick(tick: u64, tick_size: u64): Strike {
     Strike(tick * tick_size)
 }
 
+/// Typed strike at a raw price. The inventory lattice lays its boundaries out in
+/// log price rather than on the tick grid, so it enters the strike domain here
+/// instead of through `strike_from_tick`.
+public(package) fun strike_from_raw(raw: u64): Strike {
+    Strike(raw)
+}
+
 /// Raw value for pricing math; consumers re-enter the raw domain only through this.
 public(package) fun value(strike: Strike): u64 {
     strike.0

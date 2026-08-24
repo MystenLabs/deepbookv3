@@ -16,7 +16,6 @@ STATE = {
     "account_dusdc_balance": "0",
     "account_plp_balance": "0",
     "expiry_cash_balance": "0",
-    "inventory_reserve": "0",
     "payout_liability": "0",
     "required_cash": "0",
     "fee_incentive_balance": "0",
@@ -75,8 +74,6 @@ def record(step: int, action: str) -> dict[str, object]:
                 "penalty_fee",
                 "referral_fee",
                 "inventory_charge",
-                "inventory_rebate",
-                "inventory_reserve",
                 "onchain_timestamp_ms",
                 "pyth_spot_source_timestamp_ms",
                 "block_scholes_spot_source_timestamp_ms",
@@ -103,8 +100,6 @@ def record(step: int, action: str) -> dict[str, object]:
                 "builder_fee",
                 "penalty_fee",
                 "inventory_charge",
-                "inventory_rebate",
-                "inventory_reserve",
                 "onchain_timestamp_ms",
                 "pyth_spot_source_timestamp_ms",
                 "block_scholes_spot_source_timestamp_ms",
@@ -166,7 +161,6 @@ def record(step: int, action: str) -> dict[str, object]:
             [
                 "settlement_price",
                 "settlement_source",
-                "inventory_reserve_released",
                 "onchain_timestamp_ms",
             ],
         )

@@ -1,6 +1,6 @@
 # Fees and rebates
 
-Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A referred mint redirects a configured share of the protocol-collected trading fee and congestion surcharge to the referring Account without increasing the trader's payment. A market may additionally run an isolated **inventory-skew charge/rebate** that prices how unevenly the book's payouts sit across likely settlement prices: trades that concentrate the book pay into a dedicated escrow and trades that flatten it receive the matching decrease from it. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
+Every Predict trade — a mint or a live redeem — carries a trading fee, and may also carry a builder fee and a congestion surcharge. A referred mint redirects a configured share of the protocol-collected trading fee and congestion surcharge to the referring Account without increasing the trader's payment. A market may additionally run an **inventory charge** that prices how unevenly the book's payouts sit across likely settlement prices: trades that concentrate the book pay, and trades that flatten it are free. The trading fee itself is shaped by an expiry ramp. This page describes each component, the reasoning behind it, and how they combine into the cash a trader pays or receives.
 
 Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
 
@@ -83,7 +83,7 @@ referral_basis = (trading_fee - sponsor_subsidy) + congestion_surcharge
 referral_fee   = floor(referral_basis * referral_fee_rate)
 ```
 
-Sponsor-funded subsidy is subtracted because it is not paid by the trader. Builder fees are already owned by the builder, and inventory-skew adjustments are isolated risk escrow, so neither enters the referral basis. Referrals apply only to mints; live and settled redeems do not pay referral fees.
+Sponsor-funded subsidy is subtracted because it is not paid by the trader. Builder fees are already owned by the builder, and the inventory charge prices book risk rather than the contract, so neither enters the referral basis. Referrals apply only to mints; live and settled redeems do not pay referral fees.
 
 The referral amount is split from the mint payment before the remaining protocol proceeds enter expiry cash. It therefore leaves `MintQuote.all_in_cost`, `max_cost`, and the trader's account debit unchanged. `MintQuote` describes what the trader pays, not how the protocol distributes those proceeds.
 
@@ -115,15 +115,17 @@ One accepted weakness: because the first observation seeds the variance directly
 
 The congestion surcharge is handled differently from the trading fee in the cash flow. It is withdrawn from the trader (at mint) or withheld from the payout (at redeem). On an unreferred mint or any redeem it rides into the expiry's cash as **surplus**; on a referred mint, the configured referral share is split from it first. It earns no builder cut. It compensates liquidity providers for transacting during congestion rather than being a fee on the contract itself.
 
-## Inventory-skew charge and rebate
+## Inventory charge
 
-Inventory skew is an isolated transfer layered on top of the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. It prices how **unevenly** the book's payouts sit across the settlement prices that carry probability — a shape plain size cannot see, because two books of equal size can differ arbitrarily in how one-sided they are.
+The inventory charge is layered on top of the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. It prices how **unevenly** the book's payouts sit across the settlement prices that carry probability — a shape plain size cannot see, because two books of equal size can differ arbitrarily in how one-sided they are.
 
-The statistic is the probability-weighted standard deviation of the payout profile: `D(W) = sqrt(sum q(S) * W(S)^2 - (sum q(S) * W(S))^2)`, where `W(S)` is what the pool owes if settlement lands at tick `S` and `q(S)` is the probability of landing there under a surface **frozen at the market's first mint**. Freezing makes the charge a state function — a difference of one book-level potential `rate * D(W)` — so splitting, partial closes, and cycles telescope exactly, and a round trip refunds to the unit. The measure needs no measurement window: a price the market will almost never reach carries almost no weight, so nothing has to be clipped, sized, or re-derived.
+The statistic is the probability-weighted standard deviation of the payout profile: `D(W) = sqrt(sum q(S) * W(S)^2 - (sum q(S) * W(S))^2)`, where `W(S)` is what the pool owes if settlement lands at tick `S` and `q(S)` is the probability of landing there. The measure has two parts, and they are frozen differently: the distribution's **shape** is frozen from the market's first priced mint, while its **centre** is re-read from every later trade's own forward. Freezing the shape avoids a keeper; re-anchoring the centre is what keeps the charge meaningful after spot has moved, because a measure frozen at both would call every strike the market can still trade a near-certainty and charge almost nothing for it.
 
-The sign travels with the trade's effect, not its direction. A mint that concentrates the book pays a charge; a mint that flattens it (completing a set) receives a rebate that reduces the withdrawal. A close that flattens is rebated; a close that unbalances a flat book is charged out of its payout. Buying every outcome at once is translation on the payout profile and moves the deviation by nothing, so a guaranteed-payout position earns no rebate and the escrow cannot be farmed.
+Re-anchoring is free because the measure is mirrored on a lattice uniform in log price: moving the centre translates the whole mass profile along that axis, which is an integer cell shift rather than a recomputation. No surface is read after the lattice is built. The measure also needs no measurement window — a price the market will almost never reach carries almost no weight, so nothing has to be clipped, sized, or re-derived.
 
-`inventory_skew_rate` ships at `0` and each market snapshots it at creation; a zero-rate market never evaluates a weight or freezes a surface. Collected charges are earmarked in `inventory_reserve`, rebates are paid only from it, and cumulative collections equal the current potential exactly, so the escrow always covers the largest rebate any book state can claim. Settlement releases the residual into ordinary expiry surplus.
+The charge follows the trade's effect, not its direction: a mint or a close that leaves the book more concentrated pays, and one that flattens it is simply free. Buying every outcome at once is translation on the payout profile and moves the deviation by nothing, so a complete set costs nothing beyond ordinary fees. There is **no rebate**: because the measure re-anchors between trades, a refund computed under a later centre would not be the amount that was collected, so the mechanism charges only.
+
+`inventory_skew_rate` ships at `0` and each market snapshots it at creation; a zero-rate market never builds a lattice or evaluates the measure. Collected charges are ordinary expiry surplus — with no rebate there is nothing to escrow, so the charge needs no isolated reserve and no settlement release.
 
 ## How the components combine
 
@@ -142,8 +144,8 @@ flowchart TD
     ROUTE --> COLLECT[net fee and surcharge -> expiry cash]
     ROUTE --> REF[referred mint: configured share]
     REF --> RACCOUNT[referrer Account receive address]
-    D[Payout profile deviation D under the frozen measure] --> SKEW["skew charge/rebate = rate * delta D"]
-    SKEW --> SRESERVE[isolated skew reserve]
+    D[Payout profile deviation D, frozen shape re-anchored to the live forward] --> SKEW["inventory charge = rate * increase in D"]
+    SKEW --> SURPLUS[expiry cash surplus]
 ```
 
 Cash routing at trade time:
@@ -154,9 +156,9 @@ Cash routing at trade time:
 | Builder fee | add-on to trading fee | builder code address | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus, net of any mint referral share | No |
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
-| Inventory skew | mint add-on or withdrawal reduction / close credit or withheld charge | isolated skew escrow; residual becomes surplus at settlement | No |
+| Inventory charge | mint add-on / withheld from a close's payout | expiry cash surplus | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_charge - inventory_rebate` (at most one of the two skew amounts is nonzero); referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and skew adjustment on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_rebate - inventory_charge - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount, and the skew escrow is senior to fee revenue when a payout cannot cover both (the register's RP-29 owns that ordering). At **settled redeem**, the winning payout is paid in full with no per-trade or skew rebate.
+At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and skew adjustment on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount - trading_fee - builder_fee - congestion_surcharge - inventory_charge`; `min_proceeds` protects that final net amount, and the inventory charge is junior to every ordinary deduction, so it can never block a close. At **settled redeem**, the winning payout is paid in full with no per-trade deductions.
 
 ## The LP supply/withdraw fee
 

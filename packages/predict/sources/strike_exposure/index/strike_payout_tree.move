@@ -38,9 +38,6 @@ use sui::table::{Self, Table};
 const EInsufficientPayoutQuantity: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
 const ENonMonotonePrice: u64 = 2;
-const EInvertedRange: u64 = 3;
-const EInvertedWeights: u64 = 4;
-const EBoundaryWeightMismatch: u64 = 5;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -63,20 +60,6 @@ public struct PayoutSummary has copy, drop, store {
     /// `start` would break shape-independence with no test to catch it, and
     /// would also abort `strike_exposure`'s plain `total - max` subtraction.
     max_payout_prefix_gain: u64,
-    /// First moments of the boundary measure under each boundary's frozen weight:
-    /// `sum(weight * local_start)` and `sum(weight * local_end)` over the subtree.
-    /// They carry where quantity sits on the probability line, which the plain
-    /// totals cannot express — two orders of equal quantity spanning one likely
-    /// tick and a swath of unreachable ones produce identical `start`/`end`. They
-    /// are not themselves a weighted area; `range_weighted_payout_sum` combines
-    /// them with the range's opening prefix to get one.
-    ///
-    /// Unlike `max_payout_prefix_gain` these are plain sums, so associativity —
-    /// and with it the tree's shape-independence — holds unconditionally rather
-    /// than by a bound on magnitude. They are `u128` because a single term
-    /// reaches `1e9 * max_order_quantity`, past `u64`.
-    mass_weighted_start: u128,
-    mass_weighted_end: u128,
 }
 
 /// Height-balanced node keyed by finite boundary tick.
@@ -91,11 +74,6 @@ public struct PayoutNode has copy, drop, store {
     /// recomputed without deriving locals by subtracting child summaries.
     local_start: u64,
     local_end: u64,
-    /// Frozen UP probability at this boundary's strike, fixed at node creation.
-    /// Stored rather than recomputed so rotations and resummaries never evaluate
-    /// a surface; the caller owns which measure the weight comes from and must
-    /// supply the same value every time it touches this boundary.
-    weight: u64,
     summary: PayoutSummary,
 }
 
@@ -137,68 +115,6 @@ public(package) fun range_max_payout(
         constants::pos_inf_tick!(),
     );
     prefix_at_lower + window.max_payout_prefix_gain
-}
-
-/// Return raw `sum(q(S) * W(S))` over the settlement ticks `S` in
-/// `(lower_tick, higher_tick]`, where `W(S)` is the payout owed at `S` and `q`
-/// is the per-tick mass implied by the frozen boundary weights — the weighted
-/// area under the payout profile, at the 1e9 mass scale with no division.
-///
-/// Derivation: `W(S) = W(lower+1) + sum(delta_t)` over boundaries
-/// `lower < t < S`, and each boundary reaches the mass between it and the
-/// range's top, so the weighted sum is `prefix * (U(lower) - U(higher)) +
-/// sum(delta_t * (U(t) - U(higher)))` — the summary moments carry
-/// `sum(U(t) * delta_t)` directly. Both reads are the same pair
-/// `range_max_payout` already performs, so this stays `O(log n)`.
-///
-/// `lower_weight` and `higher_weight` are `U` at the two range boundaries under
-/// the caller's frozen measure; interior weights come from the nodes. Because
-/// every term is an exact integer product, inserting a range and re-reading it
-/// moves this sum by exactly `quantity * (lower_weight - higher_weight)` — the
-/// linearity the fold's exact reversal stands on.
-///
-/// The final subtraction floors at zero rather than aborting: a consistent book
-/// with a monotone weight measure cannot drive it negative, but the frozen
-/// surface's floored probabilities can carry inversion dust of a few raw units
-/// between adjacent boundaries, and a quote should absorb that dust, not abort.
-public(package) fun range_weighted_payout_sum(
-    tree: &StrikePayoutTree,
-    lower_tick: u64,
-    higher_tick: u64,
-    lower_weight: u64,
-    higher_weight: u64,
-): u128 {
-    assert!(higher_tick >= lower_tick, EInvertedRange);
-    assert!(lower_weight >= higher_weight, EInvertedWeights);
-    if (higher_tick == lower_tick) return 0;
-
-    let prefix_at_lower = settlement_prefix_payout(
-        &tree.nodes,
-        tree.root,
-        lower_tick + 1,
-        tree.base,
-    );
-    let window = window_summary(
-        &tree.nodes,
-        tree.root,
-        lower_tick,
-        higher_tick,
-        0,
-        constants::pos_inf_tick!(),
-    );
-
-    // Start and end sides accumulate separately, as `walk_linear` does: a node's
-    // net boundary delta is signed, so a single running total would underflow
-    // mid-combine even though the weighted sum itself is non-negative.
-    let prefix = prefix_at_lower as u128;
-    let lower_mass = lower_weight as u128;
-    let higher_mass = higher_weight as u128;
-    let rises =
-        prefix * lower_mass + window.mass_weighted_start + higher_mass * (window.end as u128);
-    let falls =
-        prefix * higher_mass + window.mass_weighted_end + higher_mass * (window.start as u128);
-    // Clamp, not abort: see the doc comment on inversion dust.
-    rises.saturating_sub(falls)
 }
 
 /// Evaluate payout liability at one positive normalized settlement price.
@@ -252,16 +168,11 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
 }
 
 /// Insert interval payout quantity for the order tick range `(lower_tick, higher_tick]`.
-/// `lower_weight` and `higher_weight` are the frozen UP probabilities at the two
-/// boundaries; a boundary node created here stores its weight for the subtree
-/// moments, and a reused boundary must be passed the weight it already carries.
 public(package) fun insert_range(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    lower_weight: u64,
-    higher_weight: u64,
 ) {
     if (quantity == 0) return;
 
@@ -284,7 +195,7 @@ public(package) fun insert_range(
         EMaxPayoutTreeNodes,
     );
 
-    tree.apply_range(lower_tick, higher_tick, quantity, lower_weight, higher_weight, true);
+    tree.apply_range(lower_tick, higher_tick, quantity, true);
 }
 
 /// Remove interval payout quantity for the order tick range `(lower_tick, higher_tick]`.
@@ -294,9 +205,7 @@ public(package) fun remove_range(
     higher_tick: u64,
     quantity: u64,
 ) {
-    // A removal never creates a boundary, so it carries no weights; the stored
-    // ones are already right.
-    tree.apply_range(lower_tick, higher_tick, quantity, 0, 0, false);
+    tree.apply_range(lower_tick, higher_tick, quantity, false);
 }
 
 fun apply_range(
@@ -304,8 +213,6 @@ fun apply_range(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    lower_weight: u64,
-    higher_weight: u64,
     add: bool,
 ) {
     // Skip a fully-zero delta; index any order with nonzero quantity.
@@ -313,11 +220,11 @@ fun apply_range(
 
     if (lower_tick == 0) {
         apply_net_delta(&mut tree.base, quantity, add);
-        tree.apply_boundary_delta(higher_tick, quantity, higher_weight, false, add);
+        tree.apply_boundary_delta(higher_tick, quantity, false, add);
     } else {
-        tree.apply_boundary_delta(lower_tick, quantity, lower_weight, true, add);
+        tree.apply_boundary_delta(lower_tick, quantity, true, add);
         if (higher_tick != constants::pos_inf_tick!()) {
-            tree.apply_boundary_delta(higher_tick, quantity, higher_weight, false, add);
+            tree.apply_boundary_delta(higher_tick, quantity, false, add);
         };
     };
 }
@@ -326,7 +233,6 @@ fun apply_boundary_delta(
     tree: &mut StrikePayoutTree,
     tick: u64,
     quantity: u64,
-    weight: u64,
     is_start: bool,
     add: bool,
 ) {
@@ -336,7 +242,6 @@ fun apply_boundary_delta(
         tree.root,
         tick,
         quantity,
-        weight,
         is_start,
         add,
     );
@@ -355,13 +260,12 @@ fun apply_at(
     root: Option<u64>,
     tick: u64,
     quantity: u64,
-    weight: u64,
     is_start: bool,
     add: bool,
 ): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutQuantity);
-        let leaf = new_leaf(quantity, weight, is_start);
+        let leaf = new_leaf(quantity, is_start);
         nodes.add(tick, leaf);
         return option::some(tick)
     };
@@ -370,10 +274,6 @@ fun apply_at(
     let mut node = nodes[root_tick];
 
     if (tick == root_tick) {
-        // The weight is a pure function of tick under the caller's frozen
-        // measure, so a reused boundary must arrive with the value it stored;
-        // a mismatch means two callers disagree about the measure itself.
-        if (add) assert!(node.weight == weight, EBoundaryWeightMismatch);
         if (is_start) {
             apply_net_delta(&mut node.local_start, quantity, add);
         } else {
@@ -390,15 +290,15 @@ fun apply_at(
     // The descent is a plain BST insert; every structural decision is deferred to
     // `rebalance` on the way back up, which reads only measured heights.
     if (tick < root_tick) {
-        node.left = apply_at(nodes, node.left, tick, quantity, weight, is_start, add);
+        node.left = apply_at(nodes, node.left, tick, quantity, is_start, add);
     } else {
-        node.right = apply_at(nodes, node.right, tick, quantity, weight, is_start, add);
+        node.right = apply_at(nodes, node.right, tick, quantity, is_start, add);
     };
 
     option::some(rebalance(nodes, root_tick, node))
 }
 
-fun new_leaf(quantity: u64, weight: u64, is_start: bool): PayoutNode {
+fun new_leaf(quantity: u64, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
         (quantity, 0)
     } else {
@@ -411,8 +311,7 @@ fun new_leaf(quantity: u64, weight: u64, is_start: bool): PayoutNode {
         right: option::none(),
         local_start: start,
         local_end: end,
-        weight,
-        summary: boundary_summary(weight, start, end),
+        summary: boundary_summary(start, end),
     }
 }
 
@@ -561,7 +460,7 @@ fun window_summary(
 
     let left = window_summary(nodes, node.left, lower, higher, subtree_low, tick);
     let right = window_summary(nodes, node.right, lower, higher, tick, subtree_high);
-    let boundary = boundary_summary(node.weight, node.local_start, node.local_end);
+    let boundary = boundary_summary(node.local_start, node.local_end);
     combine_summaries(combine_summaries(left, boundary), right)
 }
 
@@ -623,7 +522,7 @@ fun walk_linear_subtree(
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, tick: u64, mut node: PayoutNode) {
     let (left, left_height) = subtree_facts(nodes, node.left);
     let (right, right_height) = subtree_facts(nodes, node.right);
-    let boundary = boundary_summary(node.weight, node.local_start, node.local_end);
+    let boundary = boundary_summary(node.local_start, node.local_end);
     node.summary = combine_summaries(combine_summaries(left, boundary), right);
     node.height = 1 + left_height.max(right_height);
     *nodes.borrow_mut(tick) = node;
@@ -648,13 +547,11 @@ fun subtree_height(nodes: &Table<u64, PayoutNode>, root: Option<u64>): u64 {
     nodes[*root.borrow()].height
 }
 
-fun boundary_summary(weight: u64, start: u64, end: u64): PayoutSummary {
+fun boundary_summary(start: u64, end: u64): PayoutSummary {
     PayoutSummary {
         start,
         end,
         max_payout_prefix_gain: positive_net_delta(start, end, 0),
-        mass_weighted_start: (weight as u128) * (start as u128),
-        mass_weighted_end: (weight as u128) * (end as u128),
     }
 }
 
@@ -663,8 +560,6 @@ fun zero_summary(): PayoutSummary {
         start: 0,
         end: 0,
         max_payout_prefix_gain: 0,
-        mass_weighted_start: 0,
-        mass_weighted_end: 0,
     }
 }
 
@@ -679,8 +574,6 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
         start: left.start + right.start,
         end: left.end + right.end,
         max_payout_prefix_gain: left.max_payout_prefix_gain.max(right_gain_after_left),
-        mass_weighted_start: left.mass_weighted_start + right.mass_weighted_start,
-        mass_weighted_end: left.mass_weighted_end + right.mass_weighted_end,
     }
 }
 
@@ -766,13 +659,11 @@ fun assert_subtree_invariant(
     assert!(taller - left_height.min(right_height) <= 1);
     assert!(node.height == 1 + taller);
 
-    let boundary = boundary_summary(node.weight, node.local_start, node.local_end);
+    let boundary = boundary_summary(node.local_start, node.local_end);
     let summary = combine_summaries(combine_summaries(left_summary, boundary), right_summary);
     assert!(node.summary.start == summary.start);
     assert!(node.summary.end == summary.end);
     assert!(node.summary.max_payout_prefix_gain == summary.max_payout_prefix_gain);
-    assert!(node.summary.mass_weighted_start == summary.mass_weighted_start);
-    assert!(node.summary.mass_weighted_end == summary.mass_weighted_end);
 
     (1 + taller, summary, left_count + right_count + 1)
 }

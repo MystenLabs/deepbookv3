@@ -13,9 +13,9 @@ module deepbook_predict::strike_exposure;
 
 use deepbook_predict::{
     constants,
-    inventory_weighted::{Self, WeightedTerms},
+    inventory_lattice::{Self, InventoryLattice},
     order::{Self, Order},
-    pricing::{Self, FrozenSurface, Pricer},
+    pricing::Pricer,
     range_codec,
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
@@ -50,40 +50,24 @@ public struct StrikeExposure has store {
     settlement_price: Option<u64>,
     /// Remaining payout liability in the settled phase.
     settled_payout_liability: u64,
-    /// Probability measure the skew statistic integrates against, frozen from the
-    /// live surface the market's first priced mint validated. `none` until that
-    /// mint lands — and forever on a market whose snapshotted skew rate is zero,
-    /// which never evaluates a weight.
-    frozen_surface: Option<FrozenSurface>,
-    /// Running probability-weighted totals of the payout profile, maintained on
-    /// every mint and close. The statistic reads them instead of walking the tick
-    /// ladder, which a trade cannot afford. Both stay zero while the rate is zero.
-    skew_terms: WeightedTerms,
+    /// The payout profile mirrored for the inventory charge, under a shape frozen
+    /// at the market's first priced mint and re-anchored to each read's own
+    /// forward. `none` until that mint lands — and forever on a market whose
+    /// snapshotted rate is zero, which never builds one.
+    inventory: Option<InventoryLattice>,
     /// Sparse payout tree for live cash backing and settled liability.
     payout: StrikePayoutTree,
 }
 
-/// One trade's inventory-skew adjustment. A mint that flattens the book and a
-/// close that unbalances it both invert the usual direction, so the sign travels
-/// with the amount rather than being implied by the flow.
-public struct SkewAdjustment has copy, drop {
-    amount: u64,
-    is_charge: bool,
-}
-
-/// One trade's skew result: what it is charged or rebated, the accumulator state
-/// the book carries once it lands, and the frozen boundary weights the payout
-/// index stores if the trade creates those boundaries. All are sampled together
-/// against the pre-trade book, so the mutation re-uses the quote's reads instead
-/// of repeating the `O(log n)` traversal `range_weighted_payout_sum` costs.
-/// `surface` is set only by the quote that found no frozen measure yet: the
-/// mutation that consumes it installs the measure the same trade was priced on.
-public struct SkewTerms has copy, drop {
-    adjustment: SkewAdjustment,
-    terms: WeightedTerms,
-    lower_weight: u64,
-    higher_weight: u64,
-    surface: Option<FrozenSurface>,
+/// One trade's inventory charge, and the lattice work the mutation still owes.
+///
+/// The charge is sampled against the pre-trade book at the same forward the
+/// mutation will re-read, so quote and mutation cannot disagree. `install` is
+/// set only by the quote that found no lattice yet: the mutation that consumes
+/// it builds the measure the same trade was priced on.
+public struct InventoryTerms has drop {
+    charge: u64,
+    install: Option<InventoryLattice>,
 }
 
 /// Pure mint terms for one prospective live mint: the priced tick range and
@@ -99,10 +83,8 @@ public struct MintTerms has drop {
     quantity: u64,
     entry_probability: u64,
     premium: u64,
-    /// Signed inventory-skew adjustment and the accumulators the mint leaves
-    /// behind, both sampled against the pre-mint book. A mint that flattens the
-    /// book carries a rebate here rather than a charge.
-    skew: SkewTerms,
+    /// Inventory charge for this mint, sampled against the pre-mint book.
+    inventory: InventoryTerms,
 }
 
 /// Compute-once terms for one prospective live close. Built only by
@@ -115,10 +97,10 @@ public struct LiveCloseTerms has drop {
     close_quantity: u64,
     redeem_amount: u64,
     range_probability: u64,
-    /// Signed inventory-skew adjustment and the accumulators the close leaves
-    /// behind, both sampled against the pre-close book. A close that unbalances
-    /// the book carries a charge here rather than a rebate.
-    skew: SkewTerms,
+    /// Inventory charge for this close, sampled against the pre-close book. A
+    /// close that concentrates the remaining book is charged; one that flattens
+    /// it is simply free.
+    inventory: InventoryTerms,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -133,16 +115,8 @@ public(package) fun quantity(terms: &MintTerms): u64 {
     terms.quantity
 }
 
-public(package) fun skew_amount(adjustment: &SkewAdjustment): u64 {
-    adjustment.amount
-}
-
-public(package) fun skew_is_charge(adjustment: &SkewAdjustment): bool {
-    adjustment.is_charge
-}
-
-public(package) fun mint_skew_adjustment(terms: &MintTerms): SkewAdjustment {
-    terms.skew.adjustment
+public(package) fun mint_inventory_charge(terms: &MintTerms): u64 {
+    terms.inventory.charge
 }
 
 public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
@@ -153,8 +127,8 @@ public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
     terms.range_probability
 }
 
-public(package) fun close_skew_adjustment(terms: &LiveCloseTerms): SkewAdjustment {
-    terms.skew.adjustment
+public(package) fun close_inventory_charge(terms: &LiveCloseTerms): u64 {
+    terms.inventory.charge
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -271,83 +245,53 @@ public(package) fun trading_fee(
 }
 
 /// Return the skew escrow the current book must be backed by. Settled books and
-/// a zero rate carry none, which is what lets settlement release the residual.
-public(package) fun inventory_potential(exposure: &StrikeExposure): u64 {
-    if (exposure.is_settled() || exposure.config.inventory_skew_rate() == 0) return 0;
-    math::mul_down(exposure.config.inventory_skew_rate(), exposure.skew_terms.deviation())
-}
-
-/// Price one range change as the change in the probability-weighted standard
-/// deviation of the payout profile. A trade that flattens the book lowers it and
-/// is rebated; one that concentrates the book where settlement is likely raises
-/// it and is charged. Exposure parked where the frozen measure carries no mass
-/// moves the statistic by nothing, which is the windowless replacement for
-/// clipping a measurement range.
+/// Price one range change as the increase it causes in the inventory measure.
 ///
-/// The measure is translation-invariant: adding the same payout at every price
-/// on the ladder moves the mean and the spread together and leaves the deviation
-/// unchanged. Buying every outcome at once is exactly that move, so a
-/// guaranteed-payout position earns no rebate and cannot be farmed.
-public(package) fun inventory_skew(
+/// The measure is the probability-weighted standard deviation of the payout
+/// profile, read at `pricer`'s own forward on both sides of the change, so a
+/// single trade is priced under one measure and the difference is exactly what
+/// that trade did to the book. A trade that flattens the book leaves the measure
+/// lower and is simply free: this is a charge, not a two-sided transfer, because
+/// re-anchoring moves the measure between trades and a refund computed under a
+/// different anchor would not be the one collected.
+///
+/// The first priced trade on a rate-enabled market also builds the lattice, from
+/// that trade's own validated surface. Until it lands, quoting from the live
+/// surface is quoting from the exact shape the mutation installs, so the two
+/// paths cannot disagree; the book is empty at that point by construction.
+public(package) fun inventory_charge(
     exposure: &StrikeExposure,
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
     payout: u64,
     adding: bool,
-): SkewTerms {
+): InventoryTerms {
     if (exposure.config.inventory_skew_rate() == 0 || payout == 0) {
-        // Carry the current accumulators so the commit is unconditional: an inert
-        // mechanism writes back exactly what it already held.
-        return SkewTerms {
-            adjustment: SkewAdjustment { amount: 0, is_charge: true },
-            terms: exposure.skew_terms,
-            lower_weight: 0,
-            higher_weight: 0,
-            surface: option::none(),
-        }
+        return InventoryTerms { charge: 0, install: option::none() }
     };
 
-    // The measure freezes at the first priced trade: the live surface this quote
-    // validated becomes the market's fixed weight measure when its mint lands.
-    // Until then, quoting from that live surface is quoting from the exact
-    // snapshot the mint would install, so the two paths cannot disagree.
-    let (surface, install) = if (exposure.frozen_surface.is_some()) {
-        (*exposure.frozen_surface.borrow(), option::none())
+    let tick_size = exposure.tick_size;
+    let (before, after, install) = if (exposure.inventory.is_some()) {
+        let (before, after) = exposure
+            .inventory
+            .borrow()
+            .deviation_pair(pricer, lower_tick, higher_tick, payout, tick_size, adding);
+        (before, after, option::none())
     } else {
-        let frozen = pricing::freeze_surface(pricer);
-        (frozen, option::some(frozen))
-    };
-    let lower_weight = exposure.frozen_weight(&surface, lower_tick);
-    let higher_weight = exposure.frozen_weight(&surface, higher_tick);
-
-    // The frozen surface's floored probabilities can invert by dust on a narrow
-    // range; a zero-mass range folds to nothing rather than reading the tree.
-    let range_mass = lower_weight.saturating_sub(higher_weight);
-    let before = exposure.skew_terms;
-    let after = if (range_mass == 0) {
-        before
-    } else {
-        let range_first = exposure
-            .payout
-            .range_weighted_payout_sum(lower_tick, higher_tick, lower_weight, higher_weight);
-        before.fold(range_first, range_mass, payout, adding)
+        // The first priced trade on this market builds the measure from its own
+        // surface. The book is empty here, so the mirror this quote folds the
+        // range into is exactly the one the mutation installs.
+        let mut lattice = inventory_lattice::initialize(pricer);
+        lattice.apply_range(lower_tick, higher_tick, payout, tick_size, adding);
+        (0, lattice.deviation(pricer), option::some(lattice))
     };
 
-    // Difference of floored potentials, not the floored difference. Flooring each
-    // leg independently makes cumulative collections fall below the potential by
-    // up to a unit per trade, and the backing assert would then abort a
-    // legitimate trade. This way the collected total telescopes to the current
-    // potential exactly, which is what the escrow invariant claims.
+    // Difference of floored potentials, not the floored difference: flooring each
+    // leg independently would bias every trade downward by up to a unit.
     let rate = exposure.config.inventory_skew_rate();
-    let potential_before = math::mul_down(rate, before.deviation());
-    let potential_after = math::mul_down(rate, after.deviation());
-    let adjustment = if (potential_after >= potential_before) {
-        SkewAdjustment { amount: potential_after - potential_before, is_charge: true }
-    } else {
-        SkewAdjustment { amount: potential_before - potential_after, is_charge: false }
-    };
-    SkewTerms { adjustment, terms: after, lower_weight, higher_weight, surface: install }
+    let charge = math::mul_down(rate, after).saturating_sub(math::mul_down(rate, before));
+    InventoryTerms { charge, install }
 }
 
 /// Price a range, choose quantity under the requested bias, and run mint
@@ -395,7 +339,7 @@ public(package) fun quote_mint_terms(
         quantity,
         entry_probability,
         premium,
-        skew: exposure.inventory_skew(
+        inventory: exposure.inventory_charge(
             pricer,
             lower_tick,
             higher_tick,
@@ -411,17 +355,15 @@ public(package) fun quote_mint_terms(
 /// fields are always the ones that were priced, and the market-identity assert
 /// rejects terms priced on another exposure.
 public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
-    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, skew, .. } = terms;
+    let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, inventory, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_ticks(lower_tick, higher_tick, quantity, sequence);
     exposure.next_order_sequence = sequence + 1;
 
-    exposure.commit_skew_terms(&skew);
-    exposure
-        .payout
-        .insert_range(lower_tick, higher_tick, quantity, skew.lower_weight, skew.higher_weight);
+    exposure.commit_inventory(inventory, lower_tick, higher_tick, quantity, true);
+    exposure.payout.insert_range(lower_tick, higher_tick, quantity);
 
     allocated_order
 }
@@ -445,7 +387,7 @@ public(package) fun quote_live_close(
         close_quantity,
         redeem_amount: math::mul_down(range_probability, close_quantity),
         range_probability,
-        skew: exposure.inventory_skew(
+        inventory: exposure.inventory_charge(
             pricer,
             order.lower_tick(),
             order.higher_tick(),
@@ -461,10 +403,16 @@ public(package) fun process_live_close(
     exposure: &mut StrikeExposure,
     terms: LiveCloseTerms,
 ): Option<Order> {
-    let LiveCloseTerms { expiry_market_id, order, close_quantity, skew, .. } = terms;
+    let LiveCloseTerms { expiry_market_id, order, close_quantity, inventory, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
-    exposure.commit_skew_terms(&skew);
+    exposure.commit_inventory(
+        inventory,
+        order.lower_tick(),
+        order.higher_tick(),
+        close_quantity,
+        false,
+    );
     exposure.payout.remove_range(order.lower_tick(), order.higher_tick(), close_quantity);
 
     let remaining_quantity = order.quantity() - close_quantity;
@@ -532,8 +480,7 @@ public(package) fun new(
         next_order_sequence: 0,
         settlement_price: option::none(),
         settled_payout_liability: 0,
-        frozen_surface: option::none(),
-        skew_terms: inventory_weighted::zero_terms(),
+        inventory: option::none(),
         payout: strike_payout_tree::new(ctx),
     }
 }
@@ -553,34 +500,32 @@ fun admitted_entry_probability(
     pricer.range_price(lower, higher)
 }
 
-/// Frozen UP probability at one boundary tick: total mass at the open-lower
-/// sentinel, zero past the top, the frozen surface's digital elsewhere.
-fun frozen_weight(exposure: &StrikeExposure, surface: &FrozenSurface, tick: u64): u64 {
-    pricing::frozen_up_price(surface, range_codec::strike_from_tick(tick, exposure.tick_size))
-}
-
-/// Write back the accumulators the quote already folded, and install the frozen
-/// measure when this is the trade that creates it. The read the terms came from
-/// happened before this terms value existed, so unlike the fold itself this has
-/// no ordering requirement against the payout tree.
-fun commit_skew_terms(exposure: &mut StrikeExposure, skew: &SkewTerms) {
-    if (skew.surface.is_some()) {
-        if (exposure.frozen_surface.is_none()) {
-            exposure.frozen_surface.fill(*skew.surface.borrow());
-        } else {
-            // Two first-trade quotes in one transaction each snapshot the same
-            // oracle load — the same-transaction write guard pins that — so a
-            // second install can only ever agree with the first. Structurally
-            // unreachable: terms are `drop`-only and cannot cross transactions,
-            // and every quote-commit pair shares one call frame. Kept as a
-            // tripwire; no `expected_failure` test per unit-tests rule 4.
-            assert!(
-                exposure.frozen_surface.borrow() == skew.surface.borrow(),
-                EFrozenSurfaceMismatch,
-            );
-        }
+/// Land the trade's lattice work: install the measure when this trade built it,
+/// then fold the range in so the stored mirror matches the book the payout tree
+/// is about to hold. The quote priced the same fold at the same forward, so this
+/// re-does the fold rather than carrying a mirrored copy through the terms.
+fun commit_inventory(
+    exposure: &mut StrikeExposure,
+    inventory: InventoryTerms,
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    adding: bool,
+) {
+    let InventoryTerms { charge: _, mut install } = inventory;
+    if (install.is_some()) {
+        // Built and folded by the quote that priced this same trade.
+        exposure.inventory.fill(install.extract());
+        install.destroy_none();
+        return
     };
-    exposure.skew_terms = skew.terms;
+    install.destroy_none();
+    if (exposure.inventory.is_none()) return;
+    let tick_size = exposure.tick_size;
+    exposure
+        .inventory
+        .borrow_mut()
+        .apply_range(lower_tick, higher_tick, quantity, tick_size, adding);
 }
 
 fun live_payout_liability_from_terms(

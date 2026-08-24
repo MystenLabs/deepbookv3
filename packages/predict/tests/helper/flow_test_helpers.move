@@ -2081,14 +2081,12 @@ public fun finish_flush_bundle(
 // === Invariant assertions (rule 17 one-call checks) ===
 
 /// S1 — expiry cash backing: the market's DUSDC custody covers its payout
-/// liability plus its isolated inventory-skew escrow, mirroring the contract's
+/// liability, mirroring the contract's
 /// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
 public fun assert_market_backed(market: &ExpiryMarket) {
-    assert!(
-        market.cash_balance()
-            >= market.payout_liability() + market.inventory_reserve(),
-    );
+    assert!(market.cash_balance()
+            >= market.payout_liability());
 }
 
 /// S1 backing assertion for a market bundle.
@@ -2097,7 +2095,7 @@ public fun assert_market_backed_bundle(market: &MarketBundle) {
 }
 
 /// Expected snapshot of one expiry market's cash and payout backing, asserted in
-/// one call by `check_market_cash`. The isolated inventory-skew escrow is not a
+/// one call by `check_market_cash`. The inventory charge is ordinary surplus, not a
 /// field here — it ships at a zero rate, and `assert_market_backed` covers it.
 public struct ExpectedMarketCash has copy, drop {
     /// DUSDC held by the expiry (`market.cash_balance()`).

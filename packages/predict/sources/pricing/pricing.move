@@ -72,15 +72,6 @@ public struct PricingSVI has copy, drop, store {
     sigma: u64,
 }
 
-/// Storable snapshot of one pricer's surface: exactly the pair `up_price` reads.
-/// The inventory-skew weights freeze one of these at a market's first mint so the
-/// probability measure the statistic integrates against is fixed for the market's
-/// life — a moving measure would make the charge path-dependent.
-public struct FrozenSurface has copy, drop, store {
-    forward: u64,
-    svi: PricingSVI,
-}
-
 const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const ENonPositiveVariance: u64 = 2;
@@ -139,16 +130,32 @@ public(package) fun expiry_market_id(pricer: &Pricer): ID {
     pricer.expiry_market_id
 }
 
-/// Snapshot the surface this pricer prices with, dropping its market binding and
-/// oracle provenance. The result is a fixed function of strike, not a live quote.
-public(package) fun freeze_surface(pricer: &Pricer): FrozenSurface {
-    FrozenSurface { forward: pricer.forward, svi: pricer.svi }
+/// Return the forward this pricer prices against. The inventory lattice anchors
+/// its measure on this value and re-anchors to each later read's own forward.
+public(package) fun forward(pricer: &Pricer): u64 {
+    pricer.forward
 }
 
-/// UP digital probability for `strike` under a frozen surface. Same computation
-/// as `up_price`, against the snapshot instead of the live oracle load.
-public(package) fun frozen_up_price(surface: &FrozenSurface, strike: Strike): u64 {
-    compute_up_price(&surface.svi, surface.forward, strike)
+/// Return `sqrt(w(0))` — the at-the-money total volatility over the pricer's
+/// remaining life, 1e9-scaled. The inventory lattice sizes its span in these
+/// units, which is what makes one span constant serve every cadence and price
+/// level.
+public(package) fun atm_total_volatility(pricer: &Pricer): u64 {
+    let svi = &pricer.svi;
+    let m = svi.m;
+    let negated_m = i64::from_parts(m.magnitude(), !m.is_negative());
+    let sigma_squared = math::mul_down(svi.sigma, svi.sigma);
+    let root = math::sqrt_down(negated_m.square_scaled() + sigma_squared);
+    let inner = svi.rho.mul_scaled(&negated_m).add(&i64::from_u64(root));
+    assert!(!inner.is_negative(), ECannotBeNegative);
+    let (sqrt_var, _) = variance_sqrt_and_d2(
+        svi.a_magnitude,
+        svi.a_is_negative,
+        svi.b,
+        inner.magnitude(),
+        &i64::from_u64(0),
+    );
+    sqrt_var
 }
 
 public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {

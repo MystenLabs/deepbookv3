@@ -101,7 +101,6 @@ STATE_FIELDS = {
         "account_dusdc_balance",
         "account_plp_balance",
         "expiry_cash_balance",
-        "inventory_reserve",
         "payout_liability",
         "required_cash",
         "fee_incentive_balance",
@@ -132,8 +131,6 @@ UPDATE_SCHEMAS = {
         "penalty_fee": "decimal",
         "referral_fee": "decimal",
         "inventory_charge": "decimal",
-        "inventory_rebate": "decimal",
-        "inventory_reserve": "decimal",
         "onchain_timestamp_ms": "decimal",
         "pyth_spot_source_timestamp_ms": "decimal",
         "block_scholes_spot_source_timestamp_ms": "decimal",
@@ -152,8 +149,6 @@ UPDATE_SCHEMAS = {
         "builder_fee": "decimal",
         "penalty_fee": "decimal",
         "inventory_charge": "decimal",
-        "inventory_rebate": "decimal",
-        "inventory_reserve": "decimal",
         "onchain_timestamp_ms": "decimal",
         "pyth_spot_source_timestamp_ms": "decimal",
         "block_scholes_spot_source_timestamp_ms": "decimal",
@@ -220,7 +215,6 @@ UPDATE_SCHEMAS = {
     "market_settled": {
         "settlement_price": "decimal",
         "settlement_source": "decimal",
-        "inventory_reserve_released": "decimal",
         "onchain_timestamp_ms": "decimal",
     },
     "expiry_cash_received": {
