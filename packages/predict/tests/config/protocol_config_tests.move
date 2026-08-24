@@ -240,11 +240,11 @@ fun set_protocol_reserve_profit_share_during_valuation_aborts() {
     abort 999
 }
 
-/// The window that bounds how long a stalled keeper's flush may hold up queued LP fills ships at one hour and is admin-tunable, so keeper cadence and stall tolerance can be retuned without an upgrade.
+/// The window that bounds a stalled flush's LP-fill delay — and therefore the staleness of the mark those fills execute at — ships at ten minutes and is admin-tunable, so keeper cadence and stall tolerance can be retuned without an upgrade.
 #[test]
-fun max_valuation_window_ships_at_one_hour_and_is_tunable() {
+fun max_valuation_window_ships_at_ten_minutes_and_is_tunable() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.max_valuation_window_ms(), constants::one_hour_ms!());
+    assert_eq!(config.max_valuation_window_ms(), 10 * constants::one_minute_ms!());
 
     config.set_max_valuation_window_ms(
         &admin_cap,
