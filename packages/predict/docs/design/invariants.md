@@ -12,19 +12,20 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Solvency and custody
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
-  (`cash ≥ payout_liability`), re-asserted after every cash mutation
+  and isolated inventory-impact reserve
+  (`cash ≥ payout_liability + inventory_impact_reserve`),
+  re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
-- **Inventory-impact charges are never refunded.** A trade pays
-  `max(0, phi(K_after) − phi(K_before))`, so a risk-reducing trade is free rather
-  than credited. The charge is ordinary expiry cash from the moment it is
-  collected: there is no escrow, no position credit, and no settlement release.
-- **Splitting an inventory charge cannot lower it.** Charge is the difference
-  between two evaluations of the same deterministic integer state
-  function, so slicing one risk-increasing trade collects exactly the combined
-  charge. A path that lowers `K` and raises it again collects at least as much as
-  the direct trade, never less, because the decrease pays nothing back. A round
-  trip back to the starting book therefore keeps its charges rather than netting
-  to zero.
+- **Inventory-impact escrow covers the current potential.** While live,
+  `inventory_impact_reserve ≥ phi(payout_liability)`. Mints credit exactly the
+  potential increase and voluntary live closes may withdraw only the potential
+  decrease;
+  settlement releases the residual earmark when live closes become impossible.
+- **Inventory cycles telescope.** Inventory charge/rebate is always the signed
+  difference between two evaluations of the same deterministic integer state
+  function. Therefore any sequence returning the payout book to its starting
+  state has exactly zero net inventory transfer, including rounding and
+  cross-range reorderings.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed payout at any *single* settlement price, read
   from `StrikePayoutTree::payout_reserve_terms`; the buffer is
@@ -61,7 +62,8 @@ and contributors. For *how* each mechanism works, follow the links into
 ## NAV and valuation
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  cash − live_marked_liability`, floored at zero, where the liability is the
+  free_cash − live_marked_liability`, floored at zero, where `free_cash =
+  cash − inventory_impact_reserve` and the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree

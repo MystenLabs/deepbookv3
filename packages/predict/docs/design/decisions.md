@@ -167,43 +167,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   also serves the exact NAV linear walk (`Σ qty·P` over its live boundaries), so it
   is the single full-lifecycle live index. *Rejected:* folding settlement into the
   deleted NAV matrix and dropping the tree.
-- **D033 — Inventory impact prices capital at risk, and never refunds.**
-  The risk coordinate is `K`, the average payout across the five worst of 100
-  equally likely settlement buckets minus the book's expected payout, measured on
-  a ratio ladder rematerialized against the live forward. A trade pays
-  `max(0, phi(K_after) − phi(K_before))` for the same capped convex `phi` D032
-  defined, so both mints and live closes pay when they raise the pool's capital
-  and neither is credited when they lower it. *Why `K` and not `L`:* `L` scores a
-  fully funded book as maximum risk, ignores what the trader paid in, and charges
-  a genuinely offsetting range for its buffer contribution;
-  [the inventory-impact reference](inventory_impact_reference.md) owns the full
-  argument and the measured improvement in risk-adjusted return. *Why no rebate:*
-  a refund needs a counterparty whose risk the closer actually took off the pool,
-  which range digitals do not supply; it is also incompatible with re-freezing the
-  grid, because a charge quoted under one snapshot cannot be unwound under
-  another. *Consequence:* charges are path-dependent in the conservative
-  direction only — splitting a risk-increasing trade collects the same total,
-  while a dip-and-recover path collects more. The charge is ordinary expiry cash
-  on arrival: no escrow, no position credit, no settlement release, and it counts
-  in NAV like any other fee. *Why the pointer is ratios, not frozen dollars:*
-  the 99 rungs are stored as `strike / forward` and rematerialized as
-  `ratio × F_live` on every quote, so the 1% buckets stay on the frozen SVI
-  shape as spot moves and no keeper re-cut is required for forward drift. The
-  first charged mint inverts the live 1% CDF on-chain and stores the ratios;
-  init and that trade are one transaction, so there is no empty-book race and
-  no grid keeper. A surface that cannot invert aborts that mint. A close
-  re-derives its expected-payout delta from that live rematerialization rather
-  than a value stored at mint. *Rejected:* holding charges in escrow until
-  settlement, which defers LP compensation for no benefit and lets an LP
-  supply just before the release to capture a NAV jump. Also rejected: a
-  keeper cadence that re-cuts dollar boundaries after every spot move, which
-  the ratio axis already absorbs, and an off-chain lifecycle-cap cut of the
-  same ladder, which reintroduced the empty-book race the on-chain invert
-  removes.
 - **D032 — Inventory impact is the difference of one capped book-level potential.**
-  *SUPERSEDED by D033 — the risk coordinate moved from `L` to `K`, and the rebate
-  and its escrow were removed. The capped convex potential and the
-  state-difference construction survive unchanged.*
   Define the risk coordinate as the existing payout liability
   `L = M + λ(T-M)`, and charge mints / rebate voluntary live closes by the signed
   change of a convex potential whose marginal rate rises linearly to
@@ -426,7 +390,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
   a trustless on-chain crank), a multi-tx crank, and a flush that pauses trading.
 - **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
-  `current_nav = cash − live_marked_liability`, floored at zero, where the
+  `current_nav = free_cash − live_marked_liability`, floored at zero, where the
   liability is the payout tree's boundary-linear walk alone, with no per-order
   correction (leverage was removed — see "Leverage removal" below). The flush
   prices supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of
@@ -643,7 +607,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **Leverage, the static floor, and knock-out liquidation are removed entirely.** Every position is 1x: live value is `quantity × range_probability`, and a winning position settles for its full `quantity`. There is no floor, no financed amount, no liquidation book, no knock-out threshold, and no near-expiry leverage-admission window. *Rationale:* leverage's risk surface — the liquidation book, the NAV floor correction, the bounded liquidation sweep folded into mint and live redeem, the probability-sensitive admission cap, and the near-expiry block — was disproportionate to its value pre-launch; removing it collapses NAV to a single boundary-linear walk and deletes an entire class of keeper-timeliness risk. *Superseded:* every leverage/floor/knock-out decision above in "Economic model", "Data structures", and "Near-expiry leverage block", retired in place rather than deleted, per the response-policy register's RETIRED convention (RP-17).
 - **Mint admission is an entry-probability band plus a minimum premium.** `strike_exposure_config::assert_mint_admission` requires `entry_probability` inside `[min_entry_probability, max_entry_probability]` and `premium = entry_probability × quantity >= min_premium`; the holder pays the contract's full entry value, so premium equals entry value. *Rejected:* keeping the admission machinery as a dead 1x-only code path — deleting it removes the liquidation book's guard surface entirely rather than leaving it unreachable.
-- **NAV is the payout tree's boundary-linear walk alone.** `current_nav = cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
+- **NAV is the payout tree's boundary-linear walk alone.** `current_nav = free_cash − walk_linear(pricer)`, floored at zero. `walk_linear` still prices every boundary; what is gone is the `correction_value` term, the liquidation-book scan, and the price memo. The non-monotone-surface guard moved with the memo's deletion, from `pricing::ENonMonotonePriceMemo` to `strike_payout_tree::ENonMonotonePrice`, and is still enforced at every boundary (RP-15).
 
 See `predeploy/response-policies.md` RP-27 for the guard-duty inventory this removal required.
 
@@ -658,7 +622,7 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 ## Staking and the trading-loss rebate removal (2026-08-18)
 
 - **DEEP staking and the trading-loss rebate are removed entirely.** `stake_deep` / `unstake_deep`, the pool's `staked_deep` custody, the account's active/inactive stake split and its lazy epoch roll, `StakeConfig` and its two template setters, the rebate reserve and its `trading_loss_rebate_rate` (with the whole `ExpiryCashConfig` it was the only field of), both rebate-claim entrypoints, and the `DeepStaked` / `DeepUnstaked` / `TradingLossRebateClaimed` events are all deleted. *Rationale:* the rebate was the last surviving staking benefit after the fee discount went (see "Stake fee-discount removal"), and it is a mechanism the protocol ships disabled — `max_benefit_ratio` is `0`, so no market pays it. What it did cost, unconditionally, was solvency-critical surface: a second term in the expiry cash-backing invariant, a per-account per-expiry summary table with a claim as its only reaper, a permissionless claim flow whose economics needed their own gas measurements, and a one-shot claim whose ordering against settlement, unstaking, and the settled sweep had to be reasoned about. Removing it is the largest single reduction in tail-state surface available before the deploy freezes the ABI. *Rejected:* keeping the rebate without stake scaling — the stake was the sybil gate that made an aggregate-net-loss rebate targetable at all (a rebate paid at the flat rate to every address is farmable one address per order), so an unstaked rebate is a different and worse mechanism, not a smaller one.
-- **The expiry cash-backing invariant is now payout liability plus the inventory-impact escrow.** *SUPERSEDED by D033 — the escrow was removed with the inventory rebate, so the invariant is payout liability alone and `free_cash` no longer exists as a distinct quantity.* `required_cash = payout_liability + inventory_impact_reserve`; `free_cash` nets out the escrow alone. The settled sweep therefore returns all free cash at settlement instead of holding a per-account reserve back until a keeper resolves it, and an expiry no longer strands cash waiting on a cleanout.
+- **The expiry cash-backing invariant is now payout liability plus the inventory-impact escrow.** `required_cash = payout_liability + inventory_impact_reserve`; `free_cash` nets out the escrow alone. The settled sweep therefore returns all free cash at settlement instead of holding a per-account reserve back until a keeper resolves it, and an expiry no longer strands cash waiting on a cleanout.
 - **`ExpiryTradingSummary` is deleted with the rebate, not kept for its position count.** The summary's other three fields (fees paid, gross paid, gross received) existed only to price a rebate, and its open-position count only gated the claim. Its row was created lazily per account per expiry and removed by the claim, so keeping the table without the claim would leak one row per account per expiry forever. Position state is the `positions` table, which is complete on its own. *Consequence:* `expiry_position_count` and `trading_fees_paid` are gone from the public read surface.
 - **`MarketCreated` no longer carries `trading_loss_rebate_rate`, `max_benefit_ratio`, or the two `*_benefit_power` thresholds.** The market policy snapshot keeps the strike-exposure terms only. Off-chain consumers of those four fields must be updated with this change.
 

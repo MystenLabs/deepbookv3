@@ -438,7 +438,7 @@ comparison is a `response-policies.md` decision, not a silent widening.
 
 **Severity:** Predeploy mechanism work; the shipped rate remains zero.
 
-Inventory impact uses one capped potential over rolling grid 95% economic capital. The design is specified in [`frozen_grid_inventory_impact_spec.md`](../docs/design/frozen_grid_inventory_impact_spec.md), modeled in [`frozen_grid_inventory_impact.ipynb`](../simulations/frozen_grid_inventory_impact.ipynb), and explained end to end in [`inventory_impact_reference.md`](../docs/design/inventory_impact_reference.md): 100 raw-price buckets with 1% probability each, inverted on the first charged mint and verified on-chain; conservative snapping to payout-tree ranges for the top-five tail; additive expected payout under the same snapshot for centering; and a full charge on every risk-increasing transition.
+Inventory impact uses one capped potential over rolling grid 95% economic capital. Source of truth is [`inventory_grid.move`](../sources/strike_exposure/inventory_grid.move) and [`inventory_cells.move`](../sources/strike_exposure/inventory_cells.move): 100 buckets of 1% probability, inverted on the first charged mint and verified on-chain; cell-array maxima for the top-five tail; expected payout re-integrated from the same cells for centering; and a full charge on every risk-increasing transition.
 
 Refunds, per-position refund credit, `w(t)` vesting, and the isolated escrow are **removed from source** as of D033; the charge is ordinary expiry cash on arrival. Their value depended on a repositioning response with no precedent at these expiries, and they are incompatible with refreshing the grid.
 
