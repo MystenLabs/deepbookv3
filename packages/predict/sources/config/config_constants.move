@@ -30,6 +30,8 @@ const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
 const EInvalidReferralFeeRate: u64 = 22;
+const EInvalidMaxValuationWindowMs: u64 = 23;
+const EInvalidMaxValuationLogOps: u64 = 24;
 
 // === Fees ===
 
@@ -122,6 +124,53 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
         value >= min_lp_request_limit_flush_attempts!()
             && value <= max_lp_request_limit_flush_attempts!(),
         EInvalidLpRequestLimitFlushAttempts,
+    );
+}
+
+/// How long a started full-pool valuation may stay in flight before anyone may
+/// discard it (`plp::abort_valuation`). A stalled flush blocks only LP queue fills
+/// and the flush-set markets' settlement — trading continues, so this window bounds
+/// LP-fill latency, not a protocol pause. The minimum keeps a legitimate flush from
+/// being discarded out from under a keeper still working through it; the maximum
+/// bounds the wait even if an operator sets this carelessly. A live operator never
+/// waits it out — `abort_valuation_privileged` is immediate. See RP-29.
+public(package) macro fun default_max_valuation_window_ms(): u64 {
+    deepbook_predict::constants::one_hour_ms!()
+}
+
+public(package) macro fun min_max_valuation_window_ms(): u64 {
+    deepbook_predict::constants::five_minutes_ms!()
+}
+
+public(package) macro fun max_max_valuation_window_ms(): u64 {
+    4 * deepbook_predict::constants::one_hour_ms!()
+}
+
+public(package) fun assert_max_valuation_window_ms(value: u64) {
+    assert!(
+        value >= min_max_valuation_window_ms!() && value <= max_max_valuation_window_ms!(),
+        EInvalidMaxValuationWindowMs,
+    );
+}
+
+/// Range operations one market's valuation delta log may record while that market
+/// awaits its `value_expiry` transaction; a trade past the cap aborts until the
+/// keeper values the market (or the flush is discarded). Tunable because it
+/// prices a per-market trade-freeze against `value_expiry`'s compute headroom:
+/// each logged boundary adds one pricer evaluation to that transaction, so the
+/// ceiling is deliberately conservative until the C-5 measurement sizes it. The
+/// setter is usable mid-flush on purpose — raising the cap is the live remedy for
+/// a hot market filling its log under a stalled keeper.
+public(package) macro fun default_max_valuation_log_ops(): u64 { 256 }
+
+public(package) macro fun min_max_valuation_log_ops(): u64 { 64 }
+
+public(package) macro fun max_max_valuation_log_ops(): u64 { 1_024 }
+
+public(package) fun assert_max_valuation_log_ops(value: u64) {
+    assert!(
+        value >= min_max_valuation_log_ops!() && value <= max_max_valuation_log_ops!(),
+        EInvalidMaxValuationLogOps,
     );
 }
 

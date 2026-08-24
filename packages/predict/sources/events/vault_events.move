@@ -177,6 +177,19 @@ public struct FlushExecuted has copy, drop, store {
     idle_balance_after: u64,
     /// PLP supply after the drain's completed mints and burns.
     total_supply_after: u64,
+    /// Each queue's `next_index` at this flush's snapshot instant; the drain
+    /// filled only requests indexed strictly below these.
+    supply_request_cutoff: u64,
+    withdraw_request_cutoff: u64,
+}
+
+/// An in-flight full-pool valuation was discarded without draining any queue —
+/// by the operator immediately, or permissionlessly past the abort deadline. The
+/// counts distinguish an abandoned flush from one that never progressed.
+public struct FlushAborted has copy, drop, store {
+    pool_vault_id: ID,
+    expected_market_count: u64,
+    valued_market_count: u64,
 }
 
 /// Emitted once when the pool is bootstrapped via `plp::lock_capital`: `amount`
@@ -420,6 +433,8 @@ public(package) fun emit_flush_executed(
     requests_processed: u64,
     idle_balance_after: u64,
     total_supply_after: u64,
+    supply_request_cutoff: u64,
+    withdraw_request_cutoff: u64,
 ) {
     event::emit(FlushExecuted {
         pool_vault_id,
@@ -436,6 +451,20 @@ public(package) fun emit_flush_executed(
         requests_processed,
         idle_balance_after,
         total_supply_after,
+        supply_request_cutoff,
+        withdraw_request_cutoff,
+    });
+}
+
+public(package) fun emit_flush_aborted(
+    pool_vault_id: ID,
+    expected_market_count: u64,
+    valued_market_count: u64,
+) {
+    event::emit(FlushAborted {
+        pool_vault_id,
+        expected_market_count,
+        valued_market_count,
     });
 }
 

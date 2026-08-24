@@ -66,8 +66,37 @@ public(package) macro fun executable_price_band_factor(): u64 { 100 }
 /// full-pool flush.
 public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 
+/// Sui's `object_runtime_max_num_cached_objects`: distinct dynamic-field children
+/// one transaction may load, cumulative across every command in the PTB. A protocol
+/// constant, verified network-invariant 2026-07-29 — only system transactions get
+/// 16x. Exceeding it aborts `MEMORY_LIMIT_EXCEEDED` inside
+/// `dynamic_field::borrow_child_object`.
+public(package) macro fun object_cache_budget(): u64 { 1_000 }
+
+/// Headroom for the children a single `plp::value_expiry` loads besides the payout
+/// tree — chiefly the registered-expiry row. Source inspection puts the real figure
+/// at 1-2: Predict uses `sui::table` only, so each row is one child, and a `Table`
+/// stored inline in its parent is not itself a cached child. UNMEASURED, and set far
+/// above that estimate because running out delays every queued LP fill until the
+/// oversized market expires. C-4 tightens it. The valuation delta log adds no
+/// children: it is a plain vector inside the market object, and log-only boundaries
+/// are priced from memory.
+public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
+
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
-public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
+///
+/// **Derived, not chosen.** `plp::value_expiry` walks every node of one market's
+/// tree in a single transaction, so the cap has to leave room for everything else
+/// that transaction loads. Deriving it keeps the cap tied to the budget it must fit
+/// inside; a literal fixes today's arithmetic and is free to go stale.
+///
+/// **Precondition:** one `value_expiry` per transaction, never batched with another
+/// market's or with `finish_flush` (whose queue drain walks its own pages). The
+/// derivation bounds ONE market's valuation; batching re-creates the joint budget
+/// this exists to remove. See RP-30.
+public(package) macro fun max_payout_tree_nodes(): u64 {
+    object_cache_budget!() - valuation_base_children_reserve!()
+}
 
 // === Time Constants ===
 

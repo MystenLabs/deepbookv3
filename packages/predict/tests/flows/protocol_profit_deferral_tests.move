@@ -24,7 +24,7 @@ use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
-    plp::PoolVault,
+    plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     test_constants
 };
@@ -110,11 +110,30 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     assert!(fx.try_settle(&mut m_a, &config, &oracle_registry, &pyth, bs.values()));
     assert!(fx.try_settle(&mut m_b, &config, &oracle_registry, &pyth, bs.values()));
 
-    let mut val = fx.start_flush(&mut config, &vault);
-    fx.value_expiry(&mut val, &mut vault, &mut m_a, &config, &oracle_registry, &pyth, &bs);
-    fx.value_expiry(&mut val, &mut vault, &mut m_b, &config, &oracle_registry, &pyth, &bs);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(
+        &stage,
+        &mut vault,
+        &mut m_a,
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs,
+    );
+    fx.snapshot_expiry_pricer(
+        &stage,
+        &mut vault,
+        &mut m_b,
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs,
+    );
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m_a, &config);
+    fx.value_expiry(&mut vault, &mut m_b, &config);
     // Reaching here proves the flush did not brick on A's under-idle materialize.
-    let pool_nav = val.finish_flush(
+    let pool_nav = plp::finish_flush(
         &mut vault,
         &mut config,
         option::none(),

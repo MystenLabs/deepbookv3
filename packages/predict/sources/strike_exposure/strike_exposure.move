@@ -153,6 +153,19 @@ public(package) fun live_marked_liability(exposure: &StrikeExposure, pricer: &Pr
     exposure.payout.walk_linear(pricer, exposure.tick_size)
 }
 
+/// Return the marked liability the book held at a valuation snapshot: the live
+/// walk with every range mutation recorded since the snapshot rolled back. Same
+/// per-boundary rounding, clamping, and monotonicity contract as
+/// `live_marked_liability` over the snapshot-instant book.
+public(package) fun snapshot_marked_liability(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    deltas: &vector<strike_payout_tree::RangeDelta>,
+): u64 {
+    let adjustments = strike_payout_tree::fold_range_deltas(deltas);
+    exposure.payout.walk_linear_adjusted(pricer, exposure.tick_size, &adjustments)
+}
+
 /// Return one live order's full-close range value without consulting book state.
 public(package) fun live_order_value(
     exposure: &StrikeExposure,

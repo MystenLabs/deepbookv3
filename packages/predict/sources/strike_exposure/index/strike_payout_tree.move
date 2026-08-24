@@ -176,6 +176,279 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
     (tree.base + start_total).saturating_sub(end_total)
 }
 
+/// One range mutation applied to the tree since a valuation snapshot, recorded so
+/// the snapshot-instant walk can be reconstructed from the live tree. Mirrors the
+/// inputs of `insert_range`/`remove_range` bit-for-bit; the decomposition into
+/// per-boundary deltas is owned here, next to `apply_range`, so the two can never
+/// disagree.
+public struct RangeDelta has copy, drop, store {
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    is_insert: bool,
+}
+
+/// Per-boundary signed deltas accumulated from `RangeDelta`s, decomposed exactly
+/// as `apply_range` decomposes a range: add/remove kept as separate non-negative
+/// totals per side so reconstruction `(live + removed) - added` never underflows
+/// (the snapshot quantity was a valid u64, so `live + removed = snapshot + added
+/// >= added` by construction).
+public struct ValuationAdjustments has copy, drop {
+    /// Ascending boundary ticks carrying a recorded delta; parallel to `entries`.
+    ticks: vector<u64>,
+    entries: vector<AdjustmentEntry>,
+    base_added: u64,
+    base_removed: u64,
+}
+
+public struct AdjustmentEntry has copy, drop {
+    start_added: u64,
+    start_removed: u64,
+    end_added: u64,
+    end_removed: u64,
+}
+
+public(package) fun new_range_delta(
+    lower_tick: u64,
+    higher_tick: u64,
+    quantity: u64,
+    is_insert: bool,
+): RangeDelta {
+    RangeDelta { lower_tick, higher_tick, quantity, is_insert }
+}
+
+/// Fold recorded range mutations into per-boundary adjustments, mirroring
+/// `apply_range`'s decomposition: a `0` lower bound lands in `base`, a
+/// `pos_inf_tick` upper bound is never stored.
+public(package) fun fold_range_deltas(deltas: &vector<RangeDelta>): ValuationAdjustments {
+    let mut adjustments = ValuationAdjustments {
+        ticks: vector[],
+        entries: vector[],
+        base_added: 0,
+        base_removed: 0,
+    };
+    deltas.do_ref!(|delta| adjustments.record_range_delta(delta));
+    adjustments
+}
+
+fun record_range_delta(adjustments: &mut ValuationAdjustments, delta: &RangeDelta) {
+    let RangeDelta { lower_tick, higher_tick, quantity, is_insert } = *delta;
+    if (quantity == 0) return;
+
+    if (lower_tick == 0) {
+        if (is_insert) {
+            adjustments.base_added = adjustments.base_added + quantity;
+        } else {
+            adjustments.base_removed = adjustments.base_removed + quantity;
+        };
+        adjustments.record_boundary_delta(higher_tick, quantity, false, is_insert);
+    } else {
+        adjustments.record_boundary_delta(lower_tick, quantity, true, is_insert);
+        if (higher_tick != constants::pos_inf_tick!()) {
+            adjustments.record_boundary_delta(higher_tick, quantity, false, is_insert);
+        };
+    };
+}
+
+fun record_boundary_delta(
+    adjustments: &mut ValuationAdjustments,
+    tick: u64,
+    quantity: u64,
+    is_start: bool,
+    is_insert: bool,
+) {
+    let index = adjustments.entry_index(tick);
+    let entry = &mut adjustments.entries[index];
+    if (is_start) {
+        if (is_insert) {
+            entry.start_added = entry.start_added + quantity;
+        } else {
+            entry.start_removed = entry.start_removed + quantity;
+        };
+    } else {
+        if (is_insert) {
+            entry.end_added = entry.end_added + quantity;
+        } else {
+            entry.end_removed = entry.end_removed + quantity;
+        };
+    };
+}
+
+/// Index of `tick`'s entry, inserting an empty one in ascending position when
+/// absent. Linear scan: the delta log is compute-bounded at
+/// `max_valuation_log_ops` and this runs in the valuation transaction, off the
+/// trading path.
+fun entry_index(adjustments: &mut ValuationAdjustments, tick: u64): u64 {
+    let mut i = 0;
+    let len = adjustments.ticks.length();
+    while (i < len) {
+        let existing = adjustments.ticks[i];
+        if (existing == tick) return i;
+        if (existing > tick) break;
+        i = i + 1;
+    };
+    adjustments.ticks.insert(tick, i);
+    adjustments
+        .entries
+        .insert(
+            AdjustmentEntry {
+                start_added: 0,
+                start_removed: 0,
+                end_added: 0,
+                end_removed: 0,
+            },
+            i,
+        );
+    i
+}
+
+/// Value the liability the tree held at a valuation snapshot by walking the LIVE
+/// tree with each boundary's quantities rolled back through `adjustments`, and
+/// pricing boundaries that exist only in the adjustments (their live node was
+/// removed since the snapshot) directly. The union of live and adjustment-only
+/// ticks is visited in ascending order, so per-node rounding, the two-sided
+/// accumulation, and the monotonicity observation are exactly those of
+/// `walk_linear` over the snapshot-instant tree. A tick whose adjustments cancel
+/// to a zero snapshot quantity is still priced, only its arithmetic is skipped —
+/// same contract as `walk_linear`.
+public(package) fun walk_linear_adjusted(
+    tree: &StrikePayoutTree,
+    pricer: &Pricer,
+    tick_size: u64,
+    adjustments: &ValuationAdjustments,
+): u64 {
+    let mut previous_price = option::none();
+    let mut adjustment_cursor = 0;
+    let (start_total, end_total) = walk_adjusted_subtree(
+        &tree.nodes,
+        tree.root,
+        pricer,
+        tick_size,
+        adjustments,
+        &mut adjustment_cursor,
+        &mut previous_price,
+    );
+    // Adjustment-only ticks above every live node.
+    let (tail_start, tail_end) = price_adjustments_below(
+        adjustments,
+        &mut adjustment_cursor,
+        option::none(),
+        pricer,
+        tick_size,
+        &mut previous_price,
+    );
+    let base = tree.base + adjustments.base_removed - adjustments.base_added;
+    (base + start_total + tail_start).saturating_sub(end_total + tail_end)
+}
+
+fun walk_adjusted_subtree(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    pricer: &Pricer,
+    tick_size: u64,
+    adjustments: &ValuationAdjustments,
+    adjustment_cursor: &mut u64,
+    previous_price: &mut Option<u64>,
+): (u64, u64) {
+    if (root.is_none()) return (0, 0);
+    let tick = *root.borrow();
+    let node = nodes[tick];
+
+    let (left_start, left_end) = walk_adjusted_subtree(
+        nodes,
+        node.left,
+        pricer,
+        tick_size,
+        adjustments,
+        adjustment_cursor,
+        previous_price,
+    );
+    // Adjustment-only ticks between the left subtree and this node.
+    let (below_start, below_end) = price_adjustments_below(
+        adjustments,
+        adjustment_cursor,
+        option::some(tick),
+        pricer,
+        tick_size,
+        previous_price,
+    );
+
+    let (start_quantity, end_quantity) = if (
+        *adjustment_cursor < adjustments.ticks.length()
+            && adjustments.ticks[*adjustment_cursor] == tick
+    ) {
+        let entry = &adjustments.entries[*adjustment_cursor];
+        *adjustment_cursor = *adjustment_cursor + 1;
+        (
+            node.local_start + entry.start_removed - entry.start_added,
+            node.local_end + entry.end_removed - entry.end_added,
+        )
+    } else {
+        (node.local_start, node.local_end)
+    };
+
+    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+    if (previous_price.is_some()) {
+        assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+    };
+    *previous_price = option::some(price);
+
+    let mut start_total = 0;
+    let mut end_total = 0;
+    if (start_quantity != end_quantity) {
+        start_total = math::mul_down(price, start_quantity);
+        end_total = math::mul_down(price, end_quantity);
+    };
+
+    let (right_start, right_end) = walk_adjusted_subtree(
+        nodes,
+        node.right,
+        pricer,
+        tick_size,
+        adjustments,
+        adjustment_cursor,
+        previous_price,
+    );
+    (
+        left_start + below_start + start_total + right_start,
+        left_end + below_end + end_total + right_end,
+    )
+}
+
+/// Price adjustment ticks below `limit` (all remaining when `limit` is none) —
+/// boundaries whose live node is gone, so their snapshot quantities are pure
+/// rollback: `removed - added`, non-negative because the live quantity is zero.
+fun price_adjustments_below(
+    adjustments: &ValuationAdjustments,
+    adjustment_cursor: &mut u64,
+    limit: Option<u64>,
+    pricer: &Pricer,
+    tick_size: u64,
+    previous_price: &mut Option<u64>,
+): (u64, u64) {
+    let mut start_total = 0;
+    let mut end_total = 0;
+    while (*adjustment_cursor < adjustments.ticks.length()) {
+        let tick = adjustments.ticks[*adjustment_cursor];
+        if (limit.is_some() && tick >= *limit.borrow()) break;
+        let entry = &adjustments.entries[*adjustment_cursor];
+        *adjustment_cursor = *adjustment_cursor + 1;
+
+        let start_quantity = entry.start_removed - entry.start_added;
+        let end_quantity = entry.end_removed - entry.end_added;
+        let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+        if (previous_price.is_some()) {
+            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+        };
+        *previous_price = option::some(price);
+        if (start_quantity != end_quantity) {
+            start_total = start_total + math::mul_down(price, start_quantity);
+            end_total = end_total + math::mul_down(price, end_quantity);
+        };
+    };
+    (start_total, end_total)
+}
+
 /// Create an empty sparse payout tree.
 public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {

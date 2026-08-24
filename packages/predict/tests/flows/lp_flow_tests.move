@@ -332,8 +332,9 @@ fun flush_with_budgets(
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let val = fx.start_flush(&mut config, &vault);
-    let _ = val.finish_flush(
+    let stage = fx.start_flush(&mut config, &mut vault);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    let _ = plp::finish_flush(
         &mut vault,
         &mut config,
         supply_budget,

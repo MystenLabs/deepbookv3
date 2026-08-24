@@ -388,7 +388,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   *Rationale:* moving valuation off the trading hot path lets the flush afford an
   exact brute-force NAV, which deletes the entire approximate-NAV mitigation stack;
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
-  a trustless on-chain crank), a multi-tx crank, and a flush that pauses trading.
+  a trustless on-chain crank) and a flush that pauses trading. A multi-tx crank was
+  rejected here on the premise that it forfeits the single exact mark; the staged
+  flush (below) overturned that rejection by freezing every market's pricer in one
+  atomic snapshot and cancelling concurrent trades out of the valuation, which keeps
+  the one exact mark the rejection existed to protect. Re-reading the oracle per
+  valuation transaction stays rejected.
 - **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
   `current_nav = free_cash − live_marked_liability`, floored at zero, where the
   liability is the payout tree's boundary-linear walk alone, with no per-order
@@ -411,13 +416,54 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (bounded blast radius, better key hygiene than the root cap). NAV manipulation is
   closed by privileging the start; dilution by the fair FIFO drain at the frozen mark.
   *Rejected:* a permissionless flush.
-- **Cash maintenance is decoupled from the flush potato.** Cash rebalance, the
-  settled-market sweep, and liquidation are standalone, permissionless, per-market
-  entrypoints; the hot potato exists only for the flush, the one flow that needs the
-  exactly-once-per-market completeness proof. *Rationale:* each maintenance op is
-  per-market local and invariant-preserving, so it needs neither the completeness
-  proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
-  the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
+- **Cash maintenance is decoupled from the flush.** Cash rebalance and the
+  settled-market sweep are standalone, permissionless, per-market entrypoints; the
+  flush alone carries the exactly-once-per-market completeness proof (its snapshot
+  stage's hot potato enforces only the one-transaction snapshot). *Rationale:* each
+  maintenance op is per-market local and invariant-preserving, so it needs neither
+  the completeness proof nor the valuation flag; keeping exits responsive
+  (rebalance) must not wait for the daily flush. *Rejected:* a mode flag on one
+  shared potato; two potatoes.
+
+## Resumable lock-free flush (2026-08-24)
+
+- **Valuation is resumable across transactions; the mark is frozen atomically and
+  concurrent trades are cancelled out (RP-29 resolves C-1).** The flush's snapshot
+  stage — one atomic PTB under a `SnapshotStage` hot potato — freezes every live
+  market's `Pricer`, stamps those markets, and records each LP queue's eligibility
+  cutoff; valuation then runs one market per transaction, reconstructing each
+  market's snapshot-instant NAV by rolling recorded trade deltas back off the live
+  rows (bit-identical walk rounding; deleted boundaries price from the delta log);
+  `finish_flush` drains only pre-snapshot requests. *Rationale:* the joint object
+  budget C-1 measured is gone by construction while trading never pauses — the
+  original "flush that pauses trading" rejection above stands, and the exact-mark
+  requirement (audit L10) survives because exactness is defined at the snapshot
+  instant and reconstruction is exact. *Rejected:* a cross-transaction valuation
+  lock over the whole mutation surface (pauses all trading for the window and turns
+  a dead keeper into a protocol-wide pause); an approximate or banded mark (audit
+  L10); per-market progressive locking (still pauses each market for the flush
+  tail, at most of the review cost of corrections).
+- **Duty inventory for the dropped whole-flush potato.** *Snapshot atomicity* —
+  kept, type-enforced by `SnapshotStage`. *Completeness* — kept: sealing requires a
+  frozen entry per expected market, finishing requires every expected market
+  valued. *Authorization* — kept via `started_by`: only the starter values and
+  finishes; there is deliberately no permissionless completion, only
+  permissionless discard past `max_valuation_window_ms`. *Lock releases
+  in-transaction* — surrendered for the valuation stage only, and what the flag
+  now gates across transactions is keeper cash flows, market lifecycle, config,
+  and LP cancels — never trading. *Vault binding* — unrepresentable (the
+  valuation lives on the vault).
+- **LP cancels are gated during a flush; new requests are not.** The frozen mark
+  is on-chain readable once the snapshot lands, so an ungated cancel of an
+  eligible request is a free option against a stale price; new requests are
+  quarantined by the recorded queue cutoffs instead of a gate. *Rejected:* gating
+  requests too (needless — the cutoff is airtight and keeps the queue live).
+- **Settlement is gated per market, not globally.** `try_settle` refuses only a
+  market whose stamp names the in-flight flush — the frozen sweep-vs-value branch
+  and the recorded deltas are only sound while settlement cannot reclassify the
+  rows. A market expiring mid-window is valued at its frozen pre-expiry mark and
+  settles the moment its stamp clears (RP-29 ratifies this against RP-4's
+  original blanket block).
 
 ## Explicit exact-timestamp settlement (recent)
 

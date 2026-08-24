@@ -137,31 +137,10 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   correction), floored at zero. There is no approximation or
   uncertainty band — it is the true per-expiry recoverable value at the
   valuation instant. Code `current_nav`.
-- **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush
-  prices PLP at: `idle + Σ active-market current_nav`, net of the
-  pending-protocol-profit exclusion. Computed once per flush and used for both
-  supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
-- **Supply / withdraw queue** — the two FIFO request queues on `PoolVault`
-  (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP
-  enqueues with `request_supply` / `request_withdraw` (routed through its
-  account, with a minimum-output limit and a cancellable index), and the flush
-  fills eligible heads. Code `RequestQueue`, events `SupplyRequested` /
-  `WithdrawRequested`.
-- **The flush** — the transaction-local valuation-and-drain cycle that marks the
-  whole pool once and fills eligible queued heads at that mark. It is a **hot potato**:
-  `start_pool_valuation` opens it (engaging the valuation lock), `value_expiry`
-  is called once per active market to accumulate `Σ current_nav`, and
-  `finish_flush` computes `pool_nav`, then `lp_book::drain` mints/burns PLP
-  and delivers fills (supplies first, then withdrawals FIFO until idle is dry,
-  up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`;
-  non-executable queue heads are protocol-cancelled and refunded, as are live
-  request-limit misses at the shipped attempt count of one — above one they carry
-  until their attempts are exhausted).
-  Fills are delivered to each account through the balance accumulator
-  (`send_funds`); the account absorbs them lazily on its next capital op. The flush is
-  **privileged** — started only by a market deployer's `MarketLifecycleCap`
-  (`start_pool_valuation`). Code `PoolValuation` (the hot-potato struct), event
-  `FlushExecuted`.
+- **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush prices PLP at: `idle + Σ active-market snapshot-instant NAV`, net of the pending-protocol-profit exclusion. Computed once per flush and used for both supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
+- **Supply / withdraw queue** — the two FIFO request queues on `PoolVault` (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP enqueues with `request_supply` / `request_withdraw` (routed through its account, with a minimum-output limit and an index that can be cancelled while no flush is in flight), and the flush fills eligible heads. Code `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
+- **The flush** — the three-stage valuation-and-drain cycle that marks the whole pool at one snapshot instant and fills eligible queued heads at that mark, with trading live throughout. **Snapshot** (one atomic transaction, scoped by the `SnapshotStage` hot potato): `start_pool_valuation` engages the valuation flag and records the active set, the starter, the start time, and each queue's eligibility cutoff; `snapshot_expiry_pricer` freezes one `Pricer` per live market and stamps it; `seal_valuation_snapshot` proves completeness. **Valuation** (resumable, one market per transaction): each `value_expiry` folds one market's snapshot-instant NAV, rolling its stamped post-snapshot trades back. **Finish**: `finish_flush` proves every market was valued exactly once, computes `pool_nav`, then `lp_book::drain` mints/burns PLP and delivers fills up to each queue's recorded cutoff (supplies first, then withdrawals FIFO until idle is dry, up to the operator-supplied per-queue `supply_budget`/`withdraw_budget`; non-executable queue heads are protocol-cancelled and refunded, as are live request-limit misses at the shipped attempt count of one — above one they carry until their attempts are exhausted). Fills are delivered to each account through the balance accumulator (`send_funds`); the account absorbs them lazily on its next capital op. The flush is **privileged** — started only by a market deployer's `MarketLifecycleCap` (`start_pool_valuation`), valued and finished only by its starter; a stalled one is discarded by `abort_valuation_privileged` (immediate, lifecycle authority) or permissionless `abort_valuation` after `max_valuation_window_ms`. Code `PoolValuation` (vault-held valuation state), event `FlushExecuted`.
+- **Valuation stamp / delta log** — the per-market record that keeps trading live during a flush. The snapshot stage stamps each live market with its flush ordinal; every mint and live close on a stamped market appends the payout-tree range op and the measured deltas of the two cash rows NAV reads, and `value_expiry` rolls the log back to reconstruct the snapshot-instant book exactly. The log is capped at `max_valuation_log_ops` (a full log makes that market refuse trades until valued); a stamp left by an aborted flush is stale and lazily discarded by the next trade or settle attempt. Code `ValuationStamp`, `RangeDelta`.
 
 ## Trade lifecycle verbs
 

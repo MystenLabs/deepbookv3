@@ -724,6 +724,20 @@ export async function readActiveMarketIds(): Promise<string[]> {
     return parseVectorId(await devInspectFirstReturn(tx));
 }
 
+// On-chain valuation-lock flag (devInspect `protocol_config::valuation_in_progress`).
+// The lock now spans transactions, so a keeper that died mid-flush leaves it engaged and
+// every mutation lane stays blocked until it is cleared. Reading it is how the keeper
+// notices, since a stuck lock otherwise only shows up as every other lane aborting.
+export async function readValuationInProgress(): Promise<boolean> {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "valuation_in_progress"),
+        arguments: [tx.object(PROTOCOL_CONFIG_ID)],
+    });
+    const bytes = await devInspectFirstReturn(tx);
+    return (bytes[0] ?? 0) !== 0;
+}
+
 // On-chain settlement flag for one market (devInspect `expiry_market::is_settled`). The
 // cleanout measurement waits on this: `redeem_settled` and the settled sweep both
 // require a settled market, and a settled market drops out of `active_expiry_markets`, so a
@@ -1346,27 +1360,36 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
     });
 }
 
-// Run one full-pool flush over the single active market in the same PTB: the
-// privileged `start_pool_valuation` (started via a market-deployer `MarketLifecycleCap`
-// proof — the sole flush authority) -> one `value_expiry` for our market ->
-// `finish_flush`, which drains the supply/withdraw request queues at the frozen mark.
-// The two `finish_flush` budgets are `None` (unbounded). The harness has
-// exactly one expiry market, so the snapshot covers one `value_expiry`. (Multi-market
-// topologies must call `value_expiry` once per active market between start and finish.)
-function addFlush(tx: Transaction, params: FlushParams): void {
+// Add the ATOMIC snapshot stage: the privileged `start_pool_valuation` (via a
+// market-deployer `MarketLifecycleCap` proof — the sole flush authority) -> one
+// `snapshot_expiry_pricer` per active market -> `seal_valuation_snapshot`, which
+// consumes the `SnapshotStage` potato. These commands MUST stay in one PTB and the
+// potato enforces it: every market's `Pricer` is frozen at the instant this
+// transaction executes, and that simultaneity is what lets valuation resume later.
+// This stage reads oracles and walks no payout tree, so it fits one PTB at any book
+// size. The oracle it reads must have been written in an EARLIER transaction —
+// `resolve_live_pricer` refuses a same-transaction write (RP-24).
+function addSnapshotStage(tx: Transaction, params: FlushParams): void {
     const proof = tx.moveCall({
         target: target("registry", "generate_lifecycle_proof"),
         arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
     });
-    const valuation = tx.moveCall({
+    const stage = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
-        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId), proof],
-    });
-    tx.moveCall({
-        target: target("plp", "value_expiry"),
         arguments: [
-            valuation,
+            tx.object(params.protocolConfigId),
             tx.object(params.poolVaultId),
+            proof,
+            tx.object(CLOCK_ID),
+        ],
+    });
+    // The devtools flow runs one expiry market; a multi-market topology snapshots each
+    // one here, all inside this same transaction.
+    tx.moveCall({
+        target: target("plp", "snapshot_expiry_pricer"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            stage,
             tx.object(params.expiryMarketId),
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
@@ -1377,15 +1400,49 @@ function addFlush(tx: Transaction, params: FlushParams): void {
         ],
     });
     tx.moveCall({
+        target: target("plp", "seal_valuation_snapshot"),
+        arguments: [tx.object(params.poolVaultId), stage, tx.object(params.protocolConfigId)],
+    });
+}
+
+// One RESUMABLE-stage transaction valuing ONE market. `value_expiry` reads no oracle —
+// the frozen snapshot decides both the mark and the sweep-vs-value branch — but it is
+// the only stage that walks payout trees, and the per-market node cap is derived
+// assuming exactly one market per transaction: never batch two markets, and never
+// batch a `value_expiry` with `finish_flush`.
+function valueExpiryTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    expiryMarketId: string;
+}): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("plp", "value_expiry"),
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.expiryMarketId),
+            tx.object(params.protocolConfigId),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
+// The closing transaction: `finish_flush` proves every snapshotted market was valued,
+// drains both LP queues at the frozen mark, and releases the valuation lock. Its two
+// budgets are `None` (unbounded). Only the flush starter's address may run it.
+function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
         target: target("plp", "finish_flush"),
         arguments: [
-            valuation,
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
             tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (unbounded)
             tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (unbounded)
         ],
     });
+    return tx;
 }
 
 function addMint(tx: Transaction, params: MintParams): void {
@@ -1913,15 +1970,24 @@ export function requestWithdrawTx(params: {
 // Refresh the oracle, then run one privileged full-pool flush that drains both LP
 // request queues at the frozen mark. The drain happens inside `finish_flush`; no
 // per-LP coin is returned (fills land on the manager via the accumulator).
+// The flush is multi-transaction now: refresh, then the atomic snapshot stage, then one
+// `value_expiry` per market, then `finish_flush`. The snapshot must be a LATER
+// transaction than the refresh (RP-24 refuses a same-transaction oracle write) and
+// inside the feeds' freshness windows; `value_expiry` and `finish_flush` each get their
+// own transaction (the per-market node cap assumes it).
 export async function refreshOracleAndFlushTxs(
     params: OracleRefreshParams & FlushParams,
 ): Promise<Transaction[]> {
-    return refreshThen(params, (tx) => addFlush(tx, params));
+    const txs = await refreshThen(params, (tx) => addSnapshotStage(tx, params));
+    return [...txs, valueExpiryTx(params), finishFlushTx(params)];
 }
 
-// Genesis flush with NO active markets: proof -> start (snapshots an empty expected
-// set) -> finish, which bootstrap-mints PLP 1:1 against the queued supply. Run once
-// before any market exists, so the bootstrap never races a fast cadence's first expiry.
+// Genesis flush with NO active markets: proof -> start (snapshots an empty expected set)
+// -> seal (trivially complete: zero frozen pricers match zero expected markets) ->
+// finish, which bootstrap-mints PLP 1:1 against the queued supply. Run once before any
+// market exists, so the bootstrap never races a fast cadence's first expiry. Stays a
+// single PTB: with no market to value there is no payout tree to walk, so nothing here
+// needs the resumable split.
 export function bareFlushTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
@@ -1932,14 +1998,22 @@ export function bareFlushTx(params: {
         target: target("registry", "generate_lifecycle_proof"),
         arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
     });
-    const valuation = tx.moveCall({
+    const stage = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
-        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId), proof],
+        arguments: [
+            tx.object(params.protocolConfigId),
+            tx.object(params.poolVaultId),
+            proof,
+            tx.object(CLOCK_ID),
+        ],
+    });
+    tx.moveCall({
+        target: target("plp", "seal_valuation_snapshot"),
+        arguments: [tx.object(params.poolVaultId), stage, tx.object(params.protocolConfigId)],
     });
     tx.moveCall({
         target: target("plp", "finish_flush"),
         arguments: [
-            valuation,
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
             tx.pure(bcs.option(bcs.u64()).serialize(null)),
@@ -1949,63 +2023,113 @@ export function bareFlushTx(params: {
     return tx;
 }
 
-// The keeper's pool-flush PTB: value EVERY active market between start and finish. The durable
-// settlement lane (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
-// are only the boundary-race STRAGGLERS that expired since. Their exact-expiry observations are
-// inserted and explicitly settled before valuation. These commands are race-avoidance, not the
-// durable path: a BS outage aborts this whole PTB (reverting them), but the settlement lane already
-// settled durably, so no brick. Live-market valuation reads the updater-maintained fresh BS feed.
-export function keeperFlushTx(params: {
+// The keeper's pool-flush SEQUENCE: snapshot every active market atomically, then value
+// each one in its own transaction, then finish. The durable settlement lane
+// (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
+// are only the boundary-race STRAGGLERS that expired since. Their exact-expiry
+// observations are inserted and explicitly settled before the snapshot in the SAME
+// transaction — `try_settle` refuses a snapshotted-and-not-yet-valued market, so it must
+// run before `start_pool_valuation` engages the lock (it does here, earlier in the PTB).
+// These commands are race-avoidance, not the durable path: a BS outage aborts the
+// snapshot PTB (reverting them), but the settlement lane already settled durably, so no
+// brick. Live-market valuation reads the updater-maintained fresh BS feed via the
+// snapshot; a market that expires mid-flush is still valued off its frozen pricer and
+// settles on the next settlement pass.
+export function keeperFlushTxs(params: {
     feeds: OracleFeedIds;
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
     lifecycleCapId: string;
     settlements: { marketId: string; expiryMs: bigint; price: bigint }[];
-}): Transaction {
-    const tx = new Transaction();
+}): Transaction[] {
+    // 1. Stragglers settle, then the atomic snapshot stage. Everything from
+    //    `start_pool_valuation` to `seal_valuation_snapshot` is one transaction because
+    //    the `SnapshotStage` potato cannot leave it.
+    const snapshotTx = new Transaction();
     for (const s of params.settlements) {
-        addPythFeedInsert(tx, params.feeds.pythFeedId, s.price, s.expiryMs);
-        addTrySettle(tx, {
+        addPythFeedInsert(snapshotTx, params.feeds.pythFeedId, s.price, s.expiryMs);
+        addTrySettle(snapshotTx, {
             marketId: s.marketId,
             protocolConfigId: params.protocolConfigId,
             pythFeedId: params.feeds.pythFeedId,
             bsValueStoreId: params.feeds.bsValueStoreId,
         });
     }
+    const proof = snapshotTx.moveCall({
+        target: target("registry", "generate_lifecycle_proof"),
+        arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.lifecycleCapId)],
+    });
+    const stage = snapshotTx.moveCall({
+        target: target("plp", "start_pool_valuation"),
+        arguments: [
+            snapshotTx.object(params.protocolConfigId),
+            snapshotTx.object(params.poolVaultId),
+            proof,
+            snapshotTx.object(CLOCK_ID),
+        ],
+    });
+    for (const marketId of params.marketIds) {
+        snapshotTx.moveCall({
+            target: target("plp", "snapshot_expiry_pricer"),
+            arguments: [
+                snapshotTx.object(params.poolVaultId),
+                stage,
+                snapshotTx.object(marketId),
+                snapshotTx.object(params.protocolConfigId),
+                snapshotTx.object(ORACLE_REGISTRY_ID),
+                snapshotTx.object(params.feeds.pythFeedId),
+                snapshotTx.object(params.feeds.bsValueStoreId),
+                snapshotTx.object(params.feeds.bsSviStoreId),
+                snapshotTx.object(CLOCK_ID),
+            ],
+        });
+    }
+    snapshotTx.moveCall({
+        target: target("plp", "seal_valuation_snapshot"),
+        arguments: [
+            snapshotTx.object(params.poolVaultId),
+            stage,
+            snapshotTx.object(params.protocolConfigId),
+        ],
+    });
+
+    // 2. One transaction per market — the split the per-market node cap assumes: only
+    //    `value_expiry` walks payout trees, so each transaction carries one market's
+    //    dynamic-field children instead of the pool's.
+    const valuationTxs = params.marketIds.map((expiryMarketId) =>
+        valueExpiryTx({
+            poolVaultId: params.poolVaultId,
+            protocolConfigId: params.protocolConfigId,
+            expiryMarketId,
+        }),
+    );
+
+    // 3. Finish and drain at the frozen mark, in its own transaction.
+    const finishTx = finishFlushTx(params);
+
+    return [snapshotTx, ...valuationTxs, finishTx];
+}
+
+// Discard an in-flight flush immediately on the lifecycle authority. The valuation lock
+// is held across transactions now, so a keeper that dies between the snapshot stage and
+// `finish_flush` leaves the whole mutation surface frozen; this is the operator's
+// escape. (Anyone may run the permissionless `plp::abort_valuation` once the flush has
+// been in flight past `max_valuation_window_ms`; the keeper holds the cap, so it never
+// needs to wait.)
+export function abortValuationTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    lifecycleCapId: string;
+}): Transaction {
+    const tx = new Transaction();
     const proof = tx.moveCall({
         target: target("registry", "generate_lifecycle_proof"),
         arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
     });
-    const valuation = tx.moveCall({
-        target: target("plp", "start_pool_valuation"),
-        arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId), proof],
-    });
-    for (const marketId of params.marketIds) {
-        tx.moveCall({
-            target: target("plp", "value_expiry"),
-            arguments: [
-                valuation,
-                tx.object(params.poolVaultId),
-                tx.object(marketId),
-                tx.object(params.protocolConfigId),
-                tx.object(ORACLE_REGISTRY_ID),
-                tx.object(params.feeds.pythFeedId),
-                tx.object(params.feeds.bsValueStoreId),
-                tx.object(params.feeds.bsSviStoreId),
-                tx.object(CLOCK_ID),
-            ],
-        });
-    }
     tx.moveCall({
-        target: target("plp", "finish_flush"),
-        arguments: [
-            valuation,
-            tx.object(params.poolVaultId),
-            tx.object(params.protocolConfigId),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)),
-        ],
+        target: target("plp", "abort_valuation_privileged"),
+        arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), proof],
     });
     return tx;
 }

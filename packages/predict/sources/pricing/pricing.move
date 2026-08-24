@@ -20,9 +20,16 @@ use propbook::{
 };
 use sui::clock::Clock;
 
-/// Validated live oracle inputs bound to one expiry market. `Pricer` has no
-/// `store` ability and must be created again in each transaction that prices.
-public struct Pricer has copy, drop {
+/// Validated live oracle inputs bound to one expiry market.
+///
+/// `store` exists for exactly one caller: the full-pool flush freezes one
+/// `Pricer` per market in `plp::PoolValuation` so every market is marked at a
+/// single instant even though valuation spans transactions. Every other pricing
+/// path must load a fresh `Pricer` in its own transaction — a stored one is a
+/// *deliberately* stale mark, sound only inside the flush's frozen snapshot,
+/// where each market's recorded trade deltas roll its books back to that same
+/// instant.
+public struct Pricer has copy, drop, store {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
     forward: u64,
@@ -61,7 +68,7 @@ public struct RawSVI has copy, drop {
 /// a full raw unit — which a short-dated surface cannot afford, because its whole
 /// total variance is only about ten raw units at 1e9. Keeping the rolled values at
 /// 1e18 hands `variance_sqrt_and_d2` the same domain it already computes in.
-public struct PricingSVI has copy, drop {
+public struct PricingSVI has copy, drop, store {
     /// Rolled-down SVI `a`, magnitude at 1e18, sign in `a_is_negative`.
     a_magnitude: u128,
     a_is_negative: bool,
