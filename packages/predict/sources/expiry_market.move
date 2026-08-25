@@ -261,10 +261,6 @@ public fun load_live_pricer(
     )
 }
 
-/// Return live marked NAV as free expiry cash minus the exposure book's marked
-/// liability, floored at zero. This read requires a market-bound pre-expiry
-/// `Pricer`; an expired but unsettled market cannot be valued through this path.
-/// Public for PTB composition and devInspect pool valuation.
 /// Return whether this market is snapshotted into the in-flight flush and still
 /// awaiting its `value_expiry`. For SDK, keeper, and devInspect reads: while
 /// true, trades on this market record deltas (and abort once the delta log is
@@ -274,6 +270,10 @@ public fun is_pending_valuation(market: &ExpiryMarket, config: &ProtocolConfig):
         && config.is_current_flush(market.valuation_stamp.borrow().flush_seq)
 }
 
+/// Return live marked NAV as free expiry cash minus the exposure book's marked
+/// liability, floored at zero. This read requires a market-bound pre-expiry
+/// `Pricer`; an expired but unsettled market cannot be valued through this path.
+/// Public for PTB composition and devInspect pool valuation.
 public fun current_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     let liability = market.strike_exposure.live_marked_liability(pricer);

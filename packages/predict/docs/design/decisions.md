@@ -552,7 +552,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   a delegation trace. The admin `ProtocolConfig` setters and the registry creation
   entrypoints were brought under the gate; per-account custody and builder-code
   config stay ungated so user exits survive a freeze.
-- **Two deliberate pause/valuation-gate exemptions.** `rebalance_expiry_cash`'s grow
+- **Three deliberate pause/valuation-gate exemptions.** `rebalance_expiry_cash`'s grow
   direction (`top_up_live_expiry_cash`) is NOT trading-pause-gated — pause blocks risk
   creation at the mint gate, while top-up only backs existing exposure and keeps exits
   fundable (gating it could starve redeems mid-emergency). `plp::lock_capital` carries

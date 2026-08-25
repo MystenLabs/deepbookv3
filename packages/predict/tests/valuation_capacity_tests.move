@@ -11,8 +11,12 @@ module deepbook_predict::valuation_capacity_tests;
 
 use deepbook_predict::constants;
 
+/// Independently chosen usable floor for the derived node cap: the reserve
+/// may grow, but a cap under this makes the strike grid impractically coarse.
+const USABLE_NODE_FLOOR: u64 = 500;
+
 /// A derived cap can be driven to an unusable value without ever underflowing: inflating `valuation_base_children_reserve` far enough leaves a positive but economically dead node budget, and no relation between the constants would catch it. This floor is the one arithmetic assertion here a future edit can actually violate.
 #[test]
 fun the_node_cap_stays_usable() {
-    assert!(constants::max_payout_tree_nodes!() >= 500);
+    assert!(constants::max_payout_tree_nodes!() >= USABLE_NODE_FLOOR);
 }

@@ -29,6 +29,11 @@
 /// abort depends on which prefixes a given shape happens to visit, so it is not a
 /// desync detector — the per-boundary underflow in `apply_net_delta` is the
 /// authority.
+///
+/// The module also owns snapshot reconstruction for the resumable flush:
+/// `RangeDelta` records a range mutation, `fold_range_deltas` mirrors
+/// `apply_range`'s decomposition, and `walk_linear_adjusted` re-prices the
+/// tree as it stood at a valuation snapshot with those mutations rolled back.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};
@@ -428,7 +433,8 @@ fun price_adjustments_below(
 ): (u64, u64) {
     let mut start_total = 0;
     let mut end_total = 0;
-    while (*adjustment_cursor < adjustments.ticks.length()) {
+    let len = adjustments.ticks.length();
+    while (*adjustment_cursor < len) {
         let tick = adjustments.ticks[*adjustment_cursor];
         if (limit.is_some() && tick >= *limit.borrow()) break;
         let entry = &adjustments.entries[*adjustment_cursor];

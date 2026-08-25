@@ -2452,6 +2452,12 @@ export async function execute(
     gasBudget = gasBudgetFromEnv(),
 ): Promise<ExecutionReceipt> {
     let lastError: unknown;
+    // Completed legs survive retry attempts: a stateful sequence (the staged
+    // flush) must never re-run an already-committed leg — resubmitting
+    // start_pool_valuation after it landed aborts EValuationInProgress and
+    // masks the transient error that triggered the retry. Legs are rebuilt
+    // deterministically, so resuming by index is sound.
+    const receipts: ExecutionReceipt[] = [];
     for (let attempt = 0; attempt < EXECUTE_MAX_ATTEMPTS; attempt++) {
         let tx: Transaction | null = null;
         let raw: any = null;
@@ -2463,8 +2469,8 @@ export async function execute(
                 throw new Error(`${label}: execute requires at least one transaction`);
             }
 
-            const receipts: ExecutionReceipt[] = [];
             for (const [index, builtTx] of txs.entries()) {
+                if (index < receipts.length) continue; // committed in a prior attempt
                 tx = builtTx;
                 const legLabel =
                     txs.length === 1 ? label : `${label} (${index + 1}/${txs.length})`;
