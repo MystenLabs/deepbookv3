@@ -450,8 +450,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   finishes; there is deliberately no permissionless completion, only
   permissionless discard past `max_valuation_window_ms`. *Lock releases
   in-transaction* — surrendered for the valuation stage only, and what the flag
-  now gates across transactions is fee-incentive sponsorship, market lifecycle, config,
-  and LP cancels — never trading. *Vault binding* — unrepresentable (the
+  now gates across transactions is fee-incentive sponsorship, config, and LP
+  cancels — never trading, maintenance, or market creation (a new market sits
+  outside the flush's frozen expected set and joins the next snapshot). *Vault binding* — unrepresentable (the
   valuation lives on the vault).
 - **LP cancels are gated during a flush; new requests are not.** The frozen mark
   is on-chain readable once the snapshot lands, so an ungated cancel of an

@@ -243,7 +243,14 @@ public fun create_and_share_expiry_market(
     config.assert_version();
     registry.assert_valid_lifecycle_cap(lifecycle_cap);
     config.assert_trading_allowed();
-    config.assert_not_valuation_in_progress();
+    // Deliberately NOT gated on the valuation flag: creation moves no cash
+    // (`plp::register_expiry` records targets; funding is a later rebalance), an
+    // in-flight flush's expected set is frozen at its snapshot so the new market
+    // is simply not part of it, and funding it mid-window lands in the flush's
+    // maintenance accumulators like any other live top-up — the mark treats that
+    // cash as the idle it was at the snapshot instant. The market joins the next
+    // flush's snapshot. Gating here would gap a fast market cadence for as long
+    // as a stalled flush holds the flag.
     let deployable = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);

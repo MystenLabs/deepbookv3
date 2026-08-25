@@ -573,22 +573,76 @@ fun value_expiry_aborts_on_double_value() {
 // behavior is covered by the trading-during-flush tests, not here; this section
 // pins the ops the flag still gates.
 
-#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun create_expiry_market_during_valuation_aborts() {
+#[test]
+fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
     let mut fx = helpers::setup_market_default();
-    let _trader = fx.create_funded_manager(0);
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, e1);
 
-    // Engage the valuation lock on the shared config, then attempt to create a market:
-    // create_and_share_expiry_market is an active-set mutation, so it must abort under the lock.
-    fx.scenario_mut().next_tx(test_constants::admin());
+    // Control flush over the one existing market.
+    fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    config.begin_valuation();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let control_mark = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+
+    // Flush B: identical books at its snapshot, but a NEW market is created AND
+    // funded mid-window. The flush's expected set is frozen at its snapshot, so
+    // the new market is simply not part of it; its funding top-up lands in the
+    // maintenance accumulators on an unstamped market, and the finish reverses
+    // it — the mark treats that cash as the idle it was at the snapshot instant.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
     return_shared(config);
+    return_shared(vault);
+    return_shared(oracle_registry);
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
+    let idle_before = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m2, &config);
+    // Guard: the new market genuinely pulled its initial funding from idle
+    // mid-window, so the equality below is the compensation at work.
+    assert!(vault.idle_balance() < idle_before);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let corrected_mark = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+    assert_eq!(corrected_mark, control_mark);
+    // The new market is part of the NEXT snapshot, not the one in flight.
+    assert_eq!(vault.active_expiry_markets().length(), 2);
 
-    fx.create_expiry(test_constants::default_expiry_ms());
-
-    abort 999
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    return_shared(m2);
+    fx.finish();
 }
 
 #[test]
