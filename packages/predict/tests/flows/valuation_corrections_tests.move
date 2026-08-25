@@ -37,6 +37,9 @@ const PARTIAL_CLOSE_QUANTITY: u64 = 1_000_000_000;
 /// A Pyth move small enough to keep mint admission in its entry band but large
 /// enough that a live re-read would mark differently than the frozen pricer.
 const MOVED_LIVE_PRICE: u64 = 102_000_000_000;
+/// Large enough that its required-backing jump drops the market below its cash
+/// target, forcing the top-up branch of a following rebalance.
+const TOP_UP_FORCING_QUANTITY: u64 = 14_000_000_000;
 /// Minimum supply-request escrow accepted by the queue (10 DUSDC).
 const SUPPLY_AMOUNT: u64 = 10_000_000;
 /// No fill floor: the request takes whatever the mark quotes.
@@ -343,6 +346,134 @@ fun cancelling_a_request_during_a_flush_aborts() {
     fx.start_flush_bundle(&mut market);
     fx.cancel_supply_request_bundle(&mut market, &mut account, index);
     abort 999
+}
+
+// === Maintenance during the window: the mark is timing-invariant ===
+
+#[test]
+fun a_mid_window_surplus_sweep_leaves_the_mark_unchanged() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    // The seeded cash sits far above the market's band, so a mid-window
+    // rebalance fires a large surplus sweep on the still-pending market. It is
+    // recorded on the stamp and reversed at the finish, so the mark is exactly
+    // the control's.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    let idle_before = helpers::vault(&market).idle_balance();
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    // Guard: the sweep genuinely moved cash, so the equality below is the
+    // compensation at work, not a no-op rebalance.
+    assert!(helpers::vault(&market).idle_balance() > idle_before);
+    fx.value_expiry_bundle(&mut market);
+    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun a_mid_window_top_up_leaves_the_mark_unchanged() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+    // Sweep the seeded surplus to the band OUTSIDE any window, so the top-up
+    // branch is reachable below.
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    // Mid-window: a large mint jumps the required backing past the market's
+    // cash target, and the following rebalance tops the market up from idle —
+    // trade deltas and maintenance both recorded on the pending market's stamp,
+    // the top-up also reversed out of the pool total and profit basis.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    let _mid_window = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        TOP_UP_FORCING_QUANTITY,
+    );
+    let idle_before = helpers::vault(&market).idle_balance();
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    // Guard: the top-up genuinely pulled idle into the market.
+    assert!(helpers::vault(&market).idle_balance() < idle_before);
+    fx.value_expiry_bundle(&mut market);
+    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun maintenance_after_a_markets_valuation_leaves_the_mark_unchanged() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    // The market is valued (stamp cleared), then a trade and a surplus sweep
+    // land before the finish: nothing records on a stamp any more, and only the
+    // flush-level accumulators keep the swept surplus out of an already-measured
+    // pool total.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let _post_valuation = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        MID_WINDOW_QUANTITY,
+    );
+    let idle_before = helpers::vault(&market).idle_balance();
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    // Guard: the sweep genuinely moved cash after the valuation.
+    assert!(helpers::vault(&market).idle_balance() > idle_before);
+    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 // === Settlement: the per-market gate ===

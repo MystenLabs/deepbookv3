@@ -146,6 +146,15 @@ public struct PoolValuation has drop, store {
     /// form and then submit against a price they already know is stale.
     supply_request_cutoff: u64,
     withdraw_request_cutoff: u64,
+    /// Live-market maintenance cash moved during this flush's window: idle sent
+    /// into live markets (top-ups) and live-market surplus returned to idle.
+    /// `finish_flush` reverses both out of the pool total and the profit basis,
+    /// so the mark is invariant to maintenance timing — a rebalance mid-window
+    /// prices identically to no rebalance at all. Settled sweeps are deliberately
+    /// NOT here: a swept market contributes 0 and its recoverable cash's counted
+    /// location is idle.
+    maintenance_sent: u64,
+    maintenance_returned: u64,
 }
 
 // === Package Initializer ===
@@ -374,15 +383,16 @@ public fun seal_valuation_snapshot(
 /// This is the resumable stage: any transaction after the seal, one market per
 /// transaction (see `constants::max_payout_tree_nodes`), reading no oracle and no
 /// clock — the frozen snapshot alone decides both the branch and the mark. For a
-/// live market this stage is MEASUREMENT-ONLY: cash maintenance is decoupled from
-/// the flush (the standalone permissionless `rebalance_expiry_cash` runs before a
-/// flush starts or after it finishes, never inside the window), so no unrecorded
-/// cash movement can sit between the stamp's rollback and the zero floors it
-/// feeds — the snapshot formula holds exactly in every regime, including a
-/// floor-clamped market. Only the settled sweep moves cash here, and its return
-/// lands in idle, which the finish measures. A market that expired mid-window is
-/// valued at its frozen pre-expiry mark, and its settlement waits only for this
-/// call to clear the stamp.
+/// live market this stage is MEASUREMENT-ONLY: it moves no cash itself, and cash
+/// maintenance stays fully decoupled — `rebalance_expiry_cash` may run at any
+/// time, including mid-window, because every in-window live move records on the
+/// market's stamp (rolled back here with the trades) and on the flush's
+/// maintenance accumulators (reversed at the finish), so no unrecorded movement
+/// ever sits between the rollback and the zero floors and the snapshot formula
+/// holds exactly in every regime, including a floor-clamped market. Only the
+/// settled sweep moves cash here, and its return lands in idle, which the finish
+/// measures. A market that expired mid-window is valued at its frozen pre-expiry
+/// mark, and its settlement waits only for this call to clear the stamp.
 public fun value_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -472,6 +482,8 @@ public fun finish_flush(
         supply_request_cutoff,
         withdraw_request_cutoff,
         started_at_ms,
+        maintenance_sent,
+        maintenance_returned,
         ..,
     } = valuation;
 
@@ -480,6 +492,8 @@ public fun finish_flush(
         vault,
         config.protocol_reserve_profit_share(),
         total_nav,
+        maintenance_sent,
+        maintenance_returned,
     );
     let total_supply = vault.lp.total_supply();
     let market_count = valued_expiry_markets.length();
@@ -555,8 +569,9 @@ public fun finish_flush(
 ///
 /// Partial NAV is discarded rather than reused: the frozen marks are only sound
 /// as a simultaneous set, so a later flush must re-snapshot. Cash already moved
-/// by `value_expiry`'s settled sweeps stays moved — the sweep is an
-/// invariant-preserving per-market operation that stands on its own. Market
+/// by `value_expiry`'s settled sweeps and by any in-window maintenance stays
+/// moved — each is an invariant-preserving per-market operation that stands on
+/// its own, and the discarded accumulators only ever affected the mark. Market
 /// stamps are not visited: releasing the flag makes every one of them stale, and
 /// the next trade or settle on each market discards it.
 public fun abort_valuation(vault: &mut PoolVault, config: &mut ProtocolConfig, clock: &Clock) {
@@ -590,8 +605,12 @@ public fun abort_valuation_privileged(
 /// An expired unsettled market is a no-op until that transition succeeds.
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
 /// mintable. The market must already be registered to this vault
-/// (`registry::create_and_share_expiry_market`). Blocked while a full-pool valuation is in
-/// progress.
+/// (`registry::create_and_share_expiry_market`). Runs at any time, including while
+/// a flush is in flight: an in-window live-market move is recorded on the
+/// market's stamp (so the snapshot reconstruction keeps excluding it) and
+/// reversed out of the flush's pool total and profit basis, so the mark is
+/// invariant to maintenance timing and a market can always be topped back into
+/// its mintable band mid-flush.
 public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -599,7 +618,6 @@ public fun rebalance_expiry_cash(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     vault.sweep_or_rebalance_expiry(market, config, clock);
@@ -853,19 +871,33 @@ public(package) fun register_expiry(
 /// deployed elsewhere) has left that debit-basis exclusion, so the carried
 /// `pending_protocol_profit` is subtracted separately to keep it out of LP value
 /// until it is drained into the reserve.
+///
+/// The flush's mark must be the SNAPSHOT-instant pool value, and per-market NAVs
+/// are as-of-snapshot, so every in-window live-maintenance move is reversed out
+/// of the other terms too: idle gets the sent/returned net added back (idle at
+/// finish is short by exactly that net relative to the snapshot), and the profit
+/// basis drops the debits/credits those same moves recorded (`send_expiry_cash`
+/// records each sent amount as a debit and `receive_expiry_cash` each returned
+/// amount as a credit, so the plain subtractions below cannot underflow). With
+/// all three terms corrected, the mark is invariant to maintenance timing.
+/// Settled-sweep returns are deliberately NOT reversed: a swept market
+/// contributes 0 and idle is its recoverable cash's counted location.
 fun lp_pool_value(
     vault: &PoolVault,
     protocol_reserve_profit_share: u64,
     active_expiry_value: u64,
+    maintenance_sent: u64,
+    maintenance_returned: u64,
 ): u64 {
     let idle_balance = vault.expiry_accounting.idle_balance();
     let profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
     let profit_basis_debits = vault.expiry_accounting.profit_basis_debits();
     let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
-    let gross_pool_value = idle_balance + active_expiry_value;
-    let aggregate_credits = profit_basis_credits + active_expiry_value;
+    let gross_pool_value =
+        idle_balance + active_expiry_value + maintenance_sent - maintenance_returned;
+    let aggregate_credits = profit_basis_credits + active_expiry_value - maintenance_returned;
     let exclusion = math::mul_down(
-        aggregate_credits.saturating_sub(profit_basis_debits),
+        aggregate_credits.saturating_sub(profit_basis_debits - maintenance_sent),
         protocol_reserve_profit_share,
     );
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
@@ -892,12 +924,17 @@ fun sweep_or_rebalance_expiry(
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, expiry_market_id);
+        vault.rebalance_live_expiry(market, config, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
+fun rebalance_live_expiry(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
     vault.sync_fee_incentives(market, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
@@ -907,9 +944,42 @@ fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expi
     );
     let cash_balance = market.cash_balance();
     if (cash_balance < target_cash) {
-        vault.top_up_live_expiry_cash(market, expiry_market_id, cash_balance, target_cash);
+        let sent = vault.top_up_live_expiry_cash(
+            market,
+            expiry_market_id,
+            cash_balance,
+            target_cash,
+        );
+        vault.record_live_maintenance(market, config, sent, 0);
     } else if (cash_balance > sweep_threshold_cash) {
-        vault.sweep_live_expiry_surplus(market, expiry_market_id, cash_balance, target_cash);
+        let returned = vault.sweep_live_expiry_surplus(
+            market,
+            expiry_market_id,
+            cash_balance,
+            target_cash,
+        );
+        vault.record_live_maintenance(market, config, 0, returned);
+    };
+}
+
+/// Record one live-market maintenance move for the in-flight flush, on both
+/// ledgers that must exclude it: the market's stamp (a pending market's
+/// `snapshot_nav` rolls it back with the trades) and the flush's pool-level
+/// accumulators (`finish_flush` reverses it out of idle and the profit basis).
+/// Outside a flush both records are no-ops and the move is ordinary maintenance.
+fun record_live_maintenance(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    sent: u64,
+    returned: u64,
+) {
+    if (sent == 0 && returned == 0) return;
+    market.record_maintenance_cash_delta(config, sent, returned);
+    if (config.valuation_in_progress()) {
+        let valuation = vault.valuation.borrow_mut();
+        valuation.maintenance_sent = valuation.maintenance_sent + sent;
+        valuation.maintenance_returned = valuation.maintenance_returned + returned;
     };
 }
 
@@ -919,11 +989,11 @@ fun top_up_live_expiry_cash(
     expiry_market_id: ID,
     cash_balance: u64,
     target_cash: u64,
-) {
+): u64 {
     let requested_top_up = target_cash - cash_balance;
     let funding_room = vault.expiry_accounting.available_expiry_funding(expiry_market_id);
     let top_up = requested_top_up.min(vault.expiry_accounting.idle_balance()).min(funding_room);
-    if (top_up == 0) return;
+    if (top_up == 0) return 0;
 
     let cash = vault.expiry_accounting.send_expiry_cash(expiry_market_id, top_up);
     market.receive_pool_cash(cash);
@@ -935,6 +1005,7 @@ fun top_up_live_expiry_cash(
         target_cash,
         0,
     );
+    top_up
 }
 
 fun sweep_live_expiry_surplus(
@@ -943,7 +1014,7 @@ fun sweep_live_expiry_surplus(
     expiry_market_id: ID,
     cash_balance: u64,
     target_cash: u64,
-) {
+): u64 {
     let returned_cash = market.release_pool_cash(cash_balance - target_cash);
     let returned_cash_amount = vault
         .expiry_accounting
@@ -961,6 +1032,7 @@ fun sweep_live_expiry_surplus(
         target_cash,
         protocol_profit_realized,
     );
+    returned_cash_amount
 }
 
 fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
@@ -1095,6 +1167,8 @@ fun start_pool_valuation_internal(
             started_by: ctx.sender(),
             supply_request_cutoff: vault.lp.next_supply_request_index(),
             withdraw_request_cutoff: vault.lp.next_withdraw_request_index(),
+            maintenance_sent: 0,
+            maintenance_returned: 0,
         });
 }
 

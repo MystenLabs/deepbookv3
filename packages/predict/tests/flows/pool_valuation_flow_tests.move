@@ -489,22 +489,6 @@ fun value_expiry_aborts_on_double_value() {
 // pins the ops the flag still gates.
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun rebalance_during_valuation_aborts() {
-    let mut fx = helpers::setup_market_default();
-    let _trader = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, IDLE_SEED);
-    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(e);
-
-    helpers::begin_valuation(&mut market);
-    fx.rebalance_expiry_cash_bundle(&mut market);
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun create_expiry_market_during_valuation_aborts() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);

@@ -777,14 +777,34 @@ public(package) fun clear_valuation_stamp(market: &mut ExpiryMarket) {
     market.valuation_stamp = option::none();
 }
 
+/// Record a pool-maintenance cash movement (a live top-up or surplus sweep) on
+/// this market's stamp, so `snapshot_nav` keeps excluding it exactly as it
+/// excludes trade cash — no unrecorded movement ever sits between the rollback
+/// and the reconstruction's zero floors. A market with no current stamp (already
+/// valued, never snapshotted, or no flush in flight) records nothing: the
+/// flush-level maintenance accumulators alone correct the pool total there.
+public(package) fun record_maintenance_cash_delta(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    cash_added: u64,
+    cash_removed: u64,
+) {
+    market.reconcile_stale_valuation_stamp(config);
+    if (market.valuation_stamp.is_none()) return;
+    let stamp = market.valuation_stamp.borrow_mut();
+    stamp.cash_added = stamp.cash_added + cash_added;
+    stamp.cash_removed = stamp.cash_removed + cash_removed;
+}
+
 /// NAV this market held at its flush's snapshot instant: live rows rolled back
 /// through the stamp's recorded deltas, then the exact shape of `current_nav` —
 /// free cash (balance net of the impact escrow, floored) minus the marked
 /// liability of the snapshot-instant book, floored at zero. Reconstruction
 /// `(live + removed) - added` cannot underflow: the snapshot quantity was a valid
 /// u64, so `live + removed = snapshot + added >= added`. The zero floor is exact,
-/// not a distortion surface: `value_expiry` is measurement-only for live markets
-/// (no unrecorded cash moves between the rollback and this floor), and the cash
+/// not a distortion surface: every in-window movement of the rows this reads —
+/// trades and pool maintenance alike — records on the stamp, so no unrecorded
+/// cash sits between the rollback and this floor, and the cash
 /// backing invariant keeps the pre-floor value above zero anyway, up to P-13's
 /// per-boundary rounding dust (marked liability never exceeds the payout
 /// liability that backing requires cash to cover).
