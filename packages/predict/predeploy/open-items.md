@@ -440,7 +440,7 @@ comparison is a `response-policies.md` decision, not a silent widening.
 
 The landed mechanism is [D034](../docs/design/decisions.md). Source of truth is [`inventory_grid.move`](../sources/strike_exposure/inventory_grid.move) and [`inventory_cells.move`](../sources/strike_exposure/inventory_cells.move): the first charged mint inverts a 99-rung `strike / forward` ladder on-chain, later quotes rematerialize those ratios against the live forward and the frozen SVI shape, `K` is scored from the inline 2,048-cell payout mirror, and every risk-increasing mint or close pays `max(0, phi(K_after) − phi(K_before))` as ordinary expiry cash.
 
-`L` stays the settlement and early-exit reserve and is not stacked into the inventory fee. The potential scale `B_K` and the single rate `r_K` are still unset; the configured rate remains zero.
+`L` stays the settlement and early-exit reserve and is not stacked into the inventory fee. The admin knobs are `inventory_impact_scale` (`B_K`, default $1,000 DUSDC) and `inventory_impact_max_rate` (`r_K`, default 0); calibration of both is still open and the configured rate remains zero.
 
 **Implementation acceptance:** The first-mint invert and every later rematerialization verify each bucket in `[0.99%, 1.01%]`; mints and closes charge when they raise `K` and never go negative; splitting one order into many collects the same total; payout backing is unchanged; and both the trading path and the create-once invert stay within gas, object-access, and object-size limits.
 

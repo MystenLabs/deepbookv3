@@ -74,8 +74,8 @@ public struct ExpiryMarket has key {
 /// fill. `trading_fee` is the trading fee before the sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
-/// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes.
+/// + inventory_impact_charge`. Inventory impact is ordinary expiry cash, not a
+/// trading-fee component, and is never rebated.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -85,6 +85,8 @@ public struct MintQuote has copy, drop {
     builder_fee: u64,
     penalty_fee: u64,
     inventory_impact_charge: u64,
+    k_before: u64,
+    k_after: u64,
     all_in_cost: u64,
 }
 
@@ -377,6 +379,16 @@ public fun penalty_fee(quote: &MintQuote): u64 {
 /// consumers.
 public fun inventory_impact_charge(quote: &MintQuote): u64 {
     quote.inventory_impact_charge
+}
+
+/// Frozen-grid capital before the quoted mint, in DUSDC.
+public fun k_before(quote: &MintQuote): u64 {
+    quote.k_before
+}
+
+/// Frozen-grid capital after the quoted mint, in DUSDC.
+public fun k_after(quote: &MintQuote): u64 {
+    quote.k_after
 }
 
 /// Return the total quoted account withdrawal for SDK and devInspect consumers.
@@ -833,6 +845,8 @@ fun mint_prepared(
         quote.builder_fee,
         quote.penalty_fee,
         quote.inventory_impact_charge,
+        quote.k_before,
+        quote.k_after,
         clock.timestamp_ms(),
     );
     minted_order.id()
@@ -871,6 +885,8 @@ fun compute_mint_quote(
         builder_fee,
         penalty_fee,
         inventory_impact_charge,
+        k_before: terms.k_before(),
+        k_after: terms.k_after(),
         all_in_cost,
     }
 }
@@ -984,6 +1000,8 @@ fun redeem_live_with_auth(
     ).min(redeem_amount - fee_amount);
     let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
     let inventory_impact_charge = terms.live_close_inventory_impact_charge();
+    let k_before = terms.live_close_k_before();
+    let k_after = terms.live_close_k_after();
     let deductions = fee_amount + builder_fee_amount + penalty_amount + inventory_impact_charge;
     let additional_cost = deductions.saturating_sub(redeem_amount);
     let net_proceeds = redeem_amount.saturating_sub(deductions);
@@ -1041,6 +1059,8 @@ fun redeem_live_with_auth(
         builder_fee_amount,
         penalty_amount,
         inventory_impact_charge,
+        k_before,
+        k_after,
         clock.timestamp_ms(),
     );
     replacement_order_id

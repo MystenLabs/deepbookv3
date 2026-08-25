@@ -3,13 +3,11 @@
 
 /// Inline fixed-cell mirror of one expiry book's payout profile.
 ///
-/// The inventory coordinate needs the whole payout curve at once: a refresh
-/// rebuilds every bucket maximum and the centering expectation. Reading that from
-/// `StrikePayoutTree` costs one dynamic-field child per distinct strike, against a
-/// per-transaction object-cache ceiling that coincides with
-/// `constants::max_payout_tree_nodes`, so a market at its permitted maximum cannot
-/// be refreshed at all. A `vector` held inline in the market object costs no
-/// children, which removes that ceiling by construction rather than by tuning.
+/// The inventory coordinate needs the whole payout curve at once. Reading that
+/// from `StrikePayoutTree` costs one dynamic-field child per distinct strike,
+/// against a per-transaction object-cache ceiling that coincides with
+/// `constants::max_payout_tree_nodes`. A `vector` held inline in the market
+/// object costs no children, which removes that ceiling by construction.
 ///
 /// The price is resolution. The lattice is fixed at initialization while the
 /// settlement distribution narrows toward expiry, so an order boundary is rounded
@@ -188,11 +186,10 @@ public(package) fun span_max(
 
 /// Frozen probability mass of the half-open cell span `[start, stop)`.
 ///
-/// This is the same mass `expected_payout` attributes to those cells: survival at
-/// the start edge minus survival at the stop edge. Opens and closes accumulate
-/// `quantity` times this mass so the incremental centering term and a same-snapshot
-/// refresh stay in the same units. Open ends are exact: cell zero begins at
-/// probability one and the last cell ends at probability zero.
+/// Survival at the start edge minus survival at the stop edge. Opens and closes
+/// accumulate `quantity` times this mass as the stored centering term. Open
+/// ends are exact: cell zero begins at probability one and the last cell ends
+/// at probability zero.
 public(package) fun span_probability(
     cells: &InventoryCells,
     pricer: &FrozenPricer,
@@ -216,49 +213,22 @@ public(package) fun span_probability(
     lower_up.saturating_sub(higher_up)
 }
 
-/// Probability-weighted payout across the whole lattice under `pricer`.
-///
-/// A piecewise-constant profile integrates as its own boundary deltas against the
-/// survival function: `E = v_0 + sum_j (v_j - v_{j-1}) * P(settlement > edge_j)`,
-/// with the bottom cell carrying probability one. Only a cell whose payout differs
-/// from its neighbour contributes, so this costs one digital price per distinct
-/// snapped order boundary rather than one per cell — the same count the payout
-/// tree's own walk pays, with no children loaded.
-public(package) fun expected_payout(cells: &InventoryCells, pricer: &FrozenPricer): u64 {
-    let mut credit = cells.values[0] as u128;
-    let mut debit = 0u128;
-    let mut index = 1;
-    while (index < cell_count!()) {
-        let previous = cells.values[index - 1];
-        let current = cells.values[index];
-        if (current != previous) {
-            let up_price = pricer.frozen_up_price(
-                range_codec::strike_from_raw_boundary(cells.boundary_price(index)),
-            );
-            if (current > previous) {
-                credit = credit + (math::mul_down(current - previous, up_price) as u128);
-            } else {
-                debit = debit + (math::mul_down(previous - current, up_price) as u128);
-            };
-        };
-        index = index + 1;
-    };
-    // Expected payout is non-negative in exact arithmetic. Flooring absorbs
-    // rounding across the ladder, and it errs the safe way: understating the
-    // centering term can only raise the capital coordinate.
-    if (credit > debit) ((credit - debit) as u64) else 0
-}
-
 /// Nearest lattice boundary index to a raw price, in `0..cell_count`.
 ///
 /// Constant log spacing is what keeps this arithmetic rather than a search: the
 /// index is one logarithm, one subtraction and one division, where the payout tree
-/// needs a traversal and a stored child per node.
+/// needs a traversal and a stored child per node. Callers that already have
+/// `ln(price)` should use `boundary_index_from_ln` so a 100-rung cut does not
+/// repeat the logarithm.
 public(package) fun boundary_index(cells: &InventoryCells, raw: u64): u64 {
     if (raw == constants::neg_inf!()) return 0;
     if (raw == constants::pos_inf!()) return cell_count!();
+    cells.boundary_index_from_ln(&math::ln(raw))
+}
 
-    let offset = math::ln(raw).sub(&cells.anchor_ln);
+/// Nearest lattice boundary index from a 1e9-scaled `ln(price)`.
+public(package) fun boundary_index_from_ln(cells: &InventoryCells, price_ln: &I64): u64 {
+    let offset = price_ln.sub(&cells.anchor_ln);
     // Below the anchor the nearest boundary is the open bottom: cell zero absorbs
     // the whole region under the span, so a lower edge there extends to it and an
     // upper edge there leaves the interval in that one cell.

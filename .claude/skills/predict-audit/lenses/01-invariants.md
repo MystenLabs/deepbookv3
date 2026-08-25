@@ -17,7 +17,7 @@ Produce:
    it (solvency / accounting-consistency / ordering / conservation); judge whether the code maintains it
    across ALL touching flows. Give special weight to **cross-module and cross-package** invariants — a
    property established in one module/package and silently relied on in another (e.g. `expiry_cash`'s
-   `cash_balance >= payout_liability + inventory_impact_reserve`; the exact `current_nav` mark used identically for PLP
+   `cash_balance >= payout_liability`; the exact `current_nav` mark used identically for PLP
    supply and withdraw; the packed-order-ID `quantity` round-trip — mint insert must add bit-equal what remove subtracts).
 
 2. **ECONOMIC FLOW MAP** — trace every path where value (DUSDC, PLP) enters, moves, or leaves:

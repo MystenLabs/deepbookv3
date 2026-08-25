@@ -12,20 +12,13 @@ and contributors. For *how* each mechanism works, follow the links into
 ## Solvency and custody
 
 - **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
-  and isolated inventory-impact reserve
-  (`cash ≥ payout_liability + inventory_impact_reserve`),
-  re-asserted after every cash mutation
-  (`expiry_cash::assert_backing`).
-- **Inventory-impact escrow covers the current potential.** While live,
-  `inventory_impact_reserve ≥ phi(payout_liability)`. Mints credit exactly the
-  potential increase and voluntary live closes may withdraw only the potential
-  decrease;
-  settlement releases the residual earmark when live closes become impossible.
-- **Inventory cycles telescope.** Inventory charge/rebate is always the signed
-  difference between two evaluations of the same deterministic integer state
-  function. Therefore any sequence returning the payout book to its starting
-  state has exactly zero net inventory transfer, including rounding and
-  cross-range reorderings.
+  (`cash ≥ payout_liability`), re-asserted after every cash mutation
+  (`expiry_cash::assert_backing`). Inventory-impact charges are ordinary expiry
+  cash on arrival; there is no isolated escrow.
+- **Inventory impact is charge-only.** A trade pays
+  `max(0, phi(K_after) − phi(K_before))` on frozen-grid capital (D034). Splitting
+  a risk-increasing trade collects the same total; a dip-and-recover path
+  collects more. There is no rebate and no telescoping closed cycle.
 - **Live payout liability is a settlement floor plus a liquidity buffer.** The
   floor is the maximum summed payout at any *single* settlement price, read
   from `StrikePayoutTree::payout_reserve_terms`; the buffer is
@@ -62,8 +55,7 @@ and contributors. For *how* each mechanism works, follow the links into
 ## NAV and valuation
 
 - **`current_nav` is the exact per-expiry mark.** `expiry_market::current_nav =
-  free_cash − live_marked_liability`, floored at zero, where `free_cash =
-  cash − inventory_impact_reserve` and the liability is the
+  cash − live_marked_liability`, floored at zero, where the liability is the
   payout tree's boundary-linear walk (`strike_payout_tree::walk_linear`,
   `Σ quantity × P(range)`) with no per-order correction.
   It is a **pure read with no backing assert** (backing is owned by the payout-tree

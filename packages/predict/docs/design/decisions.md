@@ -169,7 +169,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   deleted NAV matrix and dropping the tree.
 - **D034 — Inventory impact prices 95% economic capital, and never refunds.**
   The risk coordinate is `K`, the average payout across the five worst of 100
-  equally likely settlement buckets minus the book's expected payout. A trade
+  equally likely settlement buckets minus the book's stored incremental expected
+  payout. Each trade adds or removes its cell-span mass under that quote's live
+  forward; quotes do not re-integrate the lattice, so `E` is the path of those
+  increments when spot moves. A trade
   pays `max(0, phi(K_after) − phi(K_before))` for the same capped convex `phi`
   D032 defined, so both mints and live closes pay when they raise the pool's
   capital and neither is credited when they lower it. *Why `K` and not `L`:*
@@ -192,8 +195,13 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   last tenth of life. A close re-derives its expected-payout delta from the
   live rematerialization rather than a value stored at mint. The inline
   2,048-cell payout mirror supplies the range maxima so the quote never walks
-  the payout tree. The rate snapshots at market creation, ships at zero, and
-  cannot exceed 1.0. *Rejected:* `L` as the fee coordinate; holding charges in
+  the payout tree. The only admin-tunable economics are the template pair
+  `inventory_impact_max_rate` (`r_max`, default 0, envelope 0..1) and
+  `inventory_impact_scale` (`B`, default $1,000 DUSDC), snapshotted at market
+  creation; they are not the cadence allocation cap. The coordinate itself is
+  upgrade-required: 100 buckets of 1% mass (±1 bp), `K` averages the worst 5,
+  invert uses 40 bisections with a `1e-6` digital early-exit, and the payout
+  mirror is 2,048 log-price cells spanning 1.72× the 1–99% ladder. *Rejected:* `L` as the fee coordinate; holding charges in
   escrow until settlement, which defers LP compensation and lets an LP supply
   just before the release to capture a NAV jump; a keeper that re-cuts dollar
   boundaries after every spot move, which the ratio axis already absorbs; an

@@ -134,7 +134,7 @@ public fun set_template_backing_buffer_lambda(
 }
 
 /// Set the maximum marginal inventory-impact rate snapshotted by newly created
-/// expiry markets. `0` (the default) disables both charges and rebates.
+/// expiry markets. `0` (the default) disables the charge.
 public fun set_template_inventory_impact_max_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

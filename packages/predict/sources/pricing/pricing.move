@@ -156,6 +156,10 @@ public(package) fun forward(pricer: &Pricer): u64 {
     pricer.forward
 }
 
+public(package) fun ln_forward(pricer: &Pricer): I64 {
+    pricer.ln_forward
+}
+
 public(package) fun pyth_spot_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.pyth_spot_source_timestamp_ms
 }
@@ -184,6 +188,10 @@ public(package) fun snapshot_for_inventory(pricer: &Pricer): FrozenPricer {
 /// The creation-time forward the shape snapshot was verified against.
 public(package) fun frozen_forward(pricer: &FrozenPricer): u64 {
     pricer.forward
+}
+
+public(package) fun frozen_ln_forward(pricer: &FrozenPricer): I64 {
+    pricer.ln_forward
 }
 
 /// Frozen SVI shape priced at the live forward. Bucket masses in moneyness are

@@ -70,7 +70,10 @@ public struct MintTerms has drop {
     premium: u64,
     /// Separate inventory-impact charge, sampled against the pre-mint book.
     inventory_impact_charge: u64,
-    /// Frozen expected payout attributed to this position for exact close round trips.
+    /// Frozen-grid capital before and after this open, in DUSDC.
+    k_before: u64,
+    k_after: u64,
+    /// Cell-span expected payout this open adds to the grid's centering term.
     frozen_expected_payout: u64,
 }
 
@@ -86,7 +89,10 @@ public struct LiveCloseTerms has drop {
     range_probability: u64,
     /// Charge when this close removes a hedge and raises the book potential.
     inventory_impact_charge: u64,
-    /// Frozen expected payout removed from the rolling grid by this close.
+    /// Frozen-grid capital before and after this close, in DUSDC.
+    k_before: u64,
+    k_after: u64,
+    /// Cell-span expected payout this close removes from the centering term.
     frozen_expected_payout: u64,
 }
 
@@ -106,6 +112,14 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
     terms.inventory_impact_charge
 }
 
+public(package) fun k_before(terms: &MintTerms): u64 {
+    terms.k_before
+}
+
+public(package) fun k_after(terms: &MintTerms): u64 {
+    terms.k_after
+}
+
 public(package) fun frozen_expected_payout(terms: &MintTerms): u64 {
     terms.frozen_expected_payout
 }
@@ -120,6 +134,14 @@ public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
 
 public(package) fun live_close_inventory_impact_charge(terms: &LiveCloseTerms): u64 {
     terms.inventory_impact_charge
+}
+
+public(package) fun live_close_k_before(terms: &LiveCloseTerms): u64 {
+    terms.k_before
+}
+
+public(package) fun live_close_k_after(terms: &LiveCloseTerms): u64 {
+    terms.k_after
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -256,7 +278,7 @@ public(package) fun trading_fee(
 /// real-valued quadratic would have fractional dust.
 public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     // Preserve the zero-rate kill switch through the post-trade backing check:
-    // disabled markets do not perform a second payout-tree read here.
+    // disabled markets do not walk the grid here.
     if (exposure.is_settled() || exposure.config.inventory_impact_max_rate() == 0) return 0;
     if (exposure.inventory_grid.is_none()) return 0;
     exposure.inventory_impact_potential_for_capital(exposure.inventory_grid.borrow().k95())
@@ -300,12 +322,13 @@ public(package) fun quote_mint_terms(
     let premium = exposure.config.assert_mint_admission(entry_probability, quantity);
     // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
-    let (inventory_impact_charge, frozen_expected_payout) = exposure.quote_open_inventory(
-        pricer,
-        lower_tick,
-        higher_tick,
-        quantity,
-    );
+    let (inventory_impact_charge, frozen_expected_payout, k_before, k_after) = exposure
+        .quote_open_inventory(
+            pricer,
+            lower_tick,
+            higher_tick,
+            quantity,
+        );
     MintTerms {
         expiry_market_id: exposure.expiry_market_id,
         lower_tick,
@@ -314,6 +337,8 @@ public(package) fun quote_mint_terms(
         entry_probability,
         premium,
         inventory_impact_charge,
+        k_before,
+        k_after,
         frozen_expected_payout,
     }
 }
@@ -375,10 +400,10 @@ public(package) fun quote_live_close(
     let range_probability = exposure.order_range_price(pricer, order);
     // A charged book always has a grid: the first mint inverted it. Rate-zero
     // books never grow one, so a close against them cannot raise K.
-    let (inventory_impact_charge, frozen_expected_payout) = if (
+    let (inventory_impact_charge, frozen_expected_payout, k_before, k_after) = if (
         exposure.config.inventory_impact_max_rate() == 0 || exposure.inventory_grid.is_none()
     ) {
-        (0, 0)
+        (0, 0, 0, 0)
     } else {
         let change = exposure
             .inventory_grid
@@ -390,8 +415,12 @@ public(package) fun quote_live_close(
                 close_quantity,
                 exposure.tick_size,
             );
-        let charge = exposure.inventory_impact_charge_for(&change);
-        (charge, change.frozen_expected_payout_delta())
+        (
+            exposure.inventory_impact_charge_for(&change),
+            change.frozen_expected_payout_delta(),
+            change.before_k(),
+            change.after_k(),
+        )
     };
     LiveCloseTerms {
         expiry_market_id: exposure.expiry_market_id,
@@ -400,6 +429,8 @@ public(package) fun quote_live_close(
         redeem_amount: math::mul_down(range_probability, close_quantity),
         range_probability,
         inventory_impact_charge,
+        k_before,
+        k_after,
         frozen_expected_payout,
     }
 }
@@ -538,8 +569,8 @@ fun quote_open_inventory(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-): (u64, u64) {
-    if (exposure.config.inventory_impact_max_rate() == 0) return (0, 0);
+): (u64, u64, u64, u64) {
+    if (exposure.config.inventory_impact_max_rate() == 0) return (0, 0, 0, 0);
     if (exposure.inventory_grid.is_some()) {
         return exposure.charge_open_on(
             exposure.inventory_grid.borrow(),
@@ -560,9 +591,14 @@ fun charge_open_on(
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-): (u64, u64) {
+): (u64, u64, u64, u64) {
     let change = grid.quote_open(pricer, lower_tick, higher_tick, quantity, exposure.tick_size);
-    (exposure.inventory_impact_charge_for(&change), change.frozen_expected_payout_delta())
+    (
+        exposure.inventory_impact_charge_for(&change),
+        change.frozen_expected_payout_delta(),
+        change.before_k(),
+        change.after_k(),
+    )
 }
 
 fun inventory_impact_potential_for_capital(exposure: &StrikeExposure, capital: u64): u64 {

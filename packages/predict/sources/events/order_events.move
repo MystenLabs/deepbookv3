@@ -37,8 +37,13 @@ public struct OrderMinted has copy, drop, store {
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
-    /// Separate inventory-impact charge escrowed for live-close rebates.
+    /// Inventory-impact charge kept as ordinary expiry cash. Zero when the rate is off
+    /// or the trade does not raise frozen-grid capital.
     inventory_impact_charge: u64,
+    /// Frozen-grid capital before this mint, in DUSDC. Zero when the rate is off.
+    k_before: u64,
+    /// Frozen-grid capital after this mint, in DUSDC.
+    k_after: u64,
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
@@ -71,8 +76,14 @@ public struct LiveOrderRedeemed has copy, drop, store {
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
-    /// Inventory-impact charge retained by the pool when the close removes a hedge.
+    /// Inventory-impact charge when the close raises frozen-grid capital. Zero when
+    /// the close lowers it; there is no rebate.
     inventory_impact_charge: u64,
+    /// Frozen-grid capital before this close, in DUSDC. Zero when the rate is off
+    /// or no grid exists.
+    k_before: u64,
+    /// Frozen-grid capital after this close, in DUSDC.
+    k_after: u64,
     /// Builder credited for `builder_fee`; `none` when no builder fee was paid
     /// (attribution follows the fee — applied once, in the emit helper).
     builder_code_id: Option<ID>,
@@ -114,6 +125,8 @@ public(package) fun emit_order_minted(
     builder_fee: u64,
     penalty_fee: u64,
     inventory_impact_charge: u64,
+    k_before: u64,
+    k_after: u64,
     minted_at_ms: u64,
 ) {
     event::emit(OrderMinted {
@@ -132,6 +145,8 @@ public(package) fun emit_order_minted(
         builder_fee,
         penalty_fee,
         inventory_impact_charge,
+        k_before,
+        k_after,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         minted_at_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
@@ -156,6 +171,8 @@ public(package) fun emit_live_order_redeemed(
     builder_fee: u64,
     penalty_fee: u64,
     inventory_impact_charge: u64,
+    k_before: u64,
+    k_after: u64,
     redeemed_at_ms: u64,
 ) {
     event::emit(LiveOrderRedeemed {
@@ -172,6 +189,8 @@ public(package) fun emit_live_order_redeemed(
         builder_fee,
         penalty_fee,
         inventory_impact_charge,
+        k_before,
+        k_after,
         builder_code_id: if (builder_fee == 0) option::none() else builder_code_id,
         redeemed_at_ms,
         pyth_spot_source_timestamp_ms: pricer.pyth_spot_source_timestamp_ms(),
@@ -199,4 +218,14 @@ public(package) fun emit_settled_order_redeemed(
         payout_amount,
         redeemed_at_ms,
     });
+}
+
+#[test_only]
+public fun order_minted_inventory(event: &OrderMinted): (u64, u64, u64) {
+    (event.inventory_impact_charge, event.k_before, event.k_after)
+}
+
+#[test_only]
+public fun live_order_redeemed_inventory(event: &LiveOrderRedeemed): (u64, u64, u64) {
+    (event.inventory_impact_charge, event.k_before, event.k_after)
 }

@@ -7,6 +7,7 @@
 module deepbook_predict::inventory_cells_tests;
 
 use deepbook_predict::{constants, inventory_cells};
+use fixed_math::math;
 use std::unit_test::{assert_eq, destroy};
 
 const LADDER_LOW: u64 = 90_000_000_000;
@@ -62,6 +63,15 @@ fun a_boundary_price_indexes_back_to_itself() {
     let index = inventory_cells::cell_count!() / 2;
     let price = cells.boundary_price_for_testing(index);
     assert_eq!(cells.boundary_index(price), index);
+    destroy(cells);
+}
+
+#[test]
+fun a_logged_price_indexes_the_same_cell_as_the_raw_price() {
+    let cells = inventory_cells::new(LADDER_LOW, LADDER_HIGH);
+    let index = inventory_cells::cell_count!() / 2;
+    let price = cells.boundary_price_for_testing(index);
+    assert_eq!(cells.boundary_index_from_ln(&math::ln(price)), cells.boundary_index(price));
     destroy(cells);
 }
 

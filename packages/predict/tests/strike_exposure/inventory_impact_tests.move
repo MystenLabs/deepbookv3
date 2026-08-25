@@ -56,6 +56,8 @@ fun default_zero_rate_is_a_kill_switch() {
             true,
         );
     assert_eq!(terms.inventory_impact_charge(), 0);
+    assert_eq!(terms.k_before(), 0);
+    assert_eq!(terms.k_after(), 0);
     assert_eq!(terms.frozen_expected_payout(), 0);
     let order = harness.exposure.allocate_mint_order(terms);
     assert_eq!(harness.exposure.inventory_impact_potential(), 0);
@@ -225,6 +227,8 @@ fun first_mint_inverts_and_charges_without_a_prior_cut() {
         );
     let charge = terms.inventory_impact_charge();
     assert!(charge > 0);
+    assert_eq!(terms.k_before(), 0);
+    assert!(terms.k_after() > 0);
     harness.exposure.allocate_mint_order(terms);
     assert_eq!(harness.exposure.inventory_impact_potential(), charge);
 
@@ -267,6 +271,30 @@ fun the_grid_ladder_closes_both_ends_and_is_read_against_the_forward() {
     // The 50% survival strike is ATM, so the median rematerialized rung is the
     // forward to within a tick of this short-dated fixture.
     assert!(grid.boundary(50).diff(pricer.forward()) < TEST_TICK_SIZE);
+
+    destroy(grid);
+    cleanup(fx, oracle, harness);
+}
+
+#[test]
+fun a_log_sum_indexes_the_same_cell_as_the_dollar_rung() {
+    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+    let pricer = fx.load_pricer_bundle(&oracle);
+    let grid = inventory_grid::from_pricer(&pricer);
+    let cells = grid.cells();
+    let ratios = grid.ratios();
+    let ln_forward = pricer.ln_forward();
+
+    // The quote cut is `ln(ratio) + ln(F)`. The dollar rematerialize the mass
+    // check still uses is `ratio × F`. They must land in the same cell at the
+    // creation forward, or the pointer and the verified ladder disagree.
+    let mut index = 0;
+    while (index < ratios.length()) {
+        let dollar = math::mul_down(ratios[index], pricer.forward());
+        let price_ln = math::ln(ratios[index]).add(&ln_forward);
+        assert_eq!(cells.boundary_index(dollar), cells.boundary_index_from_ln(&price_ln));
+        index = index + 1;
+    };
 
     destroy(grid);
     cleanup(fx, oracle, harness);
@@ -362,17 +390,22 @@ fun a_loaded_book_scores_from_the_cell_mirror_without_the_payout_tree() {
 fun the_same_ratio_ladder_charges_after_the_forward_moves() {
     let (mut fx, mut oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let opening = fx.load_pricer_bundle(&oracle);
-    let grid = inventory_grid::initialize(&opening, frozen_grid_fixture::ratios());
+    let mut grid = inventory_grid::initialize(&opening, frozen_grid_fixture::ratios());
+    let opening_atm = opening.forward() / TEST_TICK_SIZE;
+    open_range(&mut grid, &opening, opening_atm, constants::pos_inf_tick!(), ONE_ORDER);
+    let stored_expected = grid.current_frozen_expected_payout();
+    assert!(stored_expected > 0);
 
     // 1bp forward move — inside the cell span of this short-dated fixture, and
     // still wider than the absolute-price race that used to invalidate a cut.
-    // Dollar rungs slide with the live forward, so the same stored ratios still
-    // raise K on an ATM-relative pile without a keeper re-cut.
+    // Dollar rungs slide with the live forward; the centering term stays the
+    // increment collected at the opening forward, not a re-integrated E.
     let moved_forward = test_constants::default_live_price() * 10_001 / 10_000;
     let moved_at = fx.clock().timestamp_ms();
     fx.set_bs_forward_for_testing_bundle(&mut oracle, moved_at, moved_forward);
     let moved = fx.load_pricer_bundle(&oracle);
     assert_eq!(moved.forward(), moved_forward);
+    assert_eq!(grid.current_frozen_expected_payout(), stored_expected);
 
     let atm_tick = moved_forward / TEST_TICK_SIZE;
     let after_move = grid.quote_open(

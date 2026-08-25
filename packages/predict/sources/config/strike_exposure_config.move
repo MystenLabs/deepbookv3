@@ -35,10 +35,11 @@ public struct StrikeExposureConfig has store {
     expiry_fee_window_ms: u64,
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables the ramp.
     expiry_fee_max_multiplier: u64,
-    /// Maximum marginal rate of the path-independent inventory-impact curve, in
-    /// FLOAT_SCALING. `0` disables both charges and rebates.
+    /// Maximum marginal rate of the frozen-grid inventory-impact curve, in
+    /// FLOAT_SCALING. `0` disables the charge.
     inventory_impact_max_rate: u64,
-    /// Capital scale of the frozen-grid inventory-impact curve, in DUSDC base units.
+    /// Capital scale `B` of that curve, in DUSDC base units. Marginal rate
+    /// reaches `inventory_impact_max_rate` at this `K` and stays capped above it.
     inventory_impact_scale: u64,
 }
 

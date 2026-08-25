@@ -4,10 +4,11 @@
 /// Ratio-axis 1%-probability inventory grid for one expiry exposure book.
 ///
 /// The first mint with a nonzero rate inverts the live 1% CDF, stores the 99
-/// `strike / forward` rungs, and freezes the SVI shape. Later quotes rematerialize
-/// those ratios against the live forward and read the book through the inline cell
-/// mirror, so spot moving does not require a keeper. The grid never touches the
-/// payout tree: the tree is the source of truth for settlement backing and NAV.
+/// `strike / forward` rungs and their logs, and freezes the SVI shape. Later
+/// quotes add each stored `ln(ratio)` to the live `ln(forward)` and read the
+/// book through the inline cell mirror, so spot moving does not require a
+/// keeper. The grid never touches the payout tree: the tree is the source of
+/// truth for settlement backing and NAV.
 module deepbook_predict::inventory_grid;
 
 use deepbook_predict::{
@@ -16,38 +17,50 @@ use deepbook_predict::{
     pricing::{Self, FrozenPricer, Pricer},
     range_codec
 };
-use fixed_math::math;
+use fixed_math::{i64::I64, math};
 
 const EInvalidBoundaryCount: u64 = 0;
 const EInvalidBoundary: u64 = 1;
 const EInvalidBucketMass: u64 = 2;
 
+/// 100 equal-probability settlement buckets. `K` averages the worst
+/// `tail_bucket_count` and subtracts expected payout.
 macro fun bucket_count(): u64 { 100 }
 
 macro fun tail_bucket_count(): u64 { 5 }
 
+/// Target bucket mass and invert check, FLOAT_SCALING: 1% ± 1 bp.
 macro fun target_bucket_mass(): u64 { 10_000_000 }
 
 macro fun bucket_mass_tolerance(): u64 { 100_000 }
 
 macro fun bisection_passes(): u64 { 40 }
 
+/// Early-exit when the digital is within `1e-6` of the quantile target.
 macro fun invert_price_tolerance(): u64 { 1_000 }
 
+/// Ratio search bracket: `1 / bracket_multiple` .. `bracket_multiple`.
 macro fun bracket_multiple(): u64 { 10_000 }
 
 /// One ratio ladder plus the payout mirror read under it.
 ///
-/// `ratios` stay fixed after initialize. Dollar rungs are `ratio × F` at quote
-/// time, so the pointer follows spot without a later transaction. The cell
-/// lattice is absolute log-price, fixed at initialize, and carries the book.
+/// `ratios` stay fixed after initialize. Quote cuts add each stored
+/// `ln(ratio)` to the live `ln(forward)` rather than logging `ratio × F`
+/// again: both logs already live in 1e9-scaled value space, so ATM is
+/// `ln(forward)` exactly. The cell lattice is absolute log-price, fixed at
+/// initialize, and carries the book.
 ///
-/// `frozen_expected_payout` is only a centering term: opens and closes move it
-/// by the snapped cell-span mass under the quote's (frozen shape, live forward)
-/// view. A close that empties the mirror clears the term outright.
+/// `frozen_expected_payout` is the quote centering term: opens and closes move
+/// it by the snapped cell-span mass under that quote's (frozen shape, live
+/// forward) view. Quotes use this stored sum rather than re-integrating the
+/// lattice, so a later mint does not price one digital per book edge. When
+/// the forward moves, the term is the path of those increments, not the
+/// current-view integral. A close that empties the mirror clears it.
 public struct InventoryGrid has drop, store {
     /// Interior 1%..99% rungs as `strike / forward`, 1e9-scaled.
     ratios: vector<u64>,
+    /// `ln(ratios[i])`, taken once at initialize so a later quote does not.
+    ln_ratios: vector<I64>,
     frozen_pricer: FrozenPricer,
     frozen_expected_payout: u64,
     cells: InventoryCells,
@@ -73,8 +86,8 @@ public(package) fun frozen_expected_payout_delta(change: &InventoryChange): u64 
 }
 
 public(package) fun k95(grid: &InventoryGrid): u64 {
-    grid.capital_at(
-        grid.frozen_pricer.frozen_forward(),
+    grid.capital_from_starts(
+        &grid.cut_bucket_cells(&grid.frozen_pricer.frozen_ln_forward()),
         0,
         0,
         0,
@@ -108,9 +121,11 @@ public(package) fun initialize(pricer: &Pricer, ratios: vector<u64>): InventoryG
     // The lattice is spanned from the finite ends of the creation ladder and is
     // never re-cut: re-binning the book would be the tree read the cells avoid.
     let cells = inventory_cells::new(boundaries[1], boundaries[bucket_count!() - 1]);
+    let ln_ratios = ln_ratio_ladder(&ratios);
 
     InventoryGrid {
         ratios,
+        ln_ratios,
         frozen_pricer,
         frozen_expected_payout: 0,
         cells,
@@ -180,17 +195,23 @@ fun quote_change(
         grid.cells.span_probability(&view, start, stop),
         quantity,
     );
-    let before_expected = grid.cells.expected_payout(&view);
+    // Stored increment, not a live lattice integral: re-pricing every distinct
+    // cell edge was the later-mint slope. Same-forward slices still telescope;
+    // a moved forward leaves E as the path of prior increments.
+    let before_expected = grid.frozen_expected_payout;
     let after_expected = if (adding) {
         before_expected + frozen_expected_payout_delta
     } else {
         before_expected.saturating_sub(frozen_expected_payout_delta)
     };
+    // One cut serves both coordinates: the live forward does not change between
+    // them, and logging the ladder twice was the later-mint gas regression.
+    let starts = grid.cut_bucket_cells(&pricer.ln_forward());
 
     InventoryChange {
-        before_k: grid.capital_at(pricer.forward(), 0, 0, 0, true, before_expected),
-        after_k: grid.capital_at(
-            pricer.forward(),
+        before_k: grid.capital_from_starts(&starts, 0, 0, 0, true, before_expected),
+        after_k: grid.capital_from_starts(
+            &starts,
             start,
             stop,
             quantity,
@@ -205,19 +226,18 @@ fun quote_change(
 ///
 /// Every bucket carries 1% of the settlement distribution's probability mass
 /// along the ratio axis, so the worst 5% of outcomes is the five largest
-/// buckets. Dollar rungs are `ratio × forward` for this quote. Passing a
+/// buckets. `starts` is the live-forward cut, taken once per quote. Passing a
 /// non-empty `[range_start, range_stop)` scores the book as if `quantity` were
 /// added to or removed from those cells.
-fun capital_at(
+fun capital_from_starts(
     grid: &InventoryGrid,
-    forward: u64,
+    starts: &vector<u64>,
     range_start: u64,
     range_stop: u64,
     quantity: u64,
     adding: bool,
     expected_payout: u64,
 ): u64 {
-    let starts = cut_bucket_cells(&grid.cells, &materialized_ladder(forward, &grid.ratios));
     let mut maxima = vector[];
     let mut index = 0;
     while (index < bucket_count!()) {
@@ -384,15 +404,32 @@ fun verified_snapshot(pricer: &Pricer, boundaries: &vector<u64>): FrozenPricer {
     frozen_pricer
 }
 
-/// Cell index of every boundary in the ladder, taken once per cut.
-fun cut_bucket_cells(cells: &InventoryCells, boundaries: &vector<u64>): vector<u64> {
-    let mut starts = vector[];
+/// Cell index of every boundary in the ladder, taken once per quote.
+///
+/// Interior rungs are `ln(ratio_i) + ln(F)`. Both logs are already 1e9-scaled
+/// values, so a unit ratio is `ln(F)` and no extra `ln(1e9)` subtract appears.
+/// Sentinels are the open lattice ends and do not go through the logarithm.
+fun cut_bucket_cells(grid: &InventoryGrid, ln_forward: &I64): vector<u64> {
+    assert!(grid.ln_ratios.length() == bucket_count!() - 1, EInvalidBoundaryCount);
+    let mut starts = vector[0];
     let mut index = 0;
-    while (index < boundaries.length()) {
-        starts.push_back(cells.boundary_index(boundaries[index]));
+    while (index < grid.ln_ratios.length()) {
+        let price_ln = grid.ln_ratios[index].add(ln_forward);
+        starts.push_back(grid.cells.boundary_index_from_ln(&price_ln));
         index = index + 1;
     };
+    starts.push_back(inventory_cells::cell_count!());
     starts
+}
+
+fun ln_ratio_ladder(ratios: &vector<u64>): vector<I64> {
+    let mut ln_ratios = vector[];
+    let mut index = 0;
+    while (index < ratios.length()) {
+        ln_ratios.push_back(math::ln(ratios[index]));
+        index = index + 1;
+    };
+    ln_ratios
 }
 
 fun range_cells(
@@ -414,19 +451,13 @@ fun raw_boundary_from_tick(tick: u64, tick_size: u64): u64 {
 
 #[test_only]
 public(package) fun bucket_maximum(grid: &InventoryGrid, index: u64): u64 {
-    let starts = cut_bucket_cells(
-        &grid.cells,
-        &materialized_ladder(grid.frozen_pricer.frozen_forward(), &grid.ratios),
-    );
+    let starts = grid.cut_bucket_cells(&grid.frozen_pricer.frozen_ln_forward());
     bucket_maximum_at(grid, &starts, index)
 }
 
 #[test_only]
 public(package) fun book_peak(grid: &InventoryGrid): u64 {
-    let starts = cut_bucket_cells(
-        &grid.cells,
-        &materialized_ladder(grid.frozen_pricer.frozen_forward(), &grid.ratios),
-    );
+    let starts = grid.cut_bucket_cells(&grid.frozen_pricer.frozen_ln_forward());
     let mut peak = 0;
     let mut index = 0;
     while (index < bucket_count!()) {

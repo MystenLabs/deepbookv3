@@ -97,49 +97,23 @@ One accepted weakness: because the first observation seeds the variance directly
 
 The congestion surcharge is handled differently from the trading fee in the cash flow. It is withdrawn from the trader (at mint) or withheld from the payout (at redeem), but it then rides into the expiry's cash as **surplus**: it earns no builder cut. It compensates liquidity providers for transacting during congestion rather than being a fee on the contract itself.
 
-## Inventory-impact charge and rebate
+## Inventory-impact charge
 
-Inventory impact is an optional, path-independent transfer layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market freezes the configured rate and uses its cadence `max_expiry_allocation` as the immutable impact scale `B`; changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
+Inventory impact is an optional charge layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market snapshots that rate and `inventory_impact_scale` (`B`); changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
 
-### Step 1: measure the book's payout liability
-
-Let:
-
-- `M` be the largest summed net payout at any one settlement price;
-- `T` be the sum of every live order's payout (`quantity`);
-- `lambda` be `backing_buffer_lambda`.
-
-The existing live reserve liability is:
-
-```text
-L = M + lambda * (T - M)
-```
-
-A candidate range does not necessarily move `M` by its full net payout. The payout tree therefore reads the current maximum inside the range and in its complement in `O(log n)`, computes the exact prospective `M` and `T`, and evaluates the complete liability formula before and after the trade. Evaluating both complete states matters for integer arithmetic: rounding only the incremental buffer could miss a one-atom carry already accumulated in `lambda * (T-M)`. This charges overlapping exposure more than a cold disjoint range when it raises the book's worst settlement point.
-
-### Step 2: map liability to one book-level potential
+The risk coordinate is frozen-grid capital `K`: the average payout across the five worst of 100 equally likely settlement buckets, minus the book's expected payout. The first charged mint inverts the 1% ladder on-chain; later quotes rematerialize the stored `strike / forward` ratios against the live forward and the frozen SVI shape. `L` stays the settlement reserve and is not the fee coordinate.
 
 For maximum marginal rate `r_max` and scale `B`:
 
 ```text
-phi(L) = r_max * L^2 / (2 * B)                  when L <= B
-phi(L) = r_max * B / 2 + r_max * (L - B)        when L > B
+phi(K) = r_max * K^2 / (2 * B)                  when K <= B
+phi(K) = r_max * B / 2 + r_max * (K - B)        when K > B
+charge = max(0, phi(K_after) - phi(K_before))
 ```
 
-Below `B`, the marginal rate rises linearly from zero to `r_max`: at 25% utilization the marginal rate is 25% of `r_max`; at 100% utilization it reaches `r_max`. Above `B`, it stays capped instead of growing without bound. On chain, `phi` is defined by one exact sequence of round-down fixed-point operations. Both directions evaluate that same integer function.
+Both mints and live closes pay when they raise `K`. A trade that lowers `K` pays nothing; there is no rebate and no isolated escrow. The charge is ordinary expiry cash and counts in NAV like any other fee. Splitting a risk-increasing trade collects the same total; a dip-and-recover path collects more.
 
-### Step 3: charge or rebate only the potential change
-
-```text
-mint charge       = phi(L_after)  - phi(L_before)
-live-close rebate = phi(L_before) - phi(L_after)
-```
-
-This state-function construction is the key safety property. Splitting a trade, closing it in pieces, or cycling through ranges only creates intermediate terms that cancel. For any sequence that returns the book to the same state, total inventory charges equal total inventory rebates exactly, including integer rounding. A probability-local multiplier would not have this property: changing another range could change the price/rate used on exit and make a cross-range cycle profitable.
-
-Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_reserve`. Required cash includes the earmark and free cash/NAV excludes it. A live close can spend only this reserve. Settlement releases whatever remains into ordinary expiry surplus, because no live close can occur afterward.
-
-This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
+`OrderMinted` and `LiveOrderRedeemed` carry `inventory_impact_charge`, `k_before`, and `k_after`. `MarketCreated` carries the snapshotted `inventory_impact_max_rate` and `inventory_impact_scale`.
 
 ## How the components combine
 
@@ -155,9 +129,9 @@ flowchart TD
     FEE --> COLLECT[fee -> expiry cash]
     BUILD --> BUILDER[builder fee -> builder code address]
     CONG --> SURPLUS[surcharge -> expiry cash surplus]
-    L[Book payout liability L] --> PHI["inventory potential phi(L)"]
-    PHI --> IMPACT["mint: charge delta / live close: rebate delta"]
-    IMPACT --> IRESERVE[isolated inventory-impact reserve]
+    K[Frozen-grid capital K] --> PHI["inventory potential phi(K)"]
+    PHI --> IMPACT["charge max(0, phi after − phi before)"]
+    IMPACT --> CASH[ordinary expiry cash]
 ```
 
 Cash routing at trade time:
@@ -167,9 +141,9 @@ Cash routing at trade time:
 | Trading fee | mint price / redeem payout | expiry cash (LP + protocol) | — |
 | Builder fee | add-on to trading fee | builder code address | — |
 | Congestion surcharge | add-on / withheld | expiry cash surplus | No |
-| Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
+| Inventory impact | mint or live close when `K` rises | ordinary expiry cash | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee + builder_fee + congestion_surcharge + inventory_impact_charge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+At **mint**, the trader's withdrawal is `premium + trading_fee + builder_fee + congestion_surcharge + inventory_impact_charge`. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount - trading_fee - builder_fee - congestion_surcharge - inventory_impact_charge`; `min_proceeds` protects that final net amount. A close that raises `K` can make deductions exceed the redeem amount, and `max_cost` then caps the extra withdrawal. At **settled redeem**, the winning payout is paid in full with no inventory-impact charge.
 
 ## The LP supply/withdraw fee
 

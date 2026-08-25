@@ -13,8 +13,10 @@ use deepbook_predict::{
     expiry_market,
     flow_test_helpers as helpers,
     order,
+    order_events,
     test_constants
 };
+use sui::event;
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 
@@ -77,6 +79,12 @@ fun mint_charge_stays_with_the_pool_and_a_full_close_refunds_nothing() {
     assert_eq!(helpers::market(&market).cash_balance(), cash_after_mint);
     assert_eq!(helpers::market(&market).inventory_impact_potential(), inventory_impact_charge);
     helpers::assert_market_backed_bundle(&market);
+    let minted = event::events_by_type<order_events::OrderMinted>();
+    assert_eq!(minted.length(), 1);
+    let (event_charge, k_before, k_after) = order_events::order_minted_inventory(&minted[0]);
+    assert_eq!(event_charge, inventory_impact_charge);
+    assert_eq!(k_before, 0);
+    assert!(k_after > 0);
 
     // Reprice one millisecond later, then close the only position. It removes
     // the book's entire capital, and pays back none of the charge.
@@ -98,6 +106,14 @@ fun mint_charge_stays_with_the_pool_and_a_full_close_refunds_nothing() {
     // mint is still in the market's cash.
     assert_eq!(helpers::market(&market).cash_balance(), cash_after_mint - gross + ORDINARY_MIN_FEE);
     assert_eq!(helpers::market(&market).inventory_impact_potential(), 0);
+    let redeemed = event::events_by_type<order_events::LiveOrderRedeemed>();
+    assert_eq!(redeemed.length(), 1);
+    let (close_charge, close_before, close_after) = order_events::live_order_redeemed_inventory(
+        &redeemed[0],
+    );
+    assert_eq!(close_charge, 0);
+    assert!(close_before > 0);
+    assert_eq!(close_after, 0);
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);

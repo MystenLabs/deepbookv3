@@ -425,6 +425,8 @@ function normalizeOrderMinted(event: any, orderRef: string | null): Record<strin
         builder_fee: decimal(json.builder_fee),
         penalty_fee: decimal(json.penalty_fee),
         inventory_impact_charge: decimal(json.inventory_impact_charge),
+        k_before: decimal(json.k_before ?? 0),
+        k_after: decimal(json.k_after ?? 0),
         minted_at_ms: decimal(json.minted_at_ms),
         ...normalizePricingSourceTimestamps(json),
     };
@@ -476,6 +478,8 @@ function normalizeLiveOrderRedeemed(event: any, row: ScenarioRow): Record<string
         builder_fee: decimal(json.builder_fee),
         penalty_fee: decimal(json.penalty_fee),
         inventory_impact_charge: decimal(json.inventory_impact_charge),
+        k_before: decimal(json.k_before ?? 0),
+        k_after: decimal(json.k_after ?? 0),
         redeemed_at_ms: decimal(json.redeemed_at_ms),
         ...normalizePricingSourceTimestamps(json),
     };

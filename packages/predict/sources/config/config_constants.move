@@ -162,7 +162,7 @@ public(package) fun assert_backing_buffer_lambda(value: u64) {
 // === Inventory Impact ===
 
 /// Maximum marginal inventory-impact rate, in FLOAT_SCALING. The mechanism
-/// ships inert; a zero rate short-circuits before any payout-tree range read.
+/// ships inert; a zero rate skips invert, quote, and charge.
 public(package) macro fun default_inventory_impact_max_rate(): u64 { 0 }
 
 public(package) macro fun min_inventory_impact_max_rate(): u64 { 0 }

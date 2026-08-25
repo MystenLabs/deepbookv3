@@ -45,6 +45,8 @@ public struct MarketCreated has copy, drop, store {
     expiry_fee_max_multiplier: u64,
     /// Maximum marginal inventory-impact rate snapshotted by this market.
     inventory_impact_max_rate: u64,
+    /// Frozen-grid capital scale `B` snapshotted by this market, in DUSDC.
+    inventory_impact_scale: u64,
 }
 
 /// Emitted when an admin updates or disables one underlying's cadence policy.
@@ -132,6 +134,7 @@ public(package) fun emit_market_created(
         expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
         expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
         inventory_impact_max_rate: strike_exposure_config.inventory_impact_max_rate(),
+        inventory_impact_scale: strike_exposure_config.inventory_impact_scale(),
     });
 }
 
@@ -196,4 +199,9 @@ public(package) fun emit_market_settled(
         settlement_price,
         settled_at_ms,
     });
+}
+
+#[test_only]
+public fun market_created_inventory(event: &MarketCreated): (u64, u64) {
+    (event.inventory_impact_max_rate, event.inventory_impact_scale)
 }
