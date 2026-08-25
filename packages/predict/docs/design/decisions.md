@@ -450,7 +450,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   finishes; there is deliberately no permissionless completion, only
   permissionless discard past `max_valuation_window_ms`. *Lock releases
   in-transaction* — surrendered for the valuation stage only, and what the flag
-  now gates across transactions is keeper cash flows, market lifecycle, config,
+  now gates across transactions is fee-incentive sponsorship, market lifecycle, config,
   and LP cancels — never trading. *Vault binding* — unrepresentable (the
   valuation lives on the vault).
 - **LP cancels are gated during a flush; new requests are not.** The frozen mark
@@ -458,6 +458,22 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   eligible request is a free option against a stale price; new requests are
   quarantined by the recorded queue cutoffs instead of a gate. *Rejected:* gating
   requests too (needless — the cutoff is airtight and keeps the queue live).
+- **Cash maintenance runs mid-flush, compensated on every mark term.** An
+  in-window live top-up or surplus sweep records on the pending market's stamp
+  (so `snapshot_nav` rolls it back with the trades and the zero floors see no
+  unrecorded movement) and on two flush accumulators that `finish_flush` reverses
+  out of idle AND the profit basis's credits and debits, so the mark is invariant
+  to maintenance timing. *Rationale:* gating the rebalance for the window left a
+  market that exhausted its buffer mid-flush unable to admit mints or closes
+  until the flush landed — exits paying for a purity gate — and a gross-only
+  compensation would misprice the mark by the protocol profit share of every
+  moved amount, so all three terms are corrected together. Settled sweeps stay
+  uncompensated: a swept market contributes zero and idle is its recoverable
+  cash's counted location. *Rejected:* gating `rebalance_expiry_cash` for the
+  window (the exit-freeze above); compensating gross alone (mispriced by
+  `share × moved`); a starter-gated maintenance entrypoint (needless — with the
+  compensation the mark cannot be moved by rebalancing, so permissionless
+  maintenance has no lever).
 - **Settlement is gated per market, not globally.** `try_settle` refuses only a
   market whose stamp names the in-flight flush — the frozen sweep-vs-value branch
   and the recorded deltas are only sound while settlement cannot reclassify the

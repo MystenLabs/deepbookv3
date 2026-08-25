@@ -144,7 +144,7 @@ and contributors. For *how* each mechanism works, follow the links into
   registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
-- Trading pause blocks new risk creation. Trade flows (mint, live redeem, settled redeem) are never gated on the valuation flag — a stamped market records deltas instead; the flag gates keeper cash flows, settled-market cleanup, market creation, LP request cancels, and most config setters.
+- Trading pause blocks new risk creation. Trade flows (mint, live redeem, settled redeem) are never gated on the valuation flag — a stamped market records deltas instead; the flag gates fee-incentive sponsorship, market creation, LP request cancels, and most config setters; cash rebalancing runs at any time, with in-window live moves recorded on the market's stamp and reversed out of the flush's pool total and profit basis, so the mark is invariant to maintenance timing.
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
   there is no expiry-only path that can strand capital. (The standalone compaction

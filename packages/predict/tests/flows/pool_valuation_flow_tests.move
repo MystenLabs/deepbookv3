@@ -159,6 +159,91 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
 }
 
 #[test]
+fun multi_market_pool_nav_is_exact_with_a_mid_flush_rebalance() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    let premium = fund_market_with_order(&mut fx, &trader, e1);
+    assert_eq!(fund_market_with_order(&mut fx, &trader, e2), premium);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
+
+    // m1 rebalances BEFORE the window, m2 DURING it: with the in-window move
+    // recorded on m2's stamp and reversed out of the pool total and profit
+    // basis, every exact expected value below must be identical to the
+    // rebalance-before-the-window case.
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    // Mid-window maintenance on the still-pending m2, guarded as a real move.
+    let idle_before = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m2, &config);
+    assert!(vault.idle_balance() != idle_before);
+    fx.value_expiry(&mut vault, &mut m2, &config);
+    let pool_nav = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+
+    // Every expected value below is built from the fixture's own arithmetic and
+    // the mint premium, which was checked against the independent reference at
+    // mint time — nothing is read back out of the vault to predict itself.
+    //
+    // An order's live worth is the same product as its premium, so a swept
+    // market holds its cash target less that worth.
+    let expected_nav = MARKET_CASH_TARGET - premium;
+    let mint_cost = premium + MINT_MIN_FEE;
+    let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
+    let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
+    assert_eq!(nav1, expected_nav);
+    assert_eq!(nav2, expected_nav);
+
+    // Each market swept its premium and fee to idle; the funding it drew is the
+    // debit side of the profit basis.
+    assert_eq!(vault.profit_basis_credits(), 2 * mint_cost);
+    assert_eq!(vault.profit_basis_debits(), 2 * MARKET_CASH_TARGET);
+    assert_eq!(vault.idle_balance(), IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost);
+    assert_eq!(vault.pending_protocol_profit(), 0);
+
+    // The pool mark is gross value less the protocol's share of realised profit.
+    // This is the one line that mirrors `lp_pool_value`; every input to it is
+    // pinned above against fixture arithmetic, so the composition is all that is
+    // taken from the implementation.
+    let active = 2 * expected_nav;
+    let expected_exclusion = math::mul_down(
+        2 * mint_cost + active - 2 * MARKET_CASH_TARGET,
+        config_constants::default_protocol_reserve_profit_share!(),
+    );
+    assert_eq!(
+        pool_nav,
+        IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost + active - expected_exclusion,
+    );
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    return_shared(m2);
+    fx.finish();
+}
+
+#[test]
 fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
