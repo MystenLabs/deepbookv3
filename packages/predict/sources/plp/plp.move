@@ -878,10 +878,19 @@ public(package) fun register_expiry(
 /// finish is short by exactly that net relative to the snapshot), and the profit
 /// basis drops the debits/credits those same moves recorded (`send_expiry_cash`
 /// records each sent amount as a debit and `receive_expiry_cash` each returned
-/// amount as a credit, so the plain subtractions below cannot underflow). With
-/// all three terms corrected, the mark is invariant to maintenance timing.
-/// Settled-sweep returns are deliberately NOT reversed: a swept market
-/// contributes 0 and idle is its recoverable cash's counted location.
+/// amount as a credit, so the basis subtractions below cannot underflow). The
+/// returned-side reversal lives inside the final policy clamp rather than in
+/// `gross_pool_value`: a mid-window sweep's return can leave idle again in the
+/// same call (`realize_pending_protocol_profit`), so `idle + sent` may be
+/// smaller than `returned` even though the fully-reduced mark is representable —
+/// the clamp form is algebraically identical wherever the split form would not
+/// abort, and floors at zero where it would. With all three terms corrected,
+/// the mark is invariant to maintenance timing. Settled-sweep returns are not
+/// reversed and the standalone settled sweep is deferred while a flush is in
+/// flight (see `sweep_or_rebalance_expiry`): the flush's own sweep keeps idle
+/// the counted location for a frozen-settled market's cash, while a market
+/// valued as LIVE this flush must not have its cash swept into idle mid-window
+/// on top of its folded NAV.
 fun lp_pool_value(
     vault: &PoolVault,
     protocol_reserve_profit_share: u64,
@@ -893,8 +902,7 @@ fun lp_pool_value(
     let profit_basis_credits = vault.expiry_accounting.profit_basis_credits();
     let profit_basis_debits = vault.expiry_accounting.profit_basis_debits();
     let pending_protocol_profit = vault.expiry_accounting.pending_protocol_profit();
-    let gross_pool_value =
-        idle_balance + active_expiry_value + maintenance_sent - maintenance_returned;
+    let gross_pool_value = idle_balance + active_expiry_value + maintenance_sent;
     let aggregate_credits = profit_basis_credits + active_expiry_value - maintenance_returned;
     let exclusion = math::mul_down(
         aggregate_credits.saturating_sub(profit_basis_debits - maintenance_sent),
@@ -906,7 +914,7 @@ fun lp_pool_value(
     // exceed gross. LP value can never be negative, so floor it at 0 to keep the
     // subtraction from underflow-aborting. A 0/dust pool NAV makes non-executable
     // LP queue heads refund inside `lp_book::drain`, rather than aborting the flush.
-    gross_pool_value.saturating_sub(exclusion + pending_protocol_profit)
+    gross_pool_value.saturating_sub(maintenance_returned + exclusion + pending_protocol_profit)
 }
 
 /// Sweep a settled market, rebalance a live market, or leave an expired unsettled
@@ -919,6 +927,15 @@ fun sweep_or_rebalance_expiry(
 ): bool {
     let expiry_market_id = market.id();
     if (market.is_settled()) {
+        // Deferred while a flush is in flight: a settled sweep moves cash to
+        // idle with no maintenance recording, and for a market already valued
+        // as LIVE this flush (expired and settled mid-window after its stamp
+        // cleared) that return would sit in idle ON TOP of the market's folded
+        // NAV, inflating the mark by the swept amount. The flush's own
+        // `value_expiry` still sweeps its frozen-settled members; the
+        // standalone sweep is idempotent, so deferral costs one keeper retry
+        // after the finish.
+        if (config.valuation_in_progress()) return true;
         vault.sweep_settled_expiry(market, config);
         true
     } else if (clock.timestamp_ms() >= market.expiry()) {
@@ -975,12 +992,15 @@ fun record_live_maintenance(
     returned: u64,
 ) {
     if (sent == 0 && returned == 0) return;
+    if (!config.valuation_in_progress()) return;
+    // Inside the still-open snapshot PTB nothing may record: the whole PTB is
+    // the snapshot instant, so a move there is part of the baseline the frozen
+    // pricers and stamps measure — recording it too would count it twice.
+    if (!vault.valuation.borrow().sealed) return;
     market.record_maintenance_cash_delta(config, sent, returned);
-    if (config.valuation_in_progress()) {
-        let valuation = vault.valuation.borrow_mut();
-        valuation.maintenance_sent = valuation.maintenance_sent + sent;
-        valuation.maintenance_returned = valuation.maintenance_returned + returned;
-    };
+    let valuation = vault.valuation.borrow_mut();
+    valuation.maintenance_sent = valuation.maintenance_sent + sent;
+    valuation.maintenance_returned = valuation.maintenance_returned + returned;
 }
 
 fun top_up_live_expiry_cash(

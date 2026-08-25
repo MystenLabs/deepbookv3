@@ -574,6 +574,67 @@ fun value_expiry_aborts_on_double_value() {
 // pins the ops the flag still gates.
 
 #[test]
+fun a_rebalance_inside_the_snapshot_ptb_is_baseline_not_maintenance() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, e1);
+
+    // Control: a plain flush with NO rebalance anywhere near it.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let control_mark = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+
+    // Flush B: a rebalance composed INSIDE the snapshot PTB, before the market
+    // is snapshotted. Everything in that PTB is the snapshot instant, so the
+    // move is part of the baseline the frozen books measure — it must record
+    // NOTHING (a maintenance record would be added back at the finish and count
+    // the moved cash twice). Since an unrecorded intra-instant move is
+    // conserved between idle and the market row, the mark must equal the
+    // control's exactly.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    let idle_before = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    // Guard: the in-PTB rebalance genuinely moved cash (the funded market still
+    // carries its unswept surplus).
+    assert!(vault.idle_balance() != idle_before);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let mid_ptb_mark = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+    assert_eq!(mid_ptb_mark, control_mark);
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    fx.finish();
+}
+
+#[test]
 fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
     let mut fx = helpers::setup_market_default();
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());

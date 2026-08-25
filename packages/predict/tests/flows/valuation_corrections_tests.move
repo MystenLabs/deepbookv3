@@ -513,15 +513,23 @@ fun a_market_expiring_mid_flush_values_at_the_frozen_mark_then_settles() {
     let control_mark = run_undisturbed_flush(&mut fx, &mut market);
 
     // The expiry passes between the snapshot and the valuation: the market is
-    // valued at its frozen pre-expiry mark (identical books, identical mark) and
-    // becomes settleable the moment its stamp clears.
+    // valued at its frozen pre-expiry mark (identical books, identical mark),
+    // becomes settleable the moment its stamp clears, and its settled sweep is
+    // DEFERRED for the rest of the window — a market already folded at its live
+    // NAV must not also have its cash swept into idle before the finish.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
     fx.value_expiry_bundle(&mut market);
+    assert!(!helpers::market(&market).is_pending_valuation(helpers::config(&market)));
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    assert!(fx.try_settle_bundle(&mut market));
+    let idle_before = helpers::vault(&market).idle_balance();
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    // Guard: the settled sweep genuinely deferred — idle untouched mid-window.
+    assert_eq!(helpers::vault(&market).idle_balance(), idle_before);
     let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
     assert_eq!(corrected_mark, control_mark);
-    assert!(!helpers::market(&market).is_pending_valuation(helpers::config(&market)));
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
