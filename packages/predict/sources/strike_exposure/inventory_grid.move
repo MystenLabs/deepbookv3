@@ -3,12 +3,12 @@
 
 /// Ratio-axis 1%-probability inventory grid for one expiry exposure book.
 ///
-/// The first mint with a nonzero rate inverts the live 1% CDF, stores the 99
-/// `strike / forward` rungs and their logs, and freezes the SVI shape. Later
-/// quotes add each stored `ln(ratio)` to the live `ln(forward)` and read the
-/// book through the inline cell mirror, so spot moving does not require a
-/// keeper. The grid never touches the payout tree: the tree is the source of
-/// truth for settlement backing and NAV.
+/// The keeper inverts the live 1% CDF off-chain. Create mass-checks the 99
+/// `strike / forward` rungs, stores them and their logs, and freezes the SVI
+/// shape. Later quotes add each stored `ln(ratio)` to the live `ln(forward)`
+/// and read the book through the inline cell mirror, so spot moving does not
+/// require a keeper. The grid never touches the payout tree: the tree is the
+/// source of truth for settlement backing and NAV.
 module deepbook_predict::inventory_grid;
 
 use deepbook_predict::{
@@ -34,20 +34,25 @@ macro fun target_bucket_mass(): u64 { 10_000_000 }
 
 macro fun bucket_mass_tolerance(): u64 { 100_000 }
 
+#[test_only]
 macro fun bisection_passes(): u64 { 40 }
 
 /// Early-exit inside half the 1 bp mass check so two adjacent invert
 /// residuals still pass `verified_snapshot`.
+#[test_only]
 macro fun invert_price_tolerance(): u64 { 50_000 }
 
 /// Ratio search bracket: `1 / bracket_multiple` .. `bracket_multiple`.
+#[test_only]
 macro fun bracket_multiple(): u64 { 10_000 }
 
 /// After the first rung, grow the high side by this many last-steps so a
 /// widening tail still sits inside the bracket.
+#[test_only]
 macro fun search_high_step_multiple(): u64 { 4 }
 
 /// Floor on that high-side room, FLOAT_SCALING: 10 bp of forward.
+#[test_only]
 macro fun search_high_min_room(): u64 { 1_000_000 }
 
 /// One ratio ladder plus the payout mirror read under it.
@@ -117,12 +122,15 @@ public(package) fun frozen_expected_payout(
 }
 
 /// Invert the live surface into the 99 interior 1% rungs and freeze them.
+///
+/// Production pushes an off-chain ladder into `initialize`. Tests use this
+/// when they need a valid grid without carrying 99 ratios.
+#[test_only]
 public(package) fun from_pricer(pricer: &Pricer): InventoryGrid {
     initialize(pricer, invert_quantile_ratios(pricer))
 }
 
-/// Freeze a supplied ratio ladder. Production calls `from_pricer`; this path
-/// exists so tests can inject a bad ladder into the mass and ordering guards.
+/// Freeze a supplied ratio ladder after the 1% ± 1 bp mass check.
 public(package) fun initialize(pricer: &Pricer, ratios: vector<u64>): InventoryGrid {
     let boundaries = materialized_ladder(pricer.forward(), &ratios);
     let frozen_pricer = verified_snapshot(pricer, &boundaries);
@@ -296,9 +304,9 @@ public(package) fun capital_from_components(
 
 /// Invert the 1%..99% survival targets as `strike / forward`, 1e9-scaled.
 ///
-/// UP price is monotone in strike, so each quantile is a geometric bisection
-/// against the live pricer. The first mint runs this once; later quotes
-/// rematerialize the stored ratios against `F_live`.
+/// Production does not run this. Tests and the off-chain float twin produce
+/// the ladder; on-chain work is the mass check in `initialize`.
+#[test_only]
 fun invert_quantile_ratios(pricer: &Pricer): vector<u64> {
     let forward = pricer.forward();
     let scale = math::float_scaling!();
@@ -335,6 +343,7 @@ fun invert_quantile_ratios(pricer: &Pricer): vector<u64> {
 
 /// Local high for the next 1% quantile. The first rung still uses the
 /// full cap; later rungs sit just above the last ratio.
+#[test_only]
 fun next_search_high(ratios: &vector<u64>, high_cap: u64): u64 {
     let n = ratios.length();
     if (n == 0) return high_cap;
@@ -350,6 +359,7 @@ fun next_search_high(ratios: &vector<u64>, high_cap: u64): u64 {
     if (room >= max_room) high_cap else last + room
 }
 
+#[test_only]
 fun ratio_at_up_price(
     pricer: &Pricer,
     forward: u64,
@@ -389,11 +399,13 @@ fun ratio_at_up_price(
     geometric_mid(low, high)
 }
 
+#[test_only]
 fun high_bracket(scale: u64): u64 {
     let max = std::u64::max_value!();
     if (scale > max / bracket_multiple!()) max else scale * bracket_multiple!()
 }
 
+#[test_only]
 fun geometric_mid(low: u64, high: u64): u64 {
     (math::sqrt_u128_down((low as u128) * (high as u128)) as u64)
 }

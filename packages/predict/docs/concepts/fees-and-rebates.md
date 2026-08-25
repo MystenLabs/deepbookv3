@@ -101,7 +101,7 @@ The congestion surcharge is handled differently from the trading fee in the cash
 
 Inventory impact is an optional charge layered **on top of** the normal fee system. It is not trading-fee revenue, does not earn a builder cut, and is not a sponsor subsidy. `inventory_impact_max_rate` ships at `0`, so the mechanism is inert until an admin enables it for future markets. Each market snapshots that rate and `inventory_impact_scale` (`B`); changing either template later cannot reprice its live book. The maximum valid rate is `1_000_000_000` (1.0, or 100%).
 
-The risk coordinate is frozen-grid capital `K`: the average payout across the five worst of 100 equally likely settlement buckets, minus the book's expected payout. The first charged mint inverts the 1% ladder on-chain; later quotes rematerialize the stored `strike / forward` ratios against the live forward and the frozen SVI shape. `L` stays the settlement reserve and is not the fee coordinate.
+The risk coordinate is frozen-grid capital `K`: the average payout across the five worst of 100 equally likely settlement buckets, minus the book's expected payout. The keeper inverts the 1% ladder off-chain and the create path mass-checks those `strike / forward` ratios in the same transaction; later quotes rematerialize them against the live forward and the frozen SVI shape. A charged mint without a grid aborts. `L` stays the settlement reserve and is not the fee coordinate.
 
 For maximum marginal rate `r_max` and scale `B`:
 

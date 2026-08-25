@@ -29,6 +29,7 @@ const EInvalidReferenceTick: u64 = 2;
 const EReferenceTickAlreadySet: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
+const EInventoryGridRequired: u64 = 6;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -44,7 +45,7 @@ public struct StrikeExposure has store {
     reference_tick: Option<u64>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
-    /// Ratio ladder inverted on the first charged mint, plus the cell mirror.
+    /// Ratio ladder pushed at create and mass-checked, plus the cell mirror.
     inventory_grid: Option<InventoryGrid>,
     next_order_sequence: u64,
     /// Terminal settlement price once the exposure has entered its settled phase.
@@ -398,8 +399,8 @@ public(package) fun quote_live_close(
     assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
 
     let range_probability = exposure.order_range_price(pricer, order);
-    // A charged book always has a grid: the first mint inverted it. Rate-zero
-    // books never grow one, so a close against them cannot raise K.
+    // A charged book has a grid from create. Rate-zero books never grow one,
+    // so a close against them cannot raise K.
     let (inventory_impact_charge, frozen_expected_payout, k_before, k_after) = if (
         exposure.config.inventory_impact_max_rate() == 0 || exposure.inventory_grid.is_none()
     ) {
@@ -486,10 +487,25 @@ public(package) fun process_settled_close(exposure: &mut StrikeExposure, order: 
     payout
 }
 
-/// Invert the live 1% ladder on the first charged mint and persist it.
-///
-/// The rate is snapshotted at market creation, so the first charged mint is
-/// always an empty book. A later call is a no-op. Rate zero never builds a grid.
+/// Persist a supplied 1% ladder after the mass check. Rate zero and a
+/// later call are no-ops.
+public(package) fun install_inventory_grid(
+    exposure: &mut StrikeExposure,
+    pricer: &Pricer,
+    ratios: vector<u64>,
+) {
+    if (exposure.config.inventory_impact_max_rate() == 0) return;
+    if (exposure.inventory_grid.is_some()) return;
+    exposure.inventory_grid.fill(inventory_grid::initialize(pricer, ratios));
+}
+
+/// Charged books must already have a grid. Production never inverts here.
+public(package) fun assert_inventory_grid_ready(exposure: &StrikeExposure) {
+    if (exposure.config.inventory_impact_max_rate() == 0) return;
+    assert!(exposure.inventory_grid.is_some(), EInventoryGridRequired);
+}
+
+#[test_only]
 public(package) fun ensure_inventory_grid(exposure: &mut StrikeExposure, pricer: &Pricer) {
     if (exposure.config.inventory_impact_max_rate() == 0) return;
     if (exposure.inventory_grid.is_some()) return;
@@ -560,9 +576,8 @@ fun admitted_entry_probability(
     pricer.range_price(lower, higher)
 }
 
-/// Charge one prospective open. A stored grid is the book; a missing grid is
-/// inverted ephemerally so a read-only quote before the first mint still prices
-/// the charge the mutation will persist.
+/// Charge one prospective open. A stored grid is the book; a missing grid
+/// aborts when the rate is on.
 fun quote_open_inventory(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -571,17 +586,14 @@ fun quote_open_inventory(
     quantity: u64,
 ): (u64, u64, u64, u64) {
     if (exposure.config.inventory_impact_max_rate() == 0) return (0, 0, 0, 0);
-    if (exposure.inventory_grid.is_some()) {
-        return exposure.charge_open_on(
-            exposure.inventory_grid.borrow(),
-            pricer,
-            lower_tick,
-            higher_tick,
-            quantity,
-        )
-    };
-    let grid = inventory_grid::from_pricer(pricer);
-    exposure.charge_open_on(&grid, pricer, lower_tick, higher_tick, quantity)
+    assert!(exposure.inventory_grid.is_some(), EInventoryGridRequired);
+    exposure.charge_open_on(
+        exposure.inventory_grid.borrow(),
+        pricer,
+        lower_tick,
+        higher_tick,
+        quantity,
+    )
 }
 
 fun charge_open_on(
@@ -670,7 +682,6 @@ public(package) fun fill_inventory_grid(exposure: &mut StrikeExposure, grid: Inv
     exposure.inventory_grid.fill(grid);
 }
 
-#[test_only]
 public(package) fun has_inventory_grid(exposure: &StrikeExposure): bool {
     exposure.inventory_grid.is_some()
 }

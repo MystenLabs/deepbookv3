@@ -1629,6 +1629,38 @@ export function createExpiryMarketTx(params: {
     return tx;
 }
 
+// Same create, plus a mass-check of an off-chain 1% ratio ladder before the
+// market is shared. The keeper uses this when the template rate is nonzero.
+// Requires a live surface for the deployable expiry already on the bound
+// feeds (RP-24: written in a prior tx).
+export function createExpiryMarketWithInventoryTx(params: {
+    poolVaultId: string;
+    protocolConfigId: string;
+    lifecycleCapId: string;
+    cadenceId: number;
+    ratios: bigint[];
+} & OracleFeedIds): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("registry", "create_and_share_expiry_market_with_inventory_grid"),
+        arguments: [
+            tx.object(REGISTRY_ID),
+            tx.object(params.poolVaultId),
+            tx.object(params.protocolConfigId),
+            tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsValueStoreId),
+            tx.object(params.bsSviStoreId),
+            tx.object(params.lifecycleCapId),
+            tx.pure.u32(PREDICT_ORACLE_ID),
+            tx.pure.u8(params.cadenceId),
+            tx.pure(bcs.vector(bcs.u64()).serialize(params.ratios)),
+            tx.object(CLOCK_ID),
+        ],
+    });
+    return tx;
+}
+
 // Fund / rebalance one expiry's cash from pool idle toward target. Standalone and
 // permissionless; this is what makes a freshly created market mintable. Replaces
 // the old setup-only PLP sync.

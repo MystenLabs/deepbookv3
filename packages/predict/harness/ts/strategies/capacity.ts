@@ -140,7 +140,7 @@ export function createCapacityStrategy(profile: CapacityProfile): Strategy {
     gasBudget: GAS_BUDGET,
     // The tree profile still drives the node count the flush hits the
     // object-cache ceiling at. user-on turns the inventory-impact rate on;
-    // the first mint inverts the grid, so there is no keeper cut.
+    // the keeper create pushes an off-chain 1% ladder.
     inventoryImpactMaxRate: profile === "user-on" ? USER_IMPACT_RATE : 0n,
     maxOps: USER_PROFILES.has(profile) ? 40 : 0,
     expect:

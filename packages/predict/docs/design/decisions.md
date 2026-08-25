@@ -185,14 +185,17 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   direction only — splitting a risk-increasing trade collects the same total,
   while a dip-and-recover path collects more. The charge is ordinary expiry
   cash on arrival: no escrow, no position credit, no settlement release, and
-  it counts in NAV like any other fee. *How the pointer is built:* the first
-  charged mint inverts the live 1% CDF on-chain, stores the 99
-  `strike / forward` rungs and the SVI shape, and quotes later trades by
-  rematerializing `ratio × F_live` against that frozen shape. Init and that
-  mint are one transaction, so there is no empty-book race and no grid
-  keeper. A surface that cannot invert aborts that mint. Later mints do not
-  re-invert: smile decay is accepted, and these markets are not traded in the
-  last tenth of life. A close re-derives its expected-payout delta from the
+  it counts in NAV like any other fee. *How the pointer is built:* the
+  keeper inverts the 1% CDF off-chain and the lifecycle create mass-checks
+  the 99 `strike / forward` rungs (1% ± 1 bp) in the same transaction, then
+  stores them with the SVI shape. Later quotes rematerialize
+  `ratio × F_live` against that frozen shape. A later
+  `provision_inventory_grid` is a no-op when the grid is already filled. A
+  charged mint or quote without a grid aborts. Init and create are one
+  transaction, so there is no empty-book race and no grid keeper. A ladder
+  that fails the mass check aborts that create. Later mints do not
+  re-invert: smile decay is accepted, and these markets are not traded in
+  the last tenth of life. A close re-derives its expected-payout delta from the
   live rematerialization rather than a value stored at mint. The inline
   2,048-cell payout mirror supplies the range maxima so the quote never walks
   the payout tree. The only admin-tunable economics are the template pair
@@ -200,13 +203,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `inventory_impact_scale` (`B`, default $1,000 DUSDC), snapshotted at market
   creation; they are not the cadence allocation cap. The coordinate itself is
   upgrade-required: 100 buckets of 1% mass (±1 bp), `K` averages the worst 5,
-  invert uses 40 bisections with a two-sided last-step warm start and a `0.5 bp` digital early-exit, and the payout
+  invert is off-chain with an on-chain 1 bp mass check, and the payout
   mirror is 2,048 log-price cells spanning 1.72× the 1–99% ladder. *Rejected:* `L` as the fee coordinate; holding charges in
   escrow until settlement, which defers LP compensation and lets an LP supply
   just before the release to capture a NAV jump; a keeper that re-cuts dollar
   boundaries after every spot move, which the ratio axis already absorbs; an
-  off-chain lifecycle-cap cut of the same ladder, which reintroduced the
-  empty-book race; and re-inverting on later mints.
+  off-chain lifecycle-cap cut in a later transaction than create, which
+  reintroduced the empty-book race; on-chain invert at create or first mint,
+  which spent most of the computation cap; and re-inverting on later mints.
 - **D032 — Inventory impact is the difference of one capped book-level potential.**
   *SUPERSEDED by D034 — the risk coordinate moved from `L` to `K`, and the rebate
   and its escrow were removed. The capped convex potential and the

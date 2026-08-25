@@ -167,6 +167,11 @@ public fun inventory_impact_scale(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_scale()
 }
 
+/// True once this market has a mass-checked 1% inventory ladder.
+public fun has_inventory_grid(market: &ExpiryMarket): bool {
+    market.strike_exposure.has_inventory_grid()
+}
+
 /// Return the strike tick size for SDK and devInspect range construction. Raw
 /// strikes are `tick * tick_size`.
 public fun tick_size(market: &ExpiryMarket): u64 {
@@ -230,6 +235,20 @@ public fun load_live_pricer(
         clock,
         ctx,
     )
+}
+
+/// Persist a supplied 1% ladder after the mass check. Rate zero and a
+/// later call are no-ops. The keeper create-with-inventory path is the
+/// usual producer; this is the fallback for an already-shared market.
+public fun provision_inventory_grid(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    ratios: vector<u64>,
+) {
+    config.assert_version();
+    market.assert_pricer_bound(pricer);
+    market.strike_exposure.install_inventory_grid(pricer, ratios);
 }
 
 /// Return live marked NAV as expiry cash minus the exposure book's marked
@@ -739,10 +758,76 @@ public(package) fun create_and_share(
     reference_tick_source_timestamp_ms: u64,
     ctx: &mut TxContext,
 ): ID {
+    share_new(
+        new_market(
+            config,
+            propbook_underlying_id,
+            expiry,
+            tick_size,
+            admission_tick_size,
+            reference_tick_source_timestamp_ms,
+            ctx,
+        ),
+    )
+}
+
+/// Create, mass-check a supplied inventory ladder, and share.
+///
+/// The check runs before `share_object`, so it is the same transaction as
+/// creation. Rate zero leaves the grid empty. A ladder that fails the 1 bp
+/// mass check aborts the create.
+public(package) fun create_and_share_with_inventory(
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    tick_size: u64,
+    admission_tick_size: u64,
+    reference_tick_source_timestamp_ms: u64,
+    ratios: vector<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    let mut market = new_market(
+        config,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        reference_tick_source_timestamp_ms,
+        ctx,
+    );
+    let pricer = pricing::load_live_pricer(
+        config.pricing_config(),
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        market.id(),
+        market.propbook_underlying_id,
+        market.expiry,
+        clock,
+        ctx,
+    );
+    market.strike_exposure.install_inventory_grid(&pricer, ratios);
+    share_new(market)
+}
+
+fun new_market(
+    config: &ProtocolConfig,
+    propbook_underlying_id: u32,
+    expiry: u64,
+    tick_size: u64,
+    admission_tick_size: u64,
+    reference_tick_source_timestamp_ms: u64,
+    ctx: &mut TxContext,
+): ExpiryMarket {
     let id = object::new(ctx);
     let expiry_market_id = id.to_inner();
-    let strike_exposure_config = config.strike_exposure_config_snapshot();
-    let market = ExpiryMarket {
+    ExpiryMarket {
         id,
         propbook_underlying_id,
         expiry,
@@ -750,7 +835,7 @@ public(package) fun create_and_share(
         fee_incentive_balance: balance::zero(),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
-            strike_exposure_config,
+            config.strike_exposure_config_snapshot(),
             tick_size,
             admission_tick_size,
             reference_tick_source_timestamp_ms,
@@ -758,7 +843,11 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
-    };
+    }
+}
+
+fun share_new(market: ExpiryMarket): ID {
+    let expiry_market_id = market.id();
     transfer::share_object(market);
     expiry_market_id
 }
@@ -804,7 +893,7 @@ fun mint_prepared(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.strike_exposure.ensure_inventory_grid(pricer);
+    market.strike_exposure.assert_inventory_grid_ready();
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -1181,3 +1270,4 @@ fun assert_cash_backing(market: &ExpiryMarket) {
 public(package) fun ensure_inventory_grid_for_testing(market: &mut ExpiryMarket, pricer: &Pricer) {
     market.strike_exposure.ensure_inventory_grid(pricer);
 }
+

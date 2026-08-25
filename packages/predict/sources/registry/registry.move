@@ -21,7 +21,11 @@ use deepbook_predict::{
     plp::PoolVault,
     protocol_config::{Self, ProtocolConfig}
 };
-use propbook::registry::OracleRegistry;
+use propbook::{
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
 const EPauseCapNotValid: u64 = 0;
@@ -263,29 +267,88 @@ public fun create_and_share_expiry_market(
         reference_tick_source_timestamp_ms,
         ctx,
     );
-    pool_vault.register_expiry(
-        expiry_market_id,
-        expiry,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        clock,
-    );
-    registry
-        .market_manager
-        .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
-    config_events::emit_market_created(
+    record_created_market(
+        registry,
+        pool_vault,
+        config,
         expiry_market_id,
         pool_vault_id,
         propbook_underlying_id,
+        cadence_id,
         expiry,
         tick_size,
         admission_tick_size,
         max_expiry_allocation,
         initial_expiry_cash,
-        config.strike_exposure_template_config(),
-    );
+        clock,
+    )
+}
 
-    expiry_market_id
+/// Create the next deployable market and mass-check a supplied inventory
+/// ladder in the same transaction.
+///
+/// Used when the snapshotted inventory-impact rate is nonzero. Rate zero
+/// still creates; the install is a no-op. A ladder that fails the 1 bp mass
+/// check aborts the create.
+public fun create_and_share_expiry_market_with_inventory_grid(
+    registry: &mut Registry,
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
+    lifecycle_cap: &MarketLifecycleCap,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    ratios: vector<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    config.assert_version();
+    registry.assert_valid_lifecycle_cap(lifecycle_cap);
+    config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
+    let deployable = registry
+        .market_manager
+        .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
+    let expiry = deployable.expiry();
+    let tick_size = deployable.tick_size();
+    let admission_tick_size = deployable.admission_tick_size();
+    let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
+    let max_expiry_allocation = deployable.max_expiry_allocation();
+    let initial_expiry_cash = deployable.initial_expiry_cash();
+    let pool_vault_id = pool_vault.id();
+    let expiry_market_id = expiry_market::create_and_share_with_inventory(
+        config,
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        reference_tick_source_timestamp_ms,
+        ratios,
+        clock,
+        ctx,
+    );
+    record_created_market(
+        registry,
+        pool_vault,
+        config,
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        cadence_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        clock,
+    )
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
@@ -320,6 +383,45 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
         },
         admin::new(ctx),
     )
+}
+
+fun record_created_market(
+    registry: &mut Registry,
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+    pool_vault_id: ID,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    expiry: u64,
+    tick_size: u64,
+    admission_tick_size: u64,
+    max_expiry_allocation: u64,
+    initial_expiry_cash: u64,
+    clock: &Clock,
+): ID {
+    pool_vault.register_expiry(
+        expiry_market_id,
+        expiry,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        clock,
+    );
+    registry
+        .market_manager
+        .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
+    config_events::emit_market_created(
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        config.strike_exposure_template_config(),
+    );
+    expiry_market_id
 }
 
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.

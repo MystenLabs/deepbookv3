@@ -1,9 +1,9 @@
 // Off-chain replica of the on-chain 1% invert.
 //
-// The first charged mint inverts the live surface on-chain and stores the 99
+// The keeper inverts the live surface here and the create path mass-checks the 99
 // interior `strike / forward` ratios, 1e9-scaled. Later quotes rematerialize
-// those ratios against the live forward. This module is the float twin of that
-// invert, used by simulations and analysis rather than submitted to the chain.
+// those ratios against the live forward. This module is the float twin of the
+// test-only Move invert and the ladder the keeper submits.
 //
 // Submitting ratios rather than absolute prices is what makes the cut operable at
 // all. Pricing reads a strike only as `ln(strike) - ln(forward)`, so a bucket's mass

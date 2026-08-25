@@ -4,6 +4,8 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import { atomicWriteFile } from "./io.js";
+import { gridBoundaries } from "./inventoryGrid.js";
+import { forwardFor, pricerEnvFor, readSnapshot } from "./oracleEnv.js";
 import { BOOTSTRAP_SUPPLY, CADENCES } from "./predictConfig.js";
 import { bigintEnv, requiredEnv } from "./runnerConfig.js";
 import {
@@ -13,7 +15,9 @@ import {
   bareFlushTx,
   bindFeedsToUnderlyingTx,
   createAccountTx,
+  clockTimestampMs,
   createExpiryMarketTx,
+  createExpiryMarketWithInventoryTx,
   deriveAccountWrapperId,
   executeAndWait,
   lockCapitalTx,
@@ -84,16 +88,45 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   return { feeds, lifecycleCapId };
 }
 
-// Create one cadence market. Reads NO oracle (absolute ticks need no grid centering),
-// so a keeper with a live updater needs no per-market seed — the updater warms the feed.
+// Create one cadence market. Rate zero reads no oracle. A nonzero inventory
+// rate pushes an off-chain 1% ladder and mass-checks it in the same create;
+// the updater must already have warmed that expiry's surface (RP-24).
 export async function createMarket(
   lifecycleCapId: string,
   cadenceId: number,
+  feeds: Feeds,
+  expectedExpiryMs?: number,
 ): Promise<{ marketId: string; expiryMs: bigint }> {
-  const mkR = await executeAndWait(
-    createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId }),
-    "create-market",
-  );
+  const inventoryImpactMaxRate = bigintEnv("INVENTORY_IMPACT_MAX_RATE", 0n);
+  let createTx = createExpiryMarketTx({
+    poolVaultId: POOL_VAULT_ID,
+    protocolConfigId: PROTOCOL_CONFIG_ID,
+    lifecycleCapId,
+    cadenceId,
+  });
+  if (inventoryImpactMaxRate > 0n) {
+    if (expectedExpiryMs == null) {
+      throw new Error("createMarket with a nonzero inventory rate needs the deployable expiry");
+    }
+    const clockMs = Number(await clockTimestampMs());
+    const env = pricerEnvFor(readSnapshot(requiredEnv("INSTANCE_DIR")), expectedExpiryMs, clockMs);
+    if (!env) {
+      throw new Error(`no rolled-down surface for inventory grid at ${expectedExpiryMs}`);
+    }
+    const ratios = gridBoundaries(env.svi, forwardFor(env));
+    if (!ratios) {
+      throw new Error(`degenerate inventory grid at ${expectedExpiryMs}`);
+    }
+    createTx = createExpiryMarketWithInventoryTx({
+      poolVaultId: POOL_VAULT_ID,
+      protocolConfigId: PROTOCOL_CONFIG_ID,
+      lifecycleCapId,
+      cadenceId,
+      ratios,
+      ...feeds,
+    });
+  }
+  const mkR = await executeAndWait(createTx, "create-market");
   return { marketId: found(mkR, "ExpiryMarket"), expiryMs: BigInt(eventField(mkR, "MarketCreated", "expiry")) };
 }
 

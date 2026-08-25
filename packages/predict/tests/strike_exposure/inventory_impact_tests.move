@@ -209,6 +209,7 @@ fun closing_a_hedge_pays_the_same_potential_increase_as_opening_risk() {
 
 #[test]
 fun first_mint_inverts_and_charges_without_a_prior_cut() {
+    // Test-only invert. Production installs a supplied ladder.
     let (mut fx, oracle, mut harness) = new_harness(impact_config(IMPACT_MAX_RATE));
     let pricer = fx.load_pricer_bundle(&oracle);
     assert!(!harness.exposure.has_inventory_grid());
@@ -233,6 +234,24 @@ fun first_mint_inverts_and_charges_without_a_prior_cut() {
     assert_eq!(harness.exposure.inventory_impact_potential(), charge);
 
     cleanup(fx, oracle, harness);
+}
+
+#[test, expected_failure(abort_code = strike_exposure::EInventoryGridRequired)]
+fun quote_without_a_grid_aborts_when_the_rate_is_on() {
+    let (mut fx, oracle, harness) = new_harness(impact_config(IMPACT_MAX_RATE));
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert!(!harness.exposure.has_inventory_grid());
+    let _terms = harness
+        .exposure
+        .quote_mint_terms(
+            &pricer,
+            test_constants::default_live_price() / TEST_TICK_SIZE,
+            constants::pos_inf_tick!(),
+            0,
+            ONE_ORDER,
+            true,
+        );
+    abort 999
 }
 
 #[test, expected_failure(abort_code = inventory_grid::EInvalidBoundaryCount)]

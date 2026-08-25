@@ -32,6 +32,7 @@ use deepbook_predict::{
     builder_code::BuilderCode,
     constants,
     expiry_market::{ExpiryMarket, MintQuote},
+    inventory_grid,
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
@@ -55,6 +56,7 @@ use sui::{
     accumulator::AccumulatorRoot,
     clock::{Self, Clock},
     coin,
+    object,
     test_scenario::{Self as test, Scenario, return_shared},
     tx_context::{Self, TxContext}
 };
@@ -312,6 +314,87 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     expiry_id
 }
 
+/// Seed the live surface for `expiry`, then create through the inventory-grid
+/// path so the mass-checked ladder lands in the same transaction as share.
+public fun create_expiry_with_inventory(self: &mut Fixture, expiry: u64): ID {
+    let create_clock_ms = expiry - test_constants::default_cadence_period_ms();
+    self.clock.set_for_testing(create_clock_ms);
+    self.scenario.next_tx(test_constants::admin());
+    let mut pyth = self.scenario.take_shared_by_id<PythFeed>(self.pyth_id);
+    let mut bs = self.take_bs();
+    store_pyth_spot(
+        &mut self.scenario,
+        &mut pyth,
+        test_constants::default_live_price(),
+        create_clock_ms,
+        create_clock_ms,
+    );
+    self.seed_bs_surface_with_svi_source(
+        expiry,
+        &mut bs,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        test_constants::default_svi_a(),
+        false,
+        test_constants::default_svi_b(),
+        test_constants::default_svi_sigma(),
+        test_constants::default_svi_rho_magnitude(),
+        false,
+        test_constants::default_svi_m(),
+        false,
+        create_clock_ms,
+        create_clock_ms,
+    );
+    return_bs(bs);
+    return_shared(pyth);
+
+    self.scenario.next_tx(test_constants::admin());
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let oracle_registry = self.scenario.take_shared<OracleRegistry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    let pyth = self.scenario.take_shared_by_id<PythFeed>(self.pyth_id);
+    let bs = self.take_bs();
+    let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
+    creation_clock.set_for_testing(create_clock_ms);
+    let pricer = pricing::load_live_pricer(
+        config.pricing_config(),
+        &oracle_registry,
+        &pyth,
+        bs.values(),
+        bs.svi(),
+        object::id_from_address(@0x0),
+        test_constants::propbook_underlying_id(),
+        expiry,
+        &creation_clock,
+        self.scenario.ctx(),
+    );
+    let ratios = inventory_grid::from_pricer(&pricer).ratios();
+    let expiry_id = registry.create_and_share_expiry_market_with_inventory_grid(
+        &mut vault,
+        &config,
+        &oracle_registry,
+        &pyth,
+        bs.values(),
+        bs.svi(),
+        &self.lifecycle_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
+        ratios,
+        &creation_clock,
+        self.scenario.ctx(),
+    );
+    creation_clock.destroy_for_testing();
+    return_bs(bs);
+    return_shared(pyth);
+    return_shared(config);
+    return_shared(oracle_registry);
+    return_shared(registry);
+    return_shared(vault);
+    self.scenario.next_tx(test_constants::admin());
+    expiry_id
+}
+
 public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): ID {
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
@@ -512,7 +595,7 @@ public fun set_template_inventory_impact_scale(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
 }
 
-/// Persist the first-mint invert so a later read-only quote does not invert again.
+/// Persist a test invert so a later quote has a grid.
 public fun ensure_inventory_grid_bundle(self: &mut Fixture, market: &mut MarketBundle) {
     let pricer = market
         .market
@@ -1071,7 +1154,7 @@ public fun seed_bs_surface(
     source_timestamp_ms: u64,
 ) {
     self.seed_bs_surface_with_svi_source(
-        market,
+        market.expiry(),
         bs,
         spot,
         forward,
@@ -1142,7 +1225,7 @@ public fun seed_bs_surface_with_svi(
 ) {
     let svi_source_timestamp_ms = self.clock.timestamp_ms();
     self.seed_bs_surface_with_svi_source(
-        market,
+        market.expiry(),
         bs,
         spot,
         forward,
@@ -1161,7 +1244,7 @@ public fun seed_bs_surface_with_svi(
 
 fun seed_bs_surface_with_svi_source(
     self: &mut Fixture,
-    market: &ExpiryMarket,
+    expiry: u64,
     bs: &mut BlockScholesFeed,
     spot: u64,
     forward: u64,
@@ -1177,7 +1260,6 @@ fun seed_bs_surface_with_svi_source(
     svi_source_timestamp_ms: u64,
 ) {
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
-    let expiry = market.expiry();
     let spot_sid = bs.values().spot_sid();
     let forward_sid = bs.values().forward_sid(expiry);
     let svi_sid = bs.svi().svi_sid(expiry);

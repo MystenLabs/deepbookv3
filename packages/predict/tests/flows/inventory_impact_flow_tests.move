@@ -14,6 +14,7 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     order,
     order_events,
+    strike_exposure,
     test_constants
 };
 use sui::event;
@@ -127,6 +128,7 @@ fun partial_closes_unwind_the_potential_without_a_stored_position_payout() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.ensure_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),
@@ -292,6 +294,7 @@ fun live_close_inventory_debit_obeys_max_cost() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.ensure_inventory_grid_bundle(&mut market);
     fx.seed_market_cash(
         helpers::market_mut(&mut market),
         test_constants::default_seeded_expiry_cash(),
@@ -346,6 +349,72 @@ fun live_order_value_does_not_require_book_membership() {
     // short-expiry ATM probability.
     helpers::assert_atm_entry_probability_short_expiry(value);
 
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = strike_exposure::EInventoryGridRequired)]
+fun mint_without_a_grid_aborts_when_the_rate_is_on() {
+    let (mut fx, expiry_id, trader) = setup_enabled_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    let _order_id = fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        test_constants::mint_deposit(),
+        std::u64::max_value!(),
+    );
+    abort 999
+}
+
+#[test]
+fun create_with_inventory_grid_is_filled_before_the_first_mint() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
+    fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
+    fx.set_template_inventory_impact_scale(IMPACT_SCALE);
+    let expiry_id = fx.create_expiry_with_inventory(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(3 * test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    assert!(helpers::market(&market).has_inventory_grid());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    let inventory_impact_charge = quote.inventory_impact_charge();
+    assert!(inventory_impact_charge > 0);
+
+    let _order_id = fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+    assert_eq!(
+        helpers::market(&market).inventory_impact_potential(),
+        inventory_impact_charge,
+    );
+
+    helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     fx.finish();
 }

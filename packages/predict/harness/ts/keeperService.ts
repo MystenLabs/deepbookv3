@@ -182,7 +182,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       const expectedExpiry = nextDeployableExpiry(live, c, liveClock, CADENCE_IDS);
       if (expectedExpiry === null) continue;
       try {
-        const { marketId, expiryMs } = await createMarket(lifecycleCapId, c);
+        const { marketId, expiryMs } = await createMarket(lifecycleCapId, c, feeds, expectedExpiry);
         if (Number(expiryMs) !== expectedExpiry) {
           throw new Error(`keeper cadence schedule drift c${c}: expected ${expectedExpiry}, created ${expiryMs}`);
         }

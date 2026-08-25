@@ -10,7 +10,7 @@
 ///
 /// These are inject-ladder inputs for mass and ordering guards, not the production
 /// invert. They were generated against the pinned Move pricer so a well-formed
-/// ladder still verifies on-chain; production first-mint invert builds its own.
+/// ladder still verifies on-chain; production pushes its own off-chain invert.
 #[test_only]
 module deepbook_predict::frozen_grid_fixture;
 
