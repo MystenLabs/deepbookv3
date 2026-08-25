@@ -36,11 +36,19 @@ macro fun bucket_mass_tolerance(): u64 { 100_000 }
 
 macro fun bisection_passes(): u64 { 40 }
 
-/// Early-exit when the digital is within `1e-6` of the quantile target.
-macro fun invert_price_tolerance(): u64 { 1_000 }
+/// Early-exit inside half the 1 bp mass check so two adjacent invert
+/// residuals still pass `verified_snapshot`.
+macro fun invert_price_tolerance(): u64 { 50_000 }
 
 /// Ratio search bracket: `1 / bracket_multiple` .. `bracket_multiple`.
 macro fun bracket_multiple(): u64 { 10_000 }
+
+/// After the first rung, grow the high side by this many last-steps so a
+/// widening tail still sits inside the bracket.
+macro fun search_high_step_multiple(): u64 { 4 }
+
+/// Floor on that high-side room, FLOAT_SCALING: 10 bp of forward.
+macro fun search_high_min_room(): u64 { 1_000_000 }
 
 /// One ratio ladder plus the payout mirror read under it.
 ///
@@ -302,7 +310,18 @@ fun invert_quantile_ratios(pricer: &Pricer): vector<u64> {
         let target = scale - index * target_bucket_mass!();
         // Bisect the stored ratio, and price the rematerialized strike
         // `mul_down(ratio, forward)` so the mass check sees the same rung.
-        let ratio = ratio_at_up_price(pricer, forward, target, search_low, high_cap);
+        // The high side tracks the last step: a fixed `10_000×` cap puts
+        // every geometric mid near `100×` forward and wastes most digitals
+        // walking back.
+        let search_high = next_search_high(&ratios, high_cap);
+        let ratio = ratio_at_up_price(
+            pricer,
+            forward,
+            target,
+            search_low,
+            search_high,
+            high_cap,
+        );
         assert!(ratio > 0, EInvalidBoundary);
         if (ratios.length() > 0) {
             assert!(ratio > ratios[ratios.length() - 1], EInvalidBoundary);
@@ -314,13 +333,43 @@ fun invert_quantile_ratios(pricer: &Pricer): vector<u64> {
     ratios
 }
 
+/// Local high for the next 1% quantile. The first rung still uses the
+/// full cap; later rungs sit just above the last ratio.
+fun next_search_high(ratios: &vector<u64>, high_cap: u64): u64 {
+    let n = ratios.length();
+    if (n == 0) return high_cap;
+    let last = ratios[n - 1];
+    if (last >= high_cap) return high_cap;
+    let room = if (n == 1) {
+        (last / 4).max(1)
+    } else {
+        let step = last - ratios[n - 2];
+        (step * search_high_step_multiple!()).max(search_high_min_room!()).max(1)
+    };
+    let max_room = high_cap - last;
+    if (room >= max_room) high_cap else last + room
+}
+
 fun ratio_at_up_price(
     pricer: &Pricer,
     forward: u64,
     target: u64,
     mut low: u64,
     mut high: u64,
+    high_cap: u64,
 ): u64 {
+    // A short high that is still too cheap (UP above the target) means
+    // the quantile is above it. Fall back to the full cap rather than
+    // returning a low rung that fails the mass check.
+    if (high < high_cap && high > low) {
+        let up_high = pricer.up_price(
+            range_codec::strike_from_raw_boundary(math::mul_down(high, forward)),
+        );
+        if (up_high.diff(target) <= invert_price_tolerance!()) return high;
+        if (up_high > target) {
+            high = high_cap;
+        };
+    };
     let mut pass = 0;
     while (pass < bisection_passes!()) {
         if (high - low <= 1) return geometric_mid(low, high);

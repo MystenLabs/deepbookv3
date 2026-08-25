@@ -18,7 +18,7 @@ Some structural constants are real and stable enough to state directly:
 - **Position lot size** and **minimum mint-time net premium** are fixed constants, not admin-tunable.
 - **The minimum per-expiry allocation cap** is an upgrade-required floor. The actual per-expiry cap is admin-tuned per cadence and snapshotted into pool accounting when a market is created.
 - **Market tick sizes** are admin-tuned per cadence and must be positive and within the protocol's overflow-safe bounds. There is no centered strike grid and no per-oracle tick-count constant — a strike is an absolute tick from zero (`raw_strike = tick * tick_size`) over the fixed 30-bit tick domain.
-- **K-grid inventory impact** (D034): 100 buckets of 1% mass with a 1 bp mass check, `K` as the average of the worst 5 minus the stored incremental expected payout, a 40-pass ratio invert, and a 2,048-cell log-price payout mirror. These live in `inventory_grid` / `inventory_cells`, not in `config_constants`.
+- **K-grid inventory impact** (D034): 100 buckets of 1% mass with a 1 bp mass check, `K` as the average of the worst 5 minus the stored incremental expected payout, a 40-pass ratio invert that warm-starts each high from the last step and early-exits at `0.5 bp`, and a 2,048-cell log-price payout mirror. These live in `inventory_grid` / `inventory_cells`, not in `config_constants`.
 
 ## Three classes of configuration
 

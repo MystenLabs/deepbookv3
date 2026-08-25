@@ -200,7 +200,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `inventory_impact_scale` (`B`, default $1,000 DUSDC), snapshotted at market
   creation; they are not the cadence allocation cap. The coordinate itself is
   upgrade-required: 100 buckets of 1% mass (±1 bp), `K` averages the worst 5,
-  invert uses 40 bisections with a `1e-6` digital early-exit, and the payout
+  invert uses 40 bisections with a two-sided last-step warm start and a `0.5 bp` digital early-exit, and the payout
   mirror is 2,048 log-price cells spanning 1.72× the 1–99% ladder. *Rejected:* `L` as the fee coordinate; holding charges in
   escrow until settlement, which defers LP compensation and lets an LP supply
   just before the release to capture a NAV jump; a keeper that re-cuts dollar
