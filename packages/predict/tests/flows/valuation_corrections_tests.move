@@ -556,8 +556,8 @@ fun a_settled_redeem_mid_window_leaves_the_mark_unchanged() {
 
     // The market is valued, expires, settles, and the winner REDEEMS — all
     // inside the window. The redeem moves market cash after the figure was
-    // folded, so it is invisible to the mark, and the settled sweep stays
-    // deferred throughout.
+    // folded, and the standalone sweep then lands the remainder in idle —
+    // both invisible to the mark, whose every term was frozen at the instant.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
@@ -567,7 +567,7 @@ fun a_settled_redeem_mid_window_leaves_the_mark_unchanged() {
     fx.redeem_settled_bundle(&mut market, &mut account, baseline);
     let idle_before = helpers::vault(&market).idle_balance();
     fx.rebalance_expiry_cash_bundle(&mut market);
-    assert_eq!(helpers::vault(&market).idle_balance(), idle_before);
+    assert!(helpers::vault(&market).idle_balance() > idle_before);
     let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
     assert_eq!(corrected_mark, control_mark);
 
