@@ -35,7 +35,7 @@ use deepbook_predict::{
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, PoolValuation},
-    predict_account::{Self, PredictApp},
+    predict_account,
     pricing,
     pricing_reference_data as ref_data,
     protocol_config::ProtocolConfig,
@@ -178,12 +178,9 @@ public fun setup_market(tick: u64): Fixture {
 
     // tx1: configure protocol params, register the underlying, create feeds.
     scenario.next_tx(test_constants::admin());
-    // Whitelist PredictApp on the account registry so permissionless settled-redeem can
-    // generate app auth (`predict_account::generate_auth_as_app`).
+    // Predict attaches its account data slot with a `Permit<PredictApp>` alone, so it
+    // needs no registry authorization; the cap is kept for fixtures of other packages.
     let account_admin_cap = scenario.take_from_sender<AccountAdminCap>();
-    let mut account_registry = scenario.take_shared<AccountRegistry>();
-    account_registry.authorize_app<PredictApp>(&account_admin_cap);
-    return_shared(account_registry);
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
     let admin_cap = scenario.take_from_sender<AdminCap>();
@@ -564,15 +561,6 @@ public fun authorize_account_app<App>(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut account_registry = self.scenario.take_shared<AccountRegistry>();
     account_registry.authorize_app<App>(&self.account_admin_cap);
-    return_shared(account_registry);
-    self.scenario.next_tx(test_constants::admin());
-}
-
-/// Remove Predict's app-auth access from the shared account registry.
-public fun deauthorize_predict_app(self: &mut Fixture) {
-    self.scenario.next_tx(test_constants::admin());
-    let mut account_registry = self.scenario.take_shared<AccountRegistry>();
-    account_registry.deauthorize_app<PredictApp>(&self.account_admin_cap);
     return_shared(account_registry);
     self.scenario.next_tx(test_constants::admin());
 }
@@ -1752,33 +1740,9 @@ public fun redeem_live_bundle_with_limits(
     )
 }
 
-/// Permissionless settled redeem (no owner auth): clears a settled order using app
-/// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
-/// Block Scholes feed.
+/// Settled redeem using the current scenario sender's account auth. Does not price,
+/// so takes no Block Scholes feed.
 public fun redeem_settled(
-    self: &mut Fixture,
-    config: &ProtocolConfig,
-    wrapper: &mut AccountWrapper,
-    root: &AccumulatorRoot,
-    market: &mut ExpiryMarket,
-    order_id: u256,
-) {
-    let account_registry = self.scenario.take_shared<AccountRegistry>();
-    market.redeem_settled_permissionless(
-        &account_registry,
-        wrapper,
-        config,
-        order_id,
-        root,
-        &self.clock,
-        self.scenario.ctx(),
-    );
-    return_shared(account_registry);
-}
-
-/// Owner-authorized settled redeem: clears a settled order using the current
-/// scenario sender's account auth. Does not price, so takes no Block Scholes feed.
-public fun redeem_settled_with_owner_auth(
     self: &mut Fixture,
     config: &ProtocolConfig,
     wrapper: &mut AccountWrapper,
@@ -1798,7 +1762,7 @@ public fun redeem_settled_with_owner_auth(
     )
 }
 
-/// Permissionless settled redeem through a market/account bundle.
+/// Settled redeem through a market/account bundle.
 public fun redeem_settled_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
@@ -1806,22 +1770,6 @@ public fun redeem_settled_bundle(
     order_id: u256,
 ) {
     self.redeem_settled(
-        &market.config,
-        &mut account.wrapper,
-        &account.root,
-        &mut market.market,
-        order_id,
-    )
-}
-
-/// Owner-authorized settled redeem through a market/account bundle.
-public fun redeem_settled_with_owner_auth_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    account: &mut AccountBundle,
-    order_id: u256,
-) {
-    self.redeem_settled_with_owner_auth(
         &market.config,
         &mut account.wrapper,
         &account.root,

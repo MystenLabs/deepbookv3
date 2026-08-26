@@ -26,13 +26,14 @@ loss/compromise/leak is recoverable.
   itself one). Revocation by id; can a revoked cap still flush?
 - **predict_account custody auth** — THE high-value user-custody surface. NOTE: the old predict-side
   `TradeCap`/`DepositCap`/`WithdrawCap`/trade-proof model was REMOVED when custody moved to the `account`
-  package; do not hunt for it. The current model (`account::Auth` owner-auth + `Permit<PredictApp>` app-auth)
+  package; do not hunt for it. The current model (`account::Auth` owner-auth only)
   is detailed under Cross-package auth below — verify here only the predict-side surface: which predict
   entrypoints require owner vs app auth, and that withdraw authority cannot exceed intent.
 - **Cross-package auth (first-class here):**
-  - `account` custody: `generate_auth_as_app<PredictApp>` requires both a `Permit<PredictApp>` (provable only
+  - `account` custody: the generic `generate_auth_as_app<App>` requires both a `Permit<App>` (provable only
     inside predict) AND registry app-authorization — confirm a keeper/anon cannot forge app-auth to move funds.
-    `AccountAdminCap.deauthorize_app` blast radius (bricks permissionless settled-redeem? owner fallback?).
+    `AccountAdminCap.deauthorize_app` blast radius — no Predict flow depends on it (RP-29), so confirm that
+    stays true of any newly added entrypoint.
     `account` has no version gate — confirm the "custody not frozen by a predict version freeze" property is
     intended, not an escape hatch.
   - Any deepbook `BalanceManager` / cross-package delegation assumed by predict_account.

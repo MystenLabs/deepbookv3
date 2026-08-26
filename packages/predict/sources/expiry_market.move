@@ -11,7 +11,7 @@
 /// Pool-wide PLP accounting and profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
 
-use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::account::{Account, AccountWrapper, Auth};
 use deepbook_predict::{
     admin::AdminCap,
     config_events,
@@ -526,8 +526,8 @@ public fun redeem_live(
 /// Redeem a settled order you hold account authority over.
 ///
 /// The market must be settled already; this flow does not run live pricing.
-/// Explicit owner auth remains available when Predict app automation is deauthorized;
-/// another authorized app may also supply valid account auth.
+/// Account authority is the only way to redeem: the owner's own `Auth`, or that of
+/// another app the owner has authorized. No keeper can clear a position for you.
 public fun redeem_settled(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -539,33 +539,6 @@ public fun redeem_settled(
     ctx: &mut TxContext,
 ) {
     market.assert_settled_flow_allowed(config);
-    market.redeem_settled_with_auth(
-        wrapper,
-        auth,
-        order_id,
-        root,
-        clock,
-        ctx,
-    )
-}
-
-/// Permissionlessly redeem a settled order without account-owner authority.
-///
-/// This keeper path uses Predict app-auth from the account registry, so
-/// `deauthorize_app<PredictApp>` disables this automation. Owners can still use
-/// `redeem_settled` with owner auth to redeem their own settled positions.
-public fun redeem_settled_permissionless(
-    market: &mut ExpiryMarket,
-    account_registry: &AccountRegistry,
-    wrapper: &mut AccountWrapper,
-    config: &ProtocolConfig,
-    order_id: u256,
-    root: &AccumulatorRoot,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    market.assert_settled_flow_allowed(config);
-    let auth = predict_account::generate_auth_as_app(account_registry);
     market.redeem_settled_with_auth(
         wrapper,
         auth,

@@ -192,8 +192,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the rebate was removed; see "Staking and the trading-loss rebate removal" below.*
   `claim_trading_loss_rebate` consumed owner auth and `claim_trading_loss_rebate_permissionless`
   Predict app-auth, so a keeper cron could resolve accounts after settlement without
-  blocking owner claims when `PredictApp` was deauthorized. The surviving instance of
-  that pattern is `redeem_settled` / `redeem_settled_permissionless`.
+  blocking owner claims when `PredictApp` was deauthorized. No instance of that pattern
+  survives; see "Permissionless settled redeem removal" below.
 - **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
   protocol profit and exposes no admin withdrawal path. Decided (2026-07-21,
   predeploy RP-16): no withdraw entrypoint ships in this package — the reserve's
@@ -201,11 +201,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   is deliberately undecided and the entrypoint lands with the package upgrade
   that decides it. The cut's booked-order timing property is accepted in the
   same entry. *Rejected:* an admin drain entrypoint in the launch package.
-- **Account app-auth is intentionally full-account, package-level authority.** An
+- **Account app-auth is intentionally full-account, package-level authority, and Predict no longer uses it.** An
   app authorized through `account::AccountRegistry` can mutably load any
-  `AccountWrapper` it is handed and use the normal `Account` balance/data APIs — so
-  predict-user solvency depends on the account admin's app-authorization hygiene and
-  every co-authorized app's honesty. *Rejected:* per-user/per-coin app scoping —
+  `AccountWrapper` it is handed and use the normal `Account` balance/data APIs. Predict
+  holds no such authority since the permissionless settled redeem was removed (below), so
+  predict-user solvency no longer depends on the account admin's app-authorization hygiene;
+  the property still governs any other co-authorized app on the same account. *Rejected:* per-user/per-coin app scoping —
   don't add it unless a future account-margining design needs dependency-aware user
   app grants (e.g. blocking app revocation while open margin obligations require
   cross-app liquidation).
@@ -628,6 +629,14 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 - **`MarketCreated` no longer carries `trading_loss_rebate_rate`, `max_benefit_ratio`, or the two `*_benefit_power` thresholds.** The market policy snapshot keeps the strike-exposure terms only. Off-chain consumers of those four fields must be updated with this change.
 
 `predeploy/response-policies.md` RP-11 is retired by this removal; the register carries the retirement note.
+
+## Permissionless settled redeem removal (2026-08-26)
+
+- **Settled redemption is account-authorized only.** `expiry_market::redeem_settled_permissionless` and its sole helper `predict_account::generate_auth_as_app` are deleted; `redeem_settled` with account `Auth` is the only settled exit. *Rationale:* the entrypoint predates leverage, staking, and the trading-loss rebate, and outlived all three. It had no consumer — no keeper, indexer, server, script, or app built the call. What it still did was transfer the position's storage deposit to whoever sent the transaction, because Sui credits the storage rebate to the sender; the owner is paid the same rebate for redeeming their own position, and the payout credits the position's account either way. *Rejected:* keeping it behind a settlement grace window that gives the owner first claim — it preserves an automation nobody runs, and the deferred-fill population it would serve is already at its no-keeper size.
+- **Predict now holds no package-level authority over any account.** `generate_auth_as_app` was the only call into `account_registry`'s app-auth gate, so `authorize_app<PredictApp>` / `deauthorize_app<PredictApp>` no longer affect any Predict flow. `PredictApp` survives solely as the witness namespacing Predict's data slot, which `account::attach` / `borrow_data_mut` accept on a `Permit<PredictApp>` alone with no registry check. *Consequence:* the account admin's app-authorization hygiene is no longer part of Predict's user-solvency story.
+- **Nothing on-chain reclaims a settled position now.** A holder who never redeems keeps their `positions` row and, if they won, their payout backing inside the expiry. No flow blocks on either: free cash is invariant under a settled redeem (`required_cash` and `balance` move by the same integer), the settled sweep deactivates and materializes profit regardless, and the `positions` table is only ever read by key. *Consequence:* open-interest aggregates count settled-but-unredeemed positions until their holders act.
+
+`predeploy/response-policies.md` RP-29 carries the duty inventory for the deleted entrypoint; RP-11's retirement note is corrected by the same change.
 
 ## Mint referral fee distribution (2026-08-21)
 

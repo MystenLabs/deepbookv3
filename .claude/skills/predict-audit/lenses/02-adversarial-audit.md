@@ -14,7 +14,7 @@ handed back to the main loop).
 
 **Work actor-by-actor.** Enumerate what each can call, then ask "what is the worst thing they can do to
 someone else?":
-- Malicious TRADER (owner, or an app holding `Permit<PredictApp>` app-auth) — vs LPs, other traders, protocol.
+- Malicious TRADER (the account owner, or an app the owner authorized) — vs LPs, other traders, protocol.
 - Malicious LP — async supply/withdraw timing against the frozen flush mark; incentive-vesting grab; NAV-mark gaming.
 - Malicious/greedy KEEPER — passive-liquidation candidate selection, budget exhaustion, sync ordering side effects.
 - Malicious BUILDER — fee attribution / claim paths.
@@ -22,7 +22,7 @@ someone else?":
   guards were removed by design per D031, so the operator is trusted **within** the consumer envelope in
   `predict::pricing` — your job is to find what the envelope does NOT bound, and any path that reaches pricing
   without it).
-- ACCOUNT ADMIN — `deauthorize_app<PredictApp>` and other custody-layer authority intersecting an economic harm.
+- ACCOUNT ADMIN — custody-layer authority intersecting an economic harm (no Predict flow turns on app authorization).
 - Anonymous GRIEFER — anyone with gas and no special objects.
 
 **Attack categories (build PTB-level chains):**
@@ -30,7 +30,7 @@ someone else?":
   mark-to-flush timing** (supply before / withdraw after a favorable mark; price against a half-built NAV),
   settled-vs-live payout arbitrage, fee/penalty/builder-cap interactions, the exact-amount vs exact-quantity
   mint variants gamed against each other.
-- Authorization bypass: any custody/payout move without the right auth (owner `account::Auth` / app `Permit<PredictApp>`); auth reuse,
+- Authorization bypass: any custody/payout move without a caller-supplied `account::Auth`; auth reuse,
   forged-by-construction, or aimed at the wrong manager/market/expiry; the `account` app-auth boundary.
 - Cross-object confusion: mismatched market ↔ propbook feed ↔ underlying ↔ manager bindings; passing one
   expiry's object into another's flow; stale mirrored state (versions, cached liability).
@@ -47,7 +47,7 @@ someone else?":
 - Unbounded/growing computation on hot paths (NAV valuation, treap `walk_linear`, liquidation-book paging/scan).
 - Starvation of a needed risk-reducing action (under-floor liquidation, surplus release, settlement, flush).
 - Funds trapped: value owed but unwithdrawable.
-- **Griefing / forced-work / fee-shifting (own this class explicitly).** On every permissionless entrypoint (keeper liquidation, the budgeted passive scan, pool sync, settled redeem): can an attacker cheaply enqueue work that *victims* pay gas for; force a victim's mint/redeem/supply to absorb a large liquidation pass; advance a watermark/scan cursor past unprocessed candidates so real work is skipped; or repeatedly trigger a costly path to inflate others' costs? Quantify attacker-cost vs victim-cost.
+- **Griefing / forced-work / fee-shifting (own this class explicitly).** On every permissionless entrypoint (keeper liquidation, the budgeted passive scan, pool sync): can an attacker cheaply enqueue work that *victims* pay gas for; force a victim's mint/redeem/supply to absorb a large liquidation pass; advance a watermark/scan cursor past unprocessed candidates so real work is skipped; or repeatedly trigger a costly path to inflate others' costs? Quantify attacker-cost vs victim-cost.
 
 ## Output
 For each finding: the concrete PTB-ordered call sequence, the exploited state, realistic profit/damage,

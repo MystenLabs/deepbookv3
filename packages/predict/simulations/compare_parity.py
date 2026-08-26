@@ -50,7 +50,6 @@ EXPECTED_ACTION_SEQUENCE = [
     "request_supply",
     "flush",
 ]
-EXPECTED_SETTLED_REDEMPTION_MODES = [False, True, False, True]
 TOP_LEVEL_FIELDS = {"schema_version", "scenario", "records"}
 SCENARIO_FIELDS = {"quantity_scale", "required_actions", "observed_actions"}
 RECORD_FIELDS = {"step", "action", "input", "updates", "state"}
@@ -93,7 +92,7 @@ INPUT_SCHEMAS = {
     },
     "rebalance_expiry_cash": {},
     "settle": {"settlement_price": "decimal"},
-    "redeem_settled": {"order_ref": "string", "permissionless": "boolean"},
+    "redeem_settled": {"order_ref": "string"},
 }
 STATE_FIELDS = {
     field: "decimal"
@@ -350,7 +349,6 @@ def validate_economic_payload(payload: Any, label: str) -> None:
             f"must contain exactly {len(EXPECTED_ACTION_SEQUENCE)} scenario steps",
         )
     derived_observed: list[str] = []
-    settled_redemption_modes: list[bool] = []
     for index, raw_record in enumerate(records):
         path = f"$.records[{index}]"
         record = _exact_fields(raw_record, RECORD_FIELDS, label, path)
@@ -384,8 +382,6 @@ def validate_economic_payload(payload: Any, label: str) -> None:
             expected = " or ".join(str(sorted(schema)) for schema in input_schemas)
             _fail(label, f"{path}.input", f"fields must equal {expected}")
         _validate_typed_object(record["input"], matching_input, label, f"{path}.input")
-        if action == "redeem_settled":
-            settled_redemption_modes.append(record["input"]["permissionless"])
 
         updates = record["updates"]
         if not isinstance(updates, list) or not updates:
@@ -426,12 +422,6 @@ def validate_economic_payload(payload: Any, label: str) -> None:
 
     if observed != derived_observed:
         _fail(label, "$.scenario.observed_actions", "does not match record actions")
-    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
-        _fail(
-            label,
-            "$.records",
-            "settled redemptions must cover owner/permissionless/owner/permissionless",
-        )
     missing = [action for action in REQUIRED_ACTIONS if action not in derived_observed]
     if missing:
         _fail(label, "$.records", f"missing required actions: {','.join(missing)}")

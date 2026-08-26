@@ -38,7 +38,7 @@ Interleave calls to observe or force an intermediate state.
 ## DoS / griefing for economic gain
 Brick or starve a risk-reducing action to trap value or avoid loss.
 - Predict: drive a backing subtraction to underflow-abort (R1); inflate liquidation-scan gas; starve settlement
-  of an under-floor order; `deauthorize_app<PredictApp>` bricking permissionless cleanup.
+  of an under-floor order.
 
 ## Sandwich / MEV-adjacent
 Front/back-run a victim's value-moving tx.

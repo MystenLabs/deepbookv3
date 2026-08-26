@@ -26,8 +26,8 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 
 ## Actors / roles
 - **Trader** — acts through `predict_account` (wraps an `account::Account` for DUSDC custody); authorizes
-  either directly as owner (`account::Auth`) or via the account package's app-auth (`Permit<PredictApp>` +
-  registry authorization → `generate_auth_as_app`). The old predict-side manager cap/proof model
+  as owner (`account::Auth`), or by another app the owner authorized. Predict itself derives no app-auth:
+  `PredictApp` is only the witness namespacing its data slot. The old predict-side manager cap/proof model
   (`PredictTradeCap`/`DepositCap`/`WithdrawCap`/`PredictTradeProof`) was removed when custody moved to `account`.
 - **LP** — supplies/withdraws DUSDC to the PLP vault (async request → privileged flush).
 - **Keeper** — permissionless: triggers settlement and pool syncs.
@@ -38,7 +38,7 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
   `MarketLifecycleCap` for break-glass.
 - **Market-lifecycle operator** — holds `MarketLifecycleCap` (revocable); starts the **privileged** cron flush.
 - **Pause operator** — holds `PauseCap`; pauses trading/minting, disables versions.
-- **Account admin** — holds `account::AccountAdminCap`; authorizes/deauthorizes apps (e.g. `PredictApp`) on the custody layer.
+- **Account admin** — holds `account::AccountAdminCap`; authorizes/deauthorizes apps on the custody layer. No Predict flow depends on that authorization.
 
 ## Assets
 DUSDC (settlement/custody for all trading + payouts, and the sponsored fee-incentive donation), PLP (LP vault share token).
@@ -48,7 +48,7 @@ DUSDC (settlement/custody for all trading + payouts, and the sponsored fee-incen
 ### `predict` (31 modules — the protocol core)
 - `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap & lifecycle-cap allowlists, `create_and_share_expiry_market`.
 - `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
-- `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
+- `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth`, not predict-side caps; `PredictApp` namespaces the data slot and grants no account authority.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
 - `order.move` — packs immutable position terms (absolute boundary ticks, quantity, sequence) into a u256 order id (132 dense bits); validates shape.
 - `expiry_market.move` — per-expiry risk engine; mint / live redeem / settled redeem / settlement / compaction state machine; routes DUSDC; produces per-expiry `current_nav`.

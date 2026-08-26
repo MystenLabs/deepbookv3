@@ -111,7 +111,7 @@ function rowInput(row: ScenarioRow, tickSize: bigint): Record<string, unknown> {
     if (row.action === "request_supply") return { amount: row.amount.toString(), min_output: row.minOutput.toString(), lp_ref: row.lpRef };
     if (row.action === "request_withdraw") return { shares: row.shares.toString(), min_output: row.minOutput.toString(), lp_ref: row.lpRef };
     if (row.action === "settle") return { settlement_price: row.settlementPrice.toString() };
-    if (row.action === "redeem_settled") return { order_ref: row.orderRef, permissionless: row.permissionless };
+    if (row.action === "redeem_settled") return { order_ref: row.orderRef };
     return oracle;
 }
 function sourceTimestamps(value: any): Record<string, string> {
@@ -241,7 +241,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): 
     }
     const orderId = aliases.orderIds.get(row.orderRef);
     if (!orderId) throw new Error(`unknown order_ref ${row.orderRef}`);
-    return execute(() => redeemSettledTx({ expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, orderId, permissionless: row.permissionless }), `scenario_${row.step}_redeem_settled`);
+    return execute(() => redeemSettledTx({ expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, orderId }), `scenario_${row.step}_redeem_settled`);
 }
 
 function createdObjectId(result: any, typeName: string): string {

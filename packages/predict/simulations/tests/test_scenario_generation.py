@@ -134,10 +134,6 @@ class ScenarioGenerationTests(unittest.TestCase):
                     "redeem_settled",
                 },
             )
-            self.assertEqual(
-                [row["permissionless"] for row in rows if row["action"] == "redeem_settled"],
-                ["false", "true", "false", "true"],
-            )
             partial = next(row for row in rows if row["tx"] == "3")
             self.assertEqual(partial["replacement_order_ref"], "")
             self.assertEqual(

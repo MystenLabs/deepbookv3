@@ -168,7 +168,7 @@ def record(step: int, action: str) -> dict[str, object]:
             )
         ]
     else:
-        input_value = {"order_ref": "order", "permissionless": False}
+        input_value = {"order_ref": "order"}
         update = decimal_update(
             "settled_order_redeemed",
             ["order_sequence", "payout_amount", "onchain_timestamp_ms"],
@@ -193,12 +193,8 @@ def current_payload() -> dict[str, object]:
         },
         "records": [],
     }
-    settled_modes = iter(compare.EXPECTED_SETTLED_REDEMPTION_MODES)
     for step, action in enumerate(compare.EXPECTED_ACTION_SEQUENCE, start=1):
-        item = record(step, action)
-        if action == "redeem_settled":
-            item["input"]["permissionless"] = next(settled_modes)
-        payload["records"].append(item)
+        payload["records"].append(record(step, action))
     payload["scenario"]["observed_actions"] = list(
         dict.fromkeys(compare.EXPECTED_ACTION_SEQUENCE)
     )

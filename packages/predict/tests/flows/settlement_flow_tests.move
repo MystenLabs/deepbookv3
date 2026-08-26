@@ -6,7 +6,6 @@
 #[test_only]
 module deepbook_predict::settlement_flow_tests;
 
-use account::account_registry;
 use deepbook_predict::{
     config_events,
     constants,
@@ -36,8 +35,8 @@ const MINT_MIN_FEE: u64 = 5_000_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
 
-/// Even with the exact Propbook spot recorded, permissionless `redeem_settled`
-/// requires the explicit settlement transition instead of settling implicitly.
+/// Even with the exact Propbook spot recorded, `redeem_settled` requires the
+/// explicit settlement transition instead of settling implicitly.
 #[test, expected_failure(abort_code = expiry_market::EMarketNotSettled)]
 fun settled_redeem_requires_explicit_settlement() {
     let (mut fx, expiry_id, trader) = helpers::setup_live_market(
@@ -461,93 +460,6 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 
     fx.redeem_settled_bundle(
-        &mut market,
-        &mut account,
-        order_id,
-    );
-    fx.check_manager_bundle(
-        &account,
-        helpers::expected_manager_state(post_settled_redeem_balance(premium)),
-    );
-    helpers::check_market_cash(
-        helpers::market(&market),
-        helpers::expected_market_cash(cash_after_winning_redeem(premium), 0),
-    );
-
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-    fx.finish();
-}
-
-#[test, expected_failure(abort_code = account_registry::EAppNotAuthorized)]
-fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
-    let settlement_price = settlement_inside_default_finite_range();
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::short_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let order_id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        helpers::strike_tick() + 10,
-        test_constants::mint_quantity(),
-    );
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-
-    fx.deauthorize_predict_app();
-    fx.set_clock_for_testing(test_constants::short_expiry_ms());
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
-    assert_eq!(fx.try_settle_bundle(&mut market), true);
-
-    fx.redeem_settled_bundle(
-        &mut market,
-        &mut account,
-        order_id,
-    );
-
-    abort 999
-}
-
-#[test]
-fun owner_auth_settled_redeem_survives_predict_app_deauth() {
-    let settlement_price = settlement_inside_default_finite_range();
-    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
-        test_constants::short_expiry_ms(),
-        test_constants::default_live_price(),
-    );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    let premium = finite_range_premium(&mut fx, &market);
-    let order_id = fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        helpers::strike_tick() + 10,
-        test_constants::mint_quantity(),
-    );
-    helpers::return_account_bundle(account);
-    helpers::return_market_bundle(market);
-
-    fx.deauthorize_predict_app();
-    fx.set_clock_for_testing(test_constants::short_expiry_ms());
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
-    assert_eq!(fx.try_settle_bundle(&mut market), true);
-
-    fx.redeem_settled_with_owner_auth_bundle(
         &mut market,
         &mut account,
         order_id,

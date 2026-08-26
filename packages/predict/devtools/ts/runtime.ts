@@ -1421,8 +1421,7 @@ function addMint(tx: Transaction, params: MintParams): void {
 
 function addRedeem(tx: Transaction, params: RedeemParams): void {
     // The sim always acts as the account owner, so it uses the owner-authorized
-    // `redeem_live` (auth consumed). The benchmark harness does not drive the
-    // permissionless settled redeem path.
+    // `redeem_live` (auth consumed).
     const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);
     tx.moveCall({
@@ -1449,12 +1448,11 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
 }
 
 // === Account cleanout (settled-redeem gas measurement, E1) ===
-// One PTB that redeems every settled position on `wrapper` (permissionless full-close). This is
-// the maximally-incentivized keeper/MEV cleanout: it deletes the N position dynamic-field
-// entries, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
-// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoint derives
-// PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
-// account's wrapper — the actual on-chain keeper surface, priced as-is.
+// One PTB that redeems every settled position on the signer's own `wrapper` (full close). It
+// deletes the N position dynamic-field entries, so its net gas (comp + storage - rebate) is the
+// self-incentive signal for an owner clearing their own settled book (negative = the owner is
+// paid to clean up). Requires the market SETTLED. Settled redeem is owner-authorized only, so
+// the signer must own `wrapper` — there is no path to clear another account's positions.
 export interface CleanoutPosition {
     orderId: string;
 }
@@ -1464,20 +1462,21 @@ export interface CleanoutParams {
     positions: CleanoutPosition[];
 }
 
-function addRedeemSettledPermissionless(
+function addRedeemSettled(
     tx: Transaction,
     p: { expiryMarketId: string; wrapperId: string; orderId: string; protocolConfigId?: string },
 ): void {
-    // redeem_settled_permissionless(market, account_registry, wrapper, config, order_id,
-    //   root, clock, ctx). A settled close is always full — the entrypoint takes no
-    //   quantity. Settlement is a separate PTB transition; this consumer needs no
-    //   oracle objects or live pricer.
+    // redeem_settled(market, wrapper, auth, config, order_id, root, clock, ctx). A settled
+    //   close is always full — the entrypoint takes no quantity. Settlement is a separate
+    //   PTB transition; this consumer needs no oracle objects or live pricer. `auth` is
+    //   consumed per call, so a multi-redeem PTB generates one per position.
+    const auth = generateAuth(tx);
     tx.moveCall({
-        target: target("expiry_market", "redeem_settled_permissionless"),
+        target: target("expiry_market", "redeem_settled"),
         arguments: [
             tx.object(p.expiryMarketId),
-            tx.object(ACCOUNT_REGISTRY_ID),
             tx.object(p.wrapperId),
+            auth,
             tx.object(p.protocolConfigId ?? PROTOCOL_CONFIG_ID),
             tx.pure.u256(BigInt(p.orderId)),
             tx.object(ACCUMULATOR_ROOT_ID),
@@ -1491,33 +1490,16 @@ export function redeemSettledTx(params: {
     protocolConfigId: string;
     wrapperId: string;
     orderId: string;
-    permissionless: boolean;
 }): Transaction {
     const tx = new Transaction();
-    if (params.permissionless) {
-        addRedeemSettledPermissionless(tx, params);
-    } else {
-        const auth = generateAuth(tx);
-        tx.moveCall({
-            target: target("expiry_market", "redeem_settled"),
-            arguments: [
-                tx.object(params.expiryMarketId),
-                tx.object(params.wrapperId),
-                auth,
-                tx.object(params.protocolConfigId),
-                tx.pure.u256(BigInt(params.orderId)),
-                tx.object(ACCUMULATOR_ROOT_ID),
-                tx.object(CLOCK_ID),
-            ],
-        });
-    }
+    addRedeemSettled(tx, params);
     return tx;
 }
 
 export function cleanoutAccountTx(params: CleanoutParams): Transaction {
     const tx = new Transaction();
     for (const pos of params.positions) {
-        addRedeemSettledPermissionless(tx, {
+        addRedeemSettled(tx, {
             expiryMarketId: params.expiryMarketId,
             wrapperId: params.wrapperId,
             orderId: pos.orderId,

@@ -60,7 +60,7 @@ The Block Scholes local fixture derives series identities through the published 
 
 `data/scenario_config.json` is the complete, versioned protocol and generator configuration. Missing, unknown, malformed, and unsupported fields fail before execution. Scenario generation is byte-deterministic for a fixed source, configuration, and seed. Changing any input is visible in the retained manifest hashes.
 
-The generator writes fixed-point integers as decimal text and emits explicit mint, live redeem, LP request, flush, rebalance, settlement, owner-settled-redeem, and permissionless-settled-redeem actions. The TypeScript executor records emitted transitions plus direct chain-state snapshots after every action; the Python replay independently models the same economics.
+The generator writes fixed-point integers as decimal text and emits explicit mint, live redeem, LP request, flush, rebalance, settlement, and settled-redeem actions. The TypeScript executor records emitted transitions plus direct chain-state snapshots after every action; the Python replay independently models the same economics.
 
 ## Verification
 

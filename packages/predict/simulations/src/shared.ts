@@ -56,8 +56,6 @@ export const EXPECTED_ACTION_SEQUENCE: ScenarioActionName[] = [
     "flush",
 ];
 
-export const EXPECTED_SETTLED_REDEMPTION_MODES = [false, true, false, true];
-
 export interface OracleRefreshData {
     spot: bigint;
     forward: bigint;
@@ -111,11 +109,7 @@ export type ScenarioRow =
       })
     | (ScenarioRowBase & { action: "rebalance_expiry_cash" })
     | (ScenarioRowBase & { action: "settle"; settlementPrice: bigint })
-    | (ScenarioRowBase & {
-          action: "redeem_settled";
-          orderRef: string;
-          permissionless: boolean;
-      });
+    | (ScenarioRowBase & { action: "redeem_settled"; orderRef: string });
 
 export type MintRow = Extract<ScenarioRow, { action: "mint" }>;
 export type OracleRefreshRow = Extract<
@@ -200,7 +194,6 @@ export const SCENARIO_COLUMNS = [
     "min_output",
     "lp_ref",
     "settlement_price",
-    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -377,7 +370,6 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             lineNumber,
             step,
             orderRef: parseRef(row, "order_ref", lineNumber),
-            permissionless: parseBoolean(row, "permissionless", lineNumber),
         };
     }
     throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
@@ -461,22 +453,6 @@ export function validateCompleteScenario(rows: readonly ScenarioRow[]): void {
             );
         }
     });
-    const settledRedemptionModes = rows
-        .filter((row): row is Extract<ScenarioRow, { action: "redeem_settled" }> =>
-            row.action === "redeem_settled",
-        )
-        .map((row) => row.permissionless);
-    if (
-        settledRedemptionModes.length !== EXPECTED_SETTLED_REDEMPTION_MODES.length ||
-        settledRedemptionModes.some(
-            (permissionless, index) =>
-                permissionless !== EXPECTED_SETTLED_REDEMPTION_MODES[index],
-        )
-    ) {
-        throw new Error(
-            "scenario settled redemptions must be owner/permissionless/owner/permissionless",
-        );
-    }
 }
 
 export function readJson<T>(filePath: string): T {

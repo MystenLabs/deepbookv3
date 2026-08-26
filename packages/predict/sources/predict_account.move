@@ -13,7 +13,7 @@
 /// application may obtain that mutable borrow.
 module deepbook_predict::predict_account;
 
-use account::{account::{Account, AccountWrapper, Auth}, account_registry::AccountRegistry};
+use account::account::{Account, AccountWrapper, Auth};
 use deepbook_predict::{builder_code::BuilderCode, builder_code_events};
 use std::internal::permit;
 use sui::table::{Self, Table};
@@ -94,11 +94,6 @@ public fun unset_builder_code(wrapper: &mut AccountWrapper, auth: Auth, ctx: &mu
 }
 
 // === Public-Package Functions ===
-
-/// Generate Predict's package-issued authority to mutably load any account.
-public(package) fun generate_auth_as_app(registry: &AccountRegistry): Auth {
-    registry.generate_auth_as_app<PredictApp>(permit<PredictApp>())
-}
 
 /// Return the on-chain time (`clock.timestamp_ms()`) a held position was opened.
 /// Carried forward unchanged across partial-close replacements.

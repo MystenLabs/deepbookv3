@@ -36,7 +36,6 @@ SCENARIO_COLUMNS = [
     "min_output",
     "lp_ref",
     "settlement_price",
-    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -298,25 +297,21 @@ class Generator:
                     14,
                     "redeem_settled",
                     order_ref="o_up_partial",
-                    permissionless=False,
                 ),
                 scenario_row(
                     15,
                     "redeem_settled",
                     order_ref="o_down",
-                    permissionless=True,
                 ),
                 scenario_row(
                     16,
                     "redeem_settled",
                     order_ref="o_settle_winner",
-                    permissionless=False,
                 ),
                 scenario_row(
                     17,
                     "redeem_settled",
                     order_ref="o_settle_loser",
-                    permissionless=True,
                 ),
                 scenario_row(18, "flush"),
                 scenario_row(

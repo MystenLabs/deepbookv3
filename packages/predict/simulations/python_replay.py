@@ -40,7 +40,6 @@ EXPECTED_ACTION_SEQUENCE = (
     "request_supply",
     "flush",
 )
-EXPECTED_SETTLED_REDEMPTION_MODES = (False, True, False, True)
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 SCENARIO_CONFIG_SCHEMA: dict[str, Any] = {
     "schema_version": int,
@@ -116,7 +115,6 @@ SCENARIO_COLUMNS = (
     "min_output",
     "lp_ref",
     "settlement_price",
-    "permissionless",
     "replay_timestamp_ms",
     "source_timestamp_ms",
     "price_source_timestamp_ms",
@@ -611,7 +609,6 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "lineNumber": index,
                     "step": tx,
                     "orderRef": _ref(row, "order_ref", index),
-                    "permissionless": _bool(row, "permissionless", index),
                 }
             )
         else:
@@ -637,13 +634,6 @@ def validate_complete_scenario(rows: list[dict[str, Any]]) -> None:
             raise ValueError(
                 f"scenario step {index} must be {expected_action}, got {row['action']}"
             )
-    settled_redemption_modes = tuple(
-        row["permissionless"] for row in rows if row["action"] == "redeem_settled"
-    )
-    if settled_redemption_modes != EXPECTED_SETTLED_REDEMPTION_MODES:
-        raise ValueError(
-            "scenario settled redemptions must be owner/permissionless/owner/permissionless"
-        )
 
 
 def deepbook_div(x: int, y: int) -> int:
@@ -1190,7 +1180,6 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
     if action == "redeem_settled":
         return {
             "order_ref": row["orderRef"],
-            "permissionless": row["permissionless"],
         }
     return oracle_input
 

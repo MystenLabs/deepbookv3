@@ -25,10 +25,9 @@ The split is only safe if it is behavior-preserving at every seam.
 
 - **predict → account** (DUSDC custody). Custody moved from the in-package manager into `account::Account`.
   Enumerate what auth/limits the old in-package custody enforced and confirm each is enforced across the new
-  boundary: app-auth (`generate_auth_as_app<PredictApp>`) requires a `Permit<PredictApp>` (constructible only
-  inside predict) AND registry authorization — confirm no keeper/anon path forges it; withdraw authority cannot
-  exceed intent; `deauthorize_app` blast radius (which predict flows brick, is owner-redeem the guaranteed
-  fallback); `account` has no version gate (confirm "custody not frozen by a predict version freeze" is the
+  boundary: Predict derives no app-auth at all (RP-29), so every custody move must trace to an `account::Auth`
+  the caller supplied — confirm no keeper/anon path reaches custody, and that no new entrypoint reintroduces
+  package-level authority; withdraw authority cannot exceed intent; `account` has no version gate (confirm "custody not frozen by a predict version freeze" is the
   intended non-custodial property, not an exploitable escape hatch).
 
 - **propbook → bs_oracle** (the external verifier). Batches are mintable only by

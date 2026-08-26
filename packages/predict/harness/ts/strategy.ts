@@ -93,7 +93,7 @@ export interface StrategyCtx {
   refreshPlp(): Promise<void>; // refresh ctx.plpShares from chain
   // Phase-2b (lp-adversary / E5) scaffolding — NOT consumed by any current strategy yet:
 
-  // Cleanout gas-incentive (E1): submit ONE permissionless PTB that redeems every settled
+  // Cleanout gas-incentive (E1): submit ONE owner-authorized PTB that redeems every settled
   // position on THIS account, and return + trace the full gas breakdown (net < 0 ⇒ the cleaner
   // is paid). Requires the market settled — gate on isSettled first.
   cleanout(marketId: string, positions: CleanoutPosition[]): Promise<GasBreakdown & { nSettled: number }>;
