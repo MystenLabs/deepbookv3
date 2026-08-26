@@ -290,6 +290,49 @@ fun an_inversion_on_a_husk_still_aborts_the_frozen_walk() {
     abort 999
 }
 
+/// RP-29(e)'s admission residual, pinned from the failing side: a husk keeps
+/// its slot in the admission cap, so a fresh-tick mint at the cap aborts where
+/// the same mint would land outside a window.
+#[test, expected_failure(abort_code = strike_payout_tree::EMaxPayoutTreeNodes)]
+fun a_husk_holds_its_place_against_the_admission_cap() {
+    let (mut fixture, _oracle, _pricer) = live_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
+    tree.set_node_count_for_testing(constants::max_payout_tree_nodes!());
+    tree.activate_snapshot(1);
+    tree.remove_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
+    // Both boundaries are husks; the count still sits at the cap, so one fresh
+    // tick cannot be admitted.
+    tree.insert_range(RANGE_C_HIGHER, pos_inf_tick(), Q_B);
+    abort 999
+}
+
+/// The recovering side of the same edge: revival at a husk tick admits even at
+/// the cap (no new record), and release reopens fresh-tick admission.
+#[test]
+fun revival_and_release_reopen_admission_at_the_cap() {
+    let (mut fixture, _oracle, _pricer) = live_pricer();
+    let ctx = fixture.scenario_mut().ctx();
+    let mut tree = strike_payout_tree::new(ctx);
+    tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
+    let cap = constants::max_payout_tree_nodes!();
+    tree.set_node_count_for_testing(cap);
+    tree.activate_snapshot(1);
+    tree.remove_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
+    // Revival at the husk ticks needs no new record, so it admits at the cap.
+    tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_B);
+    tree.remove_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_B);
+    assert_eq!(tree.node_count_for_testing(), cap);
+    // Consumption removes the husks and reopens fresh-tick admission.
+    tree.release_snapshot();
+    assert_eq!(tree.node_count_for_testing(), cap - 2);
+    tree.insert_range(RANGE_C_HIGHER, pos_inf_tick(), Q_B);
+    assert_eq!(tree.node_count_for_testing(), cap - 1);
+
+    destroy(tree);
+    cleanup(fixture, _oracle);
+}
+
 fun tick_size(): u64 { test_constants::default_tick_size() }
 
 fun pos_inf_tick(): u64 { constants::pos_inf_tick!() }

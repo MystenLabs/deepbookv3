@@ -535,6 +535,119 @@ fun a_market_expiring_mid_flush_values_at_the_frozen_mark_then_settles() {
     fx.finish();
 }
 
+#[test]
+fun a_settled_redeem_mid_window_leaves_the_mark_unchanged() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    // The market is valued, expires, settles, and the winner REDEEMS — all
+    // inside the window. The redeem moves market cash after the figure was
+    // folded, so it is invisible to the mark, and the settled sweep stays
+    // deferred throughout.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
+    fx.value_expiry_bundle(&mut market);
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    assert!(fx.try_settle_bundle(&mut market));
+    fx.redeem_settled_bundle(&mut market, &mut account, baseline);
+    let idle_before = helpers::vault(&market).idle_balance();
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(helpers::vault(&market).idle_balance(), idle_before);
+    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun emergency_controls_stay_available_mid_flush() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    // The pause and the freeze both engage AND clear while a flush is in
+    // flight — neither setter carries a valuation gate — and the flush then
+    // completes at the control mark.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    fx.set_trading_paused_bundle(&mut market, true);
+    fx.set_trading_paused_bundle(&mut market, false);
+    fx.set_frozen_bundle(&mut market, true);
+    fx.set_frozen_bundle(&mut market, false);
+    fx.value_expiry_bundle(&mut market);
+    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun an_aborted_flushs_husks_never_reach_a_later_mark() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let with_position_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    // Flush A freezes the position, the position fully closes mid-window
+    // (its boundaries become husks holding A's shadows), and A aborts. The
+    // husks' stale shadows must never serve a later mark: flushes B and C
+    // both price the emptied book, agree with each other, and disagree with
+    // the with-position control.
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    let _closed = fx.redeem_live_bundle(&mut market, &mut account, baseline, BASELINE_QUANTITY);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.abort_valuation_privileged_bundle(&mut market);
+
+    let mark_b = run_undisturbed_flush(&mut fx, &mut market);
+    let mark_c = run_undisturbed_flush(&mut fx, &mut market);
+    assert_eq!(mark_b, mark_c);
+    assert!(mark_b != with_position_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 // === Lazy reconciliation across aborts ===
 
 #[test]

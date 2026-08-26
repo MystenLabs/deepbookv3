@@ -472,6 +472,11 @@ public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, 
     self.set_trading_paused(&mut market.config, paused);
 }
 
+/// Engage / clear the protocol-wide emergency freeze through a market bundle.
+public fun set_frozen_bundle(self: &Fixture, market: &mut MarketBundle, frozen: bool) {
+    market.config.set_frozen(&self.admin_cap, frozen);
+}
+
 /// Toggle whether live pricing re-anchors the forward onto a fresh Pyth spot.
 public fun set_use_pyth_spot_for_forward_bundle(
     self: &Fixture,
