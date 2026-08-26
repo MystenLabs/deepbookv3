@@ -431,10 +431,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   concurrent trades are cancelled out (RP-29 resolves C-1).** The flush's snapshot
   stage — one atomic PTB under a `SnapshotStage` hot potato — freezes every live
   market's `Pricer`, stamps those markets, and records each LP queue's eligibility
-  cutoff; valuation then runs one market per transaction, reconstructing each
-  market's snapshot-instant NAV by rolling recorded trade deltas back off the live
-  rows (bit-identical walk rounding; deleted boundaries price from the delta log);
-  `finish_flush` drains only pre-snapshot requests. *Rationale:* the joint object
+  cutoff; valuation then runs one market per transaction, reading each market's
+  snapshot-instant NAV from state captured at the instant (see the in-tree
+  snapshot decision below — originally a per-trade delta log replayed at
+  valuation); `finish_flush` drains only pre-snapshot requests. *Rationale:* the joint object
   budget C-1 measured is gone by construction while trading never pauses — the
   original "flush that pauses trading" rejection above stands, and the exact-mark
   requirement (audit L10) survives because exactness is defined at the snapshot
@@ -477,10 +477,42 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   maintenance has no lever).
 - **Settlement is gated per market, not globally.** `try_settle` refuses only a
   market whose stamp names the in-flight flush — the frozen sweep-vs-value branch
-  and the recorded deltas are only sound while settlement cannot reclassify the
+  and the captured snapshot are only sound while settlement cannot reclassify the
   rows. A market expiring mid-window is valued at its frozen pre-expiry mark and
   settles the moment its stamp clears (RP-29 ratifies this against RP-4's
   original blanket block).
+
+## In-tree snapshot capture (2026-08-26)
+
+- **The snapshot state is captured in place, not journaled and replayed.**
+  Supersedes the mechanism half of the 2026-08-24 entry (the staged lifecycle,
+  cutoffs, gating, and maintenance compensation above all stand). The stamp
+  copies the two cash rows NAV reads eagerly at the snapshot instant; each
+  payout-tree node copies its boundary quantities into a per-node shadow, keyed
+  by the flush ordinal, immediately before its first mutation under that flush
+  (copy-on-write — an untouched node is its own snapshot; prototyped in
+  deepbookv3#1268). `snapshot_nav` is then the SAME linear walk as the live read
+  over the captured terms, so rounding, clamping, and the monotonicity
+  observation are identical by construction rather than by a reconstruction
+  proof. *Rationale:* the replaced delta log carried three costs the capture
+  does not — an equivalence obligation (replay must reproduce the snapshot walk
+  bit-for-bit), a per-market trade budget (`max_valuation_log_ops`, whose full
+  log froze that market's trading mid-window), and a per-trade recording hook on
+  every mutation source that had to be enumerated (trades, then maintenance)
+  rather than covered structurally. *Consequences that needed design rather than
+  deletion:* a node emptied mid-window is retained as a live-zero husk so the
+  frozen walk keeps its boundary — retention converts an existing node (never
+  adds one, so the RP-30 cap is undisturbed) and every husk is removed by the
+  same `value_expiry` that consumes the snapshot, so retention never outlives
+  one window even across aborted generations; the live walk skips husks (a husk
+  is no live order's edge — the frozen walk that owns the tick still observes
+  it); and the tree generation is the flush ordinal, so a stale snapshot from an
+  aborted flush is superseded by activation and can never serve a frozen read
+  (`EStaleValuationSnapshot`). *Rejected:* wall-clock snapshot keys (Sui's clock
+  is commit-granular, and the flush ordinal already exists with the exact
+  staleness semantics needed); purging husks on the trade path (walks the tree
+  in a hot flow); counting retained husks outside the node cap (they are loaded
+  by the valuation walk, which is the budget the cap exists to fit).
 
 ## Explicit exact-timestamp settlement (recent)
 

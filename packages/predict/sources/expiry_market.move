@@ -26,8 +26,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     range_codec,
     strike_exposure::{Self, MintTerms, StrikeExposure},
-    strike_exposure_config,
-    strike_payout_tree::{Self, RangeDelta}
+    strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
 use fixed_math::math;
@@ -49,8 +48,7 @@ const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketPendingValuation: u64 = 10;
-const EValuationLogFull: u64 = 11;
-const EMarketNotPendingValuation: u64 = 12;
+const EMarketNotPendingValuation: u64 = 11;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -72,32 +70,29 @@ public struct ExpiryMarket has key {
     mint_paused: bool,
     /// `Some` from the flush's snapshot stage until this market's `value_expiry`
     /// (or lazily discarded once the stamp goes stale — see `ValuationStamp`).
-    /// Trading is never gated on it: while pending, each trade records its book
-    /// deltas here so the valuation can roll them back to the snapshot instant.
+    /// Trading is never gated on it and never touches it: the cash rows are
+    /// captured eagerly here at the snapshot instant, and the payout tree
+    /// captures its own boundary shadows as trades first touch each node.
     valuation_stamp: Option<ValuationStamp>,
 }
 
-/// One flush's snapshot stamp on this market, with every book delta trades have
-/// applied since the snapshot instant.
+/// One flush's snapshot stamp on this market: the cash rows NAV reads, captured
+/// eagerly at the snapshot instant. The book side lives in the payout tree's own
+/// snapshot (activated together with this stamp), so no trade path records
+/// anything — every mutation source is covered by construction, with nothing to
+/// enumerate.
 ///
 /// `flush_seq` names the flush that made the stamp. The stamp is current only
 /// while that flush is in flight (`protocol_config::is_current_flush`); an
 /// aborted or superseded flush leaves the stamp stale, and the next trade
-/// discards it instead of recording — so abort never has to visit stamped
-/// markets. Cash deltas are one-sided non-negative totals (added/removed), so
-/// snapshot reconstruction `(live + removed) - added` cannot underflow; range
-/// deltas replay through `strike_payout_tree::fold_range_deltas`, which owns the
-/// same decomposition `apply_range` uses.
+/// discards it (deactivating the tree snapshot with it) — so abort never has to
+/// visit stamped markets.
 public struct ValuationStamp has drop, store {
     flush_seq: u64,
-    /// Payout-tree range mutations since the snapshot, in application order.
-    range_deltas: vector<RangeDelta>,
-    /// Deltas to `cash.balance()` since the snapshot.
-    cash_added: u64,
-    cash_removed: u64,
-    /// Deltas to `cash.inventory_impact_reserve()` since the snapshot.
-    impact_reserve_added: u64,
-    impact_reserve_removed: u64,
+    /// `cash.balance()` at the snapshot instant.
+    snapshot_cash: u64,
+    /// `cash.inventory_impact_reserve()` at the snapshot instant.
+    snapshot_impact_reserve: u64,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -263,8 +258,7 @@ public fun load_live_pricer(
 
 /// Return whether this market is snapshotted into the in-flight flush and still
 /// awaiting its `value_expiry`. For SDK, keeper, and devInspect reads: while
-/// true, trades on this market record deltas (and abort once the delta log is
-/// full) and `try_settle` refuses to run.
+/// true, `try_settle` refuses to run; trading is unaffected.
 public fun is_pending_valuation(market: &ExpiryMarket, config: &ProtocolConfig): bool {
     market.valuation_stamp.is_some()
         && config.is_current_flush(market.valuation_stamp.borrow().flush_seq)
@@ -751,63 +745,46 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
-/// Stamp this market for the flush whose snapshot stage is freezing it. From here
-/// until `clear_valuation_stamp`, every trade records its book deltas on the
-/// stamp. Any surviving stamp being replaced is stale by construction:
-/// `begin_valuation` bumped the flush ordinal before this stage ran, and a
-/// current-flush double-stamp is rejected upstream
+/// Stamp this market for the flush whose snapshot stage is freezing it: capture
+/// the two cash rows NAV reads eagerly (this call IS the snapshot instant — it
+/// runs inside the atomic snapshot PTB) and activate the payout tree's own
+/// snapshot for the book side. Any surviving stamp being replaced is stale by
+/// construction: `begin_valuation` bumped the flush ordinal before this stage
+/// ran, and a current-flush double-stamp is rejected upstream
 /// (`EExpiryPricerAlreadySnapshotted`).
 public(package) fun stamp_for_valuation(market: &mut ExpiryMarket, flush_seq: u64) {
     market.valuation_stamp =
         option::some(ValuationStamp {
             flush_seq,
-            range_deltas: vector[],
-            cash_added: 0,
-            cash_removed: 0,
-            impact_reserve_added: 0,
-            impact_reserve_removed: 0,
+            snapshot_cash: market.cash.balance(),
+            snapshot_impact_reserve: market.cash.inventory_impact_reserve(),
         });
+    market.strike_exposure.activate_valuation_snapshot(flush_seq);
 }
 
-/// Retire this market's stamp once its valuation is folded (or, defensively, when
-/// the flush that made it is being finished). Later trades are ordinary: their
-/// deltas are invisible to a flush that already measured this market, which is
-/// exactly as-of-snapshot semantics.
+/// Retire this market's stamp once its valuation is folded, consuming the payout
+/// tree's snapshot with it (which removes any nodes retained for a frozen walk —
+/// this generation's just-read one, or a stale generation's that was never
+/// consumed because its flush aborted). Later trades are ordinary: invisible to
+/// a flush that already measured this market, which is exactly as-of-snapshot
+/// semantics.
 public(package) fun clear_valuation_stamp(market: &mut ExpiryMarket) {
     market.valuation_stamp = option::none();
+    market.strike_exposure.release_valuation_snapshot();
 }
 
-/// Record a pool-maintenance cash movement (a live top-up or surplus sweep) on
-/// this market's stamp, so `snapshot_nav` keeps excluding it exactly as it
-/// excludes trade cash — no unrecorded movement ever sits between the rollback
-/// and the reconstruction's zero floors. A market with no current stamp (already
-/// valued, never snapshotted, or no flush in flight) records nothing: the
-/// flush-level maintenance accumulators alone correct the pool total there.
-public(package) fun record_maintenance_cash_delta(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    cash_added: u64,
-    cash_removed: u64,
-) {
-    market.reconcile_stale_valuation_stamp(config);
-    if (market.valuation_stamp.is_none()) return;
-    let stamp = market.valuation_stamp.borrow_mut();
-    stamp.cash_added = stamp.cash_added + cash_added;
-    stamp.cash_removed = stamp.cash_removed + cash_removed;
-}
-
-/// NAV this market held at its flush's snapshot instant: live rows rolled back
-/// through the stamp's recorded deltas, then the exact shape of `current_nav` —
-/// free cash (balance net of the impact escrow, floored) minus the marked
-/// liability of the snapshot-instant book, floored at zero. Reconstruction
-/// `(live + removed) - added` cannot underflow: the snapshot quantity was a valid
-/// u64, so `live + removed = snapshot + added >= added`. The zero floor is exact,
-/// not a distortion surface: every in-window movement of the rows this reads —
-/// trades and pool maintenance alike — records on the stamp, so no unrecorded
-/// cash sits between the rollback and this floor, and the cash
-/// backing invariant keeps the pre-floor value above zero anyway, up to P-13's
-/// per-boundary rounding dust (marked liability never exceeds the payout
-/// liability that backing requires cash to cover).
+/// NAV this market held at its flush's snapshot instant: the exact shape of
+/// `current_nav` — free cash (balance net of the impact escrow, floored) minus
+/// the book's marked liability, floored at zero — over values captured AT that
+/// instant rather than reconstructed toward it. The cash rows were copied onto
+/// the stamp when the snapshot stage stamped this market; the liability is the
+/// live walk over the payout tree's captured shadows. No in-window movement of
+/// any row this reads can escape the capture — the stamp copy predates every
+/// post-snapshot mutation, and the tree captures each node before its first —
+/// so the zero floors are exact, and the cash backing invariant keeps the
+/// pre-floor value above zero anyway, up to P-13's per-boundary rounding dust
+/// (marked liability never exceeds the payout liability that backing requires
+/// cash to cover).
 public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     // Defensive, structurally unreachable: the only caller is `plp::value_expiry`
@@ -816,12 +793,8 @@ public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     // rule 4: documented in lieu of a bypass test).
     assert!(market.valuation_stamp.is_some(), EMarketNotPendingValuation);
     let stamp = market.valuation_stamp.borrow();
-    let snapshot_cash = market.cash.balance() + stamp.cash_removed - stamp.cash_added;
-    let snapshot_reserve =
-        market.cash.inventory_impact_reserve() + stamp.impact_reserve_removed
-        - stamp.impact_reserve_added;
-    let snapshot_free_cash = snapshot_cash.saturating_sub(snapshot_reserve);
-    let liability = market.strike_exposure.snapshot_marked_liability(pricer, &stamp.range_deltas);
+    let snapshot_free_cash = stamp.snapshot_cash.saturating_sub(stamp.snapshot_impact_reserve);
+    let liability = market.strike_exposure.frozen_marked_liability(pricer, stamp.flush_seq);
     snapshot_free_cash.saturating_sub(liability)
 }
 
@@ -902,66 +875,16 @@ public(package) fun create_and_share(
 /// Discard a stamp whose flush is no longer in flight (aborted, or finished
 /// having defensively left the stamp). Stale stamps are cleared lazily by the
 /// next trade or settle attempt, so neither abort nor finish has to visit every
-/// stamped market.
+/// stamped market. The tree snapshot deactivates with the stamp — capture and
+/// husk retention stop — but is not walked here (this runs on the trade path);
+/// husks a stale generation already retained fall out at the next consumed
+/// snapshot, or at the next mutation that empties their node.
 fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &ProtocolConfig) {
     if (market.valuation_stamp.is_none()) return;
     let stamp_seq = market.valuation_stamp.borrow().flush_seq;
     if (!config.is_current_flush(stamp_seq)) {
         market.valuation_stamp = option::none();
-    };
-}
-
-/// Reconcile the stamp and return whether this trade must record its deltas.
-/// Mutation-independent precondition: a full delta log aborts here, before any
-/// book or cash state moves, bounding a stalled flush's per-market damage to
-/// "this market refuses trades until valued or the flush is discarded".
-fun begin_trade_recording(market: &mut ExpiryMarket, config: &ProtocolConfig): bool {
-    market.reconcile_stale_valuation_stamp(config);
-    if (market.valuation_stamp.is_none()) return false;
-    assert!(
-        market.valuation_stamp.borrow().range_deltas.length()
-            < config.max_valuation_log_ops(),
-        EValuationLogFull,
-    );
-    true
-}
-
-/// Record one trade's book deltas on the stamp: the range op exactly as applied
-/// to the payout tree, and the measured movements of the two cash rows NAV reads.
-/// Measuring (before/after) rather than re-deriving from fee components keeps the
-/// record correct under any future re-plumbing of the payment decomposition.
-fun record_trade_deltas(
-    market: &mut ExpiryMarket,
-    lower_tick: u64,
-    higher_tick: u64,
-    quantity: u64,
-    is_insert: bool,
-    cash_before: u64,
-    reserve_before: u64,
-) {
-    let cash_after = market.cash.balance();
-    let reserve_after = market.cash.inventory_impact_reserve();
-    let stamp = market.valuation_stamp.borrow_mut();
-    stamp
-        .range_deltas
-        .push_back(
-            strike_payout_tree::new_range_delta(
-                lower_tick,
-                higher_tick,
-                quantity,
-                is_insert,
-            ),
-        );
-    if (cash_after >= cash_before) {
-        stamp.cash_added = stamp.cash_added + (cash_after - cash_before);
-    } else {
-        stamp.cash_removed = stamp.cash_removed + (cash_before - cash_after);
-    };
-    if (reserve_after >= reserve_before) {
-        stamp.impact_reserve_added = stamp.impact_reserve_added + (reserve_after - reserve_before);
-    } else {
-        stamp.impact_reserve_removed =
-            stamp.impact_reserve_removed + (reserve_before - reserve_after);
+        market.strike_exposure.deactivate_valuation_snapshot();
     };
 }
 
@@ -973,10 +896,11 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 }
 
 // Trade flows are deliberately NOT gated on the valuation lock: a flush spans
-// transactions, and pausing trading for its whole window was rejected. Instead a
-// market the flush snapshotted carries a `ValuationStamp`, and every trade on it
-// records its book deltas for `value_expiry` to roll back (see
-// `begin_trade_recording`).
+// transactions, and pausing trading for its whole window was rejected. A market
+// the flush snapshotted carries a `ValuationStamp` with its cash rows captured at
+// the snapshot instant, and the payout tree captures its own boundary shadows as
+// trades touch it — so trades run unrecorded and unbudgeted while the market
+// awaits its `value_expiry`.
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
     market.assert_pricer_bound(pricer);
@@ -1007,9 +931,7 @@ fun mint_prepared(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let recording = market.begin_trade_recording(config);
-    let cash_before = market.cash.balance();
-    let reserve_before = market.cash.inventory_impact_reserve();
+    market.reconcile_stale_valuation_stamp(config);
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -1047,16 +969,6 @@ fun mint_prepared(
         clock,
         ctx,
     );
-    if (recording) {
-        market.record_trade_deltas(
-            minted_order.lower_tick(),
-            minted_order.higher_tick(),
-            minted_order.quantity(),
-            true,
-            cash_before,
-            reserve_before,
-        );
-    };
     order_events::emit_order_minted(
         market.id(),
         account.account_id(),
@@ -1180,9 +1092,7 @@ fun redeem_live_with_auth(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    let recording = market.begin_trade_recording(config);
-    let cash_before = market.cash.balance();
-    let reserve_before = market.cash.inventory_impact_reserve();
+    market.reconcile_stale_valuation_stamp(config);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
@@ -1275,17 +1185,6 @@ fun redeem_live_with_auth(
         builder_code_id,
         ctx,
     );
-    if (recording) {
-        market.record_trade_deltas(
-            order.lower_tick(),
-            order.higher_tick(),
-            close_quantity,
-            false,
-            cash_before,
-            reserve_before,
-        );
-    };
-
     order_events::emit_live_order_redeemed(
         market.id(),
         account.account_id(),

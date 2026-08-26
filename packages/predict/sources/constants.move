@@ -78,9 +78,9 @@ public(package) macro fun object_cache_budget(): u64 { 1_000 }
 /// at 1-2: Predict uses `sui::table` only, so each row is one child, and a `Table`
 /// stored inline in its parent is not itself a cached child. UNMEASURED, and set far
 /// above that estimate because running out delays every queued LP fill until the
-/// oversized market expires. C-2 tightens it. The valuation delta log adds no
-/// children: it is a plain vector inside the market object, and log-only boundaries
-/// are priced from memory.
+/// oversized market expires. C-2 tightens it. Snapshot husks add no children: a
+/// boundary emptied mid-window is retained in place as an existing tree node, so
+/// the frozen walk loads exactly the nodes the cap already bounds.
 public(package) macro fun valuation_base_children_reserve(): u64 { 40 }
 
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.

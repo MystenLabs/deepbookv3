@@ -1,24 +1,23 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Coverage for trading during an in-flight flush: the valuation stamp's delta
-/// recording, the snapshot-exact rollback, the LP-queue eligibility cutoff, the
-/// per-market settlement gate, lazy stamp reconciliation across aborts, and the
-/// delta-log cap.
+/// Coverage for trading during an in-flight flush: the snapshot capture that
+/// keeps the mark exact under mid-window trades, the LP-queue eligibility
+/// cutoff, the per-market settlement gate, lazy stamp reconciliation across
+/// aborts, and the absence of any mid-window trade budget.
 ///
 /// The exactness tests are metamorphic: the same books produce a control mark
 /// from an undisturbed flush, then a second flush runs with trades injected
 /// between its snapshot and its valuation and must produce the IDENTICAL mark —
-/// the trades are provably cancelled out. Each carries a guard flush afterwards
-/// (the same trades now pre-snapshot) asserting the mark MOVES, so the equality
-/// is the corrections at work, not an insensitive mark. The control comes from a
-/// code path that never exercises the rollback arithmetic under test, so the
+/// the trades are provably invisible to the captured figure. Each carries a
+/// guard flush afterwards (the same trades now pre-snapshot) asserting the mark
+/// MOVES, so the equality is the capture at work, not an insensitive mark. The
+/// control comes from a code path that never mutates a captured book, so the
 /// oracle is independent in the sense of unit-test rule 1.
 #[test_only]
 module deepbook_predict::valuation_corrections_tests;
 
 use deepbook_predict::{
-    config_constants,
     constants,
     expiry_market,
     flow_test_helpers as helpers,
@@ -150,8 +149,8 @@ fun a_full_close_deleting_boundaries_mid_window_leaves_the_mark_unchanged() {
 
     let control_mark = run_undisturbed_flush(&mut fx, &mut market);
 
-    // Fully closing the only position deletes its boundary node from the live
-    // tree, so the rollback must price that boundary from the delta log alone.
+    // Fully closing the only position empties its boundary nodes, so the frozen
+    // walk must price the retained husks alone.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
@@ -539,7 +538,7 @@ fun a_market_expiring_mid_flush_values_at_the_frozen_mark_then_settles() {
 // === Lazy reconciliation across aborts ===
 
 #[test]
-fun an_aborted_flushs_delta_log_never_leaks_into_the_next_flush() {
+fun an_aborted_flushs_snapshot_never_leaks_into_the_next_flush() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.bootstrap_lock(SUPPLY_AMOUNT);
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -641,53 +640,17 @@ fun value_expiry_moves_no_cash_for_a_live_market() {
     fx.finish();
 }
 
-// === The delta-log cap ===
-
-#[test, expected_failure(abort_code = expiry_market::EValuationLogFull)]
-fun a_full_delta_log_aborts_trades_on_that_market() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
-    fx.bootstrap_lock(SUPPLY_AMOUNT);
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    fx.set_max_valuation_log_ops(&mut config, config_constants::min_max_valuation_log_ops!());
-    return_shared(config);
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(expiry_id);
-    let mut account = fx.take_account_bundle(&trader);
-
-    fx.scenario_mut().next_tx(test_constants::alice());
-    fx.start_flush_bundle(&mut market);
-    let mut minted = 0;
-    while (minted < config_constants::min_max_valuation_log_ops!()) {
-        fx.mint_bundle(
-            &mut market,
-            &mut account,
-            helpers::strike_tick(),
-            helpers::pos_inf_tick(),
-            constants::position_lot_size!() * 400,
-        );
-        minted = minted + 1;
-    };
-    // The cap bounds the log strictly: the next trade on this market aborts
-    // until its valuation lands or the flush is discarded.
-    fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        helpers::pos_inf_tick(),
-        constants::position_lot_size!() * 400,
-    );
-    abort 999
-}
+// === Unbudgeted mid-window trading ===
 
 #[test]
-fun valuing_the_market_reopens_trading_after_a_full_log() {
+fun mid_window_trading_has_no_budget() {
+    // The retired delta log capped mid-window trades per market (its floor was
+    // 64, so trade 65 aborted at that setting). Snapshot capture has
+    // no per-trade record, so nothing bounds how much a pending market trades:
+    // 65 mints land while the market awaits its value leg, and the flush still
+    // completes on its frozen figure.
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.bootstrap_lock(SUPPLY_AMOUNT);
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    fx.set_max_valuation_log_ops(&mut config, config_constants::min_max_valuation_log_ops!());
-    return_shared(config);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -695,7 +658,7 @@ fun valuing_the_market_reopens_trading_after_a_full_log() {
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     let mut minted = 0;
-    while (minted < config_constants::min_max_valuation_log_ops!()) {
+    while (minted < 65) {
         fx.mint_bundle(
             &mut market,
             &mut account,
@@ -706,7 +669,7 @@ fun valuing_the_market_reopens_trading_after_a_full_log() {
         minted = minted + 1;
     };
     fx.value_expiry_bundle(&mut market);
-    // The stamp is cleared: trading resumes before the flush even finishes.
+    // The stamp is cleared: trading also continues before the flush finishes.
     let _reopened = fx.mint_bundle(
         &mut market,
         &mut account,

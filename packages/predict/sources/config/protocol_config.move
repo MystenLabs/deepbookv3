@@ -63,11 +63,6 @@ public struct ProtocolConfig has key {
     /// LP queue fills and the flush-set markets' settlement — trading continues —
     /// so this bounds LP-fill latency and is tuned alongside flush cadence (RP-29).
     max_valuation_window_ms: u64,
-    /// Range operations one market's valuation delta log may record before trades
-    /// on that market abort for the rest of its wait; prices a bounded per-market
-    /// trade freeze against `value_expiry`'s compute headroom (one extra pricer
-    /// evaluation per logged boundary).
-    max_valuation_log_ops: u64,
     strike_exposure_template_config: StrikeExposureConfig,
     ewma_config: EwmaConfig,
     /// Minimum package version permitted to run version-gated flows. Monotonic;
@@ -341,22 +336,6 @@ public fun set_max_valuation_window_ms(
     config.max_valuation_window_ms = window_ms;
 }
 
-/// Set how many range operations one market's valuation delta log may record
-/// while it awaits its `value_expiry`. Deliberately NOT gated on the valuation
-/// flag: raising the cap mid-flush is the operator's live remedy when a hot
-/// market fills its log under a stalled keeper, and each logged boundary only
-/// adds compute (one pricer evaluation) to that market's own valuation
-/// transaction.
-public fun set_max_valuation_log_ops(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    log_ops: u64,
-) {
-    config.assert_version();
-    config_constants::assert_max_valuation_log_ops(log_ops);
-    config.max_valuation_log_ops = log_ops;
-}
-
 /// Set the ceiling on LP-attributable pool value that queued supplies may raise the
 /// pool to. A supply that would carry the pool past it is filled up to the cap at the
 /// flush and its remainder stays queued;
@@ -516,10 +495,6 @@ public(package) fun max_valuation_window_ms(config: &ProtocolConfig): u64 {
     config.max_valuation_window_ms
 }
 
-public(package) fun max_valuation_log_ops(config: &ProtocolConfig): u64 {
-    config.max_valuation_log_ops
-}
-
 public(package) fun current_flush_seq(config: &ProtocolConfig): u64 {
     config.flush_seq
 }
@@ -637,7 +612,6 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
         max_valuation_window_ms: config_constants::default_max_valuation_window_ms!(),
-        max_valuation_log_ops: config_constants::default_max_valuation_log_ops!(),
         strike_exposure_template_config: strike_exposure_config::new(),
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),

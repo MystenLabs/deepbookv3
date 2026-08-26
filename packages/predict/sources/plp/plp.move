@@ -105,15 +105,16 @@ public struct PoolVault has key {
 /// instant, which is what keeps the pool mark exact (audit L10) once valuation
 /// spans transactions. **Valuation (resumable):** each `value_expiry` folds one
 /// market's snapshot-instant NAV into `total_nav` exactly once, pricing against
-/// its frozen `Pricer` with every post-snapshot trade rolled back through the
-/// market's stamp (a swept settled market contributes 0). **Finish:**
+/// its frozen `Pricer` over the cash values and payout-tree shadows captured at
+/// the snapshot instant (a swept settled market contributes 0). **Finish:**
 /// `finish_flush` proves every snapshotted market was valued, prices the pool
 /// NAV, and drains the LP queues against it up to the recorded cutoffs.
 ///
-/// Trading is never gated on the flush: post-snapshot trades in a not-yet-valued
-/// market self-record onto that market's stamp and are cancelled out of its
-/// valuation, and trades in an already-valued market are invisible to a figure
-/// that already exists — both are exactly as-of-snapshot semantics. Splitting the
+/// Trading is never gated on the flush: a not-yet-valued market's snapshot state
+/// is captured — cash eagerly on its stamp, tree boundaries lazily in its nodes
+/// — so post-snapshot trades cannot reach the figure being valued, and trades in
+/// an already-valued market are invisible to a figure that already exists — both
+/// are exactly as-of-snapshot semantics. Splitting the
 /// stages is what removes C-1's ceiling: only `value_expiry` walks payout trees
 /// (one dynamic-field child per distinct strike tick), and it carries just one
 /// market's nodes per transaction under Sui's 1,000-cached-object limit.
@@ -375,9 +376,10 @@ public fun seal_valuation_snapshot(
 /// Fold one snapshotted market's SNAPSHOT-INSTANT NAV into the running total. A
 /// market frozen as settled is swept (deactivated, cash returned, profit
 /// materialized) and contributes 0; a market frozen with a pricer is valued
-/// through `expiry_market::snapshot_nav`, which rolls every post-snapshot trade
-/// back off the live rows before marking against the frozen pricer, then has its
-/// stamp cleared so later trades run unrecorded (they are invisible to a figure
+/// through `expiry_market::snapshot_nav`, which marks the snapshot-captured cash
+/// and payout-tree shadows against the frozen pricer, then has its stamp cleared
+/// — releasing the tree snapshot and its retained nodes — so later trades and
+/// the next flush start from a clean live tree (they are invisible to a figure
 /// already folded — as-of-snapshot semantics either way).
 ///
 /// This is the resumable stage: any transaction after the seal, one market per
@@ -385,14 +387,14 @@ public fun seal_valuation_snapshot(
 /// clock — the frozen snapshot alone decides both the branch and the mark. For a
 /// live market this stage is MEASUREMENT-ONLY: it moves no cash itself, and cash
 /// maintenance stays fully decoupled — `rebalance_expiry_cash` may run at any
-/// time, including mid-window, because every in-window live move records on the
-/// market's stamp (rolled back here with the trades) and on the flush's
-/// maintenance accumulators (reversed at the finish), so no unrecorded movement
-/// ever sits between the rollback and the zero floors and the snapshot formula
-/// holds exactly in every regime, including a floor-clamped market. Only the
-/// settled sweep moves cash here, and its return lands in idle, which the finish
-/// measures. A market that expired mid-window is valued at its frozen pre-expiry
-/// mark, and its settlement waits only for this call to clear the stamp.
+/// time, including mid-window, because the snapshot values were captured before
+/// any in-window move could touch them, and the flush's maintenance accumulators
+/// (reversed at the finish) keep the pool total invariant to maintenance timing;
+/// the snapshot formula holds exactly in every regime, including a floor-clamped
+/// market. Only the settled sweep moves cash here, and its return lands in idle,
+/// which the finish measures. A market that expired mid-window is valued at its
+/// frozen pre-expiry mark, and its settlement waits only for this call to clear
+/// the stamp.
 public fun value_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -606,11 +608,11 @@ public fun abort_valuation_privileged(
 /// Mint asserts backing but never pulls pool cash, so this is what makes a market
 /// mintable. The market must already be registered to this vault
 /// (`registry::create_and_share_expiry_market`). Runs at any time, including while
-/// a flush is in flight: an in-window live-market move is recorded on the
-/// market's stamp (so the snapshot reconstruction keeps excluding it) and
-/// reversed out of the flush's pool total and profit basis, so the mark is
-/// invariant to maintenance timing and a market can always be topped back into
-/// its mintable band mid-flush.
+/// a flush is in flight: a pending market's snapshot cash was captured before
+/// any in-window move could touch it, and the move is reversed out of the
+/// flush's pool total and profit basis, so the mark is invariant to maintenance
+/// timing and a market can always be topped back into its mintable band
+/// mid-flush.
 public fun rebalance_expiry_cash(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -941,17 +943,12 @@ fun sweep_or_rebalance_expiry(
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, config, expiry_market_id);
+        vault.rebalance_live_expiry(market, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    expiry_market_id: ID,
-) {
+fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
     vault.sync_fee_incentives(market, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
@@ -967,7 +964,7 @@ fun rebalance_live_expiry(
             cash_balance,
             target_cash,
         );
-        vault.record_live_maintenance(market, config, sent, 0);
+        vault.record_live_maintenance(sent, 0);
     } else if (cash_balance > sweep_threshold_cash) {
         let returned = vault.sweep_live_expiry_surplus(
             market,
@@ -975,29 +972,23 @@ fun rebalance_live_expiry(
             cash_balance,
             target_cash,
         );
-        vault.record_live_maintenance(market, config, 0, returned);
+        vault.record_live_maintenance(0, returned);
     };
 }
 
-/// Record one live-market maintenance move for the in-flight flush, on both
-/// ledgers that must exclude it: the market's stamp (a pending market's
-/// `snapshot_nav` rolls it back with the trades) and the flush's pool-level
-/// accumulators (`finish_flush` reverses it out of idle and the profit basis).
-/// Outside a flush both records are no-ops and the move is ordinary maintenance.
-fun record_live_maintenance(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    sent: u64,
-    returned: u64,
-) {
+/// Record one live-market maintenance move on the in-flight flush's pool-level
+/// accumulators, which `finish_flush` reverses out of idle and the profit basis.
+/// The market side needs no record: a pending market's `snapshot_nav` reads cash
+/// values captured at the snapshot instant, so any later movement — maintenance
+/// included — is structurally invisible to it. Outside a flush the record is a
+/// no-op and the move is ordinary maintenance.
+fun record_live_maintenance(vault: &mut PoolVault, sent: u64, returned: u64) {
     if (sent == 0 && returned == 0) return;
-    if (!config.valuation_in_progress()) return;
+    if (vault.valuation.is_none()) return;
     // Inside the still-open snapshot PTB nothing may record: the whole PTB is
     // the snapshot instant, so a move there is part of the baseline the frozen
     // pricers and stamps measure — recording it too would count it twice.
     if (!vault.valuation.borrow().sealed) return;
-    market.record_maintenance_cash_delta(config, sent, returned);
     let valuation = vault.valuation.borrow_mut();
     valuation.maintenance_sent = valuation.maintenance_sent + sent;
     valuation.maintenance_returned = valuation.maintenance_returned + returned;

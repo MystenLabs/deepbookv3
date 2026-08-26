@@ -153,17 +153,31 @@ public(package) fun live_marked_liability(exposure: &StrikeExposure, pricer: &Pr
     exposure.payout.walk_linear(pricer, exposure.tick_size)
 }
 
-/// Return the marked liability the book held at a valuation snapshot: the live
-/// walk with every range mutation recorded since the snapshot rolled back. Same
-/// per-boundary rounding, clamping, and monotonicity contract as
-/// `live_marked_liability` over the snapshot-instant book.
-public(package) fun snapshot_marked_liability(
+/// Return the marked liability the book held at generation `snapshot_seq`'s
+/// valuation snapshot: the same walk as `live_marked_liability` over the terms
+/// the payout tree captured at that instant. Same per-boundary rounding,
+/// clamping, and monotonicity contract over the snapshot-instant book.
+public(package) fun frozen_marked_liability(
     exposure: &StrikeExposure,
     pricer: &Pricer,
-    deltas: &vector<strike_payout_tree::RangeDelta>,
+    snapshot_seq: u64,
 ): u64 {
-    let adjustments = strike_payout_tree::fold_range_deltas(deltas);
-    exposure.payout.walk_linear_adjusted(pricer, exposure.tick_size, &adjustments)
+    exposure.payout.walk_linear_frozen(pricer, exposure.tick_size, snapshot_seq)
+}
+
+/// Begin holding generation `snapshot_seq`'s book snapshot for the frozen walk.
+public(package) fun activate_valuation_snapshot(exposure: &mut StrikeExposure, snapshot_seq: u64) {
+    exposure.payout.activate_snapshot(snapshot_seq);
+}
+
+/// Discard a stale (aborted-flush) snapshot without walking the tree.
+public(package) fun deactivate_valuation_snapshot(exposure: &mut StrikeExposure) {
+    exposure.payout.deactivate_snapshot();
+}
+
+/// Consume the snapshot after its frozen walk was read, removing retained husks.
+public(package) fun release_valuation_snapshot(exposure: &mut StrikeExposure) {
+    exposure.payout.release_snapshot();
 }
 
 /// Return one live order's full-close range value without consulting book state.

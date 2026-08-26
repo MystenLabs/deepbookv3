@@ -299,8 +299,10 @@ true of the generator but not of the committed data.
 RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
 `walk_linear` pays that per payout-tree node; since RP-29 the flush prices one
 market per transaction (C-1 — resolved — owned the old joint budget), so the
-increment lands on the per-transaction valuation compute that C-5 measures —
-last measured at ~51% of the wall for a full single-market book.
+increment lands on the per-transaction valuation compute (bounded at the node
+cap's boundary count; C-5 — resolved by the snapshot restructure — owned the
+retired delta log's extra term) — last measured at ~51% of the wall for a full
+single-market book.
 
 Precedent for sizing it: `evidence/c1-skew-gas-2026-07-09.md` records that the
 previous comparable addition (one `normal_pdf`, i.e. one `exp`) cost +2.2%
@@ -309,7 +311,7 @@ comparable increment is expected — not near a cliff, but unmeasured. Move
 unit-test metering put the difference under 0.01% of a test's gas; that is not
 on-chain compute and should not be cited as the answer.
 
-**Action:** fold a re-measurement into the C-5 localnet campaign rather than
+**Action:** fold a re-measurement into the C-2 localnet campaign rather than
 running one for this alone.
 
 ### P-31: A provider envelope ahead of the Sui clock silently empties the feed
@@ -384,13 +386,7 @@ trust coupling.
 `valuation_base_children_reserve` ships at 40 against a source-inspected true figure of 1-2 (`constants.move`), so `max_payout_tree_nodes` gives up ~4% of the strike grid as pure headroom (RP-30 derives the cap; C-1 — resolved — measured the wall). Tightening needs one localnet run: fill one market to the cap, run its `value_expiry` alone, and read the object-runtime count the transaction actually cached beyond the tree nodes. Decision rule, pre-registered: set the reserve to the measured base plus 8, and never below 8.
 
 - Instrument: `packages/predict/harness/ts/strategies/capacity.ts` `tree` profile against a localnet publish.
-- The run must include mid-window trades on the stamped market so the measured transaction carries a populated delta log (the log is inline vector state, expected zero extra children — the run proves that expectation).
-
-### C-5: `value_expiry` compute with a full delta log is unmeasured
-
-**Severity:** Low / measure before raising `max_valuation_log_ops`.
-
-A valuation transaction prices up to 960 tree nodes plus up to two boundaries per logged range op (`max_valuation_log_ops`, default 256 → up to ~1,472 SVI evaluations). C-1's evidence (resolved; `evidence/c1-price-memo-2026-07-01.md`) put ~1,000-node single-market pricing at 15-54% of the 5M compute cap, so +50% is expected to fit, but the sum is unmeasured and the log cap's ceiling (1,024) would roughly triple it. Measure one `value_expiry` at the node cap with a full log before any admin raises the cap past its default; record the compute fraction here and size the cap's ceiling from it.
+- The run must include mid-window trades on the stamped market, including full closes, so the measured walk covers retained husks (husks are ordinary tree nodes converted in place, expected zero extra children — the run proves that expectation).
 
 ## Oracle Calibration
 

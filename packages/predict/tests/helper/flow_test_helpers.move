@@ -416,11 +416,6 @@ public fun request_supply_direct(
     )
 }
 
-/// Set the per-market valuation delta-log cap through the real admin path.
-public fun set_max_valuation_log_ops(self: &Fixture, config: &mut ProtocolConfig, value: u64) {
-    config.set_max_valuation_log_ops(&self.admin_cap, value);
-}
-
 /// Queue an LP supply request against a bundle's vault through the production
 /// entrypoint.
 public fun request_supply_bundle(
