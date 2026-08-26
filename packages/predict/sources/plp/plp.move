@@ -86,10 +86,8 @@ public struct PoolSnapshot {
 
 /// Frozen pool-price function awaiting zero or more per-market liability walks.
 public struct PoolValuation has store {
-    assets_before_liability: u64,
-    profit_before_liability: u64,
-    protocol_profit_share: u64,
-    aggregate_liability: u64,
+    assets_remaining: u64,
+    profit_remaining: u64,
     pending_markets: vector<ID>,
 }
 
@@ -259,7 +257,7 @@ public fun snapshot_expiry(
 
 /// Consume the atomic snapshot builder after every market has frozen its cash and
 /// pricer. All pool and queue inputs are reduced to the constants needed to finish
-/// pricing from aggregate liability, then the snapshot lock is released.
+/// pricing as each market liability arrives, then the snapshot lock is released.
 public fun finish_pool_snapshot(
     snapshot: PoolSnapshot,
     vault: &mut PoolVault,
@@ -278,19 +276,17 @@ public fun finish_pool_snapshot(
     assert!(unprepared_markets.is_empty(), EMissingExpiryValuation);
     unprepared_markets.destroy_empty();
 
-    let assets_before_liability = (
+    let assets_remaining = (
         vault.expiry_accounting.idle_balance() + aggregate_market_cash,
     ).saturating_sub(vault.expiry_accounting.pending_protocol_profit());
-    let profit_before_liability = (
+    let profit_remaining = (
         vault.expiry_accounting.profit_basis_credits() + aggregate_market_cash,
     ).saturating_sub(vault.expiry_accounting.profit_basis_debits());
     vault
         .valuation
         .fill(PoolValuation {
-            assets_before_liability,
-            profit_before_liability,
-            protocol_profit_share: config.protocol_reserve_profit_share(),
-            aggregate_liability: 0,
+            assets_remaining,
+            profit_remaining,
             pending_markets,
         });
     config.end_snapshot();
@@ -305,8 +301,9 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
     let index = valuation.pending_markets.find_index!(|id| *id == market.id());
     if (index.is_none()) return;
     let index = index.destroy_some();
-    valuation.aggregate_liability =
-        valuation.aggregate_liability + market.consume_snapshot_marked_liability();
+    let liability = market.consume_snapshot_marked_liability();
+    valuation.assets_remaining = valuation.assets_remaining.saturating_sub(liability);
+    valuation.profit_remaining = valuation.profit_remaining.saturating_sub(liability);
     valuation.pending_markets.swap_remove(index);
 }
 
@@ -345,22 +342,18 @@ public fun finish_flush(
     if (vault.valuation.is_none()) return option::none();
     let valuation = vault.valuation.extract();
     let PoolValuation {
-        assets_before_liability,
-        profit_before_liability,
-        protocol_profit_share,
-        aggregate_liability,
+        assets_remaining,
+        profit_remaining,
         pending_markets,
     } = valuation;
     assert!(pending_markets.is_empty(), EMissingExpiryValuation);
     pending_markets.destroy_empty();
 
     let protocol_exclusion = math::mul_down(
-        profit_before_liability.saturating_sub(aggregate_liability),
-        protocol_profit_share,
+        profit_remaining,
+        config.protocol_reserve_profit_share(),
     );
-    let pool_value = assets_before_liability
-        .saturating_sub(aggregate_liability)
-        .saturating_sub(protocol_exclusion);
+    let pool_value = assets_remaining.saturating_sub(protocol_exclusion);
     // Only this drain can mint or burn PLP while a valuation is stored, so supply
     // is unchanged from the snapshot and needs only one pre-drain sample.
     let total_supply = vault.lp.total_supply();
