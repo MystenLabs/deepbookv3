@@ -45,6 +45,9 @@ public struct RequestEntry has copy, drop, store {
     recipient: address,
     amount: u64,
     min_output: u64,
+    /// Pool snapshot generation current when this request entered the queue. A
+    /// valuation may process it only after the pool advances to a later generation.
+    request_seq: u64,
     /// Frozen marks this request has already missed. Only ever non-zero when the
     /// protocol allows more than one attempt (`ProtocolConfig`), since at one
     /// attempt a miss refunds immediately.
@@ -146,9 +149,12 @@ public(package) fun request_supply<LP>(
     account_id: ID,
     recipient: address,
     min_plp_out: u64,
+    request_seq: u64,
 ): u64 {
     assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
-    book.supply_queue.enqueue(account_id, recipient, payment.into_balance(), min_plp_out)
+    book
+        .supply_queue
+        .enqueue(account_id, recipient, payment.into_balance(), min_plp_out, request_seq)
 }
 
 public(package) fun request_withdraw<LP>(
@@ -157,9 +163,12 @@ public(package) fun request_withdraw<LP>(
     account_id: ID,
     recipient: address,
     min_dusdc_out: u64,
+    request_seq: u64,
 ): u64 {
     assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
-    book.withdraw_queue.enqueue(account_id, recipient, lp.into_balance(), min_dusdc_out)
+    book
+        .withdraw_queue
+        .enqueue(account_id, recipient, lp.into_balance(), min_dusdc_out, request_seq)
 }
 
 public(package) fun cancel_supply_request<LP>(
@@ -242,6 +251,8 @@ public(package) fun requests_processed(summary: &DrainSummary): u64 {
 ///
 /// Supplies run first on purpose: their fresh idle cash funds same-flush withdrawals.
 /// User-cancelled requests are removed at cancel time and never spend flush capacity.
+/// Each queue stops at its first request that does not precede `snapshot_seq`,
+/// leaving that request and every later one for the next mark.
 /// Every fill is charged its leg's frozen fee rate on the DUSDC it actually fills —
 /// the slice, not the whole request, when the fill is partial. The two legs carry
 /// independent rates and the supply leg ships at zero. Refunded and still-queued
@@ -252,6 +263,7 @@ public(package) fun drain<LP>(
     mark: FlushMark,
     fees: FeeRates,
     pool_vault_id: ID,
+    snapshot_seq: u64,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     max_limit_misses: u64,
@@ -264,6 +276,7 @@ public(package) fun drain<LP>(
         &mark,
         &fees,
         pool_vault_id,
+        snapshot_seq,
         &supply_budget,
         max_limit_misses,
         max_pool_value,
@@ -274,6 +287,7 @@ public(package) fun drain<LP>(
         &mark,
         &fees,
         pool_vault_id,
+        snapshot_seq,
         &withdraw_budget,
         max_limit_misses,
         ctx,
@@ -292,6 +306,7 @@ fun drain_supply_queue<LP>(
     mark: &FlushMark,
     fees: &FeeRates,
     pool_vault_id: ID,
+    snapshot_seq: u64,
     budget: &Option<u64>,
     max_limit_misses: u64,
     max_pool_value: u64,
@@ -306,6 +321,7 @@ fun drain_supply_queue<LP>(
 
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
+        if (request.request_seq >= snapshot_seq) break;
         let quote = mark.quote_supply_shares(fees, request.amount);
         if (quote.is_none()) {
             processed = processed + 1;
@@ -428,6 +444,7 @@ fun drain_withdraw_queue<LP>(
     mark: &FlushMark,
     fees: &FeeRates,
     pool_vault_id: ID,
+    snapshot_seq: u64,
     budget: &Option<u64>,
     max_limit_misses: u64,
     ctx: &mut TxContext,
@@ -437,6 +454,7 @@ fun drain_withdraw_queue<LP>(
 
     while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
+        if (request.request_seq >= snapshot_seq) break;
         let quote = mark.quote_withdraw_dusdc(fees, request.amount);
         if (quote.is_none()) {
             quote.destroy_none();
@@ -648,6 +666,7 @@ fun enqueue<T>(
     recipient: address,
     escrow: Balance<T>,
     min_output: u64,
+    request_seq: u64,
 ): u64 {
     let index = queue.next_index;
     queue.next_index = index + 1;
@@ -663,6 +682,7 @@ fun enqueue<T>(
             recipient,
             amount,
             min_output,
+            request_seq,
             missed_flushes: 0,
         });
     queue.escrow.join(escrow);

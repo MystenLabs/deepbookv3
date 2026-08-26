@@ -155,8 +155,10 @@ public struct WithdrawFilled has copy, drop, store {
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
+    /// Pool snapshot generation that produced this mark.
+    snapshot_seq: u64,
     /// LP-attributable pool NAV every fill was priced at: idle plus
-    /// `active_market_nav`, excluding unrealized and pending protocol profit.
+    /// snapshotted market cash, less marked liability and protocol-owned profit.
     pool_value: u64,
     /// PLP supply in the frozen pre-drain mark used to price every fill.
     total_supply: u64,
@@ -165,12 +167,6 @@ public struct FlushExecuted has copy, drop, store {
     supply_fee_rate: u64,
     /// Withdraw-leg fee rate in FLOAT_SCALING, frozen alongside it.
     withdraw_fee_rate: u64,
-    /// Sum of the marked NAV contributed by each active market; settled markets add zero.
-    active_market_nav: u64,
-    /// Number of active markets valued for this flush.
-    market_count: u64,
-    /// Idle DUSDC held by the pool at valuation time, before the drain.
-    idle_balance_before: u64,
     supplies_filled: u64,
     withdrawals_filled: u64,
     requests_processed: u64,
@@ -408,13 +404,11 @@ public(package) fun emit_withdraw_filled(
 public(package) fun emit_flush_executed(
     pool_vault_id: ID,
     epoch: u64,
+    snapshot_seq: u64,
     pool_value: u64,
     total_supply: u64,
     supply_fee_rate: u64,
     withdraw_fee_rate: u64,
-    active_market_nav: u64,
-    market_count: u64,
-    idle_balance_before: u64,
     supplies_filled: u64,
     withdrawals_filled: u64,
     requests_processed: u64,
@@ -424,13 +418,11 @@ public(package) fun emit_flush_executed(
     event::emit(FlushExecuted {
         pool_vault_id,
         epoch,
+        snapshot_seq,
         pool_value,
         total_supply,
         supply_fee_rate,
         withdraw_fee_rate,
-        active_market_nav,
-        market_count,
-        idle_balance_before,
         supplies_filled,
         withdrawals_filled,
         requests_processed,

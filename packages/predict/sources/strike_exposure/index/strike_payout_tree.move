@@ -38,7 +38,6 @@ use sui::table::{Self, Table};
 const EInsufficientPayoutQuantity: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
 const ENonMonotonePrice: u64 = 2;
-const ESnapshotTimestampNotIncreasing: u64 = 3;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -48,9 +47,11 @@ public struct StrikePayoutTree has store {
     /// Aggregate order quantity over the open-lower prefix, which is also its
     /// aggregate settled payout.
     base: u64,
-    /// Zero selects live state. A positive value selects the tree state frozen
-    /// at that timestamp, captured lazily in nodes as they next mutate.
-    snapshot_timestamp_ms: u64,
+    /// Frozen pricing state for the most recently requested snapshot. Setting a
+    /// new snapshot overwrites it without applying lifecycle or freshness policy.
+    snapshot_pricer: Option<Pricer>,
+    /// Pool-owned generation used by each node's lazy snapshot copy.
+    snapshot_seq: u64,
     snapshot_base: u64,
 }
 
@@ -79,12 +80,12 @@ public struct PayoutNode has copy, drop, store {
     /// recomputed without deriving locals by subtracting child summaries.
     local_start: u64,
     local_end: u64,
-    /// Boundary terms immediately before this node's first mutation at
-    /// `snapshot_timestamp_ms`. A matching timestamp with zero terms means the
-    /// node was created after the snapshot.
+    /// Boundary terms immediately before this node's first mutation in
+    /// `snapshot_seq`. A matching sequence with zero terms means the node was
+    /// created after that snapshot.
     snapshot_local_start: u64,
     snapshot_local_end: u64,
-    snapshot_timestamp_ms: u64,
+    snapshot_seq: u64,
     summary: PayoutSummary,
 }
 
@@ -170,13 +171,9 @@ public(package) fun settled_payout_liability(
 /// The start and end sides accumulate as two non-negative totals: a node's net
 /// `local_start - local_end` quantity is signed, so a single running `u64` would
 /// underflow mid-walk. They combine once at the top:
-/// `base + start_total - end_total`. The selected base is the `P(-inf) = 1`
+/// `base + start_total - end_total`. `tree.base` is the `P(-inf) = 1`
 /// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
 /// are never stored (`P = 0`).
-///
-/// Before the first snapshot this reads live boundaries. Once a timestamp is set,
-/// it reads each boundary as it existed at that timestamp while live updates keep
-/// using the same tree.
 public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
     let mut previous_price = option::none();
     let (start_total, end_total) = walk_linear_subtree(
@@ -184,17 +181,30 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
         tree.root,
         pricer,
         tick_size,
-        tree.snapshot_timestamp_ms,
+        option::none(),
         &mut previous_price,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
     // once. This can differ from pricing and flooring each order independently.
-    let base = if (tree.snapshot_timestamp_ms == 0) {
-        tree.base
-    } else {
-        tree.snapshot_base
-    };
-    (base + start_total).saturating_sub(end_total)
+    (tree.base + start_total).saturating_sub(end_total)
+}
+
+/// Value the quantity-weighted liability frozen by `set_snapshot_pricer`.
+///
+/// Nodes untouched since the snapshot still hold their snapshot quantities in
+/// the live fields. Nodes first mutated after it copied those live fields before
+/// applying the mutation, and nodes created after it carry a matching zero copy.
+public(package) fun walk_linear_snapshot(tree: &StrikePayoutTree, tick_size: u64): u64 {
+    let mut previous_price = option::none();
+    let (start_total, end_total) = walk_linear_subtree(
+        &tree.nodes,
+        tree.root,
+        tree.snapshot_pricer.borrow(),
+        tick_size,
+        option::some(tree.snapshot_seq),
+        &mut previous_price,
+    );
+    (tree.snapshot_base + start_total).saturating_sub(end_total)
 }
 
 /// Create an empty sparse payout tree.
@@ -204,20 +214,21 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
         nodes: table::new(ctx),
         node_count: 0,
         base: 0,
-        snapshot_timestamp_ms: 0,
+        snapshot_pricer: option::none(),
+        snapshot_seq: 0,
         snapshot_base: 0,
     }
 }
 
-/// Freeze the current tree state for subsequent linear walks. Nodes capture their
-/// boundary terms lazily immediately before their first mutation under this
-/// timestamp; untouched nodes remain their own snapshot.
-public(package) fun set_snapshot_timestamp(
+/// Overwrite the frozen pricer and bind the lazy position snapshot to the pool's
+/// canonical snapshot generation.
+public(package) fun set_snapshot_pricer(
     tree: &mut StrikePayoutTree,
-    snapshot_timestamp_ms: u64,
+    pricer: Pricer,
+    snapshot_seq: u64,
 ) {
-    assert!(snapshot_timestamp_ms > tree.snapshot_timestamp_ms, ESnapshotTimestampNotIncreasing);
-    tree.snapshot_timestamp_ms = snapshot_timestamp_ms;
+    tree.snapshot_pricer = option::some(pricer);
+    tree.snapshot_seq = snapshot_seq;
     tree.snapshot_base = tree.base;
 }
 
@@ -291,7 +302,11 @@ fun apply_boundary_delta(
     add: bool,
 ) {
     let had_node = tree.nodes.contains(tick);
-    let snapshot_timestamp_ms = tree.snapshot_timestamp_ms;
+    let snapshot_seq = if (tree.snapshot_pricer.is_some()) {
+        option::some(tree.snapshot_seq)
+    } else {
+        option::none()
+    };
     let new_root = apply_at(
         &mut tree.nodes,
         tree.root,
@@ -299,7 +314,7 @@ fun apply_boundary_delta(
         quantity,
         is_start,
         add,
-        snapshot_timestamp_ms,
+        snapshot_seq,
     );
     tree.root = new_root;
 
@@ -318,11 +333,11 @@ fun apply_at(
     quantity: u64,
     is_start: bool,
     add: bool,
-    snapshot_timestamp_ms: u64,
+    snapshot_seq: Option<u64>,
 ): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutQuantity);
-        let leaf = new_leaf(quantity, is_start, snapshot_timestamp_ms);
+        let leaf = new_leaf(quantity, is_start, snapshot_seq);
         nodes.add(tick, leaf);
         return option::some(tick)
     };
@@ -331,13 +346,13 @@ fun apply_at(
     let mut node = nodes[root_tick];
 
     if (tick == root_tick) {
-        capture_snapshot_if_stale(&mut node, snapshot_timestamp_ms);
+        capture_snapshot_if_stale(&mut node, snapshot_seq);
         if (is_start) {
             apply_net_delta(&mut node.local_start, quantity, add);
         } else {
             apply_net_delta(&mut node.local_end, quantity, add);
         };
-        if (is_empty_node(node) && !has_snapshot_quantity(node, snapshot_timestamp_ms)) {
+        if (is_empty_node(node) && !has_snapshot_quantity(node, snapshot_seq)) {
             let _removed = nodes.remove(root_tick);
             return join_subtrees(nodes, node.left, node.right)
         };
@@ -356,7 +371,7 @@ fun apply_at(
                 quantity,
                 is_start,
                 add,
-                snapshot_timestamp_ms,
+                snapshot_seq,
             );
     } else {
         node.right =
@@ -367,14 +382,14 @@ fun apply_at(
                 quantity,
                 is_start,
                 add,
-                snapshot_timestamp_ms,
+                snapshot_seq,
             );
     };
 
     option::some(rebalance(nodes, root_tick, node))
 }
 
-fun new_leaf(quantity: u64, is_start: bool, snapshot_timestamp_ms: u64): PayoutNode {
+fun new_leaf(quantity: u64, is_start: bool, snapshot_seq: Option<u64>): PayoutNode {
     let (start, end) = if (is_start) {
         (quantity, 0)
     } else {
@@ -389,7 +404,11 @@ fun new_leaf(quantity: u64, is_start: bool, snapshot_timestamp_ms: u64): PayoutN
         local_end: end,
         snapshot_local_start: 0,
         snapshot_local_end: 0,
-        snapshot_timestamp_ms,
+        snapshot_seq: if (snapshot_seq.is_some()) {
+            *snapshot_seq.borrow()
+        } else {
+            0
+        },
         summary: boundary_summary(start, end),
     }
 }
@@ -545,16 +564,20 @@ fun window_summary(
 
 /// Accumulate start and end boundary products separately during an in-order walk.
 ///
-/// Every boundary selected by the live or snapshot view is priced, including one
-/// whose start and end quantities cancel. A zero snapshot boundary is skipped: it
-/// was created after the frozen state and therefore did not exist in that pricing
-/// surface.
+/// Every boundary with quantity in the selected view is priced, including one
+/// whose local start and end quantities cancel. Only the arithmetic is skipped
+/// there, because such a boundary contributes `price * q - price * q = 0` to the
+/// netted aggregate at any price. The pricing call itself must not be skipped: it
+/// is where monotonicity is observed, and a cancelling boundary is still the
+/// shared edge of two positions in that view. An inversion sitting on it does not
+/// move this walk's total, but it does move what per-position pricing pays, so
+/// skipping the observation would let NAV understate liability without aborting.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
     tick_size: u64,
-    snapshot_timestamp_ms: u64,
+    snapshot_seq: Option<u64>,
     previous_price: &mut Option<u64>,
 ): (u64, u64) {
     if (root.is_none()) return (0, 0);
@@ -566,12 +589,13 @@ fun walk_linear_subtree(
         node.left,
         pricer,
         tick_size,
-        snapshot_timestamp_ms,
+        snapshot_seq,
         previous_price,
     );
 
     let (local_start, local_end) = if (
-        snapshot_timestamp_ms != 0 && node.snapshot_timestamp_ms == snapshot_timestamp_ms
+        snapshot_seq.is_some()
+            && node.snapshot_seq == *snapshot_seq.borrow()
     ) {
         (node.snapshot_local_start, node.snapshot_local_end)
     } else {
@@ -601,7 +625,7 @@ fun walk_linear_subtree(
         node.right,
         pricer,
         tick_size,
-        snapshot_timestamp_ms,
+        snapshot_seq,
         previous_price,
     );
     (start_total + left_start + right_start, end_total + left_end + right_end)
@@ -673,17 +697,19 @@ fun is_empty_node(node: PayoutNode): bool {
     node.local_start == 0 && node.local_end == 0
 }
 
-fun has_snapshot_quantity(node: PayoutNode, snapshot_timestamp_ms: u64): bool {
-    snapshot_timestamp_ms != 0
-        && node.snapshot_timestamp_ms == snapshot_timestamp_ms
+fun has_snapshot_quantity(node: PayoutNode, snapshot_seq: Option<u64>): bool {
+    snapshot_seq.is_some()
+        && node.snapshot_seq == *snapshot_seq.borrow()
         && (node.snapshot_local_start != 0 || node.snapshot_local_end != 0)
 }
 
-fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_timestamp_ms: u64) {
-    if (snapshot_timestamp_ms == 0 || node.snapshot_timestamp_ms == snapshot_timestamp_ms) return;
+fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_seq: Option<u64>) {
+    if (snapshot_seq.is_none()) return;
+    let snapshot_seq = *snapshot_seq.borrow();
+    if (node.snapshot_seq == snapshot_seq) return;
     node.snapshot_local_start = node.local_start;
     node.snapshot_local_end = node.local_end;
-    node.snapshot_timestamp_ms = snapshot_timestamp_ms;
+    node.snapshot_seq = snapshot_seq;
 }
 
 fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {

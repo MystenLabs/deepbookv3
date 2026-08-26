@@ -5,7 +5,7 @@
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
 /// gate, the protocol-wide emergency freeze, and the transaction-local full-pool
-/// valuation lock. Flow modules decide which gates apply before they mutate
+/// snapshot lock. Flow modules decide which gates apply before they mutate
 /// expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
@@ -21,8 +21,8 @@ use deepbook_predict::{
 use sui::clock::Clock;
 
 const ETradingPaused: u64 = 0;
-const EValuationInProgress: u64 = 1;
-const EValuationNotInProgress: u64 = 2;
+const ESnapshotInProgress: u64 = 1;
+const ESnapshotNotInProgress: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
@@ -73,9 +73,9 @@ public struct ProtocolConfig has key {
     /// Account-package custody withdrawals and builder-fee claims are ungated and
     /// stay available (already-earned funds).
     frozen: bool,
-    /// Transaction-local lock held while a full-pool valuation is assembled, so no
-    /// NAV-changing op can interleave between per-market value steps in the PTB.
-    valuation_in_progress: bool,
+    /// Transaction-local lock held while a full-pool snapshot is assembled, so no
+    /// NAV-changing operation can interleave between its per-market preparation steps.
+    snapshot_in_progress: bool,
 }
 
 // === Public Functions ===
@@ -223,7 +223,7 @@ public fun set_template_max_entry_probability(
 
 /// Select which source the live forward is built from: `true` carries the Block
 /// Scholes basis on a fresh Pyth spot, `false` uses the Block Scholes forward
-/// directly. Locked during valuation so one flush marks every market on one formula.
+/// directly. Locked during snapshotting so one flush marks every market on one formula.
 public fun set_use_pyth_spot_for_forward(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -231,7 +231,7 @@ public fun set_use_pyth_spot_for_forward(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     config.pricing_config.set_use_pyth_spot_for_forward(enabled);
     config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
@@ -244,7 +244,7 @@ public fun set_pyth_spot_freshness_ms(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
     config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
@@ -257,7 +257,7 @@ public fun set_block_scholes_price_freshness_ms(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     config.pricing_config.set_block_scholes_price_freshness_ms(value);
     config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
@@ -270,7 +270,7 @@ public fun set_block_scholes_svi_freshness_ms(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
     config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
@@ -285,9 +285,6 @@ public fun set_lp_request_limit_flush_attempts(
     attempts: u64,
 ) {
     config.assert_version();
-    // The flush reads this value mid-PTB; refuse to move it under a valuation in
-    // flight, as the other setters a flush reads from do.
-    config.assert_not_valuation_in_progress();
     config_constants::assert_lp_request_limit_flush_attempts(attempts);
     config.lp_request_limit_flush_attempts = attempts;
 }
@@ -303,8 +300,6 @@ public fun set_max_lp_pool_value(
     max_pool_value: u64,
 ) {
     config.assert_version();
-    // The flush reads this mid-PTB, like the attempt count.
-    config.assert_not_valuation_in_progress();
     config_constants::assert_max_lp_pool_value(max_pool_value);
     config.max_lp_pool_value = max_pool_value;
 }
@@ -369,7 +364,7 @@ public fun set_protocol_reserve_profit_share(
     protocol_reserve_profit_share: u64,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
@@ -383,8 +378,7 @@ public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &Admin
 }
 
 /// Set the fee charged on executed PLP supply fills. Admin-gated and validated
-/// against its config-constants envelope. Locked during valuation so the rate a
-/// flush froze into its mark cannot change midway through that flush.
+/// against its config-constants envelope.
 public fun set_plp_supply_fee_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -392,7 +386,6 @@ public fun set_plp_supply_fee_rate(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config_constants::assert_plp_supply_fee_rate(rate);
     config.plp_supply_fee_rate = rate;
     config_events::emit_plp_fee_rates_updated(
@@ -402,8 +395,8 @@ public fun set_plp_supply_fee_rate(
     );
 }
 
-/// Set the fee charged on executed PLP withdraw fills. Same gating as the supply
-/// leg; the two are independent so the exit charge can move without taxing entry.
+/// Set the fee charged on executed PLP withdraw fills. The two legs are independent
+/// so the exit charge can move without taxing entry.
 public fun set_plp_withdraw_fee_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -411,7 +404,6 @@ public fun set_plp_withdraw_fee_rate(
     clock: &Clock,
 ) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
     config_constants::assert_plp_withdraw_fee_rate(rate);
     config.plp_withdraw_fee_rate = rate;
     config_events::emit_plp_fee_rates_updated(
@@ -479,14 +471,14 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
 }
 
-/// Abort unless a valuation lock is currently active.
-public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
-    assert!(config.valuation_in_progress, EValuationNotInProgress);
+/// Abort unless a snapshot lock is currently active.
+public(package) fun assert_snapshot_in_progress(config: &ProtocolConfig) {
+    assert!(config.snapshot_in_progress, ESnapshotNotInProgress);
 }
 
-/// Abort unless no valuation lock is currently active.
-public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
-    assert!(!config.valuation_in_progress, EValuationInProgress);
+/// Abort unless no snapshot lock is currently active.
+public(package) fun assert_not_snapshot_in_progress(config: &ProtocolConfig) {
+    assert!(!config.snapshot_in_progress, ESnapshotInProgress);
 }
 
 /// Create and share the protocol-wide configuration object.
@@ -509,16 +501,16 @@ public(package) fun freeze_protocol(config: &mut ProtocolConfig) {
     config.set_frozen_internal(true);
 }
 
-/// Begin a transaction-local full-pool valuation lock.
-public(package) fun begin_valuation(config: &mut ProtocolConfig) {
-    config.assert_not_valuation_in_progress();
-    config.valuation_in_progress = true;
+/// Begin a transaction-local full-pool snapshot lock.
+public(package) fun begin_snapshot(config: &mut ProtocolConfig) {
+    config.assert_not_snapshot_in_progress();
+    config.snapshot_in_progress = true;
 }
 
-/// End a transaction-local full-pool valuation lock.
-public(package) fun end_valuation(config: &mut ProtocolConfig) {
-    config.assert_valuation_in_progress();
-    config.valuation_in_progress = false;
+/// End a transaction-local full-pool snapshot lock.
+public(package) fun end_snapshot(config: &mut ProtocolConfig) {
+    config.assert_snapshot_in_progress();
+    config.snapshot_in_progress = false;
 }
 
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
@@ -551,6 +543,6 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         version_watermark: constants::current_version!(),
         trading_paused: false,
         frozen: false,
-        valuation_in_progress: false,
+        snapshot_in_progress: false,
     }
 }

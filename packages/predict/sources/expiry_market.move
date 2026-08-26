@@ -588,7 +588,7 @@ public fun set_reference_tick(
     clock: &Clock,
 ): u64 {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
     let spot = pricing::load_exact_spot(
@@ -680,6 +680,27 @@ public fun try_settle(
 }
 
 // === Public-Package Functions ===
+
+/// Freeze this market's bound pricer in its payout tree, starting a lazy position snapshot.
+public(package) fun set_snapshot_pricer(
+    market: &mut ExpiryMarket,
+    pricer: Pricer,
+    snapshot_seq: u64,
+) {
+    market.assert_pricer_bound(&pricer);
+    market.strike_exposure.set_snapshot_pricer(pricer, snapshot_seq);
+}
+
+/// Return the marked liability from this market's frozen pricer and position view.
+/// Frozen cash accounting remains the pool valuation's responsibility.
+public(package) fun snapshot_marked_liability(market: &ExpiryMarket): u64 {
+    market.strike_exposure.snapshot_marked_liability()
+}
+
+/// Return cash available to PLP NAV after excluding the inventory-impact escrow.
+public(package) fun free_cash(market: &ExpiryMarket): u64 {
+    market.cash.free_cash()
+}
 
 /// Force `mint_paused = true` through the registry's `PauseCap` path. This cannot
 /// unpause and does not apply the package-version gate.
@@ -779,13 +800,13 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     market.assert_pricer_bound(pricer);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_not_snapshot_in_progress();
     assert!(market.is_settled(), EMarketNotSettled);
 }
 
