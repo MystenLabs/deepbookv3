@@ -76,17 +76,11 @@ public struct ExpiryMarket has key {
     valuation_stamp: Option<ValuationStamp>,
 }
 
-/// One flush's snapshot stamp on this market: the cash rows NAV reads, captured
-/// eagerly at the snapshot instant. The book side lives in the payout tree's own
-/// snapshot (activated together with this stamp), so no trade path records
-/// anything — every mutation source is covered by construction, with nothing to
-/// enumerate.
-///
-/// `flush_seq` names the flush that made the stamp. The stamp is current only
-/// while that flush is in flight (`protocol_config::is_current_flush`); an
-/// aborted or superseded flush leaves the stamp stale, and the next trade
-/// discards it (deactivating the tree snapshot with it) — so abort never has to
-/// visit stamped markets.
+/// One flush's snapshot stamp: the cash rows NAV reads, captured eagerly at the
+/// snapshot instant (the book side lives in the payout tree's own snapshot,
+/// activated with this stamp). Current only while `flush_seq`'s flush is in
+/// flight; a stale stamp is lazily discarded by the next trade, so abort never
+/// visits stamped markets.
 public struct ValuationStamp has drop, store {
     flush_seq: u64,
     /// `cash.balance()` at the snapshot instant.
@@ -745,13 +739,10 @@ public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives
     market.fee_incentive_balance.join(incentives);
 }
 
-/// Stamp this market for the flush whose snapshot stage is freezing it: capture
-/// the two cash rows NAV reads eagerly (this call IS the snapshot instant — it
-/// runs inside the atomic snapshot PTB) and activate the payout tree's own
-/// snapshot for the book side. Any surviving stamp being replaced is stale by
-/// construction: `begin_valuation` bumped the flush ordinal before this stage
-/// ran, and a current-flush double-stamp is rejected upstream
-/// (`EExpiryPricerAlreadySnapshotted`).
+/// Stamp this market for the flush freezing it: capture the two cash rows (this
+/// call IS the snapshot instant) and activate the tree snapshot. A surviving
+/// stamp being replaced is stale by construction — `begin_valuation` bumped the
+/// ordinal, and a current-flush double-stamp is rejected upstream.
 public(package) fun stamp_for_valuation(market: &mut ExpiryMarket, flush_seq: u64) {
     market.valuation_stamp =
         option::some(ValuationStamp {
@@ -762,29 +753,19 @@ public(package) fun stamp_for_valuation(market: &mut ExpiryMarket, flush_seq: u6
     market.strike_exposure.activate_valuation_snapshot(flush_seq);
 }
 
-/// Retire this market's stamp once its valuation is folded, consuming the payout
-/// tree's snapshot with it (which removes any nodes retained for a frozen walk —
-/// this generation's just-read one, or a stale generation's that was never
-/// consumed because its flush aborted). Later trades are ordinary: invisible to
-/// a flush that already measured this market, which is exactly as-of-snapshot
-/// semantics.
+/// Retire the stamp once its valuation is folded, consuming the tree snapshot
+/// with it (purging retained husks — this generation's or a stale one's). Later
+/// trades are invisible to the folded figure: as-of-snapshot semantics.
 public(package) fun clear_valuation_stamp(market: &mut ExpiryMarket) {
     market.valuation_stamp = option::none();
     market.strike_exposure.release_valuation_snapshot();
 }
 
-/// NAV this market held at its flush's snapshot instant: the exact shape of
-/// `current_nav` — free cash (balance net of the impact escrow, floored) minus
-/// the book's marked liability, floored at zero — over values captured AT that
-/// instant rather than reconstructed toward it. The cash rows were copied onto
-/// the stamp when the snapshot stage stamped this market; the liability is the
-/// live walk over the payout tree's captured shadows. No in-window movement of
-/// any row this reads can escape the capture — the stamp copy predates every
-/// post-snapshot mutation, and the tree captures each node before its first —
-/// so the zero floors are exact, and the cash backing invariant keeps the
-/// pre-floor value above zero anyway, up to P-13's per-boundary rounding dust
-/// (marked liability never exceeds the payout liability that backing requires
-/// cash to cover).
+/// NAV at the flush's snapshot instant: `current_nav`'s exact shape over values
+/// captured AT that instant — the stamp's cash copy predates every
+/// post-snapshot mutation and the tree captures each node before its first, so
+/// the zero floors are exact (backing keeps the pre-floor value above zero up
+/// to P-13's rounding dust).
 public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     market.assert_pricer_bound(pricer);
     // Defensive, structurally unreachable: the only caller is `plp::value_expiry`
@@ -872,13 +853,9 @@ public(package) fun create_and_share(
 
 // --- Valuation stamp bookkeeping ---
 
-/// Discard a stamp whose flush is no longer in flight (aborted, or finished
-/// having defensively left the stamp). Stale stamps are cleared lazily by the
-/// next trade or settle attempt, so neither abort nor finish has to visit every
-/// stamped market. The tree snapshot deactivates with the stamp — capture and
-/// husk retention stop — but is not walked here (this runs on the trade path);
-/// husks a stale generation already retained fall out at the next consumed
-/// snapshot, or at the next mutation that empties their node.
+/// Lazily discard a stale stamp (aborted or superseded flush), deactivating the
+/// tree snapshot with it. Not walked here (trade path): a stale generation's
+/// husks fall out at the next consumed snapshot.
 fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &ProtocolConfig) {
     if (market.valuation_stamp.is_none()) return;
     let stamp_seq = market.valuation_stamp.borrow().flush_seq;
@@ -895,12 +872,9 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
     assert!(!market.mint_paused, EMintPaused);
 }
 
-// Trade flows are deliberately NOT gated on the valuation lock: a flush spans
-// transactions, and pausing trading for its whole window was rejected. A market
-// the flush snapshotted carries a `ValuationStamp` with its cash rows captured at
-// the snapshot instant, and the payout tree captures its own boundary shadows as
-// trades touch it — so trades run unrecorded and unbudgeted while the market
-// awaits its `value_expiry`.
+// Trade flows are deliberately NOT gated on the valuation lock: a snapshotted
+// market's state is captured (stamp cash + tree shadows), so trades run
+// unrecorded and unbudgeted while it awaits its `value_expiry`.
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
     market.assert_pricer_bound(pricer);

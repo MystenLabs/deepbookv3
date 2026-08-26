@@ -91,11 +91,9 @@ public struct PayoutNode has copy, drop, store {
     /// recomputed without deriving locals by subtracting child summaries.
     local_start: u64,
     local_end: u64,
-    /// Boundary terms as of generation `snapshot_seq`'s snapshot instant,
-    /// captured lazily before this node's first mutation under that generation.
-    /// A node stamped with the active generation but zero shadows was created
-    /// after the snapshot; a node stamped with an older generation is untouched
-    /// since the snapshot, so its live terms ARE its shadow.
+    /// Boundary terms at generation `snapshot_seq`'s instant, captured before
+    /// the first mutation under it. Active generation + zero shadows = created
+    /// post-snapshot; older generation = untouched, live terms ARE the shadow.
     snapshot_local_start: u64,
     snapshot_local_end: u64,
     snapshot_seq: u64,
@@ -202,14 +200,11 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
     (tree.base + start_total).saturating_sub(end_total)
 }
 
-/// Value the liability the tree held at generation `snapshot_seq`'s snapshot
-/// instant. This is `walk_linear` — the same traversal, per-node rounding,
-/// two-sided accumulation, single floor, and monotonicity observation — over each
-/// node's shadow terms where the active generation captured them and its live
-/// terms where it did not (untouched since the snapshot means live IS the
-/// snapshot). A boundary created after the snapshot carries zero shadows and is
-/// not part of the frozen surface, so it is neither priced nor observed here; the
-/// live walk observes it on every live NAV read.
+/// Value the liability at generation `snapshot_seq`'s snapshot instant: the
+/// same walk as `walk_linear` over each node's shadow where the generation
+/// captured one, and its live terms where untouched (live IS the snapshot). A
+/// post-snapshot boundary carries zero shadows and is outside the frozen
+/// surface; the live walk observes it instead.
 public(package) fun walk_linear_frozen(
     tree: &StrikePayoutTree,
     pricer: &Pricer,
@@ -286,12 +281,10 @@ public(package) fun remove_range(
     tree.apply_range(lower_tick, higher_tick, quantity, false);
 }
 
-/// Begin holding generation `snapshot_seq`'s snapshot: the tree state at this
-/// instant becomes readable through `walk_linear_frozen` while live mutations
-/// continue. O(1) — `base` is captured eagerly and nodes capture themselves
-/// lazily on first mutation. The generation is the flush ordinal, minted
-/// strictly increasing by `protocol_config::begin_valuation`, so a stale
-/// activation (an aborted flush's) is always superseded, never re-entered.
+/// Begin holding generation `snapshot_seq`'s snapshot: readable through
+/// `walk_linear_frozen` while live mutations continue. O(1) — `base` is copied
+/// eagerly, nodes capture lazily on first mutation. Generations are flush
+/// ordinals, strictly increasing, so a stale activation is always superseded.
 public(package) fun activate_snapshot(tree: &mut StrikePayoutTree, snapshot_seq: u64) {
     assert!(snapshot_seq > tree.snapshot_seq, ESnapshotSeqNotIncreasing);
     tree.snapshot_seq = snapshot_seq;
@@ -299,21 +292,16 @@ public(package) fun activate_snapshot(tree: &mut StrikePayoutTree, snapshot_seq:
     tree.snapshot_base = tree.base;
 }
 
-/// Stop holding the snapshot without walking the tree: shadows stop being
-/// captured and emptied nodes stop being retained. For the trade-path discard of
-/// a stale (aborted-flush) snapshot; nodes already retained for it stay until
-/// `release_snapshot` at the next consumed generation, or until a mutation
-/// empties them again with no current-generation shadow.
+/// Stop holding the snapshot without walking the tree (trade-path discard of a
+/// stale generation); its husks stay until the next consumed generation's
+/// `release_snapshot`.
 public(package) fun deactivate_snapshot(tree: &mut StrikePayoutTree) {
     tree.snapshot_active = false;
 }
 
-/// Consume the snapshot after its frozen walk has been read: deactivate, then
-/// remove every node with zero live quantities — exactly the nodes retained for
-/// a snapshot (this generation's, or a stale generation's never consumed because
-/// its flush aborted). Runs in the market's own valuation transaction, whose
-/// budget already covers every node (`constants::max_payout_tree_nodes`), so
-/// retention never outlives the one flush window that read it.
+/// Consume the snapshot after its frozen walk was read: deactivate, then remove
+/// every live-zero node (husks — this generation's or a stale one's). Runs in
+/// the valuation transaction, whose budget already covers every node.
 public(package) fun release_snapshot(tree: &mut StrikePayoutTree) {
     tree.snapshot_active = false;
     let mut husks = vector[];
@@ -608,10 +596,8 @@ fun window_summary(
 /// total, but it does move what `redeem_live` pays per order (`range_price` is
 /// evaluated per order, not netted), so skipping the observation would let NAV
 /// understate liability without aborting. A node whose selected terms are both
-/// zero is NOT part of the view — on the live view it is a retained husk (no
-/// live order touches its tick), on a frozen view it was created after the
-/// snapshot — so pricing it would observe a tick outside the surface being
-/// valued; the view that does own the tick observes it.
+/// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
+/// creation) — the view that owns the tick observes it.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
@@ -736,9 +722,8 @@ fun is_empty_node(node: PayoutNode): bool {
 }
 
 /// Copy live terms into the shadow before the first mutation under the active
-/// generation. A node already stamped with it — captured earlier, or created
-/// under it (whose zero shadows mean "not in the snapshot" and must survive
-/// every later mutation) — is left alone.
+/// generation; a node already stamped with it (captured, or created under it
+/// with the zero shadows that mean "not in the snapshot") is left alone.
 fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_seq: u64) {
     if (snapshot_seq == 0 || node.snapshot_seq == snapshot_seq) return;
     node.snapshot_local_start = node.local_start;
@@ -746,17 +731,15 @@ fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_seq: u64) {
     node.snapshot_seq = snapshot_seq;
 }
 
-/// Whether the active generation still needs this node: it captured a nonzero
-/// shadow that `walk_linear_frozen` has yet to read. A stale generation's shadow
-/// retains nothing — its flush was superseded and its walk can no longer run.
+/// Whether the active generation still needs this node: a nonzero shadow the
+/// frozen walk has yet to read. A stale generation's shadow retains nothing.
 fun retains_snapshot(node: &PayoutNode, snapshot_seq: u64): bool {
     snapshot_seq != 0
         && node.snapshot_seq == snapshot_seq
         && (node.snapshot_local_start != 0 || node.snapshot_local_end != 0)
 }
 
-/// Collect every live-zero tick in order. Only snapshot retention creates such
-/// nodes — an emptied node with no shadow to keep is removed at the mutation.
+/// Collect every live-zero tick (husks) in order.
 fun collect_husks(nodes: &Table<u64, PayoutNode>, root: Option<u64>, husks: &mut vector<u64>) {
     if (root.is_none()) return;
     let node = nodes[*root.borrow()];
@@ -765,9 +748,8 @@ fun collect_husks(nodes: &Table<u64, PayoutNode>, root: Option<u64>, husks: &mut
     collect_husks(nodes, node.right, husks);
 }
 
-/// Remove the node at `tick` — present by construction (a husk `collect_husks`
-/// found) — rejoining and rebalancing the path exactly as an emptying mutation
-/// would have.
+/// Remove the husk at `tick`, rejoining and rebalancing as an emptying
+/// mutation would.
 fun detach_tick(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>, tick: u64): Option<u64> {
     let root_tick = *root.borrow();
     let mut node = nodes[root_tick];
