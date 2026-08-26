@@ -167,6 +167,15 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   also serves the exact NAV linear walk (`Σ qty·P` over its live boundaries), so it
   is the single full-lifecycle live index. *Rejected:* folding settlement into the
   deleted NAV matrix and dropping the tree.
+- **Store payout boundaries in an inline sorted vector (2026-08-26).** `StrikePayoutTree`
+  keeps the same five evaluators and the same exact terms. Records sit in tick order
+  on the market object, so `walk_linear`, `range_max_payout`, and settlement prefix
+  load no dynamic-field children. That removes C-1's object-cache wall (one child per
+  distinct strike, cumulative across the flush PTB; abort at ~982 nodes, or 586+586).
+  *Superseded:* the AVL `Table<tick, PayoutNode>`, which existed to keep mint, close,
+  and settlement on an `O(log n)` child path while each boundary was a child. *Rejected:*
+  a multi-transaction flush that keeps the table and snapshots nodes (#1265); a coarse
+  inventory-cell lattice as the NAV source (audit L10 requires the exact mark).
 - **D032 — Inventory impact is the difference of one capped book-level potential.**
   Define the risk coordinate as the existing payout liability
   `L = M + λ(T-M)`, and charge mints / rebate voluntary live closes by the signed

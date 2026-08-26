@@ -66,7 +66,7 @@ public(package) macro fun executable_price_band_factor(): u64 { 100 }
 /// full-pool flush.
 public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 
-/// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
+/// Maximum finite payout-index boundary records one expiry market may carry into NAV.
 public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
 
 // === Time Constants ===

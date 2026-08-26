@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Unit tests for `strike_payout_tree`. The tree keys finite interval boundaries
+/// Unit tests for `strike_payout_tree`. The index keys finite interval boundaries
 /// by absolute tick; raw strikes are recovered only at settlement via the caller-
 /// supplied `tick_size` (`raw_strike = tick * tick_size`). Range-shape validity
 /// (lower < higher, sentinels) is enforced by `order` when ticks are packed, not by
-/// the tree, so the only tree-level abort is removing terms that are not present.
+/// the index, so the only index-level abort is removing terms that are not present.
 #[test_only]
 module deepbook_predict::strike_payout_tree_tests;
 

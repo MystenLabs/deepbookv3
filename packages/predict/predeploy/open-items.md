@@ -374,67 +374,34 @@ trust coupling.
 
 **Severity:** Medium / must be accepted or fixed before deployment.
 
-The flush values every active market in one PTB. Current independent caps
-(`24` live markets, `1000` payout nodes) do
-not compose into a single-PTB budget — and the binding limit is object-count,
-not compute (corrected 2026-07-07; see the model below). The NAV price memo
-removed the single-market pre-cap OOG; the remaining deploy blocker is the
-pool-total case. The missing bound is a joint sum across all active markets, not
-another isolated per-market cap.
+The flush values every active market in one PTB. The 2026-07-07 object-cache
+wall was one `Table` child per distinct payout boundary, cumulative across the
+PTB (`evidence/c1-object-cache-flush-2026-07-07.md`). That driver is closed:
+`StrikePayoutTree` stores those records in an inline vector, so `walk_linear`
+loads no per-strike children. The remaining question is compute on a 1×-only
+full-pool flush, last measured with leveraged orders present.
 
-**Capacity model (corrected 2026-07-07 — the binding wall is object-count, not compute):**
+**Capacity model (updated 2026-08-26 — object-cache driver removed):**
 
-- The binding wall for the pool total is the Sui **object-runtime cached-objects
-  limit: 1,000 dynamic-field child objects per transaction**
-  (`object_runtime_max_num_cached_objects`; a protocol constant, taken as
-  network-invariant). The flush loads each market's payout-tree nodes as
-  dynamic-field children, and the object-runtime cache
-  **accumulates across every `value_expiry` command in the one PTB**. On overflow
-  it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object` —
-  a framework error whose true cause is this limit. It binds at 16–50% of the 5M
-  compute cap, so the pool flush is object-count-bound, not computation-bound
-  (`evidence/c1-object-cache-flush-2026-07-07.md`).
-- Driver = distinct payout-tree nodes: one `Table<tick,PayoutNode>` child per
-  distinct strike tick, and `walk_linear` loads every node. Node count = distinct
-  ticks, NOT order count (the tree aggregates by boundary) — which is why
-  single-market runs at narrow strikes never reached it despite large books.
-- Confirmed cumulative, not per-command: two 1× markets at 586 nodes each —
-  neither near 1,000 — abort the flush at ~1,172 combined; a single 1× market
-  crosses at ~982 nodes (`evidence/c1-object-cache-flush-2026-07-07.md`).
-- Superseded conclusion: the 2026-07-01 model called the flush
-  computation-bound. That holds for the SINGLE market (a full 5,000-order book
-  values at ~47–54% of the compute cap, `evidence/c1-price-memo-2026-07-01.md`;
-  pre-memo that single market OOG'd at ~4,580 orders,
-  `evidence/c1-nav-stress-2026-06-30.md`) but not the pool total. Earlier
-  pool-total runs hit
-  `expiry_cash::EInsufficientCash` (capital) at ~92% compute before reaching the
-  object wall; raising the allocation cap removed that mask and exposed the
-  1,000-child limit.
-- Skew-adjusted pricing re-measured the single-market compute cost on 2026-07-09:
-  the per-order flush slope rose 2.2% (~480K → ~491K computation units) and a
-  full 5,000-order book used 51% of the compute wall. This does not change the
-  pool-total conclusion above: the object-cache limit binds first
-  (`evidence/c1-skew-gas-2026-07-09.md`).
+- Historical wall: Sui **object-runtime cached-objects limit: 1,000 dynamic-field
+  child objects per transaction**. A single 1× market aborted at ~982 table
+  nodes; two markets aborted at 586+586. Those records are now inline, so the
+  flush's child count is the market objects, oracles, and other base children,
+  not `Σ distinct_ticks`.
+- Compute figures in `evidence/c1-price-memo-2026-07-01.md` and
+  `evidence/c1-skew-gas-2026-07-09.md` still describe a full-book walk. They
+  were taken with leveraged orders present and must be re-measured on the 1×-only
+  inline index before this item is closed. The benchmark cannot do that until
+  the simulation parity model is updated.
 - Expired-unswept markets leave the active set only inside a successful
   `value_expiry`/sweep, so the flush's active tail is not bounded by the
   live-market creation cap.
-- Capacity law:
-  `sum_over_active_markets(distinct_ticks + base_children)
-  < 1,000 dynamic-field children per flush PTB` — a joint sum across all active
-  markets, dominated by distinct strike ticks.
-- Leverage removal (2026-08-14) deleted the `ceil(leveraged_orders / 64)`
-  liquidation-book term from this law and the 5,000-order cap that bounded it.
-  Every measured threshold above was taken with leveraged orders present, so the
-  numbers are now conservative for the object wall and stale for compute; they
-  must be re-measured against the 1x-only footprint before this item is closed.
-  The benchmark cannot do that until the simulation parity model is updated.
+- Capacity law: flush child count is no longer dominated by payout-tree nodes.
+  `max_payout_tree_nodes` still caps distinct ticks per market (vector length and
+  mint admission). Joint compute across active markets is the open bound.
 
-**Fix options (reframed for the object-count wall):** shrink the per-market
-NAV-walk child footprint (e.g. cache tree aggregates so `walk_linear` need not
-load every node) · a joint active-market×node budget enforced at creation/roll ·
-valuation resumable across PTBs (partial state instead of a hot potato) · an
-out-of-flush settled sweep/deactivate path (bounds the active tail) · documented
-operator throttling (an off-chain acceptance, not an on-chain guarantee).
+**Fix landed (2026-08-26):** inline sorted vector. Remaining work is the 1×
+compute remasure, not another store change.
 
 **Plan — runs that finish the number (decision rules pre-registered
 2026-07-02):**

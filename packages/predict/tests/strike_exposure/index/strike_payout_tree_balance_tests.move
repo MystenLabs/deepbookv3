@@ -1,22 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Depth and shape regression for the payout tree.
+/// Order-independence and garbage-collection regressions for the payout index.
 ///
-/// Boundary ticks are chosen by whoever mints, so the balancing rule must not be
-/// derivable from a tick. The previous treap keyed rotations on
-/// `blake2b256(bcs(tick))`, which is exactly that: a caller could scan for ticks
-/// whose priorities descend as the ticks ascend and force a right spine of depth
-/// N, turning every `apply_at` and settlement prefix walk into an N-node
-/// dynamic-field traversal. External audit issue #47.
-///
-/// Depth is enforced by code alone — a runtime balance check would cost a full
-/// traversal, so nothing on chain notices a regression, and the only symptom is
-/// the tree drifting back toward the spine this change exists to prevent. These
-/// tests are therefore the whole guarantee, and they are written to kill specific
-/// mutations rather than to exercise the happy path: insertion orders are chosen
-/// to reach all four rotation cases, and `assert_tree_invariant_for_testing`
-/// recomputes every stored height and summary rather than trusting them.
+/// Insertion order and mid-sequence removes must leave the same sorted records
+/// and the same reserve and settlement terms. `assert_tree_invariant_for_testing`
+/// recomputes sort order and emptiness rather than trusting `node_count`.
 #[test_only]
 module deepbook_predict::strike_payout_tree_balance_tests;
 
@@ -26,12 +15,11 @@ use std::unit_test::{assert_eq, destroy};
 const QUANTITY: u64 = 1_000_000;
 const NODES: u64 = 100;
 const GC_STRIDE: u64 = 3;
+const GC_SURVIVORS: u64 = 66;
 
-/// On-grid ticks, strictly increasing, whose treap priorities strictly DECREASE —
-/// the shape attack. Every tick is a multiple of 10, so the set clears
-/// `strike_exposure::assert_admitted_mint_ticks`'s grid gate for a market whose
-/// `admission_tick_size` is 10x its `tick_size`. Found with ~11k blake2b probes,
-/// well under a second of laptop CPU.
+/// On-grid ticks, strictly increasing. Every tick is a multiple of 10, so the
+/// set clears `strike_exposure::assert_admitted_mint_ticks`'s grid gate for a
+/// market whose `admission_tick_size` is 10x its `tick_size`.
 const SKEWED_TICKS: vector<u64> = vector[
     1110, 10739550, 21475700, 32213220, 42949930, 53689330, 64425020, 75162460, 85899770, 96637210,
     107378160, 118115050, 128850590, 139586740, 150323920, 161062410, 171800450, 182536090,
@@ -48,16 +36,6 @@ const SKEWED_TICKS: vector<u64> = vector[
     1052266700, 1063003910,
 ];
 
-/// Minimum height for 100 nodes: `ceil(log2(101))`. Ascending insertion into a
-/// height-balanced tree always achieves it.
-const EXPECTED_HEIGHT: u64 = 7;
-/// AVL's worst case at 100 nodes, from the minimum-nodes recurrence
-/// `N(h) = N(h-1) + N(h-2) + 1`: `N(9) = 88 <= 100 < N(10) = 143`, so height <= 9.
-/// At the production cap of `max_payout_tree_nodes!()` the same recurrence gives
-/// `N(14) = 986 <= 1000 < N(15) = 1596` — height <= 14 for every admissible tick
-/// set, against the treap's 1000-deep adversarial worst case.
-const AVL_HEIGHT_BOUND: u64 = 9;
-
 fun insert(tree: &mut StrikePayoutTree, tick: u64) {
     tree.insert_range(tick, constants::pos_inf_tick!(), QUANTITY);
 }
@@ -66,8 +44,7 @@ fun remove(tree: &mut StrikePayoutTree, tick: u64) {
     tree.remove_range(tick, constants::pos_inf_tick!(), QUANTITY);
 }
 
-/// Insert one finite boundary per tick, checking the whole invariant after each —
-/// a mid-sequence corruption that a later rotation happens to repair still fails.
+/// Insert one finite boundary per tick, checking the whole invariant after each.
 fun build_checked(ticks: vector<u64>, ctx: &mut TxContext): StrikePayoutTree {
     let mut tree = strike_payout_tree::new(ctx);
     ticks.do!(|tick| {
@@ -84,37 +61,31 @@ fun settled_above_all(tree: &StrikePayoutTree): u64 {
 }
 
 #[test]
-/// The attack fixture, in the order it was generated.
-fun chosen_ticks_cannot_force_a_deep_tree() {
+fun chosen_ticks_stay_sorted_and_keep_terms() {
     let mut ctx = tx_context::dummy();
     let tree = build_checked(SKEWED_TICKS, &mut ctx);
 
-    assert_eq!(tree.assert_tree_invariant_for_testing(), EXPECTED_HEIGHT);
-    assert!(EXPECTED_HEIGHT <= AVL_HEIGHT_BOUND);
+    assert_eq!(tree.assert_tree_invariant_for_testing(), NODES);
     assert_eq!(settled_above_all(&tree), NODES * QUANTITY);
 
     destroy(tree);
 }
 
 #[test]
-/// Descending arrival drives the left-heavy single rotation, which ascending
-/// fixtures never reach.
-fun descending_inserts_stay_balanced() {
+fun descending_inserts_match_ascending_terms() {
     let mut ctx = tx_context::dummy();
     let mut ticks = SKEWED_TICKS;
     ticks.reverse();
     let tree = build_checked(ticks, &mut ctx);
 
-    assert_eq!(tree.assert_tree_invariant_for_testing(), EXPECTED_HEIGHT);
+    assert_eq!(tree.assert_tree_invariant_for_testing(), NODES);
     assert_eq!(settled_above_all(&tree), NODES * QUANTITY);
 
     destroy(tree);
 }
 
 #[test]
-/// Outside-in arrival alternates the two heavy sides, reaching both double
-/// rotations as well as both singles.
-fun outside_in_inserts_stay_balanced() {
+fun outside_in_inserts_match_ascending_terms() {
     let mut ctx = tx_context::dummy();
     let sorted = SKEWED_TICKS;
     let mut zigzag = vector[];
@@ -129,19 +100,14 @@ fun outside_in_inserts_stay_balanced() {
     };
 
     let tree = build_checked(zigzag, &mut ctx);
-    assert!(tree.assert_tree_invariant_for_testing() <= AVL_HEIGHT_BOUND);
+    assert_eq!(tree.assert_tree_invariant_for_testing(), NODES);
     assert_eq!(settled_above_all(&tree), NODES * QUANTITY);
 
     destroy(tree);
 }
 
 #[test]
-/// A delete can leave a node two levels heavy with its taller child's subtrees
-/// EQUAL in height. That tie must take the single rotation: the double leaves the
-/// demoted child holding a two-level gap that nothing goes back to fix. Only a
-/// removal produces the tie, so no insert-only fixture distinguishes `>` from
-/// `>=` in `rebalance`'s inner-rotation condition.
-fun delete_induced_height_tie_takes_the_single_rotation() {
+fun removing_an_end_tick_keeps_the_remaining_terms() {
     let mut ctx = tx_context::dummy();
     let mut tree = strike_payout_tree::new(&mut ctx);
 
@@ -150,19 +116,16 @@ fun delete_induced_height_tie_takes_the_single_rotation() {
 
     remove(&mut tree, 1);
 
-    // Under `>=` this leaves a node with subtree heights 0 and 2.
-    assert_eq!(tree.assert_tree_invariant_for_testing(), 4);
+    assert_eq!(tree.assert_tree_invariant_for_testing(), 7);
     assert_eq!(settled_above_all(&tree), 7 * QUANTITY);
 
-    // The mirror image, so both the left-heavy and right-heavy inner conditions
-    // are pinned. Removing the largest tick leans the tree the other way.
     let mut mirrored = strike_payout_tree::new(&mut ctx);
     vector[8, 7, 6, 3, 2, 4, 5, 1].do!(|tick| insert(&mut mirrored, tick));
     mirrored.assert_tree_invariant_for_testing();
 
     remove(&mut mirrored, 8);
 
-    assert_eq!(mirrored.assert_tree_invariant_for_testing(), 4);
+    assert_eq!(mirrored.assert_tree_invariant_for_testing(), 7);
     assert_eq!(settled_above_all(&mirrored), 7 * QUANTITY);
 
     destroy(tree);
@@ -170,11 +133,7 @@ fun delete_induced_height_tie_takes_the_single_rotation() {
 }
 
 #[test]
-/// When the in-order successor carries a right subtree of its own, that subtree
-/// must be re-parented onto the successor's old parent. Dropping it keeps the tree
-/// balanced, keeps `node_count` consistent, and silently loses a boundary's payout
-/// — so this asserts terms, not shape.
-fun successor_keeps_its_own_right_subtree() {
+fun removing_an_interior_tick_keeps_neighbor_terms() {
     let mut ctx = tx_context::dummy();
     let mut tree = strike_payout_tree::new(&mut ctx);
 
@@ -192,10 +151,7 @@ fun successor_keeps_its_own_right_subtree() {
 }
 
 #[test]
-/// The rewritten GC path, asserted on terms rather than height. A splice that
-/// leaves a stale summary keeps every height correct while reporting a reserve
-/// floor that is wrong by a factor of two.
-fun boundary_gc_preserves_terms_and_balance() {
+fun boundary_gc_preserves_terms_against_a_rebuild() {
     let mut ctx = tx_context::dummy();
     let ticks = SKEWED_TICKS;
     let mut tree = build_checked(ticks, &mut ctx);
@@ -213,12 +169,9 @@ fun boundary_gc_preserves_terms_and_balance() {
     };
 
     // 100 ticks, every third removed -> 34 removed, 66 survive.
-    assert_eq!(survivors.length(), 66);
-    assert_eq!(settled_above_all(&tree), 66 * QUANTITY);
+    assert_eq!(survivors.length(), GC_SURVIVORS);
+    assert_eq!(settled_above_all(&tree), GC_SURVIVORS * QUANTITY);
 
-    // Metamorphic: a tree built from the survivors alone has a DIFFERENT shape
-    // (the GC'd tree carries rotation history the rebuilt one never saw), so
-    // agreement on every evaluator is a real check, not a tautology.
     let rebuilt = build_checked(survivors, &mut ctx);
     assert_eq!(settled_above_all(&tree), settled_above_all(&rebuilt));
     let (gc_max, gc_total) = tree.payout_reserve_terms();
@@ -231,16 +184,9 @@ fun boundary_gc_preserves_terms_and_balance() {
 }
 
 #[test]
-/// Mixed insert/remove churn. A deterministic LCG picks the tick so the sequence
-/// is reproducible; the invariant is recomputed after every single operation,
-/// which is what kills the ordering and double-rotation mutations that fixed
-/// fixtures miss.
 fun interleaved_churn_preserves_the_invariant() {
     let mut ctx = tx_context::dummy();
     let mut tree = strike_payout_tree::new(&mut ctx);
-    // Sized so the per-operation invariant recomputation (which walks the whole
-    // tree) fits the unit-test gas budget; the mutation-killing property is the
-    // mixed insert/remove order plus checking after EVERY op, not the op count.
     let span = 60;
     let mut live = vector[];
     let mut seed = 12345;
@@ -260,15 +206,13 @@ fun interleaved_churn_preserves_the_invariant() {
     });
 
     assert_eq!(settled_above_all(&tree), live.length() * QUANTITY);
-    assert!(tree.assert_tree_invariant_for_testing() <= AVL_HEIGHT_BOUND);
+    assert_eq!(tree.assert_tree_invariant_for_testing(), live.length());
 
     destroy(tree);
 }
 
 #[test]
-/// Draining every boundary must leave the tree genuinely empty, including the
-/// root-removal case where `join_subtrees` has to produce a new root.
-fun draining_every_boundary_empties_the_tree() {
+fun draining_every_boundary_empties_the_index() {
     let mut ctx = tx_context::dummy();
     let ticks = SKEWED_TICKS;
     let mut tree = build_checked(ticks, &mut ctx);

@@ -53,7 +53,7 @@ public struct StrikeExposure has store {
     settlement_price: Option<u64>,
     /// Remaining payout liability in the settled phase.
     settled_payout_liability: u64,
-    /// Sparse payout tree for live cash backing and settled liability.
+    /// Sparse payout index for live cash backing and settled liability.
     payout: StrikePayoutTree,
 }
 

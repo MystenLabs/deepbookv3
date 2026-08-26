@@ -137,6 +137,6 @@ Predict-specific Move rules: package architecture, config and capability shapes,
 ## Predict Gas & Capacity
 
 Read the current capacity model before changing flush, NAV, or batching behavior; measurements belong in [predeploy evidence](../../packages/predict/predeploy/evidence/) and conclusions in the [open-items register](../../packages/predict/predeploy/open-items.md) C-1 or the [response-policy register](../../packages/predict/predeploy/response-policies.md).
-- The full-pool flush is one mandatory PTB that values every active market. Test growth-sensitive limits against the joint pool total, including cumulative dynamic-field object loads across markets; isolated per-market caps are not sufficient. C-1 owns the current bound and evidence.
+- The full-pool flush is one mandatory PTB that values every active market. Payout-tree records are an inline vector, so `walk_linear` loads no per-strike children; remaining flush growth is compute and the market's own object size. C-1 owns the bound and evidence.
 - Do not extrapolate batched mint or redeem capacity from standalone operation cost. Large multi-command PTBs are amplified by transaction-level metering and must be measured and chunked according to RP-10; the supporting record is [c3-mint-batch-2026-07-01.md](../../packages/predict/predeploy/evidence/c3-mint-batch-2026-07-01.md).
 - Treat zero pool NAV as reachable. `lp_pool_value` must floor at zero rather than abort; downstream queue behavior is owned by RP-2 and RP-3 in the response-policy register.
