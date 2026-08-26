@@ -691,10 +691,11 @@ public(package) fun set_snapshot_pricer(
     market.strike_exposure.set_snapshot_pricer(pricer, snapshot_seq);
 }
 
-/// Return the marked liability from this market's frozen pricer and position view.
-/// Frozen cash accounting remains the pool valuation's responsibility.
-public(package) fun snapshot_marked_liability(market: &ExpiryMarket): u64 {
-    market.strike_exposure.snapshot_marked_liability()
+/// Return the marked liability from this market's frozen pricer and position view,
+/// consuming the snapshot. Frozen cash accounting remains the pool valuation's
+/// responsibility.
+public(package) fun consume_snapshot_marked_liability(market: &mut ExpiryMarket): u64 {
+    market.strike_exposure.consume_snapshot_marked_liability()
 }
 
 /// Return cash available to PLP NAV after excluding the inventory-impact escrow.

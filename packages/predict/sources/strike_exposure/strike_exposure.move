@@ -162,9 +162,10 @@ public(package) fun set_snapshot_pricer(
     exposure.payout.set_snapshot_pricer(pricer, snapshot_seq);
 }
 
-/// Return the marked liability from the payout tree's frozen pricer and position view.
-public(package) fun snapshot_marked_liability(exposure: &StrikeExposure): u64 {
-    exposure.payout.walk_linear_snapshot(exposure.tick_size)
+/// Return the marked liability from the payout tree's frozen pricer and position
+/// view, retiring that snapshot and reclaiming snapshot-only boundaries.
+public(package) fun consume_snapshot_marked_liability(exposure: &mut StrikeExposure): u64 {
+    exposure.payout.consume_walk_linear_snapshot(exposure.tick_size)
 }
 
 /// Return one live order's full-close range value without consulting book state.

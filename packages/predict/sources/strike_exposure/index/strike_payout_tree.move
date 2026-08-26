@@ -189,22 +189,28 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
     (tree.base + start_total).saturating_sub(end_total)
 }
 
-/// Value the quantity-weighted liability frozen by `set_snapshot_pricer`.
+/// Consume and value the quantity-weighted liability frozen by
+/// `set_snapshot_pricer`.
 ///
 /// Nodes untouched since the snapshot still hold their snapshot quantities in
 /// the live fields. Nodes first mutated after it copied those live fields before
 /// applying the mutation, and nodes created after it carry a matching zero copy.
-public(package) fun walk_linear_snapshot(tree: &StrikePayoutTree, tick_size: u64): u64 {
+/// A successful walk retires the stored pricer and removes every boundary with no
+/// live quantity. If the transaction aborts, both retirement and pruning revert.
+public(package) fun consume_walk_linear_snapshot(tree: &mut StrikePayoutTree, tick_size: u64): u64 {
+    let pricer = tree.snapshot_pricer.extract();
     let mut previous_price = option::none();
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
-        tree.snapshot_pricer.borrow(),
+        &pricer,
         tick_size,
         option::some(tree.snapshot_seq),
         &mut previous_price,
     );
-    (tree.snapshot_base + start_total).saturating_sub(end_total)
+    let liability = (tree.snapshot_base + start_total).saturating_sub(end_total);
+    tree.prune_empty_nodes();
+    liability
 }
 
 /// Create an empty sparse payout tree.
@@ -386,6 +392,53 @@ fun apply_at(
             );
     };
 
+    option::some(rebalance(nodes, root_tick, node))
+}
+
+/// Reclaim boundaries retained solely for the snapshot that was just consumed.
+/// Empty ticks are collected before deletion so each structural change travels
+/// through the existing one-node AVL deletion path.
+fun prune_empty_nodes(tree: &mut StrikePayoutTree) {
+    let mut empty_ticks = vector[];
+    collect_empty_ticks(&tree.nodes, tree.root, &mut empty_ticks);
+    while (!empty_ticks.is_empty()) {
+        let tick = empty_ticks.pop_back();
+        tree.root = remove_empty_node(&mut tree.nodes, tree.root, tick);
+        tree.node_count = tree.node_count - 1;
+    };
+    empty_ticks.destroy_empty();
+}
+
+fun collect_empty_ticks(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    empty_ticks: &mut vector<u64>,
+) {
+    if (root.is_none()) return;
+    let tick = *root.borrow();
+    let node = nodes[tick];
+    collect_empty_ticks(nodes, node.left, empty_ticks);
+    if (is_empty_node(node)) empty_ticks.push_back(tick);
+    collect_empty_ticks(nodes, node.right, empty_ticks);
+}
+
+fun remove_empty_node(
+    nodes: &mut Table<u64, PayoutNode>,
+    root: Option<u64>,
+    tick: u64,
+): Option<u64> {
+    let root_tick = *root.borrow();
+    let mut node = nodes[root_tick];
+    if (tick == root_tick) {
+        let _removed = nodes.remove(root_tick);
+        return join_subtrees(nodes, node.left, node.right)
+    };
+
+    if (tick < root_tick) {
+        node.left = remove_empty_node(nodes, node.left, tick);
+    } else {
+        node.right = remove_empty_node(nodes, node.right, tick);
+    };
     option::some(rebalance(nodes, root_tick, node))
 }
 

@@ -296,9 +296,9 @@ public fun finish_pool_snapshot(
     config.end_snapshot();
 }
 
-/// Add one pending market's frozen liability to the pool aggregate. Calls without
-/// a current valuation, markets outside it, and repeated calls are no-ops.
-public fun value_expiry(vault: &mut PoolVault, market: &ExpiryMarket, config: &ProtocolConfig) {
+/// Consume one pending market's frozen liability into the pool aggregate. Calls
+/// without a current valuation, markets outside it, and repeated calls are no-ops.
+public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
     config.assert_version();
     if (vault.valuation.is_none()) return;
     let valuation = vault.valuation.borrow_mut();
@@ -306,7 +306,7 @@ public fun value_expiry(vault: &mut PoolVault, market: &ExpiryMarket, config: &P
     if (index.is_none()) return;
     let index = index.destroy_some();
     valuation.aggregate_liability =
-        valuation.aggregate_liability + market.snapshot_marked_liability();
+        valuation.aggregate_liability + market.consume_snapshot_marked_liability();
     valuation.pending_markets.swap_remove(index);
 }
 
