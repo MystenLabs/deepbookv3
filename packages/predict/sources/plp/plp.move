@@ -111,10 +111,9 @@ public struct PoolVault has key {
 ///
 /// Trading is never gated on the flush: captured state cannot be reached by
 /// post-snapshot trades, and an already-valued figure already exists — both are
-/// as-of-snapshot semantics. Splitting the
-/// stages is what removes C-1's ceiling: only `value_expiry` walks payout trees
-/// (one dynamic-field child per distinct strike tick), and it carries just one
-/// market's nodes per transaction under Sui's 1,000-cached-object limit.
+/// as-of-snapshot semantics. Splitting the stages is what removes C-1's joint
+/// budget: each `value_expiry` prices just one market's inline boundary records
+/// per transaction, bounded by `constants::max_payout_tree_nodes`.
 public struct PoolValuation has drop, store {
     /// Active expiry markets snapshotted at start; every one must be valued.
     expected_expiry_markets: vector<ID>,

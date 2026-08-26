@@ -229,15 +229,14 @@ fun activation_at_the_current_generation_aborts() {
 }
 
 #[test]
-fun releasing_a_root_husk_with_two_children_rejoins_the_survivors() {
+fun releasing_an_interior_husk_keeps_the_survivors_exact() {
     let (mut fixture, oracle, pricer) = live_pricer();
     let ctx = fixture.scenario_mut().ctx();
     let mut tree = strike_payout_tree::new(ctx);
     let mut survivor_reference = strike_payout_tree::new(ctx);
 
-    // Ascending one-sided inserts at three ticks balance to the middle tick as
-    // root; husking it forces `detach_tick` through the two-children rejoin
-    // (`join_subtrees`/`take_min`), not the leaf shortcut.
+    // Husk the middle of three one-sided boundaries, so release compacts an
+    // interior record with live neighbors on both sides.
     tree.insert_range(RANGE_A_LOWER, pos_inf_tick(), Q_A);
     tree.insert_range(RANGE_A_HIGHER, pos_inf_tick(), Q_B);
     tree.insert_range(RANGE_C_HIGHER, pos_inf_tick(), Q_C);

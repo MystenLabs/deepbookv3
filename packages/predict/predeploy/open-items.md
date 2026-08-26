@@ -311,8 +311,9 @@ comparable increment is expected — not near a cliff, but unmeasured. Move
 unit-test metering put the difference under 0.01% of a test's gas; that is not
 on-chain compute and should not be cited as the answer.
 
-**Action:** fold a re-measurement into the C-2 localnet campaign rather than
-running one for this alone.
+**Action:** one localnet campaign: measure the inline-vector `value_expiry`
+at the node cap (this is also RP-30's cap-sizing input now that C-2's
+children reserve is gone) and refresh the per-order flush slope.
 
 ### P-31: A provider envelope ahead of the Sui clock silently empties the feed
 
@@ -346,7 +347,7 @@ comparison is a `response-policies.md` decision, not a silent widening.
 
 **Severity:** Low-Medium / post-launch; bounded to one market.
 
-`max_payout_tree_nodes` (RP-30) closes the flush-liveness attack, but an actor who fills one market's tree to the cap (~960 boundary-creating min-size mints, premium mostly recoverable) still denies NEW strike ranges in that market until nodes free up on closes or expiry. Direction: collapse the cheap node-minting shape onto the free `pos_inf_tick` sentinel so deep-OTM upper bounds stop minting nodes — sequenced after C-2/C-3 because it changes what the cap costs, not what it must be.
+`max_payout_tree_nodes` (RP-30) closes the flush-liveness attack, but an actor who fills one market's tree to the cap (~960 boundary-creating min-size mints, premium mostly recoverable) still denies NEW strike ranges in that market until nodes free up on closes or expiry. Direction: collapse the cheap node-minting shape onto the free `pos_inf_tick` sentinel so deep-OTM upper bounds stop minting nodes — sequenced after P-30's remeasure and C-3 because it changes what the cap costs, not what it must be.
 
 ## Access and Governance
 
@@ -381,12 +382,7 @@ trust coupling.
 
 ### C-2: The valuation base-children reserve is unmeasured
 
-**Severity:** Low / tighten before mainnet; the unsafe direction is closed.
-
-`valuation_base_children_reserve` ships at 40 against a source-inspected true figure of 1-2 (`constants.move`), so `max_payout_tree_nodes` gives up ~4% of the strike grid as pure headroom (RP-30 derives the cap; C-1 — resolved — measured the wall). Tightening needs one localnet run: fill one market to the cap, run its `value_expiry` alone, and read the object-runtime count the transaction actually cached beyond the tree nodes. Decision rule, pre-registered: set the reserve to the measured base plus 8, and never below 8.
-
-- Instrument: `packages/predict/harness/ts/strategies/capacity.ts` `tree` profile against a localnet publish.
-- The run must include mid-window trades on the stamped market, including full closes, so the measured walk covers retained husks (husks are ordinary tree nodes converted in place, expected zero extra children — the run proves that expectation).
+**Resolved by restructure (2026-08-26).** Payout boundaries moved from dynamic-field children to an inline vector on the market object, so `value_expiry` loads no per-strike children and there is no reserve to measure. The successor measurement — the inline walk's compute at the node cap — is owned by P-30's localnet remeasure; RP-30 sizes the cap from it.
 
 ## Oracle Calibration
 

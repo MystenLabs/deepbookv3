@@ -79,9 +79,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `admin`/`AdminCap` into `registry` — it creates a Move import cycle
   (`registry → protocol_config → admin`).
 
-- **Two sparse strike indexes, both tick-keyed.** A sparse height-balanced (AVL)
-  payout tree and a flat liquidation book coexist; the exact live NAV is read by
-  decomposing the per-order liability across the two (`Σ qty·P` over the tree
+- **Two sparse strike indexes, both tick-keyed.** A sparse payout index (an AVL
+  table when this was decided; an inline sorted vector since the store decision
+  below) and a flat liquidation book coexist; the exact live NAV is read by
+  decomposing the per-order liability across the two (`Σ qty·P` over the index
   minus the leveraged floor-correction scan over the book).
   *Superseded:* balancing that tree as a treap keyed on `blake2b256(bcs(tick))`.
   Boundary ticks are caller-chosen, so a rotation key derived from a tick is a
@@ -481,6 +482,30 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   rows. A market expiring mid-window is valued at its frozen pre-expiry mark and
   settles the moment its stamp clears (RP-29 ratifies this against RP-4's
   original blanket block).
+
+## Inline sorted-vector payout store (2026-08-26)
+
+- **Payout boundaries live in a tick-sorted inline vector on the market object,
+  not a dynamic-field table.** The store prototyped in #1269, adopted under the
+  staged flush: the same five evaluators and the same exact terms, with binary
+  search + memmove replacing the AVL's rotations and subtree summaries, and the
+  per-record snapshot shadows riding on the records. A `value_expiry` therefore
+  loads no per-strike children at all — the C-1 object-cache wall is gone at the
+  store, and the staged shape already removed the joint budget — and
+  `release_snapshot`'s husk purge collapses to one compaction pass.
+  *Consequences:* `max_payout_tree_nodes` is no longer derived from the object
+  budget (no children to budget); it stays at 960 as a compute-headroom literal
+  until P-30's remeasure prices the inline walk, and C-2's children reserve is
+  moot. Mint admission's `range_max_payout` and the settlement prefix become
+  linear scans (u64 arithmetic, negligible beside one pricer evaluation), and
+  every trade rewrites the record vector inside the market object (storage
+  churn, ~99% rebated). *Superseded:* the AVL table and its height-keyed
+  rotation design above — its reason to exist was keeping mint, close, and
+  settlement on an `O(log n)` CHILD path while each boundary was a child.
+  *Rejected:* keeping the single-PTB flush over this store (#1269 standalone) —
+  it re-couples every market's pricing compute into one all-or-nothing
+  transaction and keeps the keeper active-set race RP-31 resolved; a dual
+  store (tree plus vector) — two bills and drift.
 
 ## In-tree snapshot capture (2026-08-26)
 
