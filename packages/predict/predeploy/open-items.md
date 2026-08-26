@@ -294,26 +294,17 @@ true of the generator but not of the committed data.
 
 ### P-30: The C-1 capacity model is one measurement behind the pricing path
 
-**Severity:** Low, but it compounds. Not a defect; a stale measurement.
-
-RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
-`walk_linear` pays that per payout-tree node; since RP-29 the flush prices one
-market per transaction (C-1 — resolved — owned the old joint budget), so the
-increment lands on the per-transaction valuation compute (bounded at the node
-cap's boundary count; C-5 — resolved by the snapshot restructure — owned the
-retired delta log's extra term) — last measured at ~51% of the wall for a full
-single-market book.
-
-Precedent for sizing it: `evidence/c1-skew-gas-2026-07-09.md` records that the
-previous comparable addition (one `normal_pdf`, i.e. one `exp`) cost +2.2%
-per-order flush slope and +3.3% at a full book. An `ln` is of similar cost, so a
-comparable increment is expected — not near a cliff, but unmeasured. Move
-unit-test metering put the difference under 0.01% of a test's gas; that is not
-on-chain compute and should not be cited as the answer.
-
-**Action:** one localnet campaign: measure the inline-vector `value_expiry`
-at the node cap (this is also RP-30's cap-sizing input now that C-2's
-children reserve is gone) and refresh the per-order flush slope.
+**Resolved by measurement (2026-08-26).** `evidence/p30-bigbook-gas-2026-08-26.md`
+prices the post-leverage inline-vector walk on localnet: the full staged flush
+at a 950-record single-market book is 1,023,390 CU (20.47% of the 5M cap;
+1,183,730 / 23.67% on the AVL baseline), placing the per-transaction wall at
+~4,500-4,900 records — ~4-5x headroom over the 960 cap. The same record also
+measured the inline store's mint-serialization slope (flat on the AVL; 2,530 →
+63,000 CU across an empty → full book on the vector), which is the next
+capacity surface to watch if the cap is raised past ~2,000 records. These
+post-leverage figures supersede the RP-26 increment question this item tracked
+(the earlier slope precedent is `evidence/c1-skew-gas-2026-07-09.md`). RP-30
+owns the cap decision and cites the evidence.
 
 ### P-31: A provider envelope ahead of the Sui clock silently empties the feed
 

@@ -78,10 +78,10 @@ public(package) macro fun object_cache_budget(): u64 { 1_000 }
 ///
 /// With boundaries stored inline on the market object, a `value_expiry` loads no
 /// per-strike children — the binding budget is that transaction's COMPUTE (one
-/// pricer evaluation per record; C-1's evidence put a ~1,000-record book at
-/// 15-54% of the 5M cap) and the market object's size. The cap keeps the
-/// pre-restructure value until the localnet remeasure (P-30) prices the new
-/// walk; raising it is a measurement-gated decision, not a default.
+/// pricer evaluation per record; measured 2026-08-26: the full staged cycle at
+/// a 950-record book is 20.47% of the 5M cap, wall ~4,500-4,900 records) and
+/// the market object's size. The cap keeps the pre-restructure value with ~4-5x
+/// measured headroom; raising it re-runs the P-30 evidence scenario first.
 ///
 /// Snapshot husks (records emptied mid-window and retained for the frozen walk)
 /// live inside this cap — retention converts a record, never adds one — and are
