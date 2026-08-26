@@ -282,7 +282,8 @@ public fun start_pool_valuation(
 }
 
 /// Freeze one snapshotted market's oracle state for this flush and stamp the
-/// market so trades record their deltas from this instant on.
+/// market, capturing its cash rows and activating its payout-tree snapshot at
+/// this instant.
 ///
 /// Holding `SnapshotStage` is what admits this call, and that potato cannot leave
 /// the transaction `start_pool_valuation` minted it in — so every `Pricer` here is
@@ -943,12 +944,17 @@ fun sweep_or_rebalance_expiry(
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, expiry_market_id);
+        vault.rebalance_live_expiry(market, config, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
+fun rebalance_live_expiry(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
     vault.sync_fee_incentives(market, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
@@ -964,7 +970,7 @@ fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expi
             cash_balance,
             target_cash,
         );
-        vault.record_live_maintenance(sent, 0);
+        vault.record_live_maintenance(market, config, sent, 0);
     } else if (cash_balance > sweep_threshold_cash) {
         let returned = vault.sweep_live_expiry_surplus(
             market,
@@ -972,7 +978,7 @@ fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expi
             cash_balance,
             target_cash,
         );
-        vault.record_live_maintenance(0, returned);
+        vault.record_live_maintenance(market, config, 0, returned);
     };
 }
 
@@ -982,13 +988,26 @@ fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expi
 /// values captured at the snapshot instant, so any later movement — maintenance
 /// included — is structurally invisible to it. Outside a flush the record is a
 /// no-op and the move is ordinary maintenance.
-fun record_live_maintenance(vault: &mut PoolVault, sent: u64, returned: u64) {
+///
+/// The gate is per-market ordering against the eager stamp copy, not the
+/// PTB-global seal: inside the still-open snapshot PTB, a move BEFORE this
+/// market's stamp is baseline (the copy taken at the stamp measures it —
+/// recording it too would count it twice), while a move AFTER the stamp is
+/// already invisible to the copied figure and must be compensated exactly as a
+/// post-seal move is. After the seal every move records: the market is stamped
+/// (copy predates the move), already valued (its folded figure predates it), or
+/// outside the frozen expected set (it contributes nothing to the marks, so the
+/// idle it moved must be added back).
+fun record_live_maintenance(
+    vault: &mut PoolVault,
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    sent: u64,
+    returned: u64,
+) {
     if (sent == 0 && returned == 0) return;
     if (vault.valuation.is_none()) return;
-    // Inside the still-open snapshot PTB nothing may record: the whole PTB is
-    // the snapshot instant, so a move there is part of the baseline the frozen
-    // pricers and stamps measure — recording it too would count it twice.
-    if (!vault.valuation.borrow().sealed) return;
+    if (!vault.valuation.borrow().sealed && !market.is_pending_valuation(config)) return;
     let valuation = vault.valuation.borrow_mut();
     valuation.maintenance_sent = valuation.maintenance_sent + sent;
     valuation.maintenance_returned = valuation.maintenance_returned + returned;

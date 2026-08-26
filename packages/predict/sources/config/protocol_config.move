@@ -6,8 +6,8 @@
 /// This shared object owns the admin-tunable config structs, the trading pause
 /// gate, the protocol-wide emergency freeze, and the full-pool valuation
 /// in-flight state (flag + flush ordinal, held across the transactions a flush
-/// spans; keeper/config flows gate on it, trading flows read it to stamp their
-/// deltas). Flow modules decide which gates apply before they mutate expiry,
+/// spans; keeper/config flows gate on it, trading flows read it only to discard
+/// stale stamps lazily). Flow modules decide which gates apply before they mutate expiry,
 /// oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
@@ -83,8 +83,8 @@ public struct ProtocolConfig has key {
     /// True for the whole duration of a full-pool valuation, across every
     /// transaction it spans. Keeper cash flows, market lifecycle, and config
     /// mutations gate on it; trading flows do NOT — they read it (with
-    /// `flush_seq`) to decide whether a market's valuation stamp is current, and
-    /// record their book deltas for the flush to cancel out (see `plp`).
+    /// `flush_seq`) only to discard a stale valuation stamp lazily; a pending
+    /// market's snapshot state is captured, never recorded per trade (see `plp`).
     valuation_in_progress: bool,
     /// Monotonic flush ordinal, bumped by `begin_valuation`. A market's valuation
     /// stamp names the flush that made it; a stamp whose ordinal is not the

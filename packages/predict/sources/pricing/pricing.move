@@ -27,7 +27,7 @@ use sui::clock::Clock;
 /// single instant even though valuation spans transactions. Every other pricing
 /// path must load a fresh `Pricer` in its own transaction — a stored one is a
 /// *deliberately* stale mark, sound only inside the flush's frozen snapshot,
-/// where each market's recorded trade deltas roll its books back to that same
+/// where each market's books are read from state captured at that same
 /// instant.
 public struct Pricer has copy, drop, store {
     /// Expiry market this snapshot was loaded for.

@@ -188,8 +188,8 @@ fun a_mint_closed_again_mid_window_leaves_the_mark_unchanged() {
     let control_mark = run_undisturbed_flush(&mut fx, &mut market);
 
     // Mint a NEW boundary pair mid-window, then fully close it mid-window: the
-    // transient boundaries cancel to zero snapshot quantity in the log and the
-    // trades' cash legs net to their fees, all rolled back together.
+    // transient boundaries carry zero shadows (created after the snapshot) and
+    // the cash legs never touch the stamp's captured values.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     let mid_window = fx.mint_bundle(
@@ -238,8 +238,8 @@ fun an_oracle_move_plus_a_trade_mid_window_leave_the_mark_unchanged() {
     // moved oracle, both after the snapshot. The close executes at the live
     // pricer (the fixture surface saturates mint admission off-ATM, so the
     // mid-window trade is a close, which admits at any probability), the flush
-    // marks at the frozen one, and the rollback still lands the control mark
-    // exactly.
+    // marks at the frozen one, and the captured snapshot still lands the
+    // control mark exactly.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     fx.advance_live_oracle_bundle(&mut market, MOVED_LIVE_PRICE);
@@ -567,8 +567,8 @@ fun an_aborted_flushs_snapshot_never_leaks_into_the_next_flush() {
     assert!(!helpers::valuation_in_progress_bundle(&market));
 
     // Both later flushes see the mint as ordinary pre-snapshot state. If flush
-    // B inherited A's stale log it would roll the mint back and disagree with
-    // flush C.
+    // B could read A's stale snapshot it would exclude the mint and disagree
+    // with flush C.
     let mark_b = run_undisturbed_flush(&mut fx, &mut market);
     let mark_c = run_undisturbed_flush(&mut fx, &mut market);
     assert_eq!(mark_b, mark_c);
@@ -623,9 +623,8 @@ fun value_expiry_moves_no_cash_for_a_live_market() {
         BASELINE_QUANTITY,
     );
 
-    // Measurement-only: a live market's valuation reads the books and moves
-    // nothing, so no unrecorded cash sits between the stamp rollback and the
-    // reconstruction's zero floors. Cash maintenance runs outside the window.
+    // Measurement-only: a live market's valuation reads its captured snapshot
+    // and moves nothing. Cash maintenance runs outside the window.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     let idle_before = helpers::vault(&market).idle_balance();
@@ -644,11 +643,10 @@ fun value_expiry_moves_no_cash_for_a_live_market() {
 
 #[test]
 fun mid_window_trading_has_no_budget() {
-    // The retired delta log capped mid-window trades per market (its floor was
-    // 64, so trade 65 aborted at that setting). Snapshot capture has
-    // no per-trade record, so nothing bounds how much a pending market trades:
-    // 65 mints land while the market awaits its value leg, and the flush still
-    // completes on its frozen figure.
+    // Snapshot capture has no per-trade record, so nothing bounds how much a
+    // pending market trades: one mint past the retired delta-log floor lands
+    // while the market awaits its value leg, and the flush still completes on
+    // its frozen figure.
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.bootstrap_lock(SUPPLY_AMOUNT);
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -657,8 +655,11 @@ fun mid_window_trading_has_no_budget() {
 
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
+    // One past the retired delta-log floor (64), where the old mechanism's
+    // 65th trade aborted at that setting.
+    let past_retired_log_floor = 65;
     let mut minted = 0;
-    while (minted < 65) {
+    while (minted < past_retired_log_floor) {
         fx.mint_bundle(
             &mut market,
             &mut account,

@@ -616,7 +616,7 @@ public fun redeem_settled_permissionless(
 /// feed at `reference_tick_source_timestamp_ms` before this call, and the
 /// normalized spot is floored to the market's `tick_size`. Not gated on the
 /// valuation lock: the reference tick shapes mint admission only, and a mint it
-/// admits mid-flush records its deltas like any other.
+/// admits mid-flush is invisible to the captured snapshot like any other.
 public fun set_reference_tick(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,

@@ -11,6 +11,7 @@
 module deepbook_predict::payout_tree_snapshot_tests;
 
 use deepbook_predict::{
+    constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::Pricer,
     strike_payout_tree::{Self, StrikePayoutTree},
@@ -219,12 +220,45 @@ fun a_released_snapshots_frozen_walk_aborts() {
 }
 
 #[test, expected_failure(abort_code = strike_payout_tree::ESnapshotSeqNotIncreasing)]
-fun activation_below_the_current_generation_aborts() {
+fun activation_at_the_current_generation_aborts() {
     let (mut fixture, _oracle, _pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
     tree.activate_snapshot(2);
     tree.activate_snapshot(2);
     abort 999
+}
+
+#[test]
+fun releasing_a_root_husk_with_two_children_rejoins_the_survivors() {
+    let (mut fixture, oracle, pricer) = live_pricer();
+    let ctx = fixture.scenario_mut().ctx();
+    let mut tree = strike_payout_tree::new(ctx);
+    let mut survivor_reference = strike_payout_tree::new(ctx);
+
+    // Ascending one-sided inserts at three ticks balance to the middle tick as
+    // root; husking it forces `detach_tick` through the two-children rejoin
+    // (`join_subtrees`/`take_min`), not the leaf shortcut.
+    tree.insert_range(RANGE_A_LOWER, pos_inf_tick(), Q_A);
+    tree.insert_range(RANGE_A_HIGHER, pos_inf_tick(), Q_B);
+    tree.insert_range(RANGE_C_HIGHER, pos_inf_tick(), Q_C);
+    survivor_reference.insert_range(RANGE_A_LOWER, pos_inf_tick(), Q_A);
+    survivor_reference.insert_range(RANGE_C_HIGHER, pos_inf_tick(), Q_C);
+
+    tree.activate_snapshot(1);
+    tree.remove_range(RANGE_A_HIGHER, pos_inf_tick(), Q_B);
+    assert_eq!(tree.node_count_for_testing(), 3);
+
+    tree.release_snapshot();
+    assert_eq!(tree.node_count_for_testing(), 2);
+    tree.assert_tree_invariant_for_testing();
+    assert_eq!(
+        tree.walk_linear(&pricer, tick_size()),
+        survivor_reference.walk_linear(&pricer, tick_size()),
+    );
+
+    destroy(tree);
+    destroy(survivor_reference);
+    cleanup(fixture, oracle);
 }
 
 /// A husk is not a live-order edge, so the live walk must not observe an
@@ -258,6 +292,8 @@ fun an_inversion_on_a_husk_still_aborts_the_frozen_walk() {
 }
 
 fun tick_size(): u64 { test_constants::default_tick_size() }
+
+fun pos_inf_tick(): u64 { constants::pos_inf_tick!() }
 
 /// A live market at the default ATM forward with an inflated base variance, as
 /// in the walk tests.

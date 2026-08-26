@@ -459,12 +459,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   eligible request is a free option against a stale price; new requests are
   quarantined by the recorded queue cutoffs instead of a gate. *Rejected:* gating
   requests too (needless — the cutoff is airtight and keeps the queue live).
-- **Cash maintenance runs mid-flush, compensated on every mark term.** An
-  in-window live top-up or surplus sweep records on the pending market's stamp
-  (so `snapshot_nav` rolls it back with the trades and the zero floors see no
-  unrecorded movement) and on two flush accumulators that `finish_flush` reverses
-  out of idle AND the profit basis's credits and debits, so the mark is invariant
-  to maintenance timing. *Rationale:* gating the rebalance for the window left a
+- **Cash maintenance runs mid-flush, compensated on every mark term.** A
+  pending market's snapshot cash is captured before any in-window move can touch
+  it (originally recorded on the stamp and rolled back — see the in-tree
+  snapshot decision below), and the move records on two flush accumulators that
+  `finish_flush` reverses out of idle AND the profit basis's credits and debits,
+  so the mark is invariant to maintenance timing. *Rationale:* gating the rebalance for the window left a
   market that exhausted its buffer mid-flush unable to admit mints or closes
   until the flush landed — exits paying for a purity gate — and a gross-only
   compensation would misprice the mark by the protocol profit share of every
@@ -503,8 +503,9 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   deletion:* a node emptied mid-window is retained as a live-zero husk so the
   frozen walk keeps its boundary — retention converts an existing node (never
   adds one, so the RP-30 cap is undisturbed) and every husk is removed by the
-  same `value_expiry` that consumes the snapshot, so retention never outlives
-  one window even across aborted generations; the live walk skips husks (a husk
+  next `value_expiry` to consume a snapshot on its market — its own flush's, or
+  a later flush's for husks an aborted generation stranded — so retention is
+  bounded by the market's next consumed valuation; the live walk skips husks (a husk
   is no live order's edge — the frozen walk that owns the tick still observes
   it); and the tree generation is the flush ordinal, so a stale snapshot from an
   aborted flush is superseded by activation and can never serve a frozen read
