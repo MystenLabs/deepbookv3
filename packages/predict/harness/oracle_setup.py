@@ -91,13 +91,6 @@ def initialize(
     )
     objs["pyth_lazer_state"] = _created(pch, "state::State")
 
-    _call(
-        client_config, pkgs["account"], "account_registry", "authorize_app",
-        [objs["account_registry"], objs["account_admin_cap"]],
-        type_args=[f'{pkgs["predict"]}::predict_account::PredictApp'],
-        cancel_event=cancel_event,
-    )
-
     write_env_localnet(instance_dir, deployment, lp, rpc_port, active_address)
     return deployment
 

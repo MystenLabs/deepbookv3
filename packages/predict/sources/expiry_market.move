@@ -526,8 +526,9 @@ public fun redeem_live(
 /// Redeem a settled order you hold account authority over.
 ///
 /// The market must be settled already; this flow does not run live pricing.
-/// Account authority is the only way to redeem: the owner's own `Auth`, or that of
-/// another app the owner has authorized. No keeper can clear a position for you.
+/// Redeeming consumes account authority: the owner's own `Auth`, or one issued by an
+/// app the account registry has authorized. Predict holds no app authority of its own,
+/// so it cannot generate authority over any account.
 public fun redeem_settled(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -1075,9 +1076,9 @@ fun redeem_settled_with_auth(
         ctx,
     );
     let payout_amount = market.strike_exposure.process_settled_close(&order);
-    // A settled losing position pays nothing; the settled redeem is
-    // permissionless, so guard the amount before dispensing rather than
-    // splitting/depositing a 0 coin.
+    // A settled losing position pays nothing, and a holder clearing a book of
+    // them must not abort on one, so guard the amount before dispensing rather
+    // than splitting/depositing a 0 coin.
     if (payout_amount > 0) {
         let payout = market.cash.pay_authorized(payout_amount);
         account.deposit<DUSDC>(payout.into_coin(ctx));

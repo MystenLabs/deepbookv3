@@ -598,6 +598,61 @@ fun explicit_settlement_then_standalone_rebalance_sweeps_market() {
     fx.finish();
 }
 
+/// The settled sweep must complete against a market that still owes an unredeemed
+/// winner: it deactivates the expiry and returns everything above payout liability,
+/// keeping back exactly the payout, and the holder is still paid in full afterwards.
+/// Nothing but the holder's own authority can clear the position, so this is the
+/// normal terminal state rather than an edge case.
+#[test]
+fun settled_sweep_retains_payout_backing_for_an_unredeemed_winner() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let premium = finite_range_premium(&mut fx, &market);
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    // Sweep with the winner still open. A winner's liability is its full quantity,
+    // and settlement released the inventory-impact escrow, so the market must keep
+    // back exactly the payout and return the rest of the minted premium and fee.
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(
+            test_constants::mint_quantity(),
+            test_constants::mint_quantity(),
+        ),
+    );
+    assert_eq!(helpers::vault(&market).active_expiry_markets().length(), 0);
+
+    // The holder is still made whole after the sweep, and the market ends empty.
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+    fx.check_manager_bundle(
+        &account,
+        helpers::expected_manager_state(post_settled_redeem_balance(premium)),
+    );
+    helpers::check_market_cash(helpers::market(&market), helpers::expected_market_cash(0, 0));
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 #[test]
 fun expired_unsettled_standalone_rebalance_moves_no_cash() {
     let mut fx = helpers::setup_market_default();

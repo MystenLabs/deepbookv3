@@ -201,12 +201,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   is deliberately undecided and the entrypoint lands with the package upgrade
   that decides it. The cut's booked-order timing property is accepted in the
   same entry. *Rejected:* an admin drain entrypoint in the launch package.
-- **Account app-auth is intentionally full-account, package-level authority, and Predict no longer uses it.** An
+- **Account app-auth is intentionally full-account, package-level authority.** ⚠ 2026-08-26: Predict no longer uses it — see "Permissionless settled redeem removal" below. An
   app authorized through `account::AccountRegistry` can mutably load any
-  `AccountWrapper` it is handed and use the normal `Account` balance/data APIs. Predict
-  holds no such authority since the permissionless settled redeem was removed (below), so
-  predict-user solvency no longer depends on the account admin's app-authorization hygiene;
-  the property still governs any other co-authorized app on the same account. *Rejected:* per-user/per-coin app scoping —
+  `AccountWrapper` it is handed and use the normal `Account` balance/data APIs — so
+  predict-user solvency depends on the account admin's app-authorization hygiene and
+  every co-authorized app's honesty. *Rejected:* per-user/per-coin app scoping —
   don't add it unless a future account-margining design needs dependency-aware user
   app grants (e.g. blocking app revocation while open margin obligations require
   cross-app liquidation).

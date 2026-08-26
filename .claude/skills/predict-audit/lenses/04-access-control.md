@@ -37,8 +37,9 @@ loss/compromise/leak is recoverable.
     `account` has no version gate — confirm the "custody not frozen by a predict version freeze" property is
     intended, not an escape hatch.
   - Any deepbook `BalanceManager` / cross-package delegation assumed by predict_account.
-- **Permissionless paths** — every function with no cap/owner gate (keeper sync/passive-liquidation, manager/
-  builder/market creation, permissionless deposit, settled redeem). Confirm each is SAFE to expose: can an anon
+- **Permissionless paths** — every function with no cap/owner gate (settlement, keeper sync, manager/
+  builder/market creation, permissionless deposit, cash rebalance). Note settled redeem is NOT one: it
+  consumes account `Auth` (RP-29). Confirm each is SAFE to expose: can an anon
   move funds, harm another party's state, or inject bad state?
 
 **Move ownership & visibility audit:**
