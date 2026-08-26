@@ -573,123 +573,25 @@ fun value_expiry_aborts_on_double_value() {
 // behavior is covered by the trading-during-flush tests, not here; this section
 // pins the ops the flag still gates.
 
-#[test]
-fun a_rebalance_inside_the_snapshot_ptb_is_baseline_not_maintenance() {
+#[test, expected_failure(abort_code = plp::ESnapshotStageOpen)]
+fun a_rebalance_inside_the_open_snapshot_stage_aborts() {
     let mut fx = helpers::setup_market_default();
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     bootstrap_pool(&mut fx, IDLE_SEED);
     let e1 = fx.create_expiry(test_constants::default_expiry_ms());
     fund_market_with_order(&mut fx, &trader, e1);
 
-    // Control: a plain flush with NO rebalance anywhere near it.
+    // A cross-move between a market's stamp and the seal's vault capture would
+    // skew the frozen figures, so the whole open stage refuses maintenance —
+    // only the flush-starter's own PTB can even compose this state. Post-seal
+    // rebalances are pinned free by the mid-flush metamorphic tests.
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.take_bs();
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
-    let stage = fx.start_flush(&mut config, &mut vault);
-    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
-    fx.value_expiry(&mut vault, &mut m1, &config);
-    let control_mark = vault.finish_flush(
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
-
-    // Flush B: a rebalance composed INSIDE the snapshot PTB, BEFORE the market
-    // is stamped. The eager copy taken at the stamp measures the moved cash, so
-    // the move is baseline — it must record NOTHING (a maintenance record would
-    // be added back at the finish and count the moved cash twice). Since an
-    // unrecorded pre-copy move is conserved between idle and the market row,
-    // the mark must equal the control's exactly. The post-stamp ordering is the
-    // opposite case, pinned by the next test.
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let stage = fx.start_flush(&mut config, &mut vault);
-    let idle_before = vault.idle_balance();
+    let _stage = fx.start_flush(&mut config, &mut vault);
     fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
-    // Guard: the in-PTB rebalance genuinely moved cash (the funded market still
-    // carries its unswept surplus).
-    assert!(vault.idle_balance() != idle_before);
-    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
-    fx.value_expiry(&mut vault, &mut m1, &config);
-    let mid_ptb_mark = vault.finish_flush(
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
-    assert_eq!(mid_ptb_mark, control_mark);
-
-    return_shared(config);
-    return_shared(pyth);
-    helpers::return_bs(bs);
-    return_shared(oracle_registry);
-    return_shared(vault);
-    return_shared(m1);
-    fx.finish();
-}
-
-#[test]
-fun a_rebalance_after_the_stamp_in_the_snapshot_ptb_is_maintenance() {
-    let mut fx = helpers::setup_market_default();
-    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
-    bootstrap_pool(&mut fx, IDLE_SEED);
-    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
-    fund_market_with_order(&mut fx, &trader, e1);
-
-    // Control: a plain flush with NO rebalance anywhere near it.
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
-    let bs = fx.take_bs();
-    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
-    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
-    let stage = fx.start_flush(&mut config, &mut vault);
-    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
-    fx.value_expiry(&mut vault, &mut m1, &config);
-    let control_mark = vault.finish_flush(
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
-
-    // Flush B: the rebalance composed inside the snapshot PTB but AFTER the
-    // market's stamp. The eager copy predates the move, so the move is
-    // invisible to the frozen figure and must record as maintenance — the
-    // sealed-gate-only shape skipped it here and skewed the mark by the moved
-    // amount. With the per-market ordering gate the mark equals the control's.
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let stage = fx.start_flush(&mut config, &mut vault);
-    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    let idle_before = vault.idle_balance();
-    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
-    // Guard: the post-stamp rebalance genuinely moved cash.
-    assert!(vault.idle_balance() != idle_before);
-    helpers::seal_snapshot(stage, &mut vault, &config);
-    fx.value_expiry(&mut vault, &mut m1, &config);
-    let post_stamp_mark = vault.finish_flush(
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
-    assert_eq!(post_stamp_mark, control_mark);
-
-    return_shared(config);
-    return_shared(pyth);
-    helpers::return_bs(bs);
-    return_shared(oracle_registry);
-    return_shared(vault);
-    return_shared(m1);
-    fx.finish();
+    abort 999
 }
 
 #[test]
