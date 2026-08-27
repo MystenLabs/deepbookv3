@@ -1580,7 +1580,8 @@ worth-fixing.
 - **Pinning tests:** `reference_tick_tests.move` —
   `set_reference_ticks_missing_exact_history_is_retryable`,
   `cadence_reference_ticks_fill_due_slots_independently`,
-  `set_reference_ticks_skip_filled_slot_after_feed_rebind`, and
+  `set_reference_ticks_skip_filled_slot_after_feed_rebind`,
+  `set_reference_ticks_fill_unfilled_slot_from_rebound_feed`, and
   `set_reference_ticks_floor_to_zero_aborts`; `registry_guard_tests.move` —
   `create_expiry_market_snapshots_aligned_reference_schedule`.
 - **Reopen when:** mint policy requires every scheduled cadence reference before a

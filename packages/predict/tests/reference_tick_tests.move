@@ -176,6 +176,34 @@ fun set_reference_ticks_skip_filled_slot_after_feed_rebind() {
     fx.finish();
 }
 
+#[test]
+fun set_reference_ticks_fill_unfilled_slot_from_rebound_feed() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut market = fx.take_expiry_market();
+    let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
+    fx.set_clock_for_testing(source_timestamp_ms);
+
+    let rebound_ids = fx.create_and_rebind_oracle(REBOUND_PYTH_SOURCE_ID);
+    let mut rebound = fx.take_oracle_bundle_by_ids(rebound_ids);
+    fx.insert_exact_pyth_bundle(
+        &mut rebound,
+        SHORTER_REFERENCE_SPOT_WITH_DUST,
+        source_timestamp_ms,
+    );
+    let added = market.set_reference_ticks(
+        oracle_fixture::config(&rebound),
+        oracle_fixture::oracle_registry(&rebound),
+        oracle_fixture::pyth(&rebound),
+        fx.clock(),
+    );
+    assert_eq!(added, ONE_NEW_REFERENCE_TICK);
+    assert_eq!(market.reference_tick().destroy_some(), SHORTER_REFERENCE_TICK);
+
+    oracle_fixture::return_expiry_market(market);
+    oracle_fixture::return_oracle_bundle(rebound);
+    fx.finish();
+}
+
 #[test, expected_failure(abort_code = strike_exposure::EInvalidReferenceTick)]
 fun set_reference_ticks_floor_to_zero_aborts() {
     let mut fx = oracle_fixture::setup_oracle_default();
@@ -226,32 +254,34 @@ fun cadence_reference_ticks_fill_due_slots_independently() {
         ).is_none(),
     );
 
-    fx.set_clock_for_testing(native_source_timestamp_ms);
-    fx.insert_exact_pyth_spot_bundle(
-        &mut market,
-        REFERENCE_SPOT_WITH_DUST,
-        native_source_timestamp_ms,
-    );
-    assert_eq!(fx.set_reference_ticks_bundle(&mut market), ONE_NEW_REFERENCE_TICK);
     assert_eq!(fx.set_reference_ticks_bundle(&mut market), NO_NEW_REFERENCE_TICKS);
-    let native_filled = helpers::market(&market).reference_ticks();
-    assert_eq!(
-        strike_exposure::reference_tick_value(
-            &native_filled[NATIVE_REFERENCE_INDEX],
-        ).destroy_some(),
-        REFERENCE_TICK,
-    );
-    assert!(
-        strike_exposure::reference_tick_value(&native_filled[SHORTER_REFERENCE_INDEX]).is_none(),
-    );
-    assert_eq!(helpers::market(&market).reference_tick().destroy_some(), REFERENCE_TICK);
 
     fx.set_clock_for_testing(shorter_source_timestamp_ms);
-    assert_eq!(fx.set_reference_ticks_bundle(&mut market), NO_NEW_REFERENCE_TICKS);
     fx.insert_exact_pyth_spot_bundle(
         &mut market,
         SHORTER_REFERENCE_SPOT_WITH_DUST,
         shorter_source_timestamp_ms,
+    );
+    assert_eq!(fx.set_reference_ticks_bundle(&mut market), ONE_NEW_REFERENCE_TICK);
+    assert_eq!(fx.set_reference_ticks_bundle(&mut market), NO_NEW_REFERENCE_TICKS);
+    let shorter_filled = helpers::market(&market).reference_ticks();
+    assert!(
+        strike_exposure::reference_tick_value(
+            &shorter_filled[NATIVE_REFERENCE_INDEX],
+        ).is_none(),
+    );
+    assert_eq!(
+        strike_exposure::reference_tick_value(
+            &shorter_filled[SHORTER_REFERENCE_INDEX],
+        ).destroy_some(),
+        SHORTER_REFERENCE_TICK,
+    );
+    assert!(helpers::market(&market).reference_tick().is_none());
+
+    fx.insert_exact_pyth_spot_bundle(
+        &mut market,
+        REFERENCE_SPOT_WITH_DUST,
+        native_source_timestamp_ms,
     );
     assert_eq!(fx.set_reference_ticks_bundle(&mut market), ONE_NEW_REFERENCE_TICK);
     assert_eq!(fx.set_reference_ticks_bundle(&mut market), NO_NEW_REFERENCE_TICKS);
@@ -264,6 +294,7 @@ fun cadence_reference_ticks_fill_due_slots_independently() {
         strike_exposure::reference_tick_value(&all_filled[SHORTER_REFERENCE_INDEX]).destroy_some(),
         SHORTER_REFERENCE_TICK,
     );
+    assert_eq!(helpers::market(&market).reference_tick().destroy_some(), REFERENCE_TICK);
 
     helpers::return_market_bundle(market);
     fx.finish();
