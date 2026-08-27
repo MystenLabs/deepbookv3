@@ -517,9 +517,9 @@ public fun finish_flush(
     let market_count = valued_expiry_markets.length();
 
     // Snapshot the share price once (frozen pair), drain both queues against it, then
-    // release the valuation lock at the very end. The flush IS the full-pool
-    // valuation, so the single FlushExecuted event carries the priced mark and its
-    // idle + active-NAV breakdown.
+    // release the valuation lock at the very end. The event carries the priced mark
+    // (gross = frozen_idle_balance + active-NAV) alongside `idle_balance_before`, a
+    // LIVE pre-drain read for telemetry that is deliberately not a mark input.
     let vault_id = vault.id();
     let mark = lp_book::new_flush_mark(pool_nav, total_supply);
     let fees = lp_book::new_fee_rates(
@@ -559,6 +559,7 @@ public fun finish_flush(
         total_nav,
         market_count,
         idle_balance_before,
+        frozen_idle_balance,
         drain_summary.supplies_filled(),
         drain_summary.withdrawals_filled(),
         drain_summary.requests_processed(),

@@ -151,7 +151,9 @@ public struct WithdrawFilled has copy, drop, store {
 }
 
 /// Emitted once after a flush drains both queues. `pool_value / total_supply` is
-/// the frozen pre-drain mark used by every fill in the flush.
+/// the frozen mark used by every fill; its gross reconstructs as
+/// `frozen_idle_balance + active_market_nav`. `idle_balance_before` is a LIVE
+/// pre-drain read for drain telemetry and is deliberately not a mark input.
 public struct FlushExecuted has copy, drop, store {
     pool_vault_id: ID,
     epoch: u64,
@@ -169,8 +171,15 @@ public struct FlushExecuted has copy, drop, store {
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
-    /// Idle DUSDC held by the pool at valuation time, before the drain.
+    /// LIVE idle DUSDC read at finish time, immediately before the drain — NOT
+    /// a mark input. It brackets the drain with `idle_balance_after`; because
+    /// maintenance, settlement sweeps, and trading run mid-window, it can differ
+    /// from `frozen_idle_balance` below. Drain telemetry, not the mark.
     idle_balance_before: u64,
+    /// The mark's idle component: idle DUSDC FROZEN at the seal. `frozen_idle_balance
+    /// + active_market_nav` reconstructs the priced mark's gross; every fill in the
+    /// flush is priced from this, never from `idle_balance_before`.
+    frozen_idle_balance: u64,
     supplies_filled: u64,
     withdrawals_filled: u64,
     requests_processed: u64,
@@ -432,6 +441,7 @@ public(package) fun emit_flush_executed(
     active_market_nav: u64,
     market_count: u64,
     idle_balance_before: u64,
+    frozen_idle_balance: u64,
     supplies_filled: u64,
     withdrawals_filled: u64,
     requests_processed: u64,
@@ -451,6 +461,7 @@ public(package) fun emit_flush_executed(
         active_market_nav,
         market_count,
         idle_balance_before,
+        frozen_idle_balance,
         supplies_filled,
         withdrawals_filled,
         requests_processed,
@@ -535,6 +546,13 @@ public(package) fun emit_fee_incentives_returned(
 #[test_only]
 public fun flush_executed_fee_rates(event: &FlushExecuted): (u64, u64) {
     (event.supply_fee_rate, event.withdraw_fee_rate)
+}
+
+/// `(live pre-drain idle, frozen mark idle)` — exists so a test can assert the
+/// two diverge after a mid-window cash movement while the mark stays exact.
+#[test_only]
+public fun flush_executed_idle_figures(event: &FlushExecuted): (u64, u64) {
+    (event.idle_balance_before, event.frozen_idle_balance)
 }
 
 /// The fill events' fields exist for off-chain consumers, which decode them rather

@@ -106,7 +106,7 @@ flowchart TD
     DRAIN --> SUP[supplies first: mint PLP into idle]
     DRAIN --> WD[then withdrawals FIFO until idle dry]
   end
-  TRADE[trading: mint and close stay live on every market throughout] -.->|deltas recorded on stamped markets| EXP
+  TRADE[trading: mint and close stay live on every market throughout] -.->|captured in place, copy-on-write| EXP
 ```
 
 ### Draining the queues
@@ -151,7 +151,7 @@ If the exact settlement spot is not present, the market remains unsettled and a 
 
 ## Pool ↔ expiry cash flow
 
-Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence, blocked only while a flush is in flight), and the same inner logic runs inside the flush's `value_expiry` before each still-live market is valued — cash it moves is conserved between idle and the market row, so it cannot change the pool total the flush prices.
+Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence, refused only inside the flush's still-open snapshot stage). Post-seal it runs freely and cannot change the pool total the flush prices — every figure the mark reads was frozen at the seal — and `value_expiry` itself moves no cash.
 
 Each expiry has a **required cash** floor of `payout_liability + inventory_impact_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
 

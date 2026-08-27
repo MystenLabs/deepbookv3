@@ -460,7 +460,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   eligible request is a free option against a stale price; new requests are
   quarantined by the recorded queue cutoffs instead of a gate. *Rejected:* gating
   requests too (needless — the cutoff is airtight and keeps the queue live).
-- **Cash maintenance runs mid-flush, compensated on every mark term.** A
+- **Cash maintenance runs mid-flush, compensated on every mark term.** *Superseded 2026-08-26 (vault-figure freeze) — the vault figures are now frozen at the seal, so nothing is recorded or reversed; see the entry at the end of this document. Kept for the decision record.* A
   pending market's snapshot cash is captured before any in-window move can touch
   it (originally recorded on the stamp and rolled back — see the in-tree
   snapshot decision below), and the move records on two flush accumulators that
@@ -511,7 +511,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 - **The snapshot state is captured in place, not journaled and replayed.**
   Supersedes the mechanism half of the 2026-08-24 entry (the staged lifecycle,
-  cutoffs, gating, and maintenance compensation above all stand). The stamp
+  cutoffs, and gating above all stand; the maintenance compensation was itself superseded 2026-08-26 — see the vault-figure freeze entry at the end). The stamp
   copies the two cash rows NAV reads eagerly at the snapshot instant; each
   payout-tree node copies its boundary quantities into a per-node shadow, keyed
   by the flush ordinal, immediately before its first mutation under that flush
@@ -756,3 +756,7 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 - **The referral rate is live protocol config.** `ProtocolConfig.referral_fee_rate` defaults to 10%, accepts 0% through 25%, and is read on every mint. Accounts and expiry markets do not snapshot it, so an admin update applies to subsequent mints protocol-wide.
 - **Account stores identity and payment routing separately.** Referral creation snapshots the existing referrer's canonical Account ID for attribution and its outer wrapper receive address for `balance::send_funds`. The relation is immutable, direct, and one level. A newly created Account cannot refer to itself because its referrer must already exist and the registry permits one canonical Account per owner; common beneficial ownership across distinct owner addresses is not checked.
 - **Mint events preserve attribution when payment is zero.** `OrderMinted` reports the calculated referral amount and the stored canonical referrer Account ID independently, so a zero rate or rounded-zero amount does not erase the referral relation from the event stream.
+
+## Vault-figure freeze (2026-08-26)
+
+- **The mark's vault-side figures are frozen at the seal, not corrected for afterward.** Supersedes "Cash maintenance runs mid-flush, compensated on every mark term" (2026-08-24). `seal_valuation_snapshot` captures idle, the profit-basis credits and debits, and the pending protocol cut into the `PoolValuation`, alongside each market's stamped cash and payout-tree shadows; `finish_flush` prices `lp_pool_value` purely from those frozen inputs, and settled members are swept inside the snapshot stage so their recoverable cash is already inside the frozen idle. There is nothing to record and nothing to reverse — an in-window rebalance, surplus sweep, or settlement cannot reach the mark because every term it reads was captured at one instant (the atomic vault-wide freeze was prototyped in deepbookv3#1268). *Consequence:* the maintenance accumulators, their finish-time reversal arithmetic, and the standalone-settled-sweep deferral are all deleted; `value_expiry` moves no cash for any member, and the standalone settled sweep runs freely mid-window. *The one new gate:* `rebalance_expiry_cash` is refused inside the still-open snapshot stage (`ESnapshotStageOpen`), since a cross-move landing between a market's stamp and the seal's capture would split that cash across the two frozen figures — a single-transaction, starter-composable state, so the keeper's snapshot PTB never triggers it. *Rejected:* keeping the per-market maintenance-ordering record (the freeze removes the recording, so there is nothing left to order); collapsing the per-market stamped cash into one pool aggregate (that is pool-level netting — a silent LP-economics change; the per-market NAV floor is preserved).

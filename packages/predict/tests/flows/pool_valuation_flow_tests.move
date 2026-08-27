@@ -28,12 +28,13 @@ use deepbook_predict::{
     plp::{Self, PoolVault},
     pricing,
     protocol_config::{Self, ProtocolConfig},
-    test_constants
+    test_constants,
+    vault_events
 };
 use fixed_math::math::{Self, float_scaling as float};
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::return_shared;
+use sui::{event, test_scenario::return_shared};
 
 /// Standard ATM up-range quantity, well under the 50e9 cash floor that backs it.
 const STANDARD_QUANTITY: u64 = 2_000_000_000;
@@ -177,10 +178,10 @@ fun multi_market_pool_nav_is_exact_with_a_mid_flush_rebalance() {
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
-    // m1 rebalances BEFORE the window, m2 DURING it: with the in-window move
-    // recorded on m2's stamp and reversed out of the pool total and profit
-    // basis, every exact expected value below must be identical to the
-    // rebalance-before-the-window case.
+    // m1 rebalances BEFORE the window, m2 DURING it: m2's in-window move lands
+    // after its stamp and the seal, so it cannot reach the mark, and every exact
+    // expected value below must be identical to the rebalance-before-the-window
+    // case.
     fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
@@ -595,6 +596,73 @@ fun a_rebalance_inside_the_open_snapshot_stage_aborts() {
 }
 
 #[test]
+fun the_flush_event_reports_live_pre_drain_idle_apart_from_the_frozen_mark_idle() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, e1);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+
+    // Control flush, no mid-window movement, to fix the mark.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let control_mark = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+
+    // Flush B moves idle BETWEEN the seal and the finish: a post-seal rebalance
+    // sweeps the funded market's surplus into idle. The frozen mark idle was
+    // captured at the seal (before the sweep), while `idle_balance_before` is a
+    // live read at the finish (after it) — the event must report the two apart,
+    // and the mark must still equal the control's.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &config);
+    let idle_at_seal = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    // Guard: the mid-window sweep genuinely raised live idle.
+    assert!(vault.idle_balance() > idle_at_seal);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let corrected_mark = vault.finish_flush(
+        &mut config,
+        option::none(),
+        option::none(),
+        fx.scenario_mut().ctx(),
+    );
+    assert_eq!(corrected_mark, control_mark);
+
+    let events = event::events_by_type<vault_events::FlushExecuted>();
+    let (live_before, frozen_idle) = vault_events::flush_executed_idle_figures(
+        &events[events.length() - 1],
+    );
+    // Telemetry reflects the swept cash; the mark's idle input does not.
+    assert!(live_before > frozen_idle);
+    assert_eq!(frozen_idle, idle_at_seal);
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    fx.finish();
+}
+
+#[test]
 fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
     let mut fx = helpers::setup_market_default();
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
@@ -624,9 +692,9 @@ fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
 
     // Flush B: identical books at its snapshot, but a NEW market is created AND
     // funded mid-window. The flush's expected set is frozen at its snapshot, so
-    // the new market is simply not part of it; its funding top-up lands in the
-    // maintenance accumulators on an unstamped market, and the finish reverses
-    // it — the mark treats that cash as the idle it was at the snapshot instant.
+    // the new market is simply not part of it; its funding top-up moves idle
+    // after the seal, and the mark reads idle frozen at the seal, so it treats
+    // that cash as the idle it was at the snapshot instant.
     fx.scenario_mut().next_tx(test_constants::alice());
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
@@ -1288,10 +1356,11 @@ fun a_stale_market_alongside_a_live_one_is_skipped_and_the_live_one_still_values
     // returning. The skip is therefore precise — it dropped the stale market and only
     // the stale market.
     //
-    // Pin it on state the flush itself moved, so this cannot pass on a no-op: only
-    // `value_expiry` rebalances a live market, and only for a market inside `expected`,
-    // so the live market sitting exactly at its cash target proves it was processed
-    // rather than skipped alongside the stale one.
+    // The skip precision is proven by the flush COMPLETING above: finish would
+    // have aborted `EMissingExpiryValuation` had the live market been skipped
+    // too. `value_expiry` moves no cash, so the assertion below pins only the
+    // pre-flush fixture state (the live market rebalanced to target), confirming
+    // the fixture, not the skip.
     assert_eq!(m_live.cash_balance(), MARKET_CASH_TARGET);
     assert!(pool_nav > vault.idle_balance());
 
