@@ -591,7 +591,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   fundable (gating it could starve redeems mid-emergency). `plp::lock_capital` carries
   no valuation-lock gate — it is legal only at `total_supply == 0` (both LP request
   entrypoints abort `ENotBootstrapped` until supply > 0), so nothing the lock protects
-  can exist when it runs.
+  can exist when it runs. `expiry_market::set_reference_tick` carries no valuation-lock
+  gate — the reference tick shapes mint admission only, and a mint it admits mid-flush is
+  invisible to the captured snapshot like any other trade, so moving it cannot touch the
+  frozen mark.
 
 ## Near-expiry leverage block (recent)
 

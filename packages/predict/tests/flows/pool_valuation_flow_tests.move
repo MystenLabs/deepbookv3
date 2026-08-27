@@ -1199,7 +1199,7 @@ fun a_third_party_cannot_finish_a_flush_it_did_not_start() {
 }
 
 #[test]
-fun aborting_after_a_partial_valuation_keeps_moved_cash_and_lets_a_later_flush_finish() {
+fun aborting_after_a_partial_valuation_leaves_no_residue_and_re_values() {
     let mut fx = helpers::setup_market_default();
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     bootstrap_pool(&mut fx, IDLE_SEED);
@@ -1217,9 +1217,11 @@ fun aborting_after_a_partial_valuation_keeps_moved_cash_and_lets_a_later_flush_f
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
-    // Value ONE market, then abandon the flush. `value_expiry` moved cash for m1, and
-    // `abort_valuation`'s doc claims that stays moved because a rebalance is
-    // invariant-preserving on its own. This is the test of that claim.
+    // Value ONE market (measurement-only — value_expiry moves no cash), then
+    // abandon the flush. The claim under test is that the discarded valuation
+    // leaves no exactly-once residue and moves no cash: the abort is cash-neutral
+    // (idle and m1 unchanged across it) and a later flush values m1 again rather
+    // than rejecting it as already-valued.
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
@@ -1237,8 +1239,8 @@ fun aborting_after_a_partial_valuation_keeps_moved_cash_and_lets_a_later_flush_f
     assert_eq!(vault.idle_balance(), idle_after_partial);
 
     // A fresh flush covers BOTH markets again: the discarded valuation left no
-    // exactly-once residue, so m1 is valuable a second time rather than rejected as
-    // already valued. The second pass is a no-op for cash — m1 is already at target.
+    // exactly-once residue, so m1 is valued a second time rather than rejected as
+    // already valued, and every cash figure is unchanged from before the abort.
     fx.scenario_mut().next_tx(test_constants::admin());
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);

@@ -129,10 +129,12 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 /// How long a started full-pool valuation may stay in flight before anyone may
 /// discard it (`plp::abort_valuation`). A stalled flush blocks only LP queue fills
 /// and the flush-set markets' settlement — trading continues, so this window bounds
-/// LP-fill latency AND the staleness of the frozen mark those fills execute at:
-/// fills land at finish time against the snapshot instant, so no fill is ever
-/// staler than this window. The ten-minute default keeps that staleness to about
-/// one flush cadence. The minimum keeps a legitimate flush from being discarded
+/// LP-fill latency and, once elapsed, lets ANYONE discard a stalled flush
+/// (`plp::abort_valuation`). It is not a hard cap on fill-mark staleness: `finish_flush`
+/// is not deadline-gated, so a still-live operator can complete past the window and its
+/// fills carry that older mark; the window is the point past which the operator loses its
+/// exclusive hold, so in practice staleness tracks the operator's cadence and this
+/// deadline. The ten-minute default keeps that to about one flush cadence. The minimum keeps a legitimate flush from being discarded
 /// out from under a keeper still working through it (a healthy flush is seconds
 /// of transactions, so one minute still covers it with margin); the maximum
 /// bounds the wait even if an operator sets this carelessly. A live operator

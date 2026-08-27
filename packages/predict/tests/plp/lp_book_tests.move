@@ -227,6 +227,47 @@ fun two_withdrawals_share_one_frozen_mark() {
     finish(scenario, book, ledger);
 }
 
+#[test]
+fun a_withdraw_queued_after_the_cutoff_is_not_drained() {
+    let (mut scenario, mut book, mut ledger) = setup();
+    // 10e6 locked + 20e6 circulating -> total_supply 30e6; idle 50e6 at the mark
+    // covers a single 10e6 exit with room to spare.
+    lock_and_fill_supply(&mut scenario, &mut book, &mut ledger, 10_000_000, 20_000_000);
+    seed_idle(&mut ledger, 30_000_000);
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    // The cutoff is captured with only the first withdraw queued. The second,
+    // enqueued AFTER, sits at or above the cutoff and must be left for the next
+    // mark — even though the budget is unbounded and idle is ample. Without the
+    // `request.index >= cutoff` break in `drain_withdraw_queue`, both would fill
+    // and someone watching the frozen mark form could withdraw against a price
+    // they already know.
+    let supply_cutoff = book.next_supply_request_index();
+    let withdraw_cutoff = book.next_withdraw_request_index();
+    enqueue_withdraw(&mut scenario, &mut book, 10_000_000);
+
+    book.drain(
+        &mut ledger,
+        lp_book::new_flush_mark(50_000_000, 30_000_000),
+        no_fees(),
+        vault_id(),
+        supply_cutoff,
+        withdraw_cutoff,
+        option::none(),
+        option::none(),
+        NO_RETRY,
+        NO_CAP,
+        scenario.ctx(),
+    );
+
+    // Exactly the pre-cutoff withdraw drained: one still pending, and only its
+    // 10e6 was burned (total 30e6 -> 20e6, not 10e6).
+    assert_eq!(book.withdraw_requests_pending(), 1);
+    assert_eq!(book.total_supply(), 20_000_000);
+
+    finish(scenario, book, ledger);
+}
+
 // === Supply / withdraw fee ===
 //
 // Every expected value below is hand-derived from the frozen mark and the rate,

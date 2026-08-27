@@ -659,7 +659,14 @@ fun mid_window_trading_has_no_budget() {
     // One past the retired delta-log floor (64), where the old mechanism's
     // 65th trade aborted at that setting.
     let past_retired_log_floor = 65;
-    let mut minted = 0;
+    let first_order = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        constants::position_lot_size!() * 400,
+    );
+    let mut minted = 1;
     while (minted < past_retired_log_floor) {
         fx.mint_bundle(
             &mut market,
@@ -670,6 +677,9 @@ fun mid_window_trading_has_no_budget() {
         );
         minted = minted + 1;
     };
+    // The unbudgeted trades genuinely landed on the live book.
+    assert!(account.has_position_bundle(expiry_id, first_order));
+    assert!(helpers::market(&market).payout_liability() > 0);
     fx.value_expiry_bundle(&mut market);
     // The stamp is cleared: trading also continues before the flush finishes.
     let _reopened = fx.mint_bundle(
@@ -679,7 +689,10 @@ fun mid_window_trading_has_no_budget() {
         helpers::pos_inf_tick(),
         constants::position_lot_size!() * 400,
     );
-    fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    // The flush completes on the frozen (pre-trade) figure regardless of the
+    // volume that landed mid-window.
+    let mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    assert!(mark > 0);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
