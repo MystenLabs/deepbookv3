@@ -6,16 +6,7 @@ designed, and what its risks are. It is written for a technically literate reade
 understand the mechanism. It is **not** an integration or SDK guide — it does not
 contain transaction recipes or a function-by-function API reference.
 
-> **Status:** in development, not yet deployed. Current shipped state: live
-> oracle data is read from the standalone **propbook** Pyth and Block Scholes
-> feeds (no in-package oracle); strikes are **absolute integer ticks**
-> (`raw_strike = tick × tick_size`); the LP layer is **asynchronous** — supply
-> and withdraw are queued and settled by a **privileged periodic flush** that
-> marks the whole pool at one **exact** NAV; and **terminal settlement is
-> passive**, preferring Propbook's exact Pyth history and permitting exact Block Scholes after a 30-second grace period when a normal redeem
-> or pool-rebalance flow first needs the settled branch. Where a behaviour is
-> still changing, the docs describe it at the conceptual level and point to the
-> configuration that governs it rather than to specific values that may drift.
+> **Status:** in development and deployed on Sui Testnet as `predict-testnet-8-21`; interfaces may change before mainnet. See the [deployment integration guide](../deployment/INTEGRATION.md) for the SDK, public read APIs, and deployment-specific identities. Current deployed state: live oracle data is read from the standalone **propbook** Pyth and Block Scholes feeds (no in-package oracle); strikes are **absolute integer ticks** (`raw_strike = tick × tick_size`); the LP layer is **asynchronous** — supply and withdraw are queued and settled by a **privileged periodic flush** that marks the whole pool at one **exact** NAV; and **terminal settlement is passive**, preferring Propbook's exact Pyth history and permitting exact Block Scholes after a 30-second grace period when a normal redeem or pool-rebalance flow first needs the settled branch. Where a behaviour is still changing, the docs describe it at the conceptual level and point to the configuration that governs it rather than to specific values that may drift.
 
 ## Start here
 

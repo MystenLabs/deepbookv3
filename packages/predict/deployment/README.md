@@ -7,9 +7,14 @@ This directory records and reproduces the `predict-testnet-8-21` contract deploy
 - `deploy.ts` is the resumable deployment state machine. It publishes `fixed_math`, Account, Propbook, Predict, the DeepBook core Account wrapper, and Sessions; authorizes the fresh Account apps; wires BTC oracle state; applies cadence policy; bootstraps the pool; fills the initial market windows; transfers the lifecycle capability; and audits the result from Testnet.
 - `deployment.testnet.state.json` is the mode-`0600`, gitignored operator journal. It contains in-flight intent, transaction receipts, temporary objects, bootstrap-account data, and administrative capabilities.
 - `deployment.testnet.json` is the public integration manifest. The script writes it only after a complete Testnet audit.
+- `INTEGRATION.md` is the application and backend integration guide for the deployed SDK, public read APIs, data conventions, and freshness checks.
 - `deploy.test.ts` pins the non-broadcasting default, state/manifest boundary, deployment policy, publication metadata decoding, and schema-6 manifest boundary.
 
 No deployment artifact contains signer key material. The workflow reads the selected signer from a mode-restricted snapshot of the existing Sui client configuration and removes the snapshot on exit.
+
+## Integrate
+
+Start with the [integration guide](./INTEGRATION.md) for TypeScript SDK setup, public indexed-read endpoints, consumer flows, pagination, units, and freshness. Package and object identities remain owned by [`deployment.testnet.json`](./deployment.testnet.json); mutable protocol and cadence state remains owned by the shared objects on-chain.
 
 ## Run
 
