@@ -588,9 +588,9 @@ public fun finish_flush(
 ///
 /// Partial NAV is discarded rather than reused: the frozen marks are only sound
 /// as a simultaneous set, so a later flush must re-snapshot. Cash already moved
-/// by `value_expiry`'s settled sweeps and by any in-window maintenance stays
+/// by snapshot-stage settled sweeps and by any in-window maintenance stays
 /// moved — each is an invariant-preserving per-market operation that stands on
-/// its own, and the discarded accumulators only ever affected the mark. Market
+/// its own; the discarded valuation only ever affected the mark. Market
 /// stamps are not visited: releasing the flag makes every one of them stale, and
 /// the next trade or settle on each market discards it.
 public fun abort_valuation(vault: &mut PoolVault, config: &mut ProtocolConfig, clock: &Clock) {
