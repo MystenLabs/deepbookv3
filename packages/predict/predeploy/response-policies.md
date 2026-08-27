@@ -1547,45 +1547,18 @@ worth-fixing.
 
 ---
 
-## RP-29: Missing cadence-reference history skips that slot (`EReferenceTickObservationMissing` removed)
+## RP-29: Cadence-reference fills are independent and first-write-wins (`EReferenceTickObservationMissing` and `EReferenceTickAlreadySet` removed)
 
-- **Trigger state:** one or more due, unfilled cadence-reference slots lack a
-  positive normalized Pyth observation at their exact scheduled source timestamp.
-- **Controller:** external availability — Pyth produces the signed observation and
-  a relayer lands its exact-history row; Predict controls only when callers retry.
-- **Blast radius:** one reference slot on one expiry market. Existing filled slots,
-  unrelated due slots, coarse-grid mint admission, pricing, custody, and settlement
-  remain available.
-- **Response:** skip the missing slot, continue scanning the schedule, return the
-  number of newly filled slots, and leave the missing slot retryable. Future and
-  already-filled slots are the same no-op class. There is no latest, nearest, or
-  Block Scholes substitute for a cadence reference.
-- **Reasoning:** reference ticks add optional fine-grid mint boundaries; they do not
-  price a trade or settle a position. Reverting the whole call because one cadence
-  row is absent would prevent independent due references from becoming usable and
-  would make retry batching all-or-nothing without improving oracle trust.
-- **Duty inventory (guard removal):** the deleted abort forced the singular
-  reference call to observe one exact normalized row. It incidentally made absence
-  a hard liveness failure and guaranteed no successful return with an unfilled due
-  slot; it did not validate feed identity, price width, tick range, timestamp
-  alignment, freshness, custody, or market accounting. Canonical-feed identity is
-  still asserted by `pricing::load_exact_spot`; exact-key semantics remain RP-14;
-  `grid_tick` plus `strike_exposure::set_reference_tick` still reject a zero or
-  sentinel tick; creation owns timestamp alignment; and filled slots remain
-  first-write-wins. The intentional duty change is only that a due slot may remain
-  empty after a successful call.
-- **Risk profile:** `BEST-GUESS` — the response improves keeper and batch liveness;
-  the residual user-visible effect is that one off-grid cadence boundary remains
-  unavailable until exact Pyth history lands.
-- **Pinning tests:** `reference_tick_tests.move` —
-  `set_reference_ticks_missing_exact_history_is_retryable`,
-  `cadence_reference_ticks_fill_due_slots_independently`,
-  `set_reference_ticks_skip_filled_slot_after_feed_rebind`,
-  `set_reference_ticks_fill_unfilled_slot_from_rebound_feed`, and
-  `set_reference_ticks_floor_to_zero_aborts`; `registry_guard_tests.move` —
-  `create_expiry_market_snapshots_aligned_reference_schedule`.
-- **Reopen when:** mint policy requires every scheduled cadence reference before a
-  market can trade, a batch consumer assumes all due slots fill together, or a
-  fallback source is proposed for reference admission.
+- **Trigger state:** one or more due, unfilled cadence-reference slots lack a positive normalized Pyth observation at their exact scheduled source timestamp; or a filled slot's stored tick differs from the tick that a later canonical-feed binding would derive for the same timestamp.
+- **Controller:** external availability controls whether Pyth produces and a relayer lands an exact-history row; a Propbook binding update controls which canonical feed can fill an unfilled slot. Predict controls only when callers retry and never revisits a filled slot.
+- **Blast radius:** one reference slot on one expiry market. A missing slot remains unavailable as an off-grid mint boundary; a filled slot retains its first value. Unrelated slots, coarse-grid mint admission, pricing, custody, and settlement remain available.
+- **Response:** skip a missing slot, continue scanning the schedule, return the number of newly filled slots, and leave the missing slot retryable. Future and already-filled slots are no-ops. A filled slot is not re-read, compared, or overwritten after a feed rebind. There is no latest, nearest, or Block Scholes substitute for a cadence reference.
+- **Reasoning:** reference ticks add optional fine-grid mint boundaries; they do not price a trade or settle a position. Reverting the whole call because one cadence row is absent would prevent independent due references from becoming usable and would make retry batching all-or-nothing without improving oracle trust. Once a canonical value has admitted a fine-grid boundary, overwriting it would make the market's mint-admission policy change over its lifetime; aborting on a later conflict would instead let one filled slot block unrelated missing slots forever.
+- **Duty inventory (`EReferenceTickObservationMissing` removal):** the deleted abort forced the singular reference call to observe one exact normalized row. It incidentally made absence a hard liveness failure and guaranteed no successful return with an unfilled due slot. It did not validate feed identity, price width, tick range, timestamp alignment, freshness, custody, or market accounting.
+- **Duty inventory (`EReferenceTickAlreadySet` removal):** the deleted guard compared a newly derived tick with the stored tick and aborted when a later canonical feed disagreed. It was a conflict detector only: it never permitted mutation and did not protect custody, settlement, pricing, timestamp alignment, or the initial fill's authority. Removing it also removes canonical-feed reads for filled slots, so feed rebinds cannot block retries or revise an admitted boundary.
+- **Surviving duties:** canonical-feed identity is asserted by `pricing::load_exact_spot` before every unfilled slot is written; exact-key semantics remain RP-14; `grid_tick` plus `strike_exposure::set_reference_tick` reject a zero or sentinel tick; creation owns timestamp alignment; and the first successful fill emits the immutable value. The intentional changes are that a due slot may remain empty after a successful call and a filled slot is permanently first-write-wins.
+- **Risk profile:** `BEST-GUESS` — independent no-op slots improve keeper and batch liveness. A missing exact row withholds one off-grid cadence boundary until the row lands; a later feed rebind cannot correct or challenge a previously filled value on chain, so any repudiation of that historical value requires external detection and a protocol upgrade or replacement market.
+- **Pinning tests:** `reference_tick_tests.move` — `set_reference_ticks_missing_exact_history_is_retryable`, `cadence_reference_ticks_fill_due_slots_independently`, `set_reference_ticks_skip_filled_slot_after_feed_rebind`, `set_reference_ticks_fill_unfilled_slot_from_rebound_feed`, and `set_reference_ticks_floor_to_zero_aborts`; `registry_guard_tests.move` — `create_expiry_market_snapshots_aligned_reference_schedule`.
+- **Reopen when:** mint policy requires every scheduled cadence reference before a market can trade, a batch consumer assumes all due slots fill together, filled references need an on-chain conflict signal or correction path, or a fallback source is proposed for reference admission.
 
 ---
