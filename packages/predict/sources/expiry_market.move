@@ -25,7 +25,7 @@ use deepbook_predict::{
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
     range_codec,
-    strike_exposure::{Self, MintTerms, StrikeExposure},
+    strike_exposure::{Self, MintTerms, ReferenceTick, StrikeExposure},
     strike_exposure_config
 };
 use dusdc::dusdc::DUSDC;
@@ -42,11 +42,10 @@ const EMarketNotSettled: u64 = 1;
 const EMintCostAboveMax: u64 = 2;
 const EMintProbabilityAboveMax: u64 = 3;
 const EWrongPricer: u64 = 4;
-const EReferenceTickObservationMissing: u64 = 5;
-const EMintRedeemSameTimestamp: u64 = 6;
-const ERedeemProbabilityBelowMin: u64 = 7;
-const ERedeemProceedsBelowMin: u64 = 8;
-const EMintCostCapRequired: u64 = 9;
+const EMintRedeemSameTimestamp: u64 = 5;
+const ERedeemProbabilityBelowMin: u64 = 6;
+const ERedeemProceedsBelowMin: u64 = 7;
+const EMintCostCapRequired: u64 = 8;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -178,6 +177,11 @@ public fun admission_tick_size(market: &ExpiryMarket): u64 {
 /// Return the admitted reference tick for SDK and devInspect range construction.
 public fun reference_tick(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.reference_tick()
+}
+
+/// Return every immutable cadence-aligned reference tick for SDK and devInspect reads.
+public fun reference_ticks(market: &ExpiryMarket): vector<ReferenceTick> {
+    market.strike_exposure.reference_ticks()
 }
 
 /// Return the reference observation timestamp for SDK and devInspect reads.
@@ -576,45 +580,6 @@ public fun redeem_settled_permissionless(
     )
 }
 
-/// Set this expiry's reference fine-grid tick from the exact previous-window
-/// Propbook Pyth observation. The source observation must be inserted into the
-/// feed at `reference_tick_source_timestamp_ms` before this call, and the
-/// normalized spot is floored to the market's `tick_size`.
-public fun set_reference_tick(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    clock: &Clock,
-): u64 {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-
-    let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
-    let spot = pricing::load_exact_spot(
-        propbook_registry,
-        pyth,
-        market.propbook_underlying_id,
-        source_timestamp_ms,
-    );
-    assert!(spot.is_some(), EReferenceTickObservationMissing);
-
-    let spot = spot.destroy_some();
-    let tick_size = market.strike_exposure.tick_size();
-    let tick = range_codec::grid_tick(spot, tick_size);
-    if (market.strike_exposure.set_reference_tick(tick)) {
-        config_events::emit_reference_tick_set(
-            market.id(),
-            market.propbook_underlying_id,
-            source_timestamp_ms,
-            spot,
-            tick,
-            clock.timestamp_ms(),
-        );
-    };
-    tick
-}
-
 /// Set whether new mints are paused on this expiry market. Admin-only and
 /// version-gated. A `PauseCap` holder can force-engage the pause one-way under a
 /// version freeze via `registry::pause_expiry_market_mint_pause_cap`.
@@ -680,6 +645,45 @@ public fun try_settle(
 }
 
 // === Public-Package Functions ===
+
+/// Fill every supplied source timestamp whose exact Propbook Pyth observation is available.
+/// Registry cadence policy derives `source_timestamps_ms`; this state owner skips timestamps
+/// already recorded and emits one event for each newly recorded tick.
+public(package) fun set_reference_ticks(
+    market: &mut ExpiryMarket,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    source_timestamps_ms: vector<u64>,
+    clock: &Clock,
+): u64 {
+    let mut added = 0;
+    source_timestamps_ms.do!(|source_timestamp_ms| {
+        if (!market.strike_exposure.has_reference_tick_source_timestamp(source_timestamp_ms)) {
+            let spot = pricing::load_exact_spot(
+                propbook_registry,
+                pyth,
+                market.propbook_underlying_id,
+                source_timestamp_ms,
+            );
+            if (spot.is_some()) {
+                let spot = spot.destroy_some();
+                let tick = range_codec::grid_tick(spot, market.strike_exposure.tick_size());
+                if (market.strike_exposure.set_reference_tick(source_timestamp_ms, tick)) {
+                    config_events::emit_reference_tick_set(
+                        market.id(),
+                        market.propbook_underlying_id,
+                        source_timestamp_ms,
+                        spot,
+                        tick,
+                        clock.timestamp_ms(),
+                    );
+                    added = added + 1;
+                };
+            };
+        };
+    });
+    added
+}
 
 /// Force `mint_paused = true` through the registry's `PauseCap` path. This cannot
 /// unpause and does not apply the package-version gate.

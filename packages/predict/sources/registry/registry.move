@@ -21,12 +21,13 @@ use deepbook_predict::{
     plp::PoolVault,
     protocol_config::{Self, ProtocolConfig}
 };
-use propbook::registry::OracleRegistry;
+use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
 const EPauseCapNotValid: u64 = 0;
 const ELifecycleCapNotValid: u64 = 1;
 const ELifecycleCapNotFound: u64 = 2;
+const EWrongExpiryMarket: u64 = 3;
 
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
@@ -78,6 +79,57 @@ public fun cadence_configs(
     propbook_underlying_id: u32,
 ): vector<CadenceConfig> {
     registry.market_manager.cadence_configs(propbook_underlying_id)
+}
+
+/// Fill every currently eligible cadence-aligned reference tick whose exact Pyth row exists.
+///
+/// The market's native previous-window timestamp is always eligible. Each enabled shorter
+/// cadence contributes `expiry - cadence_period` when its grid aligns with the expiry. Future,
+/// missing, and already-recorded timestamps are skipped, so callers can retry this entrypoint as
+/// exact observations become available without changing an existing tick.
+public fun set_reference_ticks(
+    registry: &Registry,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+): u64 {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+
+    let propbook_underlying_id = market.propbook_underlying_id();
+    let expiry = market.expiry();
+    assert!(
+        registry
+            .market_manager
+            .expiry_market_id(propbook_underlying_id, expiry)
+            .contains(&market.id()),
+        EWrongExpiryMarket,
+    );
+
+    let native_source_timestamp_ms = market.reference_tick_source_timestamp_ms();
+    let native_period_ms = expiry - native_source_timestamp_ms;
+    let mut source_timestamps_ms = vector[native_source_timestamp_ms];
+    let cadence_configs = registry.market_manager.cadence_configs(propbook_underlying_id);
+    let mut cadence_id = 0;
+    while (cadence_id < cadence_configs.length()) {
+        let cadence = &cadence_configs[cadence_id];
+        let cadence_period_ms = market_manager::cadence_period_ms(cadence_id as u8);
+        if (
+            market_manager::cadence_enabled(cadence)
+                && cadence_period_ms < native_period_ms
+                && expiry % cadence_period_ms == 0
+        ) {
+            let source_timestamp_ms = expiry - cadence_period_ms;
+            if (source_timestamp_ms <= clock.timestamp_ms()) {
+                source_timestamps_ms.push_back(source_timestamp_ms);
+            };
+        };
+        cadence_id = cadence_id + 1;
+    };
+
+    market.set_reference_ticks(propbook_registry, pyth, source_timestamps_ms, clock)
 }
 
 // === PauseCap Lifecycle (admin) ===

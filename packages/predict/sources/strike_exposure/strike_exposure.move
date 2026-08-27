@@ -25,10 +25,17 @@ use sui::clock::Clock;
 const EInvalidCloseQuantity: u64 = 0;
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
-const EReferenceTickAlreadySet: u64 = 3;
+const ETooManyReferenceTicks: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
+const MAX_REFERENCE_TICKS: u64 = 6;
+
+/// One immutable exact-history Pyth reference tick for an expiry market.
+public struct ReferenceTick has copy, drop, store {
+    source_timestamp_ms: u64,
+    tick: u64,
+}
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -38,10 +45,10 @@ public struct StrikeExposure has store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
-    /// Exact Propbook Pyth source timestamp used to derive the reference tick.
+    /// Exact Propbook Pyth source timestamp for this market's native cadence.
     reference_tick_source_timestamp_ms: u64,
-    /// Reference fine-grid tick that may bypass the coarser admission grid once set.
-    reference_tick: Option<u64>,
+    /// Cadence-aligned reference fine-grid ticks that may bypass the coarser admission grid.
+    reference_ticks: vector<ReferenceTick>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
     /// Immutable DUSDC scale for the inventory-impact curve. This is the
@@ -86,6 +93,16 @@ public struct LiveCloseTerms has drop {
     range_probability: u64,
     /// Separate inventory-impact rebate, sampled against the pre-close book.
     inventory_impact_rebate: u64,
+}
+
+/// Return the exact Pyth source timestamp for one reference tick.
+public fun source_timestamp_ms(reference: &ReferenceTick): u64 {
+    reference.source_timestamp_ms
+}
+
+/// Return the fine-grid tick for one reference tick.
+public fun reference_tick_value(reference: &ReferenceTick): u64 {
+    reference.tick
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -212,8 +229,31 @@ public(package) fun reference_tick_source_timestamp_ms(exposure: &StrikeExposure
     exposure.reference_tick_source_timestamp_ms
 }
 
+/// Return all immutable cadence-aligned reference ticks.
+public(package) fun reference_ticks(exposure: &StrikeExposure): vector<ReferenceTick> {
+    exposure.reference_ticks
+}
+
+/// Return the native-cadence reference tick, or `none` until it is recorded.
 public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
-    exposure.reference_tick
+    let source_timestamp_ms = exposure.reference_tick_source_timestamp_ms;
+    let mut i = 0;
+    while (i < exposure.reference_ticks.length()) {
+        let reference = &exposure.reference_ticks[i];
+        if (reference.source_timestamp_ms == source_timestamp_ms) {
+            return option::some(reference.tick)
+        };
+        i = i + 1;
+    };
+    option::none()
+}
+
+/// Return whether one exact-history source timestamp is already recorded.
+public(package) fun has_reference_tick_source_timestamp(
+    exposure: &StrikeExposure,
+    source_timestamp_ms: u64,
+): bool {
+    exposure.reference_ticks.any!(|reference| reference.source_timestamp_ms == source_timestamp_ms)
 }
 
 /// Return the raw per-trade fee for a live price and quantity.
@@ -427,16 +467,19 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
     exposure.settled_payout_liability = settled_payout_liability;
 }
 
-/// Set the reference fine-grid tick that can bypass coarser mint admission.
-/// Returns `true` only when this call records the tick for the first time.
-/// Repeated calls are idempotent for the same tick and abort for a different one.
-public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64): bool {
+/// Record one immutable cadence-aligned reference tick.
+/// Returns `true` only when this call records the source timestamp for the first time.
+public(package) fun set_reference_tick(
+    exposure: &mut StrikeExposure,
+    source_timestamp_ms: u64,
+    tick: u64,
+): bool {
     assert!(tick > 0 && tick < constants::pos_inf_tick!(), EInvalidReferenceTick);
-    if (exposure.reference_tick.is_some()) {
-        assert!(*exposure.reference_tick.borrow() == tick, EReferenceTickAlreadySet);
+    if (exposure.has_reference_tick_source_timestamp(source_timestamp_ms)) {
         return false
     };
-    exposure.reference_tick = option::some(tick);
+    assert!(exposure.reference_ticks.length() < MAX_REFERENCE_TICKS, ETooManyReferenceTicks);
+    exposure.reference_ticks.push_back(ReferenceTick { source_timestamp_ms, tick });
     true
 }
 
@@ -456,7 +499,7 @@ public(package) fun new(
         tick_size,
         admission_tick_size,
         reference_tick_source_timestamp_ms,
-        reference_tick: option::none(),
+        reference_ticks: vector[],
         config,
         inventory_impact_scale,
         next_order_sequence: 0,
@@ -545,13 +588,13 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
     assert!(
         lower_tick == 0
             || lower_tick % admission_multiple == 0
-            || exposure.reference_tick.contains(&lower_tick),
+            || exposure.reference_ticks.any!(|reference| reference.tick == lower_tick),
         EInvalidAdmissionTick,
     );
     assert!(
         higher_tick == constants::pos_inf_tick!()
             || higher_tick % admission_multiple == 0
-            || exposure.reference_tick.contains(&higher_tick),
+            || exposure.reference_ticks.any!(|reference| reference.tick == higher_tick),
         EInvalidAdmissionTick,
     );
 }
