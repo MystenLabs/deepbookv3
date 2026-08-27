@@ -6,12 +6,9 @@ at a fixed future **expiry**: a contract pays a fixed notional if the settlement
 price lands inside the trader's chosen strike range, and zero otherwise. A shared
 **pool** of liquidity providers writes every contract and earns the trading flow.
 
-> **Status:** in development, not yet deployed. There are no published package
-> addresses yet, and the on-chain interface is still changing. The documentation
-> describes how the protocol works and is designed; it is not an integration or
-> SDK guide.
+> **Status:** in development and deployed on Sui Testnet as `predict-testnet-8-21`; interfaces may change before mainnet. Package and object identities are in the [deployment manifest](./deployment/deployment.testnet.json), and application setup is in the [integration guide](./deployment/INTEGRATION.md).
 
-The TypeScript client is [`@mysten/deepbook-predict`](https://github.com/MystenLabs/ts-sdks/tree/main/packages/deepbook-predict), maintained in `MystenLabs/ts-sdks`.
+The TypeScript client is [`@mysten/deepbook-v3/predict`](https://github.com/MystenLabs/ts-sdks/blob/main/packages/deepbook-v3/PREDICT.md), maintained in `MystenLabs/ts-sdks`.
 
 ## Documentation
 
