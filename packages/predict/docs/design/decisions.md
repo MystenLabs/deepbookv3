@@ -359,6 +359,18 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   re-adding a creation-time spot read purely to sanity-check the tick size against the
   asset's price scale — the tick size is sized operationally and a mismatch fails
   loud at the first mint.
+- **Cadence references are creation-scheduled and independently fillable.** Every
+  market stores its native `expiry - cadence_period` reference first, followed by
+  each enabled shorter cadence whose period aligns with the expiry. The schedule is
+  fixed at creation, while each tick starts empty and fills once from the canonical
+  exact Pyth row when due. Missing history skips only that slot and callers retry;
+  any filled slot may admit its fine-grid tick through the coarser mint-admission
+  grid. *Rationale:* a longer-cadence market can anchor ranges to overlapping shorter
+  opens without making market creation depend on a future price or making one absent
+  row revert unrelated fills. *Rejected:* deriving slots from current cadence config
+  at fill time (retroactively changes live-market terms), requiring all due rows in
+  one atomic batch (one missing cadence blocks the others), and accepting caller-
+  supplied timestamps or latest-price fallback (breaks cadence alignment).
 - **Deep-tail pricing stays live, and it is computed rather than asserted.**
   `compute_nd2` takes log-moneyness as a difference of logarithms, `k = ln(strike) -
   ln(forward)`, so both tails price through the ordinary formula and converge on

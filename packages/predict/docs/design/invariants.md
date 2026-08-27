@@ -159,6 +159,11 @@ and contributors. For *how* each mechanism works, follow the links into
   "Paused" is not a state.
 - Trading pause blocks new risk creation; exits, settled-market cleanup, and
   valuation are gated only by the valuation lock.
+- A market's cadence-reference schedule is fixed at creation: native cadence first,
+  then the enabled, expiry-aligned shorter cadences from longest to shortest. Each
+  slot fills at most once from the canonical exact Pyth row at
+  `expiry - cadence_period`; future, missing, and already-filled slots are no-ops,
+  and an unfilled slot grants no mint-admission exception.
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
   there is no expiry-only path that can strand capital. (The standalone compaction

@@ -128,10 +128,16 @@ Note the asymmetry: the Block Scholes forward/SVI source set is mandatory and ga
 
 Resolving a price touches three facts — *are these the current canonical Propbook feeds for this market's underlying and expiry*, *is this market still live for live pricing*, and *are the required feed reads fresh* — and they are owned by different modules:
 
-- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing` for a live `Pricer` or an exact-history the exact-spot read before consuming oracle-derived facts.
+- **`expiry_market` owns market flow sequencing.** It stores `propbook_underlying_id` and the market expiry, then asks `pricing` for a live `Pricer` or an exact-history spot read before consuming oracle-derived facts.
 - **`pricing` owns the oracle-read boundary.** It checks passed Propbook feed objects against the current canonical bindings, issues the exact-spot read for reference-tick and settlement lookups, and issues `Pricer` for live flows after enforcing pre-expiry liveness, freshness, and Predict's pricing-safe envelope.
 
 This split keeps each guard with the module whose contract depends on it: the market owns the flow and market facts, while pricing is the only path from Propbook oracle objects into Predict business logic.
+
+## Cadence reference prices
+
+At creation, a market fixes one reference-price slot for its native cadence and for every enabled shorter cadence aligned with that expiry. Each slot looks up Pyth at exactly `expiry - cadence_period`; creation itself reads no price. `set_reference_ticks` validates the current canonical Pyth binding and fills only due slots whose exact normalized history exists. It never substitutes latest, nearest, or Block Scholes data. A missing or unnormalizable row leaves that slot unfilled while other due slots can succeed, and later calls retry only the unfilled slots. Filled values never change.
+
+The stored price is converted to the market's fine-grid tick by flooring to `tick_size`. Any filled slot may then admit that tick as a finite mint boundary even when it is not a multiple of the coarser `admission_tick_size`; see [markets and positions](./markets-and-positions.md#cadence-reference-ticks-and-mint-admission). This reference path is independent of settlement: reference gaps only withhold an off-grid admission exception, while settlement still follows the exact Pyth/Block Scholes policy below.
 
 ## Freshness and price bounds
 

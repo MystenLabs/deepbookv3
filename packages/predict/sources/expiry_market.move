@@ -42,10 +42,10 @@ const EMarketNotSettled: u64 = 1;
 const EMintCostAboveMax: u64 = 2;
 const EMintProbabilityAboveMax: u64 = 3;
 const EWrongPricer: u64 = 4;
-const EMintRedeemSameTimestamp: u64 = 6;
-const ERedeemProbabilityBelowMin: u64 = 7;
-const ERedeemProceedsBelowMin: u64 = 8;
-const EMintCostCapRequired: u64 = 9;
+const EMintRedeemSameTimestamp: u64 = 5;
+const ERedeemProbabilityBelowMin: u64 = 6;
+const ERedeemProceedsBelowMin: u64 = 7;
+const EMintCostCapRequired: u64 = 8;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -187,58 +187,6 @@ public fun reference_ticks(market: &ExpiryMarket): vector<ReferenceTick> {
 /// Return the reference observation timestamp for SDK and devInspect reads.
 public fun reference_tick_source_timestamp_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.reference_tick_source_timestamp_ms()
-}
-
-/// Fill every due, unfilled creation-scheduled reference whose exact Pyth observation exists.
-/// Missing observations and already-filled or future slots are no-ops, so callers can retry.
-public fun set_reference_ticks(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    propbook_registry: &OracleRegistry,
-    pyth: &PythFeed,
-    clock: &Clock,
-): u64 {
-    config.assert_version();
-    config.assert_not_valuation_in_progress();
-
-    let references = market.strike_exposure.reference_ticks();
-    let now = clock.timestamp_ms();
-    let mut reference_index = 0;
-    let mut added = 0;
-    while (reference_index < references.length()) {
-        let reference = &references[reference_index];
-        let source_timestamp_ms = strike_exposure::source_timestamp_ms(reference);
-        if (
-            strike_exposure::reference_tick_value(reference).is_some()
-                || source_timestamp_ms > now
-        ) {
-            reference_index = reference_index + 1;
-            continue
-        };
-        let spot = pricing::load_exact_spot(
-            propbook_registry,
-            pyth,
-            market.propbook_underlying_id,
-            source_timestamp_ms,
-        );
-        if (spot.is_some()) {
-            let spot = spot.destroy_some();
-            let tick = range_codec::grid_tick(spot, market.strike_exposure.tick_size());
-            if (market.strike_exposure.set_reference_tick(reference_index, tick)) {
-                config_events::emit_reference_tick_set(
-                    market.id(),
-                    market.propbook_underlying_id,
-                    source_timestamp_ms,
-                    spot,
-                    tick,
-                    now,
-                );
-                added = added + 1;
-            };
-        };
-        reference_index = reference_index + 1;
-    };
-    added
 }
 
 /// Return payout reserve or settled liability for external accounting observability.
@@ -644,6 +592,58 @@ public fun set_mint_paused(
     config.assert_version();
     market.mint_paused = paused;
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
+}
+
+/// Fill every due, unfilled creation-scheduled reference whose exact Pyth observation exists.
+/// Missing observations and already-filled or future slots are no-ops, so callers can retry.
+public fun set_reference_ticks(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    clock: &Clock,
+): u64 {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+
+    let references = market.strike_exposure.reference_ticks();
+    let now = clock.timestamp_ms();
+    let mut reference_index = 0;
+    let mut added = 0;
+    while (reference_index < references.length()) {
+        let reference = &references[reference_index];
+        let source_timestamp_ms = strike_exposure::source_timestamp_ms(reference);
+        if (
+            strike_exposure::reference_tick_value(reference).is_some()
+                || source_timestamp_ms > now
+        ) {
+            reference_index = reference_index + 1;
+            continue
+        };
+        let spot = pricing::load_exact_spot(
+            propbook_registry,
+            pyth,
+            market.propbook_underlying_id,
+            source_timestamp_ms,
+        );
+        if (spot.is_some()) {
+            let spot = spot.destroy_some();
+            let tick = range_codec::grid_tick(spot, market.strike_exposure.tick_size());
+            if (market.strike_exposure.set_reference_tick(reference_index, tick)) {
+                config_events::emit_reference_tick_set(
+                    market.id(),
+                    market.propbook_underlying_id,
+                    source_timestamp_ms,
+                    spot,
+                    tick,
+                    now,
+                );
+                added = added + 1;
+            };
+        };
+        reference_index = reference_index + 1;
+    };
+    added
 }
 
 /// Settle from Propbook's exact positive Pyth spot at expiry, or from the exact Block Scholes

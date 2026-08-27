@@ -616,9 +616,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   Propbook source; residual risk is semantic drift in that dependency, not an
   accepted reachable market state.
 - **Pinning tests:** `reference_tick_tests.move` —
-  `set_reference_tick_floors_spot_and_is_idempotent`,
-  `set_reference_tick_missing_exact_history_aborts`, and
-  `set_reference_tick_wrong_pyth_feed_aborts`.
+  `set_reference_ticks_floor_spot_and_report_idempotent_fills`,
+  `set_reference_ticks_missing_exact_history_is_retryable`, and
+  `set_reference_ticks_wrong_pyth_feed_aborts`.
 - **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
   normalization semantics, or Predict begins using the exact product across a
   delayed boundary that requires update-time metadata.
@@ -1544,5 +1544,47 @@ worth-fixing.
 - **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is static reachability of the deleted expressions, verified by grep against HEAD plus the cash-sheet flow tests below.
 - **Pinning tests:** `cash_backing_flow_tests.move` — `cash_sheet_exact_after_every_flow` (exact expiry cash and payout liability after every LIVE cash-mutating step — mint, mint, partial close — with `assert_market_backed` on each; the settled sweep is covered by the two tests below, not by this one); `settlement_flow_tests.move` — `explicit_settlement_then_standalone_rebalance_sweeps_market`; `protocol_profit_deferral_tests.move` — `settled_sweep_defers_protocol_cut_then_drains_on_later_sweep`.
 - **Reopen when:** a loss rebate, a fee-basis reserve, or any other per-account liability funded out of expiry cash is reintroduced — the backing term and its resolve-side underflow guard come back together, and the settled sweep must hold the reserve back again.
+
+---
+
+## RP-29: Missing cadence-reference history skips that slot (`EReferenceTickObservationMissing` removed)
+
+- **Trigger state:** one or more due, unfilled cadence-reference slots lack a
+  positive normalized Pyth observation at their exact scheduled source timestamp.
+- **Controller:** external availability — Pyth produces the signed observation and
+  a relayer lands its exact-history row; Predict controls only when callers retry.
+- **Blast radius:** one reference slot on one expiry market. Existing filled slots,
+  unrelated due slots, coarse-grid mint admission, pricing, custody, and settlement
+  remain available.
+- **Response:** skip the missing slot, continue scanning the schedule, return the
+  number of newly filled slots, and leave the missing slot retryable. Future and
+  already-filled slots are the same no-op class. There is no latest, nearest, or
+  Block Scholes substitute for a cadence reference.
+- **Reasoning:** reference ticks add optional fine-grid mint boundaries; they do not
+  price a trade or settle a position. Reverting the whole call because one cadence
+  row is absent would prevent independent due references from becoming usable and
+  would make retry batching all-or-nothing without improving oracle trust.
+- **Duty inventory (guard removal):** the deleted abort forced the singular
+  reference call to observe one exact normalized row. It incidentally made absence
+  a hard liveness failure and guaranteed no successful return with an unfilled due
+  slot; it did not validate feed identity, price width, tick range, timestamp
+  alignment, freshness, custody, or market accounting. Canonical-feed identity is
+  still asserted by `pricing::load_exact_spot`; exact-key semantics remain RP-14;
+  `grid_tick` plus `strike_exposure::set_reference_tick` still reject a zero or
+  sentinel tick; creation owns timestamp alignment; and filled slots remain
+  first-write-wins. The intentional duty change is only that a due slot may remain
+  empty after a successful call.
+- **Risk profile:** `BEST-GUESS` — the response improves keeper and batch liveness;
+  the residual user-visible effect is that one off-grid cadence boundary remains
+  unavailable until exact Pyth history lands.
+- **Pinning tests:** `reference_tick_tests.move` —
+  `set_reference_ticks_missing_exact_history_is_retryable`,
+  `cadence_reference_ticks_fill_due_slots_independently`,
+  `set_reference_ticks_skip_filled_slot_after_feed_rebind`, and
+  `set_reference_ticks_floor_to_zero_aborts`; `registry_guard_tests.move` —
+  `create_expiry_market_snapshots_aligned_reference_schedule`.
+- **Reopen when:** mint policy requires every scheduled cadence reference before a
+  market can trade, a batch consumer assumes all due slots fill together, or a
+  fallback source is proposed for reference admission.
 
 ---

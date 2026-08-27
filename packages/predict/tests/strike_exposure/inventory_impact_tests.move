@@ -37,6 +37,7 @@ const ROUNDING_SEED_QUANTITY: u64 = 10_000_000;
 const ROUNDING_CARRY_QUANTITY: u64 = 30_000_000;
 const ROUNDING_BEFORE_POTENTIAL: u64 = 78_333_333;
 const ROUNDING_AFTER_POTENTIAL: u64 = 88_333_333;
+const ZERO_REFERENCE_TIMESTAMP_MS: u64 = 0;
 
 #[test]
 fun default_zero_rate_is_a_kill_switch() {
@@ -227,7 +228,7 @@ fun zero_inventory_impact_scale_aborts() {
         strike_exposure_config::new(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
-        0,
+        vector[ZERO_REFERENCE_TIMESTAMP_MS],
         0,
         ctx,
     );
@@ -305,7 +306,7 @@ fun new_harness(
         config,
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
-        expiry_ms - test_constants::default_cadence_period_ms(),
+        vector[expiry_ms - test_constants::default_cadence_period_ms()],
         inventory_impact_scale,
         fx.scenario_mut().ctx(),
     );

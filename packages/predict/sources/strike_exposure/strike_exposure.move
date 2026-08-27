@@ -25,9 +25,9 @@ use sui::clock::Clock;
 const EInvalidCloseQuantity: u64 = 0;
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
-const ETermsExposureMismatch: u64 = 4;
-const EMintQuantityBelowMin: u64 = 5;
-const EInvalidInventoryImpactScale: u64 = 6;
+const ETermsExposureMismatch: u64 = 3;
+const EMintQuantityBelowMin: u64 = 4;
+const EInvalidInventoryImpactScale: u64 = 5;
 
 /// One creation-scheduled exact-history Pyth reference tick for an expiry market.
 public struct ReferenceTick has copy, drop, store {

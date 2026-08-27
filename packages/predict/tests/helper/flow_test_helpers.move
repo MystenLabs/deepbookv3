@@ -559,6 +559,27 @@ public fun set_default_cadence_allocation(
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Enable one cadence with the flow fixture's production-valid default terms.
+public fun set_default_terms_for_cadence(self: &mut Fixture, cadence_id: u8) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut registry = self.scenario.take_shared<Registry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    registry.set_template_cadence_config(
+        &config,
+        &self.admin_cap,
+        test_constants::propbook_underlying_id(),
+        cadence_id,
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
+        test_constants::default_cadence_window_size(),
+    );
+    return_shared(config);
+    return_shared(registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Authorize an Account app in fixtures owned by another package.
 public fun authorize_account_app<App>(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
@@ -1085,6 +1106,18 @@ public fun set_pyth_price_for_testing_bundle(
     source_timestamp_ms: u64,
 ) {
     self.set_pyth_price_for_testing(&mut market.pyth, live_price, source_timestamp_ms);
+}
+
+/// Fill every due reference slot on a market bundle through the production entrypoint.
+public fun set_reference_ticks_bundle(self: &Fixture, market: &mut MarketBundle): u64 {
+    market
+        .market
+        .set_reference_ticks(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            &self.clock,
+        )
 }
 
 /// Write split Block Scholes spot, forward, and SVI rows for `market`'s expiry
@@ -2239,6 +2272,16 @@ public fun insert_exact_settlement_spot(
         &ctx,
     );
     end_seed_tx(restore);
+}
+
+/// Insert one exact Pyth history row for a market bundle at an arbitrary source timestamp.
+public fun insert_exact_pyth_spot_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    spot: u64,
+    source_timestamp_ms: u64,
+) {
+    self.insert_exact_settlement_spot(&mut market.pyth, source_timestamp_ms, spot);
 }
 
 /// Insert an exact settlement spot for the bundled market expiry.

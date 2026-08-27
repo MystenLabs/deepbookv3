@@ -26,6 +26,7 @@ use deepbook_predict::{
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     registry::{Self, Registry},
+    strike_exposure,
     test_constants,
     test_helpers
 };
@@ -40,6 +41,11 @@ use sui::{clock::{Self, Clock}, object, test_scenario::{Self, Scenario, return_s
 const UNREGISTERED_UNDERLYING_ID: u32 = 777;
 const START_OF_TIME_MS: u64 = 0;
 const WINDOW_SIZE_THREE: u64 = 3;
+const DISABLED_CONFIG_VALUE: u64 = 0;
+const NATIVE_REFERENCE_INDEX: u64 = 0;
+const FIVE_MINUTE_REFERENCE_INDEX: u64 = 1;
+const ONE_MINUTE_REFERENCE_INDEX: u64 = 2;
+const ALIGNED_REFERENCE_SCHEDULE_LENGTH: u64 = 3;
 
 // === builder_code owner guard ===
 
@@ -258,7 +264,7 @@ fun create_expiry_market_skips_higher_rank_overlap() {
 }
 
 #[test]
-fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
+fun create_expiry_market_snapshots_aligned_reference_schedule() {
     let (
         mut scenario,
         registry_id,
@@ -266,7 +272,7 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
         propbook_admin_cap,
         pyth_id,
     ) = setup_registered_feeds();
-    let period_ms = constants::five_minutes_ms!();
+    let period_ms = constants::one_hour_ms!();
     let expected_expiry = 2 * period_ms;
 
     scenario.next_tx(test_constants::admin());
@@ -295,6 +301,17 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_hour!(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
+        test_constants::default_cadence_window_size(),
+    );
 
     let expiry_id = reg.create_and_share_expiry_market(
         &mut vault,
@@ -302,7 +319,7 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
         &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        market_manager::cadence_five_minute!(),
+        market_manager::cadence_one_hour!(),
         &clock,
         scenario.ctx(),
     );
@@ -318,12 +335,55 @@ fun create_expiry_market_snapshots_five_minute_reference_tick_source() {
     assert_eq!(market.admission_tick_size(), test_constants::default_admission_tick_size());
     assert_eq!(market.reference_tick_source_timestamp_ms(), period_ms);
     assert!(market.reference_tick().is_none());
+    assert_reference_schedule(&market, expected_expiry);
+
+    return_shared(market);
+    scenario.next_tx(test_constants::admin());
+    let mut reg = scenario.take_shared_by_id<Registry>(registry_id);
+    let config = scenario.take_shared<ProtocolConfig>();
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        test_constants::propbook_underlying_id(),
+        market_manager::cadence_one_minute!(),
+        DISABLED_CONFIG_VALUE,
+        DISABLED_CONFIG_VALUE,
+        DISABLED_CONFIG_VALUE,
+        DISABLED_CONFIG_VALUE,
+        DISABLED_CONFIG_VALUE,
+    );
+    return_shared(config);
+    return_shared(reg);
+
+    scenario.next_tx(test_constants::admin());
+    let market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    assert_reference_schedule(&market, expected_expiry);
 
     return_shared(market);
     lifecycle_cap.destroy();
     destroy(propbook_admin_cap);
     destroy(admin_cap);
     scenario.end();
+}
+
+fun assert_reference_schedule(market: &ExpiryMarket, expiry: u64) {
+    let references = market.reference_ticks();
+    assert_eq!(references.length(), ALIGNED_REFERENCE_SCHEDULE_LENGTH);
+    assert_eq!(
+        strike_exposure::source_timestamp_ms(&references[NATIVE_REFERENCE_INDEX]),
+        expiry - constants::one_hour_ms!(),
+    );
+    assert_eq!(
+        strike_exposure::source_timestamp_ms(&references[FIVE_MINUTE_REFERENCE_INDEX]),
+        expiry - constants::five_minutes_ms!(),
+    );
+    assert_eq!(
+        strike_exposure::source_timestamp_ms(&references[ONE_MINUTE_REFERENCE_INDEX]),
+        expiry - constants::one_minute_ms!(),
+    );
+    references.do_ref!(|reference| {
+        assert!(strike_exposure::reference_tick_value(reference).is_none());
+    });
 }
 
 #[test, expected_failure(abort_code = market_manager::ECadenceWindowExceeded)]
