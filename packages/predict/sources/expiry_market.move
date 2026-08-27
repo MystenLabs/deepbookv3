@@ -209,29 +209,31 @@ public fun set_reference_ticks(
         let reference = &references[reference_index];
         let source_timestamp_ms = strike_exposure::source_timestamp_ms(reference);
         if (
-            strike_exposure::reference_tick_value(reference).is_none()
-                && source_timestamp_ms <= now
+            strike_exposure::reference_tick_value(reference).is_some()
+                || source_timestamp_ms > now
         ) {
-            let spot = pricing::load_exact_spot(
-                propbook_registry,
-                pyth,
-                market.propbook_underlying_id,
-                source_timestamp_ms,
-            );
-            if (spot.is_some()) {
-                let spot = spot.destroy_some();
-                let tick = range_codec::grid_tick(spot, market.strike_exposure.tick_size());
-                if (market.strike_exposure.set_reference_tick(reference_index, tick)) {
-                    config_events::emit_reference_tick_set(
-                        market.id(),
-                        market.propbook_underlying_id,
-                        source_timestamp_ms,
-                        spot,
-                        tick,
-                        now,
-                    );
-                    added = added + 1;
-                };
+            reference_index = reference_index + 1;
+            continue
+        };
+        let spot = pricing::load_exact_spot(
+            propbook_registry,
+            pyth,
+            market.propbook_underlying_id,
+            source_timestamp_ms,
+        );
+        if (spot.is_some()) {
+            let spot = spot.destroy_some();
+            let tick = range_codec::grid_tick(spot, market.strike_exposure.tick_size());
+            if (market.strike_exposure.set_reference_tick(reference_index, tick)) {
+                config_events::emit_reference_tick_set(
+                    market.id(),
+                    market.propbook_underlying_id,
+                    source_timestamp_ms,
+                    spot,
+                    tick,
+                    now,
+                );
+                added = added + 1;
             };
         };
         reference_index = reference_index + 1;
