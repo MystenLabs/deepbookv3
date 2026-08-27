@@ -22,7 +22,7 @@ use deepbook_predict::{
     order::{Self, Order},
     order_events,
     predict_account,
-    pricing::{Self, Pricer},
+    pricing::{Self, Pricer, FrozenPricer},
     protocol_config::ProtocolConfig,
     range_codec,
     strike_exposure::{Self, MintTerms, StrikeExposure},
@@ -766,8 +766,11 @@ public(package) fun clear_valuation_stamp(market: &mut ExpiryMarket) {
 /// post-snapshot mutation and the tree captures each node before its first, so
 /// the zero floors are exact (backing keeps the pre-floor value above zero up
 /// to P-13's rounding dust).
-public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
-    market.assert_pricer_bound(pricer);
+public(package) fun snapshot_nav(market: &ExpiryMarket, frozen: &FrozenPricer): u64 {
+    // Thaw to a transient, non-`store` `Pricer` for the frozen walk; it cannot
+    // outlive this transaction, so it can never reach a trade path.
+    let pricer = frozen.thaw();
+    market.assert_pricer_bound(&pricer);
     // Defensive, structurally unreachable: the only caller is `plp::value_expiry`
     // on a frozen-live market, which its own flush's snapshot stage stamped, and
     // the stamp cannot go stale while that flush is still in flight (unit-tests
@@ -775,7 +778,7 @@ public(package) fun snapshot_nav(market: &ExpiryMarket, pricer: &Pricer): u64 {
     assert!(market.valuation_stamp.is_some(), EMarketNotPendingValuation);
     let stamp = market.valuation_stamp.borrow();
     let snapshot_free_cash = stamp.snapshot_cash.saturating_sub(stamp.snapshot_impact_reserve);
-    let liability = market.strike_exposure.frozen_marked_liability(pricer, stamp.flush_seq);
+    let liability = market.strike_exposure.frozen_marked_liability(&pricer, stamp.flush_seq);
     snapshot_free_cash.saturating_sub(liability)
 }
 

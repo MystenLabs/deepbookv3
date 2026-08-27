@@ -22,14 +22,18 @@ use sui::clock::Clock;
 
 /// Validated live oracle inputs bound to one expiry market.
 ///
-/// `store` exists for exactly one caller: the full-pool flush freezes one
-/// `Pricer` per market in `plp::PoolValuation` so every market is marked at a
-/// single instant even though valuation spans transactions. Every other pricing
-/// path must load a fresh `Pricer` in its own transaction — a stored one is a
-/// *deliberately* stale mark, sound only inside the flush's frozen snapshot,
-/// where each market's books are read from state captured at that same
-/// instant.
-public struct Pricer has copy, drop, store {
+/// `Pricer` has NO `store` ability, by design: a non-`store` value cannot enter
+/// an object or a dynamic field, so it cannot survive the transaction that
+/// loaded it. `load_live_pricer` is the only constructor and validates oracle
+/// freshness, the same-transaction-digest guard, and `clock < expiry` at load;
+/// the live trade paths then gate a supplied `&Pricer` on market-id alone
+/// (`assert_pricer_bound`). The non-`store` ability is therefore the structural
+/// guarantee that every fund-moving trade prices against a mark loaded in its
+/// OWN transaction — a persisted, stale-favorable mark can never reach a trade.
+/// The full-pool flush, which must carry one mark per market across
+/// transactions, uses the separate `FrozenPricer` below (which no trade
+/// entrypoint accepts). See RP-32.
+public struct Pricer has copy, drop {
     /// Expiry market this snapshot was loaded for.
     expiry_market_id: ID,
     forward: u64,
@@ -40,6 +44,24 @@ public struct Pricer has copy, drop, store {
     /// envelope time (`source_timestamp_ms`), the clock freshness gated and the SVI roll-down
     /// anchored on. The provider's calibration (model) times stay on the stored observations and
     /// their ingestion events.
+    pyth_spot_source_timestamp_ms: u64,
+    block_scholes_spot_source_timestamp_ms: u64,
+    block_scholes_forward_source_timestamp_ms: u64,
+    block_scholes_svi_source_timestamp_ms: u64,
+}
+
+/// The flush's storable form of a `Pricer`. `seal_valuation_snapshot` freezes one
+/// per market inside `plp::PoolValuation` so every market is marked at one instant
+/// even though valuation spans transactions; `snapshot_nav` thaws it back to a
+/// transient `Pricer` for the frozen walk. It is a DELIBERATELY stale mark and is
+/// never accepted by any live trade entrypoint — only a fresh `Pricer` is — which
+/// is what keeps a persisted mark from ever pricing a fund-moving trade (RP-32).
+/// Construction (`into_frozen`) and consumption (`thaw`) are package-internal, so
+/// no external caller can mint or unwrap one.
+public struct FrozenPricer has copy, drop, store {
+    expiry_market_id: ID,
+    forward: u64,
+    svi: PricingSVI,
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
     block_scholes_forward_source_timestamp_ms: u64,
@@ -151,6 +173,43 @@ public(package) fun block_scholes_forward_source_timestamp_ms(pricer: &Pricer): 
 
 public(package) fun block_scholes_svi_source_timestamp_ms(pricer: &Pricer): u64 {
     pricer.block_scholes_svi_source_timestamp_ms
+}
+
+/// Freeze a `Pricer` into the flush's storable form — the only `FrozenPricer`
+/// constructor, called once per market at the snapshot stage.
+public(package) fun into_frozen(pricer: Pricer): FrozenPricer {
+    let Pricer {
+        expiry_market_id,
+        forward,
+        svi,
+        pyth_spot_source_timestamp_ms,
+        block_scholes_spot_source_timestamp_ms,
+        block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms,
+    } = pricer;
+    FrozenPricer {
+        expiry_market_id,
+        forward,
+        svi,
+        pyth_spot_source_timestamp_ms,
+        block_scholes_spot_source_timestamp_ms,
+        block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms,
+    }
+}
+
+/// Thaw a frozen mark back to a transient `Pricer` for the flush's frozen walk.
+/// The result is non-`store`, so it cannot outlive this transaction.
+public(package) fun thaw(frozen: &FrozenPricer): Pricer {
+    Pricer {
+        expiry_market_id: frozen.expiry_market_id,
+        forward: frozen.forward,
+        svi: frozen.svi,
+        pyth_spot_source_timestamp_ms: frozen.pyth_spot_source_timestamp_ms,
+        block_scholes_spot_source_timestamp_ms: frozen.block_scholes_spot_source_timestamp_ms,
+        block_scholes_forward_source_timestamp_ms: frozen.block_scholes_forward_source_timestamp_ms,
+        block_scholes_svi_source_timestamp_ms: frozen.block_scholes_svi_source_timestamp_ms,
+    }
 }
 
 /// Scale one 1e9-scaled SVI magnitude down by the fraction of anchored time

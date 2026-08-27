@@ -24,7 +24,7 @@ use deepbook_predict::{
     lp_book::{Self, LpBook},
     market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
-    pricing::Pricer,
+    pricing::FrozenPricer,
     protocol_config::ProtocolConfig,
     vault_events
 };
@@ -132,7 +132,7 @@ public struct PoolValuation has drop, store {
     /// deterministic: it decides both the mark AND the sweep-vs-value branch, so
     /// no later transaction's clock or oracle state can change a market's
     /// contribution.
-    frozen_pricers: VecMap<ID, Option<Pricer>>,
+    frozen_pricers: VecMap<ID, Option<FrozenPricer>>,
     /// Set by `seal_valuation_snapshot`; no market may be valued before it.
     /// Nothing may be snapshotted after it because sealing consumes the
     /// `SnapshotStage`.
@@ -345,15 +345,17 @@ public fun snapshot_expiry_pricer(
         option::none()
     } else {
         assert!(clock.timestamp_ms() < market.expiry(), EExpiredMarketNotSettled);
-        option::some(market.load_live_pricer(
-            config,
-            propbook_registry,
-            pyth,
-            bs_values,
-            bs_svi,
-            clock,
-            ctx,
-        ))
+        option::some(market
+            .load_live_pricer(
+                config,
+                propbook_registry,
+                pyth,
+                bs_values,
+                bs_svi,
+                clock,
+                ctx,
+            )
+            .into_frozen())
     };
     let stamp = frozen.is_some();
     vault.valuation.borrow_mut().frozen_pricers.insert(expiry_market_id, frozen);

@@ -277,6 +277,34 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
 }
 
 #[test]
+fun freeze_then_thaw_preserves_the_mark() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
+    let pricer = fx.load_pricer_bundle(&oracle);
+
+    // The flush freezes a `Pricer` into a `FrozenPricer` and thaws it back at
+    // `value_expiry`; that round trip must reproduce the mark bit-for-bit, or a
+    // frozen market would price at a different NAV than it was snapshotted at.
+    let atm = strike(test_constants::default_live_price());
+    let up_before = pricer.up_price(atm);
+    let range_before = pricer.range_price(atm, strike(constants::pos_inf!()));
+
+    let thawed = pricer.into_frozen().thaw();
+    assert_eq!(thawed.up_price(atm), up_before);
+    assert_eq!(thawed.range_price(atm, strike(constants::pos_inf!())), range_before);
+    assert_eq!(thawed.expiry_market_id(), pricer.expiry_market_id());
+    assert_eq!(
+        thawed.block_scholes_svi_source_timestamp_ms(),
+        pricer.block_scholes_svi_source_timestamp_ms(),
+    );
+    assert_eq!(thawed.pyth_spot_source_timestamp_ms(), pricer.pyth_spot_source_timestamp_ms());
+
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test]
 fun unusable_pyth_observation_uses_zero_timestamp_sentinel() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
