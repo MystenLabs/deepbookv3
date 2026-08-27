@@ -16,7 +16,7 @@ import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
 import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
-import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
+import { aggregateNetGasOf, appendTrace, errorTag, legComputationsOf, maxComputationOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
@@ -173,7 +173,13 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       appendTrace("keeper", {
         type: "flush", marketCount: fe ? Number(fe.market_count) : flush.length, stragglers: settlements.length,
         poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
-        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr), compGas: computationOf(fr),
+        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0,
+        // compGas is the heaviest SINGLE transaction (the largest value_expiry leg) — the number the
+        // per-tx computation cap applies to. compGasTotal is the aggregate across the staged flush's
+        // legs, and legCompGas is each leg in order (snapshot, value_expiry per market, finish), so a
+        // capacity run measures one transaction against the cap and can see which leg carries it.
+        gas: aggregateNetGasOf(fr), compGas: maxComputationOf(fr),
+        compGasTotal: Number(fr.gas?.computationCost ?? 0), legCompGas: legComputationsOf(fr),
       });
       console.log(`[keeper] flushed ${flush.length} active market(s)`);
     } catch (e) {

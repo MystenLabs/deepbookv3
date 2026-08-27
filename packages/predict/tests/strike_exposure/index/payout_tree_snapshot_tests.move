@@ -199,7 +199,7 @@ fun a_new_generation_supersedes_a_stale_snapshot_and_release_purges_its_husks() 
 
 #[test, expected_failure(abort_code = strike_payout_tree::EStaleValuationSnapshot)]
 fun a_superseded_generations_frozen_walk_aborts() {
-    let (mut fixture, oracle, pricer) = live_pricer();
+    let (mut fixture, _oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
     tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
     tree.activate_snapshot(1);
@@ -210,7 +210,7 @@ fun a_superseded_generations_frozen_walk_aborts() {
 
 #[test, expected_failure(abort_code = strike_payout_tree::EStaleValuationSnapshot)]
 fun a_released_snapshots_frozen_walk_aborts() {
-    let (mut fixture, oracle, pricer) = live_pricer();
+    let (mut fixture, _oracle, pricer) = live_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
     tree.insert_range(RANGE_A_LOWER, RANGE_A_HIGHER, Q_A);
     tree.activate_snapshot(1);
@@ -281,7 +281,7 @@ fun an_inversion_on_a_husk_is_invisible_to_the_live_walk() {
 
 #[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
 fun an_inversion_on_a_husk_still_aborts_the_frozen_walk() {
-    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let (mut fixture, _oracle, pricer) = non_monotone_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
     tree.insert_range(INVERTED_LOWER_TICK, INVERTED_HIGHER_TICK, INVERTED_QUANTITY);
     tree.activate_snapshot(1);

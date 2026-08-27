@@ -25,7 +25,6 @@ use deepbook_predict::{
     test_constants
 };
 use std::unit_test::assert_eq;
-use sui::test_scenario::return_shared;
 
 /// Baseline position minted before any flush: UP at the anchored strike.
 const BASELINE_QUANTITY: u64 = 2_000_000_000;
@@ -658,7 +657,7 @@ fun mid_window_trading_has_no_budget() {
     fx.start_flush_bundle(&mut market);
     // One past the retired delta-log floor (64), where the old mechanism's
     // 65th trade aborted at that setting.
-    let past_retired_log_floor = 65;
+    let past_retired_log_floor = 65u64;
     let first_order = fx.mint_bundle(
         &mut market,
         &mut account,

@@ -72,7 +72,12 @@ export interface GasUsage {
 export interface ExecutionReceipt {
     digest: string;
     clockTimestampMs: number | null;
+    // `gas` is the AGGREGATE across every leg of a multi-transaction sequence (the staged
+    // flush). `legGas` keeps each leg's own gas so a per-transaction limit (the computation
+    // cap) can be measured against a SINGLE transaction, never the aggregate. A single-tx
+    // receipt has one entry. `effects` is the LAST leg's — do not read per-tx gas from it.
     gas: GasUsage;
+    legGas: GasUsage[];
     events: any[];
     objectChanges: any[];
     effects: any;
@@ -545,6 +550,7 @@ function combineExecutionReceipts(receipts: ExecutionReceipt[]): ExecutionReceip
     return {
         ...last,
         gas: aggregateGas(receipts.map((receipt) => receipt.gas)),
+        legGas: receipts.flatMap((receipt) => receipt.legGas ?? [receipt.gas]),
         events: receipts.flatMap((receipt) => receipt.events),
         objectChanges: receipts.flatMap((receipt) => receipt.objectChanges),
     };
@@ -2517,10 +2523,12 @@ export async function execute(
                         ),
                     );
                 }
+                const legGas = gasSummaryFromEffects(settled.effects ?? raw.effects);
                 receipts.push({
                     digest: raw.digest,
                     clockTimestampMs: settled.clockTimestampMs,
-                    gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
+                    gas: legGas,
+                    legGas: [legGas],
                     events: settled.events ?? raw.events ?? [],
                     objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
                     effects: settled.effects ?? raw.effects,
