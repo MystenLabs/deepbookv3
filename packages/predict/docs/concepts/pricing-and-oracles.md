@@ -151,12 +151,6 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 **Min/max entry probability bounds.** A raw probability near `0` or `1` must not become an admitted mint just because the fee moves the all-in cash outlay away from the edge. These bounds live in `StrikeExposureConfig` (snapshotted per expiry from a global template), not in the pricing config: pricing produces the probability, and the mint-admission flow enforces the raw-probability envelope. At mint, `entry_probability` must lie within `[min_entry_probability, max_entry_probability]`. See [configuration](../design/configuration.md) for the bound values.
 
-## Reference ticks
-
-Each expiry market stores a bounded vector of exact-history Pyth reference ticks used as price-to-beat boundaries. The market's native entry is the exact Pyth spot at `expiry - native cadence period`; every currently enabled shorter cadence whose period divides the market expiry contributes its own `expiry - cadence period` timestamp. Each available normalized spot is floored to the market's fine tick grid and stored with its source timestamp, and any stored tick may bypass the coarser mint-admission grid for an Up or Down range.
-
-`registry::set_reference_ticks` derives these timestamps from the market and the Registry's current cadence configuration; callers supply the Registry, market, canonical Propbook registry and Pyth feed, and Clock, but no timestamp or price. A call skips future cadence boundaries, timestamps already stored, and exact Pyth rows that are not yet available. It can therefore run at every cadence boundary: each call fills whatever new exact rows exist, an already-complete call emits nothing, and an existing reference tick never changes. Reference ticks do not use Block Scholes and do not participate in terminal settlement.
-
 ## Settlement
 
 Terminal settlement uses Propbook's exact timestamp history, not a Predict-side sampling buffer. The market stores no settlement sample itself before expiry. Permissionless `expiry_market::try_settle` validates and queries the canonical Pyth feed at exactly the market expiry on every attempt; if Pyth is unavailable and at least 30 seconds have elapsed, it validates the canonical Block Scholes value store and queries `spot_at(expiry)`.

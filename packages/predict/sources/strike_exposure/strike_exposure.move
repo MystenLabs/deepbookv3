@@ -25,18 +25,14 @@ use sui::clock::Clock;
 const EInvalidCloseQuantity: u64 = 0;
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
-// Registry supplies at most the six fixed cadence sources, so this is unreachable unless a new
-// package-internal caller violates the bounded-vector contract.
-const ETooManyReferenceTicks: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EInvalidInventoryImpactScale: u64 = 6;
-const MAX_REFERENCE_TICKS: u64 = 6;
 
-/// One immutable exact-history Pyth reference tick for an expiry market.
+/// One creation-scheduled exact-history Pyth reference tick for an expiry market.
 public struct ReferenceTick has copy, drop, store {
     source_timestamp_ms: u64,
-    tick: u64,
+    tick: Option<u64>,
 }
 
 /// Exposure lifecycle state for one expiry market.
@@ -47,9 +43,8 @@ public struct StrikeExposure has store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
-    /// Exact Propbook Pyth source timestamp for this market's native cadence.
-    reference_tick_source_timestamp_ms: u64,
-    /// Cadence-aligned reference fine-grid ticks that may bypass the coarser admission grid.
+    /// Creation-scheduled cadence references, native first, whose filled fine-grid ticks may bypass
+    /// the coarser admission grid.
     reference_ticks: vector<ReferenceTick>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
@@ -102,8 +97,8 @@ public fun source_timestamp_ms(reference: &ReferenceTick): u64 {
     reference.source_timestamp_ms
 }
 
-/// Return the fine-grid tick for one reference tick.
-public fun reference_tick_value(reference: &ReferenceTick): u64 {
+/// Return the fine-grid tick for one reference slot, or `none` until exact history is available.
+public fun reference_tick_value(reference: &ReferenceTick): Option<u64> {
     reference.tick
 }
 
@@ -228,7 +223,7 @@ public(package) fun admission_tick_size(exposure: &StrikeExposure): u64 {
 }
 
 public(package) fun reference_tick_source_timestamp_ms(exposure: &StrikeExposure): u64 {
-    exposure.reference_tick_source_timestamp_ms
+    exposure.reference_ticks[0].source_timestamp_ms
 }
 
 /// Return all immutable cadence-aligned reference ticks.
@@ -238,24 +233,7 @@ public(package) fun reference_ticks(exposure: &StrikeExposure): vector<Reference
 
 /// Return the native-cadence reference tick, or `none` until it is recorded.
 public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
-    let source_timestamp_ms = exposure.reference_tick_source_timestamp_ms;
-    let mut i = 0;
-    while (i < exposure.reference_ticks.length()) {
-        let reference = &exposure.reference_ticks[i];
-        if (reference.source_timestamp_ms == source_timestamp_ms) {
-            return option::some(reference.tick)
-        };
-        i = i + 1;
-    };
-    option::none()
-}
-
-/// Return whether one exact-history source timestamp is already recorded.
-public(package) fun has_reference_tick_source_timestamp(
-    exposure: &StrikeExposure,
-    source_timestamp_ms: u64,
-): bool {
-    exposure.reference_ticks.any!(|reference| reference.source_timestamp_ms == source_timestamp_ms)
+    exposure.reference_ticks[0].tick
 }
 
 /// Return the raw per-trade fee for a live price and quantity.
@@ -469,19 +447,19 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
     exposure.settled_payout_liability = settled_payout_liability;
 }
 
-/// Record one immutable cadence-aligned reference tick.
-/// Returns `true` only when this call records the source timestamp for the first time.
+/// Fill one creation-scheduled cadence reference.
+/// Returns `true` only when this call records the tick for the first time.
 public(package) fun set_reference_tick(
     exposure: &mut StrikeExposure,
-    source_timestamp_ms: u64,
+    reference_index: u64,
     tick: u64,
 ): bool {
     assert!(tick > 0 && tick < constants::pos_inf_tick!(), EInvalidReferenceTick);
-    if (exposure.has_reference_tick_source_timestamp(source_timestamp_ms)) {
+    let reference = &mut exposure.reference_ticks[reference_index];
+    if (reference.tick.is_some()) {
         return false
     };
-    assert!(exposure.reference_ticks.length() < MAX_REFERENCE_TICKS, ETooManyReferenceTicks);
-    exposure.reference_ticks.push_back(ReferenceTick { source_timestamp_ms, tick });
+    reference.tick = option::some(tick);
     true
 }
 
@@ -491,17 +469,23 @@ public(package) fun new(
     config: StrikeExposureConfig,
     tick_size: u64,
     admission_tick_size: u64,
-    reference_tick_source_timestamp_ms: u64,
+    reference_tick_source_timestamps_ms: vector<u64>,
     inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
     assert!(inventory_impact_scale > 0, EInvalidInventoryImpactScale);
+    let mut reference_ticks = vector[];
+    reference_tick_source_timestamps_ms.do!(|source_timestamp_ms| {
+        reference_ticks.push_back(ReferenceTick {
+            source_timestamp_ms,
+            tick: option::none(),
+        });
+    });
     StrikeExposure {
         expiry_market_id,
         tick_size,
         admission_tick_size,
-        reference_tick_source_timestamp_ms,
-        reference_ticks: vector[],
+        reference_ticks,
         config,
         inventory_impact_scale,
         next_order_sequence: 0,
@@ -590,13 +574,17 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
     assert!(
         lower_tick == 0
             || lower_tick % admission_multiple == 0
-            || exposure.reference_ticks.any!(|reference| reference.tick == lower_tick),
+            || exposure
+                .reference_ticks
+                .any!(|reference| reference.tick == option::some(lower_tick)),
         EInvalidAdmissionTick,
     );
     assert!(
         higher_tick == constants::pos_inf_tick!()
             || higher_tick % admission_multiple == 0
-            || exposure.reference_ticks.any!(|reference| reference.tick == higher_tick),
+            || exposure
+                .reference_ticks
+                .any!(|reference| reference.tick == option::some(higher_tick)),
         EInvalidAdmissionTick,
     );
 }
