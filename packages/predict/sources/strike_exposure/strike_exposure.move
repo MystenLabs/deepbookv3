@@ -25,6 +25,8 @@ use sui::clock::Clock;
 const EInvalidCloseQuantity: u64 = 0;
 const EInvalidAdmissionTick: u64 = 1;
 const EInvalidReferenceTick: u64 = 2;
+// Registry supplies at most the six fixed cadence sources, so this is unreachable unless a new
+// package-internal caller violates the bounded-vector contract.
 const ETooManyReferenceTicks: u64 = 3;
 const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;

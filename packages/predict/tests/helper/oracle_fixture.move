@@ -23,6 +23,7 @@ use deepbook_predict::{
     block_scholes_feed::{Self as bs_feed, BlockScholesFeed},
     expiry_market::ExpiryMarket,
     market_lifecycle_cap::MarketLifecycleCap,
+    market_manager,
     plp::{Self, PoolVault},
     pricing::{Self, Pricer},
     protocol_config::ProtocolConfig,
@@ -79,6 +80,18 @@ public struct OracleBundleIds has copy, drop {
 /// is read at creation (absolute ticks); seed live data with
 /// `prepare_live_oracle`/`prepare_real_oracle`.
 public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
+    setup_oracle_for_cadence(_spot, tick, expiry, test_constants::default_cadence_id())
+}
+
+/// Stand up an expiry market for an explicit cadence. The default one-minute cadence is also
+/// enabled when a longer cadence owns the market so cadence-aligned reference tests exercise
+/// the production overlap policy.
+public fun setup_oracle_for_cadence(
+    _spot: u64,
+    tick: u64,
+    expiry: u64,
+    cadence_id: u8,
+): OracleFixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
     registry::init_for_testing(scenario.ctx());
@@ -94,13 +107,26 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &config,
         &admin_cap,
         test_constants::propbook_underlying_id(),
-        test_constants::default_cadence_id(),
+        cadence_id,
         tick,
         test_constants::default_admission_tick_size(),
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
     );
+    if (cadence_id != test_constants::default_cadence_id()) {
+        registry.set_template_cadence_config(
+            &config,
+            &admin_cap,
+            test_constants::propbook_underlying_id(),
+            test_constants::default_cadence_id(),
+            tick,
+            test_constants::default_admission_tick_size(),
+            test_constants::default_max_expiry_allocation(),
+            test_constants::default_initial_expiry_cash(),
+            test_constants::default_cadence_window_size(),
+        );
+    };
     return_shared(config);
     return_shared(registry);
     let mut oracle_registry = scenario.take_shared<OracleRegistry>();
@@ -129,7 +155,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(scenario.ctx());
-    creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
+    creation_clock.set_for_testing(expiry - market_manager::cadence_period_ms(cadence_id));
     let lifecycle_cap = registry.mint_lifecycle_cap(
         &config,
         &admin_cap,
@@ -141,7 +167,7 @@ public fun setup_oracle(_spot: u64, tick: u64, expiry: u64): OracleFixture {
         &oracle_registry,
         &lifecycle_cap,
         test_constants::propbook_underlying_id(),
-        test_constants::default_cadence_id(),
+        cadence_id,
         &creation_clock,
         scenario.ctx(),
     );

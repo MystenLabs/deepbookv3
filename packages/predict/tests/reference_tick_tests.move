@@ -13,11 +13,13 @@ module deepbook_predict::reference_tick_tests;
 use deepbook_predict::{
     constants,
     expiry_market,
-    oracle_fixture::{Self, OracleFixture},
+    market_manager,
+    oracle_fixture::{Self, OracleBundle, OracleFixture},
     order::Order,
     pricing::{Self, Pricer},
     pricing_reference_data as ref_data,
-    strike_exposure::{Self, StrikeExposure},
+    registry::Registry,
+    strike_exposure::{Self, ReferenceTick, StrikeExposure},
     strike_exposure_config,
     test_constants
 };
@@ -35,6 +37,8 @@ const TINY_SPOT: u64 = 999_999_999;
 const ROGUE_PYTH_SOURCE_ID: u32 = 999;
 const REBOUND_PYTH_SOURCE_ID: u32 = 777;
 const LARGE_VARIANCE_SCENARIO: u64 = 0;
+/// 31_536_300_000 / 300_000 = 105_121 exactly.
+const FIVE_MINUTE_ALIGNED_EXPIRY_MS: u64 = 31_536_300_000;
 const EUnexpectedSuccess: u64 = 999;
 
 public struct ExposureHarness has key {
@@ -42,19 +46,20 @@ public struct ExposureHarness has key {
     exposure: StrikeExposure,
 }
 
-#[test, expected_failure(abort_code = expiry_market::EReferenceTickObservationMissing)]
-fun set_reference_tick_missing_exact_history_aborts() {
+#[test]
+fun set_reference_ticks_missing_exact_history_is_noop() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let oracle = fx.take_oracle_bundle();
     let mut market = fx.take_expiry_market();
+    let registry = fx.scenario_mut().take_shared<Registry>();
 
-    market.set_reference_tick(
-        oracle_fixture::config(&oracle),
-        oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle),
-        fx.clock(),
-    );
-    abort EUnexpectedSuccess
+    assert_eq!(set_reference_ticks(&registry, &fx, &mut market, &oracle), 0);
+    assert!(market.reference_ticks().is_empty());
+
+    return_shared(registry);
+    oracle_fixture::return_expiry_market(market);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = pricing::EWrongPythFeed)]
@@ -75,15 +80,23 @@ fun set_reference_tick_wrong_pyth_feed_aborts() {
     let config = fx.scenario_mut().take_shared<deepbook_predict::protocol_config::ProtocolConfig>();
     let mut market = fx.take_expiry_market();
 
-    market.set_reference_tick(&config, &oracle_registry, &rogue_pyth, fx.clock());
+    let registry = fx.scenario_mut().take_shared<Registry>();
+    registry.set_reference_ticks(
+        &mut market,
+        &config,
+        &oracle_registry,
+        &rogue_pyth,
+        fx.clock(),
+    );
     abort EUnexpectedSuccess
 }
 
 #[test]
-fun set_reference_tick_floors_spot_and_is_idempotent() {
+fun set_reference_ticks_floors_spot_and_is_idempotent() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     let mut market = fx.take_expiry_market();
+    let registry = fx.scenario_mut().take_shared<Registry>();
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
     assert_eq!(
         source_timestamp_ms,
@@ -91,59 +104,46 @@ fun set_reference_tick_floors_spot_and_is_idempotent() {
     );
 
     fx.insert_exact_pyth_bundle(&mut oracle, REFERENCE_SPOT_WITH_DUST, source_timestamp_ms);
-    let first_tick = market.set_reference_tick(
-        oracle_fixture::config(&oracle),
-        oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle),
-        fx.clock(),
-    );
-    let second_tick = market.set_reference_tick(
-        oracle_fixture::config(&oracle),
-        oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle),
-        fx.clock(),
-    );
+    let first_added = set_reference_ticks(&registry, &fx, &mut market, &oracle);
+    let second_added = set_reference_ticks(&registry, &fx, &mut market, &oracle);
 
-    assert_eq!(first_tick, REFERENCE_TICK);
-    assert_eq!(second_tick, REFERENCE_TICK);
+    assert_eq!(first_added, 1);
+    assert_eq!(second_added, 0);
     assert_eq!(market.reference_tick().destroy_some(), REFERENCE_TICK);
+    let references = market.reference_ticks();
+    assert_eq!(references.length(), 1);
+    assert_reference(&references[0], source_timestamp_ms, REFERENCE_TICK);
 
+    return_shared(registry);
     oracle_fixture::return_expiry_market(market);
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
 }
 
-/// A second reference-tick set can only derive a CONFLICTING value if the canonical
-/// Pyth binding was replaced in between (the exact-history print itself is
-/// first-write-wins). The replacement feed carries a different exact print at the
-/// reference timestamp, so the second set aborts instead of silently moving the tick.
-#[test, expected_failure(abort_code = strike_exposure::EReferenceTickAlreadySet)]
-fun set_reference_tick_conflicting_value_after_rebind_aborts() {
+#[test]
+fun recorded_reference_tick_is_immutable_after_pyth_rebind() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     let mut market = fx.take_expiry_market();
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
+    let registry = fx.scenario_mut().take_shared<Registry>();
 
     fx.insert_exact_pyth_bundle(&mut oracle, REFERENCE_SPOT_WITH_DUST, source_timestamp_ms);
-    market.set_reference_tick(
-        oracle_fixture::config(&oracle),
-        oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle),
-        fx.clock(),
-    );
+    assert_eq!(set_reference_ticks(&registry, &fx, &mut market, &oracle), 1);
+    return_shared(registry);
     oracle_fixture::return_oracle_bundle(oracle);
 
     let rebound_ids = fx.create_and_rebind_oracle(REBOUND_PYTH_SOURCE_ID);
     let mut rebound = fx.take_oracle_bundle_by_ids(rebound_ids);
     fx.insert_exact_pyth_bundle(&mut rebound, CONFLICTING_REFERENCE_SPOT, source_timestamp_ms);
-    market.set_reference_tick(
-        oracle_fixture::config(&rebound),
-        oracle_fixture::oracle_registry(&rebound),
-        oracle_fixture::pyth(&rebound),
-        fx.clock(),
-    );
+    let registry = fx.scenario_mut().take_shared<Registry>();
+    assert_eq!(set_reference_ticks(&registry, &fx, &mut market, &rebound), 0);
+    assert_eq!(market.reference_tick().destroy_some(), REFERENCE_TICK);
 
-    abort EUnexpectedSuccess
+    return_shared(registry);
+    oracle_fixture::return_expiry_market(market);
+    oracle_fixture::return_oracle_bundle(rebound);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidReferenceTick)]
@@ -152,15 +152,48 @@ fun set_reference_tick_floor_to_zero_aborts() {
     let mut oracle = fx.take_oracle_bundle();
     let mut market = fx.take_expiry_market();
     let source_timestamp_ms = market.reference_tick_source_timestamp_ms();
+    let registry = fx.scenario_mut().take_shared<Registry>();
 
     fx.insert_exact_pyth_bundle(&mut oracle, TINY_SPOT, source_timestamp_ms);
-    market.set_reference_tick(
-        oracle_fixture::config(&oracle),
-        oracle_fixture::oracle_registry(&oracle),
-        oracle_fixture::pyth(&oracle),
-        fx.clock(),
-    );
+    set_reference_ticks(&registry, &fx, &mut market, &oracle);
     abort EUnexpectedSuccess
+}
+
+#[test]
+fun five_minute_market_fills_native_then_one_minute_reference() {
+    let expiry = FIVE_MINUTE_ALIGNED_EXPIRY_MS;
+    let mut fx = oracle_fixture::setup_oracle_for_cadence(
+        test_constants::default_live_price(),
+        test_constants::default_tick_size(),
+        expiry,
+        market_manager::cadence_five_minute!(),
+    );
+    let mut oracle = fx.take_oracle_bundle();
+    let mut market = fx.take_expiry_market();
+    let registry = fx.scenario_mut().take_shared<Registry>();
+    let native_source = expiry - constants::five_minutes_ms!();
+    let one_minute_source = expiry - constants::one_minute_ms!();
+
+    fx.set_clock_for_testing(native_source);
+    fx.insert_exact_pyth_bundle(&mut oracle, REFERENCE_SPOT_WITH_DUST, native_source);
+    assert_eq!(set_reference_ticks(&registry, &fx, &mut market, &oracle), 1);
+    let native_only = market.reference_ticks();
+    assert_eq!(native_only.length(), 1);
+    assert_reference(&native_only[0], native_source, REFERENCE_TICK);
+
+    fx.set_clock_for_testing(one_minute_source);
+    fx.insert_exact_pyth_bundle(&mut oracle, CONFLICTING_REFERENCE_SPOT, one_minute_source);
+    assert_eq!(set_reference_ticks(&registry, &fx, &mut market, &oracle), 1);
+    assert_eq!(set_reference_ticks(&registry, &fx, &mut market, &oracle), 0);
+    let references = market.reference_ticks();
+    assert_eq!(references.length(), 2);
+    assert_reference(&references[0], native_source, REFERENCE_TICK);
+    assert_reference(&references[1], one_minute_source, 105);
+
+    return_shared(registry);
+    oracle_fixture::return_expiry_market(market);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = strike_exposure::EInvalidAdmissionTick)]
@@ -186,7 +219,7 @@ fun reference_tick_admits_up_and_down_ranges() {
     let (fx, pricer, mut harness) = setup_priced_harness();
 
     assert_reference_tick_is_off_admission_grid(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
-    harness.exposure.set_reference_tick(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
+    harness.exposure.set_reference_tick(1, ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
     let up_terms = harness
         .exposure
         .quote_mint_terms(
@@ -220,7 +253,7 @@ fun reference_tick_admits_up_and_down_ranges() {
 fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
     let (_fx, pricer, mut harness) = setup_priced_harness();
 
-    harness.exposure.set_reference_tick(REFERENCE_TICK);
+    harness.exposure.set_reference_tick(1, REFERENCE_TICK);
     let terms = harness
         .exposure
         .quote_mint_terms(
@@ -279,6 +312,26 @@ fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
 fun cleanup_priced_harness(fx: OracleFixture, harness: ExposureHarness) {
     return_shared(harness);
     fx.finish();
+}
+
+fun set_reference_ticks(
+    registry: &Registry,
+    fx: &OracleFixture,
+    market: &mut expiry_market::ExpiryMarket,
+    oracle: &OracleBundle,
+): u64 {
+    registry.set_reference_ticks(
+        market,
+        oracle_fixture::config(oracle),
+        oracle_fixture::oracle_registry(oracle),
+        oracle_fixture::pyth(oracle),
+        fx.clock(),
+    )
+}
+
+fun assert_reference(reference: &ReferenceTick, source_timestamp_ms: u64, tick: u64) {
+    assert_eq!(reference.source_timestamp_ms(), source_timestamp_ms);
+    assert_eq!(reference.reference_tick_value(), tick);
 }
 
 fun assert_range(order: &Order, lower_tick: u64, higher_tick: u64) {

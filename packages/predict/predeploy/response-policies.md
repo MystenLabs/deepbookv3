@@ -616,8 +616,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   Propbook source; residual risk is semantic drift in that dependency, not an
   accepted reachable market state.
 - **Pinning tests:** `reference_tick_tests.move` —
-  `set_reference_tick_floors_spot_and_is_idempotent`,
-  `set_reference_tick_missing_exact_history_aborts`, and
+  `set_reference_ticks_floors_spot_and_is_idempotent`,
+  `set_reference_ticks_missing_exact_history_is_noop`, and
   `set_reference_tick_wrong_pyth_feed_aborts`.
 - **Reopen when:** Propbook changes exact-history keying, `read_at`, or Pyth
   normalization semantics, or Predict begins using the exact product across a
@@ -1544,5 +1544,19 @@ worth-fixing.
 - **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is static reachability of the deleted expressions, verified by grep against HEAD plus the cash-sheet flow tests below.
 - **Pinning tests:** `cash_backing_flow_tests.move` — `cash_sheet_exact_after_every_flow` (exact expiry cash and payout liability after every LIVE cash-mutating step — mint, mint, partial close — with `assert_market_backed` on each; the settled sweep is covered by the two tests below, not by this one); `settlement_flow_tests.move` — `explicit_settlement_then_standalone_rebalance_sweeps_market`; `protocol_profit_deferral_tests.move` — `settled_sweep_defers_protocol_cut_then_drains_on_later_sweep`.
 - **Reopen when:** a loss rebate, a fee-basis reserve, or any other per-account liability funded out of expiry cash is reintroduced — the backing term and its resolve-side underflow guard come back together, and the settled sweep must hold the reserve back again.
+
+---
+
+## RP-29: Missing exact Pyth history leaves cadence reference ticks retryable (DBU-761)
+
+- **Trigger state:** one or more exact Pyth rows implied by a market's native window and currently enabled aligned shorter cadences are absent when `registry::set_reference_ticks` runs.
+- **Controller:** external — verified Pyth payload availability and landing time determine when an exact row exists; the protocol and keeper can retry but cannot manufacture the observation.
+- **Blast radius:** only the missing price-to-beat boundary on one expiry market. Existing reference ticks, terminal settlement, live pricing, and pool accounting are unchanged.
+- **Response:** skip every unavailable exact row, record each available row immutably, and allow the same entrypoint to run again at later cadence boundaries or during cleanup. Already-recorded timestamps are skipped before oracle access, so a complete market is a no-op and a later feed rebind cannot move an existing reference tick.
+- **Reasoning:** reference ticks are independent cadence UI/trading boundaries rather than terminal payout authority. Aborting the entire call when one row is absent prevents an available native or shorter-cadence tick from being recorded and turns ordinary oracle arrival skew into keeper sequencing coupling; partial monotonic fill preserves every exact fact that exists without substituting an approximate price. Settlement keeps its separate exact-source liveness policy under RP-4.
+- **Duty inventory (guard removal):** deleting `expiry_market::EReferenceTickObservationMissing` removes only the requirement that the native exact row exist on the first attempt. Canonical Pyth binding still aborts in `pricing::load_exact_spot`; normalization still rejects unusable raw rows as absent; zero or out-of-domain floored ticks still abort in `strike_exposure::set_reference_tick`; Registry cadence derivation and the six-entry cap still bound storage and iteration; the valuation lock and version gate still apply at the public entrypoint; and immutable source-timestamp deduplication prevents replacement.
+- **Risk profile:** `BEST-GUESS` — the accepted state is a temporarily partial reference vector. Liveness depends on an exact Pyth row eventually landing and a caller retrying, but no approximate source gains authority and no recorded boundary can change.
+- **Pinning tests:** `reference_tick_tests.move` — `set_reference_ticks_missing_exact_history_is_noop`, `five_minute_market_fills_native_then_one_minute_reference`, `set_reference_ticks_floors_spot_and_is_idempotent`, `recorded_reference_tick_is_immutable_after_pyth_rebind`, `set_reference_tick_wrong_pyth_feed_aborts`, and `set_reference_tick_floor_to_zero_aborts`.
+- **Reopen when:** reference ticks become settlement inputs, cadence periods become dynamic or exceed the fixed six-entry bound, Pyth exact-history semantics change, or product requirements demand a bounded fallback source for a permanently absent row.
 
 ---

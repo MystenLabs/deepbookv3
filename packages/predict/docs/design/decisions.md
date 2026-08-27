@@ -419,6 +419,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
   the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
 
+## Cadence-aligned reference ticks (2026-08-27)
+
+- **One expiry market stores every enabled cadence's aligned price-to-beat.** A market always derives its native source timestamp as `expiry - native_period`; each enabled shorter cadence contributes `expiry - cadence_period` only when the market expiry lies on that cadence's grid. The resulting vector is bounded by the six fixed protocol cadences, and every entry stores the exact source timestamp beside the fine-grid tick. *Rationale:* higher-rank cadences own overlap expiries, but shorter-cadence Up/Down views still need the exact preceding boundary for their own window. *Rejected:* one mutable scalar reference (loses shorter-cadence continuity at overlaps), and caller-supplied timestamps or prices (duplicates cadence policy and creates an untrusted derivation surface).
+- **The Registry derives eligibility; the ExpiryMarket owns exact Pyth reads and immutable insertion.** `registry::set_reference_ticks` reads current cadence enablement, filters aligned windows that have reached their source boundary, and delegates the timestamp vector to the market; the market skips timestamps already present before oracle access, reads only exact canonical Pyth history for the rest, floors each available spot to its tick size, and emits one `ReferenceTickSet` per insertion. Missing exact rows are skipped, so repeated calls fill later arrivals without changing an existing entry. The native-cadence scalar getter remains a convenience view over the vector. *Rejected:* coupling reference ticks to terminal settlement or its Block Scholes fallback; reference ticks are UI/trading boundaries, while settlement remains the terminal payout authority at expiry.
+- **Every recorded reference tick is an admitted finite mint boundary.** The coarser admission grid remains the default, while any tick in the bounded reference vector may define either side of a range. *Rationale:* each stored tick is an exact cadence price-to-beat, so a shorter-cadence Up or Down range must remain constructible even when that tick is off the market's coarser admission grid.
+
 ## Explicit exact-timestamp settlement (recent)
 
 - **Settlement is one public permissionless transition.** `expiry_market::try_settle`
