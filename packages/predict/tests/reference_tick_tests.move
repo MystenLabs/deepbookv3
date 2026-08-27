@@ -24,7 +24,7 @@ use deepbook_predict::{
 };
 use propbook::{pyth_feed::PythFeed, registry::{Self as propbook_registry, OracleRegistry}};
 use std::unit_test::assert_eq;
-use sui::{object, test_scenario::return_shared};
+use sui::{object, test_scenario::return_shared, tx_context};
 
 const REFERENCE_TICK: u64 = 101;
 const SHORTER_REFERENCE_TICK: u64 = 105;
@@ -48,6 +48,21 @@ const EUnexpectedSuccess: u64 = 999;
 public struct ExposureHarness has key {
     id: UID,
     exposure: StrikeExposure,
+}
+
+#[test, expected_failure(abort_code = strike_exposure::EInvalidReferenceTickSchedule)]
+fun empty_reference_tick_schedule_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let _exposure = strike_exposure::new(
+        object::id_from_address(@0xCAFE),
+        strike_exposure_config::new(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        vector[],
+        test_constants::default_max_expiry_allocation(),
+        ctx,
+    );
+    abort EUnexpectedSuccess
 }
 
 #[test]

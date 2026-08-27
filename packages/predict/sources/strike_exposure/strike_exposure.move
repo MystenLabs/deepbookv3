@@ -28,6 +28,7 @@ const EInvalidReferenceTick: u64 = 2;
 const ETermsExposureMismatch: u64 = 3;
 const EMintQuantityBelowMin: u64 = 4;
 const EInvalidInventoryImpactScale: u64 = 5;
+const EInvalidReferenceTickSchedule: u64 = 6;
 
 /// One creation-scheduled exact-history Pyth reference tick for an expiry market.
 public struct ReferenceTick has copy, drop, store {
@@ -473,6 +474,7 @@ public(package) fun new(
     inventory_impact_scale: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
+    assert!(!reference_tick_source_timestamps_ms.is_empty(), EInvalidReferenceTickSchedule);
     assert!(inventory_impact_scale > 0, EInvalidInventoryImpactScale);
     let mut reference_ticks = vector[];
     reference_tick_source_timestamps_ms.do!(|source_timestamp_ms| {
