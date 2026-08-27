@@ -367,9 +367,9 @@ fun a_mid_window_surplus_sweep_leaves_the_mark_unchanged() {
     let control_mark = run_undisturbed_flush(&mut fx, &mut market);
 
     // The seeded cash sits far above the market's band, so a mid-window
-    // rebalance fires a large surplus sweep on the still-pending market. It is
-    // recorded on the stamp and reversed at the finish, so the mark is exactly
-    // the control's.
+    // rebalance fires a large surplus sweep on the still-pending market. Its
+    // stamped cash was frozen at the snapshot, so the sweep cannot reach the
+    // mark and the finish is exactly the control's.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     let idle_before = helpers::vault(&market).idle_balance();
@@ -408,8 +408,8 @@ fun a_mid_window_top_up_leaves_the_mark_unchanged() {
 
     // Mid-window: a large mint jumps the required backing past the market's
     // cash target, and the following rebalance tops the market up from idle —
-    // trade deltas and maintenance both recorded on the pending market's stamp,
-    // the top-up also reversed out of the pool total and profit basis.
+    // both the trade and the top-up land after the market's stamp and the seal,
+    // so neither can reach the mark, whose every figure was frozen there.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     let _mid_window = fx.mint_bundle(
@@ -450,9 +450,8 @@ fun maintenance_after_a_markets_valuation_leaves_the_mark_unchanged() {
     let control_mark = run_undisturbed_flush(&mut fx, &mut market);
 
     // The market is valued (stamp cleared), then a trade and a surplus sweep
-    // land before the finish: nothing records on a stamp any more, and only the
-    // flush-level accumulators keep the swept surplus out of an already-measured
-    // pool total.
+    // land before the finish: its figure is already folded and every vault
+    // figure was frozen at the seal, so neither move can reach the mark.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut market);
