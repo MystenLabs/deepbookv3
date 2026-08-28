@@ -2168,6 +2168,35 @@ public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundl
     stage
 }
 
+/// Open a snapshot stage and attempt a SECOND `start_pool_valuation` inside it,
+/// holding one `Registry` take across both so they live in one PTB (a stage cannot
+/// cross a transaction). The second start must abort `ESnapshotInProgress`; the
+/// tail is unreachable at runtime and exists only so the happy path type-checks.
+public fun start_twice_in_one_stage(self: &mut Fixture, market: &mut MarketBundle) {
+    let registry = self.scenario.take_shared<Registry>();
+    let proof_a = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let stage_a = plp::start_pool_valuation(
+        &mut market.config,
+        &mut market.vault,
+        proof_a,
+        option::none(),
+        option::none(),
+        &self.clock,
+    );
+    let proof_b = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let stage_b = plp::start_pool_valuation(
+        &mut market.config,
+        &mut market.vault,
+        proof_b,
+        option::none(),
+        option::none(),
+        &self.clock,
+    );
+    return_shared(registry);
+    seal_snapshot(stage_a, &mut market.vault, &mut market.config);
+    seal_snapshot(stage_b, &mut market.vault, &mut market.config);
+}
+
 /// Read the valuation flag through a bundle's config. Wraps the public
 /// `protocol_config::valuation_in_progress` getter, not a test-only seam.
 public fun valuation_in_progress_bundle(market: &MarketBundle): bool {

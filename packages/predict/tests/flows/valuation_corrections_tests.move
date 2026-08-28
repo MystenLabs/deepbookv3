@@ -481,6 +481,21 @@ fun maintenance_after_a_markets_valuation_leaves_the_mark_unchanged() {
 // === Settlement: the per-market gate ===
 
 #[test, expected_failure(abort_code = protocol_config::ESnapshotInProgress)]
+fun a_second_start_inside_the_open_snapshot_stage_aborts() {
+    let (mut fx, expiry_id, _trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+
+    // Two `start_pool_valuation` calls in one PTB (one Registry take): the second,
+    // inside the still-open snapshot stage, aborts. So at most one `SnapshotStage`
+    // hot potato is ever live. Superseding a stranded flush is unaffected: that
+    // flush is already sealed, so the snapshot flag is clear.
+    fx.start_twice_in_one_stage(&mut market);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::ESnapshotInProgress)]
 fun a_mint_composed_into_the_open_snapshot_stage_aborts() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.bootstrap_lock(SUPPLY_AMOUNT);
