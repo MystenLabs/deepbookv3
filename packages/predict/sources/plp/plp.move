@@ -284,7 +284,7 @@ public fun start_pool_valuation(
     // snapshot is still in progress (both inside one PTB) aborts rather than handing
     // back a second `SnapshotStage` hot potato. A stranded flush is always sealed
     // (seal cleared the flag), so superseding it with a fresh start is unaffected.
-    config.assert_not_snapshot_in_progress();
+    config.assert_snapshot_not_in_progress();
     lifecycle_proof.destroy_proof();
     start_pool_valuation_internal(config, vault, supply_budget, withdraw_budget, clock);
     SnapshotStage {}

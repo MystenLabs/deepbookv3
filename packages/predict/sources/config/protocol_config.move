@@ -562,7 +562,7 @@ public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
 
 /// Abort while the atomic snapshot stage is open — used by the trade gates so the
 /// keeper cannot compose a mint or redeem into its own snapshot PTB.
-public(package) fun assert_not_snapshot_in_progress(config: &ProtocolConfig) {
+public(package) fun assert_snapshot_not_in_progress(config: &ProtocolConfig) {
     assert!(!config.snapshot_in_progress, ESnapshotInProgress);
 }
 
