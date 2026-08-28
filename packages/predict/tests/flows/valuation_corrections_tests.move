@@ -521,6 +521,34 @@ fun a_redeem_composed_into_the_open_snapshot_stage_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::ESnapshotInProgress)]
+fun a_settled_redeem_composed_into_the_open_snapshot_stage_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    // Settle the market so the position is settled-redeemable.
+    fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    assert!(fx.try_settle_bundle(&mut market));
+
+    // The settled-redeem path carries the same open-stage gate as the live paths:
+    // a redeem composed into the still-open snapshot PTB is refused, so the seal's
+    // frozen idle cannot be moved out from under it.
+    let _stage = fx.start_flush_bundle_stage(&mut market);
+    fx.redeem_settled_bundle(&mut market, &mut account, baseline);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = expiry_market::EMarketPendingValuation)]
 fun settling_a_market_pending_valuation_aborts() {
     let (mut fx, expiry_id, _trader) = helpers::setup_everything();
