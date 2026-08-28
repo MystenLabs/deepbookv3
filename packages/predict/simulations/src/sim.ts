@@ -329,6 +329,13 @@ async function replay(rows: ScenarioRow[], state: SimState, scenario: string, ma
             const step = traceStep(row, receipt, performance.now() - started, receipt.clockTimestampMs ?? 0);
             steps.push(step);
             if (receipt.clockTimestampMs === null) step.pricingTimestampMs = Number(await clockTimestampMs());
+            if (row.action === "flush") {
+                // The staged flush prices at the snapshot leg's clock, not the last
+                // (finish) leg's; FlushExecuted carries that instant.
+                const flushExecuted = receipt.events.find((event: any) => eventName(event) === "FlushExecuted");
+                const snapshotMs = flushExecuted?.parsedJson?.snapshot_timestamp_ms;
+                if (snapshotMs !== undefined) step.pricingTimestampMs = Number(snapshotMs);
+            }
             const updates = normalizeUpdates(row, receipt, aliases);
             updateAliases(row, receipt, aliases);
             records.push({ step: row.step, action: row.action, input: rowInput(row, BigInt(state.tickSize)), updates, state: await stateSnapshot(state) });

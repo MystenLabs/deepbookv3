@@ -22,7 +22,7 @@ use deepbook_predict::{
     order::{Self, Order},
     order_events,
     predict_account,
-    pricing::{Self, Pricer},
+    pricing::{Self, Pricer, FrozenPricer},
     protocol_config::ProtocolConfig,
     range_codec,
     strike_exposure::{Self, MintTerms, StrikeExposure},
@@ -47,6 +47,8 @@ const EMintRedeemSameTimestamp: u64 = 6;
 const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
+const EMarketPendingValuation: u64 = 10;
+const EMarketNotPendingValuation: u64 = 11;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -66,6 +68,25 @@ public struct ExpiryMarket has key {
     /// Admin sets/unsets it (version-gated); a `PauseCap` holder can force it
     /// true one-way through the registry (ungated kill switch).
     mint_paused: bool,
+    /// `Some` from the flush's snapshot stage until this market's `value_expiry`
+    /// (or lazily discarded once the stamp goes stale — see `ValuationStamp`).
+    /// Trading is never gated on it and never touches it: the cash rows are
+    /// captured eagerly here at the snapshot instant, and the payout tree
+    /// captures its own boundary shadows as trades first touch each node.
+    valuation_stamp: Option<ValuationStamp>,
+}
+
+/// One flush's snapshot stamp: the cash rows NAV reads, captured eagerly at the
+/// snapshot instant (the book side lives in the payout tree's own snapshot,
+/// activated with this stamp). Current only while `flush_seq`'s flush is in
+/// flight; a stale stamp is lazily discarded by the next trade, so abort never
+/// visits stamped markets.
+public struct ValuationStamp has drop, store {
+    flush_seq: u64,
+    /// `cash.balance()` at the snapshot instant.
+    snapshot_cash: u64,
+    /// `cash.inventory_impact_reserve()` at the snapshot instant.
+    snapshot_impact_reserve: u64,
 }
 
 /// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
@@ -227,6 +248,14 @@ public fun load_live_pricer(
         clock,
         ctx,
     )
+}
+
+/// Return whether this market is snapshotted into the in-flight flush and still
+/// awaiting its `value_expiry`. For SDK, keeper, and devInspect reads: while
+/// true, `try_settle` refuses to run; trading is unaffected.
+public fun is_pending_valuation(market: &ExpiryMarket, config: &ProtocolConfig): bool {
+    market.valuation_stamp.is_some()
+        && config.is_current_flush(market.valuation_stamp.borrow().flush_seq)
 }
 
 /// Return live marked NAV as free expiry cash minus the exposure book's marked
@@ -579,7 +608,9 @@ public fun redeem_settled_permissionless(
 /// Set this expiry's reference fine-grid tick from the exact previous-window
 /// Propbook Pyth observation. The source observation must be inserted into the
 /// feed at `reference_tick_source_timestamp_ms` before this call, and the
-/// normalized spot is floored to the market's `tick_size`.
+/// normalized spot is floored to the market's `tick_size`. Not gated on the
+/// valuation lock: the reference tick shapes mint admission only, and a mint it
+/// admits mid-flush is invisible to the captured snapshot like any other.
 public fun set_reference_tick(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -588,7 +619,6 @@ public fun set_reference_tick(
     clock: &Clock,
 ): u64 {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
 
     let source_timestamp_ms = market.strike_exposure.reference_tick_source_timestamp_ms();
     let spot = pricing::load_exact_spot(
@@ -641,6 +671,17 @@ public fun try_settle(
     clock: &Clock,
 ): bool {
     config.assert_version();
+    // A market awaiting its `value_expiry` must not settle: the flush froze its
+    // sweep-vs-value branch at the snapshot, and settlement discontinuously
+    // reclassifies its rows (releases the impact escrow, swaps marked for settled
+    // liability). The wait is bounded by that market's own valuation transaction
+    // — or by a fresh flush superseding this one, which bumps the flush ordinal so
+    // the stamp is staleness-cleared on the next line — not by the whole flush. The snapshot
+    // stage refuses to stamp an expired-unsettled market, so settlement can never
+    // be due before a flush stamps it; only an expiry landing mid-window waits
+    // here.
+    market.reconcile_stale_valuation_stamp(config);
+    assert!(market.valuation_stamp.is_none(), EMarketPendingValuation);
     if (market.is_settled()) return true;
     let now = clock.timestamp_ms();
     if (now < market.expiry) return false;
@@ -697,6 +738,49 @@ public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<D
 /// Receive sponsor-funded fee incentives allocated by the pool vault.
 public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<DUSDC>) {
     market.fee_incentive_balance.join(incentives);
+}
+
+/// Stamp this market for the flush freezing it: capture the two cash rows (this
+/// call IS the snapshot instant) and activate the tree snapshot. A surviving
+/// stamp being replaced is stale by construction — `begin_valuation` bumped the
+/// ordinal, and a current-flush double-stamp is rejected upstream.
+public(package) fun stamp_for_valuation(market: &mut ExpiryMarket, flush_seq: u64) {
+    market.valuation_stamp =
+        option::some(ValuationStamp {
+            flush_seq,
+            snapshot_cash: market.cash.balance(),
+            snapshot_impact_reserve: market.cash.inventory_impact_reserve(),
+        });
+    market.strike_exposure.activate_valuation_snapshot(flush_seq);
+}
+
+/// Retire the stamp once its valuation is folded, consuming the tree snapshot
+/// with it (purging retained husks — this generation's or a stale one's). Later
+/// trades are invisible to the folded figure: as-of-snapshot semantics.
+public(package) fun clear_valuation_stamp(market: &mut ExpiryMarket) {
+    market.valuation_stamp = option::none();
+    market.strike_exposure.release_valuation_snapshot();
+}
+
+/// NAV at the flush's snapshot instant: `current_nav`'s exact shape over values
+/// captured AT that instant — the stamp's cash copy predates every
+/// post-snapshot mutation and the tree captures each node before its first, so
+/// the zero floors are exact (backing keeps the pre-floor value above zero up
+/// to P-13's rounding dust).
+public(package) fun snapshot_nav(market: &ExpiryMarket, frozen: &FrozenPricer): u64 {
+    // Thaw to a transient, non-`store` `Pricer` for the frozen walk; it cannot
+    // outlive this transaction, so it can never reach a trade path.
+    let pricer = frozen.thaw();
+    market.assert_pricer_bound(&pricer);
+    // Defensive, structurally unreachable: the only caller is `plp::value_expiry`
+    // on a frozen-live market, which its own flush's snapshot stage stamped, and
+    // the stamp cannot go stale while that flush is still in flight (unit-tests
+    // rule 4: documented in lieu of a bypass test).
+    assert!(market.valuation_stamp.is_some(), EMarketNotPendingValuation);
+    let stamp = market.valuation_stamp.borrow();
+    let snapshot_free_cash = stamp.snapshot_cash.saturating_sub(stamp.snapshot_impact_reserve);
+    let liability = market.strike_exposure.frozen_marked_liability(&pricer, stamp.flush_seq);
+    snapshot_free_cash.saturating_sub(liability)
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
@@ -763,12 +847,27 @@ public(package) fun create_and_share(
         ),
         ewma: ewma::new(ctx),
         mint_paused: false,
+        valuation_stamp: option::none(),
     };
     transfer::share_object(market);
     expiry_market_id
 }
 
 // === Private Functions ===
+
+// --- Valuation stamp bookkeeping ---
+
+/// Lazily discard a stale stamp (aborted or superseded flush), deactivating the
+/// tree snapshot with it. Not walked here (trade path): a stale generation's
+/// husks fall out at the next consumed snapshot.
+fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &ProtocolConfig) {
+    if (market.valuation_stamp.is_none()) return;
+    let stamp_seq = market.valuation_stamp.borrow().flush_seq;
+    if (!config.is_current_flush(stamp_seq)) {
+        market.valuation_stamp = option::none();
+        market.strike_exposure.deactivate_valuation_snapshot();
+    };
+}
 
 // --- Gates: the first call of every public entry ---
 fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
@@ -777,15 +876,22 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
     assert!(!market.mint_paused, EMintPaused);
 }
 
+// Trade flows are deliberately NOT gated on the whole-flush valuation lock: a
+// snapshotted market's state is captured (stamp cash + tree shadows), so trades
+// run unrecorded and unbudgeted while it awaits its `value_expiry`. They ARE
+// blocked while the atomic snapshot stage is open (`assert_snapshot_not_in_progress`),
+// so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
+// mid-stamp cash move would skew the figures the seal freezes. That stage is one
+// PTB, so this never blocks a trade in any other transaction.
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_snapshot_not_in_progress();
     market.assert_pricer_bound(pricer);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
     config.assert_version();
-    config.assert_not_valuation_in_progress();
+    config.assert_snapshot_not_in_progress();
     assert!(market.is_settled(), EMarketNotSettled);
 }
 
@@ -809,6 +915,7 @@ fun mint_prepared(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
+    market.reconcile_stale_valuation_stamp(config);
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -969,6 +1076,7 @@ fun redeem_live_with_auth(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
+    market.reconcile_stale_valuation_stamp(config);
     wrapper.settle<DUSDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
@@ -1061,7 +1169,6 @@ fun redeem_live_with_auth(
         builder_code_id,
         ctx,
     );
-
     order_events::emit_live_order_redeemed(
         market.id(),
         account.account_id(),

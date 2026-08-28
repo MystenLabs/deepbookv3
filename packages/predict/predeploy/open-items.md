@@ -297,9 +297,12 @@ true of the generator but not of the committed data.
 **Severity:** Low, but it compounds. Not a defect; a stale measurement.
 
 RP-26 added one `ln` evaluation per digital and removed one `try_mul_div_down`.
-`walk_linear` pays that per payout-tree node and the pool-wide flush prices every
-active market in one PTB, so the increment lands directly on the C-1 computation
-budget — last measured at ~51% of the wall.
+`walk_linear` pays that per payout-tree node; since RP-29 the flush prices one
+market per transaction (C-1 — resolved — owned the old joint budget), so the
+increment lands on the per-transaction valuation compute (bounded at the node
+cap's boundary count; C-5 — resolved by the snapshot restructure — owned the
+retired delta log's extra term) — last measured at ~51% of the wall for a full
+single-market book.
 
 Precedent for sizing it: `evidence/c1-skew-gas-2026-07-09.md` records that the
 previous comparable addition (one `normal_pdf`, i.e. one `exp`) cost +2.2%
@@ -308,8 +311,8 @@ comparable increment is expected — not near a cliff, but unmeasured. Move
 unit-test metering put the difference under 0.01% of a test's gas; that is not
 on-chain compute and should not be cited as the answer.
 
-**Action:** fold a re-measurement into the next localnet capacity campaign rather
-than running one for this alone, and refresh the C-1 figures.
+**Action:** fold a re-measurement into the C-2 localnet campaign rather than
+running one for this alone.
 
 ### P-31: A provider envelope ahead of the Sui clock silently empties the feed
 
@@ -338,6 +341,12 @@ against the live provider before a value-bearing deployment, and alert on
 is what distinguishes this from a genuinely quiet feed. If the observed margin
 is thin, decide the response deliberately — a bounded tolerance on the
 comparison is a `response-policies.md` decision, not a silent widening.
+
+### P-32: A filled payout tree denies new strike ranges in its own market
+
+**Severity:** Low-Medium / post-launch; bounded to one market.
+
+`max_payout_tree_nodes` (RP-30) closes the flush-liveness attack, but an actor who fills one market's tree to the cap (~960 boundary-creating min-size mints, premium mostly recoverable) still denies NEW strike ranges in that market until nodes free up on closes or expiry. Direction: collapse the cheap node-minting shape onto the free `pos_inf_tick` sentinel so deep-OTM upper bounds stop minting nodes — sequenced after C-2/C-3 because it changes what the cap costs, not what it must be.
 
 ## Access and Governance
 
@@ -370,87 +379,14 @@ trust coupling.
 
 ## Capacity and Liveness Findings
 
-### C-1: Full-pool flush has no joint valuation budget
+### C-2: The valuation base-children reserve is unmeasured
 
-**Severity:** Medium / must be accepted or fixed before deployment.
+**Severity:** Low / tighten before mainnet; the unsafe direction is closed.
 
-The flush values every active market in one PTB. Current independent caps
-(`24` live markets, `1000` payout nodes) do
-not compose into a single-PTB budget — and the binding limit is object-count,
-not compute (corrected 2026-07-07; see the model below). The NAV price memo
-removed the single-market pre-cap OOG; the remaining deploy blocker is the
-pool-total case. The missing bound is a joint sum across all active markets, not
-another isolated per-market cap.
+`valuation_base_children_reserve` ships at 40 against a source-inspected true figure of 1-2 (`constants.move`), so `max_payout_tree_nodes` gives up ~4% of the strike grid as pure headroom (RP-30 derives the cap; C-1 — resolved — measured the wall). Tightening needs one localnet run: fill one market to the cap, run its `value_expiry` alone, and read the object-runtime count the transaction actually cached beyond the tree nodes. Decision rule, pre-registered: set the reserve to the measured base plus 8, and never below 8.
 
-**Capacity model (corrected 2026-07-07 — the binding wall is object-count, not compute):**
-
-- The binding wall for the pool total is the Sui **object-runtime cached-objects
-  limit: 1,000 dynamic-field child objects per transaction**
-  (`object_runtime_max_num_cached_objects`; a protocol constant, taken as
-  network-invariant). The flush loads each market's payout-tree nodes as
-  dynamic-field children, and the object-runtime cache
-  **accumulates across every `value_expiry` command in the one PTB**. On overflow
-  it aborts `MEMORY_LIMIT_EXCEEDED` inside `dynamic_field::borrow_child_object` —
-  a framework error whose true cause is this limit. It binds at 16–50% of the 5M
-  compute cap, so the pool flush is object-count-bound, not computation-bound
-  (`evidence/c1-object-cache-flush-2026-07-07.md`).
-- Driver = distinct payout-tree nodes: one `Table<tick,PayoutNode>` child per
-  distinct strike tick, and `walk_linear` loads every node. Node count = distinct
-  ticks, NOT order count (the tree aggregates by boundary) — which is why
-  single-market runs at narrow strikes never reached it despite large books.
-- Confirmed cumulative, not per-command: two 1× markets at 586 nodes each —
-  neither near 1,000 — abort the flush at ~1,172 combined; a single 1× market
-  crosses at ~982 nodes (`evidence/c1-object-cache-flush-2026-07-07.md`).
-- Superseded conclusion: the 2026-07-01 model called the flush
-  computation-bound. That holds for the SINGLE market (a full 5,000-order book
-  values at ~47–54% of the compute cap, `evidence/c1-price-memo-2026-07-01.md`;
-  pre-memo that single market OOG'd at ~4,580 orders,
-  `evidence/c1-nav-stress-2026-06-30.md`) but not the pool total. Earlier
-  pool-total runs hit
-  `expiry_cash::EInsufficientCash` (capital) at ~92% compute before reaching the
-  object wall; raising the allocation cap removed that mask and exposed the
-  1,000-child limit.
-- Skew-adjusted pricing re-measured the single-market compute cost on 2026-07-09:
-  the per-order flush slope rose 2.2% (~480K → ~491K computation units) and a
-  full 5,000-order book used 51% of the compute wall. This does not change the
-  pool-total conclusion above: the object-cache limit binds first
-  (`evidence/c1-skew-gas-2026-07-09.md`).
-- Expired-unswept markets leave the active set only inside a successful
-  `value_expiry`/sweep, so the flush's active tail is not bounded by the
-  live-market creation cap.
-- Capacity law:
-  `sum_over_active_markets(distinct_ticks + base_children)
-  < 1,000 dynamic-field children per flush PTB` — a joint sum across all active
-  markets, dominated by distinct strike ticks.
-- Leverage removal (2026-08-14) deleted the `ceil(leveraged_orders / 64)`
-  liquidation-book term from this law and the 5,000-order cap that bounded it.
-  Every measured threshold above was taken with leveraged orders present, so the
-  numbers are now conservative for the object wall and stale for compute; they
-  must be re-measured against the 1x-only footprint before this item is closed.
-  The benchmark cannot do that until the simulation parity model is updated.
-
-**Fix options (reframed for the object-count wall):** shrink the per-market
-NAV-walk child footprint (e.g. cache tree aggregates so `walk_linear` need not
-load every node) · a joint active-market×node budget enforced at creation/roll ·
-valuation resumable across PTBs (partial state instead of a hot potato) · an
-out-of-flush settled sweep/deactivate path (bounds the active tail) · documented
-operator throttling (an off-chain acceptance, not an on-chain guarantee).
-
-**Plan — runs that finish the number (decision rules pre-registered
-2026-07-02):**
-
-The binding wall is now identified (object-cache, 2026-07-07 above); the compute
-runs below are superseded for the pool total (compute is not the wall), and what
-remains open is the FIX, not the measurement. Retained for context:
-
-- Historical payout-tree probes — DONE 2026-07-07: filling one 1× market to the node cap
-  and two markets to 586 each proved the pool-total wall is the object-runtime
-  cached-objects limit, cumulative across the PTB, not compute
-  (`evidence/c1-object-cache-flush-2026-07-07.md`). The `c_node`/compute terms are
-  moot for the pool total — object count binds first.
-- Historical worst-branch and pool-total compute probes are superseded by the object-count result above, and their one-off strategy files were retired. If a fix needs a fresh boundary measurement, extend the retained `packages/predict/harness/ts/strategies/capacity.ts` family rather than restoring the old probes.
-- Any final cap change is followed by one run that reaches the new boundary
-  and proves the flush stays under the safety target.
+- Instrument: `packages/predict/harness/ts/strategies/capacity.ts` `tree` profile against a localnet publish.
+- The run must include mid-window trades on the stamped market, including full closes, so the measured walk covers retained husks (husks are ordinary tree nodes converted in place, expected zero extra children — the run proves that expectation).
 
 ## Oracle Calibration
 

@@ -30,6 +30,7 @@ const EInvalidPlpSupplyFeeRate: u64 = 19;
 const EInvalidPlpWithdrawFeeRate: u64 = 20;
 const EInvalidInventoryImpactMaxRate: u64 = 21;
 const EInvalidReferralFeeRate: u64 = 22;
+const EInvalidMaxValuationWindowMs: u64 = 23;
 
 // === Fees ===
 
@@ -122,6 +123,36 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
         value >= min_lp_request_limit_flush_attempts!()
             && value <= max_lp_request_limit_flush_attempts!(),
         EInvalidLpRequestLimitFlushAttempts,
+    );
+}
+
+/// A HARD staleness bound on a flush's fills: `finish_flush` refuses to complete a
+/// flush that has been in flight for at least this window (`EValuationWindowExpired`),
+/// so no LP request is ever filled at a mark older than the window. Past it the
+/// operator starts a fresh flush — `start_pool_valuation` discards any in-flight
+/// flush and re-snapshots, so there is no separate restart, and starting carries
+/// NO deadline; only finishing is gated. Enforced for everyone, including the cap
+/// owner. A healthy
+/// flush is seconds of transactions, so the five-minute default leaves ample margin;
+/// the minimum keeps a legitimate slow flush from being locked out (one minute still
+/// covers a healthy flush), and the maximum bounds fill staleness even if an operator
+/// sets this carelessly. See RP-29.
+public(package) macro fun default_max_valuation_window_ms(): u64 {
+    5 * deepbook_predict::constants::one_minute_ms!()
+}
+
+public(package) macro fun min_max_valuation_window_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!()
+}
+
+public(package) macro fun max_max_valuation_window_ms(): u64 {
+    4 * deepbook_predict::constants::one_hour_ms!()
+}
+
+public(package) fun assert_max_valuation_window_ms(value: u64) {
+    assert!(
+        value >= min_max_valuation_window_ms!() && value <= max_max_valuation_window_ms!(),
+        EInvalidMaxValuationWindowMs,
     );
 }
 

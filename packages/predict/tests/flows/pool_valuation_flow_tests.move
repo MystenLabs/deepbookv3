@@ -1,15 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Flow coverage for the pool NAV hot potato (`start_flush` /
-/// `value_expiry` / `finish_flush`) and its unified per-market cash
-/// flush. Tests build production-valid markets through the real creation + funding
-/// path, then assert: the aggregated pool NAV equals an independently assembled
-/// reference from the vault's ledger fields and per-market `current_nav`,
-/// the exactly-once completeness proof fires on a missed / double-valued market,
-/// and the valuation lock blocks NAV-changing ops between start and finish.
-/// Passive settled-market sweep and pending-profit exclusion coverage live in
-/// `settlement_flow_tests` and `protocol_profit_deferral_tests`.
+/// Flow coverage for the staged pool NAV flush (`start_pool_valuation` opens the
+/// atomic snapshot stage under the `SnapshotStage` potato, `seal_valuation_snapshot`
+/// closes it, per-market `value_expiry` transactions fold each frozen mark in, and
+/// `finish_flush` proves completeness before draining the LP queues) and its
+/// unified per-market cash flush. Tests build production-valid markets through the
+/// real creation + funding path, then assert: the aggregated pool NAV equals an
+/// independently assembled reference from the vault's ledger fields and per-market
+/// `current_nav`, valuation split across transactions marks at the snapshot
+/// instant, the exactly-once completeness proof fires on a missed / double-valued
+/// market, and the valuation flag gates keeper cash ops, market creation, and
+/// settlement of a snapshotted-but-unvalued market — trading itself stays open
+/// during a flush and is covered separately. Passive settled-market sweep and
+/// pending-profit exclusion coverage live in `settlement_flow_tests` and
+/// `protocol_profit_deferral_tests`.
 #[test_only]
 module deepbook_predict::pool_valuation_flow_tests;
 
@@ -18,17 +23,18 @@ use deepbook_predict::{
     block_scholes_feed::BlockScholesFeed,
     config_constants,
     constants,
-    expiry_market::ExpiryMarket,
+    expiry_market::{Self, ExpiryMarket},
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     pricing,
     protocol_config::{Self, ProtocolConfig},
-    test_constants
+    test_constants,
+    vault_events
 };
 use fixed_math::math::{Self, float_scaling as float};
 use propbook::{pyth_feed::PythFeed, registry::OracleRegistry};
 use std::unit_test::{assert_eq, destroy};
-use sui::test_scenario::return_shared;
+use sui::{event, test_scenario::return_shared};
 
 /// Standard ATM up-range quantity, well under the 50e9 cash floor that backs it.
 const STANDARD_QUANTITY: u64 = 2_000_000_000;
@@ -92,16 +98,97 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
-    let mut val = fx.start_flush(&mut config, &vault);
-    fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
+    // Cash maintenance is decoupled from the flush: the keeper rebalances each
+    // market to its band BEFORE starting; the flush itself moves no live cash.
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    fx.rebalance_expiry_cash(&mut vault, &mut m2, &config);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    fx.value_expiry(&mut vault, &mut m2, &config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
+
+    // Every expected value below is built from the fixture's own arithmetic and
+    // the mint premium, which was checked against the independent reference at
+    // mint time — nothing is read back out of the vault to predict itself.
+    //
+    // An order's live worth is the same product as its premium, so a swept
+    // market holds its cash target less that worth.
+    let expected_nav = MARKET_CASH_TARGET - premium;
+    let mint_cost = premium + MINT_MIN_FEE;
+    let nav1 = fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs);
+    let nav2 = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
+    assert_eq!(nav1, expected_nav);
+    assert_eq!(nav2, expected_nav);
+
+    // Each market swept its premium and fee to idle; the funding it drew is the
+    // debit side of the profit basis.
+    assert_eq!(vault.profit_basis_credits(), 2 * mint_cost);
+    assert_eq!(vault.profit_basis_debits(), 2 * MARKET_CASH_TARGET);
+    assert_eq!(vault.idle_balance(), IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost);
+    assert_eq!(vault.pending_protocol_profit(), 0);
+
+    // The pool mark is gross value less the protocol's share of realised profit.
+    // This is the one line that mirrors `lp_pool_value`; every input to it is
+    // pinned above against fixture arithmetic, so the composition is all that is
+    // taken from the implementation.
+    let active = 2 * expected_nav;
+    let expected_exclusion = math::mul_down(
+        2 * mint_cost + active - 2 * MARKET_CASH_TARGET,
+        config_constants::default_protocol_reserve_profit_share!(),
     );
+    assert_eq!(
+        pool_nav,
+        IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost + active - expected_exclusion,
+    );
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    return_shared(m2);
+    fx.finish();
+}
+
+#[test]
+fun multi_market_pool_nav_is_exact_with_a_mid_flush_rebalance() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    let premium = fund_market_with_order(&mut fx, &trader, e1);
+    assert_eq!(fund_market_with_order(&mut fx, &trader, e2), premium);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
+
+    // m1 rebalances BEFORE the window, m2 DURING it: m2's in-window move lands
+    // after its stamp and the seal, so it cannot reach the mark, and every exact
+    // expected value below must be identical to the rebalance-before-the-window
+    // case.
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    // Mid-window maintenance on the still-pending m2, guarded as a real move.
+    let idle_before = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m2, &config);
+    assert!(vault.idle_balance() != idle_before);
+    fx.value_expiry(&mut vault, &mut m2, &config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
 
     // Every expected value below is built from the fixture's own arithmetic and
     // the mint premium, which was checked against the independent reference at
@@ -166,16 +253,13 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
     let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
-    let mut val = fx.start_flush(&mut config, &vault);
-    fx.value_expiry(&mut val, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    fx.value_expiry(&mut val, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    let pool_nav = val.finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    fx.value_expiry(&mut vault, &mut m2, &config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
@@ -212,15 +296,11 @@ fun empty_pool_valuation_returns_idle() {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
 
-    // No active markets: start then finish with no value steps returns idle.
-    let val = fx.start_flush(&mut config, &vault);
-    let pool_nav = val.finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
+    // No active markets: start, seal an empty snapshot, then finish with no value
+    // steps returns idle.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
     assert_eq!(pool_nav, idle_seed);
 
     return_shared(config);
@@ -230,8 +310,10 @@ fun empty_pool_valuation_returns_idle() {
 
 // === Oracle-width propagation and recovery ===
 
-/// `value_expiry` is the mandatory per-market leg of a pool-wide flush, so an over-wide active
-/// market observation must surface the named pricing-boundary error here rather than a VM cast.
+/// Freezing the pricer is the mandatory per-market leg of a pool-wide flush, so an over-wide
+/// active market observation must surface the named pricing-boundary error there rather than a
+/// VM cast. The oracle read happens in the atomic snapshot stage rather than in `value_expiry`,
+/// so the abort lands inside the flush's first transaction.
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
     let mut fx = helpers::setup_market_default();
@@ -246,8 +328,7 @@ fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
         FIRST_UNREPRESENTABLE_U64,
     );
 
-    let mut valuation = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut valuation, &mut market);
+    fx.start_flush_bundle(&mut market);
     abort 999
 }
 
@@ -273,14 +354,9 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
         overwide_timestamp_ms + 1,
     );
 
-    let mut valuation = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut valuation, &mut market);
-    let pool_nav = fx.finish_flush_bundle(
-        valuation,
-        &mut market,
-        option::none(),
-        option::none(),
-    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
     assert_eq!(pool_nav, IDLE_SEED);
 
     helpers::return_market_bundle(market);
@@ -300,94 +376,323 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     fund_empty_market(&mut fx, e2);
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(e1);
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
-    // Snapshot held two markets; only one was valued.
-    let _ = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = plp::EExpiryMarketAlreadyValued)]
-fun value_expiry_aborts_on_double_value() {
-    let mut fx = helpers::setup_market_default();
-    let _trader = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, IDLE_SEED);
-    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(e);
-
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
+    // Both markets sealed into the snapshot, then only one valued.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let _ = fx.finish_flush(&mut vault, &mut config);
 
     abort 999
 }
 
-// === Valuation lock ===
-
-#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun mint_during_valuation_aborts() {
+/// C-1: valuation spread across transactions must mark the pool exactly as a
+/// single-transaction flush would have at the snapshot instant.
+///
+/// The oracle is deliberately moved between the two `value_expiry` transactions. If
+/// the second market re-read live oracle state instead of its frozen `Pricer`, its
+/// NAV — and the pool mark — would shift off the snapshot instant, which is exactly
+/// the audit-L10 single-mark property. The expected value is the same independent
+/// fixture arithmetic the single-transaction test asserts, so the two are pinned to
+/// one number, not to each other.
+#[test]
+fun valuation_split_across_transactions_marks_at_the_snapshot_instant() {
     let mut fx = helpers::setup_market_default();
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     bootstrap_pool(&mut fx, IDLE_SEED);
-    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    let premium = fund_market_with_order(&mut fx, &trader, e1);
+    assert_eq!(fund_market_with_order(&mut fx, &trader, e2), premium);
 
     fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(e);
-    let mut account = fx.take_account_bundle(&trader);
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
 
-    helpers::begin_valuation(&mut market);
-    fx.mint_bundle(
-        &mut market,
-        &mut account,
-        helpers::strike_tick(),
-        constants::pos_inf_tick!(),
-        STANDARD_QUANTITY,
+    // Snapshot stage: one atomic transaction, both markets frozen at one instant.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+
+    // Valuation stage, transaction 1 of 2.
+    fx.value_expiry(&mut vault, &mut m1, &config);
+
+    // Move the oracle between valuation transactions.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let now_ms = fx.clock().timestamp_ms();
+    fx.set_pyth_price_for_testing(&mut pyth, test_constants::default_live_price() * 2, now_ms);
+
+    // Guard against a vacuous test: prove the move is load-bearing. A pricer loaded
+    // live at this moment marks m2 differently from its frozen one, so if
+    // `value_expiry` re-read the oracle the pool mark below could not still match.
+    let expected_nav = MARKET_CASH_TARGET - premium;
+    let live_nav_after_move = fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs);
+    assert!(live_nav_after_move != expected_nav);
+
+    // Valuation stage, transaction 2 of 2 — priced off the frozen snapshot.
+    fx.value_expiry(&mut vault, &mut m2, &config);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
+
+    let mint_cost = premium + MINT_MIN_FEE;
+    let active = 2 * expected_nav;
+    let expected_exclusion = math::mul_down(
+        2 * mint_cost + active - 2 * MARKET_CASH_TARGET,
+        config_constants::default_protocol_reserve_profit_share!(),
     );
+    assert_eq!(
+        pool_nav,
+        IDLE_SEED - 2 * MARKET_CASH_TARGET + 2 * mint_cost + active - expected_exclusion,
+    );
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    return_shared(m2);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = plp::EIncompleteValuationSnapshot)]
+fun seal_aborts_when_an_active_market_has_no_frozen_pricer() {
+    let mut fx = helpers::setup_market_default();
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    fund_empty_market(&mut fx, e1);
+    fund_empty_market(&mut fx, e2);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+
+    // Two markets are active but only one is frozen: sealing here would let the
+    // flush value a market at an oracle state read after the snapshot instant.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
 
     abort 999
 }
 
-#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun rebalance_during_valuation_aborts() {
+#[test, expected_failure(abort_code = plp::EValuationSnapshotNotSealed)]
+fun value_expiry_before_seal_aborts() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
     bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
-    let mut market = fx.take_market_bundle(e);
-
-    helpers::begin_valuation(&mut market);
-    fx.rebalance_expiry_cash_bundle(&mut market);
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun create_expiry_market_during_valuation_aborts() {
-    let mut fx = helpers::setup_market_default();
-    let _trader = fx.create_funded_manager(0);
-    bootstrap_pool(&mut fx, IDLE_SEED);
-
-    // Engage the valuation lock on the shared config, then attempt to create a market:
-    // create_and_share_expiry_market is an active-set mutation, so it must abort under the lock.
-    fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    config.begin_valuation();
-    return_shared(config);
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e);
 
-    fx.create_expiry(test_constants::default_expiry_ms());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m, &config, &oracle_registry, &pyth, &bs);
+    fx.value_expiry(&mut vault, &mut m, &config);
 
     abort 999
 }
 
 #[test]
-fun valuation_flow_releases_lock_and_mint_succeeds() {
+fun value_expiry_is_idempotent_on_double_value() {
+    let mut fx = helpers::setup_market_default();
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    // value_expiry is permissionless, so a stranger can race the keeper. Valuing an
+    // already-valued market is a no-op, not an abort: it must not wedge the flush or
+    // double-count the market. A second call here is silently absorbed and finish
+    // still closes at the empty-pool mark.
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+// === Valuation flag ===
+
+// Trading is not gated by the flag on this design: a mint or redeem during a flush
+// records its deltas on the market's valuation stamp instead of aborting. That
+// behavior is covered by the trading-during-flush tests, not here; this section
+// pins the ops the flag still gates.
+
+#[test, expected_failure(abort_code = plp::ESnapshotStageOpen)]
+fun a_rebalance_inside_the_open_snapshot_stage_aborts() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, e1);
+
+    // A cross-move between a market's stamp and the seal's vault capture would
+    // skew the frozen figures, so the whole open stage refuses maintenance —
+    // only the flush-starter's own PTB can even compose this state. Post-seal
+    // rebalances are pinned free by the mid-flush metamorphic tests.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let _stage = fx.start_flush(&mut config, &mut vault);
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    abort 999
+}
+
+#[test]
+fun the_flush_event_reports_live_pre_drain_idle_apart_from_the_frozen_mark_idle() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, e1);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+
+    // Control flush, no mid-window movement, to fix the mark.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let control_mark = fx.finish_flush(&mut vault, &mut config);
+
+    // Flush B moves idle BETWEEN the seal and the finish: a post-seal rebalance
+    // sweeps the funded market's surplus into idle. The frozen mark idle was
+    // captured at the seal (before the sweep), while `idle_balance_before` is a
+    // live read at the finish (after it) — the event must report the two apart,
+    // and the mark must still equal the control's.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    let idle_at_seal = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    // Guard: the mid-window sweep genuinely raised live idle.
+    assert!(vault.idle_balance() > idle_at_seal);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let corrected_mark = fx.finish_flush(&mut vault, &mut config);
+    assert_eq!(corrected_mark, control_mark);
+
+    let events = event::events_by_type<vault_events::FlushExecuted>();
+    let (live_before, frozen_idle) = vault_events::flush_executed_idle_figures(
+        &events[events.length() - 1],
+    );
+    // Telemetry reflects the swept cash; the mark's idle input does not.
+    assert!(live_before > frozen_idle);
+    assert_eq!(frozen_idle, idle_at_seal);
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    fx.finish();
+}
+
+#[test]
+fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    fund_market_with_order(&mut fx, &trader, e1);
+
+    // Control flush over the one existing market.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let control_mark = fx.finish_flush(&mut vault, &mut config);
+
+    // Flush B: identical books at its snapshot, but a NEW market is created AND
+    // funded mid-window. The flush's expected set is frozen at its snapshot, so
+    // the new market is simply not part of it; its funding top-up moves idle
+    // after the seal, and the mark reads idle frozen at the seal, so it treats
+    // that cash as the idle it was at the snapshot instant.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    return_shared(config);
+    return_shared(vault);
+    return_shared(oracle_registry);
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
+    let idle_before = vault.idle_balance();
+    fx.rebalance_expiry_cash(&mut vault, &mut m2, &config);
+    // Guard: the new market genuinely pulled its initial funding from idle
+    // mid-window, so the equality below is the compensation at work.
+    assert!(vault.idle_balance() < idle_before);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let corrected_mark = fx.finish_flush(&mut vault, &mut config);
+    assert_eq!(corrected_mark, control_mark);
+    // The new market is part of the NEXT snapshot, not the one in flight.
+    assert_eq!(vault.active_expiry_markets().length(), 2);
+
+    return_shared(config);
+    return_shared(pyth);
+    helpers::return_bs(bs);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    return_shared(m2);
+    fx.finish();
+}
+
+#[test]
+fun finish_flush_releases_the_valuation_flag_and_a_mint_succeeds() {
     let mut fx = helpers::setup_market_default();
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     bootstrap_pool(&mut fx, IDLE_SEED);
@@ -397,16 +702,21 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     let mut market = fx.take_market_bundle(e);
     let mut account = fx.take_account_bundle(&trader);
 
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
-    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    fx.start_flush_bundle(&mut market);
+    assert!(helpers::valuation_in_progress_bundle(&market));
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
     assert_eq!(
         pool_nav,
         constants::expiry_cash_floor!() + (IDLE_SEED - constants::expiry_cash_floor!()),
     );
 
-    // Lock released by finish: the same mint that would have aborted mid-flow now
-    // succeeds, adding a position.
+    // Finish releases the flag — asserted on the flag itself, because trading is
+    // not blocked by a flush and cannot witness the release. The flag is what
+    // still gates keeper cash ops, market creation, and config setters, so it
+    // must not survive the flush. The mint then pins that ordinary trading
+    // continues after a completed flush.
+    assert!(!helpers::valuation_in_progress_bundle(&market));
     let expiry_id = helpers::market(&market).id();
     let order_id = fx.mint_bundle(
         &mut market,
@@ -422,40 +732,24 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = plp::EWrongPoolVault)]
-fun finish_with_wrong_vault_aborts() {
-    let mut fx = helpers::setup_market_default();
-    fx.bootstrap_lock(constants::min_bootstrap_liquidity!()); // flush start requires a bootstrapped pool
+// `finish_with_wrong_vault_aborts` is gone with `EWrongPoolVault`: the valuation is
+// now a field of the vault it belongs to, so finishing one vault's flush against
+// another is unrepresentable rather than rejected at runtime.
 
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let wrong_vault_id = plp::init_for_testing(fx.scenario_mut().ctx());
-
-    fx.scenario_mut().next_tx(test_constants::admin());
-    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-
-    let val = fx.start_flush(&mut config, &vault);
-    // A second, unrelated vault created through the normal test init path:
-    // finishing against it must fail the binding check.
-    let mut wrong_vault = fx.scenario_mut().take_shared_by_id<PoolVault>(wrong_vault_id);
-    let _ = val.finish_flush(
-        &mut wrong_vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
-
-    abort 999
-}
-
-#[test, expected_failure(abort_code = plp::EExpiryMarketNotActive)]
-fun value_expiry_for_inactive_market_aborts() {
+/// The stale-list regression: a keeper builds its market list off-chain, a market is settled
+/// and swept before the flush executes, and the flush is then handed a market that is no
+/// longer in the active set. That used to abort and fail the whole flush — observed on
+/// testnet as a repeated flush-failing abort. Both stages now skip it, and the flush
+/// completes.
+#[test]
+fun a_swept_market_left_in_the_keepers_list_is_skipped_not_fatal() {
     let mut fx = helpers::setup_market_default();
     let _trader = fx.create_funded_manager(0);
     bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
+    // Settle and sweep the market out of the active set, exactly as the keeper's own
+    // settlement lane does between reading the list and submitting the flush.
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
@@ -467,12 +761,19 @@ fun value_expiry_for_inactive_market_aborts() {
     fx.rebalance_expiry_cash_bundle(&mut market);
     helpers::return_market_bundle(market);
 
+    // Flush anyway, with the stale market still in hand.
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
 
-    abort 999
+    // The swept market contributed nothing, so the pool marks at idle — the sweep
+    // already returned its cash. Exact, so a silent double-count would fail here.
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 #[test]
@@ -481,9 +782,9 @@ fun finish_flush_with_zero_pool_nav_and_empty_queues_succeeds() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
-    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
     assert_eq!(pool_nav, 0);
 
     helpers::return_market_bundle(market);
@@ -496,9 +797,9 @@ fun finish_flush_with_low_plp_price_and_empty_queues_succeeds() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
-    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
     assert_eq!(pool_nav, BELOW_MIN_PRICE_IDLE);
 
     helpers::return_market_bundle(market);
@@ -516,9 +817,9 @@ fun finish_flush_with_high_plp_price_and_empty_queues_succeeds() {
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.seed_market_cash(helpers::market_mut(&mut market), ABOVE_MAX_PRICE_MARKET_CASH);
 
-    let mut val = fx.start_flush_bundle(&mut market);
-    fx.value_expiry_bundle(&mut val, &mut market);
-    let pool_nav = fx.finish_flush_bundle(val, &mut market, option::none(), option::none());
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
     assert_eq!(pool_nav, ABOVE_MAX_PRICE_POOL_NAV);
 
     helpers::return_market_bundle(market);
@@ -664,4 +965,351 @@ fun setup_underwater_market(idle_remainder: u64): (helpers::Fixture, ID) {
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
     (fx, e)
+}
+
+// === Snapshot-stage guards ===
+
+#[test, expected_failure(abort_code = plp::EExpiryPricerAlreadySnapshotted)]
+fun snapshotting_one_market_twice_aborts() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let stage = fx.start_flush_bundle_stage(&mut market);
+    fx.snapshot_expiry_pricer_bundle(&stage, &mut market);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = plp::EExpiredMarketNotSettled)]
+fun snapshotting_an_expired_unsettled_market_aborts() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    // Past expiry with no settlement price recorded: the market has no live mark and
+    // no settled one, so the snapshot stage refuses it rather than guessing. Because
+    // the stage is atomic this abort reverts `start_pool_valuation` too, which is what
+    // keeps the `try_settle` gate from deadlocking against the flush.
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.start_flush_bundle(&mut market);
+
+    abort 999
+}
+
+// === Restart folds into start; completion is deadline-bounded ===
+
+#[test]
+fun starting_a_fresh_flush_supersedes_a_stranded_one() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    // Start a flush and walk away without valuing or finishing it: the outer lock
+    // survives the transaction boundary (a stranded flush).
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.start_flush_bundle(&mut market);
+    assert!(helpers::valuation_in_progress_bundle(&market));
+    helpers::return_market_bundle(market);
+
+    // There is no abort entrypoint. Recovery is to start again: `start_pool_valuation`
+    // discards the stranded valuation (bumping the flush ordinal, which invalidates the
+    // prior snapshot's per-market stamps) and begins fresh. The whole flush then
+    // completes, proving the stranded valuation left no exactly-once residue — an empty
+    // funded market marks the pool at exactly its idle, so `> 0` would not separate
+    // "no residue" from "residue but still positive".
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun finish_one_ms_before_the_window_succeeds() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let started_at_ms = fx.clock().timestamp_ms();
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+
+    // One millisecond inside the window: finish still closes. Paired with the abort
+    // test below, this pins the deadline boundary from both sides so it cannot be
+    // widened or dropped silently. Finish reads no oracle (the snapshot froze every
+    // input), so advancing the clock cannot stale it for any reason but the deadline.
+    fx.set_clock_for_testing(
+        started_at_ms + config_constants::default_max_valuation_window_ms!() - 1,
+    );
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = plp::EValuationWindowExpired)]
+fun finish_at_the_window_aborts() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let started_at_ms = fx.clock().timestamp_ms();
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+
+    // Exactly the window: the frozen mark is now too stale to fill queued LP requests,
+    // so finish refuses even for the cap owner (the deadline is enforced before the
+    // completeness check, and this flush is fully valued, so only the deadline fires).
+    // The operator's recourse is to start a fresh flush, not to force this one.
+    fx.set_clock_for_testing(
+        started_at_ms + config_constants::default_max_valuation_window_ms!(),
+    );
+    fx.finish_flush_bundle(&mut market);
+
+    abort 999
+}
+
+// === The per-market settlement gate the resumable flush required ===
+
+#[test, expected_failure(abort_code = expiry_market::EMarketPendingValuation)]
+fun settling_a_snapshotted_unvalued_market_aborts() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    // The snapshot stage stamps the market; until its own `value_expiry` clears that
+    // stamp it is snapshotted-and-not-yet-valued, which is the only state `try_settle`
+    // refuses.
+    fx.start_flush_bundle(&mut market);
+
+    // A market that crosses its expiry mid-flush must not settle underneath the frozen
+    // snapshot: settling would discontinuously reclassify the rows the flush froze on
+    // the sweep-vs-value branch. The gate is per-market — the wait is bounded by this
+    // market's own valuation transaction (or the flush abort deadline), not by the
+    // whole flush.
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    fx.try_settle_bundle(&mut market);
+
+    abort 999
+}
+
+// === Completion is permissionless ===
+
+#[test]
+fun a_third_party_can_complete_a_flush_the_operator_started() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    // The operator (cap owner) starts the flush — the one permissioned step.
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.start_flush_bundle(&mut market);
+    helpers::return_market_bundle(market);
+
+    // Once the snapshot is sealed it no longer matters who drives the rest: the frozen
+    // mark and the budgets committed at start are fixed, so value and finish are
+    // permissionless. A stranger values the market...
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(e);
+    fx.value_expiry_bundle(&mut market);
+    helpers::return_market_bundle(market);
+
+    // ...and a different stranger finishes it. The griefing shape that once justified a
+    // starter gate — finishing with a zero drain budget to retire the mark with nothing
+    // filled — is closed structurally: budgets are committed at start and finish takes
+    // none. The flush closes at the empty-pool mark and the lock is released.
+    fx.scenario_mut().next_tx(test_constants::bob());
+    let mut market = fx.take_market_bundle(e);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+    assert!(!helpers::valuation_in_progress_bundle(&market));
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun superseding_after_a_partial_valuation_leaves_no_residue_and_re_values() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e1 = fx.create_expiry(test_constants::default_expiry_ms());
+    let e2 = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    fund_market_with_order(&mut fx, &trader, e1);
+    fund_market_with_order(&mut fx, &trader, e2);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m1 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e1);
+    let mut m2 = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(e2);
+
+    // Value ONE market (measurement-only — value_expiry moves no cash), then walk
+    // away. The claim under test is that superseding the partial valuation with a
+    // fresh flush leaves no exactly-once residue and moves no cash: m1's cash and the
+    // pool idle are unchanged across the restart, and the later flush values m1 again
+    // rather than rejecting it as already-valued.
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    let m1_cash_after_partial = m1.cash_balance();
+    let idle_after_partial = vault.idle_balance();
+
+    // No abort entrypoint: recovery is to start again. Folding stop into start, the
+    // fresh `start_pool_valuation` below discards this partial valuation (bumping the
+    // flush ordinal, which staleness-invalidates m1's earlier snapshot stamp) and
+    // begins clean. A fresh transaction is needed only so the shared `Registry` is
+    // takeable again for the new lifecycle proof — the realistic shape, where a
+    // superseding flush runs in a later transaction than the one that stalled.
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
+    fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m1, &config);
+    fx.value_expiry(&mut vault, &mut m2, &config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
+    // The superseded partial valuation left no exactly-once residue: m1's cash and the
+    // pool idle are unchanged across the restart, and m1 was re-valued rather than
+    // rejected as already valued.
+    assert_eq!(m1.cash_balance(), m1_cash_after_partial);
+    assert_eq!(vault.idle_balance(), idle_after_partial);
+    assert!(pool_nav > 0);
+
+    return_shared(config);
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m1);
+    return_shared(m2);
+    helpers::return_bs(bs);
+    fx.finish();
+}
+
+/// The mixed case, which is what actually happens in production: the pool still has a
+/// LIVE market to value, and the caller's list additionally carries one that was swept
+/// out from under it. The degenerate single-market version above leaves `expected`
+/// empty, so it never proves the live market is still valued correctly alongside the
+/// skip — this does.
+#[test]
+fun a_stale_market_alongside_a_live_one_is_skipped_and_the_live_one_still_values() {
+    let mut fx = helpers::setup_market_default();
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    // `doomed` expires first so the clock can pass it while `live` is still live.
+    let doomed = fx.create_expiry(test_constants::default_expiry_ms());
+    let live = fx.create_expiry(test_constants::default_expiry_ms() + 86_400_000);
+    fund_market_with_order(&mut fx, &trader, live);
+    // `doomed` is deliberately left unfunded, so sweeping it moves no cash and the pool
+    // arithmetic below is exactly the single-live-market case.
+
+    // Settle and sweep `doomed` only. `live` stays in the active set.
+    fx.set_clock_for_testing(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut doomed_bundle = fx.take_market_bundle(doomed);
+    fx.insert_exact_settlement_spot_bundle(
+        &mut doomed_bundle,
+        test_constants::default_live_price(),
+    );
+    assert!(fx.try_settle_bundle(&mut doomed_bundle));
+    fx.rebalance_expiry_cash_bundle(&mut doomed_bundle);
+    helpers::return_market_bundle(doomed_bundle);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(fx.pyth_id());
+    let mut bs = fx.take_bs();
+    let oracle_registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut m_live = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(live);
+    let mut m_doomed = fx.scenario_mut().take_shared_by_id<ExpiryMarket>(doomed);
+
+    // The clock moved to reach `doomed`'s expiry, which staled the seeded surface; the
+    // live market still has to price, so refresh it at the current instant. In an
+    // EARLIER transaction than the snapshot, which RP-24 requires.
+    let now_ms = fx.clock().timestamp_ms();
+    fx.seed_bs_surface(
+        &m_live,
+        &mut bs,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        now_ms,
+    );
+    fx.scenario_mut().next_tx(test_constants::admin());
+
+    // Drive BOTH through both stages, exactly as a caller holding a stale list would.
+    // `expected` is {live}; `doomed` is skipped by each stage without failing the flush.
+    // Cash maintenance is decoupled from the flush: rebalance the live market to
+    // its band BEFORE starting; the flush itself moves no live cash.
+    fx.rebalance_expiry_cash(&mut vault, &mut m_live, &config);
+    let stage = fx.start_flush(&mut config, &mut vault);
+    fx.snapshot_expiry_pricer(
+        &stage,
+        &mut vault,
+        &mut m_live,
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs,
+    );
+    fx.snapshot_expiry_pricer(
+        &stage,
+        &mut vault,
+        &mut m_doomed,
+        &config,
+        &oracle_registry,
+        &pyth,
+        &bs,
+    );
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+    fx.value_expiry(&mut vault, &mut m_live, &config);
+    fx.value_expiry(&mut vault, &mut m_doomed, &config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
+
+    // That the flush COMPLETED is already the proof the live market was valued:
+    // `expected` is {live}, and `finish_flush` asserts every expected market was valued,
+    // so a skip of `live` would have aborted `EMissingExpiryValuation` rather than
+    // returning. The skip is therefore precise — it dropped the stale market and only
+    // the stale market.
+    //
+    // The skip precision is proven by the flush COMPLETING above: finish would
+    // have aborted `EMissingExpiryValuation` had the live market been skipped
+    // too. `value_expiry` moves no cash, so the assertion below pins only the
+    // pre-flush fixture state (the live market rebalanced to target), confirming
+    // the fixture, not the skip.
+    assert_eq!(m_live.cash_balance(), MARKET_CASH_TARGET);
+    assert!(pool_nav > vault.idle_balance());
+
+    return_shared(config);
+    return_shared(pyth);
+    return_shared(oracle_registry);
+    return_shared(vault);
+    return_shared(m_live);
+    return_shared(m_doomed);
+    helpers::return_bs(bs);
+    fx.finish();
 }

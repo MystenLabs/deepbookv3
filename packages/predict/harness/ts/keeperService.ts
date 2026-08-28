@@ -16,17 +16,19 @@ import { atomicWriteFile } from "./io.js";
 import { fetchExactSpot1e9 } from "./marketSource.js";
 import { type Feeds, bootstrapPool, createMarket, isoSec, setupFeedsAndConfig } from "./predictSetup.js";
 import { definedEnv, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
-import { appendTrace, computationOf, errorTag, gasOf } from "./trace.js";
+import { aggregateNetGasOf, appendTrace, errorTag, legComputationsOf, maxComputationOf } from "./trace.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
   clockTimestampMs,
+  execute,
   executeAndWait,
   fundAddressDusdcTx,
-  keeperFlushTx,
+  keeperFlushTxs,
   keeperSettleTx,
   readActiveMarketIds,
   readMarketExpiry,
+  readValuationInProgress,
   rebalanceExpiryCashTx,
 } from "../../devtools/ts/runtime.js";
 
@@ -100,6 +102,19 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string) {
+  // 0. Surface a stranded valuation lock. A valuation that died after its snapshot
+  //    sealed leaves the outer lock (`valuation_in_progress`) engaged, but that lock
+  //    now only gates cancels and config setters — not settlement, trading, or the
+  //    flush lane. There is no separate discard step: the next flush's
+  //    `start_pool_valuation` discards the stranded valuation and starts fresh (stop is
+  //    folded into start), and the snapshot PTB is atomic so a pre-seal failure reverts
+  //    the lock cleanly. So there is nothing to recover here — trace it and let the
+  //    flush lane below supersede it.
+  if (await readValuationInProgress()) {
+    console.warn("[keeper] valuation lock engaged at tick start — the next flush supersedes it");
+    appendTrace("keeper", { type: "valuation-stranded", lane: "recovery" });
+  }
+
   // Reconcile the active set from CHAIN — never an in-memory list. Used by settle / rebalance /
   // roll below; settlement (step 1) re-reads a fresh set of its own each pass.
   const active: Mkt[] = [];
@@ -134,20 +149,34 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       for (const m of flush) {
         if (m.expiryMs <= nowClock) settlements.push({ marketId: m.id, expiryMs: BigInt(m.expiryMs), price: await fetchExactSpot1e9(m.expiryMs) });
       }
-      const fr = await executeAndWait(
-        keeperFlushTx({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
+      // The flush is a sequence now: settle+snapshot (atomic), one value_expiry per
+      // market, then finish. A failure part-way leaves the valuation lock held, so the
+      // catch below discards it rather than letting the whole protocol sit frozen.
+      const fr = await execute(
+        keeperFlushTxs({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
         "flush",
       );
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
       appendTrace("keeper", {
         type: "flush", marketCount: fe ? Number(fe.market_count) : flush.length, stragglers: settlements.length,
         poolValue: fe ? Number(fe.pool_value) / 1e6 : 0, totalSupply: fe ? Number(fe.total_supply) : 0,
-        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0, gas: gasOf(fr), compGas: computationOf(fr),
+        activeNav: fe ? Number(fe.active_market_nav) / 1e6 : 0,
+        // compGas is the heaviest SINGLE transaction (the largest value_expiry leg) — the number the
+        // per-tx computation cap applies to. compGasTotal is the aggregate across the staged flush's
+        // legs, and legCompGas is each leg in order (snapshot, value_expiry per market, finish), so a
+        // capacity run measures one transaction against the cap and can see which leg carries it.
+        gas: aggregateNetGasOf(fr), compGas: maxComputationOf(fr),
+        compGasTotal: Number(fr.gas?.computationCost ?? 0), legCompGas: legComputationsOf(fr),
       });
       console.log(`[keeper] flushed ${flush.length} active market(s)`);
     } catch (e) {
       appendTrace("keeper", { type: "fail", lane: "flush", tag: errorTag(e) });
       console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+      // A flush that fails after the snapshot sealed leaves the outer valuation lock
+      // engaged. There is no separate discard step: the next tick's
+      // `start_pool_valuation` discards the stranded valuation and starts a fresh flush
+      // (the snapshot PTB is atomic, so a pre-seal failure reverts the lock cleanly).
+      // The lock only gates cancels and config setters until then.
     }
   }
 

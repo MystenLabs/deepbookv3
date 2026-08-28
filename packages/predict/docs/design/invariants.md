@@ -70,23 +70,10 @@ and contributors. For *how* each mechanism works, follow the links into
   reserve and proven on every trade); the `saturating_sub` cash floor marks a
   degenerate (underwater) market at 0, the correct per-market limited-recourse
   value, never negative.
-- **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP
-  supply *and* withdraw at the single `pool_nav = idle + Σ current_nav` (net of the
-  protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`),
-  computed once in `finish_flush`. Because each
-  `current_nav` is exact, that one mark equals true recoverable value in both
-  directions: a supplier prices `=` fair shares (never over-mints to dilute
-  incumbents) and a withdrawer draws `=` fair cash. There is **no conservative
-  band** — the bucket/band decomposition belonged to the deleted approximate-NAV
-  world. Any liveness clamp inside `current_nav` (the degenerate-underwater cash
-  floor) only ever *maximizes* NAV when it fires, preserving the supply-mark
-  direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
-- **Exactly-once full-pool valuation.** The flush hot potato (`PoolValuation`)
-  snapshots the active-expiry set at `start_pool_valuation`; each `value_expiry`
-  proves its market is in the snapshot and not already valued, and `finish_flush`
-  proves the valued set equals the snapshot. A missed or double-counted market would
-  mis-price the pool, so the completeness proof is mandatory; the potato has no
-  abilities, so it must be consumed by `finish_flush`.
+- **NAV-mark directional invariant — one mark, equals TRUE.** The flush prices PLP supply *and* withdraw at the single `pool_nav = idle + Σ snapshot-instant market NAV` (net of the protocol's unmaterialized-profit exclusion and any carried `pending_protocol_profit`), computed once in `finish_flush`. Because each market's snapshot NAV is exact — `current_nav`'s shape over the reconstructed snapshot-instant book — that one mark equals true recoverable value in both directions: a supplier prices `=` fair shares (never over-mints to dilute incumbents) and a withdrawer draws `=` fair cash. There is **no conservative band** — the bucket/band decomposition belonged to the deleted approximate-NAV world. Any liveness clamp inside the NAV shape (the degenerate-underwater cash floor) only ever *maximizes* NAV when it fires, preserving the supply-mark direction. See [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
+- **Exactly-once full-pool valuation, on vault-held state.** The in-flight valuation (`PoolValuation`) lives on the vault across transactions, with the `ProtocolConfig` flag (`valuation_in_progress`) engaged for its whole span. `start_pool_valuation` records the active-expiry set and commits the per-queue drain budgets; each `value_expiry` proves its market is in the snapshot and skips it if already valued (idempotent, so a permissionless caller racing the keeper cannot wedge or double-count it); `finish_flush` proves the valued set equals the snapshot. A missed or double-counted market would mis-price the pool, so the completeness proof is mandatory. Only the snapshot is privileged; `value_expiry` and `finish_flush` are permissionless once it seals. The state is released on exactly two paths: `finish_flush` (after the completeness proof and the queue drain, refused past `max_valuation_window_ms` for everyone including the operator), or a fresh `start_pool_valuation`, which discards the in-flight valuation and re-snapshots (folding stop into start). Both discard the partial NAV — frozen marks are sound only as a simultaneous set — while cash already moved by valuation settled sweeps stays (an invariant-preserving per-market move); the discard bumps the flush ordinal, so stale market stamps are lazily dropped by the next trade or settle attempt without visiting them.
+- **One instant per flush.** Every live market's `Pricer` is frozen inside the single snapshot transaction — the ability-less `SnapshotStage` hot potato cannot leave it — and no later stage reads an oracle: the frozen map alone decides each market's sweep-vs-value branch and its mark. The pool NAV a flush prices, and every LP fill against it, is therefore the pool's value at one instant.
+- **Post-snapshot trades cannot reach the snapshot figure.** A stamped (snapshotted-not-yet-valued) market's snapshot state is captured, not reconstructed: the stamp copies the two cash rows NAV reads at the snapshot instant, and each payout-tree node copies its boundary quantities into a shadow before its first mutation under the flush's generation (a node emptied mid-window is retained as a live-zero husk until the valuation consumes it). `snapshot_nav` is then the SAME linear walk as the live read over the captured terms — identical rounding and monotonicity contract by construction — against the captured cash, so the folded figure equals the market's NAV at the snapshot instant with no per-trade record and no trade budget. Trades after the market's valuation are invisible to the already-folded figure (as-of-snapshot either way).
 
 ## Settlement
 
@@ -157,24 +144,13 @@ and contributors. For *how* each mechanism works, follow the links into
   registration (registered → deactivated) — plus three
   independent gate flags (`trading_paused`, `mint_paused`, `valuation_in_progress`).
   "Paused" is not a state.
-- Trading pause blocks new risk creation; exits, settled-market cleanup, and
-  valuation are gated only by the valuation lock.
+- Trading pause blocks new risk creation. Trade flows (mint, live redeem, settled redeem) are never gated on the whole-flush valuation flag — a stamped market's snapshot state is already captured, so trades touch nothing the flush reads — but they ARE refused inside the atomic snapshot PTB (`ESnapshotInProgress`), so the keeper cannot compose a trade into its own snapshot before the seal; the flag gates fee-incentive sponsorship, LP request cancels, and most config setters; cash rebalancing runs at any time post-seal, and the mark is invariant to maintenance timing because every figure it reads — idle, the profit basis, the pending protocol cut, and each market's cash — is frozen at the seal, so no in-window move can reach it (refused only inside the still-open snapshot stage).
 - The settled-market sweep is **pool-coordinated**: it returns LP cash to the pool,
   unregisters the expiry from active valuation, and materializes terminal profit —
   there is no expiry-only path that can strand capital. (The standalone compaction
   step was deleted with the dense NAV matrix; the payout tree is full-lifecycle, so
   the sweep alone suffices.)
-- **Past-expiry exact-data liveness.** A market that crosses its expiry but lacks
-  an exact Propbook Pyth spot cannot be live-valued: `value_expiry` tries passive
-  settlement first, then `current_nav → pricing::load_live_pricer` aborts if the
-  market remains unsettled. This preserves the single exact mark for PLP supply and
-  withdraw; no approximate substitute mark is allowed. Because the flush must value
-  every active market exactly once, this abort blocks the *whole* pool flush, not
-  just the one market — so an expiry whose exact settlement spot is permanently
-  unobtainable is a cross-market liveness brick, not a benign wait. Guaranteeing the
-  exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, or a
-  bounded settlement fallback) is a pre-testnet open item — see the open-issues
-  tracker.
+- **Past-expiry exact-data liveness.** A market past its expiry cannot be live-valued (`pricing::load_live_pricer` refuses it), so the flush's snapshot stage refuses to stamp an expired-but-unsettled market: it must be settled (`try_settle`) before a flush can start. This preserves the single exact mark for PLP supply and withdraw; no approximate substitute mark is allowed. A market that expires *after* the snapshot is valued as-is at its frozen pre-expiry mark, and its settlement waits only for that one `value_expiry` (or a flush abort). Because the snapshot must cover every active market, an expiry whose exact settlement data is unobtainable at both sources blocks starting the *whole* pool flush — trading continues, but every queued LP fill waits — so a permanently unobtainable settlement spot is a cross-market LP-liveness brick, not a benign wait. Guaranteeing the exact-timestamp datum is always obtainable (expiry↔publish-cadence alignment, plus the bounded Block Scholes settlement fallback) remains tracked in the open-issues tracker.
 
 ## Configuration
 

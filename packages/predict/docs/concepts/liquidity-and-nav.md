@@ -1,6 +1,6 @@
 # Liquidity and NAV
 
-The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's exact net asset value (NAV) is computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged daily flush prices and fills those requests at a single frozen mark, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability.
+The Predict pool is the counterparty to every market. Liquidity providers deposit DUSDC, receive PLP shares, and collectively back the payout liability of every active expiry. This page describes how that capital is held, how an expiry's exact net asset value (NAV) is computed, how liquidity enters and leaves through an **asynchronous** supply/withdraw flow, how a privileged periodic flush prices and fills those requests at a single snapshot-instant mark while trading stays live, how cash flows between the pool and individual expiries, and how settlement profit is split between LPs and the protocol. The recurring invariant is the solvency guarantee: each expiry always holds cash at least equal to its payout liability.
 
 For how markets, orders, and absolute ticks work, see [markets and positions](./markets-and-positions.md). For tunable values, see [configuration](../design/configuration.md). For trust assumptions and known caveats, see [risks](../risks.md).
 
@@ -26,41 +26,57 @@ LPs do not mint or burn PLP synchronously against a live valuation. Instead they
 
 - **`request_supply`** escrows a DUSDC payment, records the requesting account's receive address as the fill recipient, and stores `min_plp_out`, the minimum PLP the fill must deliver — measured **after** the supply/withdraw fee, so it bounds what the account actually receives. It is routed through the account — not just the tx signer — so a composing vault's own account receives the minted PLP. It returns a queue index.
 - **`request_withdraw`** escrows PLP, records the account recipient, and stores `min_dusdc_out`, the minimum DUSDC the fill must deliver — measured **after** the supply/withdraw fee. It returns a queue index.
-- **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the escrowed DUSDC or PLP at the returned index any time **before** the next flush processes it.
+- **`cancel_supply_request` / `cancel_withdraw_request`** let the account owner reclaim the escrowed DUSDC or PLP at the returned index while no flush is in flight. Cancels are **gated during a flush**: once the snapshot lands, the frozen mark is on-chain readable, so an ungated cancel of an already-eligible request would be a free look at a stale price — keep the fill if the mark favors you, cancel if not. New requests stay ungated because the eligibility cutoff quarantines them to the next mark.
 
 Each request must clear a minimum size (`min_supply_request` / `min_withdraw_request`). Escrowed funds sit in the queue until the flush fills or refunds the request, or the LP cancels it.
 
 ## The flush: one frozen mark for both sides
 
-A daily **flush** values the whole pool once and attempts to drain both queues against that single frozen mark, filling only eligible heads. It is a transaction-local **hot potato** with a strict three-phase shape:
+A periodic **flush** values the whole pool at one snapshot instant and attempts to drain both queues against that single frozen mark, filling only eligible heads. It runs in three stages, spanning as many transactions as it needs, and trading is **never** paused while it is in flight:
 
-1. **`start_pool_valuation`** engages the valuation lock in `ProtocolConfig` and snapshots the set of active expiry markets into the potato (`PoolValuation`).
-2. **`value_expiry`** is called once per snapshotted market. Each call rebalances that market's cash against the pool (top up / sweep, described below), then folds the market's NAV into a running total — a settled market contributes `0`; a live market contributes its exact `current_nav`.
-3. **`finish_flush`** proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, runs the queue drain against it, releases the lock, and consumes the potato.
+1. **Snapshot — one atomic transaction.** `start_pool_valuation` engages the cross-transaction valuation flag in `ProtocolConfig` and records the flush's frozen facts on the vault (`PoolValuation`): the active market set, the starter, the start time, and each LP queue's eligibility cutoff (its `next_index` — the drain later fills only requests submitted before this instant). One `snapshot_expiry_pricer` per market then freezes that market's oracle state as a `Pricer` and stamps the market, and `seal_valuation_snapshot` proves the set is complete. A `SnapshotStage` hot potato scopes all of this to the starting transaction, so every market's pricer is loaded at the same instant — the simultaneity that makes the single mark sound. A market already settled at snapshot time is recorded with no pricer and contributes `0`; an expired-but-unsettled market aborts the snapshot — settle it first, then start the flush.
+2. **Valuation — resumable.** One `value_expiry` per transaction folds one market's SNAPSHOT-INSTANT NAV into the running total, reading no oracle and moving no cash: the frozen snapshot alone decides the mark. A market frozen as settled was already swept inside the snapshot stage — its recoverable cash sits in the frozen idle figure — and contributes `0` here. A still-live market is read from its captured snapshot (next section). The standalone top-up/sweep rebalance (described below) may run at any time post-seal: every figure the mark reads was frozen at the snapshot instant, so no in-window move can reach it. A market that expired mid-window is valued at its frozen pre-expiry mark. The stamp is then cleared, releasing the tree snapshot. One market per transaction is a hard shape, never batched: a market's payout tree is capped at `max_payout_tree_nodes` boundary nodes — derived as Sui's 1,000-cached-object budget minus a 40-child reserve, 960 — so a single `value_expiry` always fits a transaction.
+3. **Finish.** `finish_flush` proves every snapshotted market was valued exactly once, computes the pool NAV, snapshots the share price once, drains each LP queue only up to its recorded cutoff, releases the valuation flag, and retires the valuation.
 
-The potato has no abilities, so the sequence cannot be left half-finished: the only way to release the lock is to finish.
+`value_expiry` and `finish_flush` are permissionless once the snapshot seals: the frozen mark and the per-queue drain budgets are both committed at the snapshot, so it no longer matters who drives the rest, and a stranger cannot grief by finishing with a zero budget because budgets are committed at start and finish takes none. `value_expiry` is idempotent, so a stranger racing the keeper is a harmless no-op. A stalled flush is not aborted but superseded by a fresh `start_pool_valuation` (below).
 
 PLP bounds live NAV work separately from the flush itself: each active expiry is stored with its expiry timestamp, and market registration rejects a new future market once the active pre-expiry count reaches the upgrade-required live-market cap. Expired or settled markets may still sit in the pool's active-expiry set until a rebalance or valuation pass sweeps them, but they no longer count against the live NAV cap because they do not use a live `current_nav` walk.
 
+### Trading stays live: the valuation stamp and book snapshot
+
+A snapshotted-but-not-yet-valued market carries a `ValuationStamp` naming its flush, holding the two cash rows NAV reads (the cash balance and the inventory-impact reserve) copied at the snapshot instant. The payout tree holds its own snapshot: each boundary node copies its quantities into a shadow immediately before its first mutation under that flush, and a node emptied mid-window is retained as a live-zero husk until the valuation reads it. `value_expiry` then prices the snapshot-instant book with the SAME linear walk the live NAV read uses — identical per-boundary rounding and monotonicity observation by construction — over the captured terms, against the captured cash, and releases the snapshot (removing the husks). Trades after a market's valuation are invisible to the already-read figure. Either way the semantics are as-of-snapshot: the mark LPs fill at is exactly the pool NAV at the snapshot instant.
+
+Nothing about this budgets trading: capture is a per-node copy on first touch, so a pending market accepts any volume of mid-window trading with no per-trade record, no cap, and no compute added to its valuation beyond the boundaries the node cap already bounds.
+
+### What is gated during a flush
+
+Gated while the valuation flag is engaged: `sponsor_fee_incentives`, most config setters, and LP request **cancels** (see [Async supply and withdraw](#async-supply-and-withdraw) for why an ungated cancel would be a free look at the frozen mark). New LP requests are not gated — the eligibility cutoff quarantines them to the next mark. `rebalance_expiry_cash` is not gated either — the seal froze idle and the profit basis alongside every market's stamped cash, so an in-window move cannot reach the mark and a market can always be topped back into its mintable band mid-flush; its one refusal is the still-open snapshot stage (start → seal, a single transaction), where a cross-move landing between a stamp and the seal's vault capture would skew the frozen figures. Market creation is not gated either: creation moves no cash, an in-flight flush's frozen expected set simply does not contain the new market, and funding it mid-window is invisible to the frozen mark — the market joins the next flush's snapshot, so a fast cadence never gaps on a slow flush. Trading (mint and redeem) is not gated during the resumable stage either, but IS refused inside the still-open snapshot PTB (`ESnapshotInProgress`): the keeper cannot compose a trade into its own snapshot before the seal, where a mid-stamp cash move would skew the frozen figures. `try_settle` refuses only **stamped** markets: a per-market wait until that market's `value_expiry` clears the stamp (or the flush is aborted), not a pool-wide gate. The snapshot stage refuses to stamp an expired-unsettled market, so settlement is never due before a flush stamps a market — only an expiry landing mid-window waits.
+
+### A stalled flush is bounded
+
+A dead keeper stalls the flush; trading continues. The cost is queued LP fills waiting and the flush-set markets' settlement deferred. There is no abort entrypoint: recovery is to start a fresh flush, which discards the in-flight valuation and re-snapshots (folding stop into start). `finish_flush` refuses a flush older than `max_valuation_window_ms` (admin-tunable within 1 minute–4 hours, default 5 minutes) — for everyone, including the operator — so a fill's mark staleness is capped by that finish deadline, and past it the operator simply starts again. The discard drops the partial NAV — the frozen marks are sound only as a simultaneous set, so the fresh flush re-snapshots — while cash already moved by snapshot-stage settled sweeps stays moved (an invariant-preserving per-market operation). The discard bumps the flush ordinal, so market stamps go stale and are lazily dropped by the next trade or settle attempt, and neither the fresh start nor finish visits stamped markets.
+
+The same window bounds the mark's staleness: fills execute at finish time against the snapshot-instant NAV, and the gap between snapshot and fill is operator-controlled, capped by the finish deadline (`finish_flush` refuses past `max_valuation_window_ms`).
+
 ### The flush is privileged, not permissionless
 
-Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`), and the hot potato can be created **only** by starting one, so gating the start gates the whole flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
+Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`, on a registry-issued lifecycle proof), and the snapshot stage cannot leave the starting transaction — so the privileged start fixes the frozen mark and commits the per-queue drain budgets that the rest of the flush honors. `value_expiry` and `finish_flush` are then permissionless (finish gated only by the staleness window), which is safe precisely because the mark and budgets are already fixed. There is no separate abort or restart entrypoint: a fresh start supersedes a stranded flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
 
-This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. The cap-holder is trusted not to manipulate the live oracle, which is the trust that makes the single frozen mark sound.
+This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. The cap-holder is trusted not to manipulate the live oracle at the snapshot instant, which is the trust that makes the single frozen mark sound.
 
 ### Pool NAV and the single mark
 
 `finish_flush` computes the LP-attributable pool NAV from the accumulated active-expiry total:
 
 ```
-gross_pool_value = idle_DUSDC + Σ active_expiry current_nav
-exclusion        = protocol_reserve_profit_share × max(0, (profit_basis_credits + Σ current_nav) − profit_basis_debits)
+gross_pool_value = idle_DUSDC + Σ active_expiry snapshot_nav
+exclusion        = protocol_reserve_profit_share × max(0, (profit_basis_credits + Σ snapshot_nav) − profit_basis_debits)
 pool_nav         = max(0, gross_pool_value − exclusion − pending_protocol_profit)
 ```
 
-Both subtracted terms are protocol profit not yet sitting in the reserve, in two phases:
+where each `snapshot_nav` is that market's exact NAV at the flush's snapshot instant (the shape of `current_nav`, reconstructed through the stamp). Both subtracted terms are protocol profit not yet sitting in the reserve, in two phases:
 
-- **`exclusion`** — the protocol's share of *unmaterialized* profit: gain NAV has priced in (via `current_nav`) but that has not yet terminally materialized into the reserve.
+- **`exclusion`** — the protocol's share of *unmaterialized* profit: gain NAV has priced in (via each market's snapshot NAV) but that has not yet terminally materialized into the reserve.
 - **`pending_protocol_profit`** — a cut that *has* materialized but whose cash could not yet be moved to the reserve because idle was deployed in other markets; it is carried and realized on a later sweep (see [Profit materialization](#profit-materialization-at-settlement)).
 
 The two are disjoint: the moment a cut materializes it leaves `exclusion` (its profit enters `profit_basis_debits`) and, if not immediately movable, enters `pending_protocol_profit`. Incentive value is not part of this figure (incentives are out of the pool entirely).
@@ -72,21 +88,30 @@ The two are disjoint: the moment a cut materializes it leaves `exclusion` (its p
 
 The fee is charged on the DUSDC leg *after* the mark, never inside it, and is retained by the pool — see [fees and rebates](./fees-and-rebates.md#the-lp-supplywithdraw-fee). The mark itself is unchanged by it.
 
-There is **no band, no separate supply/withdraw pricing, and no optimistic/conservative stance.** Because the same mark must be fair in both directions, it must equal the *true* recoverable value — which it does, because each per-expiry `current_nav` is exact (see [An active expiry's exact NAV](#an-active-expirys-exact-nav)). This is the NAV-mark invariant: the supply mark must never undercount true value (or a supplier could over-mint and dilute incumbents), and a single exact mark satisfies it in both directions.
+There is **no band, no separate supply/withdraw pricing, and no optimistic/conservative stance.** Because the same mark must be fair in both directions, it must equal the *true* recoverable value — which it does, because each per-expiry mark is exact: `current_nav`'s shape evaluated on the snapshot-instant book (see [An active expiry's exact NAV](#an-active-expirys-exact-nav)). This is the NAV-mark invariant: the supply mark must never undercount true value (or a supplier could over-mint and dilute incumbents), and a single exact mark satisfies it in both directions.
 
 ```mermaid
 flowchart TD
-  CAP[MarketLifecycleCap] -->|start_pool_valuation| LOCK[lock + snapshot active expiries]
-  LOCK -->|value_expiry x N| EXP[rebalance cash, fold exact current_nav]
-  EXP -->|finish_flush| NAV[pool_nav = idle + Sigma current_nav - exclusion - pending protocol cut]
-  NAV --> DRAIN[drain queues at frozen pool_nav / total_supply]
-  DRAIN --> SUP[supplies first: mint PLP into idle]
-  DRAIN --> WD[then withdrawals FIFO until idle dry]
+  subgraph S1[Stage 1 - snapshot, one atomic tx]
+    CAP[MarketLifecycleCap] -->|start_pool_valuation| REC[record active set, starter, start time, queue cutoffs]
+    REC -->|snapshot_expiry_pricer x N| FRZ[freeze one Pricer per live market + stamp it]
+    FRZ -->|seal_valuation_snapshot| SEAL[snapshot proven complete]
+  end
+  subgraph S2[Stage 2 - valuation, one market per tx]
+    SEAL -->|value_expiry x N| EXP[read captured snapshot, fold snapshot-instant NAV, release husks]
+  end
+  subgraph S3[Stage 3 - finish]
+    EXP -->|finish_flush| NAV[pool_nav = idle + Sigma snapshot NAV - exclusion - pending protocol cut]
+    NAV --> DRAIN[drain queues at frozen pool_nav / total_supply, up to the recorded cutoffs]
+    DRAIN --> SUP[supplies first: mint PLP into idle]
+    DRAIN --> WD[then withdrawals FIFO until idle dry]
+  end
+  TRADE[trading: mint and close stay live on every market throughout] -.->|captured in place, copy-on-write| EXP
 ```
 
 ### Draining the queues
 
-`lp_book::drain` processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` makes that queue unbounded. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the gas left after valuing the snapshotted markets:
+`lp_book::drain` fills only requests submitted before the flush's snapshot instant — each queue stops at its recorded eligibility cutoff, so younger requests wait for the next mark. It processes **supplies first, then withdrawals**, each bounded by its own operator-supplied budget — `supply_budget` / `withdraw_budget: Option<u64>`, where `None` makes that queue unbounded. The budgets are **independent**, so a supply backlog can never starve withdrawals, and the operator sizes them to the finish transaction's own gas:
 
 - **Supplies pass (FIFO from the head).** Each executable request whose quote satisfies `min_plp_out` mints PLP on the deposit net of the fee and joins the **whole** escrowed DUSDC into idle, fee included — the fee is simply DUSDC no shares were issued against. A head supply whose mark or quote is non-executable — PLP price outside the executable band, zero-share output, or u64 overflow — is protocol-cancelled and refunded instead of aborting the flush; it counts against the supply budget because the queue head was processed. If the quote is executable but below `min_plp_out`, the request is protocol-cancelled and refunded on the spot for the same reason, spending one processed-budget unit, and the pass continues to the next request — a limit the mark cannot meet never holds the head. That is the shipped setting (`lp_request_limit_flush_attempts` = 1); if an admin raises it, a missing head instead stays queued and stops the supply pass for the flush, refunding on its final attempt. After the limit check, a supply is bounded by `max_lp_pool_value`: one larger than the remaining headroom fills up to the cap and keeps its unfilled balance escrowed at the head, and one with no room left waits untouched while the pass stops. Headroom is measured against the frozen mark plus the supplies already filled in this flush, so several requests that each fit cannot together exceed the cap, and it is handed out in queue order rather than to whichever request happens to fit. The cap is uncapped by default and applies to supplies only; withdrawals in the same flush drain afterwards and do not give back headroom, because the mark is frozen.
 - **Withdrawals pass (FIFO until idle is dry).** Each executable request whose quote satisfies `min_dusdc_out` burns its escrowed PLP and pays the marked payout **less the fee** out of idle; the fee stays in idle while the full escrow is burned. A head withdrawal whose mark or quote is non-executable is protocol-cancelled and refunded, counting against the withdraw budget. If the quote is executable but below `min_dusdc_out`, the request is refunded and the pass continues, exactly as on the supply side. If the quote is valid and limit-satisfying but idle cannot cover the head request's payout, idle pays as much of it as it covers, the unfilled balance stays queued at the head, and the pass **stops** — withdrawals are never reordered to skip a too-large head, and a partially paid request keeps its position rather than going to the back of the line.
@@ -97,7 +122,7 @@ Fills and refunds are delivered to each recipient account through the **balance 
 
 ## Full-pool NAV is exact, per expiry
 
-The pool NAV above is just `idle + Σ current_nav`. The substance is `current_nav`, the **exact** live recoverable value of one expiry.
+The pool NAV above is just `idle + Σ per-market NAV`. The substance is `current_nav`, the **exact** live recoverable value of one expiry; the flush folds the same quantity as of its snapshot instant from each stamped market's captured cash and tree shadows.
 
 ### An active expiry's exact NAV
 
@@ -110,7 +135,7 @@ current_nav = max(0, free_cash − live_marked_liability)
 where:
 
 - **`free_cash = cash_balance − inventory_impact_reserve`** — the expiry's DUSDC net of the isolated impact escrow it still owes. Inventory-impact escrow is not LP value while live.
-- **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so there is no per-order correction term.
+- **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so the walk carries no per-order correction term. (The flush's snapshot capture is not such a term either: it runs the same walk over the book's captured shadows.)
 
 The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding; it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 
@@ -120,13 +145,13 @@ The aggregate is netted per boundary rather than summed per order, so it can dif
 
 ### Past-expiry settlement liveness
 
-`current_nav` loads a live `Pricer`, so it **aborts** for a market that has crossed its expiry. Settlement is a separate PTB command: the keeper calls `try_settle` before `value_expiry`, supplying the canonical exact-history Pyth and Block Scholes stores; Pyth is checked first, while Block Scholes is eligible only after the 30-second grace period. A settled market is swept off the active set and contributes `0`; an expired unsettled market moves no cash and then aborts through `current_nav` until settlement succeeds.
+A live `Pricer` cannot be loaded for a market that has crossed its expiry, so the flush's snapshot stage **refuses** an expired-but-unsettled market. Settlement is a separate transaction: the keeper calls `try_settle` before starting the flush, supplying the canonical exact-history Pyth and Block Scholes stores; Pyth is checked first, while Block Scholes is eligible only after the 30-second grace period. A market settled at snapshot time is frozen with no pricer, swept off the active set by its `value_expiry`, and contributes `0`. A market that expires mid-window is valued as-is at its frozen pre-expiry mark, and its settlement waits only for that one `value_expiry` to clear its stamp (or a flush abort) — `try_settle` refuses stamped markets, never the rest of the pool.
 
-If that exact spot is not present, the market remains unsettled and the live branch still aborts. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
+If the exact settlement spot is not present, the market remains unsettled and a flush cannot start over it. This is intentional, not a bug: there is no solvency-safe mark for an unsettled past-expiry market. The flush uses one mark for both supply and withdraw, so the mark must equal the settlement-dependent true value — substituting an approximation would either dilute incumbents on supply or overpay withdrawals.
 
 ## Pool ↔ expiry cash flow
 
-Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence), and the same lock-free inner logic runs inside the flush's `value_expiry` before each market is valued.
+Idle pool cash is funded into expiries to back trading, and surplus is swept back. The policy lives entirely in the pool; the expiry only enforces its own backing on every cash move. `rebalance_expiry_cash` is permissionless and standalone (callable at any cadence, refused only inside the flush's still-open snapshot stage). Post-seal it runs freely and cannot change the pool total the flush prices — every figure the mark reads was frozen at the seal — and `value_expiry` itself moves no cash.
 
 Each expiry has a **required cash** floor of `payout_liability + inventory_impact_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
 

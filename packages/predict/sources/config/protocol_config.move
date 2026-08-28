@@ -4,9 +4,11 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, the protocol-wide emergency freeze, and the transaction-local full-pool
-/// valuation lock. Flow modules decide which gates apply before they mutate
-/// expiry, oracle, pool, or account state.
+/// gate, the protocol-wide emergency freeze, and the full-pool valuation
+/// in-flight state (flag + flush ordinal, held across the transactions a flush
+/// spans; keeper/config flows gate on it, trading flows read it only to discard
+/// stale stamps lazily). Flow modules decide which gates apply before they mutate expiry,
+/// oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -26,6 +28,7 @@ const EValuationNotInProgress: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
+const ESnapshotInProgress: u64 = 6;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -56,6 +59,13 @@ public struct ProtocolConfig has key {
     /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
     /// the pool is uncapped until an operator sets a figure (RP-23).
     max_lp_pool_value: u64,
+    /// Hard staleness bound: `finish_flush` refuses to complete a flush in flight
+    /// longer than this, so no LP request fills at a mark older than the window;
+    /// past it the operator starts a fresh flush (which discards the stale one).
+    /// A stalled flush blocks only LP queue fills and the flush-set markets'
+    /// settlement — trading continues — so this also bounds LP-fill latency and is
+    /// tuned alongside flush cadence (RP-29).
+    max_valuation_window_ms: u64,
     strike_exposure_template_config: StrikeExposureConfig,
     ewma_config: EwmaConfig,
     /// Minimum package version permitted to run version-gated flows. Monotonic;
@@ -73,9 +83,26 @@ public struct ProtocolConfig has key {
     /// Account-package custody withdrawals and builder-fee claims are ungated and
     /// stay available (already-earned funds).
     frozen: bool,
-    /// Transaction-local lock held while a full-pool valuation is assembled, so no
-    /// NAV-changing op can interleave between per-market value steps in the PTB.
+    /// True for the whole duration of a full-pool valuation, across every
+    /// transaction it spans. Keeper cash flows, market lifecycle, and config
+    /// mutations gate on it; trading flows do NOT — they read it (with
+    /// `flush_seq`) only to discard a stale valuation stamp lazily; a pending
+    /// market's snapshot state is captured, never recorded per trade (see `plp`).
     valuation_in_progress: bool,
+    /// True ONLY while the atomic snapshot stage is open — set by `begin_snapshot`
+    /// at `start_pool_valuation` and cleared by `end_snapshot` at
+    /// `seal_valuation_snapshot`. Both live in one PTB (the `SnapshotStage` hot
+    /// potato forces it), so this can never be observed across transactions: it
+    /// blocks only a trade the keeper composes INTO its own snapshot PTB, where a
+    /// mid-stamp cash move would skew the figures the seal freezes. The resumable
+    /// valuation stage after the seal leaves it false, so trading stays live.
+    snapshot_in_progress: bool,
+    /// Monotonic flush ordinal, bumped by `begin_valuation`. A market's valuation
+    /// stamp names the flush that made it; a stamp whose ordinal is not the
+    /// current one — or held while no valuation is in flight — is stale and is
+    /// lazily discarded by the next trade, so aborting a flush never has to visit
+    /// its stamped markets.
+    flush_seq: u64,
 }
 
 // === Public Functions ===
@@ -93,6 +120,15 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 /// Return the global protocol-freeze state for SDK and devInspect reads.
 public fun frozen(config: &ProtocolConfig): bool {
     config.frozen
+}
+
+/// Return whether a full-pool valuation is in flight, for SDK and devInspect
+/// reads. The flush spans transactions, so "in flight" is an observable state: a
+/// keeper reads it to notice a flush it must finish or discard, and an integrator
+/// reads it to explain a gated keeper/config transaction. Trading is not gated on
+/// it.
+public fun valuation_in_progress(config: &ProtocolConfig): bool {
+    config.valuation_in_progress
 }
 
 /// Return the live referral fee rate for SDK and devInspect reads.
@@ -292,6 +328,25 @@ public fun set_lp_request_limit_flush_attempts(
     config.lp_request_limit_flush_attempts = attempts;
 }
 
+/// Set how long a started full-pool valuation may stay in flight before anyone may
+/// discard it. A stalled flush costs LP-fill latency (and settlement latency for
+/// its own market set), not a trading pause, so this is an operator liveness knob:
+/// too short and a legitimate long flush can be discarded from under the keeper,
+/// too long and an abandoned one delays queued LP fills for that duration. See
+/// RP-29.
+public fun set_max_valuation_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    window_ms: u64,
+) {
+    config.assert_version();
+    // The deadline is read against a flush already in flight; refuse to move it
+    // under one, so a started flush cannot have its escape hatch shifted.
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_max_valuation_window_ms(window_ms);
+    config.max_valuation_window_ms = window_ms;
+}
+
 /// Set the ceiling on LP-attributable pool value that queued supplies may raise the
 /// pool to. A supply that would carry the pool past it is filled up to the cap at the
 /// flush and its remainder stays queued;
@@ -447,6 +502,22 @@ public(package) fun max_lp_pool_value(config: &ProtocolConfig): u64 {
     config.max_lp_pool_value
 }
 
+public(package) fun max_valuation_window_ms(config: &ProtocolConfig): u64 {
+    config.max_valuation_window_ms
+}
+
+public(package) fun current_flush_seq(config: &ProtocolConfig): u64 {
+    config.flush_seq
+}
+
+/// True iff a valuation stamp minted under `stamp_seq` belongs to the flush that
+/// is in flight right now. False for a stale stamp (an aborted or completed
+/// flush's leftovers) and when no flush is in flight — the caller lazily discards
+/// the stamp in those cases.
+public(package) fun is_current_flush(config: &ProtocolConfig, stamp_seq: u64): bool {
+    config.valuation_in_progress && config.flush_seq == stamp_seq
+}
+
 public(package) fun strike_exposure_template_config(
     config: &ProtocolConfig,
 ): &StrikeExposureConfig {
@@ -489,6 +560,12 @@ public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
     assert!(!config.valuation_in_progress, EValuationInProgress);
 }
 
+/// Abort while the atomic snapshot stage is open — used by the trade gates so the
+/// keeper cannot compose a mint or redeem into its own snapshot PTB.
+public(package) fun assert_snapshot_not_in_progress(config: &ProtocolConfig) {
+    assert!(!config.snapshot_in_progress, ESnapshotInProgress);
+}
+
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = new(ctx);
@@ -509,16 +586,33 @@ public(package) fun freeze_protocol(config: &mut ProtocolConfig) {
     config.set_frozen_internal(true);
 }
 
-/// Begin a transaction-local full-pool valuation lock.
+/// Begin a full-pool valuation: engage the in-flight flag for the flush's whole
+/// multi-transaction span and mint its ordinal. Bumping `flush_seq` here is what
+/// invalidates every stamp a previous flush left behind, so neither completion
+/// nor abort ever needs to visit stamped markets.
 public(package) fun begin_valuation(config: &mut ProtocolConfig) {
     config.assert_not_valuation_in_progress();
+    config.flush_seq = config.flush_seq + 1;
     config.valuation_in_progress = true;
 }
 
-/// End a transaction-local full-pool valuation lock.
+/// End a full-pool valuation (completion and abort both land here). Stamps naming
+/// this flush go stale the moment the flag drops.
 public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.assert_valuation_in_progress();
     config.valuation_in_progress = false;
+}
+
+/// Open the atomic snapshot stage — set at `start_pool_valuation`, so any trade
+/// composed later in the same PTB aborts `ESnapshotInProgress`.
+public(package) fun begin_snapshot(config: &mut ProtocolConfig) {
+    config.snapshot_in_progress = true;
+}
+
+/// Close the atomic snapshot stage — set at `seal_valuation_snapshot`, in the
+/// same PTB, so trading is live again the instant the snapshot is sealed.
+public(package) fun end_snapshot(config: &mut ProtocolConfig) {
+    config.snapshot_in_progress = false;
 }
 
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
@@ -546,11 +640,14 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         plp_withdraw_fee_rate: config_constants::default_plp_withdraw_fee_rate!(),
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
+        max_valuation_window_ms: config_constants::default_max_valuation_window_ms!(),
         strike_exposure_template_config: strike_exposure_config::new(),
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),
         trading_paused: false,
         frozen: false,
         valuation_in_progress: false,
+        snapshot_in_progress: false,
+        flush_seq: 0,
     }
 }

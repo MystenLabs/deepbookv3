@@ -140,6 +140,18 @@ public(package) fun withdraw_requests_pending<LP>(book: &LpBook<LP>): u64 {
     book.withdraw_queue.pending
 }
 
+/// Next index the supply queue will assign. Sampled at a flush's snapshot instant
+/// as the drain's eligibility cutoff: only requests indexed strictly below it may
+/// fill at that flush's mark.
+public(package) fun next_supply_request_index<LP>(book: &LpBook<LP>): u64 {
+    book.supply_queue.next_index
+}
+
+/// Withdraw-queue counterpart of `next_supply_request_index`.
+public(package) fun next_withdraw_request_index<LP>(book: &LpBook<LP>): u64 {
+    book.withdraw_queue.next_index
+}
+
 public(package) fun request_supply<LP>(
     book: &mut LpBook<LP>,
     payment: Coin<DUSDC>,
@@ -252,6 +264,8 @@ public(package) fun drain<LP>(
     mark: FlushMark,
     fees: FeeRates,
     pool_vault_id: ID,
+    supply_cutoff: u64,
+    withdraw_cutoff: u64,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     max_limit_misses: u64,
@@ -264,6 +278,7 @@ public(package) fun drain<LP>(
         &mark,
         &fees,
         pool_vault_id,
+        supply_cutoff,
         &supply_budget,
         max_limit_misses,
         max_pool_value,
@@ -274,6 +289,7 @@ public(package) fun drain<LP>(
         &mark,
         &fees,
         pool_vault_id,
+        withdraw_cutoff,
         &withdraw_budget,
         max_limit_misses,
         ctx,
@@ -292,6 +308,7 @@ fun drain_supply_queue<LP>(
     mark: &FlushMark,
     fees: &FeeRates,
     pool_vault_id: ID,
+    cutoff: u64,
     budget: &Option<u64>,
     max_limit_misses: u64,
     max_pool_value: u64,
@@ -306,6 +323,12 @@ fun drain_supply_queue<LP>(
 
     while (under_budget(budget, processed) && !book.supply_queue.is_empty()) {
         let request = book.supply_queue.front_request();
+        // Eligibility cutoff: a request younger than the flush's snapshot instant
+        // waits for the next mark. Indexes are monotone along the strict-FIFO
+        // queue, so the first too-young head ends the pass. Without this, dropping
+        // the queue gates would let a requester watch the frozen mark form and
+        // submit against a price it already knows is stale.
+        if (request.index >= cutoff) break;
         let quote = mark.quote_supply_shares(fees, request.amount);
         if (quote.is_none()) {
             processed = processed + 1;
@@ -428,6 +451,7 @@ fun drain_withdraw_queue<LP>(
     mark: &FlushMark,
     fees: &FeeRates,
     pool_vault_id: ID,
+    cutoff: u64,
     budget: &Option<u64>,
     max_limit_misses: u64,
     ctx: &mut TxContext,
@@ -437,6 +461,9 @@ fun drain_withdraw_queue<LP>(
 
     while (under_budget(budget, processed) && !book.withdraw_queue.is_empty()) {
         let request = book.withdraw_queue.front_request();
+        // Same eligibility cutoff as the supply pass: fills only pre-snapshot
+        // requests at this flush's mark.
+        if (request.index >= cutoff) break;
         let quote = mark.quote_withdraw_dusdc(fees, request.amount);
         if (quote.is_none()) {
             quote.destroy_none();

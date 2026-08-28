@@ -29,6 +29,12 @@
 /// abort depends on which prefixes a given shape happens to visit, so it is not a
 /// desync detector — the per-boundary underflow in `apply_net_delta` is the
 /// authority.
+///
+/// The module also owns the valuation snapshot for the resumable flush: while a
+/// flush generation is active, each node lazily captures its boundary quantities
+/// immediately before its first mutation under that generation (an untouched node
+/// is its own snapshot), and `walk_linear_frozen` prices the tree exactly as it
+/// stood at the snapshot instant through the same walk the live read uses.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, pricing::Pricer, range_codec};
@@ -38,6 +44,8 @@ use sui::table::{Self, Table};
 const EInsufficientPayoutQuantity: u64 = 0;
 const EMaxPayoutTreeNodes: u64 = 1;
 const ENonMonotonePrice: u64 = 2;
+const EStaleValuationSnapshot: u64 = 3;
+const ESnapshotSeqNotIncreasing: u64 = 4;
 
 /// Sparse payout-liability tree keyed by finite strike tick.
 public struct StrikePayoutTree has store {
@@ -47,6 +55,15 @@ public struct StrikePayoutTree has store {
     /// Aggregate order quantity over the open-lower prefix, which is also its
     /// aggregate settled payout.
     base: u64,
+    /// Flush generation whose snapshot this tree holds. Node shadows are valid
+    /// only against this value; monotonically increasing, 0 = never snapshotted.
+    snapshot_seq: u64,
+    /// True from `activate_snapshot` until `release_snapshot`/`deactivate_snapshot`.
+    /// While set, mutations capture shadows and emptied nodes with shadow
+    /// quantities are retained for the frozen walk instead of removed.
+    snapshot_active: bool,
+    /// `base` as of the snapshot instant, captured eagerly at activation.
+    snapshot_base: u64,
 }
 
 /// Subtree payout totals and max static payout prefix gain.
@@ -74,6 +91,12 @@ public struct PayoutNode has copy, drop, store {
     /// recomputed without deriving locals by subtracting child summaries.
     local_start: u64,
     local_end: u64,
+    /// Boundary terms at generation `snapshot_seq`'s instant, captured before
+    /// the first mutation under it. Active generation + zero shadows = created
+    /// post-snapshot; older generation = untouched, live terms ARE the shadow.
+    snapshot_local_start: u64,
+    snapshot_local_end: u64,
+    snapshot_seq: u64,
     summary: PayoutSummary,
 }
 
@@ -169,11 +192,39 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
         tree.root,
         pricer,
         tick_size,
+        0,
         &mut previous_price,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
     // once. This can differ from pricing and flooring each order independently.
     (tree.base + start_total).saturating_sub(end_total)
+}
+
+/// Value the liability at generation `snapshot_seq`'s snapshot instant: the
+/// same walk as `walk_linear` over each node's shadow where the generation
+/// captured one, and its live terms where untouched (live IS the snapshot). A
+/// post-snapshot boundary carries zero shadows and is outside the frozen
+/// surface; the live walk observes it instead.
+public(package) fun walk_linear_frozen(
+    tree: &StrikePayoutTree,
+    pricer: &Pricer,
+    tick_size: u64,
+    snapshot_seq: u64,
+): u64 {
+    assert!(
+        tree.snapshot_active && tree.snapshot_seq == snapshot_seq && snapshot_seq != 0,
+        EStaleValuationSnapshot,
+    );
+    let mut previous_price = option::none();
+    let (start_total, end_total) = walk_linear_subtree(
+        &tree.nodes,
+        tree.root,
+        pricer,
+        tick_size,
+        snapshot_seq,
+        &mut previous_price,
+    );
+    (tree.snapshot_base + start_total).saturating_sub(end_total)
 }
 
 /// Create an empty sparse payout tree.
@@ -183,6 +234,9 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
         nodes: table::new(ctx),
         node_count: 0,
         base: 0,
+        snapshot_seq: 0,
+        snapshot_active: false,
+        snapshot_base: 0,
     }
 }
 
@@ -227,6 +281,37 @@ public(package) fun remove_range(
     tree.apply_range(lower_tick, higher_tick, quantity, false);
 }
 
+/// Begin holding generation `snapshot_seq`'s snapshot: readable through
+/// `walk_linear_frozen` while live mutations continue. O(1) — `base` is copied
+/// eagerly, nodes capture lazily on first mutation. Generations are flush
+/// ordinals, strictly increasing, so a stale activation is always superseded.
+public(package) fun activate_snapshot(tree: &mut StrikePayoutTree, snapshot_seq: u64) {
+    assert!(snapshot_seq > tree.snapshot_seq, ESnapshotSeqNotIncreasing);
+    tree.snapshot_seq = snapshot_seq;
+    tree.snapshot_active = true;
+    tree.snapshot_base = tree.base;
+}
+
+/// Stop holding the snapshot without walking the tree (trade-path discard of a
+/// stale generation); its husks stay until the next consumed generation's
+/// `release_snapshot`.
+public(package) fun deactivate_snapshot(tree: &mut StrikePayoutTree) {
+    tree.snapshot_active = false;
+}
+
+/// Consume the snapshot after its frozen walk was read: deactivate, then remove
+/// every live-zero node (husks — this generation's or a stale one's). Runs in
+/// the valuation transaction, whose budget already covers every node.
+public(package) fun release_snapshot(tree: &mut StrikePayoutTree) {
+    tree.snapshot_active = false;
+    let mut husks = vector[];
+    collect_husks(&tree.nodes, tree.root, &mut husks);
+    husks.do!(|tick| {
+        tree.root = detach_tick(&mut tree.nodes, tree.root, tick);
+        tree.node_count = tree.node_count - 1;
+    });
+}
+
 fun apply_range(
     tree: &mut StrikePayoutTree,
     lower_tick: u64,
@@ -256,6 +341,9 @@ fun apply_boundary_delta(
     add: bool,
 ) {
     let had_node = tree.nodes.contains(tick);
+    // 0 encodes "no active snapshot": active generations are flush ordinals,
+    // which start at 1.
+    let snapshot_seq = if (tree.snapshot_active) tree.snapshot_seq else 0;
     let new_root = apply_at(
         &mut tree.nodes,
         tree.root,
@@ -263,6 +351,7 @@ fun apply_boundary_delta(
         quantity,
         is_start,
         add,
+        snapshot_seq,
     );
     tree.root = new_root;
 
@@ -281,10 +370,11 @@ fun apply_at(
     quantity: u64,
     is_start: bool,
     add: bool,
+    snapshot_seq: u64,
 ): Option<u64> {
     if (root.is_none()) {
         assert!(add, EInsufficientPayoutQuantity);
-        let leaf = new_leaf(quantity, is_start);
+        let leaf = new_leaf(quantity, is_start, snapshot_seq);
         nodes.add(tick, leaf);
         return option::some(tick)
     };
@@ -293,12 +383,16 @@ fun apply_at(
     let mut node = nodes[root_tick];
 
     if (tick == root_tick) {
+        capture_snapshot_if_stale(&mut node, snapshot_seq);
         if (is_start) {
             apply_net_delta(&mut node.local_start, quantity, add);
         } else {
             apply_net_delta(&mut node.local_end, quantity, add);
         };
-        if (is_empty_node(node)) {
+        // An emptied node whose shadow the active generation still needs is
+        // retained as a live-zero husk; `release_snapshot` removes it once the
+        // frozen walk has been read.
+        if (is_empty_node(node) && !retains_snapshot(&node, snapshot_seq)) {
             let _removed = nodes.remove(root_tick);
             return join_subtrees(nodes, node.left, node.right)
         };
@@ -309,15 +403,15 @@ fun apply_at(
     // The descent is a plain BST insert; every structural decision is deferred to
     // `rebalance` on the way back up, which reads only measured heights.
     if (tick < root_tick) {
-        node.left = apply_at(nodes, node.left, tick, quantity, is_start, add);
+        node.left = apply_at(nodes, node.left, tick, quantity, is_start, add, snapshot_seq);
     } else {
-        node.right = apply_at(nodes, node.right, tick, quantity, is_start, add);
+        node.right = apply_at(nodes, node.right, tick, quantity, is_start, add, snapshot_seq);
     };
 
     option::some(rebalance(nodes, root_tick, node))
 }
 
-fun new_leaf(quantity: u64, is_start: bool): PayoutNode {
+fun new_leaf(quantity: u64, is_start: bool, snapshot_seq: u64): PayoutNode {
     let (start, end) = if (is_start) {
         (quantity, 0)
     } else {
@@ -330,6 +424,11 @@ fun new_leaf(quantity: u64, is_start: bool): PayoutNode {
         right: option::none(),
         local_start: start,
         local_end: end,
+        // Stamped with the active generation and zero shadows: created after
+        // the snapshot, so the frozen walk excludes it.
+        snapshot_local_start: 0,
+        snapshot_local_end: 0,
+        snapshot_seq,
         summary: boundary_summary(start, end),
     }
 }
@@ -483,21 +582,28 @@ fun window_summary(
     combine_summaries(combine_summaries(left, boundary), right)
 }
 
-/// Accumulate start and end boundary products separately during an in-order walk.
+/// Accumulate start and end boundary products separately during an in-order walk
+/// over the view `frozen_seq` selects: 0 walks live terms; a generation walks
+/// each node's shadow where that generation captured one and its live terms
+/// otherwise.
 ///
-/// EVERY node is priced, including one whose local start and end quantities cancel.
-/// Only the arithmetic is skipped there, because such a boundary contributes
-/// `price * q - price * q = 0` to the netted aggregate at any price. The pricing
-/// call itself must not be skipped: it is where monotonicity is observed, and a
-/// cancelling boundary is still the shared edge of two live orders. An inversion
-/// sitting on it does not move this walk's total, but it does move what
-/// `redeem_live` pays per order (`range_price` is evaluated per order, not netted),
-/// so skipping the observation would let NAV understate liability without aborting.
+/// EVERY boundary in the selected view is priced, including one whose start and
+/// end quantities cancel. Only the arithmetic is skipped there, because such a
+/// boundary contributes `price * q - price * q = 0` to the netted aggregate at
+/// any price. The pricing call itself must not be skipped: it is where
+/// monotonicity is observed, and a cancelling boundary is still the shared edge
+/// of two live orders. An inversion sitting on it does not move this walk's
+/// total, but it does move what `redeem_live` pays per order (`range_price` is
+/// evaluated per order, not netted), so skipping the observation would let NAV
+/// understate liability without aborting. A node whose selected terms are both
+/// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
+/// creation) — the view that owns the tick observes it.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     pricer: &Pricer,
     tick_size: u64,
+    frozen_seq: u64,
     previous_price: &mut Option<u64>,
 ): (u64, u64) {
     if (root.is_none()) return (0, 0);
@@ -509,23 +615,33 @@ fun walk_linear_subtree(
         node.left,
         pricer,
         tick_size,
+        frozen_seq,
         previous_price,
     );
 
-    let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
-    // UP price is non-increasing in strike and the in-order walk visits ascending
-    // ticks, so a rising price is a non-monotone surface: the netted aggregate
-    // below would understate the per-order liability the protocol actually honors.
-    if (previous_price.is_some()) {
-        assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+    let (local_start, local_end) = if (frozen_seq != 0 && node.snapshot_seq == frozen_seq) {
+        (node.snapshot_local_start, node.snapshot_local_end)
+    } else {
+        (node.local_start, node.local_end)
     };
-    *previous_price = option::some(price);
 
     let mut start_total = 0;
     let mut end_total = 0;
-    if (node.local_start != node.local_end) {
-        start_total = math::mul_down(price, node.local_start);
-        end_total = math::mul_down(price, node.local_end);
+    if (local_start != 0 || local_end != 0) {
+        let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
+        // UP price is non-increasing in strike and the in-order walk visits
+        // ascending ticks, so a rising price is a non-monotone surface: the netted
+        // aggregate below would understate the per-order liability the protocol
+        // actually honors.
+        if (previous_price.is_some()) {
+            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+        };
+        *previous_price = option::some(price);
+
+        if (local_start != local_end) {
+            start_total = math::mul_down(price, local_start);
+            end_total = math::mul_down(price, local_end);
+        };
     };
 
     let (right_start, right_end) = walk_linear_subtree(
@@ -533,6 +649,7 @@ fun walk_linear_subtree(
         node.right,
         pricer,
         tick_size,
+        frozen_seq,
         previous_price,
     );
     (start_total + left_start + right_start, end_total + left_end + right_end)
@@ -604,6 +721,50 @@ fun is_empty_node(node: PayoutNode): bool {
     node.local_start == 0 && node.local_end == 0
 }
 
+/// Copy live terms into the shadow before the first mutation under the active
+/// generation; a node already stamped with it (captured, or created under it
+/// with the zero shadows that mean "not in the snapshot") is left alone.
+fun capture_snapshot_if_stale(node: &mut PayoutNode, snapshot_seq: u64) {
+    if (snapshot_seq == 0 || node.snapshot_seq == snapshot_seq) return;
+    node.snapshot_local_start = node.local_start;
+    node.snapshot_local_end = node.local_end;
+    node.snapshot_seq = snapshot_seq;
+}
+
+/// Whether the active generation still needs this node: a nonzero shadow the
+/// frozen walk has yet to read. A stale generation's shadow retains nothing.
+fun retains_snapshot(node: &PayoutNode, snapshot_seq: u64): bool {
+    snapshot_seq != 0
+        && node.snapshot_seq == snapshot_seq
+        && (node.snapshot_local_start != 0 || node.snapshot_local_end != 0)
+}
+
+/// Collect every live-zero tick (husks) in order.
+fun collect_husks(nodes: &Table<u64, PayoutNode>, root: Option<u64>, husks: &mut vector<u64>) {
+    if (root.is_none()) return;
+    let node = nodes[*root.borrow()];
+    collect_husks(nodes, node.left, husks);
+    if (is_empty_node(node)) husks.push_back(*root.borrow());
+    collect_husks(nodes, node.right, husks);
+}
+
+/// Remove the husk at `tick`, rejoining and rebalancing as an emptying
+/// mutation would.
+fun detach_tick(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>, tick: u64): Option<u64> {
+    let root_tick = *root.borrow();
+    let mut node = nodes[root_tick];
+    if (tick == root_tick) {
+        let _removed = nodes.remove(root_tick);
+        return join_subtrees(nodes, node.left, node.right)
+    };
+    if (tick < root_tick) {
+        node.left = detach_tick(nodes, node.left, tick);
+    } else {
+        node.right = detach_tick(nodes, node.right, tick);
+    };
+    option::some(rebalance(nodes, root_tick, node))
+}
+
 fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
     if (add) {
         *value = *value + delta;
@@ -619,6 +780,13 @@ fun apply_net_delta(value: &mut u64, delta: u64, add: bool) {
 /// Seed the stored count so tests can exercise the node-cap boundary directly.
 public(package) fun set_node_count_for_testing(tree: &mut StrikePayoutTree, node_count: u64) {
     tree.node_count = node_count;
+}
+
+#[test_only]
+/// Read the stored node count, so snapshot tests can pin husk retention and
+/// release against exact counts.
+public(package) fun node_count_for_testing(tree: &StrikePayoutTree): u64 {
+    tree.node_count
 }
 
 #[test_only]

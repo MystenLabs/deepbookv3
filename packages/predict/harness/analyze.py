@@ -50,7 +50,7 @@ _KEEPER_TRACE_SCHEMAS: dict[str, tuple[set[str], set[str]]] = {
             "gas",
             "compGas",
         },
-        set(),
+        {"compGasTotal", "legCompGas"},
     ),
 }
 _GAS_BREAKDOWN_FIELDS = {
@@ -147,6 +147,7 @@ _NONNEGATIVE_INTEGER_TRACE_FIELDS = {
     "elapsedMs",
     "book",
     "compGas",
+    "compGasTotal",
     "computationCost",
     "consecutiveDefers",
     "expiryMs",
@@ -227,6 +228,10 @@ def _validate_trace_record(record: dict, actor: str, location: str) -> None:
                 isinstance(value, list)
                 and bool(value)
                 and all(isinstance(item, str) and bool(item) for item in value)
+            )
+        elif field == "legCompGas":
+            valid = isinstance(value, list) and all(
+                type(item) is int and item >= 0 for item in value
             )
         if not valid:
             raise ValueError(
@@ -347,8 +352,11 @@ def _analyze_one(inst: Path) -> list[str]:
         # 5,000,000 units (a protocol constant — verified identical on localnet/testnet/mainnet) x the
         # reference gas price. Localnet/testnet RGP 1000 -> 5e9 MIST; mainnet RGP 100 -> 5e8 MIST — but
         # the binding limit is the 5M UNITS of work, so the OOG book size is network-independent.
-        # Compare the flush's COMPUTATION cost (compGas), not net gas (gasOf folds in storage/rebate,
-        # which the computation cap ignores). COMP_CAP is the module-level per-tx computation cap.
+        # Compare the flush's per-transaction COMPUTATION cost (compGas = the heaviest single leg,
+        # which for the staged flush is the largest value_expiry payout-tree walk), not net gas
+        # (storage/rebate, which the computation cap ignores) and not the cross-leg aggregate
+        # (compGasTotal, which can exceed the cap without any single tx breaching it). COMP_CAP is
+        # the module-level per-tx computation cap, and it binds one transaction at a time.
         succ = sorted(
             [r for r in recs if r.get("type") == "flush" and r.get("_actor") == "keeper" and r.get("ts")
              and r.get("compGas")],

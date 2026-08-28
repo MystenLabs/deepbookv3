@@ -42,6 +42,36 @@ export function computationOf(result: any): number {
   return Number(result?.effects?.gasUsed?.computationCost ?? 0);
 }
 
+// The heaviest SINGLE transaction's computation cost across a receipt's legs — the value the
+// per-transaction computation cap applies to. For the staged flush (snapshot, one value_expiry per
+// market, finish) this is the largest value_expiry leg, NOT the aggregate (which sums across
+// transactions and can exceed the cap without any single tx breaching it) and NOT the last leg's
+// `.effects` (the finish, which walks no payout tree). Capacity analysis must compare THIS against
+// the cap. Falls back to the single-tx computation when no leg breakdown is present.
+export function maxComputationOf(result: any): number {
+  const legs = result?.legGas;
+  if (Array.isArray(legs) && legs.length > 0) {
+    return Math.max(...legs.map((g: any) => Number(g?.computationCost ?? 0)));
+  }
+  return computationOf(result);
+}
+
+// Per-leg computation costs (MIST), in leg order — for attributing a staged flush's cost and
+// spotting which leg approaches the cap. A single-tx receipt yields one entry.
+export function legComputationsOf(result: any): number[] {
+  const legs = result?.legGas;
+  if (Array.isArray(legs) && legs.length > 0) return legs.map((g: any) => Number(g?.computationCost ?? 0));
+  return [computationOf(result)];
+}
+
+// Aggregate net gas (MIST) across every leg of a receipt — the true total cost of a multi-tx
+// sequence, from the combined `.gas` (not `.effects`, which is only the last leg).
+export function aggregateNetGasOf(result: any): number {
+  const g = result?.gas;
+  if (!g) return gasOf(result);
+  return Number(g.computationCost) + Number(g.storageCost) - Number(g.storageRebate);
+}
+
 // The FULL Sui gas breakdown (all MIST) for a tx result — the four `effects.gasUsed` terms plus
 // the derived net. `net = computationCost + storageCost - storageRebate`; NEGATIVE means the
 // sender's gas coin is refunded (a delete-heavy tx whose storage rebate dominates). The cleanout

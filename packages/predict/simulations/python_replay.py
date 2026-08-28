@@ -1813,7 +1813,9 @@ def flush(
     model: dict[str, Any],
     state: dict[str, int],
 ) -> list[dict[str, Any]]:
-    updates = rebalance_expiry(model, state)
+    # Measurement-only: cash maintenance is decoupled from the flush (the
+    # standalone rebalance action runs outside the valuation window on-chain).
+    updates: list[dict[str, Any]] = []
     active_nav = current_nav(model, state) if state["active_market_count"] else 0
     idle_before = state["vault_idle_balance"]
     frozen_pool_value = pool_value(state, active_nav)

@@ -388,7 +388,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   *Rationale:* moving valuation off the trading hot path lets the flush afford an
   exact brute-force NAV, which deletes the entire approximate-NAV mitigation stack;
   the cost is a ~24h LP settlement delay. *Rejected:* an operator-posted NAV (this is
-  a trustless on-chain crank), a multi-tx crank, and a flush that pauses trading.
+  a trustless on-chain crank) and a flush that pauses trading. A multi-tx crank was
+  rejected here on the premise that it forfeits the single exact mark; the staged
+  flush (below) overturned that rejection by freezing every market's pricer in one
+  atomic snapshot and cancelling concurrent trades out of the valuation, which keeps
+  the one exact mark the rejection existed to protect. Re-reading the oracle per
+  valuation transaction stays rejected.
 - **`current_nav` is the exact per-expiry mark — one mark, no band.** Per expiry,
   `current_nav = free_cash − live_marked_liability`, floored at zero, where the
   liability is the payout tree's boundary-linear walk alone, with no per-order
@@ -411,13 +416,111 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   (bounded blast radius, better key hygiene than the root cap). NAV manipulation is
   closed by privileging the start; dilution by the fair FIFO drain at the frozen mark.
   *Rejected:* a permissionless flush.
-- **Cash maintenance is decoupled from the flush potato.** Cash rebalance, the
-  settled-market sweep, and liquidation are standalone, permissionless, per-market
-  entrypoints; the hot potato exists only for the flush, the one flow that needs the
-  exactly-once-per-market completeness proof. *Rationale:* each maintenance op is
-  per-market local and invariant-preserving, so it needs neither the completeness
-  proof nor the valuation lock; keeping exits responsive (rebalance) must not wait for
-  the daily flush. *Rejected:* a mode flag on one shared potato; two potatoes.
+- **Cash maintenance is decoupled from the flush.** Cash rebalance and the
+  settled-market sweep are standalone, permissionless, per-market entrypoints; the
+  flush alone carries the exactly-once-per-market completeness proof (its snapshot
+  stage's hot potato enforces only the one-transaction snapshot). *Rationale:* each
+  maintenance op is per-market local and invariant-preserving, so it needs neither
+  the completeness proof nor the valuation flag; keeping exits responsive
+  (rebalance) must not wait for the daily flush. *Rejected:* a mode flag on one
+  shared potato; two potatoes.
+
+## Resumable lock-free flush (2026-08-24)
+
+- **Valuation is resumable across transactions; the mark is frozen atomically and
+  concurrent trades are cancelled out (RP-29 resolves C-1).** The flush's snapshot
+  stage — one atomic PTB under a `SnapshotStage` hot potato — freezes every live
+  market's `Pricer`, stamps those markets, and records each LP queue's eligibility
+  cutoff; valuation then runs one market per transaction, reading each market's
+  snapshot-instant NAV from state captured at the instant (see the in-tree
+  snapshot decision below — originally a per-trade delta log replayed at
+  valuation); `finish_flush` drains only pre-snapshot requests. *Rationale:* the joint object
+  budget C-1 measured is gone by construction while trading never pauses — the
+  original "flush that pauses trading" rejection above stands, and the exact-mark
+  requirement (audit L10) survives because exactness is defined at the snapshot
+  instant and reconstruction is exact. *Rejected:* a cross-transaction valuation
+  lock over the whole mutation surface (pauses all trading for the window and turns
+  a dead keeper into a protocol-wide pause); an approximate or banded mark (audit
+  L10); per-market progressive locking (still pauses each market for the flush
+  tail, at most of the review cost of corrections).
+- **Duty inventory for the dropped whole-flush potato.** *Snapshot atomicity* —
+  kept, type-enforced by `SnapshotStage`. *Completeness* — kept: sealing requires a
+  frozen entry per expected market, finishing requires every expected market
+  valued. *Authorization* — only the SNAPSHOT is privileged (a `MarketLifecycleCap`
+  starts one); `value_expiry` and `finish_flush` are permissionless. Completion
+  is safe to open because the frozen mark and the per-queue drain budgets are both
+  committed at the snapshot, so a stranger can neither reprice a fill nor grief by
+  finishing with a zero budget (finish takes no budget), and `value_expiry` is
+  idempotent so a stranger racing the keeper cannot wedge it. There is no abort or
+  restart entrypoint: a stalled flush is superseded by a fresh `start_pool_valuation`
+  (folding stop into start, discarding the in-flight valuation and re-snapshotting),
+  and `finish_flush` refuses past `max_valuation_window_ms` for everyone including
+  the operator, so recovery past the window is a fresh start. *Lock releases
+  in-transaction* — surrendered for the valuation stage only, and what the flag
+  now gates across transactions is fee-incentive sponsorship, config, and LP
+  cancels — never trading, maintenance, or market creation (a new market sits
+  outside the flush's frozen expected set and joins the next snapshot). *Vault binding* — unrepresentable (the
+  valuation lives on the vault).
+- **LP cancels are gated during a flush; new requests are not.** The frozen mark
+  is on-chain readable once the snapshot lands, so an ungated cancel of an
+  eligible request is a free option against a stale price; new requests are
+  quarantined by the recorded queue cutoffs instead of a gate. *Rejected:* gating
+  requests too (needless — the cutoff is airtight and keeps the queue live).
+- **Cash maintenance runs mid-flush, compensated on every mark term.** *Superseded 2026-08-26 (vault-figure freeze) — the vault figures are now frozen at the seal, so nothing is recorded or reversed; see the entry at the end of this document. Kept for the decision record.* A
+  pending market's snapshot cash is captured before any in-window move can touch
+  it (originally recorded on the stamp and rolled back — see the in-tree
+  snapshot decision below), and the move records on two flush accumulators that
+  `finish_flush` reverses out of idle AND the profit basis's credits and debits,
+  so the mark is invariant to maintenance timing. *Rationale:* gating the rebalance for the window left a
+  market that exhausted its buffer mid-flush unable to admit mints or closes
+  until the flush landed — exits paying for a purity gate — and a gross-only
+  compensation would misprice the mark by the protocol profit share of every
+  moved amount, so all three terms are corrected together. Settled sweeps stay
+  uncompensated: a swept market contributes zero and idle is its recoverable
+  cash's counted location. *Rejected:* gating `rebalance_expiry_cash` for the
+  window (the exit-freeze above); compensating gross alone (mispriced by
+  `share × moved`); a starter-gated maintenance entrypoint (needless — with the
+  compensation the mark cannot be moved by rebalancing, so permissionless
+  maintenance has no lever).
+- **Settlement is gated per market, not globally.** `try_settle` refuses only a
+  market whose stamp names the in-flight flush — the frozen sweep-vs-value branch
+  and the captured snapshot are only sound while settlement cannot reclassify the
+  rows. A market expiring mid-window is valued at its frozen pre-expiry mark and
+  settles the moment its stamp clears (RP-29 ratifies this against RP-4's
+  original blanket block).
+
+## In-tree snapshot capture (2026-08-26)
+
+- **The snapshot state is captured in place, not journaled and replayed.**
+  Supersedes the mechanism half of the 2026-08-24 entry (the staged lifecycle,
+  cutoffs, and gating above all stand; the maintenance compensation was itself superseded 2026-08-26 — see the vault-figure freeze entry at the end). The stamp
+  copies the two cash rows NAV reads eagerly at the snapshot instant; each
+  payout-tree node copies its boundary quantities into a per-node shadow, keyed
+  by the flush ordinal, immediately before its first mutation under that flush
+  (copy-on-write — an untouched node is its own snapshot; prototyped in
+  deepbookv3#1268). `snapshot_nav` is then the SAME linear walk as the live read
+  over the captured terms, so rounding, clamping, and the monotonicity
+  observation are identical by construction rather than by a reconstruction
+  proof. *Rationale:* the replaced delta log carried three costs the capture
+  does not — an equivalence obligation (replay must reproduce the snapshot walk
+  bit-for-bit), a per-market trade budget (`max_valuation_log_ops`, whose full
+  log froze that market's trading mid-window), and a per-trade recording hook on
+  every mutation source that had to be enumerated (trades, then maintenance)
+  rather than covered structurally. *Consequences that needed design rather than
+  deletion:* a node emptied mid-window is retained as a live-zero husk so the
+  frozen walk keeps its boundary — retention converts an existing node (never
+  adds one, so the RP-30 cap is undisturbed) and every husk is removed by the
+  next `value_expiry` to consume a snapshot on its market — its own flush's, or
+  a later flush's for husks an aborted generation stranded — so retention is
+  bounded by the market's next consumed valuation; the live walk skips husks (a husk
+  is no live order's edge — the frozen walk that owns the tick still observes
+  it); and the tree generation is the flush ordinal, so a stale snapshot from an
+  aborted flush is superseded by activation and can never serve a frozen read
+  (`EStaleValuationSnapshot`). *Rejected:* wall-clock snapshot keys (Sui's clock
+  is commit-granular, and the flush ordinal already exists with the exact
+  staleness semantics needed); purging husks on the trade path (walks the tree
+  in a hot flow); counting retained husks outside the node cap (they are loaded
+  by the valuation walk, which is the budget the cap exists to fit).
 
 ## Explicit exact-timestamp settlement (recent)
 
@@ -489,13 +592,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   a delegation trace. The admin `ProtocolConfig` setters and the registry creation
   entrypoints were brought under the gate; per-account custody and builder-code
   config stay ungated so user exits survive a freeze.
-- **Two deliberate pause/valuation-gate exemptions.** `rebalance_expiry_cash`'s grow
+- **Three deliberate pause/valuation-gate exemptions.** `rebalance_expiry_cash`'s grow
   direction (`top_up_live_expiry_cash`) is NOT trading-pause-gated — pause blocks risk
   creation at the mint gate, while top-up only backs existing exposure and keeps exits
   fundable (gating it could starve redeems mid-emergency). `plp::lock_capital` carries
   no valuation-lock gate — it is legal only at `total_supply == 0` (both LP request
   entrypoints abort `ENotBootstrapped` until supply > 0), so nothing the lock protects
-  can exist when it runs.
+  can exist when it runs. `expiry_market::set_reference_tick` carries no valuation-lock
+  gate — the reference tick shapes mint admission only, and a mint it admits mid-flush is
+  invisible to the captured snapshot like any other trade, so moving it cannot touch the
+  frozen mark.
 
 ## Near-expiry leverage block (recent)
 
@@ -635,3 +741,11 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 - **The referral rate is live protocol config.** `ProtocolConfig.referral_fee_rate` defaults to 10%, accepts 0% through 25%, and is read on every mint. Accounts and expiry markets do not snapshot it, so an admin update applies to subsequent mints protocol-wide.
 - **Account stores identity and payment routing separately.** Referral creation snapshots the existing referrer's canonical Account ID for attribution and its outer wrapper receive address for `balance::send_funds`. The relation is immutable, direct, and one level. A newly created Account cannot refer to itself because its referrer must already exist and the registry permits one canonical Account per owner; common beneficial ownership across distinct owner addresses is not checked.
 - **Mint events preserve attribution when payment is zero.** `OrderMinted` reports the calculated referral amount and the stored canonical referrer Account ID independently, so a zero rate or rounded-zero amount does not erase the referral relation from the event stream.
+
+## Vault-figure freeze (2026-08-26)
+
+- **The mark's vault-side figures are frozen at the seal, not corrected for afterward.** Supersedes "Cash maintenance runs mid-flush, compensated on every mark term" (2026-08-24). `seal_valuation_snapshot` captures idle, the profit-basis credits and debits, and the pending protocol cut into the `PoolValuation`, alongside each market's stamped cash and payout-tree shadows; `finish_flush` prices `lp_pool_value` purely from those frozen inputs, and settled members are swept inside the snapshot stage so their recoverable cash is already inside the frozen idle. There is nothing to record and nothing to reverse — an in-window rebalance, surplus sweep, or settlement cannot reach the mark because every term it reads was captured at one instant (the atomic vault-wide freeze was prototyped in deepbookv3#1268). *Consequence:* the maintenance accumulators, their finish-time reversal arithmetic, and the standalone-settled-sweep deferral are all deleted; `value_expiry` moves no cash for any member, and the standalone settled sweep runs freely mid-window. *The one new gate:* `rebalance_expiry_cash` is refused inside the still-open snapshot stage (`ESnapshotStageOpen`), since a cross-move landing between a market's stamp and the seal's capture would split that cash across the two frozen figures — a single-transaction, starter-composable state, so the keeper's snapshot PTB never triggers it. *Rejected:* keeping the per-market maintenance-ordering record (the freeze removes the recording, so there is nothing left to order); collapsing the per-market stamped cash into one pool aggregate (that is pool-level netting — a silent LP-economics change; the per-market NAV floor is preserved).
+
+## Storable mark separated from the trade pricer (2026-08-27)
+
+- **`Pricer` stays non-`store`; the flush uses a separate `FrozenPricer`.** The staged flush needs one mark per market held across transactions, which first motivated adding `store` to the live `Pricer`. But non-`store` was load-bearing: it is the type-level guarantee that a `Pricer` cannot be persisted and replayed into a fund-moving trade (the trade paths gate a supplied `&Pricer` on market-id alone, with no use-time freshness check). Making the live type storable would have downgraded that guarantee to an unenforceable doc convention, opening a permissionless stale-mark replay against `redeem_live`/`mint_*` (RP-32). Instead `Pricer` keeps `copy, drop` only, and the flush carries a distinct `FrozenPricer` (`has store`) held only in `PoolValuation`, minted by `pricing::into_frozen` at the snapshot stage and thawed back to a transient `Pricer` by `snapshot_nav` — neither constructor nor unwrapper is public, and no trade entrypoint accepts a `FrozenPricer`. *Rejected:* `store` on `Pricer` guarded by the convention "every other path loads fresh" (a convention cannot bind an adversary's PTB); a runtime freshness re-check in every trade path (a per-trade cost and a new config knob, and it must be re-audited for every new trade entrypoint, where the type separation holds automatically).
