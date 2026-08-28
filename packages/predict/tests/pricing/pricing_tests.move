@@ -299,6 +299,14 @@ fun freeze_then_thaw_preserves_the_mark() {
         pricer.block_scholes_svi_source_timestamp_ms(),
     );
     assert_eq!(thawed.pyth_spot_source_timestamp_ms(), pricer.pyth_spot_source_timestamp_ms());
+    assert_eq!(
+        thawed.block_scholes_spot_source_timestamp_ms(),
+        pricer.block_scholes_spot_source_timestamp_ms(),
+    );
+    assert_eq!(
+        thawed.block_scholes_forward_source_timestamp_ms(),
+        pricer.block_scholes_forward_source_timestamp_ms(),
+    );
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
