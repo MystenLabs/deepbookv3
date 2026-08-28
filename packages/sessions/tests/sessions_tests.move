@@ -27,7 +27,7 @@ use propbook::{
     pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
-use std::{bcs, unit_test::{assert_eq, destroy}};
+use std::{bcs, type_name::{Self, TypeName}, unit_test::{assert_eq, destroy}};
 use sui::{
     accumulator::AccumulatorRoot,
     clock::{Self as clock, Clock},
@@ -78,11 +78,7 @@ const EXCESS_SESSION_INDEX: u64 = 20;
 const POST_REVOKE_EXPIRES_AT_MS: u64 = 62_000; // 2_000 + 60_000.
 const ONE_EVENT: u64 = 1;
 const EUnexpectedSuccess: u64 = 999;
-/// A venue id no fixture object has, for grants that are never exercised.
-const OTHER_VENUE: address = @0x0E;
-const FIRST_VENUE: address = @0x0E1;
-const SECOND_VENUE: address = @0x0E2;
-const ABOVE_MAX_SESSION_VENUES: u64 = 21;
+const ABOVE_MAX_SESSION_COINS: u64 = 21;
 
 const FLOW_SESSION_EXPIRES_AT_MS: u64 = 180_000; // 120_000 + 60_000.
 const SETTLEMENT_SESSION_DURATION_MS: u64 = 180_000;
@@ -101,10 +97,32 @@ const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
 const FUTURE_VERSION: u64 = 2;
 
+public struct Coin0 has store {}
+public struct Coin1 has store {}
+public struct Coin2 has store {}
+public struct Coin3 has store {}
+public struct Coin4 has store {}
+public struct Coin5 has store {}
+public struct Coin6 has store {}
+public struct Coin7 has store {}
+public struct Coin8 has store {}
+public struct Coin9 has store {}
+public struct Coin10 has store {}
+public struct Coin11 has store {}
+public struct Coin12 has store {}
+public struct Coin13 has store {}
+public struct Coin14 has store {}
+public struct Coin15 has store {}
+public struct Coin16 has store {}
+public struct Coin17 has store {}
+public struct Coin18 has store {}
+public struct Coin19 has store {}
+public struct Coin20 has store {}
+
 public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
     session: address,
-    venues: vector<ID>,
+    coins: vector<TypeName>,
     expires_at_ms: u64,
 }
 
@@ -159,7 +177,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -174,7 +192,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &authorized[0],
         account_id,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         SESSION_EXPIRES_AT_MS,
     );
     return_shared(sessions_config);
@@ -188,7 +206,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         REAUTH_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -203,7 +221,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &reauthorized[0],
         account_id,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         REAUTH_EXPIRES_AT_MS,
     );
     return_shared(sessions_config);
@@ -246,7 +264,7 @@ fun maximum_session_duration_is_accepted() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         MAX_SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -275,7 +293,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
             &mut wrapper,
             &sessions_config,
             session_addresses[index],
-            vector[other_venue()],
+            granted_coins(),
             SESSION_DURATION_MS,
             &clock,
             scenario.ctx(),
@@ -296,7 +314,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         &mut wrapper,
         &sessions_config,
         session_addresses[LAST_SESSION_INDEX],
-        vector[other_venue()],
+        granted_coins(),
         REAUTH_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -318,7 +336,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         &mut wrapper,
         &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -351,7 +369,7 @@ fun twenty_first_distinct_session_aborts() {
             &mut wrapper,
             &sessions_config,
             session_addresses[index],
-            vector[other_venue()],
+            granted_coins(),
             SESSION_DURATION_MS,
             &clock,
             scenario.ctx(),
@@ -367,7 +385,7 @@ fun twenty_first_distinct_session_aborts() {
         &mut wrapper,
         &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -376,14 +394,14 @@ fun twenty_first_distinct_session_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = sessions::EInvalidSessionVenues)]
-fun empty_venue_list_aborts() {
+#[test, expected_failure(abort_code = sessions::EInvalidSessionCoins)]
+fun empty_coin_list_aborts() {
     let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
 
-    // An empty allowlist would authorize nothing, so it is rejected rather than stored.
+    // An empty allowlist would authorize no spot trading, so it is rejected, not stored.
     sessions::authorize_session(
         &mut wrapper,
         &sessions_config,
@@ -397,8 +415,8 @@ fun empty_venue_list_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = sessions::EInvalidSessionVenues)]
-fun duplicate_venues_abort() {
+#[test, expected_failure(abort_code = sessions::EInvalidSessionCoins)]
+fun duplicate_coins_abort() {
     let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -408,7 +426,7 @@ fun duplicate_venues_abort() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue(), other_venue()],
+        vector[type_name::with_defining_ids<Coin0>(), type_name::with_defining_ids<Coin0>()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -417,25 +435,21 @@ fun duplicate_venues_abort() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = sessions::EInvalidSessionVenues)]
-fun twenty_first_venue_aborts() {
+#[test, expected_failure(abort_code = sessions::EInvalidSessionCoins)]
+fun twenty_first_coin_aborts() {
     let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
-    // 21 distinct venue ids: one past the 20 a single grant may name.
-    let mut venues = vector[];
-    ABOVE_MAX_SESSION_VENUES.do!(
-        |i| venues.push_back(
-            object::id_from_address(sui::address::from_u256(i as u256)),
-        ),
-    );
+    // 21 distinct coin types: one past the 20 a single grant may name.
+    let coins = all_marker_coins();
+    assert_eq!(coins.length(), ABOVE_MAX_SESSION_COINS);
 
     sessions::authorize_session(
         &mut wrapper,
         &sessions_config,
         SESSION,
-        venues,
+        coins,
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -445,36 +459,36 @@ fun twenty_first_venue_aborts() {
 }
 
 #[test]
-fun reauthorization_replaces_venues_rather_than_adding() {
+fun reauthorization_replaces_coins_rather_than_adding() {
     let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
     scenario.next_tx(ALICE);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
-    let first = object::id_from_address(FIRST_VENUE);
-    let second = object::id_from_address(SECOND_VENUE);
+    let first = vector[type_name::with_defining_ids<Coin1>()];
+    let second = vector[type_name::with_defining_ids<Coin2>()];
 
     sessions::authorize_session(
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[first],
+        first,
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
     );
-    assert_eq!(sessions::session_venues(&wrapper, SESSION), option::some(vector[first]));
+    assert_eq!(sessions::session_coins(&wrapper, SESSION), option::some(first));
 
-    // Re-granting narrows as well as widens: the first venue is gone, not retained.
+    // Re-granting narrows as well as widens: the first coin is gone, not retained.
     sessions::authorize_session(
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[second],
+        second,
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
     );
-    assert_eq!(sessions::session_venues(&wrapper, SESSION), option::some(vector[second]));
+    assert_eq!(sessions::session_coins(&wrapper, SESSION), option::some(second));
 
     return_shared(sessions_config);
     return_shared(wrapper);
@@ -493,7 +507,7 @@ fun zero_session_duration_aborts() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         ZERO_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -513,7 +527,7 @@ fun session_duration_above_maximum_aborts() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         ABOVE_MAX_SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -533,7 +547,7 @@ fun non_owner_cannot_authorize_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -552,7 +566,7 @@ fun non_owner_cannot_revoke_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -579,7 +593,7 @@ fun retired_package_version_cannot_authorize_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -598,7 +612,7 @@ fun retired_package_version_keeps_reads_and_revocation_available() {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        vector[other_venue()],
+        granted_coins(),
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -1213,10 +1227,10 @@ fun assert_session_authorized_event(
     actual: &SessionAuthorized,
     account_id: ID,
     session: address,
-    venues: vector<ID>,
+    coins: vector<TypeName>,
     expires_at_ms: u64,
 ) {
-    let expected = ExpectedSessionAuthorized { account_id, session, venues, expires_at_ms };
+    let expected = ExpectedSessionAuthorized { account_id, session, coins, expires_at_ms };
     assert_eq!(bcs::to_bytes(actual), bcs::to_bytes(&expected));
 }
 
@@ -1275,19 +1289,46 @@ fun setup_flow_fixture(expiry_ms: u64): SessionFlowFixture {
     }
 }
 
-fun other_venue(): ID {
-    object::id_from_address(OTHER_VENUE)
+/// The 21 marker coin types, one past the per-grant limit.
+fun all_marker_coins(): vector<TypeName> {
+    vector[
+        type_name::with_defining_ids<Coin0>(),
+        type_name::with_defining_ids<Coin1>(),
+        type_name::with_defining_ids<Coin2>(),
+        type_name::with_defining_ids<Coin3>(),
+        type_name::with_defining_ids<Coin4>(),
+        type_name::with_defining_ids<Coin5>(),
+        type_name::with_defining_ids<Coin6>(),
+        type_name::with_defining_ids<Coin7>(),
+        type_name::with_defining_ids<Coin8>(),
+        type_name::with_defining_ids<Coin9>(),
+        type_name::with_defining_ids<Coin10>(),
+        type_name::with_defining_ids<Coin11>(),
+        type_name::with_defining_ids<Coin12>(),
+        type_name::with_defining_ids<Coin13>(),
+        type_name::with_defining_ids<Coin14>(),
+        type_name::with_defining_ids<Coin15>(),
+        type_name::with_defining_ids<Coin16>(),
+        type_name::with_defining_ids<Coin17>(),
+        type_name::with_defining_ids<Coin18>(),
+        type_name::with_defining_ids<Coin19>(),
+        type_name::with_defining_ids<Coin20>(),
+    ]
+}
+
+/// A one-coin grant for tests that never exercise the spot wrappers.
+fun granted_coins(): vector<TypeName> {
+    vector[type_name::with_defining_ids<Coin0>()]
 }
 
 fun authorize_flow_session(fixture: &mut SessionFlowFixture, duration_ms: u64) {
-    let market_id = fixture.market_id;
-    authorize_flow_session_on(fixture, duration_ms, vector[market_id]);
+    authorize_flow_session_on(fixture, duration_ms, granted_coins());
 }
 
 fun authorize_flow_session_on(
     fixture: &mut SessionFlowFixture,
     duration_ms: u64,
-    venues: vector<ID>,
+    coins: vector<TypeName>,
 ) {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
@@ -1298,7 +1339,7 @@ fun authorize_flow_session_on(
         &mut wrapper,
         &sessions_config,
         SESSION,
-        venues,
+        coins,
         duration_ms,
         clock,
         scenario.ctx(),

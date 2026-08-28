@@ -23,7 +23,7 @@ use deepbook_sessions::{
     session_config::{Self as session_config, SessionsConfig},
     sessions::{Self as sessions, SessionsApp}
 };
-use std::unit_test::{assert_eq, destroy};
+use std::{type_name::{Self, TypeName}, unit_test::{assert_eq, destroy}};
 use sui::{
     accumulator::{Self as accumulator, AccumulatorRoot},
     clock::{Self as clock, Clock},
@@ -54,8 +54,6 @@ const TWO_OPEN_ORDERS: u64 = 2;
 const ZERO_BALANCE: u64 = 0;
 const ZERO_ORDER_ID: u128 = 0;
 const EUnexpectedSuccess: u64 = 999;
-/// A venue id no fixture object has, standing in for a pool the grant never named.
-const OTHER_VENUE: address = @0x0E;
 const FUTURE_VERSION: u64 = 2;
 
 public struct BASE has store {}
@@ -448,12 +446,13 @@ fun unapproved_session_cannot_place_spot_order() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = sessions::EVenueNotGranted)]
-fun session_cannot_place_spot_order_on_ungranted_pool() {
+#[test, expected_failure(abort_code = sessions::ECoinNotGranted)]
+fun session_cannot_trade_an_ungranted_asset() {
     let mut fixture = setup_spot_fixture();
-    // The grant names a different venue, so routing the account into this pool is
-    // refused even though the session itself is live and the pool is real.
-    authorize_session_on(&mut fixture, vector[other_venue()]);
+    // The grant names the base asset but not the quote, so this pair is refused even
+    // though the session is live and the pool is real. This is what stops a session
+    // pairing a held asset against a coin the caller minted.
+    authorize_session_on(&mut fixture, vector[type_name::with_defining_ids<BASE>()]);
     let registry_id = fixture.registry_id;
     let pool_id = fixture.pool_id;
     let wrapper_id = fixture.wrapper_id;
@@ -490,16 +489,15 @@ fun session_cannot_place_spot_order_on_ungranted_pool() {
 }
 
 #[test]
-fun granted_venues_read_back_for_the_granted_session_only() {
+fun granted_coins_read_back_for_the_granted_session_only() {
     let mut fixture = setup_spot_fixture();
-    let pool_id = fixture.pool_id;
     let wrapper_id = fixture.wrapper_id;
     authorize_session(&mut fixture);
 
     fixture.scenario.next_tx(ALICE);
     let wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
-    assert_eq!(sessions::session_venues(&wrapper, SESSION), option::some(vector[pool_id]));
-    assert!(sessions::session_venues(&wrapper, BOB).is_none());
+    assert_eq!(sessions::session_coins(&wrapper, SESSION), option::some(traded_coins()));
+    assert!(sessions::session_coins(&wrapper, BOB).is_none());
     return_shared(wrapper);
     finish_spot_fixture(fixture);
 }
@@ -635,16 +633,16 @@ fun setup_spot_fixture(): SpotFixture {
     SpotFixture { scenario, registry_id, pool_id, wrapper_id, sessions_config_id }
 }
 
-fun other_venue(): ID {
-    object::id_from_address(OTHER_VENUE)
-}
-
 fun authorize_session(fixture: &mut SpotFixture) {
-    let pool_id = fixture.pool_id;
-    authorize_session_on(fixture, vector[pool_id]);
+    authorize_session_on(fixture, traded_coins());
 }
 
-fun authorize_session_on(fixture: &mut SpotFixture, venues: vector<ID>) {
+/// The pool's own pair — what a session that is meant to trade it would be granted.
+fun traded_coins(): vector<TypeName> {
+    vector[type_name::with_defining_ids<BASE>(), type_name::with_defining_ids<QUOTE>()]
+}
+
+fun authorize_session_on(fixture: &mut SpotFixture, coins: vector<TypeName>) {
     let wrapper_id = fixture.wrapper_id;
     fixture.scenario.next_tx(ALICE);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -656,7 +654,7 @@ fun authorize_session_on(fixture: &mut SpotFixture, venues: vector<ID>) {
         &mut wrapper,
         &sessions_config,
         SESSION,
-        venues,
+        coins,
         SESSION_DURATION_MS,
         &clock,
         fixture.scenario.ctx(),

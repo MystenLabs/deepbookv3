@@ -15,7 +15,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig
 };
 use deepbook_sessions::session_config::{Self, SessionsConfig};
-use std::internal::permit;
+use std::{internal::permit, type_name::{Self, TypeName}};
 use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, VecMap}};
 
 // === Errors ===
@@ -23,8 +23,8 @@ use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, Vec
 const EInvalidSessionDuration: u64 = 0;
 const ESessionNotAuthorized: u64 = 1;
 const ESessionLimitExceeded: u64 = 2;
-const EInvalidSessionVenues: u64 = 3;
-const EVenueNotGranted: u64 = 4;
+const EInvalidSessionCoins: u64 = 3;
+const ECoinNotGranted: u64 = 4;
 
 // === Constants ===
 
@@ -32,23 +32,26 @@ macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
 
 macro fun max_sessions(): u64 { 20 }
 
-macro fun max_session_venues(): u64 { 20 }
+macro fun max_session_coins(): u64 { 20 }
 
 // === Structs ===
 
 /// App witness for Account registry authorization and per-account data namespacing.
 public struct SessionsApp has drop {}
 
-/// The terms a session was granted: where it may act, and until when.
-/// A grant confers no authority outside these venues, so widening a session's
-/// reach requires a fresh owner-signed `authorize_session`.
+/// The terms a session was granted: which assets it may trade, and until when.
+/// Widening a grant requires a fresh owner-signed `authorize_session`.
 public struct SessionGrant has copy, drop, store {
     /// Execution time past which the grant is inert.
     expires_at_ms: u64,
-    /// Shared objects this session may act on: DeepBook `Pool` ids for the spot
-    /// entrypoints, `ExpiryMarket` ids for the Predict entrypoints. Allowlist —
-    /// an id absent here is refused, and the set is never empty.
-    venues: vector<ID>,
+    /// Coin types, by defining id, that the DeepBook spot wrappers may name as the
+    /// base or quote of a trade. Allowlist — a type absent here is refused, and the
+    /// list is never empty. Because DeepBook registers at most one pool per asset
+    /// pair, naming the assets pins the session to the canonical pools for them,
+    /// including pools created after the grant. The Predict wrappers are not gated
+    /// on it: they take no type parameters and settle only in DUSDC, so the caller
+    /// chooses no coin type there.
+    coins: vector<TypeName>,
 }
 
 /// Session grants keyed by transaction signer address.
@@ -56,12 +59,12 @@ public struct SessionsData has store {
     sessions: VecMap<address, SessionGrant>,
 }
 
-/// A session was authorized or reauthorized on `venues` through `expires_at_ms`.
+/// A session was authorized or reauthorized on `coins` through `expires_at_ms`.
 /// Reauthorization replaces the previous terms outright rather than adding to them.
 public struct SessionAuthorized has copy, drop {
     account_id: ID,
     session: address,
-    venues: vector<ID>,
+    coins: vector<TypeName>,
     expires_at_ms: u64,
 }
 
@@ -80,32 +83,32 @@ public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Op
     if (grant.is_none()) option::none() else option::some(grant.borrow().expires_at_ms)
 }
 
-/// Return the venues a known session may act on, for SDK and devInspect reads.
-public fun session_venues(wrapper: &AccountWrapper, session: address): Option<vector<ID>> {
+/// Return the coin types a known session may trade, for SDK and devInspect reads.
+public fun session_coins(wrapper: &AccountWrapper, session: address): Option<vector<TypeName>> {
     let grant = session_grant(wrapper, session);
-    if (grant.is_none()) option::none() else option::some(grant.borrow().venues)
+    if (grant.is_none()) option::none() else option::some(grant.borrow().coins)
 }
 
-/// Authorize `session` on `venues` from execution time for at most 30 days.
-/// `venues` are the DeepBook `Pool` and `ExpiryMarket` ids the session may act on;
-/// it must name at least one and at most 20 distinct ids, because a grant carries
-/// no authority beyond the venues it names.
+/// Authorize `session` on `coins` from execution time for at most 30 days.
+/// `coins` are the coin types the session may trade on the DeepBook spot wrappers;
+/// it must name at least one and at most 20 distinct types, because the spot
+/// wrappers carry no authority over an asset the grant does not name.
 /// Accounts may store at most 20 addresses; reauthorization replaces the grant in
 /// place, so re-granting is how a session's venues or expiry change.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
     session: address,
-    venues: vector<ID>,
+    coins: vector<TypeName>,
     duration_ms: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     sessions_config.assert_version();
     assert!(duration_ms > 0 && duration_ms <= max_session_duration_ms!(), EInvalidSessionDuration);
-    assert_distinct_venues(&venues);
+    assert_distinct_coins(&coins);
     let expires_at_ms = clock.timestamp_ms() + duration_ms;
-    let grant = SessionGrant { expires_at_ms, venues };
+    let grant = SessionGrant { expires_at_ms, coins };
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     let account_id = account.account_id();
     if (!account.has_data<SessionsApp>()) {
@@ -121,7 +124,7 @@ public fun authorize_session(
     event::emit(SessionAuthorized {
         account_id,
         session,
-        venues: grant.venues,
+        coins: grant.coins,
         expires_at_ms,
     });
 }
@@ -156,11 +159,10 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
-    let auth = generate_auth_as_session(
+    let auth = generate_spot_auth_as_session<BaseAsset, QuoteAsset>(
         sessions_config,
         account_registry,
         wrapper,
-        pool.id(),
         clock,
         ctx,
     );
@@ -200,11 +202,10 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
-    let auth = generate_auth_as_session(
+    let auth = generate_spot_auth_as_session<BaseAsset, QuoteAsset>(
         sessions_config,
         account_registry,
         wrapper,
-        pool.id(),
         clock,
         ctx,
     );
@@ -235,11 +236,10 @@ public fun cancel_live_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(
+    let auth = generate_spot_auth_as_session<BaseAsset, QuoteAsset>(
         sessions_config,
         account_registry,
         wrapper,
-        pool.id(),
         clock,
         ctx,
     );
@@ -256,11 +256,10 @@ public fun cancel_live_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(
+    let auth = generate_spot_auth_as_session<BaseAsset, QuoteAsset>(
         sessions_config,
         account_registry,
         wrapper,
-        pool.id(),
         clock,
         ctx,
     );
@@ -276,11 +275,10 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(
+    let auth = generate_spot_auth_as_session<BaseAsset, QuoteAsset>(
         sessions_config,
         account_registry,
         wrapper,
-        pool.id(),
         clock,
         ctx,
     );
@@ -304,14 +302,7 @@ public fun mint_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let auth = generate_auth_as_session(
-        sessions_config,
-        account_registry,
-        wrapper,
-        market.id(),
-        clock,
-        ctx,
-    );
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.mint_exact_quantity(
         wrapper,
         auth,
@@ -345,14 +336,7 @@ public fun mint_exact_amount(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    let auth = generate_auth_as_session(
-        sessions_config,
-        account_registry,
-        wrapper,
-        market.id(),
-        clock,
-        ctx,
-    );
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.mint_exact_amount(
         wrapper,
         auth,
@@ -385,14 +369,7 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    let auth = generate_auth_as_session(
-        sessions_config,
-        account_registry,
-        wrapper,
-        market.id(),
-        clock,
-        ctx,
-    );
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.redeem_live(
         wrapper,
         auth,
@@ -420,14 +397,7 @@ public fun redeem_settled(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(
-        sessions_config,
-        account_registry,
-        wrapper,
-        market.id(),
-        clock,
-        ctx,
-    );
+    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
     market.redeem_settled(
         wrapper,
         auth,
@@ -441,37 +411,62 @@ public fun redeem_settled(
 
 // === Private Functions ===
 
-/// Mint app auth for the transaction sender's session, bound to `venue`.
-/// Every wrapper passes the id of the object it is about to act on, so a session
-/// cannot reach a pool or market its grant does not name — including one the
-/// caller created to sit on the other side of the trade.
+/// Mint app auth for the transaction sender's live session.
+/// Predict entrypoints use this directly: they are non-generic and settle only in
+/// DUSDC, so there is no caller-chosen asset to check, and gating them on the
+/// market would strand a session every time the cadence rolls a new expiry.
 fun generate_auth_as_session(
     sessions_config: &SessionsConfig,
     account_registry: &AccountRegistry,
     wrapper: &AccountWrapper,
-    venue: ID,
     clock: &Clock,
     ctx: &TxContext,
 ): Auth {
+    live_session_grant(sessions_config, wrapper, clock, ctx);
+    account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
+}
+
+/// Mint app auth for a spot trade, refusing an asset the grant does not name.
+/// The spot wrappers are generic and fund an order from the account's whole
+/// balance, so an ungated session could name a pool pairing a real holding
+/// against a coin the caller minted and take the other side of the trade.
+fun generate_spot_auth_as_session<BaseAsset, QuoteAsset>(
+    sessions_config: &SessionsConfig,
+    account_registry: &AccountRegistry,
+    wrapper: &AccountWrapper,
+    clock: &Clock,
+    ctx: &TxContext,
+): Auth {
+    let grant = live_session_grant(sessions_config, wrapper, clock, ctx);
+    assert!(grant.coins.contains(&type_name::with_defining_ids<BaseAsset>()), ECoinNotGranted);
+    assert!(grant.coins.contains(&type_name::with_defining_ids<QuoteAsset>()), ECoinNotGranted);
+    account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
+}
+
+fun assert_distinct_coins(coins: &vector<TypeName>) {
+    let count = coins.length();
+    assert!(count > 0 && count <= max_session_coins!(), EInvalidSessionCoins);
+    count.do!(|i| {
+        let mut j = i + 1;
+        while (j < count) {
+            assert!(coins[i] != coins[j], EInvalidSessionCoins);
+            j = j + 1;
+        };
+    });
+}
+
+fun live_session_grant(
+    sessions_config: &SessionsConfig,
+    wrapper: &AccountWrapper,
+    clock: &Clock,
+    ctx: &TxContext,
+): SessionGrant {
     sessions_config.assert_version();
     let grant = session_grant(wrapper, ctx.sender());
     assert!(grant.is_some(), ESessionNotAuthorized);
     let grant = grant.destroy_some();
     assert!(clock.timestamp_ms() < grant.expires_at_ms, ESessionNotAuthorized);
-    assert!(grant.venues.contains(&venue), EVenueNotGranted);
-    account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
-}
-
-fun assert_distinct_venues(venues: &vector<ID>) {
-    let count = venues.length();
-    assert!(count > 0 && count <= max_session_venues!(), EInvalidSessionVenues);
-    count.do!(|i| {
-        let mut j = i + 1;
-        while (j < count) {
-            assert!(venues[i] != venues[j], EInvalidSessionVenues);
-            j = j + 1;
-        };
-    });
+    grant
 }
 
 fun session_grant(wrapper: &AccountWrapper, session: address): Option<SessionGrant> {
