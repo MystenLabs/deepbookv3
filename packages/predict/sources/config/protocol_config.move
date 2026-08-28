@@ -28,6 +28,7 @@ const EValuationNotInProgress: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
+const ESnapshotInProgress: u64 = 6;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -86,6 +87,14 @@ public struct ProtocolConfig has key {
     /// `flush_seq`) only to discard a stale valuation stamp lazily; a pending
     /// market's snapshot state is captured, never recorded per trade (see `plp`).
     valuation_in_progress: bool,
+    /// True ONLY while the atomic snapshot stage is open — set by `begin_snapshot`
+    /// at `start_pool_valuation` and cleared by `end_snapshot` at
+    /// `seal_valuation_snapshot`. Both live in one PTB (the `SnapshotStage` hot
+    /// potato forces it), so this can never be observed across transactions: it
+    /// blocks only a trade the keeper composes INTO its own snapshot PTB, where a
+    /// mid-stamp cash move would skew the figures the seal freezes. The resumable
+    /// valuation stage after the seal leaves it false, so trading stays live.
+    snapshot_in_progress: bool,
     /// Monotonic flush ordinal, bumped by `begin_valuation`. A market's valuation
     /// stamp names the flush that made it; a stamp whose ordinal is not the
     /// current one — or held while no valuation is in flight — is stale and is
@@ -549,6 +558,12 @@ public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
     assert!(!config.valuation_in_progress, EValuationInProgress);
 }
 
+/// Abort while the atomic snapshot stage is open — used by the trade gates so the
+/// keeper cannot compose a mint or redeem into its own snapshot PTB.
+public(package) fun assert_not_snapshot_in_progress(config: &ProtocolConfig) {
+    assert!(!config.snapshot_in_progress, ESnapshotInProgress);
+}
+
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = new(ctx);
@@ -586,6 +601,18 @@ public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.valuation_in_progress = false;
 }
 
+/// Open the atomic snapshot stage — set at `start_pool_valuation`, so any trade
+/// composed later in the same PTB aborts `ESnapshotInProgress`.
+public(package) fun begin_snapshot(config: &mut ProtocolConfig) {
+    config.snapshot_in_progress = true;
+}
+
+/// Close the atomic snapshot stage — set at `seal_valuation_snapshot`, in the
+/// same PTB, so trading is live again the instant the snapshot is sealed.
+public(package) fun end_snapshot(config: &mut ProtocolConfig) {
+    config.snapshot_in_progress = false;
+}
+
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config.trading_paused = paused;
     config_events::emit_trading_paused_updated(config.id(), paused);
@@ -618,6 +645,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         trading_paused: false,
         frozen: false,
         valuation_in_progress: false,
+        snapshot_in_progress: false,
         flush_seq: 0,
     }
 }

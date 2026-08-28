@@ -875,16 +875,22 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
     assert!(!market.mint_paused, EMintPaused);
 }
 
-// Trade flows are deliberately NOT gated on the valuation lock: a snapshotted
-// market's state is captured (stamp cash + tree shadows), so trades run
-// unrecorded and unbudgeted while it awaits its `value_expiry`.
+// Trade flows are deliberately NOT gated on the whole-flush valuation lock: a
+// snapshotted market's state is captured (stamp cash + tree shadows), so trades
+// run unrecorded and unbudgeted while it awaits its `value_expiry`. They ARE
+// blocked while the atomic snapshot stage is open (`assert_not_snapshot_in_progress`),
+// so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
+// mid-stamp cash move would skew the figures the seal freezes. That stage is one
+// PTB, so this never blocks a trade in any other transaction.
 fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
     config.assert_version();
+    config.assert_not_snapshot_in_progress();
     market.assert_pricer_bound(pricer);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
     config.assert_version();
+    config.assert_not_snapshot_in_progress();
     assert!(market.is_settled(), EMarketNotSettled);
 }
 

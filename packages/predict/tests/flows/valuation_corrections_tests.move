@@ -475,6 +475,52 @@ fun maintenance_after_a_markets_valuation_leaves_the_mark_unchanged() {
 
 // === Settlement: the per-market gate ===
 
+#[test, expected_failure(abort_code = protocol_config::ESnapshotInProgress)]
+fun a_mint_composed_into_the_open_snapshot_stage_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Open the atomic snapshot stage (start + snapshot this market) but do NOT
+    // seal: a mint the keeper composes into its own snapshot PTB is refused, so a
+    // mid-stamp cash move can never skew the figures the seal freezes. Post-seal
+    // the stage is closed and trading is live (the mid-flush metamorphic tests).
+    let _stage = fx.start_flush_bundle_stage(&mut market);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::ESnapshotInProgress)]
+fun a_redeem_composed_into_the_open_snapshot_stage_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    // Same gate on the redeem path: a live close composed into the open snapshot
+    // PTB is refused.
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    let _stage = fx.start_flush_bundle_stage(&mut market);
+    let _closed = fx.redeem_live_bundle(&mut market, &mut account, baseline, BASELINE_QUANTITY);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = expiry_market::EMarketPendingValuation)]
 fun settling_a_market_pending_valuation_aborts() {
     let (mut fx, expiry_id, _trader) = helpers::setup_everything();

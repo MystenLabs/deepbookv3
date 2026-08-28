@@ -129,7 +129,7 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
         &pyth,
         &bs,
     );
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m_a, &config);
     fx.value_expiry(&mut vault, &mut m_b, &config);
     // Reaching here proves the flush did not brick on A's under-idle materialize.

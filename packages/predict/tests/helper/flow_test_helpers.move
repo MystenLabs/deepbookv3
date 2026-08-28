@@ -1979,7 +1979,7 @@ public fun snapshot_expiry_pricer_bundle(
 }
 
 /// Close the snapshot stage; valuation may then span transactions.
-public fun seal_snapshot(stage: SnapshotStage, vault: &mut PoolVault, config: &ProtocolConfig) {
+public fun seal_snapshot(stage: SnapshotStage, vault: &mut PoolVault, config: &mut ProtocolConfig) {
     vault.seal_valuation_snapshot(stage, config);
 }
 
@@ -2126,7 +2126,7 @@ public fun start_flush(
 /// `value_expiry_bundle`. Multi-market tests must drive the stages individually.
 public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle) {
     let stage = self.start_flush_bundle_stage(market);
-    seal_snapshot(stage, &mut market.vault, &market.config);
+    seal_snapshot(stage, &mut market.vault, &mut market.config);
 }
 
 /// Start a flush through a bundle and stop mid-snapshot: start, freeze that market's

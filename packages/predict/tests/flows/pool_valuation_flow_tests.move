@@ -105,7 +105,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     fx.value_expiry(&mut vault, &mut m2, &config);
     let pool_nav = vault.finish_flush(
@@ -186,7 +186,7 @@ fun multi_market_pool_nav_is_exact_with_a_mid_flush_rebalance() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     // Mid-window maintenance on the still-pending m2, guarded as a real move.
     let idle_before = vault.idle_balance();
@@ -266,7 +266,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     fx.value_expiry(&mut vault, &mut m2, &config);
     let pool_nav = vault.finish_flush(
@@ -314,7 +314,7 @@ fun empty_pool_valuation_returns_idle() {
     // No active markets: start, seal an empty snapshot, then finish with no value
     // steps returns idle.
     let stage = fx.start_flush(&mut config, &mut vault);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     let pool_nav = vault.finish_flush(
         &mut config,
         option::none(),
@@ -408,7 +408,7 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     let _ = vault.finish_flush(
         &mut config,
@@ -452,7 +452,7 @@ fun valuation_split_across_transactions_marks_at_the_snapshot_instant() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
 
     // Valuation stage, transaction 1 of 2.
     fx.value_expiry(&mut vault, &mut m1, &config);
@@ -523,7 +523,7 @@ fun seal_aborts_when_an_active_market_has_no_frozen_pricer() {
     // flush value a market at an oracle state read after the snapshot instant.
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
 
     abort 999
 }
@@ -614,7 +614,7 @@ fun the_flush_event_reports_live_pre_drain_idle_apart_from_the_frozen_mark_idle(
     // Control flush, no mid-window movement, to fix the mark.
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     let control_mark = vault.finish_flush(
         &mut config,
@@ -631,7 +631,7 @@ fun the_flush_event_reports_live_pre_drain_idle_apart_from_the_frozen_mark_idle(
     fx.scenario_mut().next_tx(test_constants::alice());
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     let idle_at_seal = vault.idle_balance();
     fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
     // Guard: the mid-window sweep genuinely raised live idle.
@@ -681,7 +681,7 @@ fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
     fx.rebalance_expiry_cash(&mut vault, &mut m1, &config);
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     let control_mark = vault.finish_flush(
         &mut config,
@@ -698,7 +698,7 @@ fun a_market_created_and_funded_mid_flush_leaves_the_mark_unchanged() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     return_shared(config);
     return_shared(vault);
     return_shared(oracle_registry);
@@ -1225,7 +1225,7 @@ fun aborting_after_a_partial_valuation_leaves_no_residue_and_re_values() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     let m1_cash_after_partial = m1.cash_balance();
     let idle_after_partial = vault.idle_balance();
@@ -1245,7 +1245,7 @@ fun aborting_after_a_partial_valuation_leaves_no_residue_and_re_values() {
     let stage = fx.start_flush(&mut config, &mut vault);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m1, &config, &oracle_registry, &pyth, &bs);
     fx.snapshot_expiry_pricer(&stage, &mut vault, &mut m2, &config, &oracle_registry, &pyth, &bs);
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m1, &config);
     fx.value_expiry(&mut vault, &mut m2, &config);
     let pool_nav = vault.finish_flush(
@@ -1342,7 +1342,7 @@ fun a_stale_market_alongside_a_live_one_is_skipped_and_the_live_one_still_values
         &pyth,
         &bs,
     );
-    helpers::seal_snapshot(stage, &mut vault, &config);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
     fx.value_expiry(&mut vault, &mut m_live, &config);
     fx.value_expiry(&mut vault, &mut m_doomed, &config);
     let pool_nav = vault.finish_flush(

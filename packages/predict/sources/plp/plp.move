@@ -378,7 +378,7 @@ public fun snapshot_expiry_pricer(
 public fun seal_valuation_snapshot(
     vault: &mut PoolVault,
     stage: SnapshotStage,
-    config: &ProtocolConfig,
+    config: &mut ProtocolConfig,
 ) {
     config.assert_version();
     config.assert_valuation_in_progress();
@@ -397,6 +397,9 @@ public fun seal_valuation_snapshot(
     valuation.frozen_profit_basis_credits = frozen_profit_basis_credits;
     valuation.frozen_profit_basis_debits = frozen_profit_basis_debits;
     valuation.frozen_pending_protocol_profit = frozen_pending_protocol_profit;
+    // The atomic snapshot stage is closed: trading, blocked only inside this PTB,
+    // is live again for every later transaction of the resumable valuation stage.
+    config.end_snapshot();
 }
 
 /// Fold one snapshotted market's SNAPSHOT-INSTANT NAV into the running total. A
@@ -1129,6 +1132,7 @@ fun start_pool_valuation_internal(
 ) {
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
     config.begin_valuation();
+    config.begin_snapshot();
     vault.valuation =
         option::some(PoolValuation {
             expected_expiry_markets: vault.expiry_accounting.active_expiry_markets(),
