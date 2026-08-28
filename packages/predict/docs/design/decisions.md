@@ -446,9 +446,16 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 - **Duty inventory for the dropped whole-flush potato.** *Snapshot atomicity* —
   kept, type-enforced by `SnapshotStage`. *Completeness* — kept: sealing requires a
   frozen entry per expected market, finishing requires every expected market
-  valued. *Authorization* — kept via `started_by`: only the starter values and
-  finishes; there is deliberately no permissionless completion, only
-  permissionless discard past `max_valuation_window_ms`. *Lock releases
+  valued. *Authorization* — only the SNAPSHOT is privileged (a `MarketLifecycleCap`
+  starts one); `value_expiry` and `finish_flush` are permissionless. Completion
+  is safe to open because the frozen mark and the per-queue drain budgets are both
+  committed at the snapshot, so a stranger can neither reprice a fill nor grief by
+  finishing with a zero budget (finish takes no budget), and `value_expiry` is
+  idempotent so a stranger racing the keeper cannot wedge it. There is no abort or
+  restart entrypoint: a stalled flush is superseded by a fresh `start_pool_valuation`
+  (folding stop into start, discarding the in-flight valuation and re-snapshotting),
+  and `finish_flush` refuses past `max_valuation_window_ms` for everyone including
+  the operator, so recovery past the window is a fresh start. *Lock releases
   in-transaction* — surrendered for the valuation stage only, and what the flag
   now gates across transactions is fee-incentive sponsorship, config, and LP
   cancels — never trading, maintenance, or market creation (a new market sits

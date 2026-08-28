@@ -650,7 +650,7 @@ fun block_scholes_fallback_unblocks_pool_valuation_sweep() {
 
     fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut market);
-    let pool_nav = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let pool_nav = fx.finish_flush_bundle(&mut market);
 
     assert_eq!(pool_nav, IDLE_SEED);
     assert_eq!(helpers::vault(&market).idle_balance(), IDLE_SEED);

@@ -126,21 +126,19 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
     );
 }
 
-/// How long a started full-pool valuation may stay in flight before anyone may
-/// discard it (`plp::abort_valuation`). A stalled flush blocks only LP queue fills
-/// and the flush-set markets' settlement — trading continues, so this window bounds
-/// LP-fill latency and, once elapsed, lets ANYONE discard a stalled flush
-/// (`plp::abort_valuation`). It is not a hard cap on fill-mark staleness: `finish_flush`
-/// is not deadline-gated, so a still-live operator can complete past the window and its
-/// fills carry that older mark; the window is the point past which the operator loses its
-/// exclusive hold, so in practice staleness tracks the operator's cadence and this
-/// deadline. The ten-minute default keeps that to about one flush cadence. The minimum keeps a legitimate flush from being discarded
-/// out from under a keeper still working through it (a healthy flush is seconds
-/// of transactions, so one minute still covers it with margin); the maximum
-/// bounds the wait even if an operator sets this carelessly. A live operator
-/// never waits it out — `abort_valuation_privileged` is immediate. See RP-29.
+/// A HARD staleness bound on a flush's fills: `finish_flush` refuses to complete a
+/// flush that has been in flight longer than this window (`EValuationWindowExpired`),
+/// so no LP request is ever filled at a mark older than the window. Past it the
+/// operator starts a fresh flush — `start_pool_valuation` discards any in-flight
+/// flush and re-snapshots, so there is no separate restart, and starting carries
+/// NO deadline; only finishing is gated. Enforced for everyone, including the cap
+/// owner. A healthy
+/// flush is seconds of transactions, so the five-minute default leaves ample margin;
+/// the minimum keeps a legitimate slow flush from being locked out (one minute still
+/// covers a healthy flush), and the maximum bounds fill staleness even if an operator
+/// sets this carelessly. See RP-29.
 public(package) macro fun default_max_valuation_window_ms(): u64 {
-    10 * deepbook_predict::constants::one_minute_ms!()
+    5 * deepbook_predict::constants::one_minute_ms!()
 }
 
 public(package) macro fun min_max_valuation_window_ms(): u64 {

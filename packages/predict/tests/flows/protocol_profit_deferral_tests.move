@@ -133,13 +133,7 @@ fun flush_completes_when_settled_cut_exceeds_idle() {
     fx.value_expiry(&mut vault, &mut m_a, &config);
     fx.value_expiry(&mut vault, &mut m_b, &config);
     // Reaching here proves the flush did not brick on A's under-idle materialize.
-    let pool_nav = plp::finish_flush(
-        &mut vault,
-        &mut config,
-        option::none(),
-        option::none(),
-        fx.scenario_mut().ctx(),
-    );
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
 
     // cut = 5f, idle at A's materialize = l+4f -> l+4f realized, f-l carried. B releases
     // its f funding back, so idle ends at f with f-l still pending (excluded from value).

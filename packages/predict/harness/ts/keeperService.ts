@@ -20,7 +20,6 @@ import { aggregateNetGasOf, appendTrace, errorTag, legComputationsOf, maxComputa
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
-  abortValuationTx,
   clockTimestampMs,
   execute,
   executeAndWait,
@@ -103,29 +102,17 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
 }
 
 async function tick(feeds: Feeds, lifecycleCapId: string) {
-  // 0. Clear a stranded valuation lock BEFORE anything else. The lock outlives its
-  //    transaction now, so a flush that died part-way (a keeper crash between the
-  //    snapshot and finish_flush) blocks settlement and every LP lane — including the
-  //    flush lane's own recovery, which would otherwise never run again because it sits
-  //    behind `settledOk`. We are never legitimately mid-sequence at tick start (the
-  //    flush lane below runs its whole sequence inside one tick), so an engaged lock
-  //    here is always stranded: discard it on the privileged path. Recovering here
-  //    keeps the tick steps individually isolated, which is the harness invariant.
-  try {
-    if (await readValuationInProgress()) {
-      console.warn("[keeper] valuation lock engaged at tick start — discarding the stranded flush");
-      await executeAndWait(
-        abortValuationTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
-        "abort-stranded-valuation",
-      );
-      appendTrace("keeper", { type: "valuation-aborted", lane: "recovery" });
-    }
-  } catch (e) {
-    // Leave it engaged and retry next tick rather than proceeding into lanes that will
-    // all abort; surface the real tag so the bug oracle can see a repeating failure.
-    appendTrace("keeper", { type: "fail", lane: "lock-recovery", tag: errorTag(e) });
-    console.error(`[keeper] *** could not clear the valuation lock: ${errorTag(e)} — protocol stays frozen ***`);
-    return;
+  // 0. Surface a stranded valuation lock. A valuation that died after its snapshot
+  //    sealed leaves the outer lock (`valuation_in_progress`) engaged, but that lock
+  //    now only gates cancels and config setters — not settlement, trading, or the
+  //    flush lane. There is no separate discard step: the next flush's
+  //    `start_pool_valuation` discards the stranded valuation and starts fresh (stop is
+  //    folded into start), and the snapshot PTB is atomic so a pre-seal failure reverts
+  //    the lock cleanly. So there is nothing to recover here — trace it and let the
+  //    flush lane below supersede it.
+  if (await readValuationInProgress()) {
+    console.warn("[keeper] valuation lock engaged at tick start — the next flush supersedes it");
+    appendTrace("keeper", { type: "valuation-stranded", lane: "recovery" });
   }
 
   // Reconcile the active set from CHAIN — never an in-memory list. Used by settle / rebalance /
@@ -185,30 +172,11 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
     } catch (e) {
       appendTrace("keeper", { type: "fail", lane: "flush", tag: errorTag(e) });
       console.warn(`[keeper] flush deferred: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
-      // A flush that fails after the snapshot transaction committed leaves the valuation
-      // lock engaged, which freezes settlement and every LP request until it is
-      // discarded. The single-PTB flush could not reach that state. Discard on the same
-      // lifecycle authority that started it rather than waiting out
-      // `max_valuation_window_ms`; a failure here is logged and the next tick's step 0
-      // retries.
-      try {
-        await executeAndWait(
-          abortValuationTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
-          "abort-valuation",
-        );
-        appendTrace("keeper", { type: "valuation-aborted" });
-        console.warn("[keeper] discarded the in-flight valuation, lock released");
-      } catch (abortErr) {
-        // `protocol_config:2` (EValuationNotInProgress) is the benign case: the flush
-        // failed before `start_pool_valuation` committed, so there is nothing to
-        // discard. Anything else left the lock engaged — step 0 of the next tick
-        // retries it, so this is logged rather than swallowed.
-        const tag = errorTag(abortErr);
-        appendTrace("keeper", { type: "abort-noop", tag });
-        if (tag !== "protocol_config:2") {
-          console.warn(`[keeper] abort after failed flush did not land (${tag}); next tick retries`);
-        }
-      }
+      // A flush that fails after the snapshot sealed leaves the outer valuation lock
+      // engaged. There is no separate discard step: the next tick's
+      // `start_pool_valuation` discards the stranded valuation and starts a fresh flush
+      // (the snapshot PTB is atomic, so a pre-seal failure reverts the lock cleanly).
+      // The lock only gates cancels and config setters until then.
     }
   }
 

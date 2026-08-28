@@ -290,8 +290,15 @@ public fun setup_referred_live_market(
 /// `setup_live_market` at the far default expiry / live price with the large
 /// default trader deposit (used by the smoke + gate tests).
 public fun setup_everything(): (Fixture, ID, Trader) {
+    setup_everything_with_expiry(test_constants::default_expiry_ms())
+}
+
+/// Same as `setup_everything` but for a market at an explicit expiry. Used by
+/// mid-flush tests that need the expiry inside the finish window (the realistic
+/// case, where the keeper flushes a market about to expire).
+public fun setup_everything_with_expiry(expiry_ms: u64): (Fixture, ID, Trader) {
     setup_funded_live_market(
-        test_constants::default_expiry_ms(),
+        expiry_ms,
         test_constants::default_live_price(),
         test_constants::default_manager_deposit(),
     )
@@ -1984,12 +1991,12 @@ public fun seal_snapshot(stage: SnapshotStage, vault: &mut PoolVault, config: &m
 }
 
 public fun value_expiry(
-    self: &mut Fixture,
+    _self: &mut Fixture,
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
 ) {
-    vault.value_expiry(market, config, self.scenario.ctx());
+    vault.value_expiry(market, config);
 }
 
 /// Value one expiry through a market bundle.
@@ -2115,10 +2122,23 @@ public fun start_flush(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
 ): SnapshotStage {
+    self.start_flush_with_budgets(config, vault, option::none(), option::none())
+}
+
+/// Start a flush committing explicit supply/withdraw drain budgets at the snapshot.
+/// The permissionless `finish_flush` later honors whatever was committed here;
+/// `start_flush` defaults both to unbounded.
+public fun start_flush_with_budgets(
+    self: &mut Fixture,
+    config: &mut ProtocolConfig,
+    vault: &mut PoolVault,
+    supply_budget: Option<u64>,
+    withdraw_budget: Option<u64>,
+): SnapshotStage {
     let registry = self.scenario.take_shared<Registry>();
     let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
     return_shared(registry);
-    plp::start_pool_valuation(config, vault, proof, &self.clock, self.scenario.ctx())
+    plp::start_pool_valuation(config, vault, proof, supply_budget, withdraw_budget, &self.clock)
 }
 
 /// Start a pool-NAV flush through a single-market bundle, running the whole snapshot
@@ -2140,31 +2160,12 @@ public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundl
         &mut market.config,
         &mut market.vault,
         proof,
+        option::none(),
+        option::none(),
         &self.clock,
-        self.scenario.ctx(),
     );
     self.snapshot_expiry_pricer_bundle(&stage, market);
     stage
-}
-
-/// Discard an in-flight flush on the lifecycle authority that may start one.
-public fun abort_valuation_privileged_bundle(self: &mut Fixture, market: &mut MarketBundle) {
-    let registry = self.scenario.take_shared<Registry>();
-    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
-    return_shared(registry);
-    plp::abort_valuation_privileged(&mut market.vault, &mut market.config, proof);
-}
-
-/// Discard an in-flight flush on the lifecycle authority, against loose objects.
-public fun abort_valuation_privileged(
-    self: &mut Fixture,
-    vault: &mut PoolVault,
-    config: &mut ProtocolConfig,
-) {
-    let registry = self.scenario.take_shared<Registry>();
-    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
-    return_shared(registry);
-    plp::abort_valuation_privileged(vault, config, proof);
 }
 
 /// Read the valuation flag through a bundle's config. Wraps the public
@@ -2173,25 +2174,27 @@ public fun valuation_in_progress_bundle(market: &MarketBundle): bool {
     market.config.valuation_in_progress()
 }
 
-/// Discard an in-flight flush through the permissionless deadline path.
-public fun abort_valuation_bundle(self: &Fixture, market: &mut MarketBundle) {
-    plp::abort_valuation(&mut market.vault, &mut market.config, &self.clock);
-}
-
-/// Finish a pool-NAV flush through a market bundle.
-public fun finish_flush_bundle(
-    self: &mut Fixture,
-    market: &mut MarketBundle,
-    supply_budget: Option<u64>,
-    withdraw_budget: Option<u64>,
-): u64 {
+/// Finish a pool-NAV flush through a market bundle. Permissionless: finish honors
+/// the budgets committed at `start_flush` and is gated only by the staleness window.
+public fun finish_flush_bundle(self: &mut Fixture, market: &mut MarketBundle): u64 {
     plp::finish_flush(
         &mut market.vault,
         &mut market.config,
-        supply_budget,
-        withdraw_budget,
+        &self.clock,
         self.scenario.ctx(),
     )
+}
+
+/// Finish a pool-NAV flush against loose objects. Permissionless: budgets were
+/// committed at `start_flush`; finish is gated only by the staleness window. Sampling
+/// `self.clock` and the ctx inside this helper keeps the two field borrows disjoint —
+/// a caller cannot pass `fx.clock()` and `fx.scenario_mut().ctx()` in one expression.
+public fun finish_flush(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &mut ProtocolConfig,
+): u64 {
+    plp::finish_flush(vault, config, &self.clock, self.scenario.ctx())
 }
 
 // === Invariant assertions (rule 17 one-call checks) ===

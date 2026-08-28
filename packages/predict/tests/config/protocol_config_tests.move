@@ -242,9 +242,9 @@ fun set_protocol_reserve_profit_share_during_valuation_aborts() {
 
 /// The window that bounds a stalled flush's LP-fill delay — and therefore the staleness of the mark those fills execute at — ships at ten minutes and is admin-tunable, so keeper cadence and stall tolerance can be retuned without an upgrade.
 #[test]
-fun max_valuation_window_ships_at_ten_minutes_and_is_tunable() {
+fun max_valuation_window_ships_at_five_minutes_and_is_tunable() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.max_valuation_window_ms(), 10 * constants::one_minute_ms!());
+    assert_eq!(config.max_valuation_window_ms(), 5 * constants::one_minute_ms!());
 
     config.set_max_valuation_window_ms(
         &admin_cap,
@@ -282,7 +282,7 @@ fun max_valuation_window_above_the_ceiling_aborts() {
 
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_max_valuation_window_during_valuation_aborts() {
-    // `abort_valuation` measures the deadline against a flush already in flight; moving the window under one would shift its escape hatch after the fact.
+    // `finish_flush` measures its deadline against a flush already in flight; moving the window under one would shift its finish cutoff after the fact.
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     config.begin_valuation();
     config.set_max_valuation_window_ms(

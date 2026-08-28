@@ -197,9 +197,10 @@ public struct FlushExecuted has copy, drop, store {
 }
 
 /// An in-flight full-pool valuation was discarded without draining any queue —
-/// by the operator immediately, or permissionlessly past the abort deadline. The
-/// counts distinguish an abandoned flush from one that never progressed.
-public struct FlushAborted has copy, drop, store {
+/// discard-and-restart of an in-flight flush on lifecycle authority (there is no
+/// permissionless discard). The counts distinguish an abandoned flush from one
+/// that never progressed.
+public struct FlushRestarted has copy, drop, store {
     pool_vault_id: ID,
     expected_market_count: u64,
     valued_market_count: u64,
@@ -473,12 +474,12 @@ public(package) fun emit_flush_executed(
     });
 }
 
-public(package) fun emit_flush_aborted(
+public(package) fun emit_flush_restarted(
     pool_vault_id: ID,
     expected_market_count: u64,
     valued_market_count: u64,
 ) {
-    event::emit(FlushAborted {
+    event::emit(FlushRestarted {
         pool_vault_id,
         expected_market_count,
         valued_market_count,

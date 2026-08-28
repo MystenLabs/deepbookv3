@@ -40,6 +40,11 @@ const MOVED_LIVE_PRICE: u64 = 102_000_000_000;
 const TOP_UP_FORCING_QUANTITY: u64 = 14_000_000_000;
 /// Minimum supply-request escrow accepted by the queue (10 DUSDC).
 const SUPPLY_AMOUNT: u64 = 10_000_000;
+
+// A 6-minute expiry (00:06:00, a 1-minute-cadence boundary). With `now_ms` at 120_000
+// and the finish window at 5 min, a flush starting at 120_000 can cross this expiry and
+// finish well inside the window.
+const MID_FLUSH_EXPIRY_MS: u64 = 360_000;
 /// No fill floor: the request takes whatever the mark quotes.
 const NO_MIN_OUT: u64 = 0;
 
@@ -74,7 +79,7 @@ fun a_mint_between_snapshot_and_valuation_leaves_the_mark_unchanged() {
         MID_WINDOW_QUANTITY,
     );
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     // Guard: with the mint now pre-snapshot, the mark moves (the pool keeps the
@@ -118,7 +123,7 @@ fun a_close_between_snapshot_and_valuation_leaves_the_mark_unchanged() {
         PARTIAL_CLOSE_QUANTITY,
     );
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     // Guard: the close now pre-snapshot moves the mark (the pool keeps the close
@@ -161,7 +166,7 @@ fun a_full_close_deleting_boundaries_mid_window_leaves_the_mark_unchanged() {
     );
     assert!(replacement.is_none());
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -208,7 +213,7 @@ fun a_mint_closed_again_mid_window_leaves_the_mark_unchanged() {
     );
     assert!(replacement.is_none());
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -250,7 +255,7 @@ fun an_oracle_move_plus_a_trade_mid_window_leave_the_mark_unchanged() {
         PARTIAL_CLOSE_QUANTITY,
     );
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -287,7 +292,7 @@ fun a_trade_after_a_markets_valuation_is_invisible_to_the_flush() {
         helpers::pos_inf_tick(),
         MID_WINDOW_QUANTITY,
     );
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -313,14 +318,14 @@ fun a_request_submitted_after_the_snapshot_waits_for_the_next_flush() {
     // budgets below are unbounded.
     let _too_young = fx.request_supply_bundle(&mut market, &mut account, SUPPLY_AMOUNT, NO_MIN_OUT);
     fx.value_expiry_bundle(&mut market);
-    fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    fx.finish_flush_bundle(&mut market);
     assert_eq!(helpers::vault(&market).supply_requests_pending(), 1);
 
     // The next flush reaches it.
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut market);
-    fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    fx.finish_flush_bundle(&mut market);
     assert_eq!(helpers::vault(&market).supply_requests_pending(), 0);
 
     helpers::return_account_bundle(account);
@@ -377,7 +382,7 @@ fun a_mid_window_surplus_sweep_leaves_the_mark_unchanged() {
     // compensation at work, not a no-op rebalance.
     assert!(helpers::vault(&market).idle_balance() > idle_before);
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -423,7 +428,7 @@ fun a_mid_window_top_up_leaves_the_mark_unchanged() {
     // Guard: the top-up genuinely pulled idle into the market.
     assert!(helpers::vault(&market).idle_balance() < idle_before);
     fx.value_expiry_bundle(&mut market);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -465,7 +470,7 @@ fun maintenance_after_a_markets_valuation_leaves_the_mark_unchanged() {
     fx.rebalance_expiry_cash_bundle(&mut market);
     // Guard: the sweep genuinely moved cash after the valuation.
     assert!(helpers::vault(&market).idle_balance() > idle_before);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -568,7 +573,12 @@ fun settling_a_market_pending_valuation_aborts() {
 
 #[test]
 fun a_market_expiring_mid_flush_values_at_the_frozen_mark_then_settles() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    // Expiry inside the finish window so the whole flush — start, cross the expiry,
+    // finish — fits under `max_valuation_window_ms`. This is the production shape: the
+    // keeper flushes a market about to expire, not one a year out. `now_ms` is 120_000
+    // and the window ships at 5 min, so a 6-minute (1-minute-cadence) expiry crosses
+    // mid-flush with room to spare.
+    let (mut fx, expiry_id, trader) = helpers::setup_everything_with_expiry(MID_FLUSH_EXPIRY_MS);
     fx.bootstrap_lock(SUPPLY_AMOUNT);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -601,7 +611,7 @@ fun a_market_expiring_mid_flush_values_at_the_frozen_mark_then_settles() {
     // in idle — and the mark below still equals the control, because every
     // figure it reads was frozen at the snapshot instant.
     assert!(helpers::vault(&market).idle_balance() > idle_before);
-    let corrected_mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
     assert_eq!(corrected_mark, control_mark);
 
     helpers::return_account_bundle(account);
@@ -609,10 +619,10 @@ fun a_market_expiring_mid_flush_values_at_the_frozen_mark_then_settles() {
     fx.finish();
 }
 
-// === Lazy reconciliation across aborts ===
+// === Lazy reconciliation across superseded flushes ===
 
 #[test]
-fun an_aborted_flushs_snapshot_never_leaks_into_the_next_flush() {
+fun a_superseded_flushs_snapshot_never_leaks_into_the_next_flush() {
     let (mut fx, expiry_id, trader) = helpers::setup_everything();
     fx.bootstrap_lock(SUPPLY_AMOUNT);
     fx.scenario_mut().next_tx(test_constants::alice());
@@ -626,7 +636,7 @@ fun an_aborted_flushs_snapshot_never_leaks_into_the_next_flush() {
         BASELINE_QUANTITY,
     );
 
-    // Flush A records a mid-window mint, then is discarded.
+    // Flush A records a mid-window mint, then is left in flight (never finished).
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     let _mid_window = fx.mint_bundle(
@@ -636,13 +646,11 @@ fun an_aborted_flushs_snapshot_never_leaks_into_the_next_flush() {
         helpers::pos_inf_tick(),
         MID_WINDOW_QUANTITY,
     );
-    fx.scenario_mut().next_tx(test_constants::alice());
-    fx.abort_valuation_privileged_bundle(&mut market);
-    assert!(!helpers::valuation_in_progress_bundle(&market));
 
-    // Both later flushes see the mint as ordinary pre-snapshot state. If flush
-    // B could read A's stale snapshot it would exclude the mint and disagree
-    // with flush C.
+    // No abort entrypoint: flush B's start supersedes A, bumping the flush ordinal so
+    // A's snapshot stamp is staleness-invalidated. Both later flushes then see the mint
+    // as ordinary pre-snapshot state. If flush B could read A's stale snapshot it would
+    // exclude the mint and disagree with flush C.
     let mark_b = run_undisturbed_flush(&mut fx, &mut market);
     let mark_c = run_undisturbed_flush(&mut fx, &mut market);
     assert_eq!(mark_b, mark_c);
@@ -663,10 +671,11 @@ fun a_stale_stamp_is_discarded_by_the_next_trade() {
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     assert!(helpers::market(&market).is_pending_valuation(helpers::config(&market)));
-    fx.scenario_mut().next_tx(test_constants::alice());
-    fx.abort_valuation_privileged_bundle(&mut market);
-    // The stamp is stale the moment the flag drops, and the next trade discards
-    // it instead of recording.
+    // Completing the flush drops the in-flight flag. The stamp goes stale the moment
+    // the flag drops — no visit to the stamped market is needed — and the next trade
+    // discards it instead of recording onto a dead flush.
+    fx.value_expiry_bundle(&mut market);
+    let _ = fx.finish_flush_bundle(&mut market);
     assert!(!helpers::market(&market).is_pending_valuation(helpers::config(&market)));
     let _plain = fx.mint_bundle(
         &mut market,
@@ -706,7 +715,7 @@ fun value_expiry_moves_no_cash_for_a_live_market() {
     fx.value_expiry_bundle(&mut market);
     assert_eq!(helpers::vault(&market).idle_balance(), idle_before);
     assert_eq!(helpers::market(&market).cash_balance(), cash_before);
-    fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    fx.finish_flush_bundle(&mut market);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -764,7 +773,7 @@ fun mid_window_trading_has_no_budget() {
     );
     // The flush completes on the frozen (pre-trade) figure regardless of the
     // volume that landed mid-window.
-    let mark = fx.finish_flush_bundle(&mut market, option::none(), option::none());
+    let mark = fx.finish_flush_bundle(&mut market);
     assert!(mark > 0);
 
     helpers::return_account_bundle(account);
@@ -780,5 +789,5 @@ fun run_undisturbed_flush(fx: &mut helpers::Fixture, market: &mut helpers::Marke
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(market);
     fx.value_expiry_bundle(market);
-    fx.finish_flush_bundle(market, option::none(), option::none())
+    fx.finish_flush_bundle(market)
 }

@@ -1386,6 +1386,8 @@ function addSnapshotStage(tx: Transaction, params: FlushParams): void {
             tx.object(params.protocolConfigId),
             tx.object(params.poolVaultId),
             proof,
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (unbounded)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (unbounded)
             tx.object(CLOCK_ID),
         ],
     });
@@ -1443,8 +1445,7 @@ function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }
         arguments: [
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (unbounded)
-            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (unbounded)
+            tx.object(CLOCK_ID), // deadline-gated; budgets were committed at start
         ],
     });
     return tx;
@@ -2009,6 +2010,8 @@ export function bareFlushTx(params: {
             tx.object(params.protocolConfigId),
             tx.object(params.poolVaultId),
             proof,
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // supply_budget: None (unbounded)
+            tx.pure(bcs.option(bcs.u64()).serialize(null)), // withdraw_budget: None (unbounded)
             tx.object(CLOCK_ID),
         ],
     });
@@ -2021,8 +2024,7 @@ export function bareFlushTx(params: {
         arguments: [
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)),
-            tx.pure(bcs.option(bcs.u64()).serialize(null)),
+            tx.object(CLOCK_ID),
         ],
     });
     return tx;
@@ -2071,6 +2073,9 @@ export function keeperFlushTxs(params: {
             snapshotTx.object(params.protocolConfigId),
             snapshotTx.object(params.poolVaultId),
             proof,
+            // budgets committed at start; steps 2/3 (value_expiry, finish_flush) are permissionless
+            snapshotTx.pure(bcs.option(bcs.u64()).serialize(null)),
+            snapshotTx.pure(bcs.option(bcs.u64()).serialize(null)),
             snapshotTx.object(CLOCK_ID),
         ],
     });
@@ -2116,28 +2121,6 @@ export function keeperFlushTxs(params: {
     return [snapshotTx, ...valuationTxs, finishTx];
 }
 
-// Discard an in-flight flush immediately on the lifecycle authority. The valuation lock
-// is held across transactions now, so a keeper that dies between the snapshot stage and
-// `finish_flush` leaves the whole mutation surface frozen; this is the operator's
-// escape. (Anyone may run the permissionless `plp::abort_valuation` once the flush has
-// been in flight past `max_valuation_window_ms`; the keeper holds the cap, so it never
-// needs to wait.)
-export function abortValuationTx(params: {
-    poolVaultId: string;
-    protocolConfigId: string;
-    lifecycleCapId: string;
-}): Transaction {
-    const tx = new Transaction();
-    const proof = tx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
-    });
-    tx.moveCall({
-        target: target("plp", "abort_valuation_privileged"),
-        arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), proof],
-    });
-    return tx;
-}
 
 // Settle ONE expired market in its own PTB (decoupled from the flush): insert its exact-expiry Pyth
 // observation, call try_settle, then rebalance_expiry_cash to sweep the settled market from

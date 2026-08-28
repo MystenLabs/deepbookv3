@@ -59,10 +59,12 @@ public struct ProtocolConfig has key {
     /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
     /// the pool is uncapped until an operator sets a figure (RP-23).
     max_lp_pool_value: u64,
-    /// How long a started full-pool valuation may stay in flight before
-    /// `plp::abort_valuation` becomes permissionless. A stalled flush blocks only
-    /// LP queue fills and the flush-set markets' settlement — trading continues —
-    /// so this bounds LP-fill latency and is tuned alongside flush cadence (RP-29).
+    /// Hard staleness bound: `finish_flush` refuses to complete a flush in flight
+    /// longer than this, so no LP request fills at a mark older than the window;
+    /// past it the operator starts a fresh flush (which discards the stale one).
+    /// A stalled flush blocks only LP queue fills and the flush-set markets'
+    /// settlement — trading continues — so this also bounds LP-fill latency and is
+    /// tuned alongside flush cadence (RP-29).
     max_valuation_window_ms: u64,
     strike_exposure_template_config: StrikeExposureConfig,
     ewma_config: EwmaConfig,
