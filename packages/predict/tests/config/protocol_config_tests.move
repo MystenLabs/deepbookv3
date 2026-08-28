@@ -240,7 +240,7 @@ fun set_protocol_reserve_profit_share_during_valuation_aborts() {
     abort 999
 }
 
-/// The window that bounds a stalled flush's LP-fill delay — and therefore the staleness of the mark those fills execute at — ships at ten minutes and is admin-tunable, so keeper cadence and stall tolerance can be retuned without an upgrade.
+/// The window that bounds a stalled flush's LP-fill delay — and therefore the staleness of the mark those fills execute at — ships at five minutes and is admin-tunable, so keeper cadence and stall tolerance can be retuned without an upgrade.
 #[test]
 fun max_valuation_window_ships_at_five_minutes_and_is_tunable() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
@@ -260,7 +260,7 @@ fun max_valuation_window_ships_at_five_minutes_and_is_tunable() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMaxValuationWindowMs)]
 fun max_valuation_window_below_the_floor_aborts() {
-    // A window under the floor lets anyone discard a flush the keeper is still working through, converting a liveness knob into a griefing lever.
+    // A window under the floor could lock a legitimately-slow flush out of `finish_flush` before the keeper completes it, turning a liveness knob into a self-inflicted brick.
     let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
     config.set_max_valuation_window_ms(
         &admin_cap,

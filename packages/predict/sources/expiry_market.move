@@ -675,7 +675,8 @@ public fun try_settle(
     // sweep-vs-value branch at the snapshot, and settlement discontinuously
     // reclassifies its rows (releases the impact escrow, swaps marked for settled
     // liability). The wait is bounded by that market's own valuation transaction
-    // — or by the flush abort deadline — not by the whole flush. The snapshot
+    // — or by a fresh flush superseding this one, which bumps the flush ordinal so
+    // the stamp is staleness-cleared on the next line — not by the whole flush. The snapshot
     // stage refuses to stamp an expired-unsettled market, so settlement can never
     // be due before a flush stamps it; only an expiry landing mid-window waits
     // here.

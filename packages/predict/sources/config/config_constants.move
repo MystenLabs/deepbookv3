@@ -127,7 +127,7 @@ public(package) fun assert_lp_request_limit_flush_attempts(value: u64) {
 }
 
 /// A HARD staleness bound on a flush's fills: `finish_flush` refuses to complete a
-/// flush that has been in flight longer than this window (`EValuationWindowExpired`),
+/// flush that has been in flight for at least this window (`EValuationWindowExpired`),
 /// so no LP request is ever filled at a mark older than the window. Past it the
 /// operator starts a fresh flush — `start_pool_valuation` discards any in-flight
 /// flush and re-snapshots, so there is no separate restart, and starting carries
