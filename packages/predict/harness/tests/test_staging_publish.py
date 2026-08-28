@@ -28,6 +28,49 @@ from harness import (
 )
 
 
+_PINNED_REV = "1111111111111111111111111111111111111111"
+_PYTH_REPO = "https://github.com/pyth-network/pyth-crosschain.git"
+_WORMHOLE_REPO = "https://github.com/pyth-network/wormhole.git"
+_BS_REPO = "https://github.com/blockscholes/sui-signed-oracle.git"
+
+
+def _git_dep(name: str, repo: str, subdir: str, rev: str = _PINNED_REV) -> str:
+    return f'{name} = {{ git = "{repo}", subdir = "{subdir}", rev = "{rev}" }}\n'
+
+
+def _write_canonical_consumers(
+    packages: Path,
+    *,
+    pyth_repo: str = _PYTH_REPO,
+    pyth_subdir: str = "lazer/contracts/sui",
+    wormhole_repo: str = _WORMHOLE_REPO,
+    wormhole_subdir: str = "sui/wormhole",
+    bs_repo: str = _BS_REPO,
+    bs_oracle_subdir: str = "move/bs_oracle",
+    bs_sid_subdir: str = "move/bs_sid",
+) -> None:
+    """Write matching Predict/Propbook manifests for coordinate-validation tests."""
+    predict = (
+        "[package]\nname = \"deepbook_predict\"\n\n[dependencies]\n"
+        + _git_dep("pyth_lazer", pyth_repo, pyth_subdir)
+        + _git_dep("bs_oracle", bs_repo, bs_oracle_subdir)
+        + "\n[dep-replacements.testnet]\n"
+        + _git_dep("wormhole", wormhole_repo, wormhole_subdir)
+    )
+    propbook = (
+        "[package]\nname = \"propbook\"\n\n[dependencies]\n"
+        + _git_dep("pyth_lazer", pyth_repo, pyth_subdir)
+        + _git_dep("bs_oracle", bs_repo, bs_oracle_subdir)
+        + _git_dep("bs_sid", bs_repo, bs_sid_subdir)
+        + "\n[dep-replacements.testnet]\n"
+        + _git_dep("wormhole", wormhole_repo, wormhole_subdir)
+    )
+    for name, text in (("predict", predict), ("propbook", propbook)):
+        package = packages / name
+        package.mkdir(parents=True)
+        (package / "Move.toml").write_text(text)
+
+
 class StagingTests(unittest.TestCase):
     def test_external_specs_come_from_matching_canonical_manifests(self) -> None:
         specs = staging.external_dependency_specs()
@@ -36,7 +79,7 @@ class StagingTests(unittest.TestCase):
         for spec in specs.values():
             self.assertEqual(len(spec.rev), 40)
             self.assertRegex(spec.rev, r"^[0-9a-f]{40}$")
-            self.assertTrue(spec.repo.startswith("https://"))
+            self.assertIn(spec.repo, config.ALLOWED_GIT_REPOS)
             self.assertTrue(spec.subdir)
 
     def test_checkout_fingerprint_includes_publication_metadata(self) -> None:
@@ -154,7 +197,7 @@ class StagingTests(unittest.TestCase):
             destination = root / "destination"
             spec = staging.GitDependency(
                 name="upstream",
-                repo="https://example.com/upstream.git",
+                repo=_BS_REPO,
                 rev=revision,
                 subdir="move/package",
             )
@@ -171,6 +214,101 @@ class StagingTests(unittest.TestCase):
                 '[package]\nname = "upstream"\n',
             )
             self.assertFalse((destination / "Published.toml").exists())
+
+    def test_disallowed_repo_is_rejected_before_git_starts(self) -> None:
+        spec = staging.GitDependency(
+            name="pyth_lazer",
+            repo="--upload-pack=true",
+            rev=_PINNED_REV,
+            subdir="lazer/contracts/sui",
+        )
+        with mock.patch.object(staging.cancellation, "run") as run:
+            with self.assertRaisesRegex(ValueError, "not allowlisted"):
+                staging._stage_git_dep(spec, Path("/unused"))
+        run.assert_not_called()
+
+    def test_unlisted_https_repo_is_rejected_before_git_starts(self) -> None:
+        spec = staging.GitDependency(
+            name="pyth_lazer",
+            repo="https://github.com/octocat/Hello-World.git",
+            rev=_PINNED_REV,
+            subdir="lazer/contracts/sui",
+        )
+        with mock.patch.object(staging.cancellation, "run") as run:
+            with self.assertRaisesRegex(ValueError, "not allowlisted"):
+                staging._stage_git_dep(spec, Path("/unused"))
+        run.assert_not_called()
+
+    def test_unsafe_subdir_is_rejected_before_git_starts(self) -> None:
+        cases = (
+            "../secret",
+            "/absolute/path",
+            "move:evil",
+            "-output",
+            "move\\oracle",
+            "",
+        )
+        for subdir in cases:
+            spec = staging.GitDependency(
+                name="bs_oracle",
+                repo=_BS_REPO,
+                rev=_PINNED_REV,
+                subdir=subdir,
+            )
+            with self.subTest(subdir=subdir), mock.patch.object(
+                staging.cancellation, "run"
+            ) as run:
+                with self.assertRaisesRegex(ValueError, "safe relative path"):
+                    staging._stage_git_dep(spec, Path("/unused"))
+                run.assert_not_called()
+
+    def test_manifest_coordinate_is_rejected_before_git_starts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            packages = Path(tmp)
+            _write_canonical_consumers(packages, pyth_repo="--upload-pack=true")
+            with mock.patch.object(staging.cancellation, "run") as run:
+                with self.assertRaisesRegex(ValueError, "not allowlisted"):
+                    staging.external_dependency_specs(packages)
+            run.assert_not_called()
+
+    def test_git_fetch_uses_end_of_options_and_disables_ext(self) -> None:
+        spec = staging.GitDependency(
+            name="pyth_lazer",
+            repo=_PYTH_REPO,
+            rev=_PINNED_REV,
+            subdir="lazer/contracts/sui",
+        )
+        recorded: list[list[str]] = []
+
+        def record(command, **_kwargs):
+            recorded.append(list(command))
+            if "fetch" in command:
+                raise RuntimeError("stop after recording fetch argv")
+            return mock.Mock(returncode=0, stdout=b"", stderr=b"")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "pyth_lazer"
+            with (
+                mock.patch.object(staging, "_git_has_commit", return_value=False),
+                mock.patch.object(staging.cancellation, "run", side_effect=record),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "stop after recording"):
+                    staging._stage_git_dep(spec, destination)
+
+        self.assertGreaterEqual(len(recorded), 2)
+        self.assertEqual(recorded[0][:3], ["git", "init", "-q"])
+        fetch = recorded[1]
+        self.assertEqual(fetch[:8], [
+            "git",
+            "-C",
+            fetch[2],
+            "-c",
+            "protocol.ext.allow=never",
+            "fetch",
+            "-q",
+            "--depth",
+        ])
+        self.assertEqual(fetch[8:], ["1", "--", spec.repo, spec.rev])
 
 
 class PublicationPlanTests(unittest.TestCase):
