@@ -363,7 +363,7 @@ paths:
           schema: { type: integer, format: int64, minimum: 0 }
           description: |
             Unix seconds. Defaults to 24 hours before end_time. The window must be ordered and at
-            most 90 days wide.
+            most 365 days wide.
         - in: query
           name: end_time
           schema: { type: integer, format: int64, minimum: 0 }
@@ -388,7 +388,7 @@ paths:
                 $ref: "#/components/schemas/IntervalMakerTakerVolumes"
         "400":
           description: |
-            Invalid interval, unordered or negative window, a window wider than 90 days, a window
+            Invalid interval, unordered or negative window, a window wider than 365 days, a window
             needing more than 500 buckets, or no valid pool names.
       x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
 

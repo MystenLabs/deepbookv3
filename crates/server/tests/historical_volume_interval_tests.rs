@@ -238,12 +238,24 @@ async fn rejects_a_multi_decade_window_bucketed_by_the_second() {
 }
 
 #[tokio::test]
+async fn serves_a_year_of_daily_buckets() {
+    let (_temp_db, router) = setup(&[]).await;
+
+    // The widest window the endpoint exists to serve: a year at daily granularity.
+    let (status, body) = send(&router, &uri(T0_S, T0_S + 365 * DAY_S, "86400")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let response: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(response.as_object().unwrap().len(), 365, "{body}");
+}
+
+#[tokio::test]
 async fn rejects_a_window_wider_than_the_maximum_range() {
     let (_temp_db, router) = setup(&[]).await;
 
+    // A day past the cap, at a bucket count the budget would otherwise allow.
     assert_rejected(
         &router,
-        &uri(T0_S, T0_S + 91 * DAY_S, "86400"),
+        &uri(T0_S, T0_S + 366 * DAY_S, "86400"),
         "exceeds the maximum",
     )
     .await;

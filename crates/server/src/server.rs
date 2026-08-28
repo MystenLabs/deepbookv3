@@ -75,8 +75,9 @@ const DEFAULT_VOLUME_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
 /// Default bucket length for the intervalized historical-volume endpoint (1 hour, in seconds).
 const DEFAULT_VOLUME_INTERVAL_SECONDS: i64 = 3600;
 
-/// Widest window the intervalized historical-volume endpoint will serve (90 days in ms).
-const MAX_VOLUME_INTERVAL_RANGE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
+/// Widest window the intervalized historical-volume endpoint will serve (365 days in ms). Wide
+/// enough for a year of daily buckets, which stays well inside the bucket budget below.
+const MAX_VOLUME_INTERVAL_RANGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 
 /// Most buckets one intervalized historical-volume request may ask for. Each bucket costs one
 /// database query, so this is the per-request work budget.
