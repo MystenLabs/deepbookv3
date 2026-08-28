@@ -124,9 +124,18 @@ async fn seed_fill(db: &Db, fill: FillSeed) {
 }
 
 fn uri(start_time_s: i64, end_time_s: i64, interval_s: &str) -> String {
+    uri_for_pools(
+        POOL_NAME,
+        start_time_s,
+        end_time_s,
+        &format!("&interval={interval_s}"),
+    )
+}
+
+fn uri_for_pools(pool_names: &str, start_time_s: i64, end_time_s: i64, interval: &str) -> String {
     format!(
-        "/historical_volume_by_balance_manager_id_with_interval/{POOL_NAME}/{MANAGER_ID}\
-         ?start_time={start_time_s}&end_time={end_time_s}&interval={interval_s}&volume_in_base=true",
+        "/historical_volume_by_balance_manager_id_with_interval/{pool_names}/{MANAGER_ID}\
+         ?start_time={start_time_s}&end_time={end_time_s}{interval}&volume_in_base=true",
     )
 }
 
@@ -230,10 +239,12 @@ async fn rejects_a_window_one_bucket_over_the_budget() {
 }
 
 #[tokio::test]
-async fn rejects_a_multi_decade_window_bucketed_by_the_second() {
+async fn rejects_a_multi_decade_window() {
     let (_temp_db, router) = setup(&[]).await;
 
     // The report's shape: an unauthenticated decades-wide request at a one-second interval.
+    // The window cap fires first here, whatever the interval — the bucket budget is pinned
+    // separately by rejects_a_window_one_bucket_over_the_budget.
     assert_rejected(&router, &uri(0, T0_S, "1"), "exceeds the maximum").await;
 }
 
@@ -313,4 +324,69 @@ async fn rejects_timestamps_that_overflow_the_millisecond_conversion() {
         "end_time must be greater than start_time",
     )
     .await;
+}
+
+#[tokio::test]
+async fn terminates_when_end_time_saturates_to_the_i64_ceiling() {
+    let (_temp_db, router) = setup(&[]).await;
+
+    // end_time in seconds * 1000 clamps to exactly i64::MAX, and start_time defaults to one day
+    // before it, so every budget check passes with 24 buckets. The walk must still terminate.
+    let uri = format!(
+        "/historical_volume_by_balance_manager_id_with_interval/{POOL_NAME}/{MANAGER_ID}\
+         ?end_time=9223372036854776&interval=3600&volume_in_base=true",
+    );
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(30), send(&router, &uri)).await;
+    let (status, body) = result.expect("request must terminate");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let response: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(response.as_object().unwrap().len(), 24, "{body}");
+}
+
+#[tokio::test]
+async fn repeated_pool_names_do_not_change_the_result() {
+    let (_temp_db, router) = setup(&[FillSeed {
+        tag: "maker-b0",
+        timestamp_ms: (T0_S + HOUR_S / 2) * 1000,
+        maker_balance_manager_id: MANAGER_ID,
+        taker_balance_manager_id: OTHER_MANAGER_ID,
+        base_quantity: 100,
+    }])
+    .await;
+
+    let interval = format!("&interval={HOUR_S}");
+    let end = T0_S + 4 * HOUR_S;
+    let (single_status, single) =
+        send(&router, &uri_for_pools(POOL_NAME, T0_S, end, &interval)).await;
+    let repeated_names = format!("{POOL_NAME},{POOL_NAME},{POOL_NAME}");
+    let (repeated_status, repeated) = send(
+        &router,
+        &uri_for_pools(&repeated_names, T0_S, end, &interval),
+    )
+    .await;
+
+    assert_eq!(single_status, StatusCode::OK, "{single}");
+    assert_eq!(repeated_status, StatusCode::OK, "{repeated}");
+    assert_eq!(
+        serde_json::from_str::<Value>(&single).unwrap(),
+        serde_json::from_str::<Value>(&repeated).unwrap(),
+        "deduplicating the pool list must not change what is served",
+    );
+}
+
+#[tokio::test]
+async fn defaults_to_hourly_buckets_when_no_interval_is_given() {
+    let (_temp_db, router) = setup(&[]).await;
+
+    let (status, body) = send(
+        &router,
+        &uri_for_pools(POOL_NAME, T0_S, T0_S + 4 * HOUR_S, ""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let response: Value = serde_json::from_str(&body).unwrap();
+    let buckets = response.as_object().unwrap();
+    assert_eq!(buckets.len(), 4, "{body}");
+    assert!(buckets.contains_key(&bucket(T0_S, T0_S + HOUR_S)), "{body}");
 }

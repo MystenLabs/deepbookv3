@@ -370,11 +370,11 @@ paths:
           description: Unix seconds. Defaults to now.
         - in: query
           name: interval
-          required: true
           schema: { type: integer, format: int64, minimum: 1, default: 3600 }
           description: |
-            Interval length in seconds. The window is split into at most 500 buckets, so the
-            interval must be at least (end_time - start_time) / 500.
+            Interval length in seconds. The window is split into floor((end_time - start_time) /
+            interval) buckets, which must not exceed 500. A window narrower than one interval
+            yields no buckets and returns an empty object.
         - in: query
           name: volume_in_base
           schema: { type: boolean, default: false }

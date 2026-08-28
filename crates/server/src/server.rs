@@ -758,8 +758,9 @@ fn volume_interval_ms(params: &HashMap<String, String>) -> Result<i64, DeepBookE
     })
 }
 
-/// Number of buckets the intervalized historical-volume endpoint will walk for this window, or a
-/// 400 when the request exceeds the per-request work budget.
+/// Number of buckets the intervalized historical-volume endpoint will walk for this window — the
+/// value that drives the walk itself — or a 400 when the request exceeds the per-request work
+/// budget.
 ///
 /// Every bucket costs one database query, so the window is bounded before any query runs: the
 /// timestamps must be non-negative and ordered, the window may not exceed
@@ -842,13 +843,14 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
     let mut metrics_by_interval: HashMap<String, HashMap<String, Vec<i64>>> =
         HashMap::with_capacity(buckets as usize);
 
-    // Saturating: an interval wider than the window saturates past end_time and ends the loop,
-    // rather than wrapping into a bucket that sits before the one it came from.
-    let mut current_start = start_time;
-    while current_start.saturating_add(interval_ms) <= end_time {
-        let current_end = current_start.saturating_add(interval_ms);
-
-        let volume_in_base = params.volume_in_base();
+    // The walk is driven by the budget's own bucket count, so the number the request was admitted
+    // on is the number of queries it can cost. Deriving the end of the walk separately — from a
+    // comparison against end_time — is what let a saturated end_time hold the loop open forever.
+    // Every bucket lands inside [start_time, end_time], so none of this arithmetic can overflow.
+    let volume_in_base = params.volume_in_base();
+    for bucket in 0..buckets {
+        let current_start = start_time + bucket * interval_ms;
+        let current_end = current_start + interval_ms;
 
         let results = state
             .reader
@@ -884,8 +886,6 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
             format!("[{}, {}]", current_start / 1000, current_end / 1000),
             volume_by_pool,
         );
-
-        current_start = current_end;
     }
 
     Ok(Json(metrics_by_interval))
@@ -2025,7 +2025,10 @@ impl ParameterUtil for HashMap<String, String> {
     fn end_time(&self) -> i64 {
         self.get("end_time")
             .and_then(|v| v.parse::<i64>().ok())
-            .map(|t| t.saturating_mul(1000)) // Convert to milliseconds
+            // Saturating, then floored at the epoch: ~24 handlers subtract a lookback window
+            // from this value with plain arithmetic, and a clamp to i64::MIN would underflow all
+            // of them. A pre-epoch end_time selects nothing either way.
+            .map(|t| t.saturating_mul(1000).max(0))
             .unwrap_or_else(current_time_ms)
     }
 
