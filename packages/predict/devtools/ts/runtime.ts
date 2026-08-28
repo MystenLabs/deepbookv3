@@ -2035,8 +2035,10 @@ export function bareFlushTx(params: {
 // (keeperSettleTx) runs first and sweeps markets past-expiry then; `settlements` here
 // are only the boundary-race STRAGGLERS that expired since. Their exact-expiry
 // observations are inserted and explicitly settled before the snapshot in the SAME
-// transaction — `try_settle` refuses a market once `snapshot_expiry_pricer` stamps it,
-// so the settle commands run earlier in this PTB than the stamping commands do.
+// transaction — settling first sweeps the member inside the snapshot stage
+// (`frozen.is_none()`), keeping it off the frozen walk, rather than stamping it live
+// and settling later. Both now work (settlement is no longer flush-gated), but
+// settle-first is preferred, so the settle commands run earlier in this PTB.
 // These commands are race-avoidance, not the durable path: a BS outage aborts the
 // snapshot PTB (reverting them), but the settlement lane already settled durably, so no
 // brick. Live-market valuation reads the updater-maintained fresh BS feed via the

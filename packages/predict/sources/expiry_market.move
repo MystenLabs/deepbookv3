@@ -47,8 +47,7 @@ const EMintRedeemSameTimestamp: u64 = 6;
 const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
-const EMarketPendingValuation: u64 = 10;
-const EMarketNotPendingValuation: u64 = 11;
+const EMarketNotPendingValuation: u64 = 10;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -671,17 +670,17 @@ public fun try_settle(
     clock: &Clock,
 ): bool {
     config.assert_version();
-    // A market awaiting its `value_expiry` must not settle: the flush froze its
-    // sweep-vs-value branch at the snapshot, and settlement discontinuously
-    // reclassifies its rows (releases the impact escrow, swaps marked for settled
-    // liability). The wait is bounded by that market's own valuation transaction
-    // — or by a fresh flush superseding this one, which bumps the flush ordinal so
-    // the stamp is staleness-cleared on the next line — not by the whole flush. The snapshot
-    // stage refuses to stamp an expired-unsettled market, so settlement can never
-    // be due before a flush stamps it; only an expiry landing mid-window waits
-    // here.
+    // Settlement is never blocked by a flush. A market snapshotted by the in-flight
+    // flush carries a valuation stamp, but the frozen mark is settlement-invariant:
+    // `value_expiry`/`snapshot_nav` read only the stamp's frozen cash rows, the frozen
+    // pricer, and the payout tree's frozen shadow, none of which settlement mutates.
+    // So a market settles the instant it reaches expiry — even mid-flush, before its
+    // `value_expiry` — and the flush still folds its frozen pre-expiry mark. The
+    // reconcile is ordinary first-entry housekeeping: it only clears a stamp left by a
+    // superseded or ended flush, never a current one. The snapshot stage still refuses
+    // to stamp an already expired-unsettled market, so settle-first is the resolution
+    // there.
     market.reconcile_stale_valuation_stamp(config);
-    assert!(market.valuation_stamp.is_none(), EMarketPendingValuation);
     if (market.is_settled()) return true;
     let now = clock.timestamp_ms();
     if (now < market.expiry) return false;

@@ -1084,31 +1084,32 @@ fun finish_at_the_window_aborts() {
     abort 999
 }
 
-// === The per-market settlement gate the resumable flush required ===
+// === Settlement is never gated by the flush ===
 
-#[test, expected_failure(abort_code = expiry_market::EMarketPendingValuation)]
-fun settling_a_snapshotted_unvalued_market_aborts() {
+#[test]
+fun a_snapshotted_unvalued_market_settles_mid_flush() {
     let mut fx = helpers::setup_market_default();
     bootstrap_pool(&mut fx, IDLE_SEED);
     let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut market = fx.take_market_bundle(e);
-    // The snapshot stage stamps the market; until its own `value_expiry` clears that
-    // stamp it is snapshotted-and-not-yet-valued, which is the only state `try_settle`
-    // refuses.
+    // The snapshot stage stamps the market; it stays stamped until its own
+    // `value_expiry`. Settlement is no longer gated on that stamp.
     fx.start_flush_bundle(&mut market);
 
-    // A market that crosses its expiry mid-flush must not settle underneath the frozen
-    // snapshot: settling would discontinuously reclassify the rows the flush froze on
-    // the sweep-vs-value branch. The gate is per-market — the wait is bounded by this
-    // market's own valuation transaction (or the flush abort deadline), not by the
-    // whole flush.
+    // The market crosses its expiry mid-flush and SETTLES immediately — settlement is
+    // never blocked by a flush. The frozen mark is settlement-invariant, so this
+    // market's own `value_expiry` then folds the frozen pre-expiry mark and clears the
+    // stamp, leaving the flush to finish normally.
     fx.set_clock_for_testing(test_constants::default_expiry_ms());
     fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
-    fx.try_settle_bundle(&mut market);
+    assert!(fx.try_settle_bundle(&mut market));
+    fx.value_expiry_bundle(&mut market);
+    assert!(!helpers::market(&market).is_pending_valuation(helpers::config(&market)));
 
-    abort 999
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 // === Completion is permissionless ===

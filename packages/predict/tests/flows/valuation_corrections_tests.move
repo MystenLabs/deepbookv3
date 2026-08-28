@@ -3,7 +3,7 @@
 
 /// Coverage for trading during an in-flight flush: the snapshot capture that
 /// keeps the mark exact under mid-window trades, the LP-queue eligibility
-/// cutoff, the per-market settlement gate, lazy stamp reconciliation across
+/// cutoff, settlement staying unblocked by the flush, lazy stamp reconciliation across
 /// aborts, and the absence of any mid-window trade budget.
 ///
 /// The exactness tests are metamorphic: the same books produce a control mark
@@ -569,21 +569,115 @@ fun a_settled_redeem_composed_into_the_open_snapshot_stage_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = expiry_market::EMarketPendingValuation)]
-fun settling_a_market_pending_valuation_aborts() {
-    let (mut fx, expiry_id, _trader) = helpers::setup_everything();
+#[test]
+fun settling_mid_flush_before_value_expiry_leaves_the_mark_unchanged() {
+    // The expiry passes mid-flush and the market SETTLES before its `value_expiry`.
+    // Settlement is never blocked, and the flush still folds the frozen pre-expiry
+    // mark — settlement mutates only live state the frozen walk does not read.
+    let (mut fx, expiry_id, trader) = helpers::setup_everything_with_expiry(MID_FLUSH_EXPIRY_MS);
     fx.bootstrap_lock(SUPPLY_AMOUNT);
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
 
-    // Snapshotted live, then the expiry passes mid-window: settlement must wait
-    // for this market's valuation (the frozen sweep-vs-value branch is
-    // load-bearing).
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
     fx.scenario_mut().next_tx(test_constants::alice());
     fx.start_flush_bundle(&mut market);
     fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
-    fx.try_settle_bundle(&mut market);
-    abort 999
+    // Settle BEFORE value_expiry — the exact case the removed gate aborted.
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    assert!(fx.try_settle_bundle(&mut market));
+    // The market is now settled AND still stamped; value_expiry folds its frozen mark.
+    fx.value_expiry_bundle(&mut market);
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun settling_and_sweeping_mid_flush_before_value_expiry_leaves_the_mark_unchanged() {
+    // Settle AND run the standalone settled sweep (which deactivates the market and
+    // returns its cash to idle) before `value_expiry`. The sweep touches neither the
+    // stamp nor the frozen tree shadow, and the mark reads the frozen idle captured at
+    // the seal, so the swept cash is counted exactly once and the mark is unchanged.
+    let (mut fx, expiry_id, trader) = helpers::setup_everything_with_expiry(MID_FLUSH_EXPIRY_MS);
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let _baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    assert!(fx.try_settle_bundle(&mut market));
+    let idle_before = helpers::vault(&market).idle_balance();
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert!(helpers::vault(&market).idle_balance() > idle_before);
+    // value_expiry runs against a market that is settled, swept, and deactivated from
+    // the live active set — it reads only the frozen snapshot, so it still folds the mark.
+    fx.value_expiry_bundle(&mut market);
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun settling_and_redeeming_mid_flush_before_value_expiry_leaves_the_mark_unchanged() {
+    // Settle, then redeem a settled position, before `value_expiry`. Settled redemption
+    // only decrements a scalar and pays live cash; it does not touch the payout tree or
+    // the stamp, so the frozen walk and the frozen cash the mark reads are unchanged.
+    let (mut fx, expiry_id, trader) = helpers::setup_everything_with_expiry(MID_FLUSH_EXPIRY_MS);
+    fx.bootstrap_lock(SUPPLY_AMOUNT);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let baseline = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::pos_inf_tick(),
+        BASELINE_QUANTITY,
+    );
+
+    let control_mark = run_undisturbed_flush(&mut fx, &mut market);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    fx.start_flush_bundle(&mut market);
+    fx.set_clock_for_testing(helpers::market(&market).expiry() + 1);
+    fx.insert_exact_settlement_spot_bundle(&mut market, test_constants::default_live_price());
+    assert!(fx.try_settle_bundle(&mut market));
+    fx.redeem_settled_bundle(&mut market, &mut account, baseline);
+    fx.value_expiry_bundle(&mut market);
+    let corrected_mark = fx.finish_flush_bundle(&mut market);
+    assert_eq!(corrected_mark, control_mark);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 #[test]
