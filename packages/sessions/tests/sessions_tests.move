@@ -78,6 +78,11 @@ const EXCESS_SESSION_INDEX: u64 = 20;
 const POST_REVOKE_EXPIRES_AT_MS: u64 = 62_000; // 2_000 + 60_000.
 const ONE_EVENT: u64 = 1;
 const EUnexpectedSuccess: u64 = 999;
+/// A venue id no fixture object has, for grants that are never exercised.
+const OTHER_VENUE: address = @0x0E;
+const FIRST_VENUE: address = @0x0E1;
+const SECOND_VENUE: address = @0x0E2;
+const ABOVE_MAX_SESSION_VENUES: u64 = 21;
 
 const FLOW_SESSION_EXPIRES_AT_MS: u64 = 180_000; // 120_000 + 60_000.
 const SETTLEMENT_SESSION_DURATION_MS: u64 = 180_000;
@@ -99,6 +104,7 @@ const FUTURE_VERSION: u64 = 2;
 public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
     session: address,
+    venues: vector<ID>,
     expires_at_ms: u64,
 }
 
@@ -153,6 +159,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -167,6 +174,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &authorized[0],
         account_id,
         SESSION,
+        vector[other_venue()],
         SESSION_EXPIRES_AT_MS,
     );
     return_shared(sessions_config);
@@ -180,6 +188,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         REAUTH_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -194,6 +203,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         &reauthorized[0],
         account_id,
         SESSION,
+        vector[other_venue()],
         REAUTH_EXPIRES_AT_MS,
     );
     return_shared(sessions_config);
@@ -236,6 +246,7 @@ fun maximum_session_duration_is_accepted() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         MAX_SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -264,6 +275,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
             &mut wrapper,
             &sessions_config,
             session_addresses[index],
+            vector[other_venue()],
             SESSION_DURATION_MS,
             &clock,
             scenario.ctx(),
@@ -284,6 +296,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         &mut wrapper,
         &sessions_config,
         session_addresses[LAST_SESSION_INDEX],
+        vector[other_venue()],
         REAUTH_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -305,6 +318,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         &mut wrapper,
         &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -337,6 +351,7 @@ fun twenty_first_distinct_session_aborts() {
             &mut wrapper,
             &sessions_config,
             session_addresses[index],
+            vector[other_venue()],
             SESSION_DURATION_MS,
             &clock,
             scenario.ctx(),
@@ -352,12 +367,119 @@ fun twenty_first_distinct_session_aborts() {
         &mut wrapper,
         &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
     );
 
     abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EInvalidSessionVenues)]
+fun empty_venue_list_aborts() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+
+    // An empty allowlist would authorize nothing, so it is rejected rather than stored.
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        vector[],
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EInvalidSessionVenues)]
+fun duplicate_venues_abort() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        vector[other_venue(), other_venue()],
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EInvalidSessionVenues)]
+fun twenty_first_venue_aborts() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    // 21 distinct venue ids: one past the 20 a single grant may name.
+    let mut venues = vector[];
+    ABOVE_MAX_SESSION_VENUES.do!(
+        |i| venues.push_back(
+            object::id_from_address(sui::address::from_u256(i as u256)),
+        ),
+    );
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        venues,
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun reauthorization_replaces_venues_rather_than_adding() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    let first = object::id_from_address(FIRST_VENUE);
+    let second = object::id_from_address(SECOND_VENUE);
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        vector[first],
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(sessions::session_venues(&wrapper, SESSION), option::some(vector[first]));
+
+    // Re-granting narrows as well as widens: the first venue is gone, not retained.
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        vector[second],
+        SESSION_DURATION_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(sessions::session_venues(&wrapper, SESSION), option::some(vector[second]));
+
+    return_shared(sessions_config);
+    return_shared(wrapper);
+    clock.destroy_for_testing();
+    scenario.end();
 }
 
 #[test, expected_failure(abort_code = sessions::EInvalidSessionDuration)]
@@ -371,6 +493,7 @@ fun zero_session_duration_aborts() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         ZERO_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -390,6 +513,7 @@ fun session_duration_above_maximum_aborts() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         ABOVE_MAX_SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -409,6 +533,7 @@ fun non_owner_cannot_authorize_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -427,6 +552,7 @@ fun non_owner_cannot_revoke_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -453,6 +579,7 @@ fun retired_package_version_cannot_authorize_session() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -471,6 +598,7 @@ fun retired_package_version_keeps_reads_and_revocation_available() {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        vector[other_venue()],
         SESSION_DURATION_MS,
         &clock,
         scenario.ctx(),
@@ -1085,9 +1213,10 @@ fun assert_session_authorized_event(
     actual: &SessionAuthorized,
     account_id: ID,
     session: address,
+    venues: vector<ID>,
     expires_at_ms: u64,
 ) {
-    let expected = ExpectedSessionAuthorized { account_id, session, expires_at_ms };
+    let expected = ExpectedSessionAuthorized { account_id, session, venues, expires_at_ms };
     assert_eq!(bcs::to_bytes(actual), bcs::to_bytes(&expected));
 }
 
@@ -1146,7 +1275,20 @@ fun setup_flow_fixture(expiry_ms: u64): SessionFlowFixture {
     }
 }
 
+fun other_venue(): ID {
+    object::id_from_address(OTHER_VENUE)
+}
+
 fun authorize_flow_session(fixture: &mut SessionFlowFixture, duration_ms: u64) {
+    let market_id = fixture.market_id;
+    authorize_flow_session_on(fixture, duration_ms, vector[market_id]);
+}
+
+fun authorize_flow_session_on(
+    fixture: &mut SessionFlowFixture,
+    duration_ms: u64,
+    venues: vector<ID>,
+) {
     let clock = &fixture.clock;
     let scenario = fixture.predict.scenario_mut();
     scenario.next_tx(fixture.owner);
@@ -1156,6 +1298,7 @@ fun authorize_flow_session(fixture: &mut SessionFlowFixture, duration_ms: u64) {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        venues,
         duration_ms,
         clock,
         scenario.ctx(),

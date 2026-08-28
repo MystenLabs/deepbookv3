@@ -54,6 +54,8 @@ const TWO_OPEN_ORDERS: u64 = 2;
 const ZERO_BALANCE: u64 = 0;
 const ZERO_ORDER_ID: u128 = 0;
 const EUnexpectedSuccess: u64 = 999;
+/// A venue id no fixture object has, standing in for a pool the grant never named.
+const OTHER_VENUE: address = @0x0E;
 const FUTURE_VERSION: u64 = 2;
 
 public struct BASE has store {}
@@ -446,6 +448,62 @@ fun unapproved_session_cannot_place_spot_order() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = sessions::EVenueNotGranted)]
+fun session_cannot_place_spot_order_on_ungranted_pool() {
+    let mut fixture = setup_spot_fixture();
+    // The grant names a different venue, so routing the account into this pool is
+    // refused even though the session itself is live and the pool is real.
+    authorize_session_on(&mut fixture, vector[other_venue()]);
+    let registry_id = fixture.registry_id;
+    let pool_id = fixture.pool_id;
+    let wrapper_id = fixture.wrapper_id;
+
+    fixture.scenario.next_tx(SESSION);
+    let registry = fixture.scenario.take_shared_by_id<Registry>(registry_id);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    let root = fixture.scenario.take_shared<AccumulatorRoot>();
+    let clock = fixture.scenario.take_shared<Clock>();
+    let _ = sessions::place_limit_order<BASE, QUOTE>(
+        &mut pool,
+        &registry,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        LIMIT_ORDER_CLIENT_ID,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(),
+        constants::min_size(),
+        false,
+        true,
+        constants::max_u64(),
+        &root,
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun granted_venues_read_back_for_the_granted_session_only() {
+    let mut fixture = setup_spot_fixture();
+    let pool_id = fixture.pool_id;
+    let wrapper_id = fixture.wrapper_id;
+    authorize_session(&mut fixture);
+
+    fixture.scenario.next_tx(ALICE);
+    let wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    assert_eq!(sessions::session_venues(&wrapper, SESSION), option::some(vector[pool_id]));
+    assert!(sessions::session_venues(&wrapper, BOB).is_none());
+    return_shared(wrapper);
+    finish_spot_fixture(fixture);
+}
+
 #[test, expected_failure(abort_code = sessions::ESessionNotAuthorized)]
 fun session_at_exact_expiration_cannot_place_spot_market_order() {
     let mut fixture = setup_spot_fixture();
@@ -577,7 +635,16 @@ fun setup_spot_fixture(): SpotFixture {
     SpotFixture { scenario, registry_id, pool_id, wrapper_id, sessions_config_id }
 }
 
+fun other_venue(): ID {
+    object::id_from_address(OTHER_VENUE)
+}
+
 fun authorize_session(fixture: &mut SpotFixture) {
+    let pool_id = fixture.pool_id;
+    authorize_session_on(fixture, vector[pool_id]);
+}
+
+fun authorize_session_on(fixture: &mut SpotFixture, venues: vector<ID>) {
     let wrapper_id = fixture.wrapper_id;
     fixture.scenario.next_tx(ALICE);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -589,6 +656,7 @@ fun authorize_session(fixture: &mut SpotFixture) {
         &mut wrapper,
         &sessions_config,
         SESSION,
+        venues,
         SESSION_DURATION_MS,
         &clock,
         fixture.scenario.ctx(),
