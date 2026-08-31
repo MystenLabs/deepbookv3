@@ -308,9 +308,8 @@ public fun start_pool_valuation(
 /// stamp (settled flows never touch live NAV), and contributes 0. An
 /// expired-but-unsettled market aborts: it has no well-defined mark, and because
 /// this stage is atomic the abort reverts the whole snapshot transaction, so the
-/// flag is never left engaged. Settle it first, then start the flush — that
-/// ordering is what keeps the per-market settlement gate from deadlocking against
-/// the flush.
+/// flag is never left engaged. Settle it first, then start the flush; settlement is
+/// never blocked by a flush, so that ordering is always available.
 public fun snapshot_expiry_pricer(
     vault: &mut PoolVault,
     _stage: &SnapshotStage,
@@ -421,8 +420,8 @@ public fun seal_valuation_snapshot(
 /// clock. MEASUREMENT-ONLY for every member — settled members were swept during
 /// the snapshot stage and every frozen figure was captured there, so this call
 /// moves no cash and `rebalance_expiry_cash` runs at any time. A market that
-/// expired mid-window is valued at its frozen pre-expiry mark; its settlement
-/// waits only for this call to clear the stamp.
+/// expired mid-window is valued at its frozen pre-expiry mark; its settlement does
+/// not wait for this call, because settlement is never blocked by a flush.
 public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config: &ProtocolConfig) {
     config.assert_version();
     config.assert_valuation_in_progress();

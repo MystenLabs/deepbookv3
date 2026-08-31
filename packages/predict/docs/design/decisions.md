@@ -482,12 +482,21 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `share × moved`); a starter-gated maintenance entrypoint (needless — with the
   compensation the mark cannot be moved by rebalancing, so permissionless
   maintenance has no lever).
-- **Settlement is gated per market, not globally.** `try_settle` refuses only a
-  market whose stamp names the in-flight flush — the frozen sweep-vs-value branch
-  and the captured snapshot are only sound while settlement cannot reclassify the
-  rows. A market expiring mid-window is valued at its frozen pre-expiry mark and
-  settles the moment its stamp clears (RP-29 ratifies this against RP-4's
-  original blanket block).
+- **Settlement is never gated by a flush.** `try_settle` was gated per-market while
+  the market carried an in-flight flush's stamp; that gate is removed. The frozen mark
+  is settlement-invariant — `value_expiry`/`snapshot_nav` read only the stamp's frozen
+  cash rows, the frozen pricer, and the payout tree's frozen shadow, none of which
+  settlement mutates (`record_settlement` sets scalars, the settled sweep moves live
+  cash and deactivates, a settled redeem decrements a scalar — none touch the stamp or
+  the tree shadow). So a market settles the instant it reaches expiry, even mid-flush
+  and even before its own `value_expiry`, and the flush still folds its frozen
+  pre-expiry mark. The snapshot stage still refuses to STAMP an already
+  expired-unsettled market (`EExpiredMarketNotSettled`), now purely a "settle first"
+  requirement — always satisfiable whenever an exact settlement source exists. RP-4's
+  both-sources-absent case is UNCHANGED: if neither exact source yields a price the
+  market cannot settle, the snapshot stage still refuses it, and starting the whole
+  pool flush is still blocked. This meets RP-4's reopen condition only on the
+  flush-gating side, not the oracle-availability side.
 
 ## In-tree snapshot capture (2026-08-26)
 
