@@ -2415,10 +2415,25 @@ public fun insert_exact_block_scholes_settlement_spot_bundle(
     spot: u128,
 ) {
     let expiry_ms = market.market.expiry();
+    self.insert_exact_block_scholes_settlement_spot_with_model_bundle(
+        market,
+        expiry_ms,
+        spot,
+    );
+}
+
+/// Insert an exact Block Scholes spot at the bundled market expiry with an explicit model time.
+public fun insert_exact_block_scholes_settlement_spot_with_model_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    model_timestamp_ms: u64,
+    spot: u128,
+) {
+    let expiry_ms = market.market.expiry();
     let sid = market.bs.values().spot_sid();
     let batch = verify::new_value_batch_for_testing(
         expiry_ms,
-        vector[verify::new_value_update_for_testing(sid, expiry_ms, spot)],
+        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, spot)],
     );
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
     market.bs.values_mut().insert_at(batch, &self.clock, &ctx);

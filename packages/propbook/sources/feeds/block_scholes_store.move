@@ -7,7 +7,9 @@
 /// observation for another asset cannot enter this store.
 /// Stored values are held exactly as the verifier produced them; scaling and signed-value
 /// interpretation belong to the reading package. Exact spot history additionally admits only
-/// positive `u64`-representable values so an unusable observation cannot claim a permanent key.
+/// positive `u64`-representable values whose model time is within
+/// `constants::max_block_scholes_settlement_carry_ms` of the envelope, so an unusable or
+/// long-carried observation cannot claim a permanent key.
 /// Value and SVI observations use separate stores because the verifier exposes distinct batch and
 /// value types. The registry creates and binds both stores atomically from one base-asset input.
 module propbook::block_scholes_store;
@@ -273,9 +275,10 @@ public fun apply_spot_batch(
 }
 
 /// Insert the canonical spot batch into exact minute-boundary history without changing `latest`.
-/// A valid batch whose signed `source_timestamp_ms` is not a minute boundary, or whose spot is zero or
-/// wider than `u64`, is ignored without aborting. The first admissible observation at a boundary
-/// owns the key and cannot be replaced.
+/// A valid batch whose signed `source_timestamp_ms` is not a minute boundary, whose model time is
+/// more than `constants::max_block_scholes_settlement_carry_ms` before that envelope, or whose
+/// spot is zero or wider than `u64`, is ignored without aborting. The first admissible
+/// observation at a boundary owns the key and cannot be replaced.
 public fun insert_at(
     store: &mut BlockScholesValueStore,
     batch: ValueBatch,
@@ -560,9 +563,15 @@ fun apply_value(
 }
 
 /// Insert one verified canonical spot at its exact signed minute-boundary timestamp.
+/// A model older than the compiled carry window is ignored so a long-held estimate cannot
+/// claim a settlement key. Latest ingestion does not use this bound.
 fun insert_exact_spot(store: &mut BlockScholesValueStore, read: BsRead<u128>): bool {
     if (read.source_timestamp_ms % exact_spot_period_ms!() != 0) return false;
     if (!read.has_valid_clocks()) return false;
+    if (
+        read.source_timestamp_ms - read.model_timestamp_ms
+            > constants::max_block_scholes_settlement_carry_ms!()
+    ) return false;
     if (read.value == 0 || read.value > (std::u64::max_value!() as u128)) return false;
     if (store.exact_spot_reads.contains(read.source_timestamp_ms)) return false;
 

@@ -320,6 +320,114 @@ fun insert_at_non_minute_is_a_noop() {
 }
 
 #[test]
+fun insert_at_model_equal_to_envelope_claims_the_key() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), EXACT_MINUTE_EARLY_MS, SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    let exact = value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some();
+    assert_eq!(exact.read_value(), SPOT);
+    assert_eq!(exact.read_model_timestamp_ms(), EXACT_MINUTE_EARLY_MS);
+    assert_eq!(exact.read_source_timestamp_ms(), EXACT_MINUTE_EARLY_MS);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
+fun insert_at_model_carry_at_window_claims_the_key() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+    let model_ms = EXACT_MINUTE_EARLY_MS - constants::max_block_scholes_settlement_carry_ms!();
+
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), model_ms, SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    let exact = value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some();
+    assert_eq!(exact.read_value(), SPOT);
+    assert_eq!(exact.read_model_timestamp_ms(), model_ms);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
+fun insert_at_model_carry_beyond_window_is_a_noop() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+    let model_ms = EXACT_MINUTE_EARLY_MS - constants::max_block_scholes_settlement_carry_ms!() - 1;
+
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), model_ms, SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    assert!(value_store.spot().is_none());
+    assert!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).is_none());
+    insert_value(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        spot_update(&btc(), EXACT_MINUTE_EARLY_MS, SPOT),
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert_eq!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some().read_value(), SPOT);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
+fun long_model_carry_still_records_on_latest_without_exact_history() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+    let model_ms = EXACT_MINUTE_EARLY_MS - constants::max_block_scholes_settlement_carry_ms!() - 1;
+
+    apply_values(
+        &mut value_store,
+        EXACT_MINUTE_EARLY_MS,
+        vector[spot_update(&btc(), model_ms, SPOT)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+
+    let latest = value_store.spot().destroy_some();
+    assert_eq!(latest.read_value(), SPOT);
+    assert_eq!(latest.read_model_timestamp_ms(), model_ms);
+    assert!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).is_none());
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
+
+#[test]
 fun stale_minute_batch_can_fill_exact_history_without_replacing_latest() {
     let (mut scenario, value_id, _svi_id) = setup_stores();
     let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);

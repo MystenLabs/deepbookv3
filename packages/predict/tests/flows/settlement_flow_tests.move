@@ -28,6 +28,8 @@ const SECOND_SOURCE_ID: u32 = 2;
 const FOREIGN_UNDERLYING_ID: u32 = 9_002;
 const IDLE_SEED: u64 = 1_200_000_000_000;
 const ONE_MS: u64 = 1;
+/// Compiled Block Scholes exact-insert model-carry window: one minute.
+const BLOCK_SCHOLES_SETTLEMENT_CARRY_MS: u64 = 60_000;
 const ZERO_SPOT: u128 = 0;
 const ONE_U128: u128 = 1;
 
@@ -151,6 +153,37 @@ fun block_scholes_fallback_missing_after_grace_remains_retryable() {
     assert_eq!(fx.try_settle_bundle(&mut market), false);
     assert!(!helpers::market(&market).is_settled());
     assert_eq!(helpers::market(&market).try_settlement_price(), option::none());
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun block_scholes_fallback_stale_model_after_grace_remains_retryable() {
+    let expiry = test_constants::default_expiry_ms();
+    let settlement_price = settlement_inside_default_finite_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry + constants::settlement_fallback_grace_ms!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let stale_model_ms = expiry - BLOCK_SCHOLES_SETTLEMENT_CARRY_MS - ONE_MS;
+    fx.insert_exact_block_scholes_settlement_spot_with_model_bundle(
+        &mut market,
+        stale_model_ms,
+        settlement_price as u128,
+    );
+
+    assert_eq!(fx.try_settle_bundle(&mut market), false);
+    assert!(!helpers::market(&market).is_settled());
+
+    fx.insert_exact_block_scholes_settlement_spot_bundle(
+        &mut market,
+        settlement_price as u128,
+    );
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    assert_eq!(helpers::market(&market).settlement_price(), settlement_price);
 
     helpers::return_market_bundle(market);
     fx.finish();
