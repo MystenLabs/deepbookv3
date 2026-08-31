@@ -250,8 +250,10 @@ public fun load_live_pricer(
 }
 
 /// Return whether this market is snapshotted into the in-flight flush and still
-/// awaiting its `value_expiry`. For SDK, keeper, and devInspect reads: while
-/// true, `try_settle` refuses to run; trading is unaffected.
+/// awaiting its `value_expiry`. For SDK, keeper, and devInspect reads. It gates
+/// nothing: settlement and trading both run regardless — the frozen mark is
+/// settlement-invariant, so a stamped market settles the instant it expires. Do
+/// not defer a settlement attempt on this read.
 public fun is_pending_valuation(market: &ExpiryMarket, config: &ProtocolConfig): bool {
     market.valuation_stamp.is_some()
         && config.is_current_flush(market.valuation_stamp.borrow().flush_seq)

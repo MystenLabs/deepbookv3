@@ -492,8 +492,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   and even before its own `value_expiry`, and the flush still folds its frozen
   pre-expiry mark. The snapshot stage still refuses to STAMP an already
   expired-unsettled market (`EExpiredMarketNotSettled`), now purely a "settle first"
-  requirement — always satisfiable since settlement is never blocked. This meets RP-4's
-  reopen condition on the settlement side.
+  requirement — always satisfiable whenever an exact settlement source exists. RP-4's
+  both-sources-absent case is UNCHANGED: if neither exact source yields a price the
+  market cannot settle, the snapshot stage still refuses it, and starting the whole
+  pool flush is still blocked. This meets RP-4's reopen condition only on the
+  flush-gating side, not the oracle-availability side.
 
 ## In-tree snapshot capture (2026-08-26)
 
