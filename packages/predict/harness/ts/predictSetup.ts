@@ -76,14 +76,21 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   return { feeds, lifecycleCapId };
 }
 
-// Create one cadence market. Reads NO oracle (absolute ticks need no grid centering),
-// so a keeper with a live updater needs no per-market seed — the updater warms the feed.
+// Create one cadence market. Create inverts the live surface, so the updater
+// must already have written a fresh observation for the deployable expiry.
 export async function createMarket(
   lifecycleCapId: string,
   cadenceId: number,
+  feeds: Feeds,
 ): Promise<{ marketId: string; expiryMs: bigint }> {
   const mkR = await executeAndWait(
-    createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId }),
+    createExpiryMarketTx({
+      poolVaultId: POOL_VAULT_ID,
+      protocolConfigId: PROTOCOL_CONFIG_ID,
+      lifecycleCapId,
+      cadenceId,
+      ...feeds,
+    }),
     "create-market",
   );
   return { marketId: found(mkR, "ExpiryMarket"), expiryMs: BigInt(eventField(mkR, "MarketCreated", "expiry")) };

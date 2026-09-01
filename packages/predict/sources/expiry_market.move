@@ -183,6 +183,11 @@ public fun admission_tick_size(market: &ExpiryMarket): u64 {
     market.strike_exposure.admission_tick_size()
 }
 
+/// Return the inclusive first finite tick this market admits.
+public fun min_tick(market: &ExpiryMarket): u64 {
+    market.strike_exposure.min_tick()
+}
+
 /// Return the admitted reference tick for SDK and devInspect range construction.
 public fun reference_tick(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.reference_tick()
@@ -847,16 +852,18 @@ public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balanc
 
 /// Create and share a zero-cash expiry market for one Propbook underlying.
 ///
-/// The market snapshots the underlying, accounting/admission tick sizes, and per-market config and
-/// starts with zero expiry cash; it needs no live spot at creation (strikes are absolute ticks, so
-/// there is no grid to center). Current oracle bindings stay in Propbook and are resolved on every
-/// priced flow.
+/// The market snapshots the underlying, tick geometry (`tick_size`, admission
+/// step, `min_tick`), and per-market config and starts with zero expiry cash.
+/// Create freezes a 900-wide window around the padded live 1–99 belly; cadence
+/// `belly_pad` of zero means 1.0x. Current oracle bindings stay in Propbook
+/// and are resolved on every priced flow.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     propbook_underlying_id: u32,
     expiry: u64,
     tick_size: u64,
     admission_tick_size: u64,
+    min_tick: u64,
     reference_tick_source_timestamp_ms: u64,
     ctx: &mut TxContext,
 ): ID {
@@ -875,6 +882,7 @@ public(package) fun create_and_share(
             expiry,
             tick_size,
             admission_tick_size,
+            min_tick,
             reference_tick_source_timestamp_ms,
             strike_exposure_config,
             ctx,

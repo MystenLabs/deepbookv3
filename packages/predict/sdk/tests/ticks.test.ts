@@ -1,12 +1,16 @@
 import { expect, test } from "vitest";
 
-import { POS_INF_TICK, binaryRangeTicks } from "../src/ticks.js";
+import { MAX_UNIQUE_STRIKE_TICKS, POS_INF_TICK, binaryRangeTicks } from "../src/ticks.js";
 import { priceToRaw } from "../src/units.js";
 
 const TICK_SIZE = 10_000_000n;
 
 test("POS_INF_TICK sentinel", () => {
 	expect(POS_INF_TICK).toBe((1n << 30n) - 1n);
+});
+
+test("MAX_UNIQUE_STRIKE_TICKS matches the payout-tree headroom window", () => {
+	expect(MAX_UNIQUE_STRIKE_TICKS).toBe(900n);
 });
 
 test("UP order encodes (strike, +inf)", () => {

@@ -52,6 +52,10 @@ public struct CadenceConfig has copy, drop, store {
     /// Number of cadence periods in the rolling future deployment horizon.
     /// Zero disables this cadence.
     window_size: u64,
+    /// FLOAT_SCALING-scaled multiplicative pad around the mint-probability belly.
+    /// Zero means 1.0x (invert the 1–99 band with no extra room). Create always
+    /// inverts the live surface and freezes a 900-wide window.
+    belly_pad: u64,
 }
 
 /// Next market selected for creation plus the cadence terms to snapshot into it.
@@ -113,6 +117,11 @@ public fun cadence_initial_expiry_cash(config: &CadenceConfig): u64 {
 /// Return the rolling deployment horizon for SDK and devInspect cadence reads.
 public fun cadence_window_size(config: &CadenceConfig): u64 {
     config.window_size
+}
+
+/// Return the create-time belly pad for SDK and devInspect cadence reads.
+public fun cadence_belly_pad(config: &CadenceConfig): u64 {
+    config.belly_pad
 }
 
 /// Return whether this cadence is enabled for SDK and devInspect discovery.
@@ -254,6 +263,10 @@ public(package) fun initial_expiry_cash(deployable: &DeployableMarket): u64 {
     deployable.cadence.initial_expiry_cash
 }
 
+public(package) fun belly_pad(deployable: &DeployableMarket): u64 {
+    deployable.cadence.belly_pad
+}
+
 public(package) fun register_underlying(manager: &mut MarketManager, propbook_underlying_id: u32) {
     assert!(
         !manager.underlying_configs.contains(propbook_underlying_id),
@@ -279,6 +292,7 @@ public(package) fun set_template_cadence_config(
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
+    belly_pad: u64,
 ) {
     let config = CadenceConfig {
         tick_size,
@@ -286,6 +300,7 @@ public(package) fun set_template_cadence_config(
         max_expiry_allocation,
         initial_expiry_cash,
         window_size,
+        belly_pad,
     };
     assert_cadence_config(&config);
     let cadence_index = cadence_index(cadence_id);
@@ -347,6 +362,7 @@ fun disabled_cadence(): CadenceConfig {
         max_expiry_allocation: 0,
         initial_expiry_cash: 0,
         window_size: 0,
+        belly_pad: 0,
     }
 }
 
@@ -373,13 +389,15 @@ fun assert_cadence_config(config: &CadenceConfig) {
         max_expiry_allocation,
         initial_expiry_cash,
         window_size,
+        belly_pad,
     } = *config;
     let disabled =
         tick_size == 0
             && admission_tick_size == 0
             && max_expiry_allocation == 0
             && initial_expiry_cash == 0
-            && window_size == 0;
+            && window_size == 0
+            && belly_pad == 0;
     if (disabled) return;
 
     assert!(
@@ -395,6 +413,7 @@ fun assert_cadence_config(config: &CadenceConfig) {
     assert!(admission_tick_size >= tick_size, EInvalidCadenceConfig);
     assert!(admission_tick_size % tick_size == 0, EInvalidCadenceConfig);
     config_constants::assert_cadence_window_size(window_size);
+    config_constants::assert_belly_pad(belly_pad);
     assert!(initial_expiry_cash >= constants::expiry_cash_floor!(), EInvalidCadenceConfig);
     assert!(initial_expiry_cash <= max_expiry_allocation, EInvalidCadenceConfig);
 }

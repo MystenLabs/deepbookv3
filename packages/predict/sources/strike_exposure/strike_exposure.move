@@ -34,6 +34,7 @@ const ETermsExposureMismatch: u64 = 4;
 const EMintQuantityBelowMin: u64 = 5;
 const EWrongCloseOutcome: u64 = 6;
 const EPricerRequired: u64 = 7;
+const EStrikeTickOutOfBand: u64 = 8;
 
 /// Exposure lifecycle state for one expiry market.
 public struct StrikeExposure has store {
@@ -45,6 +46,9 @@ public struct StrikeExposure has store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
+    /// Inclusive first finite tick this market admits. The window is
+    /// `[min_tick, min_tick + max_unique_strike_ticks - 1]`; sentinels stay free.
+    min_tick: u64,
     /// Exact Propbook Pyth source timestamp used to derive the reference tick.
     reference_tick_source_timestamp_ms: u64,
     /// Reference fine-grid tick that may bypass the coarser admission grid once set.
@@ -258,6 +262,10 @@ public(package) fun tick_size(exposure: &StrikeExposure): u64 {
 
 public(package) fun admission_tick_size(exposure: &StrikeExposure): u64 {
     exposure.admission_tick_size
+}
+
+public(package) fun min_tick(exposure: &StrikeExposure): u64 {
+    exposure.min_tick
 }
 
 public(package) fun reference_tick_source_timestamp_ms(exposure: &StrikeExposure): u64 {
@@ -516,6 +524,7 @@ public(package) fun record_settlement(exposure: &mut StrikeExposure, settlement_
 /// Repeated calls are idempotent for the same tick and abort for a different one.
 public(package) fun set_reference_tick(exposure: &mut StrikeExposure, tick: u64): bool {
     assert!(tick > 0 && tick < constants::pos_inf_tick!(), EInvalidReferenceTick);
+    assert!(constants::is_in_strike_band!(tick, exposure.min_tick), EStrikeTickOutOfBand);
     if (exposure.reference_tick.is_some()) {
         assert!(*exposure.reference_tick.borrow() == tick, EReferenceTickAlreadySet);
         return false
@@ -530,15 +539,22 @@ public(package) fun new(
     expiry_ms: u64,
     tick_size: u64,
     admission_tick_size: u64,
+    min_tick: u64,
     reference_tick_source_timestamp_ms: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
+    assert!(min_tick > 0, EStrikeTickOutOfBand);
+    assert!(
+        constants::max_tick_in_band!(min_tick) < constants::pos_inf_tick!(),
+        EStrikeTickOutOfBand,
+    );
     StrikeExposure {
         expiry_market_id,
         expiry_ms,
         tick_size,
         admission_tick_size,
+        min_tick,
         reference_tick_source_timestamp_ms,
         reference_tick: option::none(),
         config,
@@ -566,6 +582,14 @@ fun admitted_entry_probability(
 }
 
 fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, higher_tick: u64) {
+    assert!(
+        constants::is_in_strike_band!(lower_tick, exposure.min_tick),
+        EStrikeTickOutOfBand,
+    );
+    assert!(
+        constants::is_in_strike_band!(higher_tick, exposure.min_tick),
+        EStrikeTickOutOfBand,
+    );
     let admission_multiple = exposure.admission_tick_size / exposure.tick_size;
     assert!(
         lower_tick == 0

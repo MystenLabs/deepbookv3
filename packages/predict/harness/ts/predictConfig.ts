@@ -12,6 +12,7 @@ export interface CadenceConfig {
   maxExpiryAllocation: bigint; // DUSDC
   initialExpiryCash: bigint; // DUSDC (>= expiry_cash_floor 10k, <= maxExpiryAllocation)
   windowSize: bigint; // number of cadence periods in the rolling future horizon
+  bellyPad: bigint; // FLOAT_SCALING pad; 0 means 1.0x (invert 1–99 with no extra room)
 }
 
 // Fixed protocol cadence periods. The keeper mirrors these when deciding
@@ -32,9 +33,9 @@ export const CADENCE_PERIOD_MS: Record<number, number> = {
 // entangled with expiry_cash::EInsufficientCash (stress/capacity-and-gas-findings.md, C-1 follow-up).
 // Worst-case total allocation (9 live markets) stays under BOOTSTRAP_SUPPLY.
 export const CADENCES: Record<number, CadenceConfig> = {
-  0: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 500_000_000_000n, initialExpiryCash: 100_000_000_000n, windowSize: 3n },
-  1: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 500_000_000_000n, initialExpiryCash: 100_000_000_000n, windowSize: 3n },
-  2: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 1_000_000_000_000n, initialExpiryCash: 200_000_000_000n, windowSize: 3n },
+  0: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 500_000_000_000n, initialExpiryCash: 100_000_000_000n, windowSize: 3n, bellyPad: 0n },
+  1: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 500_000_000_000n, initialExpiryCash: 100_000_000_000n, windowSize: 3n, bellyPad: 0n },
+  2: { tickSize: 10_000_000n, admissionTickSize: 1_000_000_000n, maxExpiryAllocation: 1_000_000_000_000n, initialExpiryCash: 200_000_000_000n, windowSize: 3n, bellyPad: 0n },
 };
 
 export const NO_LEVERAGE_WINDOW_MS = 3_600_000;

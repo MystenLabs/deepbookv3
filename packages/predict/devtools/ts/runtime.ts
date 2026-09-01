@@ -1525,6 +1525,7 @@ export function setCadenceConfigTx(params: {
     maxExpiryAllocation: bigint;
     initialExpiryCash: bigint;
     windowSize: bigint;
+    bellyPad?: bigint;
 }): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -1540,6 +1541,7 @@ export function setCadenceConfigTx(params: {
             tx.pure.u64(params.maxExpiryAllocation),
             tx.pure.u64(params.initialExpiryCash),
             tx.pure.u64(params.windowSize),
+            tx.pure.u64(params.bellyPad ?? 0n),
         ],
     });
     return tx;
@@ -1672,9 +1674,9 @@ export async function seedOracleTx(params: OracleFeedIds & {
     return tx;
 }
 
-// Create the expiry market for one Propbook underlying. No spot is read at
-// creation. The registry validates, against propbook's canonical binding, that
-// the Pyth feed and the Block Scholes store pair are bound to `PREDICT_ORACLE_ID`
+// Create the expiry market for one Propbook underlying. Create loads the live
+// surface and freezes a 900-wide strike window, so the Pyth feed and Block
+// Scholes stores must already hold a fresh observation for the deployable expiry
 // (run `bindFeedsToUnderlyingTx` first; the store pair binds at creation).
 // `create_and_share_expiry_market` returns one ID and
 // registers the market with the vault as a zero-cash accounting row (not mintable
@@ -1684,7 +1686,7 @@ export function createExpiryMarketTx(params: {
     protocolConfigId: string;
     lifecycleCapId: string;
     cadenceId: number;
-}): Transaction {
+} & OracleFeedIds): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: target("registry", "create_and_share_expiry_market"),
@@ -1693,6 +1695,9 @@ export function createExpiryMarketTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
             tx.object(ORACLE_REGISTRY_ID),
+            tx.object(params.pythFeedId),
+            tx.object(params.bsValueStoreId),
+            tx.object(params.bsSviStoreId),
             tx.object(params.lifecycleCapId),
             tx.pure.u32(PREDICT_ORACLE_ID),
             tx.pure.u8(params.cadenceId),

@@ -165,3 +165,19 @@ public(package) fun insert_at<Payload: copy + drop + store>(
         observation: read,
     });
 }
+
+/// Fixture seam: replace `latest` even when the source time does not advance.
+/// Used when create seeds at one clock and later tests price at another.
+#[test_only]
+public(package) fun overwrite_latest_for_testing<Payload: copy + drop + store>(
+    lane: &mut OracleLane<Payload>,
+    read: OracleRead<Payload>,
+    propbook_oracle_id: ID,
+) {
+    if (!read.read_has_valid_timestamp()) return;
+    lane.latest = option::some(read);
+    event::emit(ObservationRecorded<OracleRead<Payload>> {
+        propbook_oracle_id,
+        observation: read,
+    });
+}

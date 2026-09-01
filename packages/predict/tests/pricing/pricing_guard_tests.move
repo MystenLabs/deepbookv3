@@ -183,23 +183,22 @@ fun live_quote_with_equal_range_bounds_aborts() {
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
 fun live_quote_with_no_block_scholes_price_aborts() {
-    // A market that has never received a BS push: normalized_spot is none, so
-    // pricing aborts on absence (distinct from the staleness code below).
+    // Create seeds a live surface; drop the spot row so pricing aborts on absence
+    // (distinct from the staleness code below).
     let mut fx = oracle_fixture::setup_oracle_default();
-    let oracle = fx.take_oracle_bundle();
+    let mut oracle = fx.take_oracle_bundle();
+    oracle_fixture::clear_bs_spot_for_testing_bundle(&mut oracle);
     live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
     abort EUnexpectedSuccess
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesSVIUnavailable)]
 fun live_quote_with_prices_but_no_svi_aborts() {
-    // Spot and forward pushed, SVI never pushed: the SVI absence code fires,
+    // Create seeds prices and SVI; drop only SVI so the SVI absence code fires,
     // distinct from EBlockScholesSVIStale.
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
-    let now = test_constants::live_source_timestamp_ms();
-    fx.set_bs_spot_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
-    fx.set_bs_forward_for_testing_bundle(&mut oracle, now, test_constants::default_live_price());
+    fx.clear_bs_svi_for_testing_bundle(&mut oracle);
     live_quote(&mut fx, &oracle, test_constants::default_live_price(), constants::pos_inf!());
     abort EUnexpectedSuccess
 }

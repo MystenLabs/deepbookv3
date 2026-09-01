@@ -35,6 +35,7 @@ const EInvalidLpRequestLimitFlushAttempts: u64 = 24;
 const EInvalidMaxLpPoolValue: u64 = 25;
 const EInvalidPlpSupplyFeeRate: u64 = 26;
 const EInvalidPlpWithdrawFeeRate: u64 = 27;
+const EInvalidBellyPad: u64 = 28;
 
 // === Fees ===
 
@@ -324,6 +325,23 @@ public(package) macro fun max_cadence_window_size(): u64 { 10 }
 
 public(package) fun assert_cadence_window_size(value: u64) {
     assert!(value <= max_cadence_window_size!(), EInvalidCadenceWindowSize);
+}
+
+/// Multiplicative pad around the mint-probability belly, in FLOAT_SCALING.
+/// Zero means 1.0x at create (invert the 1–99 band with no extra room).
+public(package) macro fun default_belly_pad(): u64 { 0 }
+
+public(package) macro fun min_belly_pad(): u64 { fixed_math::math::float_scaling!() }
+
+public(package) macro fun max_belly_pad(): u64 {
+    4 * fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_belly_pad(value: u64) {
+    assert!(
+        value == 0 || (value >= min_belly_pad!() && value <= max_belly_pad!()),
+        EInvalidBellyPad,
+    );
 }
 
 public(package) macro fun default_min_entry_probability(): u64 { 10_000_000 }

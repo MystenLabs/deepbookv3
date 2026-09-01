@@ -69,6 +69,29 @@ public(package) macro fun max_live_expiry_markets(): u64 { 24 }
 /// Maximum finite payout-tree boundary nodes one expiry market may carry into NAV.
 public(package) macro fun max_payout_tree_nodes(): u64 { 1_000 }
 
+/// Maximum distinct finite strike ticks one expiry market may admit. Leaves
+/// headroom under `max_payout_tree_nodes` for the two open-end sentinels and a
+/// single off-grid reference tick. The admitted window is
+/// `[min_tick, min_tick + max_unique_strike_ticks - 1]`.
+public(package) macro fun max_unique_strike_ticks(): u64 { 900 }
+
+/// Exclusive end of the admitted finite-tick window for a snapshotted `min_tick`.
+public(package) macro fun strike_band_end($min_tick: u64): u64 {
+    $min_tick + max_unique_strike_ticks!()
+}
+
+/// Inclusive last finite tick in the admitted window.
+public(package) macro fun max_tick_in_band($min_tick: u64): u64 {
+    strike_band_end!($min_tick) - 1
+}
+
+/// Sentinels are always admitted; finite ticks must sit in the market's 900-wide window.
+public(package) macro fun is_in_strike_band($tick: u64, $min_tick: u64): bool {
+    $tick == 0
+        || $tick == pos_inf_tick!()
+        || ($tick >= $min_tick && $tick <= max_tick_in_band!($min_tick))
+}
+
 /// Maximum active leveraged orders one expiry market may carry into NAV.
 public(package) macro fun max_active_leveraged_orders(): u64 { 5_000 }
 

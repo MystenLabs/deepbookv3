@@ -59,6 +59,7 @@ fun set_cadence_config_invalid_cadence_id_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -77,6 +78,7 @@ fun set_cadence_config_unregistered_underlying_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -95,6 +97,7 @@ fun set_cadence_config_unaligned_tick_size_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -113,6 +116,7 @@ fun set_cadence_config_unaligned_admission_tick_size_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -131,6 +135,7 @@ fun set_cadence_config_admission_tick_size_below_tick_size_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -149,6 +154,7 @@ fun set_cadence_config_admission_tick_size_not_multiple_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -167,6 +173,7 @@ fun set_cadence_config_above_max_window_size_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         ABOVE_MAX_CADENCE_WINDOW_SIZE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -185,6 +192,7 @@ fun set_cadence_config_initial_cash_below_floor_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BELOW_EXPIRY_CASH_FLOOR,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -203,6 +211,7 @@ fun set_cadence_config_initial_cash_above_allocation_aborts() {
         BELOW_INITIAL_EXPIRY_CASH,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -221,6 +230,7 @@ fun set_cadence_config_partial_disable_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -239,6 +249,7 @@ fun set_cadence_config_partial_disable_admission_tick_size_aborts() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     abort EUnexpectedSuccess
 }
@@ -252,6 +263,7 @@ fun assert_all_zero_disabled(cadence: &market_manager::CadenceConfig) {
     assert_eq!(cadence.cadence_max_expiry_allocation(), DISABLED_VALUE);
     assert_eq!(cadence.cadence_initial_expiry_cash(), DISABLED_VALUE);
     assert_eq!(cadence.cadence_window_size(), DISABLED_VALUE);
+    assert_eq!(cadence.cadence_belly_pad(), DISABLED_VALUE);
 }
 
 #[test]
@@ -283,6 +295,7 @@ fun cadence_configs_non_sequential_updates_round_trip() {
         ETH_MAX_EXPIRY_ALLOCATION,
         ETH_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_TWO,
+        0,
     );
     reg.set_template_cadence_config(
         &config,
@@ -294,6 +307,7 @@ fun cadence_configs_non_sequential_updates_round_trip() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
 
     let configs = reg.cadence_configs(UNDERLYING_BTC);
@@ -306,6 +320,7 @@ fun cadence_configs_non_sequential_updates_round_trip() {
     assert_eq!(five_minute.cadence_max_expiry_allocation(), BTC_MAX_EXPIRY_ALLOCATION);
     assert_eq!(five_minute.cadence_initial_expiry_cash(), BTC_INITIAL_EXPIRY_CASH);
     assert_eq!(five_minute.cadence_window_size(), WINDOW_SIZE_THREE);
+    assert_eq!(five_minute.cadence_belly_pad(), DISABLED_VALUE);
 
     let one_week = &configs[market_manager::cadence_one_week!() as u64];
     assert!(one_week.cadence_enabled());
@@ -314,6 +329,7 @@ fun cadence_configs_non_sequential_updates_round_trip() {
     assert_eq!(one_week.cadence_max_expiry_allocation(), ETH_MAX_EXPIRY_ALLOCATION);
     assert_eq!(one_week.cadence_initial_expiry_cash(), ETH_INITIAL_EXPIRY_CASH);
     assert_eq!(one_week.cadence_window_size(), WINDOW_SIZE_TWO);
+    assert_eq!(one_week.cadence_belly_pad(), DISABLED_VALUE);
 
     assert_all_zero_disabled(&configs[market_manager::cadence_one_minute!() as u64]);
     assert_all_zero_disabled(&configs[market_manager::cadence_one_hour!() as u64]);
@@ -338,6 +354,7 @@ fun cadence_configs_disable_round_trip() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     let enabled_configs = reg.cadence_configs(UNDERLYING_BTC);
     assert!(enabled_configs[market_manager::cadence_five_minute!() as u64].cadence_enabled());
@@ -351,6 +368,7 @@ fun cadence_configs_disable_round_trip() {
         DISABLED_VALUE,
         DISABLED_VALUE,
         DISABLED_VALUE,
+        0,
     );
 
     let configs = reg.cadence_configs(UNDERLYING_BTC);
@@ -378,6 +396,7 @@ fun cadence_configs_two_underlyings_isolated() {
         BTC_MAX_EXPIRY_ALLOCATION,
         BTC_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_THREE,
+        0,
     );
     reg.set_template_cadence_config(
         &config,
@@ -389,6 +408,7 @@ fun cadence_configs_two_underlyings_isolated() {
         ETH_MAX_EXPIRY_ALLOCATION,
         ETH_INITIAL_EXPIRY_CASH,
         WINDOW_SIZE_TWO,
+        0,
     );
 
     let btc_configs = reg.cadence_configs(UNDERLYING_BTC);
@@ -409,5 +429,67 @@ fun cadence_configs_unregistered_underlying_aborts() {
     let (_scenario, reg, _config, _admin_cap) = test_helpers::begin_registry_test();
 
     let _configs = reg.cadence_configs(UNDERLYING_BTC);
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun set_cadence_config_belly_pad_round_trips() {
+    let (scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+
+    let belly_pad = 1_250_000_000;
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        market_manager::cadence_one_minute!(),
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_THREE,
+        belly_pad,
+    );
+    let cadence = reg.cadence_config(UNDERLYING_BTC, market_manager::cadence_one_minute!());
+    assert_eq!(cadence.cadence_belly_pad(), belly_pad);
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidBellyPad)]
+fun set_cadence_config_belly_pad_below_one_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        market_manager::cadence_one_minute!(),
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_THREE,
+        500_000_000,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidBellyPad)]
+fun set_cadence_config_belly_pad_above_max_aborts() {
+    let (_scenario, mut reg, config, admin_cap) = test_helpers::begin_registry_test();
+    reg.register_underlying(&config, &admin_cap, UNDERLYING_BTC);
+    reg.set_template_cadence_config(
+        &config,
+        &admin_cap,
+        UNDERLYING_BTC,
+        market_manager::cadence_one_minute!(),
+        BTC_TICK_SIZE,
+        BTC_ADMISSION_TICK_SIZE,
+        BTC_MAX_EXPIRY_ALLOCATION,
+        BTC_INITIAL_EXPIRY_CASH,
+        WINDOW_SIZE_THREE,
+        5_000_000_000,
+    );
     abort EUnexpectedSuccess
 }

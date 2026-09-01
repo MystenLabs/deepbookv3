@@ -16,7 +16,7 @@ This is *limited-recourse* financing. A leveraged order's floor can only ever co
 
 There is **one canonical strike representation across the whole protocol — absolute integer ticks**. A strike is an integer `tick`, and its raw price is always `raw_strike = tick × tick_size`, where `tick_size` is fixed per expiry. There is no second representation: no centered grid and no boundary indices. The public API, order IDs, the payout tree, the liquidation book, and the exposure index all operate over ticks; raw strikes are reconstructed only at the pricing/settlement boundary. A range is the tick pair `(lower_tick, higher_tick)`, carried directly at public entrypoints and events; the open-ended ends are the two sentinel ticks (`lower_tick = 0` is `−∞`, `higher_tick = pos_inf_tick` is `+∞`). Only the durable order ID packs the two ticks into one integer.
 
-Because the tick domain is absolute and fixed in advance, **market creation reads no live spot** — a new expiry market just records its `tick_size` and snapshots the future-market policy from `ProtocolConfig` (the `MarketCreated` event carries `tick_size`, `max_expiry_allocation`, `initial_expiry_cash`, and the immutable policy snapshot, not a min/max strike). The pricing math saturates instead of aborting in the deep tails: a strike far below the forward prices to ~1.0 and far above to 0, so no live quote ever fails on an extreme strike.
+Because the tick domain is absolute, **market creation always loads the live surface** — it inverts the mint-probability belly, pads that interval by cadence `belly_pad` (zero means 1.0x), and freezes a 900-wide tick window (`MarketCreated` carries `tick_size`, `min_tick`, `max_expiry_allocation`, `initial_expiry_cash`, and the immutable policy snapshot). The cadence `tick_size` is a floor on derived granularity. The pricing math saturates instead of aborting in the deep tails: a strike far below the forward prices to ~1.0 and far above to 0, so no live quote ever fails on an extreme strike.
 
 ### Prices come from external feeds
 
@@ -49,7 +49,7 @@ An admin registers a Propbook underlying, and a lifecycle-cap holder creates one
 
 ```mermaid
 stateDiagram-v2
-  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket (Propbook underlying, no live spot read)
+  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket (Propbook underlying; live surface required)
   MarketCreated --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)

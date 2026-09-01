@@ -43,3 +43,13 @@ fun assert_market_tick_size_bounds_raw_strike_overflow_aborts() {
     config_constants::assert_market_tick_size_bounds(OVERFLOWING_ALIGNED_TICK_SIZE);
     abort 999
 }
+
+#[test]
+fun assert_belly_pad_accepts_zero_and_envelope() {
+    config_constants::assert_belly_pad(0);
+    config_constants::assert_belly_pad(config_constants::min_belly_pad!());
+    config_constants::assert_belly_pad(config_constants::max_belly_pad!());
+    assert!(config_constants::default_belly_pad!() == 0);
+    assert!(config_constants::min_belly_pad!() == 1_000_000_000);
+    assert!(config_constants::max_belly_pad!() == 4_000_000_000);
+}

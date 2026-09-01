@@ -185,9 +185,12 @@ fun off_grid_tick_before_reference_tick_is_set_aborts() {
 
 #[test]
 fun reference_tick_admits_up_and_down_ranges() {
-    let (fx, pricer, mut harness) = setup_priced_harness();
-
     assert_reference_tick_is_off_admission_grid(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
+    // BTC-scale off-grid tick (~$75,788 at $1) sits far above the from-zero
+    // `[1, 900]` window used by pad=0 markets; this harness starts the band there.
+    let (fx, pricer, mut harness) = setup_priced_harness_with_min_tick(
+        ADMISSIBLE_OFF_GRID_REFERENCE_TICK,
+    );
     harness.exposure.set_reference_tick(ADMISSIBLE_OFF_GRID_REFERENCE_TICK);
     let up_terms = harness
         .exposure
@@ -244,6 +247,12 @@ fun different_off_grid_tick_after_reference_tick_is_set_aborts() {
 }
 
 fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
+    setup_priced_harness_with_min_tick(1)
+}
+
+fun setup_priced_harness_with_min_tick(
+    min_tick: u64,
+): (OracleFixture, Pricer, ExposureHarness) {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(
@@ -261,14 +270,14 @@ fun setup_priced_harness(): (OracleFixture, Pricer, ExposureHarness) {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
     oracle_fixture::return_oracle_bundle(oracle);
-    let harness_id = create_and_share_exposure_harness(&mut fx);
+    let harness_id = create_and_share_exposure_harness(&mut fx, min_tick);
     fx.scenario_mut().next_tx(test_constants::admin());
     let harness = fx.scenario_mut().take_shared_by_id<ExposureHarness>(harness_id);
 
     (fx, pricer, harness)
 }
 
-fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
+fun create_and_share_exposure_harness(fx: &mut OracleFixture, min_tick: u64): ID {
     let id = object::new(fx.scenario_mut().ctx());
     let harness_id = id.to_inner();
     let exposure = strike_exposure::new(
@@ -276,6 +285,7 @@ fun create_and_share_exposure_harness(fx: &mut OracleFixture): ID {
         fx.expiry(),
         test_constants::default_tick_size(),
         test_constants::default_admission_tick_size(),
+        min_tick,
         fx.expiry() - test_constants::default_cadence_period_ms(),
         strike_exposure_config::new(),
         fx.scenario_mut().ctx(),

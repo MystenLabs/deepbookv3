@@ -35,6 +35,8 @@ public struct MarketCreated has copy, drop, store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
+    /// Inclusive first finite tick this market admits.
+    min_tick: u64,
     /// DUSDC pool allocation cap snapshotted for this expiry.
     max_expiry_allocation: u64,
     /// Minimum DUSDC cash target snapshotted for this expiry.
@@ -64,6 +66,7 @@ public struct CadenceConfigUpdated has copy, drop, store {
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
+    belly_pad: u64,
 }
 
 /// Emitted when minting pause state changes for one expiry market.
@@ -117,6 +120,7 @@ public(package) fun emit_market_created(
     expiry: u64,
     tick_size: u64,
     admission_tick_size: u64,
+    min_tick: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     strike_exposure_config: &StrikeExposureConfig,
@@ -129,6 +133,7 @@ public(package) fun emit_market_created(
         expiry,
         tick_size,
         admission_tick_size,
+        min_tick,
         max_expiry_allocation,
         initial_expiry_cash,
         liquidation_ltv: strike_exposure_config.liquidation_ltv(),
@@ -154,6 +159,7 @@ public(package) fun emit_cadence_config_updated(
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
+    belly_pad: u64,
 ) {
     event::emit(CadenceConfigUpdated {
         registry_id,
@@ -164,6 +170,7 @@ public(package) fun emit_cadence_config_updated(
         max_expiry_allocation,
         initial_expiry_cash,
         window_size,
+        belly_pad,
     });
 }
 

@@ -30,6 +30,12 @@ public(package) fun value(strike: Strike): u64 {
     strike.0
 }
 
+/// Wrap a raw price as a `Strike` without interpreting tick sentinels.
+/// Used when invert-searching the 1–99 belly before a market has a tick grid.
+public(package) fun strike_from_raw(raw: u64): Strike {
+    Strike(raw)
+}
+
 public(package) fun is_neg_inf(strike: Strike): bool {
     strike.0 == constants::neg_inf!()
 }

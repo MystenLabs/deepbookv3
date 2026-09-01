@@ -45,6 +45,13 @@ grid, no boundary indices).
 - **`tick_size`** — the fixed raw-price-per-tick factor snapshotted per expiry,
   so `raw_strike = tick × tick_size`. Carried on `MarketCreated`; an indexer or
   SDK reconstructs raw strikes from it. Code `tick_size`.
+- **`min_tick`** — inclusive first finite tick a market admits. Finite mint and
+  reference ticks must sit in `[min_tick, min_tick + 899]`; the open-end
+  sentinels stay free. Snapshotted at create from the padded live 1–99 belly.
+  Code `min_tick`.
+- **`belly_pad`** — cadence FLOAT_SCALING pad around the mint-probability belly.
+  Zero means 1.0x (invert 1%–99% UP with no extra room). Create always loads
+  the live surface and freezes the 900-wide window. Code `belly_pad`.
 - **range (`lower_tick`, `higher_tick`)** — a position's strike interval
   `(lower, higher]`, carried at public entrypoints (`mint`) and in events as the
   two absolute ticks directly. There is no standalone packed range key; the only

@@ -1178,6 +1178,7 @@ async function setupSimulation(
             maxExpiryAllocation,
             initialExpiryCash,
             windowSize: SIM_CADENCE_WINDOW_SIZE,
+            bellyPad: 0n,
         }),
         "set_template_cadence_config",
     );
@@ -1192,12 +1193,32 @@ async function setupSimulation(
     console.log(`[${ts()}]   Block Scholes local signer registered`);
 
     const expectedExpiryMs = await nextOneMonthExpiryMs();
+    // Create inverts the live surface, so the deployable expiry must already be seeded.
+    await executeAndWait(
+        await seedOracleTx({
+            pythFeedId,
+            bsValueStoreId,
+            bsSviStoreId,
+            expiry: expectedExpiryMs,
+            spot: seed.spot,
+            forward: seed.forward,
+            svi: seed.svi,
+        }),
+        "seed_oracle_surface",
+    );
+    console.log(
+        `[${ts()}]   Oracle seeded: expiry=${expectedExpiryMs} spot=${seed.spot} forward=${seed.forward} tick=$${scaledUsd(ORACLE_TICK_SIZE)}`,
+    );
+
     result = await executeAndWait(
         createExpiryMarketTx({
             poolVaultId,
             protocolConfigId,
             lifecycleCapId,
             cadenceId: SIM_CADENCE_ONE_MONTH,
+            pythFeedId,
+            bsValueStoreId,
+            bsSviStoreId,
         }),
         "create_and_share_expiry_market",
     );
@@ -1213,24 +1234,6 @@ async function setupSimulation(
         );
     }
     console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId} expiry=${expiryMsString}`);
-
-    // Seed the Block Scholes stores + Pyth spot for the on-chain cadence-created
-    // expiry so pricing has fresh spot/forward/SVI inputs.
-    await executeAndWait(
-        await seedOracleTx({
-            pythFeedId,
-            bsValueStoreId,
-            bsSviStoreId,
-            expiry: expiryMs,
-            spot: seed.spot,
-            forward: seed.forward,
-            svi: seed.svi,
-        }),
-        "seed_oracle_surface",
-    );
-    console.log(
-        `[${ts()}]   Oracle seeded: expiry=${expiryMsString} spot=${seed.spot} forward=${seed.forward} tick=$${scaledUsd(ORACLE_TICK_SIZE)}`,
-    );
 
     const accountWrapperId = deriveAccountWrapperId(address);
     await executeAndWait(createAccountTx(), "create_account");

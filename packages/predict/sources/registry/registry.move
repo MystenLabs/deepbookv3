@@ -16,12 +16,19 @@ use deepbook_predict::{
     config_events,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
-    market_manager::{Self, CadenceConfig, MarketManager},
+    market_manager::{Self, CadenceConfig, DeployableMarket, MarketManager},
     pause_cap::{Self, PauseCap},
     plp::PoolVault,
-    protocol_config::{Self, ProtocolConfig}
+    pricing,
+    protocol_config::{Self, ProtocolConfig},
+    strike_band
 };
-use propbook::registry::OracleRegistry;
+use propbook::{
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
+use fixed_math::math;
 use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
 const EPauseCapNotValid: u64 = 0;
@@ -78,6 +85,21 @@ public fun cadence_configs(
     propbook_underlying_id: u32,
 ): vector<CadenceConfig> {
     registry.market_manager.cadence_configs(propbook_underlying_id)
+}
+
+/// Next deployable expiry for an underlying/cadence. Keepers seed the live
+/// surface for this expiry before `create_and_share_expiry_market`.
+public fun next_deployable_expiry(
+    registry: &Registry,
+    propbook_registry: &OracleRegistry,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    clock: &Clock,
+): u64 {
+    registry
+        .market_manager
+        .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock)
+        .expiry()
 }
 
 // === PauseCap Lifecycle (admin) ===
@@ -184,8 +206,8 @@ public fun register_underlying(
 }
 
 /// Set all deployment terms for one underlying's cadence. Passing zero for all
-/// five values disables the cadence; otherwise all values must be nonzero and
-/// valid.
+/// six values disables the cadence; otherwise tick/allocation/cash/window must
+/// be nonzero and valid. `belly_pad` may be zero on an enabled cadence.
 public fun set_template_cadence_config(
     registry: &mut Registry,
     config: &ProtocolConfig,
@@ -197,6 +219,7 @@ public fun set_template_cadence_config(
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
     window_size: u64,
+    belly_pad: u64,
 ) {
     config.assert_version();
     registry
@@ -209,6 +232,7 @@ public fun set_template_cadence_config(
             max_expiry_allocation,
             initial_expiry_cash,
             window_size,
+            belly_pad,
         );
     config_events::emit_cadence_config_updated(
         registry.id(),
@@ -219,21 +243,28 @@ public fun set_template_cadence_config(
         max_expiry_allocation,
         initial_expiry_cash,
         window_size,
+        belly_pad,
     );
 }
 
 /// Create the next deployable `ExpiryMarket` for one cadence on a Propbook underlying.
 ///
 /// Requires an allowlisted lifecycle capability, a registered underlying with all
-/// canonical feed objects bound, and an enabled cadence with a deployable slot.
-/// Higher-rank cadence overlaps and existing markets are skipped. The market
-/// snapshots cadence and expiry policy, starts with zero cash, and cannot mint
-/// until pool rebalancing funds it. Live pricing reads current Propbook bindings.
+/// canonical feed objects bound and freshly written, and an enabled cadence with
+/// a deployable slot. Higher-rank cadence overlaps and existing markets are
+/// skipped. Create loads a live pricer, inverts the mint-probability belly,
+/// pads it by cadence `belly_pad` (zero means 1.0x), and freezes a 900-wide
+/// tick window. The cadence `tick_size` is a floor on derived granularity;
+/// admission stays the same multiple of `tick_size`. The market starts with
+/// zero cash and cannot mint until pool rebalancing funds it.
 public fun create_and_share_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
     propbook_registry: &OracleRegistry,
+    pyth: &PythFeed,
+    bs_values: &BlockScholesValueStore,
+    bs_svi: &BlockScholesSVIStore,
     lifecycle_cap: &MarketLifecycleCap,
     propbook_underlying_id: u32,
     cadence_id: u8,
@@ -247,46 +278,42 @@ public fun create_and_share_expiry_market(
     let deployable = registry
         .market_manager
         .next_deployable_market(propbook_registry, propbook_underlying_id, cadence_id, clock);
-    let expiry = deployable.expiry();
-    let tick_size = deployable.tick_size();
-    let admission_tick_size = deployable.admission_tick_size();
-    let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
-    let max_expiry_allocation = deployable.max_expiry_allocation();
-    let initial_expiry_cash = deployable.initial_expiry_cash();
-    let pool_vault_id = pool_vault.id();
-    let expiry_market_id = expiry_market::create_and_share(
-        config,
+    let pad = deployable.belly_pad();
+    let pad = if (pad == 0) { math::float_scaling!() } else { pad };
+    let pricer = pricing::load_live_pricer(
+        config.pricing_config(),
+        propbook_registry,
+        pyth,
+        bs_values,
+        bs_svi,
+        object::id_from_address(@0x0),
         propbook_underlying_id,
-        expiry,
-        tick_size,
-        admission_tick_size,
-        reference_tick_source_timestamp_ms,
+        deployable.expiry(),
+        clock,
         ctx,
     );
-    pool_vault.register_expiry(
-        expiry_market_id,
-        expiry,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        clock,
+    let strike_config = config.strike_exposure_template_config();
+    let band = strike_band::derive(
+        &pricer,
+        strike_config.min_entry_probability(),
+        strike_config.max_entry_probability(),
+        pad,
+        deployable.tick_size(),
     );
-    registry
-        .market_manager
-        .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
-    config_events::emit_market_created(
-        expiry_market_id,
-        pool_vault_id,
+    let admission_multiple = deployable.admission_tick_size() / deployable.tick_size();
+    share_deployable_market(
+        registry,
+        pool_vault,
+        config,
+        deployable,
         propbook_underlying_id,
-        expiry,
-        tick_size,
-        admission_tick_size,
-        max_expiry_allocation,
-        initial_expiry_cash,
-        config.strike_exposure_template_config(),
-        config.expiry_cash_template_config(),
-    );
-
-    expiry_market_id
+        cadence_id,
+        band.tick_size(),
+        band.tick_size() * admission_multiple,
+        band.min_tick(),
+        clock,
+        ctx,
+    )
 }
 
 /// Create a derived shared BuilderCode for the caller and index.
@@ -332,6 +359,60 @@ fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
 /// revoked.
 fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
+}
+
+fun share_deployable_market(
+    registry: &mut Registry,
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    deployable: DeployableMarket,
+    propbook_underlying_id: u32,
+    cadence_id: u8,
+    tick_size: u64,
+    admission_tick_size: u64,
+    min_tick: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    let expiry = deployable.expiry();
+    let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
+    let max_expiry_allocation = deployable.max_expiry_allocation();
+    let initial_expiry_cash = deployable.initial_expiry_cash();
+    let pool_vault_id = pool_vault.id();
+    let expiry_market_id = expiry_market::create_and_share(
+        config,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        min_tick,
+        reference_tick_source_timestamp_ms,
+        ctx,
+    );
+    pool_vault.register_expiry(
+        expiry_market_id,
+        expiry,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        clock,
+    );
+    registry
+        .market_manager
+        .record_expiry_creation(propbook_underlying_id, cadence_id, expiry, expiry_market_id);
+    config_events::emit_market_created(
+        expiry_market_id,
+        pool_vault_id,
+        propbook_underlying_id,
+        expiry,
+        tick_size,
+        admission_tick_size,
+        min_tick,
+        max_expiry_allocation,
+        initial_expiry_cash,
+        config.strike_exposure_template_config(),
+        config.expiry_cash_template_config(),
+    );
+    expiry_market_id
 }
 
 // === Test-Only Functions ===

@@ -47,6 +47,9 @@ const UNDERWATER_FORWARD: u64 = 10_000_000_000;
 const NON_MONOTONE_A_MAGNITUDE: u64 = 1;
 const NON_MONOTONE_LOWER_TICK: u64 = 90;
 const NON_MONOTONE_HIGHER_TICK: u64 = 100;
+/// 1.25x pad so the create-time window includes tick 90. A 1.0x pad around the
+/// default near-step at $100 starts the admitted band at tick 100.
+const NON_MONOTONE_BELLY_PAD: u64 = 1_250_000_000;
 /// High base variance (0.1) so prices are smooth, plus a forward below the 100e9
 /// strike that lands the 2x `LEVERAGED_QUANTITY` UP range in the knock-out band
 /// `(floor, floor / liquidation_ltv]` — worth more than its 5e8 floor but at or
@@ -320,7 +323,9 @@ fun mixed_one_x_and_leveraged_book() {
 
 #[test, expected_failure(abort_code = pricing::ENonMonotonePriceMemo)]
 fun current_nav_rejects_non_monotone_active_book_surface() {
-    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    let (mut fx, expiry_id, trader) = helpers::setup_everything_with_belly_pad(
+        NON_MONOTONE_BELLY_PAD,
+    );
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
@@ -339,7 +344,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
     );
     // These SVI values are intentionally extreme: tiny positive `a`, max `b`,
     // min `sigma`, and `rho = -1`. Together they make the model report a higher
-    // chance of finishing above tick 100 than above tick 90, which is impossible
+    // chance of finishing above tick 110 than above tick 100, which is impossible
     // for a valid UP price curve.
     fx.set_clock_for_testing(test_constants::now_ms() + 1);
     fx.seed_bs_surface_with_svi_bundle(

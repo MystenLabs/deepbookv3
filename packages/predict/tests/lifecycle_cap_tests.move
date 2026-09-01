@@ -10,6 +10,7 @@ module deepbook_predict::lifecycle_cap_tests;
 
 use deepbook_predict::{
     admin::{Self, AdminCap},
+    block_scholes_feed,
     market_lifecycle_cap::MarketLifecycleCap,
     oracle_fixture::{Self, OracleFixture},
     plp::PoolVault,
@@ -18,7 +19,11 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use propbook::registry::OracleRegistry;
+use propbook::{
+    block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use std::unit_test::destroy;
 use sui::{clock, test_scenario::return_shared};
 
@@ -110,6 +115,9 @@ fun revoke_lifecycle_cap(fx: &mut OracleFixture, admin_cap: &AdminCap, lifecycle
 /// Attempt market creation through the production registry path with a
 /// caller-chosen lifecycle cap. Revoked-cap tests abort before cadence logic.
 fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycleCap): ID {
+    let pyth_id = fx.pyth_id();
+    let bs_values_id = fx.bs_values_id();
+    let bs_svi_id = fx.bs_svi_id();
     let scenario = fx.scenario_mut();
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
@@ -117,16 +125,26 @@ fun create_second_market(fx: &mut OracleFixture, lifecycle_cap: &MarketLifecycle
     let mut vault = scenario.take_shared<PoolVault>();
     let oracle_registry = scenario.take_shared<OracleRegistry>();
     let config = scenario.take_shared<ProtocolConfig>();
+    let pyth = scenario.take_shared_by_id<PythFeed>(pyth_id);
+    let bs = block_scholes_feed::new(
+        scenario.take_shared_by_id<BlockScholesValueStore>(bs_values_id),
+        scenario.take_shared_by_id<BlockScholesSVIStore>(bs_svi_id),
+    );
     let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
+        &pyth,
+        bs.values(),
+        bs.svi(),
         lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         &clock,
         scenario.ctx(),
     );
+    bs.return_feed();
+    return_shared(pyth);
     clock.destroy_for_testing();
     return_shared(config);
     return_shared(oracle_registry);

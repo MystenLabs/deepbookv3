@@ -295,15 +295,24 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   strikes unrepresentable and makes strike analytics feed-global. *Rejected:* keeping
   grid-relative boundary indices, storing raw `u64` strikes in the id (they do not
   fit), and an opaque id with a separate order table.
-- **No-spot market creation.** Because the tick domain is absolute, market creation
-  reads no live spot — it snapshots the cadence `tick_size` and starts with zero cash.
-  `MarketCreated` carries `tick_size`, `max_expiry_allocation`, and
-  `initial_expiry_cash` plus the immutable per-expiry policy snapshot, not min/max strike.
-  *Rationale:* the only reason creation needed a fresh spot was to center the deleted grid; a market simply
-  cannot admit risk until the normal live-pricing freshness gates pass. *Rejected:*
-  re-adding a creation-time spot read purely to sanity-check the tick size against the
-  asset's price scale — the tick size is sized operationally and a mismatch fails
-  loud at the first mint.
+- **Create always freezes a 900-wide window around the live mint-probability belly.**
+  Market creation loads a live pricer, inverts the mint-probability belly
+  (default 1%–99% UP), pads that interval by cadence `belly_pad` (zero means
+  1.0x), and freezes a 900-wide absolute tick window that covers the padded
+  band. The cadence `tick_size` is a floor on derived granularity; admission
+  stays the same multiple of `tick_size`. The grid does not move after
+  creation and the market starts with zero cash. `MarketCreated` carries
+  `tick_size`, `min_tick`, `max_expiry_allocation`, and `initial_expiry_cash`
+  plus the immutable per-expiry policy snapshot. *Rationale:* a from-zero
+  30-bit ladder can burn the 1,000-node payout-tree cap on strikes a
+  short-dated market will never trade; a frozen 900-wide window around the
+  padded belly keeps unique user-chosen boundaries inside that cap and leaves
+  headroom for sentinels. *Rejected:* a global Order-level `1..=900` check
+  (Order has no market context, and a from-zero 900-tick ladder still wastes
+  slots on `$0`–belly); a gated `from_surface` create that left `belly_pad = 0`
+  on the old from-zero grid (the tree-cap finding requires the window on every
+  market); keeping create permanently no-spot (revisit of the earlier no-spot
+  rationale, which existed only to avoid centering the deleted grid).
 - **Deep-tail pricing saturates, it does not abort.** `compute_nd2` computes
   `strike/forward` in `u128` and saturates both tails (deep-ITM up tail → ~1.0, the
   `neg_inf` limit; deep-OTM up tail → 0) instead of aborting on underflow or wrapping

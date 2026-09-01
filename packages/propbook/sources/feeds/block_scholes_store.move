@@ -526,6 +526,88 @@ public fun batch_ingested_fields(event: &BlockScholesBatchIngested): (ID, u8, u6
     )
 }
 
+/// Fixture seam: drop a value row so absence tests can run after create-time seeding.
+#[test_only]
+public fun remove_value_for_testing(store: &mut BlockScholesValueStore, sid: u256) {
+    if (store.values.contains(sid)) {
+        let BsRead { .. } = store.values.remove(sid);
+    };
+}
+
+/// Fixture seam: drop an SVI row so absence tests can run after create-time seeding.
+#[test_only]
+public fun remove_svi_for_testing(store: &mut BlockScholesSVIStore, sid: u256) {
+    if (store.svis.contains(sid)) {
+        let BsRead { .. } = store.svis.remove(sid);
+    };
+}
+
+/// Fixture seam: replace a value row even when the model time does not advance.
+#[test_only]
+public fun overwrite_value_for_testing(
+    store: &mut BlockScholesValueStore,
+    sid: u256,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    value: u128,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let read = BsRead {
+        model_timestamp_ms,
+        published_at_ms,
+        recorded_at_ms: clock.timestamp_ms(),
+        writer_digest: *ctx.digest(),
+        value,
+    };
+    if (store.values.contains(sid)) {
+        *store.values.borrow_mut(sid) = read;
+    } else {
+        store.values.add(sid, read);
+    };
+}
+
+/// Fixture seam: replace an SVI row even when the model time does not advance.
+#[test_only]
+public fun overwrite_svi_for_testing(
+    store: &mut BlockScholesSVIStore,
+    sid: u256,
+    model_timestamp_ms: u64,
+    published_at_ms: u64,
+    svi_a_magnitude: u128,
+    svi_a_is_negative: bool,
+    svi_b: u128,
+    svi_sigma: u128,
+    svi_rho_magnitude: u128,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u128,
+    svi_m_is_negative: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let read = BsRead {
+        model_timestamp_ms,
+        published_at_ms,
+        recorded_at_ms: clock.timestamp_ms(),
+        writer_digest: *ctx.digest(),
+        value: SVIParams {
+            a_magnitude: svi_a_magnitude,
+            a_is_negative: svi_a_is_negative,
+            b: svi_b,
+            sigma: svi_sigma,
+            rho_magnitude: svi_rho_magnitude,
+            rho_is_negative: svi_rho_is_negative,
+            m_magnitude: svi_m_magnitude,
+            m_is_negative: svi_m_is_negative,
+        },
+    };
+    if (store.svis.contains(sid)) {
+        *store.svis.borrow_mut(sid) = read;
+    } else {
+        store.svis.add(sid, read);
+    };
+}
+
 /// Build an older-version fixture without exposing a production mutation surface.
 #[test_only]
 public fun set_store_versions_for_testing(

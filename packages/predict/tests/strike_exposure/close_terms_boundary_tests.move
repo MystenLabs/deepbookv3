@@ -170,6 +170,7 @@ fun create_and_share_exposure_harness(
         expiry_ms,
         test_constants::default_tick_size(),
         test_constants::default_tick_size(),
+        1,
         expiry_ms - test_constants::default_cadence_period_ms(),
         config,
         fx.scenario_mut().ctx(),

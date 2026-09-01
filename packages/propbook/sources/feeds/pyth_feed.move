@@ -399,3 +399,31 @@ public fun record_raw_for_testing(
         feed.lane.update(read, id);
     };
 }
+
+/// Fixture seam: replace `latest` even when the source time does not advance.
+#[test_only]
+public fun overwrite_raw_for_testing(
+    feed: &mut PythFeed,
+    price_magnitude: u64,
+    price_is_negative: bool,
+    exponent_magnitude: u16,
+    exponent_is_negative: bool,
+    feed_update_timestamp_us: u64,
+    envelope_timestamp_us: u64,
+    update_timestamp_ms: u64,
+    ctx: &TxContext,
+) {
+    assert!(feed.version == constants::current_version!(), EWrongVersion);
+    assert!(feed_update_timestamp_us <= envelope_timestamp_us, EFeedTimestampAfterEnvelope);
+    let raw = new_raw_spot(
+        feed.pyth_source_id,
+        price_magnitude,
+        price_is_negative,
+        exponent_magnitude,
+        exponent_is_negative,
+        feed_update_timestamp_us,
+    );
+    let read = new_raw_read(raw, update_timestamp_ms, ctx);
+    let id = feed.id();
+    feed.lane.overwrite_latest_for_testing(read, id);
+}

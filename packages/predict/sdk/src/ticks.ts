@@ -3,6 +3,9 @@ const TICK_BITS = 30n;
 /** +inf sentinel tick: the upper bound of an UP range. */
 export const POS_INF_TICK = (1n << TICK_BITS) - 1n;
 
+/** Maximum distinct finite strike ticks one expiry market may admit. */
+export const MAX_UNIQUE_STRIKE_TICKS = 900n;
+
 export type Side = "up" | "down";
 
 // Convert a raw binary-range strike to the `(lower_tick, higher_tick)` pair the

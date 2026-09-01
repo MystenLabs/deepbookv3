@@ -145,6 +145,12 @@ public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
+/// Return the live forward this pricer anchored to, for SDK/devInspect reads and
+/// create-time strike-band inversion.
+public fun forward(pricer: &Pricer): u64 {
+    pricer.forward
+}
+
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {

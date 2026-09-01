@@ -34,6 +34,7 @@ use deepbook_predict::{
     expiry_market::{ExpiryMarket, MintQuote},
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
+    oracle_fixture,
     plp::{Self, PoolVault, PoolValuation},
     predict_account::{Self, PredictApp},
     pricing,
@@ -157,8 +158,8 @@ public struct AccountBundle {
 /// Stand up a registry + protocol config + an empty PLP vault + the permanent
 /// Pyth, BS spot, BS forward, and BS SVI feeds for the default cadence's `tick`
 /// size. base_fee is floored to 1 and min_ask to 0 so small test quantities are
-/// admissible. Creation reads no spot (strikes are absolute ticks), so no spot is
-/// seeded here — `prepare_live_oracle` seeds the live spot + surface for pricing.
+/// admissible. `create_expiry` seeds the live surface for the deployable expiry
+/// before create; `prepare_live_oracle` re-seeds for later priced flows.
 public fun setup_market(tick: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     // The framework root constructor is a system-only test seam.
@@ -194,6 +195,7 @@ public fun setup_market(tick: u64): Fixture {
         test_constants::default_max_expiry_allocation(),
         test_constants::default_initial_expiry_cash(),
         test_constants::default_cadence_window_size(),
+        0,
     );
     return_shared(config);
     return_shared(registry);
@@ -263,7 +265,7 @@ public fun setup_market_default(): Fixture {
 /// line. The market objects are returned to the shared pool; the caller
 /// takes them with `take_market_bundle`. Returns `(fixture, expiry_id, trader)`.
 public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, Trader) {
-    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit(), 0)
 }
 
 /// `setup_live_market` at the far default expiry / live price with the large
@@ -273,11 +275,30 @@ public fun setup_everything(): (Fixture, ID, Trader) {
         test_constants::default_expiry_ms(),
         test_constants::default_live_price(),
         test_constants::default_manager_deposit(),
+        0,
     )
 }
 
-fun setup_funded_live_market(expiry_ms: u64, live_price: u64, deposit: u64): (Fixture, ID, Trader) {
+/// `setup_everything` with an explicit cadence `belly_pad` snapshotted at create.
+public fun setup_everything_with_belly_pad(belly_pad: u64): (Fixture, ID, Trader) {
+    setup_funded_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+        test_constants::default_manager_deposit(),
+        belly_pad,
+    )
+}
+
+fun setup_funded_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+    belly_pad: u64,
+): (Fixture, ID, Trader) {
     let mut fx = setup_market_default();
+    if (belly_pad > 0) {
+        fx.set_default_cadence_belly_pad(belly_pad);
+    };
     let expiry_id = fx.create_expiry(expiry_ms);
     let trader = fx.create_funded_manager(deposit);
     let mut market = fx.take_market_bundle(expiry_id);
@@ -297,16 +318,44 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): ID {
     let config = self.scenario.take_shared<ProtocolConfig>();
     let mut creation_clock = clock::create_for_testing(self.scenario.ctx());
     creation_clock.set_for_testing(expiry - test_constants::default_cadence_period_ms());
+    let mut pyth = self.scenario.take_shared_by_id<PythFeed>(self.pyth_id);
+    let mut bs = bs_feed::new(
+        self.scenario.take_shared_by_id<BlockScholesValueStore>(self.bs_values_id),
+        self.scenario.take_shared_by_id<BlockScholesSVIStore>(self.bs_svi_id),
+    );
+    oracle_fixture::seed_live_surface(
+        &mut self.scenario,
+        &mut pyth,
+        &mut bs,
+        expiry,
+        test_constants::default_live_price(),
+        creation_clock.timestamp_ms(),
+        &creation_clock,
+    );
     let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
+        &pyth,
+        bs.values(),
+        bs.svi(),
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         test_constants::default_cadence_id(),
         &creation_clock,
         self.scenario.ctx(),
     );
+    oracle_fixture::seed_live_surface(
+        &mut self.scenario,
+        &mut pyth,
+        &mut bs,
+        expiry,
+        test_constants::default_live_price(),
+        test_constants::live_source_timestamp_ms(),
+        &self.clock,
+    );
+    bs.return_feed();
+    return_shared(pyth);
     creation_clock.destroy_for_testing();
     return_shared(config);
     return_shared(oracle_registry);
@@ -322,16 +371,41 @@ public fun create_next_expiry_for_cadence(self: &mut Fixture, cadence_id: u8): I
     let mut registry = self.scenario.take_shared<Registry>();
     let oracle_registry = self.scenario.take_shared<OracleRegistry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
+    let expiry = registry.next_deployable_expiry(
+        &oracle_registry,
+        test_constants::propbook_underlying_id(),
+        cadence_id,
+        &self.clock,
+    );
+    let mut pyth = self.scenario.take_shared_by_id<PythFeed>(self.pyth_id);
+    let mut bs = bs_feed::new(
+        self.scenario.take_shared_by_id<BlockScholesValueStore>(self.bs_values_id),
+        self.scenario.take_shared_by_id<BlockScholesSVIStore>(self.bs_svi_id),
+    );
+    oracle_fixture::seed_live_surface(
+        &mut self.scenario,
+        &mut pyth,
+        &mut bs,
+        expiry,
+        test_constants::default_live_price(),
+        self.clock.timestamp_ms(),
+        &self.clock,
+    );
     let expiry_id = registry.create_and_share_expiry_market(
         &mut vault,
         &config,
         &oracle_registry,
+        &pyth,
+        bs.values(),
+        bs.svi(),
         &self.lifecycle_cap,
         test_constants::propbook_underlying_id(),
         cadence_id,
         &self.clock,
         self.scenario.ctx(),
     );
+    bs.return_feed();
+    return_shared(pyth);
     return_shared(config);
     return_shared(oracle_registry);
     return_shared(registry);
@@ -519,6 +593,29 @@ public fun set_template_no_leverage_window_ms(self: &mut Fixture, window_ms: u64
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Set the default cadence `belly_pad` through the production registry admin path.
+/// Call before creating the expiry that should snapshot the derived window.
+public fun set_default_cadence_belly_pad(self: &mut Fixture, belly_pad: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut registry = self.scenario.take_shared<Registry>();
+    let config = self.scenario.take_shared<ProtocolConfig>();
+    registry.set_template_cadence_config(
+        &config,
+        &self.admin_cap,
+        test_constants::propbook_underlying_id(),
+        test_constants::default_cadence_id(),
+        test_constants::default_tick_size(),
+        test_constants::default_admission_tick_size(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
+        test_constants::default_cadence_window_size(),
+        belly_pad,
+    );
+    return_shared(config);
+    return_shared(registry);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Resize the default cadence's pool allocation terms through the production
 /// registry admin path. Call before creating the expiry that should snapshot them.
 public fun set_default_cadence_allocation(
@@ -539,6 +636,7 @@ public fun set_default_cadence_allocation(
         max_expiry_allocation,
         initial_expiry_cash,
         test_constants::default_cadence_window_size(),
+        0,
     );
     return_shared(config);
     return_shared(registry);
@@ -806,7 +904,8 @@ public fun prepare_live_oracle_bundle_at(
 }
 
 /// Overwrite a bundled Block Scholes spot with its provider-native width. This is a test-only seam
-/// for exercising Predict's pricing-width failure through mandatory market flows.
+/// for exercising Predict's pricing-width failure through mandatory market flows. Force-replaces
+/// the row so a create-time or prepare seed cannot silently keep the previous observation.
 public fun set_bs_spot_raw_for_testing_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
@@ -814,12 +913,18 @@ public fun set_bs_spot_raw_for_testing_bundle(
     spot: u128,
 ) {
     let sid = market.bs.values().spot_sid();
-    let batch = verify::new_value_batch_for_testing(
-        source_timestamp_ms,
-        vector[verify::new_value_update_for_testing(sid, source_timestamp_ms, spot)],
-    );
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
-    market.bs.values_mut().apply_spot_batch(batch, &self.clock, &ctx);
+    market
+        .bs
+        .values_mut()
+        .overwrite_value_for_testing(
+            sid,
+            source_timestamp_ms,
+            source_timestamp_ms,
+            spot,
+            &self.clock,
+            &ctx,
+        );
     end_seed_tx(restore);
 }
 
@@ -1091,7 +1196,7 @@ public fun seed_bs_surface(
     source_timestamp_ms: u64,
 ) {
     self.seed_bs_surface_with_svi_source(
-        market,
+        market.expiry(),
         bs,
         spot,
         forward,
@@ -1162,7 +1267,7 @@ public fun seed_bs_surface_with_svi(
 ) {
     let svi_source_timestamp_ms = self.clock.timestamp_ms();
     self.seed_bs_surface_with_svi_source(
-        market,
+        market.expiry(),
         bs,
         spot,
         forward,
@@ -1181,7 +1286,7 @@ public fun seed_bs_surface_with_svi(
 
 fun seed_bs_surface_with_svi_source(
     self: &mut Fixture,
-    market: &ExpiryMarket,
+    expiry: u64,
     bs: &mut BlockScholesFeed,
     spot: u64,
     forward: u64,
@@ -1197,64 +1302,43 @@ fun seed_bs_surface_with_svi_source(
     svi_source_timestamp_ms: u64,
 ) {
     let (ctx, restore) = begin_seed_tx(&mut self.scenario);
-    let expiry = market.expiry();
     let spot_sid = bs.values().spot_sid();
     let forward_sid = bs.values().forward_sid(expiry);
     let svi_sid = bs.svi().svi_sid(expiry);
     bs
         .values_mut()
-        .apply_spot_batch(
-            verify::new_value_batch_for_testing(
-                source_timestamp_ms,
-                vector[
-                    verify::new_value_update_for_testing(
-                        spot_sid,
-                        source_timestamp_ms,
-                        spot as u128,
-                    ),
-                ],
-            ),
+        .overwrite_value_for_testing(
+            spot_sid,
+            source_timestamp_ms,
+            source_timestamp_ms,
+            spot as u128,
             &self.clock,
             &ctx,
         );
     bs
         .values_mut()
-        .apply_forward_batch(
-            verify::new_value_batch_for_testing(
-                source_timestamp_ms,
-                vector[
-                    verify::new_value_update_for_testing(
-                        forward_sid,
-                        source_timestamp_ms,
-                        forward as u128,
-                    ),
-                ],
-            ),
-            vector[expiry],
+        .overwrite_value_for_testing(
+            forward_sid,
+            source_timestamp_ms,
+            source_timestamp_ms,
+            forward as u128,
             &self.clock,
             &ctx,
         );
     bs
         .svi_mut()
-        .apply_svi_batch(
-            verify::new_svi_batch_for_testing(
-                svi_source_timestamp_ms,
-                vector[
-                    verify::new_svi_for_testing(
-                        svi_sid,
-                        svi_source_timestamp_ms,
-                        svi_a_magnitude as u128,
-                        svi_a_is_negative,
-                        svi_b as u128,
-                        svi_sigma as u128,
-                        svi_rho_magnitude as u128,
-                        svi_rho_is_negative,
-                        svi_m_magnitude as u128,
-                        svi_m_is_negative,
-                    ),
-                ],
-            ),
-            vector[expiry],
+        .overwrite_svi_for_testing(
+            svi_sid,
+            svi_source_timestamp_ms,
+            svi_source_timestamp_ms,
+            svi_a_magnitude as u128,
+            svi_a_is_negative,
+            svi_b as u128,
+            svi_sigma as u128,
+            svi_rho_magnitude as u128,
+            svi_rho_is_negative,
+            svi_m_magnitude as u128,
+            svi_m_is_negative,
             &self.clock,
             &ctx,
         );
@@ -2557,7 +2641,7 @@ fun store_pyth_spot(
     update_timestamp_ms: u64,
 ) {
     let (ctx, restore) = begin_seed_tx(scenario);
-    pyth_feed::record_raw_for_testing(
+    pyth_feed::overwrite_raw_for_testing(
         pyth,
         spot,
         false,
@@ -2566,7 +2650,6 @@ fun store_pyth_spot(
         source_timestamp_ms * 1000,
         source_timestamp_ms * 1000,
         update_timestamp_ms,
-        false,
         &ctx,
     );
     end_seed_tx(restore);
