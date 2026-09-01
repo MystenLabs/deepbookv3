@@ -12,6 +12,7 @@ paths:
 `scripts/` holds only the **protocol package-upgrade** transactions and a couple of SDK examples:
 
 - `scripts/transactions/mainPackageUpgrade.ts`, `marginPackageUpgrade.ts`, `vaultPackageUpgrade.ts` — run `sui client upgrade` and serialize an unsigned upgrade tx to `tx/tx-data.txt` for the multisig.
+- `scripts/transactions/serializeUnsignedUpgrade.ts` — shared `GAS_OBJECT` check and `execFileSync` argv invocation for those upgrade scripts.
 - `scripts/transactions/createPermissionlessPool.ts`, `deepbookMarketMaker.ts` — SDK usage examples.
 - `scripts/config/constants.ts` — the DeepBook core `upgradeCapID`.
 - `scripts/tx/` — output directory for serialized transaction bytes.
@@ -56,6 +57,6 @@ To decode:
 
 ## Environment Variables
 - `RPC_URL` - Custom RPC endpoint
-- `GAS_OBJECT` - Gas coin object ID for the upgrade tx
+- `GAS_OBJECT` - Gas coin object ID for the upgrade tx (`0x` plus 1-64 hex characters; passed as one `sui` argv, not interpolated into a shell)
 - `SUI_BINARY` - Path to sui binary (default: `sui`)
 - `NODE_ENV=development` - Outputs to `tx-data-local.txt`
