@@ -8,12 +8,17 @@
 /// neither the legacy pair nor the upgraded pair added for the Pyth cutover had any
 /// coverage of the two things that can silently go wrong: which oracle generation an
 /// entry reads, and whether the `can_liquidate` gate actually holds.
+///
+/// The legacy pair is now retired and covered by its aborts alone; everything that
+/// exercises a real liquidation runs against the upgraded pair, which is the only way
+/// the vault can liquidate.
 #[test_only]
 module margin_liquidation::liquidation_vault_oracle_tests;
 
 use deepbook::pool::Pool;
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
+    margin_manager_upgraded,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
     test_constants::{Self, USDC, BTC, btc_multiplier},
@@ -23,7 +28,6 @@ use deepbook_margin::{
         build_demo_usdc_price_info_object,
         build_btc_price_info_object_upgraded,
         build_demo_usdc_price_info_object_upgraded,
-        build_stale_btc_price_info_object,
         build_stale_btc_price_info_object_upgraded,
         mint_coin,
     }
@@ -70,10 +74,10 @@ fun healthy_manager(): (test::Scenario, Clock, ID, ID, ID) {
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
-    let btc = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    margin_manager::deposit<BTC, USDC, BTC>(
+    margin_manager_upgraded::deposit<BTC, USDC, BTC>(
         &mut mm,
         &registry,
         &btc,
@@ -82,7 +86,7 @@ fun healthy_manager(): (test::Scenario, Clock, ID, ID, ID) {
         &clock,
         scenario.ctx(),
     );
-    margin_manager::borrow_quote<BTC, USDC>(
+    margin_manager_upgraded::borrow_quote<BTC, USDC>(
         &mut mm,
         &registry,
         &mut usdc_pool,
@@ -213,56 +217,6 @@ fun liquidate_quote_upgraded_rejects_a_stale_feed() {
     scenario.end();
 }
 
-/// The legacy entry keeps the same two properties, so the pair cannot drift. This is
-/// the coverage `liquidate_quote` never had.
-#[test, expected_failure(abort_code = pyth::pyth::E_STALE_PRICE_UPDATE)]
-fun liquidate_quote_rejects_a_stale_feed() {
-    let (mut scenario, clock, btc_pool_id, usdc_pool_id, _r) = healthy_manager();
-
-    scenario.next_tx(test_constants::admin());
-    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
-    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
-    vault.deposit(
-        &cap,
-        mint_coin<USDC>(50_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-    );
-
-    scenario.next_tx(test_constants::admin());
-    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
-    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
-    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
-
-    let stale_btc = build_stale_btc_price_info_object(&mut scenario, 50000, &clock, 600);
-    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
-
-    vault.liquidate_quote<BTC, USDC>(
-        &mut mm,
-        &registry,
-        &stale_btc,
-        &usdc,
-        &mut btc_pool,
-        &mut usdc_pool,
-        &mut pool,
-        option::none(),
-        &clock,
-        scenario.ctx(),
-    );
-
-    destroy(stale_btc);
-    destroy(usdc);
-    destroy(vault);
-    destroy(cap);
-    return_shared(btc_pool);
-    return_shared(usdc_pool);
-    return_shared(registry);
-    return_shared(pool);
-    return_shared(mm);
-    destroy(clock);
-    scenario.end();
-}
-
 /// The full settlement path, which nothing else in the package reaches.
 ///
 /// The two `*_rejects_a_stale_feed` tests abort inside `risk_ratio`, and the
@@ -363,65 +317,6 @@ fun liquidate_quote_upgraded_seizes_collateral_and_settles() {
     scenario.end();
 }
 
-/// The legacy entry on the same fixture at the same prices must settle to exactly the
-/// same numbers as its upgraded twin above. Asserting identical literals in both tests
-/// is what makes the twin invariant executable: `scripts/check_upgraded_parity.py`
-/// compares signatures, this compares outcomes. Change one body and one test breaks.
-#[test]
-fun liquidate_quote_settles_the_same_numbers_on_the_legacy_generation() {
-    let (mut scenario, clock, btc_pool_id, usdc_pool_id, _r) = healthy_manager();
-
-    scenario.next_tx(test_constants::admin());
-    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
-    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
-    vault.deposit(
-        &cap,
-        mint_coin<USDC>(50_000 * test_constants::usdc_multiplier(), scenario.ctx()),
-    );
-
-    scenario.next_tx(test_constants::admin());
-    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
-    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
-    let registry = scenario.take_shared<MarginRegistry>();
-    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
-    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
-    let shares_before = mm.borrowed_quote_shares();
-
-    let btc = build_btc_price_info_object(&mut scenario, 3000, &clock);
-    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
-
-    vault.liquidate_quote<BTC, USDC>(
-        &mut mm,
-        &registry,
-        &btc,
-        &usdc,
-        &mut btc_pool,
-        &mut usdc_pool,
-        &mut pool,
-        option::none(),
-        &clock,
-        scenario.ctx(),
-    );
-
-    // Identical to `liquidate_quote_upgraded_seizes_collateral_and_settles`.
-    assert!(shares_before == 40_000_000_000);
-    assert!(mm.borrowed_quote_shares() == 5_000_000_000);
-    assert!(vault.balance<BTC>() == 0);
-    assert!(vault.balance<USDC>() == 50_700_000_000);
-
-    destroy(btc);
-    destroy(usdc);
-    destroy(vault);
-    destroy(cap);
-    return_shared(btc_pool);
-    return_shared(usdc_pool);
-    return_shared(registry);
-    return_shared(pool);
-    return_shared(mm);
-    destroy(clock);
-    scenario.end();
-}
-
 /// A base-debt manager: 50k USDC of collateral against a 0.8 BTC loan opened at $50k.
 fun manager_with_base_debt(): (test::Scenario, Clock, ID, ID) {
     let (
@@ -455,10 +350,10 @@ fun manager_with_base_debt(): (test::Scenario, Clock, ID, ID) {
     let pool = scenario.take_shared<Pool<BTC, USDC>>();
     let registry = scenario.take_shared<MarginRegistry>();
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
-    let btc = build_btc_price_info_object(&mut scenario, 50000, &clock);
-    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let btc = build_btc_price_info_object_upgraded(&mut scenario, 50000, &clock);
+    let usdc = build_demo_usdc_price_info_object_upgraded(&mut scenario, &clock);
 
-    margin_manager::deposit<BTC, USDC, USDC>(
+    margin_manager_upgraded::deposit<BTC, USDC, USDC>(
         &mut mm,
         &registry,
         &btc,
@@ -467,7 +362,7 @@ fun manager_with_base_debt(): (test::Scenario, Clock, ID, ID) {
         &clock,
         scenario.ctx(),
     );
-    margin_manager::borrow_base<BTC, USDC>(
+    margin_manager_upgraded::borrow_base<BTC, USDC>(
         &mut mm,
         &registry,
         &mut btc_pool,
@@ -603,13 +498,54 @@ fun liquidate_base_upgraded_pays_out_and_returns_every_coin() {
     scenario.end();
 }
 
-/// The legacy base entry, same fixture and prices, must settle to the same numbers as
-/// its upgraded twin above — the base-side counterpart of
-/// `liquidate_quote_settles_the_same_numbers_on_the_legacy_generation`. It is also the
-/// only coverage of `liquidate_base`'s event, whose `margin_pool_id` would otherwise be
-/// free to report the quote pool.
-#[test]
-fun liquidate_base_settles_the_same_numbers_on_the_legacy_generation() {
+/// The legacy pair is retired. These two aborts are what closed the vault's half of the
+/// dual-feed window: the entries are permissionless and fund their own repay, so unlike
+/// `margin_manager::liquidate` they never needed the caller to bring capital.
+///
+/// Both are called on a fixture that is genuinely liquidatable at the price supplied —
+/// the same $3000 BTC that `liquidate_quote_upgraded_seizes_collateral_and_settles`
+/// settles on — so the abort is the retirement and not the `can_liquidate` gate
+/// declining to act.
+#[test, expected_failure(abort_code = liquidation_vault::EDeprecatedUseUpgradedPyth)]
+fun legacy_liquidate_quote_aborts() {
+    let (mut scenario, clock, btc_pool_id, usdc_pool_id, _r) = healthy_manager();
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = liquidation_vault::create_liquidation_vault_for_testing(scenario.ctx());
+    let cap = liquidation_vault::create_admin_cap_for_testing(scenario.ctx());
+    vault.deposit(
+        &cap,
+        mint_coin<USDC>(50_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    let btc = build_btc_price_info_object(&mut scenario, 3000, &clock);
+    let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    vault.liquidate_quote<BTC, USDC>(
+        &mut mm,
+        &registry,
+        &btc,
+        &usdc,
+        &mut btc_pool,
+        &mut usdc_pool,
+        &mut pool,
+        option::none(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort WRONG_ABORT_SENTINEL
+}
+
+#[test, expected_failure(abort_code = liquidation_vault::EDeprecatedUseUpgradedPyth)]
+fun legacy_liquidate_base_aborts() {
     let (mut scenario, clock, btc_pool_id, usdc_pool_id) = manager_with_base_debt();
 
     scenario.next_tx(test_constants::admin());
@@ -623,7 +559,6 @@ fun liquidate_base_settles_the_same_numbers_on_the_legacy_generation() {
     let registry = scenario.take_shared<MarginRegistry>();
     let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
-    let shares_before = mm.borrowed_base_shares();
 
     let btc = build_btc_price_info_object(&mut scenario, 700000, &clock);
     let usdc = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -641,40 +576,7 @@ fun liquidate_base_settles_the_same_numbers_on_the_legacy_generation() {
         scenario.ctx(),
     );
 
-    // Identical to `liquidate_base_upgraded_pays_out_and_returns_every_coin`.
-    assert!(shares_before == 80_000_000);
-    assert!(mm.borrowed_base_shares() == 15_714_292);
-    assert!(vault.balance<BTC>() == 101_285_714);
-
-    let events = sui::event::events_by_type<LiquidationByVault>();
-    assert!(events.length() == 1);
-    let (
-        base_in,
-        quote_in,
-        base_out,
-        quote_out,
-        remaining,
-        base_liquidation,
-    ) = liquidation_vault::liquidation_event_fields(&events[0]);
-    assert!(base_liquidation);
-    assert!(quote_in == 0);
-    assert!(base_in == 100_000_000);
-    assert!(base_out == 67_499_994);
-    assert!(quote_out == 0);
-    assert!(remaining == 33_785_720);
-    assert!(liquidation_vault::liquidation_event_margin_pool_id(&events[0]) == btc_pool_id);
-
-    destroy(btc);
-    destroy(usdc);
-    destroy(vault);
-    destroy(cap);
-    return_shared(btc_pool);
-    return_shared(usdc_pool);
-    return_shared(registry);
-    return_shared(pool);
-    return_shared(mm);
-    destroy(clock);
-    scenario.end();
+    abort WRONG_ABORT_SENTINEL
 }
 
 /// The vault's swap entrypoints are gated by `assert_trader`, and nothing exercised
