@@ -498,12 +498,6 @@ fun liquidate_base_upgraded_pays_out_and_returns_every_coin() {
     scenario.end();
 }
 
-/// The vault's swap entrypoints are gated by `assert_trader`, and nothing exercised
-/// that gate through them: the three tests named for it in `liquidation_vault_tests`
-/// call `assert_trader_for_testing` directly, so deleting the check from
-/// `swap_base_to_quote` left the whole suite green. That check is the only thing
-/// between an arbitrary caller and swapping the vault's entire inventory with
-/// `min_quote_out` of zero.
 /// The legacy pair is retired. These two aborts are what closed the vault's half of the
 /// dual-feed window: the entries are permissionless and fund their own repay, so unlike
 /// `margin_manager::liquidate` they never needed the caller to bring capital.
@@ -585,6 +579,12 @@ fun legacy_liquidate_base_aborts() {
     abort WRONG_ABORT_SENTINEL
 }
 
+/// The vault's swap entrypoints are gated by `assert_trader`, and nothing exercised
+/// that gate through them: the three tests named for it in `liquidation_vault_tests`
+/// call `assert_trader_for_testing` directly, so deleting the check from
+/// `swap_base_to_quote` left the whole suite green. That check is the only thing
+/// between an arbitrary caller and swapping the vault's entire inventory with
+/// `min_quote_out` of zero.
 #[test, expected_failure(abort_code = liquidation_vault::ETraderNotAuthorized)]
 fun swap_base_to_quote_rejects_an_unauthorised_caller() {
     let (mut scenario, clock, _btc_pool_id, _usdc_pool_id) = manager_with_base_debt();

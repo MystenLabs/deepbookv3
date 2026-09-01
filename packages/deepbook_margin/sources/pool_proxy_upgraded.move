@@ -1,13 +1,15 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pyth's upgraded Core entrypoints for `pool_proxy`.
+/// The oracle-taking entrypoints for `pool_proxy`.
 ///
-/// Pyth Core is being replaced by a separately published package, so its
-/// `PriceInfoObject` is a distinct Move type from the legacy one and the frozen
-/// signatures in `pool_proxy` can never accept it. The upgraded surface therefore lives
-/// here, under the same function names. Each entry reads the upgraded feed and delegates
-/// to the shared core in `pool_proxy`, so both feeds run identical logic.
+/// Pyth replaced Core with a separately published package, so its `PriceInfoObject` is a
+/// distinct Move type from the legacy one and the frozen signatures in `pool_proxy` can
+/// never accept it. The oracle surface therefore lives here, under the same function
+/// names; each entry reads the upgraded feed and delegates to the shared core in
+/// `pool_proxy`. The legacy-Pyth twins in `pool_proxy` are retired and abort
+/// `EDeprecatedUseUpgradedPyth`; the module-level note in `margin_manager_upgraded`
+/// records why, and what has to happen on chain for them to stop being reachable.
 module deepbook_margin::pool_proxy_upgraded;
 
 use deepbook::{order_info::OrderInfo, pool::Pool};
@@ -21,7 +23,8 @@ use deepbook_margin::{
 use pyth_upgraded::price_info::PriceInfoObject as PriceInfoObjectUpgraded;
 use sui::clock::Clock;
 
-/// Twin: `pool_proxy::update_current_price`. Edit both.
+/// Updates the current price for a pool using safe oracle price calculation.
+/// Anyone can call this to update the price oracle used for order validation.
 public fun update_current_price<BaseAsset, QuoteAsset>(
     registry: &mut MarginRegistry,
     pool: &Pool<BaseAsset, QuoteAsset>,
