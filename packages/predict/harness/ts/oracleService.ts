@@ -1,8 +1,8 @@
 // Continuous oracle updater (substrate component of `harness live`).
 //
 // Streams real Pyth Pro + Block Scholes data onto the propbook feeds at high frequency,
-// stamping each update with the provider's REAL publish time (clamped to <= Clock,
-// monotonic). The feed ids come from the keeper (feeds.json); the data comes from a
+// preserving each update's provider source time while clamping the relayer's batch time to
+// Clock. The feed ids come from the keeper (feeds.json); the data comes from a
 // `MarketSource` chosen by env: a shared hub snapshot (parallel runs) or this localnet's
 // own provider WS pair. Each push also writes snapshot.json for the
 // trade generator (the keeper settles independently via the Pyth Lazer history endpoint).
@@ -20,8 +20,8 @@ import { type Feeds } from "./predictSetup.js";
 import { gridExpiries, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
 import {
   buildOracleRefreshGridTx,
+  clampedBatchTimestampMs,
   clampedPythTimestampMs,
-  clampedSourceTimestampMs,
   executeWithSignerAndWait,
 } from "../../devtools/ts/runtime.js";
 
@@ -88,9 +88,9 @@ async function main() {
   const start = Date.now();
   let pushes = 0;
   let skips = 0;
-  // Dual-clock accounting: per series, how often the provider re-sent an unchanged model time
+  // Source-clock accounting: per series, how often the provider re-sent an unchanged source time
   // (a pinned retransmission) vs advanced it. This is the empirical probe for the on-chain
-  // model-time freshness contract — a provider that pins a series past the freshness window
+  // source-time freshness contract — a provider that pins a series past the freshness window
   // would halt pricing, and this summary is where that behavior becomes visible.
   const lastFwdTs = new Map<number, number>();
   const lastSviTs = new Map<number, number>();
@@ -104,34 +104,49 @@ async function main() {
     source.ensureExpiries(gridNow()); // roll the warmed grid forward as boundaries pass
     const snap = source.latest();
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
-    // The envelope is when WE (the relayer) package the batch: base it on the freshest
-    // input clock so no series' model time postdates it merely from cross-stream skew.
-    let latestInputMs = Number(snap.publishedAtMs);
-    if (snap.bsSpotTsMs > latestInputMs) latestInputMs = snap.bsSpotTsMs;
-    for (const e of snap.expiries.values()) {
-      if (e.forwardTsMs > latestInputMs) latestInputMs = e.forwardTsMs;
-      if (e.sviTsMs > latestInputMs) latestInputMs = e.sviTsMs;
+    // The batch timestamp is when WE (the relayer) package the batch. Base it on the freshest
+    // input clock so no observation source time postdates the signed envelope from stream skew.
+    let latestInputMs = Number(snap.pythSourceTimestampMs);
+    if (snap.bsSpotSourceTimestampMs > latestInputMs) {
+      latestInputMs = snap.bsSpotSourceTimestampMs;
     }
-    const ts = await clampedSourceTimestampMs(BigInt(latestInputMs));
-    if (ts === null) { skips++; continue; }
+    for (const e of snap.expiries.values()) {
+      if (e.forwardSourceTimestampMs > latestInputMs) {
+        latestInputMs = e.forwardSourceTimestampMs;
+      }
+      if (e.sviSourceTimestampMs > latestInputMs) {
+        latestInputMs = e.sviSourceTimestampMs;
+      }
+    }
+    const batchTimestampMs = await clampedBatchTimestampMs(BigInt(latestInputMs));
+    if (batchTimestampMs === null) { skips++; continue; }
     // Pyth rides its OWN stream clock, not the envelope above: stamping the cached Pyth
     // value with the cross-stream max would keep a stalled Pyth stream artificially fresh
     // on-chain. A stalled stream returns null here — the push proceeds without the Pyth
     // leg and the feed ages out honestly, keeping the BS-forward fallback exercisable.
-    const pythTs = await clampedPythTimestampMs(snap.publishedAtMs);
-    if (snap.bsSpotTsMs !== 0 && snap.bsSpotTsMs === lastBsSpotTs) pinnedSpot++;
-    if (snap.bsSpotTsMs === 0) missingTs++;
-    lastBsSpotTs = snap.bsSpotTsMs;
+    const pythTs = await clampedPythTimestampMs(snap.pythSourceTimestampMs);
+    if (
+      snap.bsSpotSourceTimestampMs !== 0 &&
+      snap.bsSpotSourceTimestampMs === lastBsSpotTs
+    ) pinnedSpot++;
+    if (snap.bsSpotSourceTimestampMs === 0) missingTs++;
+    lastBsSpotTs = snap.bsSpotSourceTimestampMs;
     const grid = [...snap.expiries.entries()].map(([expiry, e]) => {
-      if (e.forwardTsMs === 0 || e.sviTsMs === 0) missingTs++;
-      if (lastFwdTs.get(expiry) === e.forwardTsMs && e.forwardTsMs !== 0) pinnedFwd++;
-      if (lastSviTs.get(expiry) === e.sviTsMs && e.sviTsMs !== 0) pinnedSvi++;
-      lastFwdTs.set(expiry, e.forwardTsMs);
-      lastSviTs.set(expiry, e.sviTsMs);
+      if (e.forwardSourceTimestampMs === 0 || e.sviSourceTimestampMs === 0) missingTs++;
+      if (
+        lastFwdTs.get(expiry) === e.forwardSourceTimestampMs &&
+        e.forwardSourceTimestampMs !== 0
+      ) pinnedFwd++;
+      if (
+        lastSviTs.get(expiry) === e.sviSourceTimestampMs &&
+        e.sviSourceTimestampMs !== 0
+      ) pinnedSvi++;
+      lastFwdTs.set(expiry, e.forwardSourceTimestampMs);
+      lastSviTs.set(expiry, e.sviSourceTimestampMs);
       return {
         expiry: BigInt(expiry),
         forward: e.forward1e9,
-        forwardTsMs: BigInt(e.forwardTsMs),
+        forwardSourceTimestampMs: BigInt(e.forwardSourceTimestampMs),
         svi: {
           a: e.svi1e9.a,
           aNegative: e.svi1e9.aNegative,
@@ -142,7 +157,7 @@ async function main() {
           m: e.svi1e9.m,
           mNegative: e.svi1e9.mNegative,
         },
-        sviTsMs: BigInt(e.sviTsMs),
+        sviSourceTimestampMs: BigInt(e.sviSourceTimestampMs),
       };
     });
     try {
@@ -155,8 +170,11 @@ async function main() {
           },
           snap.spot1e9,
           pythTs,
-          { value1e9: snap.bsSpot1e9, tsMs: BigInt(snap.bsSpotTsMs) },
-          grid, ts,
+          {
+            value1e9: snap.bsSpot1e9,
+            sourceTimestampMs: BigInt(snap.bsSpotSourceTimestampMs),
+          },
+          grid, batchTimestampMs,
         ),
         signer,
       );
@@ -165,11 +183,11 @@ async function main() {
       // spurious guard aborts that look like harness failures.
       atomicWriteFile(
         `${INSTANCE_DIR}/snapshot.json`,
-        JSON.stringify(serializableSnapshot({ ...snap, publishedAtMs: ts })),
+        JSON.stringify(serializableSnapshot(snap)),
       );
       pushes++;
       if (pushes <= 3 || pushes % 5 === 0)
-        console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} ts=${ts} digest=${digest.slice(0, 8)}`);
+        console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} batch_timestamp_ms=${batchTimestampMs} digest=${digest.slice(0, 8)}`);
     } catch (e) {
       skips++;
       console.warn(`[updater] push skipped: ${String(e).slice(0, 120)}`);
@@ -179,7 +197,7 @@ async function main() {
   console.log(`\n[updater] done: ${pushes} pushes, ${skips} skips over ${((Date.now() - start) / 1000).toFixed(0)}s`);
   console.log(
     `[updater] dual-clock: ${pinnedSpot} pinned spot + ${pinnedFwd} pinned fwd + ${pinnedSvi} pinned svi retransmissions observed` +
-    (missingTs > 0 ? ` (${missingTs} entries lacked a provider timestamp — signed at the envelope)` : ""),
+    (missingTs > 0 ? ` (${missingTs} entries lacked a provider source timestamp and were skipped)` : ""),
   );
   if (pushes === 0) throw new Error("no successful pushes");
   console.log("=== UPDATER OK: real-data oracle stream landed on-chain ===");

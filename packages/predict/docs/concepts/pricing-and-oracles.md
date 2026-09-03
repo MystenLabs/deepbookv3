@@ -137,11 +137,11 @@ This split keeps each guard with the module whose contract depends on it: the ma
 
 `pricing` reads feed state on demand and validates it at read time rather than trusting a writer kept it fresh. The relevant bounds:
 
-**Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against its observation's own clock (Pyth's normalized `source_timestamp_ms`; the Block Scholes reads' `source_timestamp_ms` envelope time):
+**Read-time freshness (`PricingConfig`, global).** Three admin-tunable maximum ages gate live pricing, each compared against its observation's own `source_timestamp_ms` (Pyth's normalized source time; Block Scholes `value_timestamp` for spot/forward and `svi_timestamp` for SVI):
 
 - **Pyth spot freshness** (`pyth_spot_freshness_ms`) — how recent the Pyth spot must be to serve as canonical spot; past it, pricing falls back to the Block Scholes forward. Only consulted while `use_pyth_spot_for_forward` is set.
 - **Block Scholes price freshness** (`block_scholes_price_freshness_ms`) — how recent the BS spot and expiry forward must be to compute the fallback forward and Pyth-reanchored basis.
-- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recently the SVI tuple must have been published; the same envelope clock anchors the remaining-time roll-down, so an unchanged retransmitted tuple stays usable and re-anchored for as long as the provider keeps publishing it. This window is intentionally looser than BS price freshness because SVI changes more slowly, and its configurable maximum is wider (120s vs 60s).
+- **Block Scholes SVI freshness** (`block_scholes_svi_freshness_ms`) — how recent the tuple's `svi_timestamp` must be; the same source clock anchors the remaining-time roll-down, so an unchanged retransmission remains pinned to the original observation and ages stale. This window is intentionally looser than BS price freshness because SVI changes more slowly, and its configurable maximum is wider (120s vs 60s).
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 

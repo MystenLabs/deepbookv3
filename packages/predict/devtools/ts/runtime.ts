@@ -1010,11 +1010,9 @@ async function refreshThen(
     return [refreshTx, pricedOperationTx];
 }
 
-// Live-data updater: clamp a provider's real publish timestamp to a valid on-chain
-// source timestamp — `<= Clock - 1` and strictly monotonic — so the oracle history
-// mirrors real wall-clock without ever tripping the freshness gate. Returns null
-// when the timestamp is not fresh (the loop should skip this tick, not wait).
-export async function clampedSourceTimestampMs(realMs: bigint): Promise<bigint | null> {
+// Live-data updater: clamp the relayer's batch timestamp to `<= Clock - 1` and make it
+// strictly monotonic. Observation timestamps remain the provider's per-update source times.
+export async function clampedBatchTimestampMs(realMs: bigint): Promise<bigint | null> {
     const clockMax = (await clockTimestampMs()) - 1n;
     const ts = realMs < clockMax ? realMs : clockMax;
     if (ts <= lastSourceTimestampMs) return null;
@@ -1039,37 +1037,37 @@ export async function clampedPythTimestampMs(realMs: bigint): Promise<bigint | n
 
 // Build ONE refresh PTB covering a grid of expiries: re-signed Pyth spot, then
 // separate BS spot, forward, and SVI batches. Pre-warms the whole boundary grid
-// in a single transaction under one (clamped) envelope timestamp — the clock the
-// on-chain stores age series by and the SVI roll-down anchors on — while each
-// series keeps its own provider model time, the clock the stores order by.
+// in a single transaction under one clamped batch timestamp for transport observability.
+// Each observation keeps its provider source timestamp, which owns on-chain ordering,
+// freshness, and SVI roll-down.
 export interface GridExpiry {
     expiry: bigint;
     forward: bigint;
-    /// Provider model time of the forward ("as of"); 0 = unknown, use the envelope.
-    forwardTsMs: bigint;
+    /// Provider source time of the forward (`value_timestamp`).
+    forwardSourceTimestampMs: bigint;
     svi: OracleRefreshParams["svi"];
-    /// Provider model time of the SVI tuple; 0 = unknown, use the envelope.
-    sviTsMs: bigint;
+    /// Provider source time of the SVI tuple (`svi_timestamp`).
+    sviSourceTimestampMs: bigint;
 }
 
 export function buildOracleRefreshGridTx(
     feeds: OracleFeedIds,
     pythSpot1e9: bigint,
     pythTsMs: bigint | null,
-    bsSpot: { value1e9: bigint; tsMs: bigint },
+    bsSpot: { value1e9: bigint; sourceTimestampMs: bigint },
     grid: GridExpiry[],
-    sourceTimestampMs: bigint,
+    batchTimestampMs: bigint,
 ): Transaction {
     const tx = new Transaction();
-    addOracleRefreshGrid(tx, feeds, pythSpot1e9, pythTsMs, bsSpot, grid, sourceTimestampMs);
+    addOracleRefreshGrid(tx, feeds, pythSpot1e9, pythTsMs, bsSpot, grid, batchTimestampMs);
     return tx;
 }
 
 // Add a grid refresh (spot, forward, and SVI batches) to an existing PTB. This
 // must remain a refresh-only PTB: a priced operation appended after it would abort
 // `EOracleWrittenInThisTransaction`. Each
-// series carries its own provider model time; a series whose model time is
-// unknown gets the envelope, and one that momentarily postdates the envelope
+// series carries its own provider source time; a series whose source time is
+// missing is skipped, and one that momentarily postdates the batch timestamp
 // (cross-stream clock skew) is skipped this push rather than clamped — the store
 // would refuse it as malformed, and the next push lands it honestly.
 // The Pyth spot is stamped with Pyth's own stream clock (`pythTsMs`), never the
@@ -1082,20 +1080,19 @@ function addOracleRefreshGrid(
     feeds: OracleFeedIds,
     pythSpot1e9: bigint,
     pythTsMs: bigint | null,
-    bsSpot: { value1e9: bigint; tsMs: bigint },
+    bsSpot: { value1e9: bigint; sourceTimestampMs: bigint },
     grid: GridExpiry[],
-    sourceTimestampMs: bigint,
+    batchTimestampMs: bigint,
 ): void {
     const seriesTs = (tsMs: bigint): bigint | null => {
-        if (tsMs <= 0n) return sourceTimestampMs;
-        if (tsMs > sourceTimestampMs) return null;
+        if (tsMs <= 0n || tsMs > batchTimestampMs) return null;
         return tsMs;
     };
     if (pythTsMs !== null) addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, pythTsMs);
-    // The BS spot slot carries Block Scholes' own signed spot series at its own model
+    // The BS spot slot carries Block Scholes' own signed spot series at its own source
     // time — a separate observation from the Pyth spot above.
     let spotUpdate: BsValueUpdate | null = null;
-    const spotTs = seriesTs(bsSpot.tsMs);
+    const spotTs = seriesTs(bsSpot.sourceTimestampMs);
     if (spotTs !== null) {
         spotUpdate = {
             sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
@@ -1105,7 +1102,7 @@ function addOracleRefreshGrid(
     }
     const forwardUpdates: ExpiringValueUpdate[] = [];
     for (const g of grid) {
-        const ts = seriesTs(g.forwardTsMs);
+        const ts = seriesTs(g.forwardSourceTimestampMs);
         if (ts !== null) {
             forwardUpdates.push({
                 expiryMs: g.expiry,
@@ -1123,7 +1120,7 @@ function addOracleRefreshGrid(
     }
     const sviUpdates: ExpiringSviUpdate[] = [];
     for (const g of grid) {
-        const ts = seriesTs(g.sviTsMs);
+        const ts = seriesTs(g.sviSourceTimestampMs);
         if (ts !== null) {
             sviUpdates.push({
                 expiryMs: g.expiry,
@@ -1132,7 +1129,7 @@ function addOracleRefreshGrid(
         }
     }
     if (spotUpdate !== null || forwardUpdates.length > 0 || sviUpdates.length > 0) {
-        addBsBatches(tx, feeds, sourceTimestampMs, spotUpdate, forwardUpdates, sviUpdates);
+        addBsBatches(tx, feeds, batchTimestampMs, spotUpdate, forwardUpdates, sviUpdates);
     }
 }
 
@@ -1200,14 +1197,14 @@ function addTrySettle(
 // verifier, and ingest them through the production
 // `block_scholes_store::apply_*_batch` path. Spot, forwards, and SVI each carry
 // their typed descriptor witnesses, matching the production writer. Each update's
-// own timestamp is the model "as of" time; the envelope is the publish time.
+// own timestamp is its provider source time; the envelope carries batch time only.
 type ExpiringValueUpdate = { expiryMs: bigint; update: BsValueUpdate };
 type ExpiringSviUpdate = { expiryMs: bigint; update: BsSviUpdate };
 
 function addBsBatches(
     tx: Transaction,
     stores: { bsValueStoreId: string; bsSviStoreId: string },
-    publishedAtMs: bigint,
+    batchTimestampMs: bigint,
     spotUpdate: BsValueUpdate | null,
     forwardUpdates: ExpiringValueUpdate[],
     sviUpdates: ExpiringSviUpdate[],
@@ -1217,7 +1214,7 @@ function addBsBatches(
         const spotMessage = signedValueBatchBytes({
             signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
             verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-            batchTimestampMs: publishedAtMs,
+            batchTimestampMs,
             updates: [spotUpdate],
         });
         const spotBatch = tx.moveCall({
@@ -1237,7 +1234,7 @@ function addBsBatches(
         const forwardMessage = signedValueBatchBytes({
             signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
             verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-            batchTimestampMs: publishedAtMs,
+            batchTimestampMs,
             updates: forwardUpdates.map(({ update }) => update),
         });
         const forwardBatch = tx.moveCall({
@@ -1265,7 +1262,7 @@ function addBsBatches(
     const sviMessage = signedSviBatchBytes({
         signerPrivateKey: LOCAL_BS_SIGNER_PRIVATE_KEY,
         verifierPackageId: BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
-        batchTimestampMs: publishedAtMs,
+        batchTimestampMs,
         updates: sviUpdates.map(({ update }) => update),
     });
     const sviBatch = tx.moveCall({
@@ -1308,15 +1305,15 @@ function sviBatchUpdate(
 function addBlockScholesUpdates(
     tx: Transaction,
     params: OracleRefreshParams,
-    publishedAtMs: bigint,
+    timestampMs: bigint,
 ): void {
     addBsBatches(
         tx,
         params,
-        publishedAtMs,
+        timestampMs,
         {
             sid: spotSid(BLOCK_SCHOLES_ORACLE_PACKAGE_ID, PREDICT_BLOCK_SCHOLES_BASE_ASSET),
-            timestampMs: publishedAtMs,
+            timestampMs,
             value: params.spot,
         },
         [
@@ -1328,7 +1325,7 @@ function addBlockScholesUpdates(
                         PREDICT_BLOCK_SCHOLES_BASE_ASSET,
                         params.expiry,
                     ),
-                    timestampMs: publishedAtMs,
+                    timestampMs,
                     value: params.forward,
                 },
             },
@@ -1336,7 +1333,7 @@ function addBlockScholesUpdates(
         [
             {
                 expiryMs: params.expiry,
-                update: sviBatchUpdate(params.expiry, params.svi, publishedAtMs),
+                update: sviBatchUpdate(params.expiry, params.svi, timestampMs),
             },
         ],
     );
