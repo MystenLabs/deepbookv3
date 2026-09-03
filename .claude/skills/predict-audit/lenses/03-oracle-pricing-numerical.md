@@ -18,17 +18,7 @@ gating, and what a worst-case-but-in-bounds supplier achieves.
 - **Pyth Lazer** (`propbook::pyth_feed`): normalization (exponent/decimals/scaling), stale/future/zero gating,
   us→ms conversion, strict-monotonic source-timestamp rule, the exact-timestamp minute history used for
   **settlement**, and what is cryptographically verified upstream vs assumed here.
-- **Block Scholes signed path** (`bs_oracle::verify::verify_and_create_{value,svi}_batch` →
-  `propbook::block_scholes_store::apply_{value,svi}_batch`): values arrive as provider-signed batches
-  (spot + forwards share one value batch; SVI is its own) landed by an UNTRUSTED relayer — confirm nothing
-  depends on who submits: sid-keyed routing (reads derive ids; writes cannot choose slots), per-series
-  lexicographic (model time, envelope time) ordering with an envelope floor (the stored publish time —
-  the clock freshness gates and the SVI roll-down anchor on — never regresses), making the stored
-  observation submission-order-independent for monotone provider streams and first-writer-wins for a
-  regressed one, malformed timestamps (model after envelope) skipped so the pricing roll-down anchor
-  stays strictly pre-expiry, replay/duplicates as no-ops. Spot, forward, and SVI can still be **as of
-  different model times** with different freshness — trace how the basis (forward/spot) and the SVI
-  surface combine and whether a skew between them is exploitable.
+- **Block Scholes signed path** (`bs_oracle::verify::verify_and_create_{value,svi}_batch` → `propbook::block_scholes_store::apply_{value,svi}_batch`): values arrive as provider-signed batches (spot + forwards share one value batch; SVI is its own) landed by an UNTRUSTED relayer — confirm nothing depends on who submits: sid-keyed routing (reads derive ids; writes cannot choose slots), strict per-series source-time ordering (`value_timestamp` for spot/forward, `svi_timestamp` for SVI), source times bounded by Sui Clock, replay/duplicates as no-ops, and `batch_timestamp_ms` retained only for transport observability. Spot, forward, and SVI can still be **as of different source times** with different freshness — trace how the basis (forward/spot) and the SVI surface combine and whether a skew between them is exploitable.
 - **The consumer envelope** (`predict::pricing::load_live_pricer`): the pricing-safe surface check (forward>0,
   basis bounds, |rho|<=1, sigma band, feed freshness, pre-expiry live-pricing gate) is enforced HERE, not in
   propbook. Verify predict enforces **all** of it on **every** priced path; a missing or bypassed check means

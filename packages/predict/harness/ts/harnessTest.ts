@@ -11,11 +11,13 @@ import {
   blockScholesSpotSubscription,
   blockScholesSubscribeRequest,
   providerPublicKeyFromRegistryObject,
+  projectLandedSnapshot,
   serializableSnapshot,
   subscriptionItemMatches,
 } from "./marketSource.js";
 import { rollDownSvi } from "./pricer.js";
 import { gridExpiries } from "./runnerConfig.js";
+import { pricingEnvFromSnapshot, type Snap } from "./strategyPricing.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
 import { abortInfo } from "./trace.js";
 
@@ -74,6 +76,90 @@ test("SVI roll-down uses the observation source timestamp as its anchor", () => 
     ),
     { a: 0.1, b: 0.2, rho: -0.3, m: 0.1, sigma: 0.5 },
   );
+});
+
+test("landed snapshot advances each source independently and ignores retransmit roll-downs", () => {
+  const expiry = 200_000;
+  const fixed = (a: bigint) => ({
+    a, aNegative: false, b: 2n, sigma: 3n, rho: 4n,
+    rhoNegative: true, m: 5n, mNegative: false,
+  });
+  const previous = {
+    spot1e9: 10n,
+    pythSourceTimestampMs: 90n,
+    bsSpot1e9: 20n,
+    bsSpotSourceTimestampMs: 100,
+    expiries: new Map([[expiry, {
+      forward: 30,
+      forward1e9: 30n,
+      forwardSourceTimestampMs: 70,
+      svi: { alpha: 0.1, beta: 0.2, rho: -0.3, m: 0.4, sigma: 0.5 },
+      svi1e9: fixed(1n),
+      sviSourceTimestampMs: 80,
+    }]]),
+  };
+  const candidate = {
+    spot1e9: 11n,
+    pythSourceTimestampMs: 101n,
+    bsSpot1e9: 21n,
+    bsSpotSourceTimestampMs: 100,
+    expiries: new Map([[expiry, {
+      forward: 31,
+      forward1e9: 31n,
+      forwardSourceTimestampMs: 95,
+      svi: { alpha: 0.09, beta: 0.18, rho: -0.3, m: 0.4, sigma: 0.5 },
+      svi1e9: fixed(9n),
+      sviSourceTimestampMs: 80,
+    }]]),
+  };
+  const landed = projectLandedSnapshot(previous, candidate, 100, 99n);
+  assert.equal(landed.spot1e9, 11n);
+  assert.equal(landed.pythSourceTimestampMs, 99n);
+  assert.equal(landed.bsSpot1e9, 20n);
+  assert.equal(landed.expiries.get(expiry)?.forward1e9, 31n);
+  assert.equal(landed.expiries.get(expiry)?.svi1e9.a, 1n);
+
+  const future = projectLandedSnapshot(landed, {
+    ...candidate,
+    bsSpot1e9: 22n,
+    bsSpotSourceTimestampMs: 101,
+  }, 100, null);
+  assert.equal(future.bsSpot1e9, 20n);
+  assert.equal(future.bsSpotSourceTimestampMs, 100);
+});
+
+test("strategy pricing mirror enforces source freshness and stale-Pyth fallback", () => {
+  const now = 100_000;
+  const expiry = 200_000;
+  const snap: Snap = {
+    spot1e9: "110000000000",
+    pythSourceTimestampMs: String(now - 1),
+    bsSpot1e9: "100000000000",
+    bsSpotSourceTimestampMs: now - 1,
+    expiries: {
+      [String(expiry)]: {
+        forward: 105,
+        forwardSourceTimestampMs: now - 1,
+        sviSourceTimestampMs: now - 1,
+        svi: { alpha: 0.1, beta: 0.2, rho: -0.3, m: 0.4, sigma: 0.5 },
+      },
+    },
+  };
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now)?.pythSpot, 110);
+
+  snap.pythSourceTimestampMs = String(now - 10_001);
+  const fallback = pricingEnvFromSnapshot(snap, expiry, now);
+  assert.equal(fallback?.pythSpot, 100);
+  assert.equal(fallback?.bsSpot, 100);
+
+  snap.bsSpotSourceTimestampMs = now - 10_001;
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
+  snap.bsSpotSourceTimestampMs = now - 1;
+  snap.expiries[String(expiry)].forwardSourceTimestampMs = now - 10_001;
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
+  snap.expiries[String(expiry)].forwardSourceTimestampMs = now - 1;
+  snap.expiries[String(expiry)].sviSourceTimestampMs = now - 60_001;
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
 });
 
 test("hub snapshots require the current complete schema without provider credentials", async () => {

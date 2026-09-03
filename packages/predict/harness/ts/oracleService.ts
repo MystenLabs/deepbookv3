@@ -12,9 +12,12 @@ import { getSignerForAddress } from "../../devtools/ts/env.js";
 import { atomicWriteFile } from "./io.js";
 import {
   type MarketSource,
+  type MarketSnapshot,
   DirectWsSource,
   HubSource,
+  projectLandedSnapshot,
   serializableSnapshot,
+  snapshotFrom,
 } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
 import { gridExpiries, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
@@ -47,7 +50,10 @@ async function waitForFeeds(): Promise<Feeds> {
   throw new Error("feeds.json not published by the keeper within 120s");
 }
 
-async function submit(tx: any, signer: any): Promise<string> {
+async function submit(
+  tx: any,
+  signer: any,
+): Promise<{ digest: string; clockTimestampMs: number }> {
   const r = await executeWithSignerAndWait(
     tx,
     signer,
@@ -55,7 +61,10 @@ async function submit(tx: any, signer: any): Promise<string> {
     GAS_BUDGET,
     { effects: true },
   );
-  return r.digest;
+  if (r.clockTimestampMs === null) {
+    throw new Error("oracle refresh receipt did not expose its Sui Clock timestamp");
+  }
+  return { digest: r.digest, clockTimestampMs: r.clockTimestampMs };
 }
 
 // A shared hub snapshot (parallel runs) or our own provider WS pair.
@@ -99,26 +108,23 @@ async function main() {
   let pinnedFwd = 0;
   let pinnedSvi = 0;
   let missingTs = 0;
+  const snapshotPath = `${INSTANCE_DIR}/snapshot.json`;
+  let landedSnapshot: MarketSnapshot | null = null;
+  if (existsSync(snapshotPath)) {
+    try {
+      landedSnapshot = snapshotFrom(JSON.parse(readFileSync(snapshotPath, "utf8")), gridNow());
+    } catch (e) {
+      console.warn(`[updater] ignoring unreadable prior snapshot: ${String(e).slice(0, 120)}`);
+    }
+  }
   while (!shutdown && (DURATION_MS === 0 || Date.now() - start < DURATION_MS)) {
     await sleep(LOOP_MS);
     source.ensureExpiries(gridNow()); // roll the warmed grid forward as boundaries pass
     const snap = source.latest();
     if (!snap || snap.expiries.size === 0) { skips++; continue; }
-    // The batch timestamp is when WE (the relayer) package the batch. Base it on the freshest
-    // input clock so no observation source time postdates the signed envelope from stream skew.
-    let latestInputMs = Number(snap.pythSourceTimestampMs);
-    if (snap.bsSpotSourceTimestampMs > latestInputMs) {
-      latestInputMs = snap.bsSpotSourceTimestampMs;
-    }
-    for (const e of snap.expiries.values()) {
-      if (e.forwardSourceTimestampMs > latestInputMs) {
-        latestInputMs = e.forwardSourceTimestampMs;
-      }
-      if (e.sviSourceTimestampMs > latestInputMs) {
-        latestInputMs = e.sviSourceTimestampMs;
-      }
-    }
-    const batchTimestampMs = await clampedBatchTimestampMs(BigInt(latestInputMs));
+    // The provider batch clock is transport observability only. Give it the relayer's observed
+    // Sui time; each observation is admitted and ordered independently by its own source clock.
+    const batchTimestampMs = await clampedBatchTimestampMs();
     if (batchTimestampMs === null) { skips++; continue; }
     // Pyth rides its OWN stream clock, not the envelope above: stamping the cached Pyth
     // value with the cross-stream max would keep a stalled Pyth stream artificially fresh
@@ -161,7 +167,7 @@ async function main() {
       };
     });
     try {
-      const digest = await submit(
+      const receipt = await submit(
         buildOracleRefreshGridTx(
           {
             pythFeedId: feeds.pythFeedId,
@@ -181,13 +187,16 @@ async function main() {
       // Publish the snapshot for the trade generator ONLY after the on-chain refresh landed —
       // otherwise traders price/guard off oracle data that never made it on-chain, producing
       // spurious guard aborts that look like harness failures.
-      atomicWriteFile(
-        `${INSTANCE_DIR}/snapshot.json`,
-        JSON.stringify(serializableSnapshot(snap)),
+      landedSnapshot = projectLandedSnapshot(
+        landedSnapshot,
+        snap,
+        receipt.clockTimestampMs,
+        pythTs,
       );
+      atomicWriteFile(snapshotPath, JSON.stringify(serializableSnapshot(landedSnapshot)));
       pushes++;
       if (pushes <= 3 || pushes % 5 === 0)
-        console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} batch_timestamp_ms=${batchTimestampMs} digest=${digest.slice(0, 8)}`);
+        console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} batch_timestamp_ms=${batchTimestampMs} digest=${receipt.digest.slice(0, 8)}`);
     } catch (e) {
       skips++;
       console.warn(`[updater] push skipped: ${String(e).slice(0, 120)}`);

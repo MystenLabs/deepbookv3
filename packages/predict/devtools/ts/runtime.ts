@@ -1010,14 +1010,15 @@ async function refreshThen(
     return [refreshTx, pricedOperationTx];
 }
 
-// Live-data updater: clamp the relayer's batch timestamp to `<= Clock - 1` and make it
-// strictly monotonic. Observation timestamps remain the provider's per-update source times.
-export async function clampedBatchTimestampMs(realMs: bigint): Promise<bigint | null> {
+// Live-data updater: stamp the transport batch from the relayer's observed Sui Clock and make it
+// strictly monotonic. Observation timestamps remain the provider's per-update source times and
+// never participate in batch admission.
+let lastBatchTimestampMs = 0n;
+export async function clampedBatchTimestampMs(): Promise<bigint | null> {
     const clockMax = (await clockTimestampMs()) - 1n;
-    const ts = realMs < clockMax ? realMs : clockMax;
-    if (ts <= lastSourceTimestampMs) return null;
-    lastSourceTimestampMs = ts;
-    return ts;
+    if (clockMax <= lastBatchTimestampMs) return null;
+    lastBatchTimestampMs = clockMax;
+    return clockMax;
 }
 
 // The same clamp for the Pyth leg, on its own monotonic cursor. The Pyth spot must be
@@ -1067,9 +1068,8 @@ export function buildOracleRefreshGridTx(
 // must remain a refresh-only PTB: a priced operation appended after it would abort
 // `EOracleWrittenInThisTransaction`. Each
 // series carries its own provider source time; a series whose source time is
-// missing is skipped, and one that momentarily postdates the batch timestamp
-// (cross-stream clock skew) is skipped this push rather than clamped — the store
-// would refuse it as malformed, and the next push lands it honestly.
+// missing is skipped. The store validates each source time against Sui Clock,
+// independently of the transport-only batch timestamp.
 // The Pyth spot is stamped with Pyth's own stream clock (`pythTsMs`), never the
 // envelope: the envelope is the max over every input clock, so reusing it would let
 // Block Scholes activity keep a stalled Pyth stream artificially fresh on-chain. A
@@ -1085,7 +1085,7 @@ function addOracleRefreshGrid(
     batchTimestampMs: bigint,
 ): void {
     const seriesTs = (tsMs: bigint): bigint | null => {
-        if (tsMs <= 0n || tsMs > batchTimestampMs) return null;
+        if (tsMs <= 0n) return null;
         return tsMs;
     };
     if (pythTsMs !== null) addPythFeedUpdate(tx, feeds.pythFeedId, pythSpot1e9, pythTsMs);
