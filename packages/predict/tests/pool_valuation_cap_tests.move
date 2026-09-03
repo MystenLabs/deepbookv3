@@ -20,10 +20,11 @@ const EUnexpectedSuccess: u64 = 999;
 #[test, expected_failure(abort_code = registry::EPoolValuationCapNotValid)]
 fun generate_proof_with_revoked_pool_valuation_cap_aborts() {
     let (mut scenario, mut registry, config, admin_cap) = test_helpers::begin_registry_test();
-    let revoked_cap = registry.mint_pool_valuation_cap(&config, &admin_cap, scenario.ctx());
+    let revoked_cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
     registry.revoke_pool_valuation_cap(&admin_cap, revoked_cap.id());
-    let proof = registry.generate_pool_valuation_proof(&revoked_cap);
-    proof.destroy_proof();
+    // The proof has no abilities, so it can only be consumed by a flush start; the
+    // gate aborts before one exists, and the abort discards the unreachable tail.
+    let _proof = registry.generate_pool_valuation_proof(&revoked_cap);
     abort EUnexpectedSuccess
 }
 
@@ -38,8 +39,8 @@ fun revoke_unknown_pool_valuation_cap_aborts() {
 #[test]
 fun destroy_pool_valuation_cap_does_not_revoke() {
     let (mut scenario, mut registry, config, admin_cap) = test_helpers::begin_registry_test();
-    let cap = registry.mint_pool_valuation_cap(&config, &admin_cap, scenario.ctx());
-    let other_cap = registry.mint_pool_valuation_cap(&config, &admin_cap, scenario.ctx());
+    let cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
+    let other_cap = registry.mint_pool_valuation_cap(&admin_cap, &config, scenario.ctx());
     let destroyed_id = cap.id();
     cap.destroy();
     // Destroying the cap object must not touch the registry allowlist: the id is

@@ -1613,13 +1613,14 @@ export function mintLifecycleCapTx(recipient: string): Transaction {
 }
 
 // Admin mints a `PoolValuationCap` into the Registry allowlist that gates
-// `start_pool_valuation` (through `generate_pool_valuation_proof`). Same shape and
-// version gate as the lifecycle mint.
+// `start_pool_valuation` (through `generate_pool_valuation_proof`). Same version
+// gate as the lifecycle mint; `mint_pool_valuation_cap(registry, admin_cap, config,
+// ctx)` puts the authority before the config, per the role order for new entries.
 export function mintPoolValuationCapTx(recipient: string): Transaction {
     const tx = new Transaction();
     const cap = tx.moveCall({
         target: target("registry", "mint_pool_valuation_cap"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID)],
+        arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.object(PROTOCOL_CONFIG_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
     return tx;

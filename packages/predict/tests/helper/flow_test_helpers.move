@@ -232,8 +232,8 @@ public fun setup_market(tick: u64): Fixture {
         scenario.ctx(),
     );
     let pool_valuation_cap = registry.mint_pool_valuation_cap(
-        &config,
         &admin_cap,
+        &config,
         scenario.ctx(),
     );
     return_shared(config);

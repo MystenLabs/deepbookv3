@@ -18,8 +18,8 @@ use deepbook_predict::{
     market_lifecycle_cap::{Self, MarketLifecycleCap},
     market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
-    plp::PoolVault,
-    pool_valuation_cap::{Self, PoolValuationCap, PoolValuationProof},
+    plp::{Self, PoolValuationProof, PoolVault},
+    pool_valuation_cap::{Self, PoolValuationCap},
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
@@ -136,8 +136,8 @@ public fun revoke_lifecycle_cap(
 /// valuation.
 public fun mint_pool_valuation_cap(
     registry: &mut Registry,
-    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
     ctx: &mut TxContext,
 ): PoolValuationCap {
     config.assert_version();
@@ -167,7 +167,7 @@ public fun generate_pool_valuation_proof(
     pool_valuation_cap: &PoolValuationCap,
 ): PoolValuationProof {
     registry.assert_valid_pool_valuation_cap(pool_valuation_cap);
-    pool_valuation_cap.new_proof()
+    plp::new_pool_valuation_proof()
 }
 
 // === Emergency Pause (PauseCap) ===

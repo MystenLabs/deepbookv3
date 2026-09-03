@@ -23,7 +23,6 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     lp_book::{Self, LpBook},
     pool_accounting::{Self, Ledger},
-    pool_valuation_cap::PoolValuationProof,
     pricing::FrozenPricer,
     protocol_config::ProtocolConfig,
     vault_events
@@ -59,6 +58,13 @@ const ESnapshotStageOpen: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
+
+/// Transaction-local proof that an allowlisted `PoolValuationCap` authorized a
+/// flush start. `registry::generate_pool_valuation_proof` issues one after checking
+/// the allowlist, and `start_pool_valuation` consumes it. With no abilities, it
+/// cannot be stored, transferred, or dropped, so a revoked cap cannot start a
+/// valuation and a proof cannot outlive its transaction.
+public struct PoolValuationProof {}
 
 /// Transaction-local proof that the snapshot stage is still open.
 ///
@@ -285,7 +291,7 @@ public fun start_pool_valuation(
     // back a second `SnapshotStage` hot potato. A stranded flush is always sealed
     // (seal cleared the flag), so superseding it with a fresh start is unaffected.
     config.assert_snapshot_not_in_progress();
-    valuation_proof.destroy_proof();
+    let PoolValuationProof {} = valuation_proof;
     start_pool_valuation_internal(config, vault, supply_budget, withdraw_budget, clock);
     SnapshotStage {}
 }
@@ -829,6 +835,13 @@ public fun cancel_withdraw_request(
         constants::request_cancel_reason_user!(),
         vault.lp.withdraw_requests_pending(),
     );
+}
+
+/// Construct the flush-start proof. Called only by
+/// `registry::generate_pool_valuation_proof` after it validates the
+/// `PoolValuationCap` against the registry allowlist.
+public(package) fun new_pool_valuation_proof(): PoolValuationProof {
+    PoolValuationProof {}
 }
 
 /// Register a freshly created expiry market with the pool as an accounting row.
