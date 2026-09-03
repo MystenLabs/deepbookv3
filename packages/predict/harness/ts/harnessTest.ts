@@ -251,9 +251,8 @@ test("Block Scholes subscriptions keep expected SIDs local and send complete des
   assert.equal(frame.params[0].batch[1].quote_asset, "USD");
   assert.deepEqual(frame.params[0].options.signature, {
     type: "SUI",
-    pkg_ver: 1,
     signature_schema: "ecdsa",
-    domain: { network: "testnet" },
+    domain: { network: "testnet", pkg_ver: 1 },
   });
   const acknowledged = { sid: forward.expectedSid, ...forward.request };
   assert.equal(subscriptionItemMatches(forward.request, acknowledged), true);

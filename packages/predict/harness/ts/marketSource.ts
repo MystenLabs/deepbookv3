@@ -31,7 +31,7 @@ const SCALE_1E9 = 1_000_000_000;
 
 // Public, versioned Block Scholes testnet trust triple. The IDs are the deployment recorded by
 // the exact upstream source revision pinned in Predict's Move.toml. The subscription's
-// `{network, pkg_ver}` selects this verifier deployment on the provider side;
+// signature domain `{network, pkg_ver}` selects this verifier deployment on the provider side;
 // startup fail-fast reads the shared registry over Sui gRPC, and every signed
 // batch re-reads it so pause and signer rotation take effect without a restart.
 const BS_PROVIDER_PROFILE = {
@@ -446,10 +446,10 @@ export function blockScholesSubscribeRequest(
         format: { timestamp: "ms", hexify: false, decimals: 9 },
         signature: {
           type: "SUI",
-          pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
           signature_schema: "ecdsa",
           domain: {
             network: BS_PROVIDER_PROFILE.network,
+            pkg_ver: BS_PROVIDER_PROFILE.pkgVer,
           },
         },
       },
@@ -627,9 +627,9 @@ export class DirectWsSource implements MarketSource {
         format?.hexify === false &&
         Number(format?.decimals) === 9 &&
         signature?.type === "SUI" &&
-        Number(signature?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer &&
         (signature?.signature_schema ?? "ecdsa") === "ecdsa" &&
-        domain?.network === BS_PROVIDER_PROFILE.network
+        domain?.network === BS_PROVIDER_PROFILE.network &&
+        Number(domain?.pkg_ver) === BS_PROVIDER_PROFILE.pkgVer
       );
     });
     const itemsOk = items.every((item: any) => {
