@@ -22,8 +22,8 @@ use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     lp_book::{Self, LpBook},
-    market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
+    pool_valuation_cap::PoolValuationProof,
     pricing::FrozenPricer,
     protocol_config::ProtocolConfig,
     vault_events
@@ -265,16 +265,16 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Begin a full-pool valuation using a registry-issued lifecycle proof. The proof
-/// grants control over when current oracle state is frozen for queued LP fills.
-/// Starting engages the cross-transaction valuation flag, snapshots the active
-/// expiry set and each LP queue's eligibility cutoff, and opens the atomic
+/// Begin a full-pool valuation using a registry-issued pool-valuation proof. The
+/// proof grants control over when current oracle state is frozen for queued LP
+/// fills. Starting engages the cross-transaction valuation flag, snapshots the
+/// active expiry set and each LP queue's eligibility cutoff, and opens the atomic
 /// snapshot stage: freeze every active market's pricer under the returned
 /// `SnapshotStage`, then seal it in the same transaction.
 public fun start_pool_valuation(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
-    lifecycle_proof: MarketLifecycleProof,
+    valuation_proof: PoolValuationProof,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     clock: &Clock,
@@ -285,7 +285,7 @@ public fun start_pool_valuation(
     // back a second `SnapshotStage` hot potato. A stranded flush is always sealed
     // (seal cleared the flag), so superseding it with a fresh start is unaffected.
     config.assert_snapshot_not_in_progress();
-    lifecycle_proof.destroy_proof();
+    valuation_proof.destroy_proof();
     start_pool_valuation_internal(config, vault, supply_budget, withdraw_budget, clock);
     SnapshotStage {}
 }
