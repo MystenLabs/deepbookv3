@@ -15,10 +15,11 @@ use deepbook_predict::{
     builder_code,
     config_events,
     expiry_market::{Self, ExpiryMarket},
-    market_lifecycle_cap::{Self, MarketLifecycleCap, MarketLifecycleProof},
+    market_lifecycle_cap::{Self, MarketLifecycleCap},
     market_manager::{Self, CadenceConfig, MarketManager},
     pause_cap::{Self, PauseCap},
-    plp::PoolVault,
+    plp::{Self, PoolValuationProof, PoolVault},
+    pool_valuation_cap::{Self, PoolValuationCap},
     protocol_config::{Self, ProtocolConfig}
 };
 use propbook::registry::OracleRegistry;
@@ -27,6 +28,8 @@ use sui::{clock::Clock, vec_set::{Self, VecSet}};
 const EPauseCapNotValid: u64 = 0;
 const ELifecycleCapNotValid: u64 = 1;
 const ELifecycleCapNotFound: u64 = 2;
+const EPoolValuationCapNotValid: u64 = 3;
+const EPoolValuationCapNotFound: u64 = 4;
 
 /// Shared registry for setup, capabilities, and market creation entrypoints.
 public struct Registry has key {
@@ -36,10 +39,12 @@ public struct Registry has key {
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
     /// Admin mints into this set and revokes from it.
     allowed_pause_caps: VecSet<ID>,
-    /// IDs of `MarketLifecycleCap` objects currently authorized for privileged
-    /// lifecycle entries such as market creation and full-pool valuation. Admin
-    /// mints into this set and revokes from it.
+    /// IDs of `MarketLifecycleCap` objects currently authorized to create expiry
+    /// markets. Admin mints into this set and revokes from it.
     allowed_lifecycle_caps: VecSet<ID>,
+    /// IDs of `PoolValuationCap` objects currently authorized to start the
+    /// full-pool valuation. Admin mints into this set and revokes from it.
+    allowed_pool_valuation_caps: VecSet<ID>,
 }
 
 // === Public Functions ===
@@ -102,7 +107,7 @@ public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, paus
 
 // === MarketLifecycleCap Lifecycle (admin) ===
 
-/// Mint a version-gated `MarketLifecycleCap` with market-creation and valuation authority.
+/// Mint a version-gated `MarketLifecycleCap` with market-creation authority.
 public fun mint_lifecycle_cap(
     registry: &mut Registry,
     config: &ProtocolConfig,
@@ -125,15 +130,44 @@ public fun revoke_lifecycle_cap(
     registry.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
 }
 
-/// Generate a transaction-local proof that `lifecycle_cap` is currently
-/// allowlisted. Consumers take the proof by value so a revoked lifecycle cap
-/// cannot authorize cross-module lifecycle actions.
-public fun generate_lifecycle_proof(
+// === PoolValuationCap Lifecycle (admin) ===
+
+/// Mint a version-gated `PoolValuationCap` with authority to start the full-pool
+/// valuation.
+public fun mint_pool_valuation_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
+    ctx: &mut TxContext,
+): PoolValuationCap {
+    config.assert_version();
+    let cap = pool_valuation_cap::new(ctx);
+    registry.allowed_pool_valuation_caps.insert(cap.id());
+    cap
+}
+
+/// Revoke a `PoolValuationCap` by ID without applying the version gate.
+public fun revoke_pool_valuation_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    pool_valuation_cap_id: ID,
+) {
+    assert!(
+        registry.allowed_pool_valuation_caps.contains(&pool_valuation_cap_id),
+        EPoolValuationCapNotFound,
+    );
+    registry.allowed_pool_valuation_caps.remove(&pool_valuation_cap_id);
+}
+
+/// Generate a transaction-local proof that `pool_valuation_cap` is currently
+/// allowlisted. `plp::start_pool_valuation` takes the proof by value so a revoked
+/// cap cannot start a valuation.
+public fun generate_pool_valuation_proof(
     registry: &Registry,
-    lifecycle_cap: &MarketLifecycleCap,
-): MarketLifecycleProof {
-    registry.assert_valid_lifecycle_cap(lifecycle_cap);
-    lifecycle_cap.new_proof()
+    pool_valuation_cap: &PoolValuationCap,
+): PoolValuationProof {
+    registry.assert_valid_pool_valuation_cap(pool_valuation_cap);
+    plp::new_pool_valuation_proof()
 }
 
 // === Emergency Pause (PauseCap) ===
@@ -325,6 +359,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             market_manager: market_manager::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_lifecycle_caps: vec_set::empty(),
+            allowed_pool_valuation_caps: vec_set::empty(),
         },
         admin::new(ctx),
     )
@@ -339,6 +374,12 @@ fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
 /// revoked.
 fun assert_valid_lifecycle_cap(registry: &Registry, cap: &MarketLifecycleCap) {
     assert!(registry.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
+}
+
+/// Abort unless the supplied `PoolValuationCap` was minted by admin and not
+/// revoked.
+fun assert_valid_pool_valuation_cap(registry: &Registry, cap: &PoolValuationCap) {
+    assert!(registry.allowed_pool_valuation_caps.contains(&cap.id()), EPoolValuationCapNotValid);
 }
 
 // === Test-Only Functions ===

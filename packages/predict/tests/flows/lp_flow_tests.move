@@ -364,7 +364,7 @@ fun flush(fx: &mut helpers::Fixture) {
 }
 
 /// Run one flush bounding how many supply / withdraw requests each queue may fill.
-/// Started through the sole flush authority, the market-deployer `MarketLifecycleCap`.
+/// Started through the sole flush authority, the `PoolValuationCap`.
 fun flush_with_budgets(
     fx: &mut helpers::Fixture,
     supply_budget: Option<u64>,

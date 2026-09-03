@@ -10,9 +10,9 @@ For the mechanisms this page evaluates, see [pricing and oracles](./concepts/pri
 | --- | --- | --- |
 | Pyth Lazer feed (propbook `PythFeed`) | The spot price live pricing is built on while `use_pyth_spot_for_forward` is set, and the preferred exact settlement price with a 30-second exclusive window | Cannot write Block Scholes data; missing/unavailable source fields abort during decode; non-advancing or future timestamps are no-ops; absent, stale, or unusable normalized spot goes unused for live re-anchoring and unavailable exact history leaves settlement to retry or use Block Scholes after the grace period |
 | Block Scholes source set (propbook BS spot/forward/SVI feeds) | The SVI curve and spot/forward basis used to price every range, plus exact terminal settlement after the Pyth-exclusive window | Cannot move custody, mint/redeem, create markets, or start a flush; stale, missing, or Predict-unsafe BS inputs abort at live pricing, while missing, zero, or over-wide exact settlement spot remains retryable |
-| Market-lifecycle operator (`MarketLifecycleCap`) | Creating future expiry markets and starting the pool flush (the sole flush authority) | Cannot write prices or any oracle data, move custody, or mint/redeem; admin-revocable on the registry allowlist |
-| `AdminCap` holder | Fees, the live-forward source, freshness thresholds, cadence allocation caps, profit share, the trading-pause and emergency-freeze switches (sole authority to lift either), underlying registration, lifecycle-cap minting, and genesis-bootstrapping the pool | Cannot touch a holder's position, an account balance, or pool custody directly |
-| Flush starter (`MarketLifecycleCap`) | When the pool is valued and the LP queues drain, i.e. the oracle state at which PLP is priced | Cannot set the mark to anything but the pool's exact NAV at that instant, or fill at an off-mark price |
+| Market-lifecycle operator (`MarketLifecycleCap`) | Creating future expiry markets | Cannot start a flush, write prices or any oracle data, move custody, or mint/redeem; admin-revocable on the registry allowlist |
+| `AdminCap` holder | Fees, the live-forward source, freshness thresholds, cadence allocation caps, profit share, the trading-pause and emergency-freeze switches (sole authority to lift either), underlying registration, lifecycle-cap and pool-valuation-cap minting, and genesis-bootstrapping the pool | Cannot touch a holder's position, an account balance, or pool custody directly |
+| Flush starter (`PoolValuationCap`) | When the pool is valued and the LP queues drain, i.e. the oracle state at which PLP is priced | Cannot create markets, set the mark to anything but the pool's exact NAV at that instant, or fill at an off-mark price; admin-revocable on the registry allowlist |
 | `PauseCap` holder | Emergency one-way switches: pause global trading, pause one market's minting, or force a protocol-wide freeze that halts the whole version-gated surface | Cannot unpause/unfreeze anything, change config, or move funds |
 
 The remainder of this page expands each row and adds the rounding, settlement, and maturity caveats.
@@ -35,7 +35,7 @@ Every live price in Predict is built from external **propbook** feeds — object
 
 ## The privileged flush
 
-The single most important LP-facing trust assumption is **who decides when the pool is valued**. PLP is not priced against a continuously-published pool price; it is priced only during a **flush**, and a flush can be started only by a market deployer (`MarketLifecycleCap`) — a revocable cap, not the root `AdminCap`. It is intended to be a cron-driven operation.
+The single most important LP-facing trust assumption is **who decides when the pool is valued**. PLP is not priced against a continuously-published pool price; it is priced only during a **flush**, and a flush can be started only by a pool-valuation operator (`PoolValuationCap`) — a revocable cap, not the root `AdminCap`. It is intended to be a cron-driven operation.
 
 - **The flush is privileged by design.** Making it permissionless would let anyone time the valuation to a favourable oracle state and capture mispriced fills. Gating it behind the operator caps closes that timing attack. The cost is a trust assumption: the flush starter chooses the snapshot instant at which every queued supply and withdraw is priced, so the **cap-holders must not manipulate the live oracle around a flush**. They cannot set the mark to anything but the pool's exact NAV at that instant — the mark is `idle + Σ snapshot-instant market NAV`, every pricer is frozen in one atomic snapshot transaction, and each market's snapshot state is captured at that instant so post-snapshot trades cannot reach it — but they do choose the instant.
 - **A single exact mark prices both directions.** Because the same `pool_nav` prices supply and withdraw, it must equal true NAV in both directions or one side is systematically advantaged. It does: each market contributes its exact recoverable value at the snapshot instant (snapshot-captured free cash minus the boundary-linear walk over the tree's captured shadows), so a supplier priced at the mark mints fair shares and a withdrawer is paid fair value. The exactness is what makes the dual-use mark safe; there is no approximation knob to mis-set.
@@ -86,7 +86,7 @@ The `AdminCap` can:
 - set future-market cadence terms, including tick size, allocation cap, and deployment window;
 - mint and revoke `PauseCap`s, advance the package-version watermark (`bump_version_watermark` — monotonic, no disable or re-enable), and register Propbook underlyings Predict can build markets on;
 - engage or lift the trading pause and the protocol-wide emergency freeze; `set_frozen` is deliberately ungated, so an engaged freeze is always liftable without a package upgrade;
-- mint and revoke the `MarketLifecycleCap`s that gate market creation and starting a flush as a deployer;
+- mint and revoke the `MarketLifecycleCap`s that gate market creation and the `PoolValuationCap`s that gate starting a flush;
 
 The `AdminCap` cannot:
 
