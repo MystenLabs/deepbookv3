@@ -50,3 +50,12 @@ export const RESOLVER_MARKET: MarketParams = {
   maxEntryProbability: 0.99,
   lotSize: 10_000, // constants::position_lot_size
 };
+
+// pricing_config.move defaults mirrored by the harness trader. The updater snapshot retains the
+// timestamps expected to have landed so this mirror rejects the same stale inputs as the contract.
+export const PRICING_DEFAULTS = {
+  usePythSpotForForward: true,
+  pythSpotFreshnessMs: 10_000,
+  blockScholesPriceFreshnessMs: 10_000,
+  blockScholesSviFreshnessMs: 60_000,
+} as const;

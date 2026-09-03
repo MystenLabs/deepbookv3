@@ -145,6 +145,70 @@ export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, u
   };
 }
 
+function sourceAdvances(
+  sourceTimestampMs: number,
+  previousSourceTimestampMs: number | undefined,
+  onchainTimestampMs: number,
+): boolean {
+  return sourceTimestampMs > 0 &&
+    sourceTimestampMs <= onchainTimestampMs &&
+    (previousSourceTimestampMs === undefined || sourceTimestampMs > previousSourceTimestampMs);
+}
+
+/// Project the provider snapshot to the values expected to have advanced on-chain. Equal-source
+/// retransmissions retain the previously landed value, including rolled SVI parameters.
+export function projectLandedSnapshot(
+  previous: MarketSnapshot | null,
+  candidate: MarketSnapshot,
+  onchainTimestampMs: number,
+  pythAppliedSourceTimestampMs: bigint | null,
+): MarketSnapshot {
+  const pythAdvances = pythAppliedSourceTimestampMs !== null &&
+    pythAppliedSourceTimestampMs > (previous?.pythSourceTimestampMs ?? 0n);
+  const bsSpotAdvances = sourceAdvances(
+    candidate.bsSpotSourceTimestampMs,
+    previous?.bsSpotSourceTimestampMs,
+    onchainTimestampMs,
+  );
+  const expiries = new Map<number, ExpiryData>();
+  for (const [expiryMs, next] of candidate.expiries) {
+    const prior = previous?.expiries.get(expiryMs);
+    const forwardAdvances = sourceAdvances(
+      next.forwardSourceTimestampMs,
+      prior?.forwardSourceTimestampMs,
+      onchainTimestampMs,
+    );
+    const sviAdvances = sourceAdvances(
+      next.sviSourceTimestampMs,
+      prior?.sviSourceTimestampMs,
+      onchainTimestampMs,
+    );
+    expiries.set(expiryMs, {
+      forward: forwardAdvances || !prior ? next.forward : prior.forward,
+      forward1e9: forwardAdvances || !prior ? next.forward1e9 : prior.forward1e9,
+      forwardSourceTimestampMs: forwardAdvances
+        ? next.forwardSourceTimestampMs
+        : (prior?.forwardSourceTimestampMs ?? 0),
+      svi: sviAdvances || !prior ? next.svi : prior.svi,
+      svi1e9: sviAdvances || !prior ? next.svi1e9 : prior.svi1e9,
+      sviSourceTimestampMs: sviAdvances
+        ? next.sviSourceTimestampMs
+        : (prior?.sviSourceTimestampMs ?? 0),
+    });
+  }
+  return {
+    spot1e9: pythAdvances || !previous ? candidate.spot1e9 : previous.spot1e9,
+    pythSourceTimestampMs: pythAdvances
+      ? pythAppliedSourceTimestampMs
+      : (previous?.pythSourceTimestampMs ?? 0n),
+    bsSpot1e9: bsSpotAdvances || !previous ? candidate.bsSpot1e9 : previous.bsSpot1e9,
+    bsSpotSourceTimestampMs: bsSpotAdvances
+      ? candidate.bsSpotSourceTimestampMs
+      : (previous?.bsSpotSourceTimestampMs ?? 0),
+    expiries,
+  };
+}
+
 function strictObject(
   value: unknown,
   keys: readonly string[],
@@ -183,7 +247,7 @@ function finiteNumber(value: unknown, label: string): number {
 
 // Parse the current versioned hub snapshot. Missing and unknown fields fail the read;
 // callers retry the next atomic snapshot instead of silently manufacturing semantics.
-function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
+export function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
   const h = strictObject(
     raw,
     ["schemaVersion", "spot1e9", "pythSourceTimestampMs", "bsSpot1e9", "bsSpotSourceTimestampMs", "expiries"],
