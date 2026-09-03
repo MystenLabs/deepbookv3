@@ -263,24 +263,37 @@ export function projectLandedSnapshot(
       prior?.sviSourceTimestampMs,
     );
     expiries.set(expiryMs, {
-      forward: forwardAdvances || !prior ? next.forward : prior.forward,
-      forward1e9: forwardAdvances || !prior ? next.forward1e9 : prior.forward1e9,
+      forward: forwardAdvances ? next.forward : (prior?.forward ?? 0),
+      forward1e9: forwardAdvances ? next.forward1e9 : (prior?.forward1e9 ?? 0n),
       forwardSourceTimestampMs: forwardAdvances
         ? next.forwardSourceTimestampMs
         : (prior?.forwardSourceTimestampMs ?? 0),
-      svi: sviAdvances || !prior ? next.svi : prior.svi,
-      svi1e9: sviAdvances || !prior ? next.svi1e9 : prior.svi1e9,
+      svi: sviAdvances
+        ? next.svi
+        : (prior?.svi ?? { alpha: 0, beta: 0, rho: 0, m: 0, sigma: 0 }),
+      svi1e9: sviAdvances
+        ? next.svi1e9
+        : (prior?.svi1e9 ?? {
+          a: 0n,
+          aNegative: false,
+          b: 0n,
+          sigma: 0n,
+          rho: 0n,
+          rhoNegative: false,
+          m: 0n,
+          mNegative: false,
+        }),
       sviSourceTimestampMs: sviAdvances
         ? next.sviSourceTimestampMs
         : (prior?.sviSourceTimestampMs ?? 0),
     });
   }
   return {
-    spot1e9: pythAdvances || !previous ? candidate.spot1e9 : previous.spot1e9,
+    spot1e9: pythAdvances ? candidate.spot1e9 : (previous?.spot1e9 ?? 0n),
     pythSourceTimestampMs: pythAdvances
       ? appliedPythSourceTimestampMs
       : (previous?.pythSourceTimestampMs ?? 0n),
-    bsSpot1e9: bsSpotAdvances || !previous ? candidate.bsSpot1e9 : previous.bsSpot1e9,
+    bsSpot1e9: bsSpotAdvances ? candidate.bsSpot1e9 : (previous?.bsSpot1e9 ?? 0n),
     bsSpotSourceTimestampMs: bsSpotAdvances
       ? candidate.bsSpotSourceTimestampMs
       : (previous?.bsSpotSourceTimestampMs ?? 0),

@@ -168,8 +168,12 @@ test("landed snapshot does not infer an on-chain advance after local state is lo
     forwardSourceTimestampMsByExpiry: new Map(),
     sviSourceTimestampMsByExpiry: new Map(),
   });
+  assert.equal(landed.spot1e9, 0n);
+  assert.equal(landed.bsSpot1e9, 0n);
   assert.equal(landed.bsSpotSourceTimestampMs, 0);
+  assert.equal(landed.expiries.get(expiry)?.forward1e9, 0n);
   assert.equal(landed.expiries.get(expiry)?.forwardSourceTimestampMs, 0);
+  assert.equal(landed.expiries.get(expiry)?.svi1e9.a, 0n);
   assert.equal(landed.expiries.get(expiry)?.sviSourceTimestampMs, 0);
 });
 
