@@ -367,6 +367,10 @@ public fun flow_fixture_atm_budget(): u64 { 21 }
 /// of the contract and shared by the direct and rolled-surface tests.
 public fun flat_surface_atm_up(): u64 { 499_993_692 }
 
+/// True UP digital at the forward for raw `a = 2e-9, b = 0` rolled down by 1/4,
+/// evaluated from `Phi(-sqrt(0.5e-9)/2)` with Python stdlib `erf`.
+public fun quarter_rolled_flat_surface_atm_up(): u64 { 499_995_540 }
+
 /// Absolute budget for the flat-surface reference, derived from math.move's
 /// precision contract and never measured from contract output.
 public fun flat_surface_atm_budget(): u64 { 21 }

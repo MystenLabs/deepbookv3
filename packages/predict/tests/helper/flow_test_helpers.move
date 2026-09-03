@@ -1023,7 +1023,7 @@ public fun write_bs_forward_in_current_tx_bundle(
     let expiry = market.market.expiry();
     let latest = market.bs.values().forward(expiry);
     let ts = if (latest.is_some()) {
-        source_timestamp_ms.max(latest.borrow().read_model_timestamp_ms() + 1)
+        source_timestamp_ms.max(latest.borrow().read_source_timestamp_ms() + 1)
     } else {
         source_timestamp_ms
     };
@@ -1062,7 +1062,7 @@ public fun write_bs_svi_in_current_tx_bundle(
     let expiry = market.market.expiry();
     let latest = market.bs.svi().svi(expiry);
     let ts = if (latest.is_some()) {
-        source_timestamp_ms.max(latest.borrow().read_model_timestamp_ms() + 1)
+        source_timestamp_ms.max(latest.borrow().read_source_timestamp_ms() + 1)
     } else {
         source_timestamp_ms
     };

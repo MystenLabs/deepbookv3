@@ -49,7 +49,7 @@ public struct OrderMinted has copy, drop, store {
     referrer_account_id: Option<ID>,
     onchain_timestamp_ms: u64,
     /// Oracle source timestamps present when this mint was priced: Pyth's canonical source time
-    /// and the Block Scholes batch-envelope times used for freshness. The SVI one is also the
+    /// and the Block Scholes per-update source times used for freshness. The SVI one is also the
     /// roll-down anchor. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,
@@ -84,7 +84,7 @@ public struct LiveOrderRedeemed has copy, drop, store {
     builder_code_id: Option<ID>,
     onchain_timestamp_ms: u64,
     /// Oracle source timestamps present when this redemption was priced: Pyth's canonical source
-    /// time and the Block Scholes batch-envelope times used for freshness. The SVI one is also the
+    /// time and the Block Scholes per-update source times used for freshness. The SVI one is also the
     /// roll-down anchor. Pyth is `0` only when unusable.
     pyth_spot_source_timestamp_ms: u64,
     block_scholes_spot_source_timestamp_ms: u64,

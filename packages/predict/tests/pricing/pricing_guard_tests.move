@@ -124,7 +124,7 @@ const W_PRIME_SURFACE_B: u64 = 13;
 const W_PRIME_SURFACE_RHO: u64 = 1_000_000_000;
 const W_PRIME_SURFACE_M: u64 = 831_439;
 const W_PRIME_SURFACE_SIGMA: u64 = 5_000_000;
-/// Seed the tuple at `now_ms`, price one second later: the seed's publish time
+/// Seed the tuple at `now_ms`, price one second later: the seed's source time
 /// is the roll-down anchor, so the roll-down is live at 119_000/120_000.
 const W_PRIME_EXPIRY_MS: u64 = 240_000;
 const W_PRIME_PRICED_AT_MS: u64 = 121_000;
@@ -407,141 +407,93 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     abort EUnexpectedSuccess
 }
 
-/// Freshness keys on each observation's batch envelope time: republishing a value re-asserts it
-/// as current, however old the model time it carries. The spot's model time is here aged past the
-/// whole price window while its envelope is current — the quote must succeed, and the exact ATM
-/// value pins that it priced the republished surface. The forward is refreshed at the same clock
-/// and the SVI republished in the same flush, mirroring a real batch where every series shares
-/// one envelope.
-#[test]
-fun live_quote_with_a_freshly_retransmitted_aged_spot_model_succeeds() {
+/// A newer batch timestamp does not refresh an unchanged spot update. Freshness remains keyed to
+/// the update's provider source timestamp, which is older than the configured price window here.
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
     let (mut fx, mut oracle) = setup_live();
-    let model_ms = test_constants::live_source_timestamp_ms();
-    let republished_now =
-        model_ms
+    let source_ms = test_constants::live_source_timestamp_ms();
+    let retransmitted_now =
+        source_ms
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
-    fx.set_clock_for_testing(republished_now);
+    fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_forward_for_testing_bundle(
         &mut oracle,
-        republished_now,
+        retransmitted_now,
         test_constants::default_live_price(),
     );
     fx.retransmit_bs_spot_for_testing(
         &mut oracle,
-        model_ms,
-        republished_now,
+        source_ms,
+        retransmitted_now,
         test_constants::default_live_price(),
     );
-    fx.retransmit_bs_svi_for_testing(
-        &mut oracle,
-        model_ms,
-        republished_now,
-        test_constants::default_svi_a(),
-        false,
-        test_constants::default_svi_b(),
-        test_constants::default_svi_sigma(),
-        test_constants::default_svi_rho_magnitude(),
-        false,
-        test_constants::default_svi_m(),
-        false,
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
     );
-
-    // The SVI envelope is the roll-down anchor and equals the quote clock, so the
-    // surface prices unrolled: the default-surface ATM reference applies exactly.
-    test_helpers::assert_within(
-        live_quote(
-            &mut fx,
-            &oracle,
-            test_constants::default_live_price(),
-            constants::pos_inf!(),
-        ),
-        ref_data::flow_fixture_atm_up(),
-        ref_data::flow_fixture_atm_budget(),
-    );
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
+    abort EUnexpectedSuccess
 }
 
-/// And for the forward series: the spot is genuinely fresh, the forward's fresh envelope carries
-/// an aged model time, and the quote succeeds on the forward's envelope currency.
-#[test]
-fun live_quote_with_a_freshly_retransmitted_aged_forward_model_succeeds() {
+/// The same rule applies to forwards: transport in a current batch does not make an unchanged
+/// forward source timestamp current.
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceStale)]
+fun live_quote_with_a_retransmitted_aged_forward_source_aborts() {
     let (mut fx, mut oracle) = setup_live();
-    let model_ms = test_constants::live_source_timestamp_ms();
-    let republished_now =
-        model_ms
+    let source_ms = test_constants::live_source_timestamp_ms();
+    let retransmitted_now =
+        source_ms
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
-    fx.set_clock_for_testing(republished_now);
+    fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
         &mut oracle,
-        republished_now,
+        retransmitted_now,
         test_constants::default_live_price(),
     );
     fx.retransmit_bs_forward_for_testing(
         &mut oracle,
-        model_ms,
-        republished_now,
+        source_ms,
+        retransmitted_now,
         test_constants::default_live_price(),
     );
-    fx.retransmit_bs_svi_for_testing(
-        &mut oracle,
-        model_ms,
-        republished_now,
-        test_constants::default_svi_a(),
-        false,
-        test_constants::default_svi_b(),
-        test_constants::default_svi_sigma(),
-        test_constants::default_svi_rho_magnitude(),
-        false,
-        test_constants::default_svi_m(),
-        false,
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
     );
-
-    test_helpers::assert_within(
-        live_quote(
-            &mut fx,
-            &oracle,
-            test_constants::default_live_price(),
-            constants::pos_inf!(),
-        ),
-        ref_data::flow_fixture_atm_up(),
-        ref_data::flow_fixture_atm_budget(),
-    );
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
+    abort EUnexpectedSuccess
 }
 
-/// The SVI case additionally pins the anchor: the tuple's model time is aged past the SVI window,
-/// the retransmit envelope equals the quote clock, and the quote both passes freshness and prices
-/// the surface unrolled (anchor == now), matching the default-surface ATM reference.
-#[test]
-fun live_quote_with_a_freshly_retransmitted_aged_svi_model_succeeds() {
+/// SVI freshness also stays on the tuple's source timestamp. A newer batch timestamp neither
+/// refreshes the tuple nor changes the roll-down anchor.
+#[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
+fun live_quote_with_a_retransmitted_aged_svi_source_aborts() {
     let (mut fx, mut oracle) = setup_live();
-    let model_ms = test_constants::live_source_timestamp_ms();
-    let republished_now =
-        model_ms
+    let source_ms = test_constants::live_source_timestamp_ms();
+    let retransmitted_now =
+        source_ms
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_svi_freshness_ms()
         + 1;
-    fx.set_clock_for_testing(republished_now);
+    fx.set_clock_for_testing(retransmitted_now);
     fx.set_bs_spot_for_testing_bundle(
         &mut oracle,
-        republished_now,
+        retransmitted_now,
         test_constants::default_live_price(),
     );
     fx.set_bs_forward_for_testing_bundle(
         &mut oracle,
-        republished_now,
+        retransmitted_now,
         test_constants::default_live_price(),
     );
-    // Identical retransmit: the seeded tuple pinned to its original model time in a fresh envelope.
     fx.retransmit_bs_svi_for_testing(
         &mut oracle,
-        model_ms,
-        republished_now,
+        source_ms,
+        retransmitted_now,
         test_constants::default_svi_a(),
         false,
         test_constants::default_svi_b(),
@@ -551,20 +503,13 @@ fun live_quote_with_a_freshly_retransmitted_aged_svi_model_succeeds() {
         test_constants::default_svi_m(),
         false,
     );
-
-    test_helpers::assert_within(
-        live_quote(
-            &mut fx,
-            &oracle,
-            test_constants::default_live_price(),
-            constants::pos_inf!(),
-        ),
-        ref_data::flow_fixture_atm_up(),
-        ref_data::flow_fixture_atm_budget(),
+    live_quote(
+        &mut fx,
+        &oracle,
+        test_constants::default_live_price(),
+        constants::pos_inf!(),
     );
-
-    oracle_fixture::return_oracle_bundle(oracle);
-    fx.finish();
+    abort EUnexpectedSuccess
 }
 
 /// A store for another underlying is a real, registry-created store that simply is not the one
@@ -1119,14 +1064,14 @@ fun pre_expiry_roll_down_keeps_positive_variance() {
     fx.finish();
 }
 
-/// A raw-valid `a = 1e-9, b = 0` tuple published at `now_ms`, quoted one millisecond before a
-/// one-year expiry with no republication in between. Flooring the rolled variance to zero needs
-/// `anchor_tte_ms >= 1e9 * remaining_ms` — a publish anchor years older than any admissible
-/// freshness window — so envelope freshness pre-empts RP-21's zero-variance response: the quote
-/// aborts stale long before the terminal region. (A republication near expiry re-anchors the
-/// roll-down instead, pricing at ratio ~1 — the terminal region is unreachable from both sides.)
+/// A raw-valid `a = 1e-9, b = 0` tuple sourced at `now_ms`, quoted one millisecond before a
+/// one-year expiry with no newer source update in between. Flooring the rolled variance to zero
+/// needs `anchor_tte_ms >= 1e9 * remaining_ms` — a source anchor years older than any admissible
+/// freshness window — so source freshness pre-empts RP-21's zero-variance response: the quote
+/// aborts stale long before the terminal region. A new source tuple near expiry instead re-anchors
+/// the roll-down and prices at ratio ~1, so the terminal region is unreachable from both sides.
 #[test, expected_failure(abort_code = pricing::EBlockScholesSVIStale)]
-fun terminal_roll_down_to_zero_is_preempted_by_envelope_freshness() {
+fun terminal_roll_down_to_zero_is_preempted_by_source_freshness() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let mut oracle = fx.take_oracle_bundle();
     fx.prepare_real_oracle_bundle(
