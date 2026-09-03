@@ -1,5 +1,6 @@
 // Shared Predict-layer bring-up on an oracle-ready localnet: oracle feeds + trusted
-// signer + cadence config + lifecycle cap, then create markets and bootstrap the pool.
+// signer + cadence config + the lifecycle and pool-valuation caps, then create markets
+// and bootstrap the pool.
 
 import { existsSync, readFileSync } from "node:fs";
 
@@ -18,6 +19,7 @@ import {
   executeAndWait,
   lockCapitalTx,
   mintLifecycleCapTx,
+  mintPoolValuationCapTx,
   objectExists,
   type OracleFeedIds,
   readPlpTotalSupply,
@@ -43,9 +45,12 @@ export const eventField = (b: any, name: string, field: string): string => {
 
 export type Feeds = OracleFeedIds;
 
-// Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + a
-// lifecycle cap. Returns the feed ids and the cap needed to create/flush markets.
-export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds: Feeds; lifecycleCapId: string }> {
+// Trusted signer + Pyth/BS feeds + bound underlying + per-cadence config + the two
+// operator caps. Returns the feed ids, the lifecycle cap that creates markets, and the
+// pool-valuation cap that starts flushes.
+export async function setupFeedsAndConfig(
+  cadenceIds: number[],
+): Promise<{ feeds: Feeds; lifecycleCapId: string; poolValuationCapId: string }> {
   const instanceDir = requiredEnv("INSTANCE_DIR");
   const feedsPath = `${instanceDir}/feeds.json`;
   let feeds: Feeds;
@@ -70,10 +75,12 @@ export async function setupFeedsAndConfig(cadenceIds: number[]): Promise<{ feeds
   // Config setters are idempotent — (re-)run either way so a re-attach re-asserts policy.
   const cap = await executeAndWait(mintLifecycleCapTx(address), "lifecycle-cap");
   const lifecycleCapId = found(cap, "MarketLifecycleCap");
+  const valuationCap = await executeAndWait(mintPoolValuationCapTx(address), "pool-valuation-cap");
+  const poolValuationCapId = found(valuationCap, "PoolValuationCap");
   for (const cadenceId of cadenceIds) {
     await executeAndWait(setCadenceConfigTx({ cadenceId, ...CADENCES[cadenceId] }), `cadence-${cadenceId}`);
   }
-  return { feeds, lifecycleCapId };
+  return { feeds, lifecycleCapId, poolValuationCapId };
 }
 
 // Create one cadence market. Reads NO oracle (absolute ticks need no grid centering),
@@ -92,7 +99,7 @@ export async function createMarket(
 // Genesis: operator account + lock min-bootstrap + supply 10M + a bare flush that mints
 // PLP 1:1. No market needed (and none should exist yet); markets are created + funded
 // afterward, so a fast cadence's first expiry can't race the bootstrap.
-export async function bootstrapPool(lifecycleCapId: string): Promise<{ wrapperId: string }> {
+export async function bootstrapPool(poolValuationCapId: string): Promise<{ wrapperId: string }> {
   const wrapperId = deriveAccountWrapperId(address);
   // Fully bootstrapped: the $10M supply has landed. The min-liquidity lock alone is
   // << BOOTSTRAP_SUPPLY, so this only trips AFTER the final flush — never mid-genesis.
@@ -113,6 +120,6 @@ export async function bootstrapPool(lifecycleCapId: string): Promise<{ wrapperId
       "supply",
     );
   }
-  await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }), "bootstrap-flush");
+  await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }), "bootstrap-flush");
   return { wrapperId };
 }

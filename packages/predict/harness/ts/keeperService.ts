@@ -101,7 +101,7 @@ async function settleExpired(feeds: Feeds): Promise<{ ok: boolean; lastErr: stri
   return { ok, lastErr, count: expired.length };
 }
 
-async function tick(feeds: Feeds, lifecycleCapId: string) {
+async function tick(feeds: Feeds, lifecycleCapId: string, poolValuationCapId: string) {
   // 0. Surface a stranded valuation lock. A valuation that died after its snapshot
   //    sealed leaves the outer lock (`valuation_in_progress`) engaged, but that lock
   //    now only gates cancels and config setters — not settlement, trading, or the
@@ -153,7 +153,7 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
       // market, then finish. A failure part-way leaves the valuation lock held, so the
       // catch below discards it rather than letting the whole protocol sit frozen.
       const fr = await execute(
-        keeperFlushTxs({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }),
+        keeperFlushTxs({ feeds, marketIds: flush.map((m) => m.id), settlements, poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }),
         "flush",
       );
       const fe = fr.events?.find((e: any) => e.type?.includes("FlushExecuted"))?.parsedJson;
@@ -235,8 +235,8 @@ async function tick(feeds: Feeds, lifecycleCapId: string) {
 
 async function main() {
   console.log(`[keeper] cadences=${CADENCE_IDS.join(",")} windows=${CADENCE_IDS.map((c) => CADENCES[c].windowSize).join(",")} tick=${TICK_MS}ms duration=${DURATION_MS || "∞"}ms`);
-  const { feeds, lifecycleCapId } = await setupFeedsAndConfig(CADENCE_IDS);
-  await bootstrapPool(lifecycleCapId);
+  const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS);
+  await bootstrapPool(poolValuationCapId);
   for (const addr of TRADER_ADDRESSES) {
     await executeAndWait(fundAddressDusdcTx(addr, TRADER_DUSDC), `fund-trader-${addr.slice(0, 8)}`);
   }
@@ -246,7 +246,7 @@ async function main() {
   const deadline = DURATION_MS > 0 ? startedAt + DURATION_MS : 0;
   for (;;) {
     try {
-      await tick(feeds, lifecycleCapId);
+      await tick(feeds, lifecycleCapId, poolValuationCapId);
     } catch (e) {
       appendTrace("keeper", { type: "fail", tag: errorTag(e) });
       console.error("[keeper] tick error:", e instanceof Error ? e.message : e);

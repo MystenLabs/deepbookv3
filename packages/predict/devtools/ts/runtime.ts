@@ -963,7 +963,7 @@ export interface FlushParams extends OracleFeedIds {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
-    lifecycleCapId: string;
+    poolValuationCapId: string;
 }
 
 // Convert a raw binary-range strike to the `(lower_tick, higher_tick)` pair the
@@ -1367,7 +1367,7 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
 }
 
 // Add the ATOMIC snapshot stage: the privileged `start_pool_valuation` (via a
-// market-deployer `MarketLifecycleCap` proof — the sole flush authority) -> one
+// `PoolValuationCap` proof — the sole flush authority) -> one
 // `snapshot_expiry_pricer` per active market -> `seal_valuation_snapshot`, which
 // consumes the `SnapshotStage` potato. These commands MUST stay in one PTB and the
 // potato enforces it: every market's `Pricer` is frozen at the instant this
@@ -1377,8 +1377,8 @@ function loadLivePricer(tx: Transaction, params: LivePricerParams) {
 // `resolve_live_pricer` refuses a same-transaction write (RP-24).
 function addSnapshotStage(tx: Transaction, params: FlushParams): void {
     const proof = tx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+        target: target("registry", "generate_pool_valuation_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.poolValuationCapId)],
     });
     const stage = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
@@ -1599,14 +1599,26 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
     return tx;
 }
 
+// Admin mints a `MarketLifecycleCap` into the Registry allowlist that gates
+// `create_and_share_expiry_market`. `mint_lifecycle_cap(registry, config, admin_cap,
+// ctx)` is version-gated, so it reads the protocol config.
 export function mintLifecycleCapTx(recipient: string): Transaction {
     const tx = new Transaction();
-    // MarketLifecycleCap mint moved from `plp` to `registry` (the allowlist now
-    // lives on Registry, its sole gating call site being create_and_share_expiry_market).
     const cap = tx.moveCall({
         target: target("registry", "mint_lifecycle_cap"),
-        // `mint_lifecycle_cap(registry, config, admin_cap, ctx)` — the mint is version-
-        // gated, so it reads the protocol config.
+        arguments: [tx.object(REGISTRY_ID), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID)],
+    });
+    tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
+// Admin mints a `PoolValuationCap` into the Registry allowlist that gates
+// `start_pool_valuation` (through `generate_pool_valuation_proof`). Same shape and
+// version gate as the lifecycle mint.
+export function mintPoolValuationCapTx(recipient: string): Transaction {
+    const tx = new Transaction();
+    const cap = tx.moveCall({
+        target: target("registry", "mint_pool_valuation_cap"),
         arguments: [tx.object(REGISTRY_ID), tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
@@ -1997,12 +2009,12 @@ export async function refreshOracleAndFlushTxs(
 export function bareFlushTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
-    lifecycleCapId: string;
+    poolValuationCapId: string;
 }): Transaction {
     const tx = new Transaction();
     const proof = tx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [tx.object(REGISTRY_ID), tx.object(params.lifecycleCapId)],
+        target: target("registry", "generate_pool_valuation_proof"),
+        arguments: [tx.object(REGISTRY_ID), tx.object(params.poolValuationCapId)],
     });
     const stage = tx.moveCall({
         target: target("plp", "start_pool_valuation"),
@@ -2049,7 +2061,7 @@ export function keeperFlushTxs(params: {
     marketIds: string[];
     poolVaultId: string;
     protocolConfigId: string;
-    lifecycleCapId: string;
+    poolValuationCapId: string;
     settlements: { marketId: string; expiryMs: bigint; price: bigint }[];
 }): Transaction[] {
     // 1. Stragglers settle, then the atomic snapshot stage. Everything from
@@ -2066,8 +2078,8 @@ export function keeperFlushTxs(params: {
         });
     }
     const proof = snapshotTx.moveCall({
-        target: target("registry", "generate_lifecycle_proof"),
-        arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.lifecycleCapId)],
+        target: target("registry", "generate_pool_valuation_proof"),
+        arguments: [snapshotTx.object(REGISTRY_ID), snapshotTx.object(params.poolValuationCapId)],
     });
     const stage = snapshotTx.moveCall({
         target: target("plp", "start_pool_valuation"),
