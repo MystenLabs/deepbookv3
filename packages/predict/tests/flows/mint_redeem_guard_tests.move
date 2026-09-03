@@ -17,8 +17,8 @@ use deepbook_predict::{
     strike_exposure,
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
+use usdc::usdc::USDC;
 
 /// Lot-aligned position size minted in both tests.
 const QUANTITY: u64 = 840_000_000;
@@ -123,7 +123,7 @@ fun mint_exact_quantity_at_exact_all_in_cost_succeeds() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - all_in_cost,
     );
 

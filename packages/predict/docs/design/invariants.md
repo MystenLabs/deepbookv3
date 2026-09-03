@@ -11,7 +11,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Solvency and custody
 
-- **Cash backing.** Every expiry's DUSDC cash always covers its payout liability
+- **Cash backing.** Every expiry's USDC cash always covers its payout liability
   and isolated inventory-impact reserve
   (`cash ≥ payout_liability + inventory_impact_reserve`),
   re-asserted after every cash mutation
@@ -48,7 +48,7 @@ and contributors. For *how* each mechanism works, follow the links into
   in full. The per-expiry allocation cap snapshotted at market creation is enforced
   on every funding move as a ceiling, and the pool sync tops every market up toward
   its reserve target before an LP withdrawal pays out.
-- **Custody.** DUSDC lives in exactly three places: account-package `Account`
+- **Custody.** USDC lives in exactly three places: account-package `Account`
   custody, each expiry's `ExpiryCash`, and the pool ledger's idle balance.
   `ExpiryMarket` is the sole authorizer of expiry cash movement. The protocol
   reserve accumulates the protocol's profit share and is excluded from PLP
@@ -129,9 +129,9 @@ and contributors. For *how* each mechanism works, follow the links into
 
 - Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
   min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
-- On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-impact charges are excluded. The DUSDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
+- On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-impact charges are excluded. The USDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
-  `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the DUSDC leg
+  `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the USDC leg
   **outside** the mark and retained by the pool, so it accrues to remaining
   holders; request limits are measured net of it, and it rounds up to the pool.
   The former uncertainty-band withdraw fee (`withdraw_fee_alpha`) was deleted with

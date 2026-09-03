@@ -13,7 +13,7 @@ import compare_parity as compare
 
 
 STATE = {
-    "account_dusdc_balance": "0",
+    "account_usdc_balance": "0",
     "account_plp_balance": "0",
     "expiry_cash_balance": "0",
     "inventory_impact_reserve": "0",

@@ -31,8 +31,8 @@ const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
 const DEFAULT_BACKING_BUFFER_LAMBDA: u64 = 310_000_000;
 const DEFAULT_BASE_FEE: u64 = 100_000_000;
 const DEFAULT_MIN_FEE: u64 = 22_000_000;
-const DEFAULT_ATM_FEE_DUSDC_RAW: u64 = 50_000;
-const DEFAULT_MIN_FEE_DUSDC_RAW: u64 = 22_000;
+const DEFAULT_ATM_FEE_USDC_RAW: u64 = 50_000;
+const DEFAULT_MIN_FEE_USDC_RAW: u64 = 22_000;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
 /// `AdminCap`, ready for admin setter calls in the next transaction.
@@ -54,15 +54,15 @@ fun new_config_seeds_default_market_economics() {
     assert_eq!(config.base_fee(), DEFAULT_BASE_FEE);
     assert_eq!(config.min_fee(), DEFAULT_MIN_FEE);
     // At p = 0.5, sqrt(p * (1 - p)) = 0.5, so the default base fee
-    // charges 0.05 DUSDC on one 1-DUSDC-payout contract.
+    // charges 0.05 USDC on one 1-USDC-payout contract.
     assert_eq!(
         config.trading_fee(
             test_constants::default_expiry_ms(),
             ENTRY_PROBABILITY_HALF,
-            test_constants::dusdc_unit(),
+            test_constants::usdc_unit(),
             test_constants::now_ms(),
         ),
-        DEFAULT_ATM_FEE_DUSDC_RAW,
+        DEFAULT_ATM_FEE_USDC_RAW,
     );
     destroy(config);
 }
@@ -155,15 +155,15 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
     // Just-inside boundary: p = 1.0 is accepted. Bernoulli variance at p = 1
     // is 0, so the raw fee is 0 and the per-unit rate floors at the default
     // min fee; far from expiry the ramp multiplier is 1x, so one contract pays
-    // the 0.022 DUSDC floor.
+    // the 0.022 USDC floor.
     assert_eq!(
         config.trading_fee(
             test_constants::default_expiry_ms(),
             float!(),
-            test_constants::dusdc_unit(),
+            test_constants::usdc_unit(),
             test_constants::now_ms(),
         ),
-        DEFAULT_MIN_FEE_DUSDC_RAW,
+        DEFAULT_MIN_FEE_USDC_RAW,
     );
     destroy(config);
 }

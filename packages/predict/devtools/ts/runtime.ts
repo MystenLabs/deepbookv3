@@ -10,8 +10,8 @@ import {
     BLOCK_SCHOLES_ORACLE_PACKAGE_ID,
     BS_ADMIN_CAP_ID,
     BS_SIGNER_REGISTRY_ID,
-    DUSDC_CURRENCY_ID,
-    DUSDC_PACKAGE_ID,
+    USDC_CURRENCY_ID,
+    USDC_PACKAGE_ID,
     LOCAL_BS_SIGNER_PRIVATE_KEY,
     LOCAL_BS_SIGNER_PUBLIC_KEY,
     LOCAL_PYTH_GOVERNANCE_CHAIN,
@@ -83,11 +83,11 @@ export interface ExecutionReceipt {
     effects: any;
 }
 
-export const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
+export const USDC_TYPE = `${USDC_PACKAGE_ID}::usdc::USDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
 // Sui's singleton balance-accumulator root lives at the reserved address 0xacc
-// (object::SUI_ACCUMULATOR_ROOT_OBJECT_ID). The async-LP flush delivers PLP/DUSDC
+// (object::SUI_ACCUMULATOR_ROOT_OBJECT_ID). The async-LP flush delivers PLP/USDC
 // fills to an account's accumulator; every account capital op (mint/redeem settle,
 // deposit, request_supply/withdraw) ambient-settles delivered funds through this root.
 const ACCUMULATOR_ROOT_ID = "0xacc";
@@ -105,7 +105,7 @@ const U64_MAX = (1n << 64n) - 1n;
 const ONE_DAY_MS = 24n * 60n * 60n * 1000n;
 const ONE_MONTH_MS = 30n * ONE_DAY_MS;
 // Genesis minimum-liquidity lock (constants::min_bootstrap_liquidity). `lock_capital`
-// permanently locks this much DUSDC so `total_supply > 0` for the life of the pool,
+// permanently locks this much USDC so `total_supply > 0` for the life of the pool,
 // making the supply==0 re-bootstrap branch unreachable. request_supply/withdraw abort
 // `ENotBootstrapped` until it has run, so the harness locks it before any supply.
 export const MIN_BOOTSTRAP_LIQUIDITY = 10_000_000n;
@@ -801,7 +801,7 @@ export async function readPlpBalance(owner: string): Promise<bigint> {
 }
 
 export interface PredictEconomicState {
-    accountDusdcBalance: bigint;
+    accountUsdcBalance: bigint;
     accountPlpBalance: bigint;
     expiryCashBalance: bigint;
     inventoryImpactReserve: bigint;
@@ -852,7 +852,7 @@ export async function readPredictEconomicState(params: {
     });
     tx.moveCall({
         target: accountTarget("account", "balance"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [account, tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
     });
     tx.moveCall({
@@ -884,7 +884,7 @@ export async function readPredictEconomicState(params: {
         feeIncentiveBalance: u64(12),
         isSettled: (commandReturnBytes(result, 13)[0] ?? 0) !== 0,
         activeMarketCount: BigInt(parseVectorId(commandReturnBytes(result, 14)).length),
-        accountDusdcBalance: u64(16),
+        accountUsdcBalance: u64(16),
         accountPlpBalance: u64(17),
     };
 }
@@ -941,7 +941,7 @@ interface MintParams extends OracleFeedIds {
     isUp: boolean;
     quantity: bigint;
     tickSize?: bigint; // cadence tick size; live harness default is $0.01
-    maxCost?: bigint; // all-in DUSDC withdrawal cap; U64_MAX (uncapped) if omitted
+    maxCost?: bigint; // all-in USDC withdrawal cap; U64_MAX (uncapped) if omitted
     maxProbability?: bigint; // per-contract probability cap (1e9); U64_MAX if omitted
 }
 
@@ -1342,10 +1342,10 @@ function addBlockScholesUpdates(
     );
 }
 
-function mintDusdc(tx: Transaction, amount: bigint) {
+function mintUsdc(tx: Transaction, amount: bigint) {
     const [coin] = tx.moveCall({
         target: "0x2::coin::mint",
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
     });
     return coin;
@@ -1473,7 +1473,7 @@ function addMint(tx: Transaction, params: MintParams): void {
             tx.pure.u64(params.maxCost ?? U64_MAX),
             tx.pure.u64(params.maxProbability ?? U64_MAX),
             // `mint_exact_quantity` loads the account and ambient-settles it
-            // (`settle<DUSDC>`) before charging the premium, so it reads the
+            // (`settle<USDC>`) before charging the premium, so it reads the
             // singleton AccumulatorRoot at 0xacc. `root` follows the slippage
             // guards.
             tx.object(ACCUMULATOR_ROOT_ID),
@@ -1503,7 +1503,7 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
             // U64_MAX caps).
             tx.pure.u64(0),
             tx.pure.u64(0),
-            // `redeem_live` loads the account and ambient-settles it (`settle<DUSDC>`)
+            // `redeem_live` loads the account and ambient-settles it (`settle<USDC>`)
             // before crediting the payout, so it reads the singleton AccumulatorRoot at 0xacc.
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
@@ -1589,12 +1589,12 @@ export function cleanoutAccountTx(params: CleanoutParams): Transaction {
     return tx;
 }
 
-export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
+export function finalizeUsdcCurrencyRegistrationTx(): Transaction {
     const tx = new Transaction();
     tx.moveCall({
         target: "0x2::coin_registry::finalize_registration",
-        typeArguments: [DUSDC_TYPE],
-        arguments: [tx.object(COIN_REGISTRY_ID), tx.object(DUSDC_CURRENCY_ID)],
+        typeArguments: [USDC_TYPE],
+        arguments: [tx.object(COIN_REGISTRY_ID), tx.object(USDC_CURRENCY_ID)],
     });
     return tx;
 }
@@ -1870,10 +1870,10 @@ export function rebalanceExpiryCashTx(params: {
     return tx;
 }
 
-// Queue a supply request: `request_supply` pulls `amount` DUSDC from the account's
+// Queue a supply request: `request_supply` pulls `amount` USDC from the account's
 // custody into queue escrow, recording the account as the fill recipient. To keep
 // supply a fresh external-capital injection (matching the old escrow-a-fresh-coin
-// model), deposit `amount` fresh DUSDC into the account first (separate owner auth),
+// model), deposit `amount` fresh USDC into the account first (separate owner auth),
 // then request_supply pulls exactly that. The minted PLP is delivered to the account
 // (via the balance accumulator) at the next flush, NOT returned here.
 export function requestSupplyTx(params: {
@@ -1884,15 +1884,15 @@ export function requestSupplyTx(params: {
     minPlpOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
-    const dusdc = mintDusdc(tx, params.amount);
+    const usdc = mintUsdc(tx, params.amount);
     const depositAuth = generateAuth(tx);
     tx.moveCall({
         target: accountTarget("account", "deposit_funds"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [
             tx.object(params.wrapperId),
             depositAuth,
-            dusdc,
+            usdc,
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -1914,10 +1914,10 @@ export function requestSupplyTx(params: {
     return tx;
 }
 
-// Queue a supply request pulling `amount` from the account's EXISTING custody DUSDC (no fresh
-// mint). For actors WITHOUT the DUSDC TreasuryCap (traders): the keeper funds the account,
+// Queue a supply request pulling `amount` from the account's EXISTING custody USDC (no fresh
+// mint). For actors WITHOUT the USDC TreasuryCap (traders): the keeper funds the account,
 // then this supplies from that balance — `request_supply` auto-settles + `account.withdraw`
-// pulls the custody DUSDC. (requestSupplyTx mints fresh DUSDC and is keeper-only.)
+// pulls the custody USDC. (requestSupplyTx mints fresh USDC and is keeper-only.)
 export function requestSupplyFromCustodyTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
@@ -1946,14 +1946,14 @@ export function requestSupplyFromCustodyTx(params: {
 // Queue a withdraw request: `request_withdraw` pulls `shares` PLP from the account's
 // custody into queue escrow. The pull auto-settles any flush-delivered PLP first (the
 // async flush delivers PLP fills to the account's accumulator), so no separate
-// materialization step exists — there is no `withdraw_settled` entrypoint. The DUSDC
+// materialization step exists — there is no `withdraw_settled` entrypoint. The USDC
 // fill is delivered to the account at the next flush, NOT returned here.
 export function requestWithdrawTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     wrapperId: string;
     shares: bigint;
-    minDusdcOut?: bigint;
+    minUsdcOut?: bigint;
 }): Transaction {
     const tx = new Transaction();
     const auth = generateAuth(tx);
@@ -1965,7 +1965,7 @@ export function requestWithdrawTx(params: {
             auth,
             tx.object(params.protocolConfigId),
             tx.pure.u64(params.shares),
-            tx.pure.u64(params.minDusdcOut ?? 0n),
+            tx.pure.u64(params.minUsdcOut ?? 0n),
             tx.object(ACCUMULATOR_ROOT_ID),
             tx.object(CLOCK_ID),
         ],
@@ -2175,16 +2175,16 @@ export function createAccountTx(): Transaction {
     return tx;
 }
 
-// Deposit `amount` fresh DUSDC into the account's stored balance via the PTB-callable
+// Deposit `amount` fresh USDC into the account's stored balance via the PTB-callable
 // `deposit_funds` (folds owner authorize -> load -> deposit). Ambient-settles delivered
-// DUSDC (reads the AccumulatorRoot) before crediting.
+// USDC (reads the AccumulatorRoot) before crediting.
 export function depositToAccountTx(wrapperId: string, amount: bigint): Transaction {
     const tx = new Transaction();
-    const coin = mintDusdc(tx, amount);
+    const coin = mintUsdc(tx, amount);
     const auth = generateAuth(tx);
     tx.moveCall({
         target: accountTarget("account", "deposit_funds"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [
             tx.object(wrapperId),
             auth,
@@ -2214,13 +2214,13 @@ export function deriveAccountWrapperId(owner: string): string {
     );
 }
 
-// Genesis bootstrap: permanently lock `MIN_BOOTSTRAP_LIQUIDITY` DUSDC so the pool's
+// Genesis bootstrap: permanently lock `MIN_BOOTSTRAP_LIQUIDITY` USDC so the pool's
 // `total_supply > 0` and the supply==0 re-bootstrap branch is unreachable. Locked
 // liquidity mints PLP into the book's locked balance (no shares to the caller) and
-// joins the DUSDC into idle. Must run once, before any request_supply.
+// joins the USDC into idle. Must run once, before any request_supply.
 export function lockCapitalTx(poolVaultId: string): Transaction {
     const tx = new Transaction();
-    const coin = mintDusdc(tx, MIN_BOOTSTRAP_LIQUIDITY);
+    const coin = mintUsdc(tx, MIN_BOOTSTRAP_LIQUIDITY);
     tx.moveCall({
         target: target("plp", "lock_capital"),
         // `lock_capital(vault, config, admin_cap, payment)`.
@@ -2241,24 +2241,24 @@ export async function refreshOracleAndRedeemTxs(
     return refreshThen(params, (tx) => addRedeem(tx, params));
 }
 
-// Mint test DUSDC and transfer it to `toAddress`. The TreasuryCap is owned by the
+// Mint test USDC and transfer it to `toAddress`. The TreasuryCap is owned by the
 // publisher, so this is how the keeper (publisher) funds trader addresses, which cannot
 // self-mint.
-export function fundAddressDusdcTx(toAddress: string, amount: bigint): Transaction {
+export function fundAddressUsdcTx(toAddress: string, amount: bigint): Transaction {
     const tx = new Transaction();
-    const coin = mintDusdc(tx, amount);
+    const coin = mintUsdc(tx, amount);
     tx.transferObjects([coin], tx.pure.address(toAddress));
     return tx;
 }
 
 // Deposit a coin the account owner already holds (e.g. one the keeper transferred) into
-// the account's stored balance, rather than minting fresh DUSDC.
+// the account's stored balance, rather than minting fresh USDC.
 export function depositOwnedCoinTx(wrapperId: string, coinId: string): Transaction {
     const tx = new Transaction();
     const auth = generateAuth(tx);
     tx.moveCall({
         target: accountTarget("account", "deposit_funds"),
-        typeArguments: [DUSDC_TYPE],
+        typeArguments: [USDC_TYPE],
         arguments: [tx.object(wrapperId), auth, tx.object(coinId), tx.object(ACCUMULATOR_ROOT_ID), tx.object(CLOCK_ID)],
     });
     return tx;

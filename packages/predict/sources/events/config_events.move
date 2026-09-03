@@ -74,9 +74,9 @@ public struct MarketCreated has copy, drop, store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
-    /// DUSDC pool allocation cap snapshotted for this expiry.
+    /// USDC pool allocation cap snapshotted for this expiry.
     max_expiry_allocation: u64,
-    /// Minimum DUSDC cash target snapshotted for this expiry.
+    /// Minimum USDC cash target snapshotted for this expiry.
     initial_expiry_cash: u64,
     backing_buffer_lambda: u64,
     base_fee: u64,

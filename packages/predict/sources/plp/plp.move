@@ -4,7 +4,7 @@
 /// PLP token and pool vault.
 ///
 /// PoolVault owns the PLP treasury cap, idle
-/// DUSDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
+/// USDC, the protocol reserve, sponsor-funded fee incentives, per-expiry cash
 /// accounting, and the queued LP supply/withdraw requests. It coordinates the
 /// full-pool NAV valuation — an atomic oracle snapshot followed by resumable
 /// per-market valuation transactions, with trading live throughout (see
@@ -28,7 +28,6 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     vault_events
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -43,6 +42,7 @@ use sui::{
     coin_registry::{Self, MetadataCap},
     vec_map::{Self, VecMap}
 };
+use usdc::usdc::USDC;
 
 const EMissingExpiryValuation: u64 = 0;
 const ENotBootstrapped: u64 = 1;
@@ -80,14 +80,14 @@ public struct SnapshotStage {}
 /// Pool-level vault state.
 public struct PoolVault has key {
     id: UID,
-    /// Protocol-owned DUSDC excluded from PLP redemption. No package entrypoint
+    /// Protocol-owned USDC excluded from PLP redemption. No package entrypoint
     /// withdraws this balance.
-    protocol_reserve_balance: Balance<DUSDC>,
-    /// Sponsor-funded DUSDC reserved for taker fee sponsorship, excluded from PLP NAV.
-    fee_incentive_reserve: Balance<DUSDC>,
+    protocol_reserve_balance: Balance<USDC>,
+    /// Sponsor-funded USDC reserved for taker fee sponsorship, excluded from PLP NAV.
+    fee_incentive_reserve: Balance<USDC>,
     /// PLP share issuance plus queued supply/withdraw escrow.
     lp: LpBook<PLP>,
-    /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
+    /// Idle USDC custody, registered expiries, and per-expiry cash-flow rows.
     expiry_accounting: Ledger,
     /// In-flight full-pool valuation, held across transactions. `Some` exactly
     /// while the `ProtocolConfig` valuation flag is engaged.
@@ -210,12 +210,12 @@ public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
 }
 
-/// Return idle DUSDC for SDK and devInspect state reads.
+/// Return idle USDC for SDK and devInspect state reads.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.expiry_accounting.idle_balance()
 }
 
-/// Return protocol-owned DUSDC for SDK and devInspect state reads.
+/// Return protocol-owned USDC for SDK and devInspect state reads.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
 }
@@ -460,9 +460,9 @@ public fun value_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, config
 
 /// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
 /// was valued exactly once, price the pool NAV, then drain the supply/withdraw queues
-/// at that frozen mark (mint PLP for supplies, burn PLP and pay DUSDC for
+/// at that frozen mark (mint PLP for supplies, burn PLP and pay USDC for
 /// withdrawals), release the valuation flag, retire the in-flight valuation, and
-/// return the LP-attributable pool-wide DUSDC NAV (frozen idle + Σ active NAV,
+/// return the LP-attributable pool-wide USDC NAV (frozen idle + Σ active NAV,
 /// net of the pending-protocol-profit exclusion priced from the frozen profit
 /// basis — every term as of the snapshot instant).
 /// Each drain fills only requests submitted before the flush's snapshot instant
@@ -620,13 +620,13 @@ public fun rebalance_expiry_cash(
     vault.sweep_or_rebalance_expiry(market, config, clock);
 }
 
-/// Sponsor taker fee incentives with DUSDC. Anyone may contribute; the payment
+/// Sponsor taker fee incentives with USDC. Anyone may contribute; the payment
 /// joins a pool-level reserve that is excluded from PLP NAV and later allocated to
 /// expiry markets by the normal rebalance flow.
 public fun sponsor_fee_incentives(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
-    payment: Coin<DUSDC>,
+    payment: Coin<USDC>,
     ctx: &mut TxContext,
 ) {
     config.assert_version();
@@ -645,9 +645,9 @@ public fun sponsor_fee_incentives(
     );
 }
 
-/// Bootstrap the pool exactly once: permanently lock `payment` DUSDC of minimum
+/// Bootstrap the pool exactly once: permanently lock `payment` USDC of minimum
 /// liquidity. Mints matching PLP (1:1) into the book's locked balance — never
-/// withdrawable, so the caller receives no shares — and joins the DUSDC into idle.
+/// withdrawable, so the caller receives no shares — and joins the USDC into idle.
 /// This keeps `total_supply > 0` while the vault exists and gives rounding dust a
 /// non-withdrawable PLP holder.
 /// Requires root authority and zero existing supply. Supply, withdrawal, and flush
@@ -656,7 +656,7 @@ public fun lock_capital(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     _admin_cap: &AdminCap,
-    payment: Coin<DUSDC>,
+    payment: Coin<USDC>,
 ) {
     config.assert_version();
     assert!(vault.lp.total_supply() == 0, EAlreadyBootstrapped);
@@ -667,10 +667,10 @@ public fun lock_capital(
     vault_events::emit_capital_locked(vault.id(), amount);
 }
 
-/// Queue a supply request: pull `amount` DUSDC from account custody into queue
+/// Queue a supply request: pull `amount` USDC from account custody into queue
 /// escrow, recording the account's receive address as the fill recipient. The pull
-/// auto-settles any flush-delivered DUSDC first. The flush charges the protocol's
-/// supply fee — zero by default — on the DUSDC it takes in and prices shares on the
+/// auto-settles any flush-delivered USDC first. The flush charges the protocol's
+/// supply fee — zero by default — on the USDC it takes in and prices shares on the
 /// remainder, so `min_plp_out` is measured after that fee. The account receives minted PLP
 /// only at a mark that mints at least `min_plp_out` for the whole `amount` — a **price
 /// floor**, not a promise of that many shares: if the pool cap leaves room for only
@@ -692,9 +692,9 @@ public fun request_supply(
 ): u64 {
     config.assert_version();
     assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
-    let payment = account.withdraw<DUSDC>(amount, ctx);
+    let payment = account.withdraw<USDC>(amount, ctx);
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
@@ -714,10 +714,10 @@ public fun request_supply(
 /// Queue a withdraw request: pull `amount` PLP shares from account custody into
 /// queue escrow, recording the account's receive address as the fill recipient.
 /// The pull auto-settles any flush-delivered PLP first. The flush withholds the
-/// protocol's withdraw fee from the marked payout, so `min_dusdc_out` is measured
+/// protocol's withdraw fee from the marked payout, so `min_usdc_out` is measured
 /// after the fee. The account is paid only at a
-/// mark that quotes at least `min_dusdc_out` for the whole `amount` — a **price
-/// floor**, not a promise of that much DUSDC: if idle liquidity covers only part of the
+/// mark that quotes at least `min_usdc_out` for the whole `amount` — a **price
+/// floor**, not a promise of that much USDC: if idle liquidity covers only part of the
 /// payout, only the shares idle affords are burned, the fill is proportionally smaller
 /// at the same price, and the remainder stays queued with its limit rescaled. At the
 /// shipped attempt count of one, a flush whose mark quotes less cancels and refunds the
@@ -729,7 +729,7 @@ public fun request_withdraw(
     auth: Auth,
     config: &ProtocolConfig,
     amount: u64,
-    min_dusdc_out: u64,
+    min_usdc_out: u64,
     root: &AccumulatorRoot,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -742,20 +742,20 @@ public fun request_withdraw(
     let vault_id = vault.id();
     let account_id = account.account_id();
     let recipient = account.receive_address();
-    let index = vault.lp.request_withdraw(lp, account_id, recipient, min_dusdc_out);
+    let index = vault.lp.request_withdraw(lp, account_id, recipient, min_usdc_out);
     vault_events::emit_withdraw_requested(
         vault_id,
         account_id,
         recipient,
         index,
         amount,
-        min_dusdc_out,
+        min_usdc_out,
         vault.lp.withdraw_requests_pending(),
     );
     index
 }
 
-/// Cancel a still-pending supply request, refunding its escrowed DUSDC straight into
+/// Cancel a still-pending supply request, refunding its escrowed USDC straight into
 /// the requesting account. `account` must be the request's recorded recipient.
 public fun cancel_supply_request(
     vault: &mut PoolVault,
@@ -776,11 +776,11 @@ public fun cancel_supply_request(
     // next mark.
     config.assert_not_valuation_in_progress();
     let vault_id = vault.id();
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let recipient = account.receive_address();
     let (account_id, amount, refund) = vault.lp.cancel_supply_request(recipient, index);
-    account.deposit<DUSDC>(refund.into_coin(ctx));
+    account.deposit<USDC>(refund.into_coin(ctx));
     vault_events::emit_request_cancelled(
         vault_id,
         account_id,
@@ -858,7 +858,7 @@ public(package) fun register_expiry(
 
 // === Private Functions ===
 
-/// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
+/// LP-attributable USDC pool value used to price PLP supply/withdraw.
 ///
 /// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
 /// not-yet-materialized profit share before terminal materialization and excludes

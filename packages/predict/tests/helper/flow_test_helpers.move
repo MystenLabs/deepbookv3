@@ -43,7 +43,6 @@ use deepbook_predict::{
     test_constants,
     test_helpers
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -58,6 +57,7 @@ use sui::{
     test_scenario::{Self as test, Scenario, return_shared},
     tx_context::{Self, TxContext}
 };
+use usdc::usdc::USDC;
 
 const PYTH_EXPONENT_NEG_9: u16 = 9;
 /// Stable fee floor for broad flow fixtures whose accounting assertions are not
@@ -630,13 +630,13 @@ public fun deauthorize_predict_app(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
 }
 
-/// Sponsor fee incentives for a market bundle with freshly-minted DUSDC.
+/// Sponsor fee incentives for a market bundle with freshly-minted USDC.
 public fun sponsor_fee_incentives_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
     amount: u64,
 ) {
-    let payment = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
+    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
     market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
 }
 
@@ -725,7 +725,7 @@ public fun create_and_rebind_pyth(self: &mut Fixture, source_id: u32): ID {
     pyth_id
 }
 
-/// Create a fresh account (owned by alice) and fund its DUSDC stored balance. The
+/// Create a fresh account (owned by alice) and fund its USDC stored balance. The
 /// scenario sender is left as alice so the caller's next mint/redeem generates a
 /// valid owner auth.
 public fun create_funded_manager(self: &mut Fixture, deposit: u64): Trader {
@@ -734,7 +734,7 @@ public fun create_funded_manager(self: &mut Fixture, deposit: u64): Trader {
 
 /// `create_funded_manager` for an arbitrary owner, for multi-trader flows. Creates the
 /// owner's canonical account through the account registry, shares the wrapper, and
-/// deposits `deposit` DUSDC into the account's stored balance.
+/// deposits `deposit` USDC into the account's stored balance.
 public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit: u64): Trader {
     self.scenario.next_tx(owner);
     let mut account_registry = self.scenario.take_shared<AccountRegistry>();
@@ -745,7 +745,7 @@ public fun create_funded_manager_as(self: &mut Fixture, owner: address, deposit:
     let acct = wrapper.load_account_mut(auth);
     // Pure stored-balance deposit (no accumulator settle), so test funding needs no
     // `AccumulatorRoot` — the barrier-delivered settle path is exercised by the localnet sim.
-    acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
+    acct.deposit<USDC>(coin::mint_for_testing<USDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     // Commit the shared returns (test_scenario defers them to a tx boundary) before the
     // caller's bundle takes. Sender stays `owner`, so a subsequent
@@ -771,7 +771,7 @@ public fun create_funded_manager_with_referrer_as(
     let auth = account::generate_auth(self.scenario.ctx());
     wrapper
         .load_account_mut(auth)
-        .deposit<DUSDC>(coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()));
+        .deposit<USDC>(coin::mint_for_testing<USDC>(deposit, self.scenario.ctx()));
     wrapper.share();
     self.scenario.next_tx(owner);
     Trader { wrapper_id, owner }
@@ -812,7 +812,7 @@ public fun account_balance<T>(
 }
 
 public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amount: u64) {
-    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+    market.receive_pool_cash(coin::mint_for_testing<USDC>(
         amount,
         self.scenario.ctx(),
     ).into_balance());
@@ -2095,8 +2095,8 @@ public fun load_pricer_bundle(self: &mut Fixture, market: &MarketBundle): pricin
 }
 
 /// Genesis-bootstrap the pool via `plp::lock_capital`: permanently lock `amount`
-/// DUSDC of minimum liquidity. Mints `amount` PLP into the book's locked balance
-/// (delivered to no one) and joins the DUSDC into idle, so `total_supply == idle ==
+/// USDC of minimum liquidity. Mints `amount` PLP into the book's locked balance
+/// (delivered to no one) and joins the USDC into idle, so `total_supply == idle ==
 /// amount` at a 1.0 mark — identical pool state to the old async bootstrap supply of
 /// `amount`. Must run before any supply/withdraw/flush (those abort `ENotBootstrapped`
 /// until the pool is locked).
@@ -2104,7 +2104,7 @@ public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let config = self.scenario.take_shared<ProtocolConfig>();
-    let coin = coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx());
+    let coin = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
     vault.lock_capital(&config, &self.admin_cap, coin);
     return_shared(vault);
     return_shared(config);
@@ -2228,7 +2228,7 @@ public fun finish_flush(
 
 // === Invariant assertions (rule 17 one-call checks) ===
 
-/// S1 — expiry cash backing: the market's DUSDC custody covers its payout
+/// S1 — expiry cash backing: the market's USDC custody covers its payout
 /// liability plus its isolated inventory-impact escrow, mirroring the contract's
 /// `expiry_cash::assert_backing`. Assert after every cash-mutating flow (mint /
 /// redeem / sync).
@@ -2245,7 +2245,7 @@ public fun assert_market_backed_bundle(market: &MarketBundle) {
 /// one call by `check_market_cash`. The isolated inventory-impact escrow is not a
 /// field here — it ships at a zero rate, and `assert_market_backed` covers it.
 public struct ExpectedMarketCash has copy, drop {
-    /// DUSDC held by the expiry (`market.cash_balance()`).
+    /// USDC held by the expiry (`market.cash_balance()`).
     cash_balance: u64,
     /// Conservative payout backing owed to open + settled orders.
     payout_liability: u64,
@@ -2273,7 +2273,7 @@ public fun check_market_cash_bundle(market: &MarketBundle, expected: ExpectedMar
 /// A full expected snapshot of one account's scalar state, asserted in one call
 /// by `check_manager`.
 public struct ExpectedManagerState has copy, drop {
-    /// Free DUSDC balance (`account.balance<DUSDC>`).
+    /// Free USDC balance (`account.balance<USDC>`).
     balance: u64,
 }
 
@@ -2281,7 +2281,7 @@ public fun expected_manager_state(balance: u64): ExpectedManagerState {
     ExpectedManagerState { balance }
 }
 
-/// Assert an account's state sheet against `expected`. The DUSDC balance read
+/// Assert an account's state sheet against `expected`. The USDC balance read
 /// includes unsettled accumulator funds (zero with the empty test root, so it
 /// equals stored free balance).
 public fun check_manager(
@@ -2291,7 +2291,7 @@ public fun check_manager(
     expected: ExpectedManagerState,
 ) {
     let account = wrapper.load_account();
-    assert_eq!(account.balance<DUSDC>(root, &self.clock), expected.balance);
+    assert_eq!(account.balance<USDC>(root, &self.clock), expected.balance);
 }
 
 /// Assert a bundled account's state sheet.

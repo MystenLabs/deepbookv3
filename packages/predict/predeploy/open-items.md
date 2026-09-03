@@ -11,27 +11,19 @@ Updated 2026-08-17. This is the live work register governed by the [predeploy li
 Neither `packages/predict/Move.toml` nor `packages/propbook/Move.toml` could
 link a mainnet publish: several of the external dependency identities a mainnet
 publish needs do not exist. `[dep-replacements.mainnet]` now carries the
-resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06 —
-and `packages/token/Published.toml` already records a mainnet entry. The rest
-is open, and none of it is a manifest fix:
+resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06,
+and `usdc`, verified 2026-09-03 — and `packages/token/Published.toml` already
+records a mainnet entry. One identity is still open, and it is not a manifest
+fix:
 
 - **`bs_oracle` and `bs_sid` are unpublished on mainnet.** The pinned upstream
   revision's publication metadata records testnet only. Closed by the provider
   publishing to mainnet and handing over the package identity, the same
   handover the signer-custody confirmation waits on.
-- **`dusdc` has no mainnet counterpart, and the intended mainnet collateral is
-  a differently-named type.** `packages/dusdc/Published.toml` is testnet-only
-  and records that its `UpgradeCap` is not held here, so it cannot be
-  republished to make a mainnet graph resolve. The intended mainnet collateral
-  is native USDC —
-  `0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC`.
-  A `dep-replacements.mainnet` entry cannot express that: a replacement
-  substitutes the address only, while Predict names the collateral nominally
-  (`use dusdc::dusdc::DUSDC`, ~140 references), and the USDC package publishes a
-  single module `usdc` containing no `dusdc::DUSDC`. Closing this means renaming
-  the collateral type in source so one module path resolves on both networks —
-  which also changes the coin type of the live testnet deployment, and so is its
-  own change with its own republish — not a manifest edit.
+
+**Collateral naming is settled.** Predict names its collateral `usdc::usdc::USDC`
+on every network, so mainnet links native USDC by address replacement alone; the
+mechanism and the testnet consequence are owned by [design decisions](../docs/design/decisions.md).
 
 **Recorded, not blocking: mainnet `pyth_lazer` links version 1 on purpose.**
 The lineage has been upgraded — version 2 adds `channel_v2` and `update_v2`,
@@ -44,7 +36,7 @@ not describe, for modules Predict does not use. Advancing to version 2 would
 mean advancing the source pin — which also serves live testnet — and is only
 worth doing if Predict ever needs the `_v2` surface.
 
-**Action:** Do not attempt a mainnet publish while either bullet above is open,
+**Action:** Do not attempt a mainnet publish while the bullet above is open,
 and never resolve one with `--with-unpublished-dependencies`: that
 republishes packages this repo does not own and changes their type identity.
 Close this gate by recording each identity as it lands, then re-resolving both
@@ -130,7 +122,7 @@ The payout tree prices and floors each signed boundary contribution before
 netting the aggregate, while an individual order floors its range probability
 before multiplying by quantity. Those operation orders are not bit-equivalent.
 On a normal monotone constant-variance surface, two one-lot ranges sharing an
-upper strike price individually at `463 + 410 = 873` raw DUSDC units, while
+upper strike price individually at `463 + 410 = 873` raw USDC units, while
 `strike_payout_tree::walk_linear` produces `9583 + 9530 - 18241 = 872`. The
 aggregate live liability is therefore one raw unit below the sum of the two
 order liabilities, and `current_nav` is one raw unit high. This is distinct from
@@ -192,7 +184,7 @@ of the share price between flushes.
 
 Shipped state: two independent rates, `plp_supply_fee_rate` (default **0**) and
 `plp_withdraw_fee_rate` (default **20 bps**), each in a `0..5%` envelope, charged
-on the DUSDC leg of executed fills only and retained by the pool. Both are
+on the USDC leg of executed fills only and retained by the pool. Both are
 admin-tunable to zero without a package upgrade, so shipping enabled is
 reversible; widening past 5% is not.
 
@@ -228,7 +220,7 @@ the *effective* rate at the sizes it is meant to deter, not the nominal one.
 
 The same identity holds on the supply leg, which is one more reason entry ships
 at zero: a supplier is a holder the instant the fill lands. Illustrated on that
-now-dormant leg, at a 1.0 mark with a 10 DUSDC pool and a 10 DUSDC supply at
+now-dormant leg, at a 1.0 mark with a 10 USDC pool and a 10 USDC supply at
 20 bps: fee 20_000, shares 9_980_000, post-fill price 20e6/19.98e6, so the new
 holding is worth 9_989_989 and the net charge is 10_011 — just over half. In
 closed form that is `F * V / (V + n - F)` for a deposit `n` into a pool worth
@@ -412,9 +404,9 @@ correctness today.
   permanent row in `values`/`svis`, and neither store can be unwrapped (`key`
   only). Reads stay O(1), so this is unreclaimable storage rather than a
   liveness risk, but it grows monotonically for the life of the deployment.
-- `fee_incentive_balance` DUSDC custody sits on `ExpiryMarket` outside the
+- `fee_incentive_balance` USDC custody sits on `ExpiryMarket` outside the
   `ExpiryCash` solvency invariant — consider folding it into the custody
-  component so per-expiry DUSDC has one owner.
+  component so per-expiry USDC has one owner.
 - The store pair could be one object. The verifier's two batch types force two
   typed entry functions, not two stores; a single store would drop
   `BlockScholesStorePair`, one registry id, one of the two binding checks in

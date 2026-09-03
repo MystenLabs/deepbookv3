@@ -15,9 +15,9 @@ use deepbook_predict::{
     order_events,
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use std::{bcs, unit_test::assert_eq};
 use sui::event;
+use usdc::usdc::USDC;
 
 const MIN_TRADING_FEE: u64 = 5_000_000;
 const DEFAULT_REFERRAL_FEE: u64 = 500_000;
@@ -88,7 +88,7 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.all_in_cost(), quote.premium() + MIN_TRADING_FEE);
 
-    let trader_balance_before = fx.account_balance_bundle<DUSDC>(&account);
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
     let market_cash_before = helpers::market(&market).cash_balance();
     let order_id = fx.mint_exact_quantity_bundle(
         &mut market,
@@ -102,7 +102,7 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         trader_balance_before - quote.all_in_cost(),
     );
     assert_eq!(
@@ -236,7 +236,7 @@ fun sponsor_and_builder_are_excluded_from_referral_basis() {
     assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
     assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_RATE_CAP);
     assert_eq!(quote.builder_fee(), BUILDER_FEE_ATM);
-    let trader_balance_before = fx.account_balance_bundle<DUSDC>(&account);
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
     let market_cash_before = helpers::market(&market).cash_balance();
 
     fx.mint_exact_quantity_bundle(
@@ -250,7 +250,7 @@ fun sponsor_and_builder_are_excluded_from_referral_basis() {
     );
 
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         trader_balance_before - quote.all_in_cost(),
     );
     assert_eq!(

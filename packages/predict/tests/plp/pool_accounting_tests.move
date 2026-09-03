@@ -12,9 +12,9 @@
 module deepbook_predict::pool_accounting_tests;
 
 use deepbook_predict::pool_accounting;
-use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 use sui::balance;
+use usdc::usdc::USDC;
 
 const EXPIRY_A: address = @0xA;
 const EXPIRY_B: address = @0xB;
@@ -42,14 +42,14 @@ fun send_and_receive_track_profit_basis() {
     assert_eq!(ledger.initial_expiry_cash(id), INITIAL_EXPIRY_CASH);
 
     // Fund 700 into the expiry: debits += 700, idle 1000 -> 300.
-    ledger.receive_idle(balance::create_for_testing<DUSDC>(1000));
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
     destroy(ledger.send_expiry_cash(id, 700));
     assert_eq!(ledger.profit_basis_debits(), 700);
     assert_eq!(ledger.profit_basis_credits(), 0);
     assert_eq!(ledger.idle_balance(), 300);
 
     // Expiry returns 250: credits += 250, idle 300 -> 550.
-    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(250), id);
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(250), id);
     assert_eq!(ledger.profit_basis_credits(), 250);
     assert_eq!(ledger.idle_balance(), 550);
 
@@ -98,22 +98,22 @@ fun materialize_carries_loss_forward_before_recognizing_profit() {
     ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
 
     // Sent 1000, then the expiry returns only 600 (a 400 terminal loss).
-    ledger.receive_idle(balance::create_for_testing<DUSDC>(1000));
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
     destroy(ledger.send_expiry_cash(id, MAX_EXPIRY_ALLOCATION));
-    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(600), id);
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(600), id);
 
     // First materialize latches the 400 loss; recognizes 0 profit, debits unchanged.
     assert_eq!(ledger.materialize_expiry_profit(id), 0);
     assert_eq!(ledger.profit_basis_debits(), 1000);
 
     // A later 300 gain (received 900) only refills the loss carry 400 -> 100.
-    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(300), id);
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(300), id);
     assert_eq!(ledger.materialize_expiry_profit(id), 0);
     assert_eq!(ledger.profit_basis_debits(), 1000);
 
     // A further 200 gain (received 1100) clears the last 100 loss and recognizes
     // 100 profit, which lands in the debit basis.
-    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(200), id);
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(200), id);
     assert_eq!(ledger.materialize_expiry_profit(id), 100);
     assert_eq!(ledger.profit_basis_debits(), 1100);
 
@@ -128,7 +128,7 @@ fun materialize_recognizes_immediate_profit_with_no_funding() {
     ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
 
     // No cash sent (sent 0); the expiry returns 500 of pure profit.
-    ledger.receive_expiry_cash(balance::create_for_testing<DUSDC>(500), id);
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(500), id);
     assert_eq!(ledger.materialize_expiry_profit(id), 500);
     assert_eq!(ledger.profit_basis_debits(), 500);
 
@@ -217,7 +217,7 @@ fun funding_past_expiry_allocation_cap_aborts() {
     let id = object::id_from_address(EXPIRY_A);
     ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
     ledger.receive_idle(
-        balance::create_for_testing<DUSDC>(
+        balance::create_for_testing<USDC>(
             FIRST_EXPIRY_FUNDING + OVER_CAP_EXPIRY_FUNDING,
         ),
     );
@@ -235,7 +235,7 @@ fun funding_after_terminal_accounting_started_aborts() {
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
     ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
-    ledger.receive_idle(balance::create_for_testing<DUSDC>(1000));
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
 
     // Latch terminal accounting, then attempt to fund the expiry again.
     ledger.materialize_expiry_profit(id);

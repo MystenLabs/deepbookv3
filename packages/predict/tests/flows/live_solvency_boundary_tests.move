@@ -8,8 +8,8 @@
 module deepbook_predict::live_solvency_boundary_tests;
 
 use deepbook_predict::{flow_test_helpers as helpers, order, test_constants};
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
+use usdc::usdc::USDC;
 
 /// Per-trade fee floors at `min_fee`: the fixture floors base_fee to 1, so the
 /// raw Bernoulli fee mul(1, sqrt(0.5 * 0.5)) rounds to 0 and the floor binds.
@@ -77,7 +77,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     // close removes the closed slice from payout backing and replaces the
     // account position with the surviving half.
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    let balance_before_close = fx.account_balance_bundle<DUSDC>(&account);
+    let balance_before_close = fx.account_balance_bundle<USDC>(&account);
     let cash_before_close = helpers::market(&market).cash_balance();
     let replacement = fx.redeem_live_bundle(
         &mut market,
@@ -90,7 +90,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     assert_eq!(survivor.quantity(), HALF_CLOSE);
     // Solvency: every unit that left expiry cash landed in the manager's balance.
     // The close moves value between the two sheets, it never creates or destroys.
-    let close_net_payout = fx.account_balance_bundle<DUSDC>(&account) - balance_before_close;
+    let close_net_payout = fx.account_balance_bundle<USDC>(&account) - balance_before_close;
     let cash_after_close = cash_before_close - close_net_payout;
     assert_eq!(cash_after_close, seeded_cash + premium + MINT_MIN_FEE - close_net_payout);
     helpers::check_market_cash_bundle(

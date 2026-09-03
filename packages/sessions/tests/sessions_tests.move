@@ -21,7 +21,6 @@ use deepbook_sessions::{
     session_config::{Self as session_config, SessionsConfig},
     sessions::{Self as sessions, SessionAuthorized, SessionRevoked, SessionsApp}
 };
-use dusdc::dusdc::DUSDC;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
     pyth_feed::PythFeed,
@@ -34,6 +33,7 @@ use sui::{
     event,
     test_scenario::{Self as test, Scenario, return_shared}
 };
+use usdc::usdc::USDC;
 
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
@@ -771,7 +771,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
         scenario.ctx(),
     );
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
-    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
+    assert_eq!(wrapper.load_account().balance<USDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
     assert_eq!(event::events_by_type<order_events::OrderMinted>().length(), ONE_EVENT);
     assert_eq!(
@@ -819,7 +819,7 @@ fun session_mints_exact_quantity_and_redeems_live() {
     assert!(replacement_order_id.is_none());
     // The public order value is gross of the fixture's one minimum close fee.
     assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, clock),
+        wrapper.load_account().balance<USDC>(&root, clock),
         post_mint_balance + gross_value - DEFAULT_TRADE_FEE,
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));
@@ -904,7 +904,7 @@ fun session_mints_exact_amount() {
     );
     assert_eq!(expected_quote.quantity(), TEN_THOUSAND_LOTS);
     assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, clock),
+        wrapper.load_account().balance<USDC>(&root, clock),
         test_constants::mint_deposit() - expected_quote.all_in_cost(),
     );
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
@@ -976,7 +976,7 @@ fun session_redeems_settled_order() {
         scenario.ctx(),
     );
     let post_mint_balance = test_constants::mint_deposit() - quote.all_in_cost();
-    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, clock), post_mint_balance);
+    assert_eq!(wrapper.load_account().balance<USDC>(&root, clock), post_mint_balance);
     assert!(predict_account::has_position(wrapper.load_account(), market_id, order_id));
     return_live_inputs(LiveInputs {
         market,
@@ -1016,7 +1016,7 @@ fun session_redeems_settled_order() {
         scenario.ctx(),
     );
     assert_eq!(
-        wrapper.load_account().balance<DUSDC>(&root, clock),
+        wrapper.load_account().balance<USDC>(&root, clock),
         post_mint_balance + test_constants::mint_quantity(),
     );
     assert!(!predict_account::has_position(wrapper.load_account(), market_id, order_id));

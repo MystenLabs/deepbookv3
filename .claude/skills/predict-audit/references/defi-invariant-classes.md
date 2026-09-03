@@ -7,7 +7,7 @@ Recon-style invariant testing), mapped to Predict surfaces. Lens 01 builds the l
 The protocol must always be able to pay what it owes; value is conserved across parties.
 - `expiry_cash`: `cash_balance >= payout_liability + inventory_impact_reserve` after EVERY cash mutation.
 - Live backing for a winning order is the exact `quantity - floor_shares` (= its settled payout under the static floor) plus the aggregate disjoint-backing λ buffer (D030) — not a time-varying max-live term.
-- DUSDC is conserved across trader / LP / protocol / builder — no path mints value from nothing or strands it.
+- USDC is conserved across trader / LP / protocol / builder — no path mints value from nothing or strands it.
 - LP NAV: the exact `current_nav` mark prices PLP supply AND withdraw identically (`supply_NAV == withdraw_NAV
   == TRUE`) at the valuation boundary — no over/under-count, so no dilution and no liveness clamp under-pays.
 

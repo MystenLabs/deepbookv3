@@ -15,7 +15,7 @@ use deepbook_predict::{
     range_codec::{strike_for_testing as strike, strike_from_tick},
     test_constants
 };
-use dusdc::dusdc::DUSDC;
+use usdc::usdc::USDC;
 
 #[test]
 fun setup_everything_check_manager_bundle_return_smoke() {
@@ -44,7 +44,7 @@ fun setup_everything_check_manager_bundle_return_smoke() {
     assert!(helpers::has_position_bundle(&account, expiry_id, order_id));
     // A mint charges a non-zero fee and a non-zero premium, so the free balance
     // strictly decreases.
-    assert!(fx.account_balance_bundle<DUSDC>(&account) < test_constants::default_manager_deposit());
+    assert!(fx.account_balance_bundle<USDC>(&account) < test_constants::default_manager_deposit());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

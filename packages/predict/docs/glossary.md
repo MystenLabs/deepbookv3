@@ -10,7 +10,7 @@ these terms directly.
 - **Binary option (digital option)** — a contract that pays a fixed cash amount
   if a condition on the underlying holds, and zero otherwise. The two names are
   exact synonyms. Every Predict contract is a **European cash-or-nothing
-  binary**: cash-settled in DUSDC and evaluated only at the terminal settlement
+  binary**: cash-settled in USDC and evaluated only at the terminal settlement
   price — there is no path dependency in the payoff.
 - **Range digital** — a binary option on the event
   `settlement ∈ (lower, higher]`. Equivalent to a **digital call spread**: long
@@ -19,7 +19,7 @@ these terms directly.
   calls** (`(K, +∞]`) and **digital puts** (`(−∞, K]`). Path-dependent names
   ("one-touch", "double-no-touch", "corridor") do not apply.
 - **Notional** — the fixed payout of the digital; code `quantity` (lot-sized,
-  DUSDC base units). A winning 1x contract pays exactly its notional.
+  USDC base units). A winning 1x contract pays exactly its notional.
 - **Position** — one held contract. The code type is `Order` and the handle is
   the packed `order_id`; there is no resting order book — every trade executes
   against the pool at the model price.
@@ -137,8 +137,8 @@ privileged periodic **flush** prices them all at one frozen pool mark. See
   correction), floored at zero. There is no approximation or
   uncertainty band — it is the true per-expiry recoverable value at the
   valuation instant. Code `current_nav`.
-- **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide DUSDC value the flush prices PLP at: `idle + Σ active-market snapshot-instant NAV`, net of the pending-protocol-profit exclusion. Computed once per flush and used for both supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
-- **Supply / withdraw queue** — the two FIFO request queues on `PoolVault` (`supply_queue` of escrowed DUSDC, `withdraw_queue` of escrowed PLP). An LP enqueues with `request_supply` / `request_withdraw` (routed through its account, with a minimum-output limit and an index that can be cancelled while no flush is in flight), and the flush fills eligible heads. Code `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
+- **Pool NAV (`pool_nav`)** — the LP-attributable pool-wide USDC value the flush prices PLP at: `idle + Σ active-market snapshot-instant NAV`, net of the pending-protocol-profit exclusion. Computed once per flush and used for both supply and withdraw. Code `pool_nav` (event `FlushExecuted`, field `pool_value`).
+- **Supply / withdraw queue** — the two FIFO request queues on `PoolVault` (`supply_queue` of escrowed USDC, `withdraw_queue` of escrowed PLP). An LP enqueues with `request_supply` / `request_withdraw` (routed through its account, with a minimum-output limit and an index that can be cancelled while no flush is in flight), and the flush fills eligible heads. Code `RequestQueue`, events `SupplyRequested` / `WithdrawRequested`.
 - **The flush** — the three-stage valuation-and-drain cycle that marks the whole pool at one snapshot instant and fills eligible queued heads at that mark, with trading live throughout. **Snapshot** (one atomic transaction, scoped by the `SnapshotStage` hot potato): `start_pool_valuation` engages the valuation flag and records the active set, the start time, each queue's eligibility cutoff, and the per-queue drain budgets; `snapshot_expiry_pricer` freezes one `Pricer` per live market and stamps it; `seal_valuation_snapshot` proves completeness. **Valuation** (resumable, one market per transaction): each `value_expiry` folds one market's snapshot-instant NAV, read from the cash values and payout-tree shadows captured at the snapshot instant. **Finish**: `finish_flush` proves every market was valued exactly once, computes `pool_nav`, then `lp_book::drain` mints/burns PLP and delivers fills up to each queue's recorded cutoff (supplies first, then withdrawals FIFO until idle is dry, up to the per-queue `supply_budget`/`withdraw_budget` committed at the snapshot; non-executable queue heads are protocol-cancelled and refunded, as are live request-limit misses at the shipped attempt count of one — above one they carry until their attempts are exhausted). Fills are delivered to each account through the balance accumulator (`send_funds`); the account absorbs them lazily on its next capital op. The flush's **snapshot is privileged** — started only by a market deployer's `MarketLifecycleCap` (`start_pool_valuation`); once it seals, `value_expiry` and `finish_flush` are permissionless, because the frozen mark and the per-queue budgets are both fixed at the snapshot so it no longer matters who drives the rest. `finish_flush` refuses a flush older than `max_valuation_window_ms` (for everyone, including the operator); a stalled flush is not aborted but superseded by a fresh `start_pool_valuation`, which discards it and re-snapshots (there is no abort or restart entrypoint). Code `PoolValuation` (vault-held valuation state), event `FlushExecuted`.
 - **Valuation stamp / book snapshot** — the per-market capture that keeps trading live during a flush. The snapshot stage stamps each live market with its flush ordinal, copying the two cash rows NAV reads at that instant; the payout tree holds its own snapshot, each node copying its boundary quantities into a shadow before its first mutation under that flush (an emptied node is retained as a live-zero husk until `value_expiry` reads and releases the snapshot). Trades record nothing and have no budget; a stamp left by an aborted flush is stale and lazily discarded by the next trade or settle attempt. Code `ValuationStamp`, `strike_payout_tree::activate_snapshot`/`walk_linear_frozen`/`release_snapshot`.
 

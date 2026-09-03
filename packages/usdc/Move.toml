@@ -1,5 +1,5 @@
 [package]
-name = "dusdc"
+name = "usdc"
 edition = "2024.beta"
 
 [dependencies]

@@ -35,8 +35,8 @@ class BootstrapAccountingTests(unittest.TestCase):
         replay.apply_scenario_config(replay.load_scenario_config())
         state = replay.initial_state()
 
-        # 500,000 DUSDC at a 0.1% supply fee mints 499,500 PLP. The separate
-        # 10-DUSDC minimum-liquidity lock is included only in total supply.
+        # 500,000 USDC at a 0.1% supply fee mints 499,500 PLP. The separate
+        # 10-USDC minimum-liquidity lock is included only in total supply.
         self.assertEqual(state["account_plp_balance"], 499_500_000_000)
         self.assertEqual(state["vault_total_plp_supply"], 499_510_000_000)
         self.assertEqual(state["vault_idle_balance"], 450_010_000_000)

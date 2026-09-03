@@ -41,7 +41,7 @@ public struct ProtocolConfig has key {
     /// surcharge routed to the referrer, in FLOAT_SCALING.
     referral_fee_rate: u64,
     /// Fee charged on an executed PLP supply fill, in FLOAT_SCALING, deducted from
-    /// the DUSDC taken in before shares are priced. Ships at zero — a deposit
+    /// the USDC taken in before shares are priced. Ships at zero — a deposit
     /// dilutes the pool's risk per dollar rather than concentrating it, so it is
     /// not taxed; the knob exists to keep that reversible.
     plp_supply_fee_rate: u64,

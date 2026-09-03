@@ -3,14 +3,14 @@
 //
 // The harness uses contract defaults. Cadence configs have NO default
 // (register_underlying seeds them disabled) and MUST be set per id. All money
-// values are DUSDC-raw (1e6); ticks are raw price units.
+// values are USDC-raw (1e6); ticks are raw price units.
 import type { MarketParams } from "./resolver.js";
 
 export interface CadenceConfig {
   tickSize: bigint; // raw price unit ($0.01 = 10_000_000)
   admissionTickSize: bigint; // raw price unit ($1 = 1_000_000_000); admission/tick = 100
-  maxExpiryAllocation: bigint; // DUSDC
-  initialExpiryCash: bigint; // DUSDC (>= expiry_cash_floor 10k, <= maxExpiryAllocation)
+  maxExpiryAllocation: bigint; // USDC
+  initialExpiryCash: bigint; // USDC (>= expiry_cash_floor 10k, <= maxExpiryAllocation)
   windowSize: bigint; // number of cadence periods in the rolling future horizon
 }
 
@@ -38,7 +38,7 @@ export const CADENCES: Record<number, CadenceConfig> = {
 };
 
 
-// Genesis bootstrap supply: 10M DUSDC (lock_capital mints min_bootstrap_liquidity itself).
+// Genesis bootstrap supply: 10M USDC (lock_capital mints min_bootstrap_liquidity itself).
 export const BOOTSTRAP_SUPPLY = 10_000_000_000_000n;
 
 // Resolver market params — all snapshotted from the contract defaults the market gets.

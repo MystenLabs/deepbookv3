@@ -18,7 +18,7 @@ from . import config, staging, suicli
 
 PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
     "token": (),
-    "dusdc": (),
+    "usdc": (),
     "fixed_math": (),
     "account": (),
     "wormhole": (),
@@ -28,7 +28,7 @@ PUBLISH_GRAPH: dict[str, tuple[str, ...]] = {
     "propbook": ("fixed_math", "wormhole", "pyth_lazer", "bs_oracle", "bs_sid"),
     "predict": (
         "token",
-        "dusdc",
+        "usdc",
         "fixed_math",
         "account",
         "wormhole",
@@ -261,9 +261,9 @@ def _test_publish(
 
 
 def _capture_objects(name: str, changes: list[dict], objects: dict[str, str | None]) -> None:
-    if name == "dusdc":
-        objects["dusdc_currency"] = _created(
-            changes, "coin_registry::Currency", "dusdc::DUSDC"
+    if name == "usdc":
+        objects["usdc_currency"] = _created(
+            changes, "coin_registry::Currency", "usdc::USDC"
         )
         objects["treasury_cap"] = _created(changes, "TreasuryCap")
     elif name == "account":

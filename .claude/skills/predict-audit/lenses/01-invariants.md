@@ -20,7 +20,7 @@ Produce:
    `cash_balance >= payout_liability + inventory_impact_reserve`; the exact `current_nav` mark used identically for PLP
    supply and withdraw; the packed-order-ID `quantity` round-trip — mint insert must add bit-equal what remove subtracts).
 
-2. **ECONOMIC FLOW MAP** — trace every path where value (DUSDC, PLP) enters, moves, or leaves:
+2. **ECONOMIC FLOW MAP** — trace every path where value (USDC, PLP) enters, moves, or leaves:
    mint, live redeem, settled redeem, async supply/withdraw + privileged
    flush, fee / builder-fee / EWMA-penalty routing, incentive vesting, protocol-profit
    materialization (`pending_protocol_profit`, D033). For each: what is conserved, what is created/destroyed,
@@ -59,7 +59,7 @@ Back the load-bearing invariants with a sim, written to the scratchpad:
 - Reuse `packages/predict/simulations/python_indexes/` (the Move `strike_payout_tree`
   mirrors) and `python_replay.py` (mint admission / pricing / NAV mirror) to drive **randomized sequences**
   of mint/redeem/liquidate/supply/withdraw, asserting after each step: cash-backing holds, NAV supply==withdraw,
-  no negative balances, conservation of DUSDC across the trader/LP/protocol/builder split, and rounding favors
+  no negative balances, conservation of USDC across the trader/LP/protocol/builder split, and rounding favors
   the protocol (never the user). Report any sequence that breaks an invariant as a finding with the seed/inputs.
 - Python sims are subagent-safe. A **localnet** parity run (`cd packages/predict && python3 -m harness parity --source <dataset> --max-rows N`) is main-loop-only — if you need one, state the exact command and scenario and hand it back rather than running it yourself.
 - Distinguish a real maintained-by-construction invariant (R1) from one that only happens to hold on the

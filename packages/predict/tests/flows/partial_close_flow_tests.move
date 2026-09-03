@@ -8,9 +8,9 @@
 module deepbook_predict::partial_close_flow_tests;
 
 use deepbook_predict::{constants, flow_test_helpers as helpers, order_events, test_constants};
-use dusdc::dusdc::DUSDC;
 use std::{bcs, unit_test::assert_eq};
 use sui::event;
+use usdc::usdc::USDC;
 
 const FIRST_CLOSE: u64 = 300_000_000;
 const SECOND_CLOSE: u64 = 200_000_000;
@@ -107,10 +107,10 @@ fun partial_close_replacement_redeems_settled_under_original_root() {
         REMAINING_AFTER_FIRST_CLOSE,
     );
 
-    let balance_before_redeem = fx.account_balance_bundle<DUSDC>(&account);
+    let balance_before_redeem = fx.account_balance_bundle<USDC>(&account);
     fx.redeem_settled_bundle(&mut market, &mut account, replacement_order_id);
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         balance_before_redeem + REMAINING_AFTER_FIRST_CLOSE,
     );
     assert_eq!(helpers::market(&market).payout_liability(), ZERO_LIABILITY);

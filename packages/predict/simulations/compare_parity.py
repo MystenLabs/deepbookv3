@@ -98,7 +98,7 @@ INPUT_SCHEMAS = {
 STATE_FIELDS = {
     field: "decimal"
     for field in {
-        "account_dusdc_balance",
+        "account_usdc_balance",
         "account_plp_balance",
         "expiry_cash_balance",
         "inventory_impact_reserve",
@@ -179,17 +179,17 @@ UPDATE_SCHEMAS = {
     },
     "supply_filled": {
         "index": "decimal",
-        "dusdc_amount": "decimal",
+        "usdc_amount": "decimal",
         "shares_minted": "decimal",
-        "fee_dusdc": "decimal",
-        "dusdc_remaining": "decimal",
+        "fee_usdc": "decimal",
+        "usdc_remaining": "decimal",
         "requests_pending_after": "decimal",
     },
     "withdraw_filled": {
         "index": "decimal",
         "shares_burned": "decimal",
-        "dusdc_amount": "decimal",
-        "fee_dusdc": "decimal",
+        "usdc_amount": "decimal",
+        "fee_usdc": "decimal",
         "shares_remaining": "decimal",
         "requests_pending_after": "decimal",
     },

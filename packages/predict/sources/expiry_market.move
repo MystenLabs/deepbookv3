@@ -28,7 +28,6 @@ use deepbook_predict::{
     strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config
 };
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use propbook::{
     block_scholes_store::{BlockScholesSVIStore, BlockScholesValueStore},
@@ -36,6 +35,7 @@ use propbook::{
     registry::OracleRegistry
 };
 use sui::{accumulator::AccumulatorRoot, balance::{Self, Balance}, clock::Clock, coin::Coin};
+use usdc::usdc::USDC;
 
 const EMintPaused: u64 = 0;
 const EMarketNotSettled: u64 = 1;
@@ -55,10 +55,10 @@ public struct ExpiryMarket has key {
     /// Propbook underlying this market was created for.
     propbook_underlying_id: u32,
     expiry: u64,
-    /// DUSDC custody and payout backing.
+    /// USDC custody and payout backing.
     cash: ExpiryCash,
-    /// Sponsor-funded DUSDC available to subsidize this market's taker fees.
-    fee_incentive_balance: Balance<DUSDC>,
+    /// Sponsor-funded USDC available to subsidize this market's taker fees.
+    fee_incentive_balance: Balance<USDC>,
     /// Exposure lifecycle state for this expiry's strike ticks.
     strike_exposure: StrikeExposure,
     /// Smoothed gas-price stats backing the congestion trade penalty.
@@ -88,7 +88,7 @@ public struct ValuationStamp has drop, store {
     snapshot_impact_reserve: u64,
 }
 
-/// Read-only all-in cost quote for a prospective live mint, in DUSDC base units.
+/// Read-only all-in cost quote for a prospective live mint, in USDC base units.
 /// `quantity` is the exact requested quantity or the conservatively budget-sized
 /// fill. `trading_fee` is the trading fee before the sponsor subsidy, and
 /// `all_in_cost` is the resulting account withdrawal:
@@ -141,7 +141,7 @@ public fun try_settlement_price(market: &ExpiryMarket): Option<u64> {
     market.strike_exposure.try_settlement_price()
 }
 
-/// Return expiry DUSDC custody for SDK and devInspect state reads.
+/// Return expiry USDC custody for SDK and devInspect state reads.
 public fun cash_balance(market: &ExpiryMarket): u64 {
     market.cash.balance()
 }
@@ -178,7 +178,7 @@ public fun inventory_impact_max_rate(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_max_rate()
 }
 
-/// Return the immutable DUSDC scale of this market's inventory-impact curve for
+/// Return the immutable USDC scale of this market's inventory-impact curve for
 /// SDK and devInspect state reads.
 public fun inventory_impact_scale(market: &ExpiryMarket): u64 {
     market.strike_exposure.inventory_impact_scale()
@@ -348,7 +348,7 @@ public fun quote_mint_for_account(
 ): MintQuote {
     market.assert_live_mint_allowed(config, pricer);
     let account = wrapper.load_account();
-    let max_premium = max_premium.min(account.balance<DUSDC>(root, clock));
+    let max_premium = max_premium.min(account.balance<USDC>(root, clock));
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -422,7 +422,7 @@ public fun all_in_cost(quote: &MintQuote): u64 {
 /// The position's strike range is the tick pair `(lower_tick, higher_tick]`
 /// (`lower_tick = 0` is
 /// `-inf`, `higher_tick = pos_inf_tick` is `+inf`); the SDK converts raw
-/// strikes to ticks. `max_cost` caps the all-in DUSDC withdrawal, while
+/// strikes to ticks. `max_cost` caps the all-in USDC withdrawal, while
 /// `max_probability` caps the quoted per-contract probability before fees.
 /// Callers can pass `std::u64::max_value!()` for either uncapped guard. Returns
 /// the minted order ID for future order-scoped flows.
@@ -442,7 +442,7 @@ public fun mint_exact_quantity(
     ctx: &mut TxContext,
 ): u256 {
     market.assert_live_mint_allowed(config, pricer);
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     market.mint_prepared(
         account,
@@ -465,12 +465,12 @@ public fun mint_exact_quantity(
 /// quantity and must meet `min_quantity`.
 ///
 /// Fees, builder fees, and EWMA congestion penalties are charged on top of
-/// `max_premium`, so `max_cost` — not `max_premium` — bounds the all-in DUSDC
+/// `max_premium`, so `max_cost` — not `max_premium` — bounds the all-in USDC
 /// withdrawal (`premium + trader-paid fee + builder_fee + EWMA penalty`).
 /// `max_cost` is required: unlike `mint_exact_quantity`'s guards there is no
 /// value that disables it, because the budget shape exists to bound spend. The
-/// sizing budget is first capped to the account's available DUSDC after
-/// settlement; fees still require additional available DUSDC at payment time.
+/// sizing budget is first capped to the account's available USDC after
+/// settlement; fees still require additional available USDC at payment time.
 /// Any unspent premium dust remains in the account because order quantity must
 /// be an integer number of `position_lot_size` lots.
 public fun mint_exact_amount(
@@ -490,8 +490,8 @@ public fun mint_exact_amount(
 ): u256 {
     market.assert_live_mint_allowed(config, pricer);
     assert!(max_cost > 0, EMintCostCapRequired);
-    wrapper.settle<DUSDC>(root, clock);
-    let max_premium = max_premium.min(wrapper.load_account().balance<DUSDC>(root, clock));
+    wrapper.settle<USDC>(root, clock);
+    let max_premium = max_premium.min(wrapper.load_account().balance<USDC>(root, clock));
     let account = wrapper.load_account_mut(auth);
     market.mint_prepared(
         account,
@@ -520,7 +520,7 @@ public fun mint_exact_amount(
 /// Two close-side slippage floors, the mirror of mint's `max_probability` /
 /// `max_cost` pair; pass `0` to disable either. `min_probability` floors the
 /// quoted per-contract range probability (same units as mint's `max_probability`).
-/// `min_proceeds` floors the all-in net DUSDC credited to the account
+/// `min_proceeds` floors the all-in net USDC credited to the account
 /// (`redeem_amount` minus trading fee, builder fee, and EWMA penalty), the mirror
 /// of mint's all-in `max_cost`.
 public fun redeem_live(
@@ -731,13 +731,13 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
 }
 
 /// Receive pool-provided cash without interpreting pool allocation policy.
-public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
+public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<USDC>) {
     market.cash.receive(cash);
     market.assert_cash_backing();
 }
 
 /// Receive sponsor-funded fee incentives allocated by the pool vault.
-public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<DUSDC>) {
+public(package) fun receive_fee_incentives(market: &mut ExpiryMarket, incentives: Balance<USDC>) {
     market.fee_incentive_balance.join(incentives);
 }
 
@@ -785,14 +785,14 @@ public(package) fun snapshot_nav(market: &ExpiryMarket, frozen: &FrozenPricer): 
 }
 
 /// Release all unused local fee incentives back to the pool reserve.
-public(package) fun release_fee_incentives(market: &mut ExpiryMarket): Balance<DUSDC> {
+public(package) fun release_fee_incentives(market: &mut ExpiryMarket): Balance<USDC> {
     let amount = market.fee_incentive_balance.value();
     if (amount == 0) return balance::zero();
     market.fee_incentive_balance.split(amount)
 }
 
 /// Release pool cash while preserving expiry-local payout backing.
-public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<USDC> {
     if (amount == 0) {
         return balance::zero()
     };
@@ -803,7 +803,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 }
 
 /// Release settled cash above payout liability and the impact escrow.
-public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<DUSDC> {
+public(package) fun release_settled_pool_cash(market: &mut ExpiryMarket): Balance<USDC> {
     let settled_liability = market.payout_liability();
     let reserved_cash = market.cash.required_cash(settled_liability);
     market.cash.assert_backing(settled_liability);
@@ -1047,7 +1047,7 @@ fun settle_mint_payment(
         clock.timestamp_ms(),
         ctx,
     );
-    let mut payment = account.withdraw<DUSDC>(quote.all_in_cost, ctx).into_balance();
+    let mut payment = account.withdraw<USDC>(quote.all_in_cost, ctx).into_balance();
     let builder_fee_payment = payment.split(quote.builder_fee);
     send_builder_fee(builder_code_id, builder_fee_payment);
     let referral_fee_payment = payment.split(referral_fee);
@@ -1078,7 +1078,7 @@ fun redeem_live_with_auth(
     ctx: &mut TxContext,
 ): Option<u256> {
     market.reconcile_stale_valuation_stamp(config);
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
     let terms = market.strike_exposure.quote_live_close(pricer, &order, close_quantity);
@@ -1199,7 +1199,7 @@ fun redeem_settled_with_auth(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    wrapper.settle<DUSDC>(root, clock);
+    wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     let order = order::from_order_id(order_id);
 
@@ -1215,7 +1215,7 @@ fun redeem_settled_with_auth(
     // splitting/depositing a 0 coin.
     if (payout_amount > 0) {
         let payout = market.cash.pay_authorized(payout_amount);
-        account.deposit<DUSDC>(payout.into_coin(ctx));
+        account.deposit<USDC>(payout.into_coin(ctx));
     };
     market.assert_cash_backing();
 
@@ -1256,7 +1256,7 @@ fun settle_live_redeem_payment(
     market.cash.receive(fee);
     send_builder_fee(builder_code_id, builder_fee);
     market.assert_cash_backing();
-    account.deposit<DUSDC>(payout.into_coin(ctx));
+    account.deposit<USDC>(payout.into_coin(ctx));
 }
 
 // --- Shared by the mint and redeem flows ---
@@ -1284,7 +1284,7 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     }
 }
 
-fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
+fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<USDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
         return
@@ -1293,7 +1293,7 @@ fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
     balance::send_funds(fee, builder_code_id.to_address());
 }
 
-fun send_referral_fee(referrer_receive_address: Option<address>, fee: Balance<DUSDC>) {
+fun send_referral_fee(referrer_receive_address: Option<address>, fee: Balance<USDC>) {
     if (fee.value() == 0) {
         fee.destroy_zero();
         return

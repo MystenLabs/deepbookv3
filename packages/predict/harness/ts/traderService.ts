@@ -1,4 +1,4 @@
-// Strategy runner. A dedicated trader address (the keeper funds it with DUSDC, since the
+// Strategy runner. A dedicated trader address (the keeper funds it with USDC, since the
 // publisher owns the cap) runs ONE strategy module, selected by the STRATEGY env. The runner
 // owns submit + account funding + the op counter; the strategy decides what to do each tick.
 // It ticks on the strategy's pace until the strategy's maxOps (run-to-completion) or
@@ -15,7 +15,7 @@ import { makeContext } from "./strategy.js";
 import { getStrategy } from "./strategies/index.js";
 import { appendTrace, errorTag } from "./trace.js";
 import {
-  DUSDC_TYPE,
+  USDC_TYPE,
   client,
   createAccountTx,
   depositOwnedCoinTx,
@@ -63,16 +63,16 @@ async function waitForFeeds(): Promise<any> {
 
 async function fundAndSetup(): Promise<void> {
   await submit(createAccountTx(), "create-account");
-  // Wait for the keeper to transfer DUSDC to this address, then deposit it.
+  // Wait for the keeper to transfer USDC to this address, then deposit it.
   for (let i = 0; i < 120; i++) {
-    const coins = await client.listCoins({ owner: TRADER_ADDRESS, coinType: DUSDC_TYPE });
+    const coins = await client.listCoins({ owner: TRADER_ADDRESS, coinType: USDC_TYPE });
     if (coins.objects.length > 0) {
       await submit(depositOwnedCoinTx(wrapperId, coins.objects[0].objectId), "deposit");
       return;
     }
     await sleep(1000);
   }
-  throw new Error("trader not funded with DUSDC by the keeper within 120s");
+  throw new Error("trader not funded with USDC by the keeper within 120s");
 }
 
 async function main() {

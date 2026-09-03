@@ -20,8 +20,8 @@ use deepbook_predict::{
     order,
     test_constants
 };
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
+use usdc::usdc::USDC;
 
 /// Independent fee components for the at-the-money `mint_quantity()` (1e9)
 /// mint. The premium is read from the quote rather than written down as a
@@ -111,7 +111,7 @@ fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - (premium + MIN_TRADING_FEE),
     );
 
@@ -197,7 +197,7 @@ fun sponsored_subsidy_lowers_quote_and_mint_debits_exactly() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - with_subsidy,
     );
 
@@ -253,7 +253,7 @@ fun builder_code_raises_account_quote_and_mint_debits_exactly() {
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
     assert_eq!(
-        fx.account_balance_bundle<DUSDC>(&account),
+        fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - with_builder,
     );
 
@@ -297,7 +297,7 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
         std::u64::max_value!(),
         std::u64::max_value!(),
     );
-    let balance_after_seed = fx.account_balance_bundle<DUSDC>(&account);
+    let balance_after_seed = fx.account_balance_bundle<USDC>(&account);
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
 
@@ -341,7 +341,7 @@ fun ewma_penalty_included_in_quote_and_mint_debits_exactly() {
     );
 
     assert!(helpers::has_position_bundle(&account, expiry_id, order));
-    assert_eq!(fx.account_balance_bundle<DUSDC>(&account), balance_after_seed - with_penalty);
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_after_seed - with_penalty);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

@@ -10,7 +10,7 @@ deepbook_core_account = { local = "../deepbook_core_account" }
 deepbook = { local = "../deepbook" }
 propbook = { local = "../propbook" }
 fixed_math = { local = "../fixed_math" }
-dusdc = { local = "../dusdc" }
+usdc = { local = "../usdc" }
 # The spot wrapper reaches DeepBook core, which pins the released `token` source by
 # git; resolve it through the byte-identical in-tree copy so one identity publishes.
 # (Predict no longer depends on `token` at all — DEEP staking was removed.)

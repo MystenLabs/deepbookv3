@@ -1,13 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Owns deterministic builder referral codes and the DUSDC fees delivered to their object addresses through the funds accumulator.
+/// Owns deterministic builder referral codes and the USDC fees delivered to their object addresses through the funds accumulator.
 /// Codes are derived per owner and index, and only the immutable owner may withdraw accumulated fees.
 module deepbook_predict::builder_code;
 
 use deepbook_predict::builder_code_events;
-use dusdc::dusdc::DUSDC;
 use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object};
+use usdc::usdc::USDC;
 
 const ENotOwner: u64 = 0;
 
@@ -38,21 +38,21 @@ public fun index(code: &BuilderCode): u64 {
     code.index
 }
 
-/// Return visible DUSDC builder fees for SDK and devInspect reads.
+/// Return visible USDC builder fees for SDK and devInspect reads.
 public fun claimable_builder_fees(root: &AccumulatorRoot, code: &BuilderCode): u64 {
-    balance::settled_funds_value<DUSDC>(root, code.id.to_address())
+    balance::settled_funds_value<USDC>(root, code.id.to_address())
 }
 
-/// Claims all settled DUSDC builder fees for the immutable owner; an empty accumulator returns a zero coin.
+/// Claims all settled USDC builder fees for the immutable owner; an empty accumulator returns a zero coin.
 public fun claim_all_builder_fees(
     code: &mut BuilderCode,
     root: &AccumulatorRoot,
     ctx: &mut TxContext,
-): Coin<DUSDC> {
+): Coin<USDC> {
     code.assert_owner(ctx);
     let amount = claimable_builder_fees(root, code);
-    if (amount == 0) return balance::zero<DUSDC>().into_coin(ctx);
-    let withdrawal = balance::withdraw_funds_from_object<DUSDC>(&mut code.id, amount);
+    if (amount == 0) return balance::zero<USDC>().into_coin(ctx);
+    let withdrawal = balance::withdraw_funds_from_object<USDC>(&mut code.id, amount);
     let coin = balance::redeem_funds(withdrawal).into_coin(ctx);
     builder_code_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
     coin
