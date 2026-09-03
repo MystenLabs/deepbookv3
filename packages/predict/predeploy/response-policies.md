@@ -251,6 +251,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Risk profile:** `BEST-GUESS` — operator-timing abuse bounded by mark
   exactness; liveness depends on flush cadence (disclosed).
 - **Pinning tests:** `pool_valuation_cap_tests.move` —
+  `mint_pool_valuation_cap_while_protocol_frozen_aborts`,
   `generate_proof_with_revoked_pool_valuation_cap_aborts`,
   `revoke_unknown_pool_valuation_cap_aborts`, and
   `destroy_pool_valuation_cap_does_not_revoke`; every flow test that starts a
