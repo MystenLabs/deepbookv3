@@ -11,9 +11,9 @@
 module deepbook_predict::cash_backing_flow_tests;
 
 use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
-use dusdc::dusdc::DUSDC;
 use fixed_math::math::float_scaling as float;
 use std::unit_test::assert_eq;
+use usdc::usdc::USDC;
 
 /// Both mints sit exactly at the money (forward == min_strike) and the second
 /// prices the complement range through the UP(neg_inf) = 1.0 sentinel. Each
@@ -127,7 +127,7 @@ fun cash_sheet_exact_after_every_flow() {
         HALF_CLOSE,
     );
     let order1b = replacement.destroy_some();
-    let close_net_payout = fx.account_balance_bundle<DUSDC>(&account) - balance_after_mints;
+    let close_net_payout = fx.account_balance_bundle<USDC>(&account) - balance_after_mints;
     let cash_after_close = cash_after_mints - close_net_payout;
     // λ_default = 0.31, so the 0.5e9 gap buffer is 155e6.
     let liability_after_close = DOWN_QUANTITY + PARTIAL_CLOSE_GAP_BUFFER;

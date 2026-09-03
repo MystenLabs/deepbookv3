@@ -8,9 +8,9 @@ Oracle, pricing & numerical integrity — the numerically-literate pass. Two equ
 **price-trust surface** — every place an externally-supplied price/parameter is ingested and trusted, now
 spread across `propbook`, the external `bs_oracle` verifier boundary, and the consumer boundary in
 `predict::pricing`; (2) the
-**fixed-point math** that turns those inputs into DUSDC. A wrong number here is wrong money everywhere
+**fixed-point math** that turns those inputs into USDC. A wrong number here is wrong money everywhere
 downstream (mint admission, redeem, liquidation trigger, settlement payout, LP NAV) — trace each price to the
-DUSDC it moves.
+USDC it moves.
 
 ### Part 1 — price ingestion & trust boundaries
 For every external input document: who supplies it, what the code verifies vs trusts, freshness/monotonicity
@@ -67,5 +67,5 @@ Beyond auditing whether freshness gating is *implemented* correctly, ask whether
 Deliver a per-input trust table (input | supplier | verified | trusted | gating | worst-case error) and a
 per-operation rounding/overflow table; show concrete inputs + the numeric discrepancy for any math finding.
 Separate "manipulable within configured bounds / trusted operator" (a trust note) from "wrong even with honest
-inputs" (a code bug). Emit in the primer's report format; end with which inputs/functions you traced to a DUSDC
+inputs" (a code bug). Emit in the primer's report format; end with which inputs/functions you traced to a USDC
 movement and Top 3. Return structured findings to the orchestrator or write the solo report. Never modify source.

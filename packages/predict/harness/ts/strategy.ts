@@ -81,7 +81,7 @@ export interface StrategyCtx {
   // high-level actions: resolve/submit + bookkeeping + trace; return the OpKind or null (no-op).
   mint(market: Mkt, inst: Instruction): Promise<"mint" | null>;
   redeem(h: Held, closeQuantity: bigint): Promise<"redeem" | null>;
-  supply(amountDusdc: bigint): Promise<"supply" | null>;
+  supply(amountUsdc: bigint): Promise<"supply" | null>;
   withdraw(shares: bigint): Promise<"withdraw" | null>;
 
   // low-level: build + submit a mint with explicit params (no bookkeeping/trace) — for probes.
@@ -116,7 +116,7 @@ export interface Strategy {
   name: string;
   tickMs: number; // pace between ticks
   maxOps: number; // run-to-completion target (0 = unbounded; duration-only)
-  fund: bigint; // DUSDC the keeper should fund this strategy's trader
+  fund: bigint; // USDC the keeper should fund this strategy's trader
   gasBudget?: number; // MIST; raise only for measurements whose PTB must reach a protocol wall
   // Declared terminal wall(s) this stress strategy is PROBING — substrings matched by `analyze` against
   // abort tags and the saved failed-tx `executionErrorSource`. A framework abort that IS a declared wall
@@ -298,12 +298,12 @@ export function makeContext(deps: ContextDeps): StrategyCtx {
       return "redeem";
     },
 
-    async supply(amountDusdc) {
+    async supply(amountUsdc) {
       const res = await deps.submit(
-        requestSupplyFromCustodyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: deps.wrapperId, amount: amountDusdc }),
+        requestSupplyFromCustodyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: deps.wrapperId, amount: amountUsdc }),
         "supply",
       );
-      ctx.trace({ type: "supply", amount: Number(amountDusdc) / 1e6, gas: gasOf(res) });
+      ctx.trace({ type: "supply", amount: Number(amountUsdc) / 1e6, gas: gasOf(res) });
       return "supply";
     },
 

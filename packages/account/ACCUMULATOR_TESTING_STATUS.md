@@ -70,11 +70,11 @@ which an empty root cannot exercise:
   against real accumulator-delivered funds.
 - The same-timestamp guard preventing duplicate settlement attempts when two
   parallel transactions see the same checkpoint-settled funds.
-- PLP async fills/refunds that send DUSDC or PLP to `Account.receive_address`
+- PLP async fills/refunds that send USDC or PLP to `Account.receive_address`
   and depend on a later Account read/write to observe or settle those funds.
 - Builder-code fee visibility and claims after Predict sends builder fees to a
   builder-code object address.
-- Referral-fee visibility and Account settlement after Predict sends DUSDC to the immutable referrer receive address.
+- Referral-fee visibility and Account settlement after Predict sends USDC to the immutable referrer receive address.
 
 The blocker is not Account source structure. Unit tests can create only an empty
 `AccumulatorRoot`; external package tests cannot populate it the same way the

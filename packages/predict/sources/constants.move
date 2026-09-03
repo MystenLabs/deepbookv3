@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Defines Predict's upgrade-required scales, hard limits, time units, and event discriminators.
-/// Prices, probabilities, and rates use 1e9 fixed point; DUSDC, PLP, and contract quantities use six decimal base units unless stated otherwise.
+/// Prices, probabilities, and rates use 1e9 fixed point; USDC, PLP, and contract quantities use six decimal base units unless stated otherwise.
 module deepbook_predict::constants;
 
 // === Package Versioning ===
@@ -17,8 +17,8 @@ public macro fun current_version(): u64 { 1 }
 /// form into the package's 1e9-scaled `u64`.
 public(package) macro fun float_scaling_decimals(): u64 { 9 }
 
-/// Decimals of the DUSDC settlement asset (the pool's denomination).
-public macro fun dusdc_decimals(): u8 { 6 }
+/// Decimals of the USDC settlement asset (the pool's denomination).
+public macro fun usdc_decimals(): u8 { 6 }
 
 // === Position Sizing ===
 
@@ -30,7 +30,7 @@ public macro fun min_premium(): u64 { 1_000_000 }
 
 // === Pool Funding ===
 
-/// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
+/// USDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
 public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
@@ -39,7 +39,7 @@ public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 // === Async LP Requests ===
 // Request admission thresholds and cancellation reasons are upgrade-required protocol values.
 
-/// Minimum DUSDC a single supply request must escrow: 10 DUSDC (6-decimal units).
+/// Minimum USDC a single supply request must escrow: 10 USDC (6-decimal units).
 public(package) macro fun min_supply_request(): u64 { 10_000_000 }
 
 /// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
@@ -52,12 +52,12 @@ public(package) macro fun request_cancel_reason_non_executable(): u8 { 1 }
 public(package) macro fun request_cancel_reason_limit_missed(): u8 { 2 }
 
 /// Permanent genesis liquidity locked at the one-time `plp::lock_capital` bootstrap:
-/// 10 DUSDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
+/// 10 USDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
 
 /// Executable frozen-mark band: the PLP price must be within this factor of unit
-/// parity (1 DUSDC per whole PLP) in both directions — [0.01, 100] DUSDC. dUSDC
+/// parity (1 USDC per whole PLP) in both directions — [0.01, 100] USDC. USDC
 /// and PLP both use 6 decimals, so unit parity is raw-unit parity and the band
 /// test needs no price unit.
 public(package) macro fun executable_price_band_factor(): u64 { 100 }
@@ -135,7 +135,7 @@ public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
 /// Fraction of the expiry allocation cap an expiry can receive over its lifetime.
 public(package) macro fun fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
 
-/// Minimum DUSDC a single fee-incentive sponsorship may contribute.
+/// Minimum USDC a single fee-incentive sponsorship may contribute.
 public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
 
 // === Settlement ===

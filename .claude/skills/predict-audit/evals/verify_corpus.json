@@ -49,7 +49,7 @@
     {
       "id": "refute-supply-shares-divzero",
       "expect": "refuted",
-      "why": "Guarded on the spot: supply_shares/withdraw_dusdc assert mark.pool_value > 0 (EInvalidDrainMark) BEFORE the mul_div, so the div-by-zero cannot occur.",
+      "why": "Guarded on the spot: supply_shares/withdraw_usdc assert mark.pool_value > 0 (EInvalidDrainMark) BEFORE the mul_div, so the div-by-zero cannot occur.",
       "severity": "High",
       "title": "supply_shares divides by pool_value with no zero guard (div-by-zero brick)",
       "location": "packages/predict/sources/plp/lp_book.move:365",

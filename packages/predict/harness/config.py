@@ -49,7 +49,7 @@ SLOT_COUNT = 32  # generous slot/port ceiling; real parallelism = --concurrency
 # drag `token` in transitively; `token` is a no-dep leaf we publish directly).
 LOCAL_CLOSURE = [
     "fixed_math",
-    "dusdc",
+    "usdc",
     "account",
     "propbook",
     "token",

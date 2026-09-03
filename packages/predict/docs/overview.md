@@ -22,7 +22,7 @@ Live prices come from standalone, Predict-unaware feeds in the **propbook** pack
 
 Terminal settlement is one permissionless public transition, `expiry_market::try_settle`. It checks the exact normalized Pyth spot at the market expiry first; if Pyth is unavailable at least 30 seconds after expiry, it may use the exact Block Scholes minute-boundary spot. The transition immediately caches the terminal price and corresponding payout liability, while `MarketSettled` records the source. Settled redeem, pool cash rebalance, and flush valuation consume recorded state without reading an oracle. If neither exact source is usable, `try_settle` returns false, standalone rebalance moves no cash, and any live-pricing path past expiry aborts rather than inventing a substitute mark (see [risks](./risks.md)).
 
-The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability.
+The pool (`PoolVault`) is the counterparty. Liquidity providers deposit USDC and receive PLP shares; the pool funds each active expiry's working cash and absorbs trader P&L. Each expiry holds its own cash and must always cover its payout liability.
 
 ## Core on-chain objects
 
@@ -30,8 +30,8 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 | --- | --- | --- |
 | `Registry` | Feed/expiry uniqueness, cadence deployment configs, pause, lifecycle, and pool-valuation caps, creation entrypoints (versioning lives on `ProtocolConfig.version_watermark`) | shared |
 | `ProtocolConfig` | Admin-tunable config, `trading_paused`, the valuation lock, per-expiry runtime controls | shared |
-| `PoolVault` | Idle + reserve DUSDC, PLP treasury cap, expiry ledger, the LP supply/withdraw queues | shared |
-| `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` DUSDC, exact `current_nav`, cleanup | shared, one per expiry |
+| `PoolVault` | Idle + reserve USDC, PLP treasury cap, expiry ledger, the LP supply/withdraw queues | shared |
+| `ExpiryMarket` | One expiry's tick grid, exposure book, embedded `ExpiryCash` USDC, exact `current_nav`, cleanup | shared, one per expiry |
 | `AccountWrapper` / `Account` | Account-package custody plus Predict app data: positions, builder attribution | shared wrapper |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
@@ -60,7 +60,7 @@ stateDiagram-v2
 
 ## Liquidity is asynchronous
 
-Liquidity providers do not transact against a live pool price. They **queue** requests: `request_supply` escrows DUSDC with a `min_plp_out` fill limit and `request_withdraw` escrows PLP with a `min_dusdc_out` fill limit, each routed through the LP's account and cancellable while pending, except during an in-flight flush (the frozen mark is on-chain readable mid-flush, so a cancel then would be a free look at a stale price). A periodic **flush** then values the whole pool at one snapshot instant and fills the queued heads submitted before that instant at that single frozen mark. A head whose quote misses its limit is refunded by that same flush and the drain moves on, exactly as a non-executable head is, so every head is resolved when it is reached — the attempt count behind that is admin-tunable and ships at one; withdrawals can still carry when idle is insufficient. The flush is staged — an atomic snapshot transaction (`start_pool_valuation` → one `snapshot_expiry_pricer` per active market → `seal_valuation_snapshot`) freezes every market's pricer at one instant, then one `value_expiry` per market per transaction folds each market's snapshot-instant NAV, then `finish_flush` drains the queues — and it is **privileged**: only a pool-valuation operator's `PoolValuationCap` may start one, so the mark cannot be timed by an adversary against a manipulated oracle. Trading never waits on a flush: a snapshotted market's cash rows and payout-tree boundaries are captured at the snapshot instant, so trades run unrecorded and its valuation reads the frozen figure directly. The mark itself, `pool_nav = idle + Σ snapshot_nav`, is **exact** (each `current_nav` is the true per-expiry recoverable value, with no approximation band), so the one mark that prices both supplies and withdrawals equals true NAV in both directions. Fills are delivered to each account's receive address through the balance accumulator and absorbed lazily on the account's next capital op. See [liquidity and NAV](./concepts/liquidity-and-nav.md).
+Liquidity providers do not transact against a live pool price. They **queue** requests: `request_supply` escrows USDC with a `min_plp_out` fill limit and `request_withdraw` escrows PLP with a `min_usdc_out` fill limit, each routed through the LP's account and cancellable while pending, except during an in-flight flush (the frozen mark is on-chain readable mid-flush, so a cancel then would be a free look at a stale price). A periodic **flush** then values the whole pool at one snapshot instant and fills the queued heads submitted before that instant at that single frozen mark. A head whose quote misses its limit is refunded by that same flush and the drain moves on, exactly as a non-executable head is, so every head is resolved when it is reached — the attempt count behind that is admin-tunable and ships at one; withdrawals can still carry when idle is insufficient. The flush is staged — an atomic snapshot transaction (`start_pool_valuation` → one `snapshot_expiry_pricer` per active market → `seal_valuation_snapshot`) freezes every market's pricer at one instant, then one `value_expiry` per market per transaction folds each market's snapshot-instant NAV, then `finish_flush` drains the queues — and it is **privileged**: only a pool-valuation operator's `PoolValuationCap` may start one, so the mark cannot be timed by an adversary against a manipulated oracle. Trading never waits on a flush: a snapshotted market's cash rows and payout-tree boundaries are captured at the snapshot instant, so trades run unrecorded and its valuation reads the frozen figure directly. The mark itself, `pool_nav = idle + Σ snapshot_nav`, is **exact** (each `current_nav` is the true per-expiry recoverable value, with no approximation band), so the one mark that prices both supplies and withdrawals equals true NAV in both directions. Fills are delivered to each account's receive address through the balance accumulator and absorbed lazily on the account's next capital op. See [liquidity and NAV](./concepts/liquidity-and-nav.md).
 
 ## Guarantees in plain language
 
@@ -83,7 +83,7 @@ These properties are designed in and hold by construction; their boundaries are 
 
 **Design — how the protocol is built:**
 
-- [Architecture](./design/architecture.md) — the on-chain objects, DUSDC custody layers, the capability and authorization model, the binding mesh, and version gating.
+- [Architecture](./design/architecture.md) — the on-chain objects, USDC custody layers, the capability and authorization model, the binding mesh, and version gating.
 - [Configuration](./design/configuration.md) — the tunable-vs-constant split, template snapshots versus live configs, and who can change what.
 
 **Risks:**

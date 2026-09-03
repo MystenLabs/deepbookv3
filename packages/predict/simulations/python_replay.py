@@ -16,7 +16,7 @@ from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v5"
 LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
 EXPECTED_ACTION_SEQUENCE = (
     "mint",
@@ -143,15 +143,15 @@ POS_INF_STRIKE = (1 << 64) - 1  # constants::pos_inf!() == u64::MAX
 ORACLE_MIN_STRIKE = 1 * ORACLE_TICK_SIZE
 ORACLE_MAX_STRIKE = (POS_INF_TICK - 1) * ORACLE_TICK_SIZE
 MIN_PREMIUM = 1_000_000
-DUSDC_DECIMALS = 1_000_000
-VAULT_SEED = 500_000 * DUSDC_DECIMALS
-MANAGER_SEED = 500_000 * DUSDC_DECIMALS
-MIN_BOOTSTRAP_LIQUIDITY = 10 * DUSDC_DECIMALS
+USDC_DECIMALS = 1_000_000
+VAULT_SEED = 500_000 * USDC_DECIMALS
+MANAGER_SEED = 500_000 * USDC_DECIMALS
+MIN_BOOTSTRAP_LIQUIDITY = 10 * USDC_DECIMALS
 INITIAL_ACCOUNT_PLP_BALANCE = VAULT_SEED
 INITIAL_TOTAL_PLP_SUPPLY = INITIAL_ACCOUNT_PLP_BALANCE + MIN_BOOTSTRAP_LIQUIDITY
-INITIAL_EXPIRY_CASH = 50_000 * DUSDC_DECIMALS
+INITIAL_EXPIRY_CASH = 50_000 * USDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
-MAX_EXPIRY_ALLOCATION = 250_000 * DUSDC_DECIMALS
+MAX_EXPIRY_ALLOCATION = 250_000 * USDC_DECIMALS
 BACKING_BUFFER_LAMBDA = 250_000_000
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -1197,7 +1197,7 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
 
 def initial_state() -> dict[str, int]:
     return {
-        "account_dusdc_balance": MANAGER_SEED,
+        "account_usdc_balance": MANAGER_SEED,
         "account_plp_balance": INITIAL_ACCOUNT_PLP_BALANCE,
         "expiry_cash_balance": INITIAL_EXPIRY_CASH,
         "inventory_impact_reserve": 0,
@@ -1221,7 +1221,7 @@ def initial_state() -> dict[str, int]:
 
 def state_snapshot(state: dict[str, int]) -> dict[str, str]:
     visible = (
-        "account_dusdc_balance",
+        "account_usdc_balance",
         "account_plp_balance",
         "expiry_cash_balance",
         "inventory_impact_reserve",
@@ -1397,7 +1397,7 @@ def mint_order(
     after = live_payout_liability(model)
     impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
     total_cost = premium + fee + impact_charge
-    if total_cost > state["account_dusdc_balance"]:
+    if total_cost > state["account_usdc_balance"]:
         raise ValueError("insufficient account balance for mint")
 
     sequence = model["next_order_sequence"]
@@ -1409,7 +1409,7 @@ def mint_order(
         "sequence": sequence,
         "position_root_sequence": sequence,
     }
-    state["account_dusdc_balance"] -= total_cost
+    state["account_usdc_balance"] -= total_cost
     state["expiry_cash_balance"] += total_cost
     state["inventory_impact_reserve"] += impact_charge
     update_required_cash(model, state)
@@ -1479,7 +1479,7 @@ def redeem_live(
             "sequence": replacement_sequence,
         }
 
-    state["account_dusdc_balance"] += redeem_amount + impact_rebate - fee
+    state["account_usdc_balance"] += redeem_amount + impact_rebate - fee
     state["expiry_cash_balance"] += fee - redeem_amount - impact_rebate
     state["inventory_impact_reserve"] -= impact_rebate
     update_required_cash(model, state)
@@ -1645,7 +1645,7 @@ def drain_supply_queue(
         if frozen_pool_value == 0 or frozen_total_supply == 0:
             model["supply_queue"].pop(0)
             state["supply_requests_pending"] -= 1
-            state["account_dusdc_balance"] += request["amount"]
+            state["account_usdc_balance"] += request["amount"]
             updates.append(
                 {
                     "type": "request_cancelled",
@@ -1669,7 +1669,7 @@ def drain_supply_queue(
         if shares < request["min_output"]:
             model["supply_queue"].pop(0)
             state["supply_requests_pending"] -= 1
-            state["account_dusdc_balance"] += request["amount"]
+            state["account_usdc_balance"] += request["amount"]
             updates.append(
                 {
                     "type": "request_cancelled",
@@ -1706,10 +1706,10 @@ def drain_supply_queue(
             {
                 "type": "supply_filled",
                 "index": str(request["index"]),
-                "dusdc_amount": str(fill),
+                "usdc_amount": str(fill),
                 "shares_minted": str(shares),
-                "fee_dusdc": str(fee),
-                "dusdc_remaining": str(remaining),
+                "fee_usdc": str(fee),
+                "usdc_remaining": str(remaining),
                 "requests_pending_after": str(state["supply_requests_pending"]),
             }
         )
@@ -1781,7 +1781,7 @@ def drain_withdraw_queue(
         remaining = request["amount"] - burn
         state["vault_idle_balance"] -= payout
         state["vault_total_plp_supply"] -= burn
-        state["account_dusdc_balance"] += payout
+        state["account_usdc_balance"] += payout
         if remaining == 0:
             model["withdraw_queue"].pop(0)
             state["withdraw_requests_pending"] -= 1
@@ -1797,8 +1797,8 @@ def drain_withdraw_queue(
                 "type": "withdraw_filled",
                 "index": str(request["index"]),
                 "shares_burned": str(burn),
-                "dusdc_amount": str(payout),
-                "fee_dusdc": str(fee),
+                "usdc_amount": str(payout),
+                "fee_usdc": str(fee),
                 "shares_remaining": str(remaining),
                 "requests_pending_after": str(state["withdraw_requests_pending"]),
             }
@@ -1947,7 +1947,7 @@ def redeem_settled(
     )
     model["settled_liability"] -= payout
     state["expiry_cash_balance"] -= payout
-    state["account_dusdc_balance"] += payout
+    state["account_usdc_balance"] += payout
     update_required_cash(model, state)
     return [
         {

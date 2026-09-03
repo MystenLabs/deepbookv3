@@ -57,7 +57,7 @@ fun max_lp_pool_value_accepts_endpoints() {
 /// The floor is the genesis lock plus one minimum supply — the smallest cap that
 /// still leaves a minimally-bootstrapped pool able to admit a deposit. A cap at the
 /// lock itself would leave zero headroom forever, which is what this rejects.
-/// 10 DUSDC genesis lock + 10 DUSDC minimum supply = 20 DUSDC, hand-derived from the
+/// 10 USDC genesis lock + 10 USDC minimum supply = 20 USDC, hand-derived from the
 /// two protocol floors rather than from the expression under test.
 #[test]
 fun max_lp_pool_value_floor_leaves_room_for_one_minimum_supply() {

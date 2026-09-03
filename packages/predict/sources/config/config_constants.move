@@ -214,7 +214,7 @@ public(package) macro fun default_inventory_impact_max_rate(): u64 { 0 }
 public(package) macro fun min_inventory_impact_max_rate(): u64 { 0 }
 
 /// A full-scale rate means that, above the market's inventory scale, one
-/// additional DUSDC of payout liability can cost at most one DUSDC. This is a
+/// additional USDC of payout liability can cost at most one USDC. This is a
 /// hard representability envelope, not a recommended operating value.
 public(package) macro fun max_inventory_impact_max_rate(): u64 {
     fixed_math::math::float_scaling!()

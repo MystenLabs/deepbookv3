@@ -51,7 +51,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-1: The flush executes at any exact NAV mark (price circuit breakers removed)
 
 - **Trigger state:** frozen flush mark implies a PLP price outside the former
-  `[0.01, 100]` DUSDC band, or a pool NAV below the former dust floor.
+  `[0.01, 100]` USDC band, or a pool NAV below the former dust floor.
 - **Controller:** market — pool NAV is set by trading outcomes; supply by fill
   history. `total_supply ≤ k × pool_value` is not a maintainable invariant.
 - **Blast radius:** the mark is assembled by the staged flush (RP-29) and every
@@ -80,7 +80,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 ## RP-2: Non-executable LP queue heads at the drain — refund
 
 - **Trigger state:** at the frozen mark, the head request's fill is not
-  executable: the implied PLP price is outside `[0.01, 100]` DUSDC/PLP,
+  executable: the implied PLP price is outside `[0.01, 100]` USDC/PLP,
   supply would mint zero shares, withdraw would pay zero, or the computed
   quote does not fit in u64.
 - **Controller:** market (the mark) × user (request size). The one
@@ -106,7 +106,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   direction of the old invariant: the protocol never *manufactures* the
   degenerate ratio, even though it cannot forbid NAV collapse.
 - **Risk profile:** `BEST-GUESS` — organic reachability requires near-total LP
-  wipeout (pool value in a micro-DUSDC band at the flush instant) and cannot
+  wipeout (pool value in a micro-USDC band at the flush instant) and cannot
   be cheaply forced (attacker must win oracle-priced bets). The asymmetry is
   the ratchet: improbable per flush, irreversible once. Harness campaign
   candidate: drive NAV collapse and measure the window width and ratchet
@@ -457,7 +457,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Trigger state:** a queued LP supply or withdraw request reaches the head of
   its FIFO queue during a flush, the frozen mark is executable, but the quoted
   output is below the request's minimum output (`min_plp_out` for supply,
-  `min_dusdc_out` for withdraw).
+  `min_usdc_out` for withdraw).
 - **Controller:** market (the frozen mark) × user (the request-time limit). The
   protocol controls only what happens to the request once it is at the head.
 - **Blast radius:** `lp_book::drain` runs inside `finish_flush`, and every LP
@@ -1131,7 +1131,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   remaining amount and rounded **up** — at worst the carried request is held to a
   fractionally stricter limit than it originally signed, never a laxer one.
 - **Ordering — the limit is checked first.** A partial fill mints fewer shares (or pays
-  less DUSDC) than the whole request, so it is only defensible if the *price* was
+  less USDC) than the whole request, so it is only defensible if the *price* was
   acceptable. Pricing is linear at a frozen mark, so "this prefix clears the LP's rate"
   is exactly the existing `shares >= min_output` test on the full amount — checking the
   limit first costs no new arithmetic and makes `min_output` a **price floor rather than

@@ -44,7 +44,7 @@ public struct StrikeExposure has store {
     reference_tick: Option<u64>,
     /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
-    /// Immutable DUSDC scale for the inventory-impact curve. This is the
+    /// Immutable USDC scale for the inventory-impact curve. This is the
     /// expiry's snapshotted maximum pool allocation: a risk-capacity parameter,
     /// not live pool equity, so LP flows cannot reprice an existing book.
     inventory_impact_scale: u64,

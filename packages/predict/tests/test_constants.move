@@ -31,8 +31,8 @@ public fun carol(): address { CAROL }
 /// FLOAT_SCALING (1e9): `500_000_000` = 50%, `1_000_000_000` = 100%.
 public fun float(): u64 { math::float_scaling!() }
 
-/// One whole DUSDC quote unit = `10^dusdc_decimals!()` = `1_000_000` raw units.
-public fun dusdc_unit(): u64 { 10u64.pow(constants::dusdc_decimals!()) }
+/// One whole USDC quote unit = `10^usdc_decimals!()` = `1_000_000` raw units.
+public fun usdc_unit(): u64 { 10u64.pow(constants::usdc_decimals!()) }
 
 // === Default market bring-up (test-fixture choices) ===
 
@@ -86,7 +86,7 @@ public fun default_cadence_window_size(): u64 { 1 }
 /// Default per-expiry allocation cap used by test market cadence configs.
 public fun default_max_expiry_allocation(): u64 { 250_000_000_000 }
 
-/// Default minimum DUSDC cash target used by test market cadence configs.
+/// Default minimum USDC cash target used by test market cadence configs.
 public fun default_initial_expiry_cash(): u64 { constants::expiry_cash_floor!() }
 
 /// The canonical finite strike tick the flow tests mint against. With the default
@@ -95,7 +95,7 @@ public fun default_initial_expiry_cash(): u64 { constants::expiry_cash_floor!() 
 /// `(strike_tick, +inf)` UP range).
 public fun default_strike_tick(): u64 { 100 }
 
-/// Default DUSDC cash seeded into expiry markets while pool funding is absent.
+/// Default USDC cash seeded into expiry markets while pool funding is absent.
 public fun default_seeded_expiry_cash(): u64 { 300_000_000_000 }
 
 /// Protocol-reserve profit share the default fixture sets (10% in FLOAT_SCALING).

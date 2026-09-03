@@ -124,7 +124,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the `u64` mul ceiling is accepted because the failure mode is a graceful per-tx
   mint abort at extreme strike×quantity (never a brick), and inline `u128` casts
   duplicated `fixed_math` semantics inside a core module. *Rejected:* the widening.
-- **DUSDC pools with a pool-coordinated settled-market sweep.** The sweep returns
+- **USDC pools with a pool-coordinated settled-market sweep.** The sweep returns
   LP cash to the pool, unregisters the expiry from active valuation, and
   materializes terminal profit — there is no expiry-only path that can strand
   capital. *Rejected:* a monolithic single-vault model; a separate expiry-only
@@ -780,3 +780,8 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
   not permissionless (audit L8)" above and the *Authorization* line of the
   2026-08-24 duty inventory — both read `PoolValuationCap` where they say
   `MarketLifecycleCap`.
+
+## Collateral named USDC on every network (2026-09-03)
+
+- **The collateral type is `usdc::usdc::USDC` everywhere; only its address changes per network.** Predict named its collateral `dusdc::dusdc::DUSDC` after the testnet test coin, which made a mainnet publish unlinkable: native USDC (`0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7`) publishes a single module `usdc` with no `dusdc::DUSDC` in it, and a `dep-replacements` entry substitutes an address, never a name. Renaming the type moves the difference between networks entirely into the address: `packages/usdc` supplies the type and is the published collateral on testnet and localnet, while `[dep-replacements.mainnet]` in `packages/predict/Move.toml` links Circle's package. The in-repo package is never published to mainnet — republishing it would mint a second, worthless type of the same name. *Consequence:* the coin type of the live testnet deployment changes, so this lands with its own testnet republish, and the four `dusdc_*` PoolVault event fields become `usdc_*`. *Consequence:* the in-repo source is a type declaration, not Circle's, so it cannot reproduce the on-chain bytecode — the mainnet publish verifies the linked package and original IDs against chain instead, with `--skip-dependency-verification` scoped to that command (`.claude/rules/predict-deployment.md`). *Rejected:* making the protocol generic over the collateral type (every public signature, the SDK, and the indexer change to buy a configurability nothing asks for); keeping the DUSDC name and publishing a mainnet package we own (a house stablecoin is not the product); a mainnet `Published.toml` entry on `packages/usdc` claiming Circle's address (that file is our own publication history, not a linkage table).
+- **The testnet coin keeps the `DUSDC` symbol.** Only the type name has to match mainnet; the display symbol is what distinguishes the mintable test coin from native USDC in explorers and wallets, and it is metadata the `MetadataCap` holder can change without touching source.

@@ -23,7 +23,7 @@ The split is only safe if it is behavior-preserving at every seam.
   observation land in a slot it wasn't signed for (the sid derivation is the check)? Compare the pre-split
   in-package `market_oracle`/`pyth_source` checks against the post-split path and list anything not carried over.
 
-- **predict → account** (DUSDC custody). Custody moved from the in-package manager into `account::Account`.
+- **predict → account** (USDC custody). Custody moved from the in-package manager into `account::Account`.
   Enumerate what auth/limits the old in-package custody enforced and confirm each is enforced across the new
   boundary: app-auth (`generate_auth_as_app<PredictApp>`) requires a `Permit<PredictApp>` (constructible only
   inside predict) AND registry authorization — confirm no keeper/anon path forges it; withdraw authority cannot

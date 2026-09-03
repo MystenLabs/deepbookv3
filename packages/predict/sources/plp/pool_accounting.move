@@ -3,9 +3,9 @@
 
 /// Pool-owned expiry registration and cash-flow accounting.
 ///
-/// This module owns pool idle DUSDC custody, the durable set of expiries
-/// registered to a pool, the active expiry index used for valuation, DUSDC sent
-/// from the main pool into each expiry, DUSDC received back from each expiry,
+/// This module owns pool idle USDC custody, the durable set of expiries
+/// registered to a pool, the active expiry index used for valuation, USDC sent
+/// from the main pool into each expiry, USDC received back from each expiry,
 /// snapshotted lifetime fee-incentive caps and allocations, terminal cash
 /// watermarks, and per-expiry cap checks. It does not classify expiry-local
 /// liabilities or apply PLP reserve policy; PoolVault uses the aggregate profit
@@ -13,26 +13,26 @@
 module deepbook_predict::pool_accounting;
 
 use deepbook_predict::constants;
-use dusdc::dusdc::DUSDC;
 use fixed_math::math;
 use sui::{balance::{Self, Balance}, table::{Self, Table}};
+use usdc::usdc::USDC;
 
 const EUnknownRegisteredExpiry: u64 = 0;
 const ERegisteredExpiryAlreadyExists: u64 = 1;
 const EMaxExpiryFundingExceeded: u64 = 2;
 const ETerminalAccountingStarted: u64 = 3;
 
-/// Aggregate and per-expiry DUSDC accounting ledger.
+/// Aggregate and per-expiry USDC accounting ledger.
 public struct Ledger has store {
-    /// Idle LP-owned DUSDC available for withdrawals and expiry funding.
-    idle_balance: Balance<DUSDC>,
+    /// Idle LP-owned USDC available for withdrawals and expiry funding.
+    idle_balance: Balance<USDC>,
     /// Expiry markets that still contribute active pool valuation/risk.
     active_expiry_markets: vector<ActiveExpiry>,
     /// Permanent per-expiry accounting rows. Presence means the expiry belongs to this pool.
     registered_expiries: Table<ID, RegisteredExpiry>,
-    /// Pricing debit basis: DUSDC sent to expiries plus materialized terminal profit.
+    /// Pricing debit basis: USDC sent to expiries plus materialized terminal profit.
     profit_basis_debits: u64,
-    /// Pricing credit basis: all DUSDC received back from expiries.
+    /// Pricing credit basis: all USDC received back from expiries.
     profit_basis_credits: u64,
     /// Aggregate terminal losses that later terminal profits must recover first;
     /// losses do not claw back profit that was already materialized.
@@ -51,13 +51,13 @@ public struct ActiveExpiry has copy, drop, store {
 
 /// Durable accounting row for one registered expiry market.
 public struct RegisteredExpiry has store {
-    /// DUSDC pool allocation cap snapshotted when this expiry was created.
+    /// USDC pool allocation cap snapshotted when this expiry was created.
     max_expiry_allocation: u64,
-    /// Minimum DUSDC cash target snapshotted when this expiry was created.
+    /// Minimum USDC cash target snapshotted when this expiry was created.
     initial_expiry_cash: u64,
-    /// DUSDC sent from the main pool into this expiry.
+    /// USDC sent from the main pool into this expiry.
     sent_to_expiry: u64,
-    /// DUSDC returned from this expiry to the main pool.
+    /// USDC returned from this expiry to the main pool.
     received_from_expiry: u64,
     /// Absolute lifetime fee-incentive cap snapshotted when this expiry was registered.
     fee_incentive_lifetime_cap: u64,
@@ -108,19 +108,19 @@ public(package) fun pending_protocol_profit(ledger: &Ledger): u64 {
     ledger.pending_protocol_profit
 }
 
-/// Return the DUSDC pool allocation cap snapshotted for one expiry.
+/// Return the USDC pool allocation cap snapshotted for one expiry.
 public(package) fun max_expiry_allocation(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     ledger.registered_expiries.borrow(expiry_market_id).max_expiry_allocation
 }
 
-/// Return the minimum DUSDC cash target snapshotted for one expiry.
+/// Return the minimum USDC cash target snapshotted for one expiry.
 public(package) fun initial_expiry_cash(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     ledger.registered_expiries.borrow(expiry_market_id).initial_expiry_cash
 }
 
-/// Return remaining net DUSDC the pool may fund into one expiry under its
+/// Return remaining net USDC the pool may fund into one expiry under its
 /// snapshotted allocation cap.
 public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
@@ -174,23 +174,23 @@ public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_mar
     true
 }
 
-/// Join idle DUSDC; the LP-supply flush drains filled supply requests here.
-public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<DUSDC>) {
+/// Join idle USDC; the LP-supply flush drains filled supply requests here.
+public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<USDC>) {
     ledger.idle_balance.join(cash);
 }
 
-/// Split idle DUSDC.
-public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<DUSDC> {
+/// Split idle USDC.
+public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<USDC> {
     ledger.idle_balance.split(amount)
 }
 
-/// Split idle DUSDC into an expiry while recording the funding flow and enforcing
+/// Split idle USDC into an expiry while recording the funding flow and enforcing
 /// the expiry's snapshotted allocation cap.
 public(package) fun send_expiry_cash(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     amount: u64,
-): Balance<DUSDC> {
+): Balance<USDC> {
     if (amount == 0) return balance::zero();
     ledger.record_sent_to_expiry(expiry_market_id, amount);
     ledger.idle_balance.split(amount)
@@ -215,10 +215,10 @@ public(package) fun record_fee_incentives_allocated_up_to(
     (amount, flow.fee_incentives_allocated)
 }
 
-/// Receive DUSDC returned from an expiry.
+/// Receive USDC returned from an expiry.
 public(package) fun receive_expiry_cash(
     ledger: &mut Ledger,
-    cash: Balance<DUSDC>,
+    cash: Balance<USDC>,
     expiry_market_id: ID,
 ): u64 {
     let amount = cash.value();
@@ -270,7 +270,7 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
 /// idle so a settled-market sweep can never abort when the cut's cash is
 /// temporarily deployed in other active markets; the uncovered remainder stays in
 /// `pending_protocol_profit` and is realized on a later sweep that refills idle.
-public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balance<DUSDC> {
+public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balance<USDC> {
     let draw = ledger.pending_protocol_profit.min(ledger.idle_balance.value());
     ledger.pending_protocol_profit = ledger.pending_protocol_profit - draw;
     ledger.idle_balance.split(draw)
@@ -279,7 +279,7 @@ public(package) fun realize_pending_protocol_profit(ledger: &mut Ledger): Balanc
 /// Accrue a freshly materialized protocol cut, then realize what idle can currently
 /// cover. In the common case idle covers the cut, so the full amount is split out
 /// immediately and nothing is carried.
-public(package) fun realize_protocol_profit(ledger: &mut Ledger, amount: u64): Balance<DUSDC> {
+public(package) fun realize_protocol_profit(ledger: &mut Ledger, amount: u64): Balance<USDC> {
     ledger.pending_protocol_profit = ledger.pending_protocol_profit + amount;
     ledger.realize_pending_protocol_profit()
 }

@@ -13,7 +13,7 @@ toolbox, the discipline, and the report format. If you cannot read this file, st
 
 ## What it is
 A trader opens **binary (cash-or-nothing range digital) positions** on whether an oracle price
-lands in a strike range at a fixed expiry. Positions are minted/redeemed in DUSDC against a per-expiry
+lands in a strike range at a fixed expiry. Positions are minted/redeemed in USDC against a per-expiry
 `ExpiryMarket`; a strike-exposure engine tracks payout liability and NAV; an LP vault (PLP) funds the
 backing and is priced against a full-pool NAV. Prices come from Pyth Lazer (signed spot) plus
 provider-signed Block Scholes spot/forward/SVI surface data — both now served by the standalone
@@ -25,11 +25,11 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - Never modify source. Read dependency source only to understand an in-scope trust boundary, and report findings only against the skill's owned scope.
 
 ## Actors / roles
-- **Trader** — acts through `predict_account` (wraps an `account::Account` for DUSDC custody); authorizes
+- **Trader** — acts through `predict_account` (wraps an `account::Account` for USDC custody); authorizes
   either directly as owner (`account::Auth`) or via the account package's app-auth (`Permit<PredictApp>` +
   registry authorization → `generate_auth_as_app`). The old predict-side manager cap/proof model
   (`PredictTradeCap`/`DepositCap`/`WithdrawCap`/`PredictTradeProof`) was removed when custody moved to `account`.
-- **LP** — supplies/withdraws DUSDC to the PLP vault (async request → privileged flush).
+- **LP** — supplies/withdraws USDC to the PLP vault (async request → privileged flush).
 - **Keeper** — permissionless: triggers settlement and pool syncs.
 - **Builder** — earns attributed add-on fees via a `BuilderCode`.
 - **Oracle operator** — pushes Block-Scholes spot/forward/SVI updates into the `propbook` feeds; settlement
@@ -42,24 +42,24 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - **Account admin** — holds `account::AccountAdminCap`; authorizes/deauthorizes apps (e.g. `PredictApp`) on the custody layer.
 
 ## Assets
-DUSDC (settlement/custody for all trading + payouts, and the sponsored fee-incentive donation), PLP (LP vault share token).
+USDC (settlement/custody for all trading + payouts, and the sponsored fee-incentive donation), PLP (LP vault share token).
 
 ## Module map (CURRENT)
 
 ### `predict` (31 modules — the protocol core)
 - `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap, lifecycle-cap & pool-valuation-cap allowlists, `create_and_share_expiry_market`.
 - `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
-- `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
+- `predict_account.move` — per-user account; USDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
 - `order.move` — packs immutable position terms (absolute boundary ticks, quantity, sequence) into a u256 order id (132 dense bits); validates shape.
-- `expiry_market.move` — per-expiry risk engine; mint / live redeem / settled redeem / settlement / compaction state machine; routes DUSDC; produces per-expiry `current_nav`.
-- `expiry_cash.move` — raw DUSDC custody arithmetic; enforces `cash_balance >= payout_liability + inventory_impact_reserve`.
+- `expiry_market.move` — per-expiry risk engine; mint / live redeem / settled redeem / settlement / compaction state machine; routes USDC; produces per-expiry `current_nav`.
+- `expiry_cash.move` — raw USDC custody arithmetic; enforces `cash_balance >= payout_liability + inventory_impact_reserve`.
 - `ewma.move` — gas-congestion surcharge ("EWMA penalty") added to trade fees.
 - `constants.move` — upgrade-only constants/sentinels (version, scalings, `pos_inf_tick`, resolution period).
 - `pricing/pricing.move` — the live pricing boundary: binds the market's underlying to current propbook feeds, pre-expiry live-pricing check, feed freshness, the pricing-safe surface envelope (forward>0, basis, |rho|<=1, sigma band), SVI variance + normal-CDF binary pricing; settlement read.
 - `config/` — `protocol_config.move` (global admin knobs + trading-pause + valuation lock + per-expiry rows), `config_constants.move` (defaults + hard bounds + `assert_*` validators), and per-subsystem snapshot configs: `pricing_config`, `ewma_config`, `strike_exposure_config`.
 - `capabilities/` — `admin.move` (singleton `AdminCap`), `market_lifecycle_cap.move` (revocable market-creation gate), `pool_valuation_cap.move` (revocable flush gate), `pause_cap.move` (versioned pause / per-pool mint pause).
-- `plp/plp.move` — LP vault: idle DUSDC, PLP treasury, per-expiry rebalancing, incentive streams, full-pool valuation (`PoolValuation` hot potato), the privileged flush.
+- `plp/plp.move` — LP vault: idle USDC, PLP treasury, per-expiry rebalancing, incentive streams, full-pool valuation (`PoolValuation` hot potato), the privileged flush.
 - `plp/pool_accounting.move` — durable per-expiry sent/received flows, profit basis, loss watermarks, funding caps, `pending_protocol_profit` (D033 deferred-carry).
 - `plp/lp_book.move` — async supply/withdraw request queues + FIFO drain at the frozen mark.
 - `strike_exposure/strike_exposure.move` — exposure accounting engine for one strike grid (mint insert / partial-close / remove / settlement recompute; the packed order id is the canonical bit-equal source of the stored quantity atom).

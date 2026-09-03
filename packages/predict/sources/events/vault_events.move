@@ -42,7 +42,7 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     pending_protocol_profit_after: u64,
 }
 
-/// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
+/// Emitted when an LP queues a supply request: `amount` USDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
 /// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
 /// whole `amount` before the request fills, but a fill capped by pool capacity delivers
@@ -58,7 +58,7 @@ public struct SupplyRequested has copy, drop, store {
 }
 
 /// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
-/// DUSDC will be delivered to `recipient` at a later flush. `min_dusdc_out` is a price
+/// USDC will be delivered to `recipient` at a later flush. `min_usdc_out` is a price
 /// floor: the frozen mark must pay at least this much for the whole `amount` before the
 /// request fills, but a fill limited by available idle pays proportionally less at that
 /// same price.
@@ -68,12 +68,12 @@ public struct WithdrawRequested has copy, drop, store {
     recipient: address,
     index: u64,
     amount: u64,
-    min_dusdc_out: u64,
+    min_usdc_out: u64,
     requests_pending_after: u64,
 }
 
 /// Emitted when a still-pending request is cancelled and the escrow (`amount` of
-/// DUSDC if `is_supply`, else PLP) is refunded straight into the requesting account.
+/// USDC if `is_supply`, else PLP) is refunded straight into the requesting account.
 /// Cancellation can be user-requested before flush or protocol-triggered when the
 /// frozen mark makes the request non-executable or quotes below the request's own
 /// minimum output.
@@ -106,7 +106,7 @@ public struct RequestLimitMissed has copy, drop, store {
     max_misses: u64,
 }
 
-/// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
+/// Emitted when a supply request fills: `usdc_amount` joined pool idle and
 /// `shares_minted` PLP were delivered to `recipient`. `account_id` is the
 /// owning account (carried from the queued request so the fill is self-contained;
 /// `recipient` is its receive address).
@@ -115,22 +115,22 @@ public struct SupplyFilled has copy, drop, store {
     account_id: ID,
     recipient: address,
     index: u64,
-    /// DUSDC actually taken into the pool, which is less than the request's escrow
+    /// USDC actually taken into the pool, which is less than the request's escrow
     /// when the supply cap left only part of it room. Shares were priced on
-    /// `dusdc_amount - fee_dusdc`.
-    dusdc_amount: u64,
+    /// `usdc_amount - fee_usdc`.
+    usdc_amount: u64,
     shares_minted: u64,
-    /// Supply fee withheld from `dusdc_amount` and retained by the pool.
-    fee_dusdc: u64,
+    /// Supply fee withheld from `usdc_amount` and retained by the pool.
+    fee_usdc: u64,
     /// Escrow still queued at the head after a partial fill; `0` on a full fill, in
-    /// which case the request is gone. `dusdc_amount + dusdc_remaining` is the amount
+    /// which case the request is gone. `usdc_amount + usdc_remaining` is the amount
     /// the request carried into this flush.
-    dusdc_remaining: u64,
+    usdc_remaining: u64,
     requests_pending_after: u64,
 }
 
 /// Emitted when a withdraw request fills: `shares_burned` PLP were burned and
-/// `dusdc_amount` was delivered to `recipient` from pool idle. `account_id`
+/// `usdc_amount` was delivered to `recipient` from pool idle. `account_id`
 /// is the owning account (carried from the queued request).
 public struct WithdrawFilled has copy, drop, store {
     pool_vault_id: ID,
@@ -138,11 +138,11 @@ public struct WithdrawFilled has copy, drop, store {
     recipient: address,
     index: u64,
     shares_burned: u64,
-    /// Net DUSDC delivered to `recipient`. The gross marked value of
-    /// `shares_burned` was `dusdc_amount + fee_dusdc`.
-    dusdc_amount: u64,
+    /// Net USDC delivered to `recipient`. The gross marked value of
+    /// `shares_burned` was `usdc_amount + fee_usdc`.
+    usdc_amount: u64,
     /// Withdraw fee withheld from the payout and retained by the pool.
-    fee_dusdc: u64,
+    fee_usdc: u64,
     /// Escrowed PLP still queued at the head after a partial fill; `0` on a full fill,
     /// in which case the request is gone. `shares_burned + shares_remaining` is the
     /// amount the request carried into this flush.
@@ -171,12 +171,12 @@ public struct FlushExecuted has copy, drop, store {
     active_market_nav: u64,
     /// Number of active markets valued for this flush.
     market_count: u64,
-    /// LIVE idle DUSDC read at finish time, immediately before the drain — NOT
+    /// LIVE idle USDC read at finish time, immediately before the drain — NOT
     /// a mark input. It brackets the drain with `idle_balance_after`; because
     /// maintenance, settlement sweeps, and trading run mid-window, it can differ
     /// from `frozen_idle_balance` below. Drain telemetry, not the mark.
     idle_balance_before: u64,
-    /// The mark's idle component: idle DUSDC FROZEN at the seal. `frozen_idle_balance
+    /// The mark's idle component: idle USDC FROZEN at the seal. `frozen_idle_balance
     /// + active_market_nav` reconstructs the priced mark's gross; every fill in the
     /// flush is priced from this, never from `idle_balance_before`.
     frozen_idle_balance: u64,
@@ -207,14 +207,14 @@ public struct FlushRestarted has copy, drop, store {
 }
 
 /// Emitted once when the pool is bootstrapped via `plp::lock_capital`: `amount`
-/// DUSDC is permanently locked as minimum liquidity and matching PLP is minted into
+/// USDC is permanently locked as minimum liquidity and matching PLP is minted into
 /// the book's locked balance (never withdrawable), so `total_supply` stays > 0.
 public struct CapitalLocked has copy, drop, store {
     pool_vault_id: ID,
     amount: u64,
 }
 
-/// Emitted when a sponsor contributes DUSDC to the pool-level fee incentive reserve.
+/// Emitted when a sponsor contributes USDC to the pool-level fee incentive reserve.
 public struct FeeIncentivesSponsored has copy, drop, store {
     pool_vault_id: ID,
     sponsor: address,
@@ -322,7 +322,7 @@ public(package) fun emit_withdraw_requested(
     recipient: address,
     index: u64,
     amount: u64,
-    min_dusdc_out: u64,
+    min_usdc_out: u64,
     requests_pending_after: u64,
 ) {
     event::emit(WithdrawRequested {
@@ -331,7 +331,7 @@ public(package) fun emit_withdraw_requested(
         recipient,
         index,
         amount,
-        min_dusdc_out,
+        min_usdc_out,
         requests_pending_after,
     });
 }
@@ -389,10 +389,10 @@ public(package) fun emit_supply_filled(
     account_id: ID,
     recipient: address,
     index: u64,
-    dusdc_amount: u64,
+    usdc_amount: u64,
     shares_minted: u64,
-    fee_dusdc: u64,
-    dusdc_remaining: u64,
+    fee_usdc: u64,
+    usdc_remaining: u64,
     requests_pending_after: u64,
 ) {
     event::emit(SupplyFilled {
@@ -400,10 +400,10 @@ public(package) fun emit_supply_filled(
         account_id,
         recipient,
         index,
-        dusdc_amount,
+        usdc_amount,
         shares_minted,
-        fee_dusdc,
-        dusdc_remaining,
+        fee_usdc,
+        usdc_remaining,
         requests_pending_after,
     });
 }
@@ -414,8 +414,8 @@ public(package) fun emit_withdraw_filled(
     recipient: address,
     index: u64,
     shares_burned: u64,
-    dusdc_amount: u64,
-    fee_dusdc: u64,
+    usdc_amount: u64,
+    fee_usdc: u64,
     shares_remaining: u64,
     requests_pending_after: u64,
 ) {
@@ -425,8 +425,8 @@ public(package) fun emit_withdraw_filled(
         recipient,
         index,
         shares_burned,
-        dusdc_amount,
-        fee_dusdc,
+        usdc_amount,
+        fee_usdc,
         shares_remaining,
         requests_pending_after,
     });
@@ -558,15 +558,15 @@ public fun flush_executed_idle_figures(event: &FlushExecuted): (u64, u64) {
 
 /// The fill events' fields exist for off-chain consumers, which decode them rather
 /// than calling Move. These readers exist only so tests can assert the fee reported
-/// to those consumers is the fee actually charged: `fee_dusdc` is where pool revenue
+/// to those consumers is the fee actually charged: `fee_usdc` is where pool revenue
 /// is attributed from, and a wrong value there is invisible to every balance
 /// assertion, since the shares and cash moved are computed separately.
 #[test_only]
 public fun supply_filled_fee(event: &SupplyFilled): u64 {
-    event.fee_dusdc
+    event.fee_usdc
 }
 
 #[test_only]
 public fun withdraw_filled_fee(event: &WithdrawFilled): u64 {
-    event.fee_dusdc
+    event.fee_usdc
 }

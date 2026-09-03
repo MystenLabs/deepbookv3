@@ -6,9 +6,9 @@ module deepbook_predict::accumulator_smoke_tests;
 
 use account::{account::{Self, AccountWrapper}, account_registry::{Self, AccountRegistry}};
 use deepbook_predict::accumulator_support;
-use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::{clock, coin, test_scenario as test};
+use usdc::usdc::USDC;
 
 const ALICE: address = @0xA;
 
@@ -37,15 +37,15 @@ fun root_constructs_and_funds_stored_balance() {
 
     let auth = account::generate_auth(scenario.ctx());
     let acct = wrapper.load_account_mut(auth);
-    acct.deposit<DUSDC>(coin::mint_for_testing<DUSDC>(1000, scenario.ctx()));
-    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, &clk), 1000);
+    acct.deposit<USDC>(coin::mint_for_testing<USDC>(1000, scenario.ctx()));
+    assert_eq!(wrapper.load_account().balance<USDC>(&root, &clk), 1000);
 
     // Second op in the SAME tx, holding the same objects (no re-take).
     let auth = account::generate_auth(scenario.ctx());
     let acct = wrapper.load_account_mut(auth);
-    let withdrawn = acct.withdraw<DUSDC>(400, scenario.ctx());
+    let withdrawn = acct.withdraw<USDC>(400, scenario.ctx());
     assert_eq!(withdrawn.value(), 400);
-    assert_eq!(wrapper.load_account().balance<DUSDC>(&root, &clk), 600);
+    assert_eq!(wrapper.load_account().balance<USDC>(&root, &clk), 600);
 
     withdrawn.burn_for_testing();
     test::return_shared(wrapper);

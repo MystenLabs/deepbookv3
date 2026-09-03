@@ -54,7 +54,7 @@ fun lock_capital_mints_locked_liquidity_and_funds_idle() {
     fx.scenario_mut().next_tx(test_constants::admin());
     let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     // The lock mints `amount` permanent PLP (held by the book, delivered to no one) and
-    // joins the DUSDC into idle, so total_supply == idle == amount at a 1.0 mark.
+    // joins the USDC into idle, so total_supply == idle == amount at a 1.0 mark.
     assert_eq!(vault.plp_total_supply(), min_supply!());
     assert_eq!(vault.idle_balance(), min_supply!());
     assert_eq!(vault.supply_requests_pending(), 0);
@@ -133,7 +133,7 @@ fun flush_carries_limit_miss_when_admin_raises_the_attempt_count() {
 // === Pool-value cap is read from config by the flush ===
 
 /// The cap must reach the drain from `ProtocolConfig`, not a constant. The genesis
-/// lock puts pool value at 10 DUSDC; a 20 DUSDC cap leaves 10 of headroom, which the
+/// lock puts pool value at 10 USDC; a 20 USDC cap leaves 10 of headroom, which the
 /// first deposit exactly fills, so the next identical deposit finds no room and waits.
 #[test]
 fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
@@ -142,7 +142,7 @@ fun flush_holds_a_supply_that_would_breach_the_configured_pool_cap() {
     // non-zero supply default cannot silently shift every figure below.
     set_supply_fee(&mut fx, 0);
     set_max_pool_value(&mut fx, 20_000_000);
-    // Consume the whole 10 DUSDC of headroom first.
+    // Consume the whole 10 USDC of headroom first.
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
     flush(&mut fx);
     assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
@@ -208,7 +208,7 @@ fun flush_fills_the_same_supply_when_the_pool_is_uncapped() {
 
     flush(&mut fx);
 
-    // 10 DUSDC minted 1:1 against the 10 DUSDC genesis lock at a 1.0 mark.
+    // 10 USDC minted 1:1 against the 10 USDC genesis lock at a 1.0 mark.
     assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
 
     helpers::return_account_bundle(account);

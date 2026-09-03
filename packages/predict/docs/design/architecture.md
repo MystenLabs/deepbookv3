@@ -25,22 +25,22 @@ The protocol is constructed at package publish: the `registry` module's `init` c
 | --- | --- | --- | --- |
 | `Registry` | `registry` | Admin-approved Propbook underlyings, cadence deployment configs, expiry uniqueness index, allowed `PauseCap`, `MarketLifecycleCap`, and `PoolValuationCap` IDs | package init |
 | `ProtocolConfig` | `protocol_config` | All admin-tunable config structs, the `trading_paused` flag, the emergency `frozen` flag, the monotonic version watermark, the cross-transaction valuation flag and flush ordinal | package init |
-| `PoolVault` | `plp` | Idle LP-owned DUSDC, protocol-reserve DUSDC, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply DUSDC escrow, withdraw PLP escrow) | package init |
-| `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree), embedded `ExpiryCash` DUSDC custody, EWMA gas-price stats, Propbook underlying ID, tick size | per underlying and expiry |
+| `PoolVault` | `plp` | Idle LP-owned USDC, protocol-reserve USDC, the PLP `TreasuryCap`, the per-expiry cash-flow ledger, and the two async LP request queues (supply USDC escrow, withdraw PLP escrow) | package init |
+| `ExpiryMarket` | `expiry_market` | One expiry's trade execution, strike-exposure state (tick-keyed payout tree), embedded `ExpiryCash` USDC custody, EWMA gas-price stats, Propbook underlying ID, tick size | per underlying and expiry |
 
 The `Registry` is the protocol's index and governance anchor. It enforces one approved config row per Propbook underlying ID and one `ExpiryMarket` per `(propbook_underlying_id, expiry)` pair (the version watermark lives on `ProtocolConfig`, not here). It does not hold runtime trading state: pool accounting lives in `PoolVault`, per-expiry risk in `ExpiryMarket`, and positions in Predict app data attached to accounts. It records which Propbook underlyings Predict will build markets on and the cadence deployment policies used to create them; source IDs and canonical oracle object IDs live in `propbook`.
 
 `ProtocolConfig` is a separate shared object from `Registry`. It owns the global flow gates — `trading_paused` (blocks new risk creation), `frozen` (the protocol-wide emergency freeze that halts the whole version-gated surface), and `valuation_in_progress` (true for the whole multi-transaction span of a full-pool NAV valuation, alongside the flush ordinal `flush_seq`; fee-incentive sponsorship, LP request cancels, and most config setters gate on it — trading flows, cash rebalancing, and market creation do not) — and the admin-tunable config structs. One of those is a *template* config (`StrikeExposureConfig`): its current values are snapshotted into each new `ExpiryMarket` at creation, so changing a template affects only future expiries, not live ones. See [configuration](./configuration.md).
 
-`ExpiryMarket` is the hot object for one expiry. It embeds `ExpiryCash` (a `store`-only component, not its own object) which holds that expiry's working DUSDC and its isolated inventory-impact escrow. The market never reaches into the pool directly; cash enters only via pool-driven rebalancing and leaves only via release back to the pool or as payouts to accounts. Because the oracle was extracted, the market stores only the Propbook underlying ID; `pricing::load_live_pricer` validates the passed feed objects against Propbook's current canonical binding before a live price reaches exposure logic.
+`ExpiryMarket` is the hot object for one expiry. It embeds `ExpiryCash` (a `store`-only component, not its own object) which holds that expiry's working USDC and its isolated inventory-impact escrow. The market never reaches into the pool directly; cash enters only via pool-driven rebalancing and leaves only via release back to the pool or as payouts to accounts. Because the oracle was extracted, the market stores only the Propbook underlying ID; `pricing::load_live_pricer` validates the passed feed objects against Propbook's current canonical binding before a live price reaches exposure logic.
 
-## DUSDC custody
+## USDC custody
 
-DUSDC is the protocol's settlement currency and has 6 decimals. Custody is partitioned across three layers, each owned by the module responsible for it:
+USDC is the protocol's settlement currency and has 6 decimals. Custody is partitioned across three layers, each owned by the module responsible for it:
 
 - **Per-trader funds** live inside the account-package `Account` loaded from an `AccountWrapper`. Deposits, withdrawals, premiums, fees, LP fills, and payouts all flow through this custody.
 - **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus its inventory-impact escrow; the market re-asserts this backing invariant after every cash movement.
-- **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). DUSDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting account under owner auth — until the next flush drains them.
+- **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned USDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). USDC supply requests and PLP withdraw requests are escrowed in two `RequestQueue`s on the vault — pulled from the requesting account under owner auth — until the next flush drains them.
 
 Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during cash rebalancing; traders' premiums and protocol fees flow from account custody into `ExpiryCash`; payouts flow from `ExpiryCash` back into account custody; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. LP supply/withdraw fills enter and leave idle at the flush and are delivered to account receive addresses. Builder fees leave for the builder-code address, while mint referral shares leave protocol proceeds for the referring Account's receive address and return to ordinary Account custody when settled.
 
@@ -94,8 +94,8 @@ graph TD
     subgraph Shared
         REG[Registry]
         CFG[ProtocolConfig]
-        VAULT[PoolVault<br/>idle + reserve DUSDC,<br/>PLP cap,<br/>LP request queues]
-        EM[ExpiryMarket<br/>embeds ExpiryCash DUSDC]
+        VAULT[PoolVault<br/>idle + reserve USDC,<br/>PLP cap,<br/>LP request queues]
+        EM[ExpiryMarket<br/>embeds ExpiryCash USDC]
         BC[BuilderCode]
     end
 
@@ -141,7 +141,7 @@ graph TD
     PAUSE -->|one-way pause| CFG
     PAUSE -->|one-way mint pause| EM
 
-    AW <-->|DUSDC trade flows| EM
+    AW <-->|USDC trade flows| EM
     AW <-->|LP requests| VAULT
     VAULT <-->|funding / settled cash| EM
     VAULT -->|LP fill via accumulator| AW
@@ -173,7 +173,7 @@ Propbook creates an underlying's store pair once through its registry and record
 
 ## The pool, NAV, and the async LP layer
 
-LP supply and withdraw are **asynchronous**. An LP queues a request (`request_supply` with `min_plp_out` / `request_withdraw` with `min_dusdc_out`, routed through an account so a composing vault's own account — not necessarily the tx signer — is the fill recipient); the input is escrowed in one of two `RequestQueue`s on `PoolVault`, and a pending request can be cancelled for an immediate refund while no flush is in flight — cancels are gated during one, because the frozen mark is on-chain readable and an ungated cancel would be a free look at it. A periodic **flush** fills eligible queued heads at one frozen mark; requests submitted after a flush's snapshot instant are quarantined to the next mark by the recorded queue cutoffs.
+LP supply and withdraw are **asynchronous**. An LP queues a request (`request_supply` with `min_plp_out` / `request_withdraw` with `min_usdc_out`, routed through an account so a composing vault's own account — not necessarily the tx signer — is the fill recipient); the input is escrowed in one of two `RequestQueue`s on `PoolVault`, and a pending request can be cancelled for an immediate refund while no flush is in flight — cancels are gated during one, because the frozen mark is on-chain readable and an ungated cancel would be a free look at it. A periodic **flush** fills eligible queued heads at one frozen mark; requests submitted after a flush's snapshot instant are quarantined to the next mark by the recorded queue cutoffs.
 
 The per-expiry NAV primitive is `expiry_market::current_nav`: the **exact** live recoverable value of one expiry — free cash minus the exact live liability, floored at zero. The liability is `walk_linear` alone — the payout tree's full boundary-linear walk, `Σ quantity × P(range)`, with no per-order correction. The flush folds the same quantity as of its snapshot instant (`snapshot_nav`, the same walk over the cash values and tree shadows captured at that instant). There is no approximation and no uncertainty band; the deleted approximate-NAV matrix and its band/withdraw-fee superstructure are gone.
 

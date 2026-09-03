@@ -23,7 +23,7 @@ import {
   clockTimestampMs,
   execute,
   executeAndWait,
-  fundAddressDusdcTx,
+  fundAddressUsdcTx,
   keeperFlushTxs,
   keeperSettleTx,
   readActiveMarketIds,
@@ -42,7 +42,7 @@ const TICK_MS = Number(process.env.KEEPER_TICK_MS ?? 15_000);
 const DURATION_MS = requiredNonnegativeInt("DURATION_MS"); // 0 = until killed
 const MARKETS_PATH = `${requiredEnv("INSTANCE_DIR")}/markets.json`;
 const TRADER_ADDRESSES = definedEnv("TRADER_ADDRESSES").split(",").filter(Boolean);
-const TRADER_DUSDC = BigInt(requiredEnv("TRADER_DUSDC"));
+const TRADER_USDC = BigInt(requiredEnv("TRADER_USDC"));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -238,7 +238,7 @@ async function main() {
   const { feeds, lifecycleCapId, poolValuationCapId } = await setupFeedsAndConfig(CADENCE_IDS);
   await bootstrapPool(poolValuationCapId);
   for (const addr of TRADER_ADDRESSES) {
-    await executeAndWait(fundAddressDusdcTx(addr, TRADER_DUSDC), `fund-trader-${addr.slice(0, 8)}`);
+    await executeAndWait(fundAddressUsdcTx(addr, TRADER_USDC), `fund-trader-${addr.slice(0, 8)}`);
   }
   console.log(`[keeper] bootstrapped (PLP minted, feeds.json published); funded ${TRADER_ADDRESSES.length} trader(s); rolling markets...`);
 

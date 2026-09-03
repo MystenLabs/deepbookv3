@@ -614,7 +614,7 @@ class LifecycleTests(unittest.TestCase):
                 "fixed_math",
                 "block_scholes_oracle",
                 "propbook",
-                "dusdc",
+                "usdc",
                 "wormhole",
                 "pyth_lazer",
             )
@@ -632,7 +632,7 @@ class LifecycleTests(unittest.TestCase):
                 "bs_admin_cap",
                 "oracle_registry",
                 "oracle_registry_admin_cap",
-                "dusdc_currency",
+                "usdc_currency",
                 "treasury_cap",
                 "wormhole_state",
                 "pyth_lazer_state",

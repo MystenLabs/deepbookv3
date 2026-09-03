@@ -4,13 +4,13 @@ Every Predict trade — a mint or a live redeem — carries a trading fee, and m
 
 Every trader pays the same fee for the same contract. Predict has no fee tiers, no staking programme, and no loss rebate: the trading fee is a function of the contract and the market, never of who is trading it.
 
-All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
+All fees are denominated in USDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
 This page covers **per-trade** fees. The pool also charges an LP-side **exit** fee: PLP supply and withdraw are still priced at one exact pool-wide mark with no band or spread, and a flat rate is charged on top of that mark — on withdrawals only, as shipped. See [the LP fee](#the-lp-supplywithdraw-fee) below and [./liquidity-and-nav.md](./liquidity-and-nav.md).
 
 ## Where fees come from
 
-Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at live redeem is withheld from the payout. The fee is collected into the expiry's DUSDC cash custody (`ExpiryCash`), and the trader-paid portion is recorded in the trader's Predict account data.
+Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at live redeem is withheld from the payout. The fee is collected into the expiry's USDC cash custody (`ExpiryCash`), and the trader-paid portion is recorded in the trader's Predict account data.
 
 The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at creation so that later admin changes do not reprice contracts already trading. The composition, in the order the protocol applies it, is:
 
@@ -70,7 +70,7 @@ builder_fee = min( trading_fee * builder_fee_multiplier , quantity * max_builder
 
 The builder fee is a fixed multiple (`builder_fee_multiplier`) of the trader's trading fee. It is capped at `max_builder_fee_rate · quantity` so that a high variance fee cannot push the builder cut to an unbounded share of notional. An account with no builder code pays no builder fee.
 
-The builder fee is split off the trader's payment and routed to the builder code's own object address using Sui's accumulator-based fund custody on the `BuilderCode` object — the DUSDC accumulates against the code object's address balance, and the code's owner can later claim all settled builder fees in a single call. The owner is fixed at creation and is the only address that can claim. For the object model and custody mechanism, see [../design/architecture.md](../design/architecture.md).
+The builder fee is split off the trader's payment and routed to the builder code's own object address using Sui's accumulator-based fund custody on the `BuilderCode` object — the USDC accumulates against the code object's address balance, and the code's owner can later claim all settled builder fees in a single call. The owner is fixed at creation and is the only address that can claim. For the object model and custody mechanism, see [../design/architecture.md](../design/architecture.md).
 
 The builder fee never enters the pool's revenue — it belongs entirely to the builder.
 
@@ -87,7 +87,7 @@ Sponsor-funded subsidy is subtracted because it is not paid by the trader. Build
 
 The referral amount is split from the mint payment before the remaining protocol proceeds enter expiry cash. It therefore leaves `MintQuote.all_in_cost`, `max_cost`, and the trader's account debit unchanged. `MintQuote` describes what the trader pays, not how the protocol distributes those proceeds.
 
-Predict sends the DUSDC to the stored referrer receive address with `balance::send_funds`. That address is the referrer's outer `AccountWrapper`, so the ordinary Account balance and `settle` flows make the funds claimable; the canonical referrer Account ID remains the attribution identity. `OrderMinted` records both the calculated `referral_fee` and the immutable `referrer_account_id`, retaining the ID when the configured rate is zero or integer rounding produces a zero payment.
+Predict sends the USDC to the stored referrer receive address with `balance::send_funds`. That address is the referrer's outer `AccountWrapper`, so the ordinary Account balance and `settle` flows make the funds claimable; the canonical referrer Account ID remains the attribution identity. `OrderMinted` records both the calculated `referral_fee` and the immutable `referrer_account_id`, retaining the ID when the configured rate is zero or integer rounding produces a zero payment.
 
 The referral is direct and one level: Predict reads only the minting Account's stored referrer and never follows that referrer's own attribution. The referrer Account must exist before the referred Account is created, so a newly created Account cannot refer to itself; the registry does not otherwise infer or restrict common beneficial ownership across different owner addresses.
 
@@ -191,11 +191,11 @@ Cash routing at trade time:
 | Referral share | protocol proceeds on referred mints | referrer Account receive address | No |
 | Inventory impact | mint add-on / live-close credit | isolated expiry escrow; residual becomes surplus at settlement | No |
 
-At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available DUSDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
+At **mint**, the trader's withdrawal is `premium + trading_fee - sponsor_subsidy + builder_fee + congestion_surcharge + inventory_impact_charge`; referral distribution changes only where part of that withdrawal goes. The `mint_exact_quantity` entrypoint's `max_cost` argument caps this full withdrawal; callers that accept any final cost can pass `std::u64::max_value!()`. Its `max_probability` argument separately caps the quoted per-contract probability before fees. The `mint_exact_amount` entrypoint instead fixes the `premium` budget, capped to the account's available USDC before sizing, and pays the ordinary fees and inventory-impact charge on top; its own `max_cost` argument caps that full withdrawal and is required — zero aborts, and no value disables it. At **live redeem**, the account receives `gross_redeem_amount + inventory_impact_rebate - trading_fee - builder_fee - congestion_surcharge`; `min_proceeds` protects that final net amount. At **settled redeem**, the winning payout is paid in full with no per-trade or inventory-impact rebate.
 
 ## The LP supply/withdraw fee
 
-Everything above is charged on a *trade*. The pool charges one further fee on *LP exit*: a flat rate applied to the DUSDC leg of every executed fill, admin-tunable within a hard `0..5%` envelope.
+Everything above is charged on a *trade*. The pool charges one further fee on *LP exit*: a flat rate applied to the USDC leg of every executed fill, admin-tunable within a hard `0..5%` envelope.
 
 The two legs carry **independent rates**, and they ship asymmetric:
 
@@ -206,9 +206,9 @@ The two legs carry **independent rates**, and they ship asymmetric:
 
 An exit concentrates the pool's outstanding risk on whoever stays: the liabilities the pool has written do not shrink when an LP leaves, so the same risk is carried on a smaller base and risk per dollar rises for the remaining holders. NAV pays the exiting LP the mark, which is the expected value; it does not charge them for the variance they hand to everyone else. That is what the exit fee prices. A deposit moves risk the other way — it dilutes risk per dollar and is a benefit to the pool's health — so the supply leg ships at zero, and the knob exists only to keep that reversible without a package upgrade.
 
-Each leg is charged on the DUSDC side at its own rate, frozen once per flush alongside the mark (never inside it):
+Each leg is charged on the USDC side at its own rate, frozen once per flush alongside the mark (never inside it):
 
-- **Supply** — the fee, if one is ever set, is deducted from the escrowed DUSDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply DUSDC that no new shares were issued against. At the shipped rate of zero a deposit mints its full pro-rata share.
+- **Supply** — the fee, if one is ever set, is deducted from the escrowed USDC *before* shares are priced, so only the remainder buys PLP. The full escrow still joins pool idle; the fee is simply USDC that no new shares were issued against. At the shipped rate of zero a deposit mints its full pro-rata share.
 - **Withdraw** — the fee is withheld from the marked payout, so the requester receives the net. The full escrowed PLP is burned either way.
 
 Both legs leave the charge inside the pool, so it accrues to PLP holders pro-rata rather than to the protocol reserve.
@@ -217,7 +217,7 @@ That has a consequence worth stating for the leg that actually charges: a withdr
 
 Two consequences worth stating plainly:
 
-- **Request limits are net of the fee.** `min_plp_out` and `min_dusdc_out` are compared against the post-fee result, so a limit means "what I actually receive", not the pre-fee quote. A caller sizing a limit should read the relevant leg's rate off `ProtocolConfig` and price accordingly.
+- **Request limits are net of the fee.** `min_plp_out` and `min_usdc_out` are compared against the post-fee result, so a limit means "what I actually receive", not the pre-fee quote. A caller sizing a limit should read the relevant leg's rate off `ProtocolConfig` and price accordingly.
 - **Only executed fills are charged.** A request that is cancelled by its owner, refunded as non-executable at the mark, or still queued after a limit miss pays nothing.
 
 The fee is deliberately separate from the mark. The mark stays the exact pool-wide NAV used in both directions; the fee is applied after it. This is what distinguishes it from the superseded uncertainty-band withdrawal fee of the approximate-NAV design, which distorted the mark itself.

@@ -4,7 +4,7 @@
 /// Unit coverage for `predict_account` — Predict's per-account app-data slot on an
 /// `account::Account`: position bookkeeping keyed by expiry market and order id.
 ///
-/// DUSDC/PLP custody itself lives in the `account` package (covered by its own
+/// USDC/PLP custody itself lives in the `account` package (covered by its own
 /// tests and by the Predict flow suite), so these tests drive only the app-data
 /// accounting primitives, which take an already-loaded `&mut Account`. The account is
 /// created through the real `account_registry` derivation and held owner-side

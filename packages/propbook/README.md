@@ -249,7 +249,7 @@ Propbook does not own:
 - market binding checks
 - consumer-specific freshness policy
 - pricing-safe numeric envelopes
-- DUSDC conversion or forward derivation
+- USDC conversion or forward derivation
 - Predict settlement valuation
 
 Consumers should read Propbook as a source-data substrate and apply their own

@@ -45,9 +45,9 @@ public struct CadenceConfig has copy, drop, store {
     tick_size: u64,
     /// Coarser raw-price step that new finite mint boundaries must align to.
     admission_tick_size: u64,
-    /// DUSDC pool allocation cap snapshotted into pool accounting for each created expiry.
+    /// USDC pool allocation cap snapshotted into pool accounting for each created expiry.
     max_expiry_allocation: u64,
-    /// Minimum DUSDC cash target snapshotted into pool accounting for each created expiry.
+    /// Minimum USDC cash target snapshotted into pool accounting for each created expiry.
     initial_expiry_cash: u64,
     /// Number of cadence periods in the rolling future deployment horizon.
     /// Zero disables this cadence.
