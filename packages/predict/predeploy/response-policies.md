@@ -173,7 +173,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   operator steering live pricing away from the Pyth spot; a provider magnitude
   that does not fit Predict's `u64` pricing domain; or, while
   `use_pyth_spot_for_forward` is set, an independently fresh Pyth spot whose
-  source timestamp is older than the Block Scholes spot observation's publish
+  source timestamp is older than the Block Scholes spot observation's source
   time.
 - **Controller:** external (oracle operator).
 - **Blast radius:** every live price — entry prices and NAV marks.

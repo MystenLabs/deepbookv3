@@ -14,6 +14,7 @@ import {
   serializableSnapshot,
   subscriptionItemMatches,
 } from "./marketSource.js";
+import { rollDownSvi } from "./pricer.js";
 import { gridExpiries } from "./runnerConfig.js";
 import { createCapacityStrategy } from "./strategies/capacity.js";
 import { abortInfo } from "./trace.js";
@@ -63,21 +64,33 @@ test("actor grid configuration is explicit and strictly parsed", () => {
   assert.throws(() => gridExpiries("0:3"), /invalid GRID_SPEC entry/);
 });
 
+test("SVI roll-down uses the observation source timestamp as its anchor", () => {
+  assert.deepEqual(
+    rollDownSvi(
+      { a: 0.2, b: 0.4, rho: -0.3, m: 0.1, sigma: 0.5 },
+      100,
+      200,
+      150,
+    ),
+    { a: 0.1, b: 0.2, rho: -0.3, m: 0.1, sigma: 0.5 },
+  );
+});
+
 test("hub snapshots require the current complete schema without provider credentials", async () => {
   const directory = mkdtempSync(path.join(tmpdir(), "predict-hub-"));
   const snapshotPath = path.join(directory, "snapshot.json");
   const expiry = 1_800_000_000_000;
   const encoded = serializableSnapshot({
     spot1e9: 10n,
-    publishedAtMs: 20n,
+    pythSourceTimestampMs: 20n,
     bsSpot1e9: 30n,
-    bsSpotTsMs: 40,
+    bsSpotSourceTimestampMs: 40,
     expiries: new Map([[
       expiry,
       {
         forward: 50,
         forward1e9: 60n,
-        forwardTsMs: 70,
+        forwardSourceTimestampMs: 70,
         svi: { alpha: 0.1, beta: 0.2, rho: -0.3, m: 0.4, sigma: 0.5 },
         svi1e9: {
           a: 1n,
@@ -89,7 +102,7 @@ test("hub snapshots require the current complete schema without provider credent
           m: 5n,
           mNegative: false,
         },
-        sviTsMs: 80,
+        sviSourceTimestampMs: 80,
       },
     ]]),
   });

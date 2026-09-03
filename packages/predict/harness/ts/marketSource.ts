@@ -81,30 +81,28 @@ export interface FixedSvi {
   m: bigint;
   mNegative: boolean;
 }
-// One expiry's provider data with each series' own model timestamp — the provider's calibration
-// clock, pinned across publishes of an unchanged calibration. The on-chain stores order series by
-// this clock first, so discarding it would collapse the dual-clock contract the updater exists to
-// exercise. The pricing clock (freshness gate and SVI roll-down anchor) is the on-chain batch
-// envelope, which the updater stamps per push and surfaces as the snapshot's `publishedAtMs`.
+// One expiry's provider data with each observation's own source timestamp. Block Scholes supplies
+// `value_timestamp` for forwards and `svi_timestamp` for SVI; Propbook stores each as that
+// observation's `source_timestamp_ms`, which owns ordering, freshness, and SVI roll-down.
 export interface ExpiryData {
   forward: number;
   /// Exact provider integer at the signed subscription's decimals=9 scale.
   forward1e9: bigint;
-  forwardTsMs: number;
+  forwardSourceTimestampMs: number;
   svi: Svi;
   /// Exact provider integers/sign bits used when re-domain-signing for localnet.
   svi1e9: FixedSvi;
-  sviTsMs: number;
+  sviSourceTimestampMs: number;
 }
 export interface MarketSnapshot {
   /// Pyth spot (the Pyth lane's input), stamped by the Pyth stream.
   spot1e9: bigint;
-  publishedAtMs: bigint;
-  /// Block Scholes' own signed spot series (`index.px`) with its provider model time — a
+  pythSourceTimestampMs: bigint;
+  /// Block Scholes' own signed spot series (`index.px`) with its provider source time — a
   /// separate observation from the Pyth spot, so the BS spot slot carries BS data, not a
   /// Pyth value relabeled.
   bsSpot1e9: bigint;
-  bsSpotTsMs: number;
+  bsSpotSourceTimestampMs: number;
   expiries: Map<number, ExpiryData>;
 }
 export interface MarketSource {
@@ -117,18 +115,18 @@ export interface MarketSource {
 
 export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     spot1e9: snapshot.spot1e9.toString(),
-    publishedAtMs: snapshot.publishedAtMs.toString(),
+    pythSourceTimestampMs: snapshot.pythSourceTimestampMs.toString(),
     bsSpot1e9: snapshot.bsSpot1e9.toString(),
-    bsSpotTsMs: snapshot.bsSpotTsMs,
+    bsSpotSourceTimestampMs: snapshot.bsSpotSourceTimestampMs,
     expiries: Object.fromEntries(
       [...snapshot.expiries.entries()].map(([expiryMs, entry]) => [
         String(expiryMs),
         {
           forward: entry.forward,
           forward1e9: entry.forward1e9.toString(),
-          forwardTsMs: entry.forwardTsMs,
+          forwardSourceTimestampMs: entry.forwardSourceTimestampMs,
           svi: entry.svi,
           svi1e9: {
             a: entry.svi1e9.a.toString(),
@@ -140,7 +138,7 @@ export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, u
             m: entry.svi1e9.m.toString(),
             mNegative: entry.svi1e9.mNegative,
           },
-          sviTsMs: entry.sviTsMs,
+          sviSourceTimestampMs: entry.sviSourceTimestampMs,
         },
       ]),
     ),
@@ -188,10 +186,10 @@ function finiteNumber(value: unknown, label: string): number {
 function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
   const h = strictObject(
     raw,
-    ["schemaVersion", "spot1e9", "publishedAtMs", "bsSpot1e9", "bsSpotTsMs", "expiries"],
+    ["schemaVersion", "spot1e9", "pythSourceTimestampMs", "bsSpot1e9", "bsSpotSourceTimestampMs", "expiries"],
     "snapshot",
   );
-  if (h.schemaVersion !== 1) {
+  if (h.schemaVersion !== 2) {
     throw new Error(`unsupported snapshot schemaVersion: ${String(h.schemaVersion)}`);
   }
   const encodedExpiries = h.expiries;
@@ -201,7 +199,7 @@ function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
   const entry = (e: any): ExpiryData => {
     const encoded = strictObject(
       e,
-      ["forward", "forward1e9", "forwardTsMs", "svi", "svi1e9", "sviTsMs"],
+      ["forward", "forward1e9", "forwardSourceTimestampMs", "svi", "svi1e9", "sviSourceTimestampMs"],
       "snapshot expiry",
     );
     const encodedSvi = strictObject(
@@ -228,7 +226,10 @@ function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
     return {
       forward: finiteNumber(encoded.forward, "snapshot expiry.forward"),
       forward1e9: integerString(encoded.forward1e9, "snapshot expiry.forward1e9"),
-      forwardTsMs: finiteNumber(encoded.forwardTsMs, "snapshot expiry.forwardTsMs"),
+      forwardSourceTimestampMs: finiteNumber(
+        encoded.forwardSourceTimestampMs,
+        "snapshot expiry.forwardSourceTimestampMs",
+      ),
       svi,
       svi1e9: {
         a: integerString(encodedFixed.a, "snapshot expiry.svi1e9.a"),
@@ -240,7 +241,10 @@ function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
         m: integerString(encodedFixed.m, "snapshot expiry.svi1e9.m"),
         mNegative: boolean(encodedFixed.mNegative, "snapshot expiry.svi1e9.mNegative"),
       },
-      sviTsMs: finiteNumber(encoded.sviTsMs, "snapshot expiry.sviTsMs"),
+      sviSourceTimestampMs: finiteNumber(
+        encoded.sviSourceTimestampMs,
+        "snapshot expiry.sviSourceTimestampMs",
+      ),
     };
   };
   const expiries = new Map<number, ExpiryData>();
@@ -250,9 +254,15 @@ function snapshotFrom(raw: unknown, wanted: number[]): MarketSnapshot {
   }
   return {
     spot1e9: integerString(h.spot1e9, "snapshot.spot1e9"),
-    publishedAtMs: integerString(h.publishedAtMs, "snapshot.publishedAtMs"),
+    pythSourceTimestampMs: integerString(
+      h.pythSourceTimestampMs,
+      "snapshot.pythSourceTimestampMs",
+    ),
     bsSpot1e9: integerString(h.bsSpot1e9, "snapshot.bsSpot1e9"),
-    bsSpotTsMs: finiteNumber(h.bsSpotTsMs, "snapshot.bsSpotTsMs"),
+    bsSpotSourceTimestampMs: finiteNumber(
+      h.bsSpotSourceTimestampMs,
+      "snapshot.bsSpotSourceTimestampMs",
+    ),
     expiries,
   };
 }
@@ -663,7 +673,7 @@ export class DirectWsSource implements MarketSource {
       if (verified <= 3 || verified % 30 === 0) {
         console.log(
           `[bs-signed] verified batch #${verified} kind=${batch.kind} ` +
-          `values=${batch.updates.length} source_timestamp_ms=${batch.batchTimestampMs}`,
+          `values=${batch.updates.length} batch_timestamp_ms=${batch.batchTimestampMs}`,
         );
       }
     } catch (error) {
@@ -797,18 +807,18 @@ export class DirectWsSource implements MarketSource {
         expiries.set(ms, {
           forward: fixedNumber(forward.raw1e9),
           forward1e9: forward.raw1e9,
-          forwardTsMs: forward.tsMs,
+          forwardSourceTimestampMs: forward.tsMs,
           svi: sviView(svi.raw1e9),
           svi1e9: svi.raw1e9,
-          sviTsMs: svi.tsMs,
+          sviSourceTimestampMs: svi.tsMs,
         });
       }
     }
     return {
       spot1e9: this.#spot1e9,
-      publishedAtMs: this.#spotMs,
+      pythSourceTimestampMs: this.#spotMs,
       bsSpot1e9: this.#bsSpot.raw1e9,
-      bsSpotTsMs: this.#bsSpot.tsMs,
+      bsSpotSourceTimestampMs: this.#bsSpot.tsMs,
       expiries,
     };
   }
