@@ -94,9 +94,9 @@ Predict reads it but does not own it.
 - **`BlockScholesValueStore`** — one per-underlying store of the latest BS spot
   and forward observations, keyed by signed series id, plus insert-only exact minute-boundary spot
   history. Predict reads `spot()` /
-  `forward(expiry_ms)` and each read's `source_timestamp_ms` envelope time for
-  freshness and trade-event reporting — the model time stays on the stored
-  observation as calibration identity — and `spot_at(expiry_ms)` for settlement fallback. Code
+  `forward(expiry_ms)` and each read's provider `value_timestamp`, exposed as
+  `source_timestamp_ms`, for freshness and trade-event reporting, and
+  `spot_at(expiry_ms)` for settlement fallback. Code
   module `propbook::block_scholes_store`.
 - **`BlockScholesSVIStore`** — one per-underlying store of the latest BS SVI
   parameter sets, keyed by signed series id. Predict reads `svi(expiry_ms)` and

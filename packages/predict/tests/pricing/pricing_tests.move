@@ -76,9 +76,9 @@ const ROLL_DOWN_EXPIRY_MS: u64 = 120_100;
 const ROLL_DOWN_MIDPOINT_MS: u64 = 120_050;
 const SHORT_ROLL_DOWN_EXPIRY_MS: u64 = 180_000;
 const SHORT_ROLL_DOWN_MIDPOINT_MS: u64 = 150_000;
-/// Halfway between the retransmit envelope (150_000) and expiry: the envelope anchor
-/// scales the surface by 1/2 here, while the original model anchor (120_000) would
-/// scale it by 1/4 — far enough apart that the ATM reference band tells them apart.
+/// The retransmit arrives at 150_000 but keeps source timestamp 120_000. Quoting at 165_000
+/// therefore scales the raw surface by 15/60 = 1/4; incorrectly using the batch timestamp would
+/// scale it by 15/30 = 1/2, far enough apart that the ATM reference band tells them apart.
 const SHORT_ROLL_DOWN_QUOTE_MS: u64 = 165_000;
 const ODD_ROLL_DOWN_VALUE: u64 = 11;
 const BOUNDARY_ROLL_DOWN_VALUE: u64 = 100;
@@ -173,13 +173,12 @@ fun rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by() {
     assert_eq!(sqrt_var, HALVED_B_SQRT_VAR);
 }
 
-/// A retransmission carries the tuple's original model time in a newer envelope, and the envelope
-/// is the economic clock: the roll-down re-anchors to the retransmit's publish time — the provider
-/// re-asserted the tuple as current there — and the snapshotted timestamp reports that same
-/// publish clock to trade events. Quoted between the retransmit and expiry, the envelope anchor
-/// scales the raw surface by 1/2; the old model anchor would have scaled it by 1/4.
+/// A retransmission carries the tuple's unchanged source timestamp in a newer batch. The batch is
+/// observable transport metadata, not an economic clock: it neither replaces the stored tuple nor
+/// re-anchors its roll-down. Quoted after the retransmit, the original source timestamp still
+/// scales the raw surface by 1/4 and is the timestamp snapshotted for trade events.
 #[test]
-fun svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp() {
+fun svi_retransmit_does_not_reanchor_roll_down_or_the_snapshotted_timestamp() {
     let mut fx = oracle_fixture::setup_oracle(
         test_constants::default_live_price(),
         test_constants::default_tick_size(),
@@ -227,18 +226,17 @@ fun svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp() {
     );
 
     let pricer = fx.load_pricer_bundle(&oracle);
-    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), SHORT_ROLL_DOWN_MIDPOINT_MS);
-    // Quoted at 165_000: remaining 15s over the envelope anchor's 30s horizon
-    // scales raw a=2 to effective a=1 and b remains zero. At K=F, positive
-    // variance gives d2=-sqrt(1e-9)/2, checked against the generated
-    // first-principles reference. Anchoring on the retransmitted tuple's model
-    // time instead would scale by 15s/60s and halve the effective variance again.
+    assert_eq!(pricer.block_scholes_svi_source_timestamp_ms(), ROLL_DOWN_ANCHOR_MS);
+    // Quoted at 165_000: remaining 15s over the source anchor's 60s horizon scales raw a=2 to
+    // effective a=0.5 and b remains zero. At K=F, positive variance gives
+    // d2=-sqrt(0.5e-9)/2, checked against the generated first-principles reference. Using the
+    // retransmit batch timestamp instead would double the effective variance.
     test_helpers::assert_within(
         pricer.range_price(
             strike(test_constants::default_live_price()),
             strike(constants::pos_inf!()),
         ),
-        ref_data::flat_surface_atm_up(),
+        ref_data::quarter_rolled_flat_surface_atm_up(),
         ref_data::flat_surface_atm_budget(),
     );
 
@@ -503,7 +501,7 @@ fun use_pyth_spot_for_forward_selects_the_live_forward_source() {
 }
 
 /// Decision-pinned: the setting selects Pyth whenever Pyth is independently fresh; it is not a
-/// newest-observation chooser. Here both Block Scholes price rows have later model timestamps, but
+/// newest-observation chooser. Here both Block Scholes price rows have later source timestamps, but
 /// the still-fresh Pyth spot remains the live anchor and carries the 1.0 Block Scholes basis.
 #[test]
 fun fresh_pyth_remains_selected_when_block_scholes_is_newer() {

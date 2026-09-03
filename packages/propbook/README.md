@@ -56,7 +56,7 @@ Pyth feeds and Block Scholes value stores retain independent insert-only exact h
   exact whole millisecond. The envelope at a tick carries Pyth's canonical price as
   of that tick, so a consumer settling at the tick resolves the right mark even when
   Pyth generated that price earlier and carried it forward.
-- Block Scholes uses the signed value-batch `source_timestamp_ms`. `apply_spot_batch` independently inserts the canonical spot when that timestamp is a whole-minute boundary, even when the observation does not advance `latest`; `insert_at` performs the same exact-history insertion without changing `latest`. A non-minute timestamp is a no-op for exact history in both paths and does not abort.
+- Block Scholes uses the spot update's signed `value_timestamp`, exposed as `source_timestamp_ms`. `apply_spot_batch` independently inserts the canonical spot when that timestamp is a whole-minute boundary, even when the observation does not advance `latest`; `insert_at` performs the same exact-history insertion without changing `latest`. A non-minute timestamp is a no-op for exact history in both paths and does not abort.
 - Block Scholes exact history admits only positive `u64`-representable spots. Zero or over-wide values remain available to the source-native `latest` path but do not claim the permanent exact key, so a later admissible observation at that timestamp can be inserted.
 
 An exact read succeeds only when a source observation was inserted at exactly the requested timestamp; there is no nearest, rounded, interpolated, or first-transaction-after-boundary lookup. The first admissible observation at a key owns it permanently, and exact insertion never rewrites `latest`.
@@ -126,26 +126,7 @@ Block Scholes data lives in two per-underlying shared objects:
 
 Writes are permissionless and enter only through `apply_spot_batch`, `insert_at`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
 
-Each stored observation carries three clocks: the provider model time the
-series data is "as of" (held fixed across retransmissions of an unchanged
-value; the provider's per-series replay key), the batch envelope time (the
-clock consumers price from — it gates freshness and anchors Predict's SVI
-roll-down — advancing on every provider flush), and the Sui execution time. A
-series' latest observation is ordered lexicographically on (model time,
-envelope time) with an envelope floor: newer model data wins only when its
-envelope is not older than the stored one, and an equal model time advances
-only with a fresher envelope — a retransmission re-asserts the value as
-current at its new publish time. The floor exists because consumers price
-from the stored envelope time, so a delayed batch whose newer model data
-arrived in an older envelope (a regressed provider publish stream) is skipped
-rather than allowed to move the pricing anchor backwards. A model time later
-than its own envelope is provider garbage and is skipped, mirroring the Pyth
-lane's `EFeedTimestampAfterEnvelope`; together with the envelope-not-after-
-execution bound, that keeps Predict's SVI roll-down anchor strictly before
-any live market's expiry. The stores keep no aggregate liveness field:
-consumers assert freshness on each series' own `source_timestamp_ms`, and
-provider-wide liveness is monitored off-chain from the per-batch
-`BlockScholesBatchIngested` events.
+Each stored observation carries two clocks: its provider source timestamp and its Sui execution time. Spot and forward source timestamps come from the signed update's `value_timestamp`; SVI source timestamps come from the signed update's `svi_timestamp`. A series advances only when its source timestamp is strictly newer than the stored one, so a retransmission with an unchanged update timestamp cannot refresh the observation. A zero or future source timestamp is skipped. Predict uses that one source timestamp for freshness, trade-event provenance, and, for SVI, the `a`/`b` roll-down anchor. The signed value/SVI batch timestamp is retained only on `BlockScholesBatchIngested` for provider-batch observability and does not participate in observation validity or ordering.
 
 Values are stored exactly as the verifier produced them (`u128`, provider
 scale). Propbook intentionally does not enforce Predict's pricing-safe numeric
