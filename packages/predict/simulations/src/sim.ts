@@ -16,7 +16,7 @@ import {
     bindFeedsToUnderlyingTx, clockTimestampMs, createAccountTx, createExpiryMarketTx,
     depositToAccountTx, deriveAccountWrapperId, execute, executeAndWait,
     finalizeDusdcCurrencyRegistrationTx, keeperSettleTx, lockCapitalTx,
-    mintLifecycleCapTx, readPredictEconomicState,
+    mintLifecycleCapTx, mintPoolValuationCapTx, readPredictEconomicState,
     rebalanceExpiryCashTx, redeemSettledTx, refreshOracleAndFlushTxs,
     refreshOracleAndMintTxs, refreshOracleAndRedeemTxs,
     registerUnderlyingAndCreateFeedsTx, requestSupplyTx, requestWithdrawTx,
@@ -230,9 +230,9 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): 
     if (row.action === "request_supply") return execute(() => requestSupplyTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, amount: row.amount, minPlpOut: row.minOutput }), `scenario_${row.step}_request_supply`);
     if (row.action === "request_withdraw") return execute(() => requestWithdrawTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, shares: row.shares, minDusdcOut: row.minOutput }), `scenario_${row.step}_request_withdraw`);
     if (row.action === "flush") {
-        if (row.oracleRefresh === null) return execute(() => bareFlushTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, lifecycleCapId: state.lifecycleCapId }), `scenario_${row.step}_flush_empty`);
+        if (row.oracleRefresh === null) return execute(() => bareFlushTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, poolValuationCapId: state.poolValuationCapId }), `scenario_${row.step}_flush_empty`);
         const oracle = row.oracleRefresh;
-        return execute(() => refreshOracleAndFlushTxs({ ...common, poolVaultId: state.poolVaultId, lifecycleCapId: state.lifecycleCapId, expiry: BigInt(state.expiryMs), ...oracleParams(oracle) }), `scenario_${row.step}_flush`);
+        return execute(() => refreshOracleAndFlushTxs({ ...common, poolVaultId: state.poolVaultId, poolValuationCapId: state.poolValuationCapId, expiry: BigInt(state.expiryMs), ...oracleParams(oracle) }), `scenario_${row.step}_flush`);
     }
     if (row.action === "rebalance_expiry_cash") return execute(() => rebalanceExpiryCashTx({ poolVaultId: state.poolVaultId, protocolConfigId: state.protocolConfigId, expiryMarketId: state.expiryMarketId }), `scenario_${row.step}_rebalance_expiry_cash`);
     if (row.action === "settle") {
@@ -260,6 +260,8 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     await executeAndWait(finalizeDusdcCurrencyRegistrationTx(), "finalize_dusdc_currency_registration");
     const capResult = await executeAndWait(mintLifecycleCapTx(address), "mint_lifecycle_cap");
     const lifecycleCapId = createdObjectId(capResult, "MarketLifecycleCap");
+    const valuationCapResult = await executeAndWait(mintPoolValuationCapTx(address), "mint_pool_valuation_cap");
+    const poolValuationCapId = createdObjectId(valuationCapResult, "PoolValuationCap");
     const feedResult = await executeAndWait(registerUnderlyingAndCreateFeedsTx(), "register_underlying_and_create_feeds");
     const pythFeedId = createdObjectId(feedResult, "pyth_feed::PythFeed");
     const bsValueStoreId = createdObjectId(feedResult, "BlockScholesValueStore");
@@ -287,7 +289,7 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     await executeAndWait(depositToAccountTx(accountWrapperId, integer(config.capital.manager_seed, "scenario config.capital.manager_seed")), "fund_simulation_account");
     await executeAndWait(lockCapitalTx(POOL_VAULT_ID), "bootstrap_lock_capital");
     await executeAndWait(requestSupplyTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, wrapperId: accountWrapperId, amount: integer(config.capital.vault_seed, "scenario config.capital.vault_seed") }), "bootstrap_request_supply");
-    await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId }), "bootstrap_flush");
+    await executeAndWait(bareFlushTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, poolValuationCapId }), "bootstrap_flush");
     await alignCreation(periodMs);
     const marketResult = await executeAndWait(createExpiryMarketTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, lifecycleCapId, cadenceId: config.market.cadence_id }), "create_and_share_expiry_market");
     const expiryMarketId = createdObjectId(marketResult, "ExpiryMarket");
@@ -298,7 +300,7 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     if (BigInt(expiryMs) !== expectedExpiry) throw new Error(`expected cadence expiry ${expectedExpiry}, got ${expiryMs}`);
     await executeAndWait(await seedOracleTx({ pythFeedId, bsValueStoreId, bsSviStoreId, expiry: BigInt(expiryMs), ...oracleParams(seed) }), "seed_oracle_surface");
     await executeAndWait(rebalanceExpiryCashTx({ poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId }), "bootstrap_rebalance_expiry_cash");
-    const state: SimState = { poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId, expiryMs, pythFeedId, bsValueStoreId, bsSviStoreId, accountWrapperId, lifecycleCapId, initialExpiryCash: initialExpiryCash.toString(), tickSize: tickSize.toString() };
+    const state: SimState = { poolVaultId: POOL_VAULT_ID, protocolConfigId: PROTOCOL_CONFIG_ID, expiryMarketId, expiryMs, pythFeedId, bsValueStoreId, bsSviStoreId, accountWrapperId, lifecycleCapId, poolValuationCapId, initialExpiryCash: initialExpiryCash.toString(), tickSize: tickSize.toString() };
     writeJson(STATE_PATH, state);
     return state;
 }

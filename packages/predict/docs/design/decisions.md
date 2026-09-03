@@ -758,3 +758,25 @@ RP-11's late-stake reasoning changed with this removal — the rebate is now the
 ## Storable mark separated from the trade pricer (2026-08-27)
 
 - **`Pricer` stays non-`store`; the flush uses a separate `FrozenPricer`.** The staged flush needs one mark per market held across transactions, which first motivated adding `store` to the live `Pricer`. But non-`store` was load-bearing: it is the type-level guarantee that a `Pricer` cannot be persisted and replayed into a fund-moving trade (the trade paths gate a supplied `&Pricer` on market-id alone, with no use-time freshness check). Making the live type storable would have downgraded that guarantee to an unenforceable doc convention, opening a permissionless stale-mark replay against `redeem_live`/`mint_*` (RP-32). Instead `Pricer` keeps `copy, drop` only, and the flush carries a distinct `FrozenPricer` (`has store`) held only in `PoolValuation`, minted by `pricing::into_frozen` at the snapshot stage and thawed back to a transient `Pricer` by `snapshot_nav` — neither constructor nor unwrapper is public, and no trade entrypoint accepts a `FrozenPricer`. *Rejected:* `store` on `Pricer` guarded by the convention "every other path loads fresh" (a convention cannot bind an adversary's PTB); a runtime freshness re-check in every trade path (a per-trade cost and a new config knob, and it must be re-audited for every new trade entrypoint, where the type separation holds automatically).
+
+## Pool-valuation authority split from the market-lifecycle cap (2026-09-03)
+
+- **Starting the flush is its own capability.** `PoolValuationCap`
+  (`capabilities/pool_valuation_cap`) is the sole authority to start the pool
+  flush: `registry::generate_pool_valuation_proof` issues a transaction-local
+  `PoolValuationProof` while the cap is allowlisted, and
+  `plp::start_pool_valuation` consumes it. `MarketLifecycleCap` keeps market
+  creation only. Both caps are minted by `AdminCap` into `Registry` allowlists
+  (mint version-gated, revoke by ID ungated); admin keeps break-glass by minting
+  itself a pool-valuation cap. *Rationale:* separation of duties by blast
+  radius — a market-creation key can never choose the valuation instant, a flush
+  key can never create a market, and each is revoked independently. *Rejected:*
+  an allowlist on `PoolVault` with a direct assert in `plp` — it would have
+  removed the proof indirection and dropped the registry from the flush
+  transaction, but it splits capability allowlists across two homes; the
+  registry stays the single home, and the proof bridges the `registry → plp`
+  dependency direction exactly as it did for the lifecycle cap. *Supersedes:*
+  the "sole flush authority" wording of "The flush is privileged (cron-driven),
+  not permissionless (audit L8)" above and the *Authorization* line of the
+  2026-08-24 duty inventory — both read `PoolValuationCap` where they say
+  `MarketLifecycleCap`.

@@ -1303,7 +1303,7 @@ fun superseding_after_a_partial_valuation_leaves_no_residue_and_re_values() {
     // fresh `start_pool_valuation` below discards this partial valuation (bumping the
     // flush ordinal, which staleness-invalidates m1's earlier snapshot stamp) and
     // begins clean. A fresh transaction is needed only so the shared `Registry` is
-    // takeable again for the new lifecycle proof — the realistic shape, where a
+    // takeable again for the new pool-valuation proof — the realistic shape, where a
     // superseding flush runs in a later transaction than the one that stalled.
     fx.scenario_mut().next_tx(test_constants::admin());
     let stage = fx.start_flush(&mut config, &mut vault);

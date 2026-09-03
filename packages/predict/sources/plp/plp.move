@@ -22,7 +22,6 @@ use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     lp_book::{Self, LpBook},
-    market_lifecycle_cap::MarketLifecycleProof,
     pool_accounting::{Self, Ledger},
     pricing::FrozenPricer,
     protocol_config::ProtocolConfig,
@@ -59,6 +58,13 @@ const ESnapshotStageOpen: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
+
+/// Transaction-local proof that an allowlisted `PoolValuationCap` authorized a
+/// flush start. `registry::generate_pool_valuation_proof` issues one after checking
+/// the allowlist, and `start_pool_valuation` consumes it. With no abilities, it
+/// cannot be stored, transferred, or dropped, so a revoked cap cannot start a
+/// valuation and a proof cannot outlive its transaction.
+public struct PoolValuationProof {}
 
 /// Transaction-local proof that the snapshot stage is still open.
 ///
@@ -265,16 +271,16 @@ public fun pending_protocol_profit(vault: &PoolVault): u64 {
     vault.expiry_accounting.pending_protocol_profit()
 }
 
-/// Begin a full-pool valuation using a registry-issued lifecycle proof. The proof
-/// grants control over when current oracle state is frozen for queued LP fills.
-/// Starting engages the cross-transaction valuation flag, snapshots the active
-/// expiry set and each LP queue's eligibility cutoff, and opens the atomic
+/// Begin a full-pool valuation using a registry-issued pool-valuation proof. The
+/// proof grants control over when current oracle state is frozen for queued LP
+/// fills. Starting engages the cross-transaction valuation flag, snapshots the
+/// active expiry set and each LP queue's eligibility cutoff, and opens the atomic
 /// snapshot stage: freeze every active market's pricer under the returned
 /// `SnapshotStage`, then seal it in the same transaction.
 public fun start_pool_valuation(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,
-    lifecycle_proof: MarketLifecycleProof,
+    valuation_proof: PoolValuationProof,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
     clock: &Clock,
@@ -285,7 +291,7 @@ public fun start_pool_valuation(
     // back a second `SnapshotStage` hot potato. A stranded flush is always sealed
     // (seal cleared the flag), so superseding it with a fresh start is unaffected.
     config.assert_snapshot_not_in_progress();
-    lifecycle_proof.destroy_proof();
+    let PoolValuationProof {} = valuation_proof;
     start_pool_valuation_internal(config, vault, supply_budget, withdraw_budget, clock);
     SnapshotStage {}
 }
@@ -831,6 +837,13 @@ public fun cancel_withdraw_request(
     );
 }
 
+/// Construct the flush-start proof. Called only by
+/// `registry::generate_pool_valuation_proof` after it validates the
+/// `PoolValuationCap` against the registry allowlist.
+public(package) fun new_pool_valuation_proof(): PoolValuationProof {
+    PoolValuationProof {}
+}
+
 /// Register a freshly created expiry market with the pool as an accounting row.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_and_share_expiry_market`.
@@ -1092,9 +1105,9 @@ fun materialize_expiry_profit(
 }
 
 /// Engage the valuation flag, mint this flush's ordinal, and record its frozen
-/// facts — the active expiry set, the starter, the start time, and each LP
-/// queue's eligibility cutoff — after requiring a bootstrapped pool with nonzero
-/// PLP supply.
+/// facts — the active expiry set, the start time, and each LP queue's
+/// eligibility cutoff — after requiring a bootstrapped pool with nonzero PLP
+/// supply.
 fun start_pool_valuation_internal(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,

@@ -169,6 +169,7 @@ export interface SimState extends OracleFeedIds {
     expiryMs: string;
     accountWrapperId: string;
     lifecycleCapId: string;
+    poolValuationCapId: string;
     initialExpiryCash: string;
     tickSize: string;
 }

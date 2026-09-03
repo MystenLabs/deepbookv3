@@ -17,13 +17,15 @@ loss/compromise/leak is recoverable.
 
 **Roles to map:**
 - **AdminCap** (`capabilities/admin`) — full surface: every config setter (+ the hard bounds that do/don't
-  constrain it), source/market/incentive creation, version enable/disable, pause-cap & lifecycle-cap mint.
+  constrain it), source/market/incentive creation, version enable/disable, pause-cap, lifecycle-cap & pool-valuation-cap mint.
   Any contract-layer timelock/multisig, or pure single-key trust? Max damage from one compromised admin tx?
 - **PauseCap** (`capabilities/pause_cap`) — pause trading / per-pool mint / disable versions; one-way vs
   reversible; transferability; revoke-by-id channel; can a leaked cap DoS, for how long?
-- **MarketLifecycleCap** (`capabilities/market_lifecycle_cap`) — the **privileged flush** gate (the
+- **MarketLifecycleCap** (`capabilities/market_lifecycle_cap`) — the market-creation gate. Revocation by id;
+  can a revoked cap still create a market? Can it reach the flush by any path?
+- **PoolValuationCap** (`capabilities/pool_valuation_cap`) — the **privileged flush** gate (the
   permissionless flush was removed to close the NAV-manipulation gate; admin keeps break-glass by minting
-  itself one). Revocation by id; can a revoked cap still flush?
+  itself one). Revocation by id; can a revoked cap still flush? Can a lifecycle cap?
 - **predict_account custody auth** — THE high-value user-custody surface. NOTE: the old predict-side
   `TradeCap`/`DepositCap`/`WithdrawCap`/trade-proof model was REMOVED when custody moved to the `account`
   package; do not hunt for it. The current model (`account::Auth` owner-auth + `Permit<PredictApp>` app-auth)
