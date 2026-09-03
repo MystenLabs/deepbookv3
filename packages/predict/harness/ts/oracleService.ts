@@ -15,6 +15,7 @@ import {
   type MarketSnapshot,
   DirectWsSource,
   HubSource,
+  appliedOracleSourcesFromEvents,
   projectLandedSnapshot,
   serializableSnapshot,
   snapshotFrom,
@@ -53,18 +54,15 @@ async function waitForFeeds(): Promise<Feeds> {
 async function submit(
   tx: any,
   signer: any,
-): Promise<{ digest: string; clockTimestampMs: number }> {
+): Promise<{ digest: string; events: readonly unknown[] }> {
   const r = await executeWithSignerAndWait(
     tx,
     signer,
     "oracle-refresh",
     GAS_BUDGET,
-    { effects: true },
+    { effects: true, events: true },
   );
-  if (r.clockTimestampMs === null) {
-    throw new Error("oracle refresh receipt did not expose its Sui Clock timestamp");
-  }
-  return { digest: r.digest, clockTimestampMs: r.clockTimestampMs };
+  return { digest: r.digest, events: r.events ?? [] };
 }
 
 // A shared hub snapshot (parallel runs) or our own provider WS pair.
@@ -190,8 +188,7 @@ async function main() {
       landedSnapshot = projectLandedSnapshot(
         landedSnapshot,
         snap,
-        receipt.clockTimestampMs,
-        pythTs,
+        appliedOracleSourcesFromEvents(receipt.events),
       );
       atomicWriteFile(snapshotPath, JSON.stringify(serializableSnapshot(landedSnapshot)));
       pushes++;

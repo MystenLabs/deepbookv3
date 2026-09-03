@@ -145,43 +145,122 @@ export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, u
   };
 }
 
-function sourceAdvances(
-  sourceTimestampMs: number,
-  previousSourceTimestampMs: number | undefined,
-  onchainTimestampMs: number,
-): boolean {
-  return sourceTimestampMs > 0 &&
-    sourceTimestampMs <= onchainTimestampMs &&
-    (previousSourceTimestampMs === undefined || sourceTimestampMs > previousSourceTimestampMs);
+export interface AppliedOracleSources {
+  pythSourceTimestampMs: bigint | null;
+  bsSpotSourceTimestampMs: number | null;
+  forwardSourceTimestampMsByExpiry: ReadonlyMap<number, number>;
+  sviSourceTimestampMsByExpiry: ReadonlyMap<number, number>;
 }
 
-/// Project the provider snapshot to the values expected to have advanced on-chain. Equal-source
-/// retransmissions retain the previously landed value, including rolled SVI parameters.
+function eventInteger(value: unknown, label: string): bigint {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
+  throw new Error(`${label} must be a nonnegative integer`);
+}
+
+function eventSafeNumber(value: unknown, label: string): number {
+  const integer = eventInteger(value, label);
+  if (integer > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${label} exceeds JavaScript's safe integer range`);
+  }
+  return Number(integer);
+}
+
+/// Extract the source clocks that the successful refresh transaction actually stored. Both
+/// Propbook event families emit only when their lane advances, so an absent event proves that an
+/// equal, stale, or future-skewed candidate was a no-op even though the transaction succeeded.
+export function appliedOracleSourcesFromEvents(events: readonly unknown[]): AppliedOracleSources {
+  let pythSourceTimestampMs: bigint | null = null;
+  let bsSpotSourceTimestampMs: number | null = null;
+  const forwardSourceTimestampMsByExpiry = new Map<number, number>();
+  const sviSourceTimestampMsByExpiry = new Map<number, number>();
+
+  for (const rawEvent of events) {
+    if (rawEvent === null || typeof rawEvent !== "object") continue;
+    const event = rawEvent as Record<string, unknown>;
+    if (typeof event.type !== "string") continue;
+    const parsedJson = event.parsedJson;
+    if (parsedJson === null || typeof parsedJson !== "object" || Array.isArray(parsedJson)) continue;
+    const fields = parsedJson as Record<string, unknown>;
+    const observation = fields.observation;
+    if (observation === null || typeof observation !== "object" || Array.isArray(observation)) continue;
+    const observationFields = observation as Record<string, unknown>;
+
+    if (
+      event.type.includes("::oracle_lane::ObservationRecorded<") &&
+      event.type.includes("::pyth_feed::RawSpot")
+    ) {
+      pythSourceTimestampMs = eventInteger(
+        observationFields.source_timestamp_ms,
+        "Pyth ObservationRecorded.source_timestamp_ms",
+      );
+      continue;
+    }
+    if (!event.type.includes("::block_scholes_store::BlockScholesObservationRecorded<")) continue;
+
+    const sourceTimestampMs = eventSafeNumber(
+      observationFields.source_timestamp_ms,
+      "BlockScholesObservationRecorded.source_timestamp_ms",
+    );
+    const seriesKind = eventSafeNumber(fields.series_kind, "BlockScholesObservationRecorded.series_kind");
+    const expiryMs = eventSafeNumber(fields.expiry_ms, "BlockScholesObservationRecorded.expiry_ms");
+    if (seriesKind === 0) {
+      bsSpotSourceTimestampMs = sourceTimestampMs;
+    } else if (seriesKind === 1) {
+      forwardSourceTimestampMsByExpiry.set(expiryMs, sourceTimestampMs);
+    } else if (seriesKind === 2) {
+      sviSourceTimestampMsByExpiry.set(expiryMs, sourceTimestampMs);
+    } else {
+      throw new Error(`unknown Block Scholes series_kind ${seriesKind}`);
+    }
+  }
+
+  return {
+    pythSourceTimestampMs,
+    bsSpotSourceTimestampMs,
+    forwardSourceTimestampMsByExpiry,
+    sviSourceTimestampMsByExpiry,
+  };
+}
+
+function eventAdvances(
+  appliedSourceTimestampMs: number | null | undefined,
+  candidateSourceTimestampMs: number,
+  previousSourceTimestampMs: number | undefined,
+): boolean {
+  return appliedSourceTimestampMs === candidateSourceTimestampMs &&
+    appliedSourceTimestampMs > (previousSourceTimestampMs ?? 0);
+}
+
+/// Project only values whose successful receipt contains the corresponding on-chain advance event.
+/// Equal-source retransmissions retain the previously landed value, including rolled SVI parameters.
 export function projectLandedSnapshot(
   previous: MarketSnapshot | null,
   candidate: MarketSnapshot,
-  onchainTimestampMs: number,
-  pythAppliedSourceTimestampMs: bigint | null,
+  applied: AppliedOracleSources,
 ): MarketSnapshot {
-  const pythAdvances = pythAppliedSourceTimestampMs !== null &&
-    pythAppliedSourceTimestampMs > (previous?.pythSourceTimestampMs ?? 0n);
-  const bsSpotAdvances = sourceAdvances(
+  const appliedPythSourceTimestampMs = applied.pythSourceTimestampMs;
+  const pythAdvances = appliedPythSourceTimestampMs !== null &&
+    appliedPythSourceTimestampMs > (previous?.pythSourceTimestampMs ?? 0n);
+  const bsSpotAdvances = eventAdvances(
+    applied.bsSpotSourceTimestampMs,
     candidate.bsSpotSourceTimestampMs,
     previous?.bsSpotSourceTimestampMs,
-    onchainTimestampMs,
   );
   const expiries = new Map<number, ExpiryData>();
   for (const [expiryMs, next] of candidate.expiries) {
     const prior = previous?.expiries.get(expiryMs);
-    const forwardAdvances = sourceAdvances(
+    const forwardAdvances = eventAdvances(
+      applied.forwardSourceTimestampMsByExpiry.get(expiryMs),
       next.forwardSourceTimestampMs,
       prior?.forwardSourceTimestampMs,
-      onchainTimestampMs,
     );
-    const sviAdvances = sourceAdvances(
+    const sviAdvances = eventAdvances(
+      applied.sviSourceTimestampMsByExpiry.get(expiryMs),
       next.sviSourceTimestampMs,
       prior?.sviSourceTimestampMs,
-      onchainTimestampMs,
     );
     expiries.set(expiryMs, {
       forward: forwardAdvances || !prior ? next.forward : prior.forward,
@@ -199,7 +278,7 @@ export function projectLandedSnapshot(
   return {
     spot1e9: pythAdvances || !previous ? candidate.spot1e9 : previous.spot1e9,
     pythSourceTimestampMs: pythAdvances
-      ? pythAppliedSourceTimestampMs
+      ? appliedPythSourceTimestampMs
       : (previous?.pythSourceTimestampMs ?? 0n),
     bsSpot1e9: bsSpotAdvances || !previous ? candidate.bsSpot1e9 : previous.bsSpot1e9,
     bsSpotSourceTimestampMs: bsSpotAdvances

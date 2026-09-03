@@ -7,6 +7,7 @@ import test from "node:test";
 import { nextDeployableExpiry } from "./cadenceSchedule.js";
 import {
   HubSource,
+  appliedOracleSourcesFromEvents,
   blockScholesForwardSubscription,
   blockScholesSpotSubscription,
   blockScholesSubscribeRequest,
@@ -112,7 +113,12 @@ test("landed snapshot advances each source independently and ignores retransmit 
       sviSourceTimestampMs: 80,
     }]]),
   };
-  const landed = projectLandedSnapshot(previous, candidate, 100, 99n);
+  const landed = projectLandedSnapshot(previous, candidate, {
+    pythSourceTimestampMs: 99n,
+    bsSpotSourceTimestampMs: null,
+    forwardSourceTimestampMsByExpiry: new Map([[expiry, 95]]),
+    sviSourceTimestampMsByExpiry: new Map(),
+  });
   assert.equal(landed.spot1e9, 11n);
   assert.equal(landed.pythSourceTimestampMs, 99n);
   assert.equal(landed.bsSpot1e9, 20n);
@@ -123,9 +129,71 @@ test("landed snapshot advances each source independently and ignores retransmit 
     ...candidate,
     bsSpot1e9: 22n,
     bsSpotSourceTimestampMs: 101,
-  }, 100, null);
+  }, {
+    pythSourceTimestampMs: null,
+    bsSpotSourceTimestampMs: null,
+    forwardSourceTimestampMsByExpiry: new Map(),
+    sviSourceTimestampMsByExpiry: new Map(),
+  });
   assert.equal(future.bsSpot1e9, 20n);
   assert.equal(future.bsSpotSourceTimestampMs, 100);
+});
+
+test("landed snapshot does not infer an on-chain advance after local state is lost", () => {
+  const expiry = 200_000;
+  const candidate = {
+    spot1e9: 11n,
+    pythSourceTimestampMs: 101n,
+    bsSpot1e9: 21n,
+    bsSpotSourceTimestampMs: 100,
+    expiries: new Map([[expiry, {
+      forward: 31,
+      forward1e9: 31n,
+      forwardSourceTimestampMs: 95,
+      svi: { alpha: 0.09, beta: 0.18, rho: -0.3, m: 0.4, sigma: 0.5 },
+      svi1e9: {
+        a: 9n, aNegative: false, b: 2n, sigma: 3n, rho: 4n,
+        rhoNegative: true, m: 5n, mNegative: false,
+      },
+      sviSourceTimestampMs: 80,
+    }]]),
+  };
+
+  // A successful transaction can still be a complete on-chain no-op when another relayer
+  // already stored equal/newer source times. With no local snapshot, timestamps alone cannot
+  // prove which candidate values landed.
+  const landed = projectLandedSnapshot(null, candidate, {
+    pythSourceTimestampMs: null,
+    bsSpotSourceTimestampMs: null,
+    forwardSourceTimestampMsByExpiry: new Map(),
+    sviSourceTimestampMsByExpiry: new Map(),
+  });
+  assert.equal(landed.bsSpotSourceTimestampMs, 0);
+  assert.equal(landed.expiries.get(expiry)?.forwardSourceTimestampMs, 0);
+  assert.equal(landed.expiries.get(expiry)?.sviSourceTimestampMs, 0);
+});
+
+test("oracle receipt events identify exactly which source lanes advanced", () => {
+  const expiry = 200_000;
+  const applied = appliedOracleSourcesFromEvents([
+    {
+      type: "0x1::oracle_lane::ObservationRecorded<0x1::oracle_lane::OracleRead<0x1::pyth_feed::RawSpot>>",
+      parsedJson: { observation: { source_timestamp_ms: "101" } },
+    },
+    {
+      type: "0x1::block_scholes_store::BlockScholesObservationRecorded<0x1::block_scholes_store::BsRead<u128>>",
+      parsedJson: {
+        series_kind: 1,
+        expiry_ms: String(expiry),
+        observation: { source_timestamp_ms: "95" },
+      },
+    },
+  ]);
+
+  assert.equal(applied.pythSourceTimestampMs, 101n);
+  assert.equal(applied.bsSpotSourceTimestampMs, null);
+  assert.equal(applied.forwardSourceTimestampMsByExpiry.get(expiry), 95);
+  assert.equal(applied.sviSourceTimestampMsByExpiry.size, 0);
 });
 
 test("strategy pricing mirror enforces source freshness and stale-Pyth fallback", () => {
