@@ -60,7 +60,7 @@ The same window bounds the mark's staleness: fills execute at finish time agains
 
 ### The flush is privileged, not permissionless
 
-Only a market-deployer's `MarketLifecycleCap` may **start** a flush (via `start_pool_valuation`, on a registry-issued lifecycle proof), and the snapshot stage cannot leave the starting transaction — so the privileged start fixes the frozen mark and commits the per-queue drain budgets that the rest of the flush honors. `value_expiry` and `finish_flush` are then permissionless (finish gated only by the staleness window), which is safe precisely because the mark and budgets are already fixed. There is no separate abort or restart entrypoint: a fresh start supersedes a stranded flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a lifecycle cap.
+Only a pool-valuation operator's `PoolValuationCap` may **start** a flush (via `start_pool_valuation`, on a registry-issued pool-valuation proof), and the snapshot stage cannot leave the starting transaction — so the privileged start fixes the frozen mark and commits the per-queue drain budgets that the rest of the flush honors. `value_expiry` and `finish_flush` are then permissionless (finish gated only by the staleness window), which is safe precisely because the mark and budgets are already fixed. There is no separate abort or restart entrypoint: a fresh start supersedes a stranded flush. The root `AdminCap` flush path was removed — the flush is routine maintenance that should run on a revocable cap, not the irrevocable root cap; admin keeps a break-glass route by minting itself a pool-valuation cap.
 
 This is a deliberate audit decision (L8): the flush prices supply and withdraw against a live oracle, so leaving it permissionless would let anyone sandwich the mark with their own oracle update. The cap-holder is trusted not to manipulate the live oracle at the snapshot instant, which is the trust that makes the single frozen mark sound.
 
@@ -93,7 +93,7 @@ There is **no band, no separate supply/withdraw pricing, and no optimistic/conse
 ```mermaid
 flowchart TD
   subgraph S1[Stage 1 - snapshot, one atomic tx]
-    CAP[MarketLifecycleCap] -->|start_pool_valuation| REC[record active set, starter, start time, queue cutoffs]
+    CAP[PoolValuationCap] -->|start_pool_valuation| REC[record active set, start time, queue cutoffs]
     REC -->|snapshot_expiry_pricer x N| FRZ[freeze one Pricer per live market + stamp it]
     FRZ -->|seal_valuation_snapshot| SEAL[snapshot proven complete]
   end

@@ -35,8 +35,9 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - **Oracle operator** — pushes Block-Scholes spot/forward/SVI updates into the `propbook` feeds; settlement
   is **passive** (no operator settle entrypoint).
 - **Admin** — holds `AdminCap`; tunes config, creates markets/sources, manages versions; can mint itself a
-  `MarketLifecycleCap` for break-glass.
-- **Market-lifecycle operator** — holds `MarketLifecycleCap` (revocable); starts the **privileged** cron flush.
+  `PoolValuationCap` for break-glass.
+- **Market-lifecycle operator** — holds `MarketLifecycleCap` (revocable); creates expiry markets.
+- **Pool-valuation operator** — holds `PoolValuationCap` (revocable); starts the **privileged** cron flush.
 - **Pause operator** — holds `PauseCap`; pauses trading/minting, disables versions.
 - **Account admin** — holds `account::AccountAdminCap`; authorizes/deauthorizes apps (e.g. `PredictApp`) on the custody layer.
 
@@ -46,7 +47,7 @@ DUSDC (settlement/custody for all trading + payouts, and the sponsored fee-incen
 ## Module map (CURRENT)
 
 ### `predict` (31 modules — the protocol core)
-- `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap & lifecycle-cap allowlists, `create_and_share_expiry_market`.
+- `registry/registry.move` — protocol root: version set, Pyth-feed/incentive indexes, object creation, pause-cap, lifecycle-cap & pool-valuation-cap allowlists, `create_and_share_expiry_market`.
 - `registry/market_manager.move` — cadence-driven market deployment: per-underlying watermarks, cadence config, `next_deployable_market`, higher-rank slot reservation.
 - `predict_account.move` — per-user account; DUSDC custody via an inner `account::Account`; positions and builder-code attribution; authorization via `account::Auth` (owner) / app-auth (`Permit<PredictApp>` via `generate_auth_as_app`), not predict-side caps.
 - `builder_code.move` — fee-attribution object; accrues + claims builder fees.
@@ -57,7 +58,7 @@ DUSDC (settlement/custody for all trading + payouts, and the sponsored fee-incen
 - `constants.move` — upgrade-only constants/sentinels (version, scalings, `pos_inf_tick`, resolution period).
 - `pricing/pricing.move` — the live pricing boundary: binds the market's underlying to current propbook feeds, pre-expiry live-pricing check, feed freshness, the pricing-safe surface envelope (forward>0, basis, |rho|<=1, sigma band), SVI variance + normal-CDF binary pricing; settlement read.
 - `config/` — `protocol_config.move` (global admin knobs + trading-pause + valuation lock + per-expiry rows), `config_constants.move` (defaults + hard bounds + `assert_*` validators), and per-subsystem snapshot configs: `pricing_config`, `ewma_config`, `strike_exposure_config`.
-- `capabilities/` — `admin.move` (singleton `AdminCap`), `market_lifecycle_cap.move` (revocable flush gate), `pause_cap.move` (versioned pause / per-pool mint pause).
+- `capabilities/` — `admin.move` (singleton `AdminCap`), `market_lifecycle_cap.move` (revocable market-creation gate), `pool_valuation_cap.move` (revocable flush gate), `pause_cap.move` (versioned pause / per-pool mint pause).
 - `plp/plp.move` — LP vault: idle DUSDC, PLP treasury, per-expiry rebalancing, incentive streams, full-pool valuation (`PoolValuation` hot potato), the privileged flush.
 - `plp/pool_accounting.move` — durable per-expiry sent/received flows, profit basis, loss watermarks, funding caps, `pending_protocol_profit` (D033 deferred-carry).
 - `plp/lp_book.move` — async supply/withdraw request queues + FIFO drain at the frozen mark.

@@ -241,16 +241,22 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   valuation to a favorable oracle state and capture mispriced LP fills.
 - **Controller:** protocol (who may start a flush is protocol-controlled — so
   this one *is* enforceable as an invariant).
-- **Response:** gate the flush behind the revocable `MarketLifecycleCap`; the
-  accepted cost is a trust assumption — the operator chooses the valuation
-  instant (never the price: the mark is the exact NAV at that instant) and
-  must run flushes for LP liveness.
+- **Response:** gate the flush behind the revocable `PoolValuationCap` (a
+  separate key from the market-creation `MarketLifecycleCap`); the accepted
+  cost is a trust assumption — the operator chooses the valuation instant
+  (never the price: the mark is the exact NAV at that instant) and must run
+  flushes for LP liveness.
 - **Reasoning + disclosure:** `docs/risks.md` "The privileged flush"; audit
   lens L8 (NAV-timing manipulation closed by privilege).
 - **Risk profile:** `BEST-GUESS` — operator-timing abuse bounded by mark
   exactness; liveness depends on flush cadence (disclosed).
-- **Pinning tests:** not yet catalogued — fill in when this entry is next
-  touched.
+- **Pinning tests:** `pool_valuation_cap_tests.move` —
+  `generate_proof_with_revoked_pool_valuation_cap_aborts`,
+  `revoke_unknown_pool_valuation_cap_aborts`, and
+  `destroy_pool_valuation_cap_does_not_revoke`; every flow test that starts a
+  flush does so through `flow_test_helpers::start_flush`, which mints the proof
+  from the fixture's `PoolValuationCap`, so a flush start without that cap has
+  no test-visible path.
 - **Reopen when:** a continuous/permissionless valuation design (e.g.
   commit-reveal or TWAP mark) is ever proposed.
 
