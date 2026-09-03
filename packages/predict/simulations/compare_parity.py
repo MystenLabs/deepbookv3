@@ -17,7 +17,7 @@ OBSERVATIONAL_EVENT_FIELDS = {
     "block_scholes_forward_source_timestamp_ms",
     "block_scholes_svi_source_timestamp_ms",
 }
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v5"
 REQUIRED_ACTIONS = [
     "mint",
     "redeem_live",

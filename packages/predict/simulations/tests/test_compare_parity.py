@@ -211,7 +211,7 @@ class ParityArtifactValidationTests(unittest.TestCase):
 
     def test_rejects_stale_economic_schema(self) -> None:
         payload = current_payload()
-        payload["schema_version"] = "predict_economic_v3"
+        payload["schema_version"] = "predict_economic_v4"
 
         with self.assertRaisesRegex(SystemExit, "unsupported economic schema"):
             compare.validate_economic_payload(payload, "local")

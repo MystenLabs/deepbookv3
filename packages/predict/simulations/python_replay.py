@@ -16,7 +16,7 @@ from sim_artifacts import load_local_trace, write_json
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v4"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v5"
 LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5"
 EXPECTED_ACTION_SEQUENCE = (
     "mint",

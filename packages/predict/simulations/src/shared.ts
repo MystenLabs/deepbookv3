@@ -384,7 +384,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
 }
 
-export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v4";
+export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v5";
 export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v5";
 export const STATE_PATH = path.join(INSTANCE_DIR, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(INSTANCE_DIR, "artifacts", "local_trace.json");
