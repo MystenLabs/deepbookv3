@@ -306,33 +306,15 @@ on-chain compute and should not be cited as the answer.
 **Action:** fold a re-measurement into the C-2 localnet campaign rather than
 running one for this alone.
 
-### P-31: A provider envelope ahead of the Sui clock silently empties the feed
+### P-31: A provider source timestamp ahead of the Sui clock silently empties the feed
 
 **Severity:** Medium; liveness, misattributed failure.
 
-`block_scholes_store::apply` returns `false` rather than aborting when
-`source_timestamp_ms > onchain_timestamp_ms` — the batch's envelope time is ahead of the
-Sui `Clock` at execution. The transaction still succeeds, so the relayer sees
-success, and the only signal is `applied` reading below `update_count` in
-`BlockScholesBatchIngested`. Skipping is the right response for one unusable
-entry, but this particular condition is not per-entry: the provider's publish
-clock and the Sui checkpoint clock are independent, so a provider running even
-slightly ahead at relay latency fails *every* observation in *every* batch. The
-feed then looks like it is ingesting while nothing is ever stored, and pricing
-halts a freshness window later on `EBlockScholesPriceStale` — an error naming
-provider staleness for what is actually clock skew on our side of the boundary.
+`block_scholes_store::apply` returns `false` rather than aborting when `source_timestamp_ms > onchain_timestamp_ms` — the update's `value_timestamp` or `svi_timestamp` is ahead of the Sui `Clock` at execution. The transaction still succeeds, so the relayer sees success, and the on-chain signal is `applied` reading below `update_count` in `BlockScholesBatchIngested`. Skipping is the right response for one unusable entry, but the provider source clock and Sui checkpoint clock are independent, so a consistently positive skew can reject every observation. The feed then looks like it is ingesting while nothing advances, and pricing halts a freshness window later on `EBlockScholesPriceStale` — an error naming provider staleness for what is actually clock skew at the boundary.
 
-The comparison has a real duty and is not simply removable: accepting a
-future-dated envelope would let that observation win the `(model, source)`
-ordering against every honest later batch at equal model time, pinning the
-series until its model time advances.
+The comparison has a real duty and is not simply removable: accepting a future-dated source timestamp would let that observation win strict source ordering and pin the series until an even later honest source timestamp arrives.
 
-**Action:** Measure the observed `source_timestamp_ms - onchain_timestamp_ms` distribution
-against the live provider before a value-bearing deployment, and alert on
-`update_count > 0 && applied == 0` sustained across consecutive batches, which
-is what distinguishes this from a genuinely quiet feed. If the observed margin
-is thin, decide the response deliberately — a bounded tolerance on the
-comparison is a `response-policies.md` decision, not a silent widening.
+**Action:** Measure each provider `value_timestamp`/`svi_timestamp` minus the Sui clock before a value-bearing deployment and alert explicitly on positive source skew. `update_count > applied` remains a supporting on-chain symptom, but `applied == 0` alone is not diagnostic because unchanged-source retransmissions are legitimate no-ops. If the observed margin is thin, decide the response deliberately — a bounded tolerance on the comparison is a `response-policies.md` decision, not a silent widening.
 
 ### P-32: A filled payout tree denies new strike ranges in its own market
 

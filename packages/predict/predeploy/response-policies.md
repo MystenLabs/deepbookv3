@@ -951,102 +951,16 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-21: Block Scholes series age from their publish timestamps (resolves P-2, P-24; reanchored by DBU-715)
+## RP-21: Block Scholes series age from per-update source timestamps (resolves P-2, P-24; reanchored by DBU-715 and DBU-779)
 
-- **Trigger state:** the Block Scholes publisher retransmits an unchanged spot,
-  forward, or normalized SVI tuple, or stops publishing a series entirely. A
-  retransmission advances the transport envelope while the series retains the
-  model timestamp at which the provider last derived the value; for SVI,
-  time-to-expiry also continues to decrease.
-- **Controller:** external × protocol clock — the publisher controls the
-  series values, model timestamps, and envelope cadence; elapsed time is
-  objective on-chain state.
-- **Blast radius:** every live quote, mint, redeem, and NAV read
-  that consumes the series. A stale spot affects every market on the
-  underlying; a stale forward or SVI affects its expiry. Because a flush must
-  value every active market, any one stale required series blocks the pool-wide
-  flush and all queued LP fills. Exact settlement does not use these latest-series freshness checks; its post-grace Block Scholes fallback reads insert-only exact history.
-- **Response:** fail closed on publish age — a series is usable while its
-  signed batch envelope time is inside the window, and each publish is trusted
-  as the provider's assertion that the carried value is current then. Spot and
-  forward age out at `block_scholes_price_freshness_ms` (10s by default); SVI
-  ages out at `block_scholes_svi_freshness_ms` (60s by default, configurable up
-  to a 120s maximum). A retransmission of an unchanged tuple therefore
-  refreshes the series and re-anchors the SVI roll-down at its new publish
-  time; pricing halts only when envelopes stop arriving, and recovery is
-  resumed publishing followed by retrying the affected action or flush. The
-  store keys ordering on model time first and never lets a series' stored
-  envelope time regress (`propbook::block_scholes_store::apply`), so the anchor
-  is monotone. Predict computes
-  `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and
-  `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)` with
-  `anchor_tte_ms = expiry - published_at`, both **at 1e18** with
-  a `u256` intermediate, and hands them to the variance path in that domain;
-  `rho`, `m`, and `sigma` are unchanged. The scaled results are carried at 1e18
-  rather than narrowed back to 1e9 because the roll-down multiplies terms that
-  are themselves tiny on short-dated surfaces — a 1e9 floor costs up to a whole
-  raw unit of `a`, and a short-dated `a` is only about ten raw units, so the
-  truncation alone breached the ratified price-deviation bound (P-14's defect,
-  one layer upstream). The SVI freshness bound also caps the
-  roll-down attenuation at `anchor_tte / remaining <= 1 + freshness / remaining`,
-  which puts the floor-to-zero arm (`anchor_tte >= 1e9 * remaining_ms`) out of
-  reach of any live quote; the residual non-positive-variance cases are the
-  sign/cancellation ones — they depend on the sign of `a` and on cancellation
-  between `a` and `b·inner`, not on `a` alone. The existing
-  `ENonPositiveVariance` guard remains authoritative for that state, including
-  in pool valuation.
-- **Reasoning:** the provider contract (stated 2026-08-09) is that the model
-  timestamp is re-derived roughly every 20 seconds and that an SVI publish
-  whose model time is unchanged carries the same calibration already rolled
-  down to its new publish time — duplicate SVI retransmission does not exist.
-  The published `a`/`b` therefore always describe the variance remaining over
-  the horizon from publish, making the publish time the only correct roll-down
-  anchor: the previous model anchor under-scaled the surface whenever publish
-  lagged calibration (it re-applied a discount the provider had already
-  applied). Keying freshness on the same clock keeps one economic clock per
-  read and makes liveness a transport property: a quiet-but-publishing feed
-  keeps pricing (the earlier model-keyed policy halted the flush on exactly
-  that state), at the trust cost that the contract itself is unverifiable
-  on-chain — a provider republishing without actually rolling or recalibrating
-  moves quotes as if the surface were current. Calibration age is observable
-  off-chain from `BlockScholesObservationRecorded`, which is where a tripwire
-  belongs: an on-chain model-age abort would be a state-triggered abort on the
-  mandatory flush over an externally-controlled variable, the guard class RP-5
-  removed (`docs/risks.md` § stopped transport). The pre-expiry
-  variance abort is likewise accepted: the flush is retriable, and flooring
-  variance to a fabricated positive value would hide an unusable effective
-  surface.
-- **Risk profile:** `BEST-GUESS` — the timestamp and arithmetic policy are
-  deterministic and pinned. The provider's publish cadence per series, and
-  therefore the frequency of a 10s or 60s envelope breach, is not measured;
-  this measurement is operational validation of the accepted fail-closed
-  policy, not a prerequisite for its correctness. Whether linear roll-down is
-  the best calibration model remains owned by the still-open O-1 calibration
-  work.
-- **Pinning tests:** `pricing_tests.move` —
-  `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`,
-  `roll_down_handles_one_ms_boundary_and_u256_intermediates`,
-  `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and
-  `svi_retransmit_reanchors_the_roll_down_and_the_snapshotted_timestamp`;
-  `pricing_guard_tests.move` —
-  `live_quote_with_a_freshly_retransmitted_aged_spot_model_succeeds`,
-  `live_quote_with_a_freshly_retransmitted_aged_forward_model_succeeds`,
-  `live_quote_with_a_freshly_retransmitted_aged_svi_model_succeeds`,
-  `live_quote_with_stale_block_scholes_surface_aborts`,
-  `live_quote_with_fresh_spot_but_stale_forward_aborts`,
-  `live_quote_with_fresh_prices_but_stale_svi_aborts`,
-  `pre_expiry_roll_down_keeps_positive_variance`,
-  `terminal_roll_down_to_zero_is_preempted_by_envelope_freshness`, and
-  `w_prime_keeps_the_rolled_b_precision` (the rolled `b` must reach the skew
-  correction at 1e18; narrowing it to 1e9 first misses the reference by ~890
-  units against a 21-unit budget); `block_scholes_store_tests.move` —
-  `svi_data_in_an_older_envelope_is_skipped_even_with_a_newer_model_time`.
-- **Reopen when:** the provider changes series or timestamp semantics or is
-  observed republishing surfaces it has stopped re-deriving, observed
-  envelope-age breaches materially interrupt LP flush liveness or lack timely
-  recovery, Predict adopts partial/async pool valuation, Predict adopts a
-  calibrated non-linear horizon transform, or live pricing stops consuming SVI
-  total variance as variance-to-expiry.
+- **Trigger state:** Block Scholes delivers a spot, forward, or SVI update whose provider source timestamp does not advance, stops advancing a required series, or advances the enclosing batch timestamp without advancing that series.
+- **Controller:** external × protocol clock — the publisher controls the signed series values and their `value_timestamp` or `svi_timestamp`; elapsed time is objective on-chain state.
+- **Blast radius:** every live quote, mint, redeem, and NAV read that consumes the series. A stale spot affects every market on the underlying; a stale forward or SVI affects its expiry. Because a flush must value every active market, any one stale required series blocks the pool-wide flush and all queued LP fills. Exact settlement does not use these latest-series freshness checks; its post-grace Block Scholes fallback reads insert-only exact history.
+- **Response:** fail closed on source age. Spot and forward map the signed update's `value_timestamp` to `source_timestamp_ms`; SVI maps `svi_timestamp`. A series advances only when that source timestamp is strictly newer than the stored one, and a retransmission with an unchanged source timestamp does not refresh it. Spot and forward age out at `block_scholes_price_freshness_ms` (10s by default); SVI ages out at `block_scholes_svi_freshness_ms` (60s by default, configurable up to 120s). Recovery requires a newer provider source update followed by retrying the affected action or flush. The signed batch timestamp remains on `BlockScholesBatchIngested` for transport observability but does not participate in observation ordering, freshness, or roll-down. Predict computes `a_eff = sign(a) * floor(abs(a) * 1e9 * remaining_ms / anchor_tte_ms)` and `b_eff = floor(b * 1e9 * remaining_ms / anchor_tte_ms)` with `anchor_tte_ms = expiry - source_timestamp_ms`, both at 1e18 with a `u256` intermediate, and hands them to the variance path in that domain; `rho`, `m`, and `sigma` are unchanged. The scaled results stay at 1e18 because a 1e9 floor costs up to a whole raw unit of `a`, enough to breach the ratified price-deviation bound on short-dated surfaces. The SVI freshness bound keeps the floor-to-zero arm unreachable for a live quote; the existing `ENonPositiveVariance` guard remains authoritative for sign/cancellation cases, including pool valuation.
+- **Reasoning:** Block Scholes confirmed that `value_timestamp` is the source time for spot and forward and `svi_timestamp` is the source time for SVI. Using those signed per-update timestamps gives each observation one economic clock for ordering, freshness, provenance, and SVI roll-down. The batch timestamp answers when the provider emitted a container, not when a carried series changed, so letting it renew freshness would turn retransmission into a false data update. Removing the duplicate `model_timestamp_ms` field also prevents local names from implying two observation clocks where the provider defines one. The pre-expiry variance abort remains accepted: the flush is retriable, and flooring variance to a fabricated positive value would hide an unusable effective surface.
+- **Risk profile:** `BEST-GUESS` — the timestamp mapping and arithmetic policy are deterministic and pinned. The provider's source cadence per series, and therefore the frequency of a 10s or 60s source-age breach, is not measured; that measurement is operational validation of the accepted fail-closed policy, not a prerequisite for its correctness. Whether linear roll-down is the best calibration model remains owned by the still-open O-1 calibration work.
+- **Pinning tests:** `pricing_tests.move` — `roll_down_is_exact_at_anchor_and_keeps_sub_1e9_resolution`, `roll_down_handles_one_ms_boundary_and_u256_intermediates`, `rolled_sub_1e9_resolution_reaches_the_variance_pricing_divides_by`, and `svi_retransmit_does_not_reanchor_roll_down_or_the_snapshotted_timestamp`; `pricing_guard_tests.move` — `live_quote_with_a_retransmitted_aged_spot_source_aborts`, `live_quote_with_a_retransmitted_aged_forward_source_aborts`, `live_quote_with_a_retransmitted_aged_svi_source_aborts`, `live_quote_with_stale_block_scholes_surface_aborts`, `live_quote_with_fresh_spot_but_stale_forward_aborts`, `live_quote_with_fresh_prices_but_stale_svi_aborts`, `pre_expiry_roll_down_keeps_positive_variance`, `terminal_roll_down_to_zero_is_preempted_by_source_freshness`, and `w_prime_keeps_the_rolled_b_precision`; `block_scholes_store_tests.move` — `a_retransmission_advances_batch_observability_without_refreshing_source`, `newer_source_data_in_an_older_batch_is_stored`, and `newer_svi_source_data_in_an_older_batch_is_stored`.
+- **Reopen when:** the provider changes series or timestamp semantics, observed source-age breaches materially interrupt LP flush liveness or lack timely recovery, Predict adopts partial/async pool valuation, Predict adopts a calibrated non-linear horizon transform, or live pricing stops consuming SVI total variance as variance-to-expiry.
 
 ---
 

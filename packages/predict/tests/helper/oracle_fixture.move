@@ -474,9 +474,8 @@ public fun prepare_real_oracle_bundle(
 }
 
 /// Overwrite only the BS spot row through the real ingest path.
-/// `source_timestamp_ms` stamps both provider clocks — the series moved, so its model time and the
-/// envelope carrying it are the same. Use `retransmit_bs_svi_for_testing` for the case where they
-/// differ.
+/// The helper stamps both the update source timestamp and the batch timestamp with
+/// `source_timestamp_ms`. Use `retransmit_bs_spot_for_testing` when they differ.
 public fun set_bs_spot_for_testing(
     self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
@@ -569,39 +568,38 @@ public fun set_bs_forward_for_testing_bundle(
     self.set_bs_forward_for_testing(&mut oracle.bs, source_timestamp_ms, forward);
 }
 
-/// Retransmit the BS spot pinned to its original model time inside a newer envelope.
+/// Retransmit the BS spot with its original source timestamp inside a newer batch.
 public fun retransmit_bs_spot_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
-    model_timestamp_ms: u64,
     source_timestamp_ms: u64,
+    batch_timestamp_ms: u64,
     spot: u64,
 ) {
     apply_spot_batch(
         &mut self.scenario,
         &mut oracle.bs,
-        model_timestamp_ms,
         source_timestamp_ms,
+        batch_timestamp_ms,
         spot,
         &self.clock,
     );
 }
 
-/// Retransmit the BS forward for this fixture's expiry pinned to its original model time inside a
-/// newer envelope.
+/// Retransmit the BS forward with its original source timestamp inside a newer batch.
 public fun retransmit_bs_forward_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
-    model_timestamp_ms: u64,
     source_timestamp_ms: u64,
+    batch_timestamp_ms: u64,
     forward: u64,
 ) {
     apply_forward_batch(
         &mut self.scenario,
         &mut oracle.bs,
         self.expiry,
-        model_timestamp_ms,
         source_timestamp_ms,
+        batch_timestamp_ms,
         forward,
         &self.clock,
     );
@@ -679,14 +677,14 @@ public fun set_bs_svi_raw_for_testing_bundle(
     end_seed_tx(restore);
 }
 
-/// Re-send an unchanged SVI tuple in a later batch: the envelope advances while the tuple keeps the
-/// model time it was first calibrated at. This is what a provider retransmission looks like; the
-/// advancing envelope re-anchors the roll-down and refreshes the tuple's freshness.
+/// Re-send an unchanged SVI tuple in a later batch. The batch timestamp advances while the tuple
+/// keeps its original source timestamp, so the stored observation and its roll-down anchor do not
+/// change.
 public fun retransmit_bs_svi_for_testing(
     self: &mut OracleFixture,
     oracle: &mut OracleBundle,
-    model_timestamp_ms: u64,
     source_timestamp_ms: u64,
+    batch_timestamp_ms: u64,
     svi_a_magnitude: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -698,8 +696,8 @@ public fun retransmit_bs_svi_for_testing(
 ) {
     self.apply_svi_batch(
         &mut oracle.bs,
-        model_timestamp_ms,
         source_timestamp_ms,
+        batch_timestamp_ms,
         svi_a_magnitude,
         svi_a_is_negative,
         svi_b,
@@ -883,15 +881,15 @@ public fun finish(self: OracleFixture) {
 fun apply_spot_batch(
     scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
-    model_timestamp_ms: u64,
     source_timestamp_ms: u64,
+    batch_timestamp_ms: u64,
     value: u64,
     clock: &Clock,
 ) {
     let sid = bs.values().spot_sid();
     let batch = verify::new_value_batch_for_testing(
-        source_timestamp_ms,
-        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
+        batch_timestamp_ms,
+        vector[verify::new_value_update_for_testing(sid, source_timestamp_ms, value as u128)],
     );
     let (ctx, restore) = begin_seed_tx(scenario);
     bs.values_mut().apply_spot_batch(batch, clock, &ctx);
@@ -903,15 +901,15 @@ fun apply_forward_batch(
     scenario: &mut Scenario,
     bs: &mut BlockScholesFeed,
     expiry_ms: u64,
-    model_timestamp_ms: u64,
     source_timestamp_ms: u64,
+    batch_timestamp_ms: u64,
     value: u64,
     clock: &Clock,
 ) {
     let sid = bs.values().forward_sid(expiry_ms);
     let batch = verify::new_value_batch_for_testing(
-        source_timestamp_ms,
-        vector[verify::new_value_update_for_testing(sid, model_timestamp_ms, value as u128)],
+        batch_timestamp_ms,
+        vector[verify::new_value_update_for_testing(sid, source_timestamp_ms, value as u128)],
     );
     let (ctx, restore) = begin_seed_tx(scenario);
     bs.values_mut().apply_forward_batch(batch, vector[expiry_ms], clock, &ctx);
@@ -922,8 +920,8 @@ fun apply_forward_batch(
 fun apply_svi_batch(
     self: &mut OracleFixture,
     bs: &mut BlockScholesFeed,
-    model_timestamp_ms: u64,
     source_timestamp_ms: u64,
+    batch_timestamp_ms: u64,
     svi_a_magnitude: u64,
     svi_a_is_negative: bool,
     svi_b: u64,
@@ -939,11 +937,11 @@ fun apply_svi_batch(
         .svi_mut()
         .apply_svi_batch(
             verify::new_svi_batch_for_testing(
-                source_timestamp_ms,
+                batch_timestamp_ms,
                 vector[
                     verify::new_svi_for_testing(
                         sid,
-                        model_timestamp_ms,
+                        source_timestamp_ms,
                         svi_a_magnitude as u128,
                         svi_a_is_negative,
                         svi_b as u128,

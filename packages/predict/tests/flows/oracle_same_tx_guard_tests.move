@@ -17,7 +17,7 @@ use std::unit_test::assert_eq;
 /// Lot-aligned position size used across the mint/redeem scenarios.
 const QUANTITY: u64 = 840_000_000;
 /// Later source stamp used when rewriting the surface mid-test. Must be ≥ the
-/// fixture clock so Block Scholes `published_at <= recorded_at` accepts the batch.
+/// fixture clock so Block Scholes `source_timestamp_ms <= onchain_timestamp_ms` accepts the batch.
 const FRESHER_SOURCE_TS: u64 = 121_000;
 /// Keep the default ATM price so admission bounds stay satisfied; the guard
 /// keys on writer digest, not the printed level.
