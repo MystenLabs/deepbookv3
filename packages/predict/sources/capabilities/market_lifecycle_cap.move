@@ -5,7 +5,7 @@
 /// `Registry` owns the allowlist and the creation entrypoint this capability gates.
 module deepbook_predict::market_lifecycle_cap;
 
-/// Capability authorized for privileged market lifecycle operations while its ID remains allowlisted.
+/// Capability authorized to create expiry markets while its ID remains allowlisted.
 public struct MarketLifecycleCap has key, store {
     id: UID,
 }

@@ -35,6 +35,7 @@ use deepbook_predict::{
     market_lifecycle_cap::MarketLifecycleCap,
     market_manager,
     plp::{Self, PoolVault, SnapshotStage},
+    pool_valuation_cap::PoolValuationCap,
     predict_account::{Self, PredictApp},
     pricing,
     pricing_reference_data as ref_data,
@@ -120,6 +121,7 @@ public struct Fixture {
     admin_cap: AdminCap,
     propbook_admin_cap: RegistryAdminCap,
     lifecycle_cap: MarketLifecycleCap,
+    pool_valuation_cap: PoolValuationCap,
     clock: Clock,
     /// Captured so helpers retrieve the shared config by id rather than relying on
     /// there being exactly one `ProtocolConfig` in scope (unit-tests Rule 13).
@@ -213,8 +215,8 @@ public fun setup_market(tick: u64): Fixture {
         scenario.ctx(),
     );
     return_shared(oracle_registry);
-    // tx2: bind all pricing feeds to the canonical underlying, mint the lifecycle cap,
-    // and capture the vault id.
+    // tx2: bind all pricing feeds to the canonical underlying, mint the lifecycle and
+    // pool-valuation caps, and capture the vault id.
     scenario.next_tx(test_constants::admin());
     let propbook_admin_cap = scenario.take_from_sender<RegistryAdminCap>();
     let (bs_values_id, bs_svi_id) = test_helpers::bind_feeds_to_underlying(
@@ -225,6 +227,11 @@ public fun setup_market(tick: u64): Fixture {
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry.mint_lifecycle_cap(
+        &config,
+        &admin_cap,
+        scenario.ctx(),
+    );
+    let pool_valuation_cap = registry.mint_pool_valuation_cap(
         &config,
         &admin_cap,
         scenario.ctx(),
@@ -243,6 +250,7 @@ public fun setup_market(tick: u64): Fixture {
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
+        pool_valuation_cap,
         clock,
         config_id,
         vault_id,
@@ -2110,9 +2118,10 @@ public fun bootstrap_lock(self: &mut Fixture, amount: u64) {
     return_shared(config);
 }
 
-/// Start a privileged pool-NAV flush as a market deployer (`MarketLifecycleCap`), the
-/// sole flush-start authority. Acquires the shared `Registry` to mint the lifecycle
-/// proof internally, so callers need not thread it. The flush state lives on the
+/// Start a privileged pool-NAV flush as the pool-valuation operator
+/// (`PoolValuationCap`), the sole flush-start authority. Acquires the shared
+/// `Registry` to mint the pool-valuation proof internally, so callers need not
+/// thread it. The flush state lives on the
 /// vault, but the snapshot stage is still one transaction: `start_flush` hands back
 /// the `SnapshotStage` potato that every `snapshot_expiry_pricer` borrows and
 /// `seal_snapshot` consumes, so callers drive start → snapshot × N → seal →
@@ -2136,7 +2145,7 @@ public fun start_flush_with_budgets(
     withdraw_budget: Option<u64>,
 ): SnapshotStage {
     let registry = self.scenario.take_shared<Registry>();
-    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     return_shared(registry);
     plp::start_pool_valuation(config, vault, proof, supply_budget, withdraw_budget, &self.clock)
 }
@@ -2154,7 +2163,7 @@ public fun start_flush_bundle(self: &mut Fixture, market: &mut MarketBundle) {
 /// stage open — `start_flush_bundle` seals it.
 public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundle): SnapshotStage {
     let registry = self.scenario.take_shared<Registry>();
-    let proof = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     return_shared(registry);
     let stage = plp::start_pool_valuation(
         &mut market.config,
@@ -2174,7 +2183,7 @@ public fun start_flush_bundle_stage(self: &mut Fixture, market: &mut MarketBundl
 /// tail is unreachable at runtime and exists only so the happy path type-checks.
 public fun start_twice_in_one_stage(self: &mut Fixture, market: &mut MarketBundle) {
     let registry = self.scenario.take_shared<Registry>();
-    let proof_a = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof_a = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     let stage_a = plp::start_pool_valuation(
         &mut market.config,
         &mut market.vault,
@@ -2183,7 +2192,7 @@ public fun start_twice_in_one_stage(self: &mut Fixture, market: &mut MarketBundl
         option::none(),
         &self.clock,
     );
-    let proof_b = registry.generate_lifecycle_proof(&self.lifecycle_cap);
+    let proof_b = registry.generate_pool_valuation_proof(&self.pool_valuation_cap);
     let stage_b = plp::start_pool_valuation(
         &mut market.config,
         &mut market.vault,
@@ -2463,6 +2472,7 @@ public fun finish(self: Fixture) {
         admin_cap,
         propbook_admin_cap,
         lifecycle_cap,
+        pool_valuation_cap,
         clock,
         config_id: _,
         vault_id: _,
@@ -2471,6 +2481,7 @@ public fun finish(self: Fixture) {
         bs_svi_id: _,
     } = self;
     lifecycle_cap.destroy();
+    pool_valuation_cap.destroy();
     destroy(propbook_admin_cap);
     destroy(admin_cap);
     destroy(account_admin_cap);

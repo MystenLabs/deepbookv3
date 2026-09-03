@@ -1092,9 +1092,9 @@ fun materialize_expiry_profit(
 }
 
 /// Engage the valuation flag, mint this flush's ordinal, and record its frozen
-/// facts — the active expiry set, the starter, the start time, and each LP
-/// queue's eligibility cutoff — after requiring a bootstrapped pool with nonzero
-/// PLP supply.
+/// facts — the active expiry set, the start time, and each LP queue's
+/// eligibility cutoff — after requiring a bootstrapped pool with nonzero PLP
+/// supply.
 fun start_pool_valuation_internal(
     config: &mut ProtocolConfig,
     vault: &mut PoolVault,

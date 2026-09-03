@@ -197,7 +197,7 @@ public struct FlushExecuted has copy, drop, store {
 }
 
 /// An in-flight full-pool valuation was discarded without draining any queue —
-/// discard-and-restart of an in-flight flush on lifecycle authority (there is no
+/// discard-and-restart of an in-flight flush on pool-valuation authority (there is no
 /// permissionless discard). The counts distinguish an abandoned flush from one
 /// that never progressed.
 public struct FlushRestarted has copy, drop, store {
