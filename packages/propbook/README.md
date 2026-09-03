@@ -211,7 +211,7 @@ Block Scholes stores emit their dedicated event surface:
 - `BlockScholesStoresRegistered` records the Propbook underlying, both shared-object IDs, and the immutable provider base asset.
 - `BlockScholesObservationRecorded<Observation>` records every stored observation with its Propbook underlying, store ID, SID, series kind (`0` spot, `1` forward, `2` SVI), absolute expiry in milliseconds (zero for spot), and observation payload.
 - `BlockScholesObservationInserted<Observation>` records every canonical spot inserted into exact minute-boundary history with its store ID and observation payload.
-- `BlockScholesBatchIngested` records every verified batch with its Propbook underlying, store ID, series kind (`0` spot, `1` forward, `2` SVI), provider source time, on-chain ingestion time, verified update count, and applied update count, including batches where no series advanced.
+- `BlockScholesBatchIngested` records every verified batch with its Propbook underlying, store ID, series kind (`0` spot, `1` forward, `2` SVI), provider batch time, on-chain ingestion time, verified update count, and applied update count, including batches where no series advanced.
 
 High-frequency cost caveats:
 

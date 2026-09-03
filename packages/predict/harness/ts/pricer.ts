@@ -20,14 +20,14 @@ export interface Svi {
   sigma: number;
 }
 
-/** Apply Predict's transaction-time roll-down to publish-anchored SVI a/b. */
+/** Apply Predict's transaction-time roll-down to source-anchored SVI a/b. */
 export function rollDownSvi(
   svi: Svi,
-  publishedAtMs: number,
+  sourceTimestampMs: number,
   expiryMs: number,
   pricingTimestampMs: number,
 ): Svi | null {
-  const anchorTteMs = expiryMs - publishedAtMs;
+  const anchorTteMs = expiryMs - sourceTimestampMs;
   const remainingMs = expiryMs - pricingTimestampMs;
   if (anchorTteMs <= 0 || remainingMs <= 0) return null;
   const fraction = remainingMs / anchorTteMs;
