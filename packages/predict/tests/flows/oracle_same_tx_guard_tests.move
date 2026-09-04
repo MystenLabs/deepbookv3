@@ -27,8 +27,13 @@ const FRESHER_PRICE: u64 = 100_000_000_000;
 const PUSHED_PRICE: u64 = 120_000_000_000;
 /// Tight Pyth freshness used to force a same-tx Pyth write into the stale branch.
 const TIGHT_PYTH_FRESHNESS_MS: u64 = 1_000;
-const STALE_PYTH_CLOCK_MS: u64 = 122_001;
-const STALE_PYTH_SOURCE_MS: u64 = 121_000;
+/// Chosen against both budgets at once: Block Scholes is seeded at 119_000, so
+/// the clock sits exactly on its 2s bound (inclusive, still fresh) while the
+/// Pyth row written below is 1_500ms old against a 1s budget, hence stale.
+const STALE_PYTH_CLOCK_MS: u64 = 121_000;
+/// Advances past the 119_000 seed so the write lands, while staying old enough
+/// to fall outside `TIGHT_PYTH_FRESHNESS_MS`.
+const STALE_PYTH_SOURCE_MS: u64 = 119_500;
 /// Idle seed large enough to bootstrap PLP supply so a flush may start.
 const BOOTSTRAP_IDLE: u64 = 1_200_000_000_000;
 
@@ -360,9 +365,9 @@ fun pyth_write_same_tx_succeeds_when_pyth_read_is_stale() {
 
     fx.set_use_pyth_spot_for_forward_bundle(&mut market, true);
     fx.set_pyth_spot_freshness_bundle(&mut market, TIGHT_PYTH_FRESHNESS_MS);
-    // Clock past the tightened window; Pyth source still advances past the prior
-    // row, so the write lands but stays provenance-only. BS at 119_000 remains
-    // inside the default 10s freshness budget.
+    // Clock past the tightened Pyth window; Pyth source still advances past the
+    // prior row, so the write lands but stays provenance-only. BS at 119_000 is
+    // exactly on its freshness bound here, so the mint still prices.
     fx.set_clock_for_testing(STALE_PYTH_CLOCK_MS);
     fx.write_pyth_in_current_tx_bundle(
         &mut market,
