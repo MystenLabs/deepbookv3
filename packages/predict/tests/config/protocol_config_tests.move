@@ -181,6 +181,38 @@ fun bump_version_watermark_at_current_version_aborts() {
     abort 999
 }
 
+/// The deliberate mirror of the `*_during_valuation_aborts` tests around it.
+/// `set_no_trade_window_ms` is ungated on the valuation flag precisely so a
+/// stalled flush cannot trap it: the knobs that are gated become unreachable
+/// exactly when an operator most needs to widen a safety control (RP-29's
+/// recovery path). That property is invisible to a negative test, so it is
+/// pinned positively here — a refactor applying `assert_not_valuation_in_progress`
+/// uniformly across setters would trap the control while every other test in this
+/// file stayed green.
+#[test]
+fun set_no_trade_window_during_valuation_succeeds() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+
+    config.begin_valuation();
+    assert!(config.valuation_in_progress());
+
+    config.set_no_trade_window_ms(&admin_cap, config_constants::max_no_trade_window_ms!(), &clock);
+    assert_eq!(config.no_trade_window_ms(), config_constants::max_no_trade_window_ms!());
+
+    // Still widenable a second time, and still narrowable back, while the flush
+    // remains in flight — recovery is not a one-shot.
+    config.set_no_trade_window_ms(&admin_cap, config_constants::min_no_trade_window_ms!(), &clock);
+    assert_eq!(config.no_trade_window_ms(), 0);
+    assert!(config.valuation_in_progress());
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_use_pyth_spot_for_forward_during_valuation_aborts() {
     // The flush marks every active market against one live-forward formula; letting
