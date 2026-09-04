@@ -13,7 +13,8 @@
 /// floor is 0
 /// (`EInvalidMinFee`, `EInvalidMinEntryProbability`, `EInvalidMaxEntryProbability`)
 /// have no reachable below-min case for a
-/// `u64`, so only the above-max side is exercised.
+/// `u64`, so only the above-max side is exercised — as does the pre-expiry
+/// `no_trade_window_ms`, whose floor of `0` is the value that disables the block.
 #[test_only]
 module deepbook_predict::protocol_config_bounds_tests;
 
@@ -367,4 +368,38 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
     clock.destroy_for_testing();
     destroy(admin_cap);
     scenario.end();
+}
+
+// === Pre-expiry no-trade window ===
+
+#[test]
+fun no_trade_window_ships_at_two_seconds_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    assert_eq!(config.no_trade_window_ms(), 2_000);
+
+    config.set_no_trade_window_ms(&admin_cap, config_constants::min_no_trade_window_ms!(), &clock);
+    assert_eq!(config.no_trade_window_ms(), 0);
+
+    config.set_no_trade_window_ms(&admin_cap, config_constants::max_no_trade_window_ms!(), &clock);
+    assert_eq!(config.no_trade_window_ms(), 15_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidNoTradeWindowMs)]
+fun no_trade_window_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_no_trade_window_ms(
+        &admin_cap,
+        config_constants::max_no_trade_window_ms!() + 1,
+        &clock,
+    );
+
+    abort 999
 }

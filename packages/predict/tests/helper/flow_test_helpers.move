@@ -505,6 +505,11 @@ public fun set_pyth_spot_freshness_bundle(
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms, &self.clock);
 }
 
+/// Set the pre-expiry no-trade window through the real admin path.
+public fun set_no_trade_window_bundle(self: &Fixture, market: &mut MarketBundle, window_ms: u64) {
+    market.config.set_no_trade_window_ms(&self.admin_cap, window_ms, &self.clock);
+}
+
 /// Enable the EWMA congestion penalty with explicit parameters through the
 /// real admin path.
 public fun set_ewma_penalty(
@@ -2371,14 +2376,16 @@ public fun advance_live_oracle(
     self.prepare_live_oracle_at(market, pyth, bs, live_price, timestamp_ms);
 }
 
-/// Advance the fixture clock by one millisecond and reseed a market bundle's live
-/// oracle.
-public fun advance_live_oracle_bundle(
+/// Move the fixture clock to `timestamp_ms` and reseed a market bundle's live
+/// oracle there, so the surface is fresh at the new time. A test that jumps the
+/// clock without reseeding hits the Block Scholes freshness bound instead of
+/// whatever it meant to exercise.
+public fun advance_live_oracle_bundle_to(
     self: &mut Fixture,
     market: &mut MarketBundle,
     live_price: u64,
+    timestamp_ms: u64,
 ) {
-    let timestamp_ms = self.clock.timestamp_ms() + 1;
     self.clock.set_for_testing(timestamp_ms);
     self.prepare_live_oracle_at(
         &market.market,
@@ -2387,6 +2394,17 @@ public fun advance_live_oracle_bundle(
         live_price,
         timestamp_ms,
     );
+}
+
+/// Advance the fixture clock by one millisecond and reseed a market bundle's live
+/// oracle.
+public fun advance_live_oracle_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    live_price: u64,
+) {
+    let timestamp_ms = self.clock.timestamp_ms() + 1;
+    self.advance_live_oracle_bundle_to(market, live_price, timestamp_ms);
 }
 
 public fun insert_exact_settlement_spot(
