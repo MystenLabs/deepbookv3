@@ -137,6 +137,16 @@ macro fun min_svi_sigma(): u64 { 1_000_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
+/// Largest rise in UP price across ascending strikes that says nothing about the
+/// surface. `compute_up_price` floors `N(d2)` and the skew correction
+/// independently, so where `N(d2)` sits on a tail plateau the difference steps up
+/// by raw units on a valid, butterfly-free surface. The bound is the pricer's own
+/// absolute precision, not a risk appetite: `pricing_reference_data` derives 3,304
+/// units per endpoint from `math.move`'s per-primitive budgets, two endpoints can
+/// disagree by twice that, and this rounds it up. It stays two orders of magnitude
+/// inside the 0.1% relative accuracy the reference tolerances hold pricing to.
+public(package) macro fun price_monotonicity_tolerance(): u64 { 10_000 }
+
 // === Public Functions ===
 
 /// Return the current UP digital probability for a typed strike. Public PTB and

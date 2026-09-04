@@ -635,56 +635,73 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ---
 
-## RP-15: Block Scholes guarantees butterfly-free surfaces; active-book inversions fail closed (resolves P-11)
+## RP-15: Sub-precision price inversions price through; a material inversion fails closed (resolves P-11)
 
-- **Trigger state:** despite the provider's guarantee that every published SVI
-  surface is monotone and butterfly-arbitrage-free, a fresh Block Scholes
-  surface makes a higher-strike UP price exceed a lower-strike UP price. During
-  `current_nav`, the active payout tree exposes that inversion at two increasing
-  boundary ticks.
-- **Controller:** external — the BS surface publisher controls the shape inside
-  Predict's pricing-safe envelope; traders cannot choose SVI parameters.
-- **Blast radius:** single-order pricing trusts the provider's surface and
-  floors an inverted range to zero. NAV adds a defense-in-depth active-book
-  check: one exposed inversion aborts that market's NAV read, and because the
-  pool flush uses one frozen mark for all LP supply and withdraw fills, it can
-  block LP fills pool-wide until the surface is corrected.
-- **Response:** accept the provider guarantee for surface admission; do not add
-  an on-chain `g(k) >= 0` or tighter synthetic-parameter envelope. If an active
-  book nevertheless exposes an inversion, abort valuation and retry after the
-  provider publishes a corrected surface. This converts the known aggregate-NAV
-  overstatement into fail-closed liveness.
-- **Reasoning:** `strike_payout_tree::walk_linear` relies on active boundary
-  prices being monotone. Skipping the market or carrying a partial mark would
-  poison the single LP mark used for both supply and withdraw, while allowing
-  the inverted segment through can overstate pool NAV. Surface quality is part
-  of the trusted Block Scholes provider contract rather than an invariant the
-  signature or Predict Move code proves; the active-book check stays as a
-  narrow accounting backstop rather than duplicating the provider's global
-  surface validation on chain.
-- **Risk profile:** `BEST-GUESS` — no sampled Block Scholes surface violated
-  butterfly freedom, and reachability requires the trusted publisher to violate
-  its guarantee with a surface whose inversion intersects the active book. The
-  guarantee is not enforced by Predict on chain.
-- **Pinning tests:** `current_nav_flow_tests.move` —
-  `current_nav_rejects_non_monotone_active_book_surface`; and
-  `payout_tree_walk_tests.move` —
-  `inversion_on_a_cancelling_last_boundary_still_aborts`. The guard moved from
+- **Trigger state:** the in-order walk over the payout tree (`walk_linear`, and
+  `walk_linear_frozen` under the flush) reads a higher UP price at a higher
+  boundary tick than at a lower one.
+- **Controller:** internal AND external. `compute_up_price` floors `N(d2)` and
+  the skew correction independently, so where `N(d2)` sits on a tail plateau the
+  difference steps UP by raw units on a surface that is valid and butterfly-free
+  — the committed real scenario 0 inverts at 24 adjacent pairs on a $10 grid
+  between $50k and $60k (first $55,240 -> $55,250, 999,999,995 -> 999,999,996),
+  at one pair on a $100 grid, and three of the four committed surfaces invert on
+  the $1 and $10 grids. Boundary ticks are chosen by whoever mints, and a range
+  whose lower boundary sits in that plateau is an ordinary wide bet priced near
+  0.5, so this source is reachable by two admitted mints. Surface shape itself
+  stays with the provider.
+- **Blast radius:** a hard abort here lands in the pool flush's mandatory leg
+  (`plp::value_expiry` -> `expiry_market::snapshot_nav`) and in the public
+  `current_nav` read. `finish_flush` proves completeness over the snapshotted set
+  and has no per-market skip, so one aborting market stops every LP supply and
+  withdraw fill; the valuation flag that flush holds also gates request cancels
+  and the flush-gated `ProtocolConfig` setters, and a restart re-snapshots the
+  same book. A market leaves the expected set only at settlement, so the stall
+  would last its remaining life. Per-order value is unaffected: `range_price`
+  floors an inverted pair to zero, so `redeem_live` and settlement stay open.
+- **Response:** price the boundary at its quote and continue while the rise is
+  within `pricing::price_monotonicity_tolerance`; abort `ENonMonotonePrice`
+  above it. Surface admission still rests on the provider guarantee — no on-chain
+  `g(k) >= 0` or tighter synthetic-parameter envelope.
+- **Reasoning:** what the netted aggregate loses to a rise is bounded by the rise
+  itself (the aggregate lets an inverted segment cancel where the per-order sum
+  floors it at zero), so bounding the rise bounds the understatement, and keeping
+  the quoted price leaves the aggregate the same per-order sum a monotone book
+  produces. Below the pricer's own absolute precision a rise carries no
+  information about the surface, so aborting on it is a false positive in a
+  mandatory path over a variable the book positions — the blast-radius ladder in
+  `.claude/rules/move.md` puts that at skip/carry, not a hard assert. Above the
+  bound the rise is a real surface defect, the overstatement it would put into
+  the single LP mark is material, and "retry once the provider publishes a
+  corrected surface" is a recovery path that actually exists in that regime.
+  The comparison is against the running minimum rather than the previous
+  boundary, so dust accumulated across many boundaries trips the same bound
+  instead of ratcheting underneath it.
+- **Risk profile:** `MEASURED` — the internal source is counted over every
+  committed reference surface and reproduced end to end through the flush;
+  `evidence/rp15-price-inversion-2026-09-04.md`. The external source remains
+  unobserved, no sampled Block Scholes surface having violated butterfly
+  freedom.
+- **Pinning tests:** `payout_tree_walk_tests.move` —
+  `a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted`,
+  `the_synthetic_inversion_exceeds_the_monotonicity_tolerance`,
+  `inversion_on_a_cancelling_last_boundary_still_aborts`;
+  `current_nav_flow_tests.move` —
+  `current_nav_rejects_non_monotone_active_book_surface`;
+  `pool_valuation_flow_tests.move` —
+  `a_fixed_point_dust_inversion_does_not_stall_the_flush`. The guard moved from
   the price memo to `strike_payout_tree::ENonMonotonePrice` when leverage was
-  removed and the memo was deleted. It is enforced at EVERY payout-tree boundary,
-  exactly as it was before the move. An intermediate revision of that change
-  enforced it only over the boundaries whose start and end quantities do not
-  cancel; that was wrong — the netted aggregate is unaffected by a cancelling
-  boundary, but live redeem prices each order individually, so an inversion
-  sitting on a cancelling tick let NAV understate liability while the flush
-  succeeded. The second pinning test above is the regression for it.
-- **Reopen when:** Block Scholes changes or violates the surface guarantee,
-  Predict accepts another SVI publisher without the same guarantee, the
-  active-book guard is removed, NAV valuation gains a safe per-market
-  skip/carry design, or the LP flush no longer uses one shared mark for both
-  queues.
-
----
+  removed and the memo was deleted. It is evaluated at EVERY payout-tree
+  boundary. An intermediate revision of that change enforced it only over the
+  boundaries whose start and end quantities do not cancel; that was wrong — the
+  netted aggregate is unaffected by a cancelling boundary, but live redeem prices
+  each order individually, so an inversion sitting on a cancelling tick let NAV
+  understate liability while the flush succeeded. The third test above is the
+  regression for it.
+- **Reopen when:** `compute_up_price` changes its rounding or its primitives'
+  error budgets (the tolerance is derived from them), Block Scholes changes or
+  violates the surface guarantee, Predict accepts another SVI publisher without
+  the same guarantee, or NAV valuation gains a safe per-market skip/carry design.
 
 ## RP-16: Protocol reserve is accrue-only; the cut is taken on booked terminal profit — accept + disclose (resolves P-8)
 
