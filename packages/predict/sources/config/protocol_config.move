@@ -56,8 +56,8 @@ public struct ProtocolConfig has key {
     /// flush, so this is an LP-queue liveness knob (RP-12).
     lp_request_limit_flush_attempts: u64,
     /// Ceiling on LP-attributable pool value that queued supplies may raise the pool
-    /// to, enforced at the flush against the frozen mark. Defaults to `u64::MAX`, so
-    /// the pool is uncapped until an operator sets a figure (RP-23).
+    /// to, enforced at the flush against the frozen mark. Defaults to 500,000 USDC
+    /// (RP-23).
     max_lp_pool_value: u64,
     /// Hard staleness bound: `finish_flush` refuses to complete a flush in flight
     /// longer than this, so no LP request fills at a mark older than the window;

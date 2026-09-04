@@ -160,8 +160,8 @@ public(package) fun assert_max_valuation_window_ms(value: u64) {
 /// protocol-profit exclusion) that queued supplies may raise the pool to. Checked at
 /// the flush against the frozen mark, because that is the only point where pool value
 /// is exact; a supply that would carry the pool past it is filled up to the cap and
-/// its remainder held at the queue head rather than refunded. The default admits everything, so the cap binds only once an operator sets
-/// a real figure.
+/// its remainder held at the queue head rather than refunded. The default admits up
+/// to 500,000 USDC of LP-attributable pool value.
 ///
 /// This caps pool *value*, not cumulative deposits — trading profit raises NAV, so a
 /// pool can sit above a set cap with no new deposits, in which case supplies wait
@@ -172,7 +172,7 @@ public(package) fun assert_max_valuation_window_ms(value: u64) {
 /// sanity bound, not a liveness guarantee: a pool bootstrapped above the minimum, or
 /// one whose NAV has since grown, can be closed to new capital by any cap at or below
 /// its current value — which is a legitimate operator action, not a misconfiguration.
-public(package) macro fun default_max_lp_pool_value(): u64 { std::u64::max_value!() }
+public(package) macro fun default_max_lp_pool_value(): u64 { 500_000_000_000 }
 
 public(package) macro fun min_max_lp_pool_value(): u64 {
     deepbook_predict::constants::min_bootstrap_liquidity!() +
