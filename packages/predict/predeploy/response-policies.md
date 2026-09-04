@@ -1065,9 +1065,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   so the headroom an exit frees is priced at the *next* flush, not the current one
   — the mark is frozen, and re-reading it mid-drain would break the single-mark
   guarantee that makes supply and withdraw prices agree.
-- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but no launch
-  figure has been chosen and the cap is inert at its default, so nothing about how
-  it behaves against real deposit flow has been measured.
+- **Risk profile:** `BEST-GUESS`. The mechanism is pinned by tests, but the 500,000 USDC default has not been measured against real deposit flow.
 - **Pinning tests:** `lp_book_tests.move` — `supply_within_pool_cap_fills`,
   `supply_larger_than_headroom_partially_fills_to_the_cap`,
   `supply_carries_when_the_pool_has_no_headroom`,
@@ -1091,15 +1089,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `lp_flow_tests.move` pins the cap to configured state rather than a constant
   (`flush_holds_a_supply_that_would_breach_the_configured_pool_cap`, with
   `flush_fills_the_same_supply_when_the_pool_is_uncapped` as the control).
-  `protocol_config_tests.move` pins the shipped default and the valuation-lock
+  `protocol_config_tests.move` pins the 500,000 USDC default and the valuation-lock
   guard; `risk_config_tests.move` pins the bounds and the floor.
-- **Reopen when:** a launch figure is set (the profile should become `MEASURED`
-  against observed deposit flow); or a request-time admission check is wanted for
-  UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or
-  withdrawals are ever drained before supplies, which would change whose headroom is
-  being measured; or per-flush drain work is bounded structurally rather than by the
-  operator's budgets, which would also bound how much of a capped pool's queue one
-  flush churns through (see RP-12's per-flush cost note).
+- **Reopen when:** observed deposit flow can measure whether the 500,000 USDC default admits the intended capital; or a request-time admission check is wanted for UX, which needs a stored last-flush NAV snapshot and makes the cap two-sided; or withdrawals are ever drained before supplies, which would change whose headroom is being measured; or per-flush drain work is bounded structurally rather than by the operator's budgets, which would also bound how much of a capped pool's queue one flush churns through (see RP-12's per-flush cost note).
 
 ---
 

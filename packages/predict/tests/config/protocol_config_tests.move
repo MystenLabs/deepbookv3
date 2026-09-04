@@ -23,6 +23,8 @@ fun new_clock(scenario: &mut Scenario): Clock {
 }
 
 const DEFAULT_PROTOCOL_RESERVE_PROFIT_SHARE: u64 = 100_000_000;
+const DEFAULT_MAX_LP_POOL_VALUE: u64 = 500_000_000_000;
+const UPDATED_MAX_LP_POOL_VALUE: u64 = 5_000_000_000_000;
 
 #[test]
 fun new_config_seeds_protocol_reserve_profit_share() {
@@ -99,15 +101,15 @@ fun set_lp_request_limit_flush_attempts_during_valuation_aborts() {
     abort 999
 }
 
-/// A fresh config admits any pool size, so merging the cap changes no behaviour until
-/// an operator sets a figure. Asserted against the stored state the flush reads.
+/// A fresh config caps LP-attributable pool value at 500,000 USDC. Asserted against
+/// the stored state the flush reads, not against the default macro.
 #[test]
-fun new_config_ships_uncapped() {
+fun new_config_ships_with_500k_usdc_cap() {
     let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
-    assert_eq!(config.max_lp_pool_value(), config_constants::max_max_lp_pool_value!());
+    assert_eq!(config.max_lp_pool_value(), DEFAULT_MAX_LP_POOL_VALUE);
 
-    config.set_max_lp_pool_value(&admin_cap, 5_000_000_000_000);
-    assert_eq!(config.max_lp_pool_value(), 5_000_000_000_000);
+    config.set_max_lp_pool_value(&admin_cap, UPDATED_MAX_LP_POOL_VALUE);
+    assert_eq!(config.max_lp_pool_value(), UPDATED_MAX_LP_POOL_VALUE);
 
     destroy(admin_cap);
     return_shared(reg);
