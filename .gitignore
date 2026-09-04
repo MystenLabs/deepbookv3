@@ -35,6 +35,11 @@ __pycache__/
 packages/predict/simulations/runs/
 packages/predict/parallel_pool_implementation_plan.md
 
+# Predict deployment operator state and atomic-write temporaries
+packages/predict/deployment/deployment.testnet.state.json
+packages/predict/deployment/deployment.testnet.state.json.tmp
+packages/predict/deployment/deployment.testnet.json.tmp
+
 # Research
 predict_research/
 

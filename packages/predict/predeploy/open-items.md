@@ -269,7 +269,7 @@ passes and worst-case budget usage is unchanged at 61%. The defect is that the
 tolerances are now conservative by luck rather than derived.
 
 `generate_pricing_reference.py` derives every tolerance analytically from
-`math.move`'s documented per-primitive budgets, and its `d_k` term has been
+`packages/fixed_math/sources/math.move`'s documented per-primitive budgets, and its `d_k` term has been
 corrected to the difference-of-logs form (`1e-7·(|ln strike| + |ln forward|) +
 2/F`) that RP-26 shipped. The committed `pricing_reference_data.move` was
 generated under the previous ratio model (`1/F/ratio + 1e-7·|k| + 1/F`), which
@@ -281,7 +281,7 @@ and absent from a fresh worktree, so it could not be done in the same change.
 
 **Action:** regenerate the reference data with the dataset present and confirm
 the budgets still bound the observed deviations. Until then the file's stated
-contract — "propagated from `math.move`'s documented per-primitive budgets" — is
+contract — "propagated from `packages/fixed_math/sources/math.move`'s documented per-primitive budgets" — is
 true of the generator but not of the committed data.
 
 ### P-30: The C-1 capacity model is one measurement behind the pricing path
