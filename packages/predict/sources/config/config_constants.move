@@ -352,7 +352,12 @@ public(package) fun assert_max_entry_probability(value: u64) {
 /// bool has no invalid value.
 public(package) macro fun default_use_pyth_spot_for_forward(): bool { true }
 
-public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 10_000 }
+/// Held strictly below `default_block_scholes_price_freshness_ms` so a
+/// re-anchor can only use a Pyth spot at least as fresh as the bound the Block
+/// Scholes spot it replaces had to clear. A stale Pyth spot skips the re-anchor
+/// silently instead of aborting, so an over-tight bound degrades pricing without
+/// any signal — 3s keeps margin over the ~1.4-1.8s push cycle RP-24 records.
+public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 3_000 }
 
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
 
@@ -367,7 +372,11 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 10_000 }
+/// Block Scholes spot and forward publish on a 500ms cadence, so 5s leaves ten
+/// refresh opportunities per window. Unlike the Pyth bound, a stale value here
+/// aborts every live trade, so the window carries the keeper's landing latency
+/// and transient submission backoff, not just its publish cadence.
+public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 5_000 }
 
 public(package) macro fun min_block_scholes_price_freshness_ms(): u64 { 1 }
 
