@@ -7,8 +7,8 @@
 /// each component nonzero (sponsor subsidy, builder fee, EWMA congestion
 /// penalty); the account-aware quote diverges from the anonymous
 /// quote in the right direction per component; quotes share the mint path's
-/// gates and admission aborts; and the settlement readers answer without
-/// aborting on a live market.
+/// gates, admission aborts, and maximum-payout bound; and the settlement readers
+/// answer without aborting on a live market.
 #[test_only]
 module deepbook_predict::quote_mint_tests;
 
@@ -38,6 +38,9 @@ use usdc::usdc::USDC;
 /// quantity = 5_000_000; with no builder code, no fee-incentive balance, and no
 /// EWMA variance, every other component is zero.
 const MIN_TRADING_FEE: u64 = 5_000_000;
+/// Per-unit fee that makes the fixture's independently pinned at-the-money
+/// premium plus its trading fee exceed the position's maximum payout.
+const GUARANTEED_LOSS_MIN_FEE: u64 = 600_000_000;
 
 /// Sponsoring the protocol-minimum incentive (10e6, fully allocated to the
 /// market by one live rebalance) leaves the balance far above the rate cap, so
@@ -65,6 +68,24 @@ const GAS_SPIKE: u64 = 3_000;
 /// second EWMA fold, still inside the oracle freshness window after re-seeding.
 const SPIKE_MS: u64 = 121_000;
 const SPIKE_SOURCE_TS: u64 = 120_000;
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun quote_above_maximum_payout_aborts() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(GUARANTEED_LOSS_MIN_FEE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+
+    fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+
+    abort 999
+}
 
 #[test]
 fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {

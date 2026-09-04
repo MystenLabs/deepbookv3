@@ -27,6 +27,9 @@ const QUANTITY: u64 = 840_000_000;
 const REDEEM_MS: u64 = 121_000;
 const REDEEM_SOURCE_TS: u64 = 120_000;
 const MAX_COST_BELOW_QUOTE: u64 = 1;
+/// Per-unit fee that makes the fixture's independently pinned at-the-money
+/// premium plus its trading fee exceed the position's maximum payout.
+const GUARANTEED_LOSS_MIN_FEE: u64 = 600_000_000;
 // The all-in cost of the at-the-money mint below is taken from the quote rather
 // than hardcoded. That is what the boundary pair is actually about: the guard
 // must accept exactly what the quote published and reject one unit less, so
@@ -84,6 +87,34 @@ fun mint_exact_quantity_above_max_cost_aborts() {
         constants::pos_inf_tick!(),
         QUANTITY,
         MAX_COST_BELOW_QUOTE,
+        std::u64::max_value!(),
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun mint_cost_above_maximum_payout_aborts() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(GUARANTEED_LOSS_MIN_FEE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        std::u64::max_value!(),
         std::u64::max_value!(),
     );
 

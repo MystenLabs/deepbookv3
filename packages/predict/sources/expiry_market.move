@@ -48,6 +48,7 @@ const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
+const EMintCostAboveMaxPayout: u64 = 11;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -94,7 +95,9 @@ public struct ValuationStamp has drop, store {
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes.
+/// fee policy because it is escrowed for risk-reducing live closes. Quote
+/// construction aborts when `all_in_cost` exceeds `quantity`, the position's
+/// maximum settlement payout.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -998,6 +1001,7 @@ fun compute_mint_quote(
         + builder_fee
         + penalty_fee
         + inventory_impact_charge;
+    assert!(all_in_cost <= quantity, EMintCostAboveMaxPayout);
 
     MintQuote {
         quantity,

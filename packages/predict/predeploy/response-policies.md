@@ -1,8 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-08-17. This is the tracked register of **settled response-policy
-decisions**: for each degenerate or adversarial state the protocol can reach,
-the behavior someone deliberately chose, why, and the tests that pin it.
+Updated 2026-09-04. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
 
 `open-items.md` tracks work that is still open; when an item closes, the
 *decision* it produced graduates into an entry here instead of surviving only
@@ -1513,5 +1511,18 @@ worth-fixing.
 - **Risk profile:** `MITIGATED-BY-CONSTRUCTION` — the guarantee is a type ability, not a runtime check, so it holds for every current and future trade path that takes `&Pricer` without a separate audit. The residual is purely the fidelity of the freeze/thaw round trip.
 - **Pinning tests:** `pricing_tests.move` — `freeze_then_thaw_preserves_the_mark` (the round trip reproduces the up-price, the range price, and the source timestamps bit-for-bit); the full flush's use of the frozen mark end to end is exercised by the staged-flush tests in `pool_valuation_flow_tests.move`. The core invariant — no trade path accepts a storable mark — is compile-time and needs no runtime pin.
 - **Reopen when:** `store` is added back to `Pricer`, OR any live trade / quote entrypoint is changed to accept a `FrozenPricer` (or any other storable pricing type), OR a public constructor/unwrapper for `FrozenPricer` is exposed — any of these restores the persisted-mark path this entry closes.
+
+---
+
+## RP-33: A mint cannot cost more than its maximum settlement payout
+
+- **Trigger state:** a complete mint quote has `all_in_cost > quantity` after adding the premium, trader-paid trading fee after sponsor subsidy, builder fee, EWMA congestion penalty, and inventory-impact charge; even the winning terminal outcome can return only `quantity`.
+- **Controller:** mixed — the oracle mark and EWMA state are market-controlled, fee policy is protocol-controlled, sponsor incentives are externally funded, and builder attribution belongs to the trader's account.
+- **Blast radius:** one caller's prospective mint; no order or payment has been allocated when the condition is evaluated.
+- **Response:** `abort` with `EMintCostAboveMaxPayout` from the shared quote computation, so both quote entrypoints and both mint entrypoints reject the same guaranteed-loss terms.
+- **Reasoning:** caller-supplied `max_cost` is slippage protection and can be disabled on exact-quantity mints, while the configured entry-probability band is independent tail-pricing policy. Comparing the final trader debit with `quantity` directly enforces the economic boundary across every variable fee component without coupling it to either control.
+- **Risk profile:** n/a (bound semantics, not a probabilistic risk).
+- **Pinning tests:** `mint_redeem_guard_tests.move` — `mint_cost_above_maximum_payout_aborts`; `quote_mint_tests.move` — `quote_above_maximum_payout_aborts` and `quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost` pin the rejected and admitted quote sides.
+- **Reopen when:** settlement can pay more than `quantity`, a mint charge becomes recoverable at settlement, or the protocol intentionally supports externally compensated loss-leading positions.
 
 ---
