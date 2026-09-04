@@ -13,7 +13,8 @@
 /// floor is 0
 /// (`EInvalidMinFee`, `EInvalidMinEntryProbability`, `EInvalidMaxEntryProbability`)
 /// have no reachable below-min case for a
-/// `u64`, so only the above-max side is exercised.
+/// `u64`, so only the above-max side is exercised — as does the pre-expiry
+/// `no_trade_window_ms`, whose floor of `0` is the value that disables the block.
 #[test_only]
 module deepbook_predict::protocol_config_bounds_tests;
 
@@ -370,9 +371,6 @@ fun plp_fee_rates_ship_asymmetric_and_accept_boundaries() {
 }
 
 // === Pre-expiry no-trade window ===
-//
-// The floor is 0 (which disables the block), so there is no reachable below-min
-// case for a `u64`; only the above-max side aborts.
 
 #[test]
 fun no_trade_window_ships_at_two_seconds_and_accepts_boundaries() {

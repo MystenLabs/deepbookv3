@@ -899,8 +899,8 @@ fun assert_live_flow_allowed(
     config.assert_snapshot_not_in_progress();
     market.assert_pricer_bound(pricer);
     // Shared by every live mint, quote, and live redeem, so the pre-expiry block
-    // lands once here. Settlement, settled redemption, and liquidation take other
-    // paths and stay open: the window closes new and closing risk, not exits.
+    // lands once here. Settlement and settled redemption take other paths and stay
+    // open, so the window delays a close rather than stranding the position.
     config.assert_trade_window_open(market.expiry, clock);
 }
 

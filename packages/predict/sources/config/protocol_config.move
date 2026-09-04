@@ -29,7 +29,7 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
-const ETradingHaltedNearExpiry: u64 = 7;
+const ETradeWindowClosed: u64 = 7;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -139,6 +139,14 @@ public fun valuation_in_progress(config: &ProtocolConfig): bool {
 /// Return the live referral fee rate for SDK and devInspect reads.
 public fun referral_fee_rate(config: &ProtocolConfig): u64 {
     config.referral_fee_rate
+}
+
+/// Window before expiry in which live quotes, mints, and live redeems abort.
+/// `public` for SDK and devInspect reads: a client that cannot see this value
+/// can only learn the window closed by decoding `ETradeWindowClosed` from a
+/// failed quote.
+public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
+    config.no_trade_window_ms
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -277,21 +285,6 @@ public fun set_use_pyth_spot_for_forward(
     config_events::emit_pricing_config_updated(&config.pricing_config, clock.timestamp_ms());
 }
 
-/// Set the window before expiry in which live quotes, mints, and live redeems
-/// abort. `0` disables the block. Applies immediately to markets already
-/// trading, so widening it is available as an incident control.
-public fun set_no_trade_window_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-    clock: &Clock,
-) {
-    config.assert_version();
-    config_constants::assert_no_trade_window_ms(value);
-    config.no_trade_window_ms = value;
-    config_events::emit_no_trade_window_updated(config.id(), value, clock.timestamp_ms());
-}
-
 /// Set the live Pyth spot freshness threshold.
 public fun set_pyth_spot_freshness_ms(
     config: &mut ProtocolConfig,
@@ -408,6 +401,26 @@ public fun set_ewma_enabled(
     config.assert_version();
     config.ewma_config.set_enabled(enabled);
     config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
+}
+
+/// Set the window before expiry in which live quotes, mints, and live redeems
+/// abort. `0` disables the block. Read live at trade time, so a change applies
+/// to markets already trading and stays available as an incident control.
+///
+/// Deliberately not gated on `assert_not_valuation_in_progress`, matching
+/// `set_trading_paused`: a stalled flush must not be able to trap a safety
+/// control. Nothing in the flush reads this value, so a mid-valuation change
+/// cannot skew a frozen mark.
+public fun set_no_trade_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_no_trade_window_ms(value);
+    config.no_trade_window_ms = value;
+    config_events::emit_no_trade_window_updated(value, clock.timestamp_ms());
 }
 
 /// Set whether trading is paused.
@@ -570,25 +583,20 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
 }
 
-/// Window before expiry in which live quotes, mints, and live redeems abort.
-public(package) fun no_trade_window_ms(config: &ProtocolConfig): u64 {
-    config.no_trade_window_ms
-}
-
-/// Abort when `expiry_ms` is inside the no-trade window. The window is exclusive
-/// at its far edge: remaining time equal to the window is already blocked, so a
-/// `0` window blocks nothing and disables the check. `now < expiry_ms` is checked
-/// first so the subtraction cannot underflow for a market at or past expiry;
-/// that case is refused here too, since no live flow may price an expired market.
+/// Abort when `expiry_ms` is inside the no-trade window. The blocked region is
+/// `remaining <= window`, so a `0` window blocks nothing and disables the check.
+/// `now < expiry_ms` guards the subtraction against underflow for any future
+/// caller; on today's paths it cannot be false, because a `&Pricer` only exists
+/// if `load_live_pricer` already asserted `now < expiry` in the same transaction.
 public(package) fun assert_trade_window_open(
     config: &ProtocolConfig,
     expiry_ms: u64,
     clock: &Clock,
 ) {
-    let window = config.no_trade_window_ms;
+    let window = config.no_trade_window_ms();
     if (window == 0) return;
     let now = clock.timestamp_ms();
-    assert!(now < expiry_ms && expiry_ms - now > window, ETradingHaltedNearExpiry);
+    assert!(now < expiry_ms && expiry_ms - now > window, ETradeWindowClosed);
 }
 
 /// Abort unless a valuation lock is currently active.

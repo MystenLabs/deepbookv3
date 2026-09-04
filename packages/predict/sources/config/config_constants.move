@@ -416,15 +416,17 @@ public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
 /// fixed oracle staleness is worth progressively more to whoever sees the move
 /// first; the edge grows without bound as the remaining time goes to zero, which
 /// no finite fee can price. This bounds the region rather than charging for it.
-/// Settlement, settled redemption, and liquidation are unaffected. `0` disables.
+/// Settlement and settled redemption are unaffected. `0` disables.
 public(package) macro fun default_no_trade_window_ms(): u64 { 2_000 }
 
 public(package) macro fun min_no_trade_window_ms(): u64 { 0 }
 
-/// 15s caps the block at a quarter of the shortest market cadence's life. Past
-/// that an `AdminCap` alone would not be narrowing the adverse tail so much as
-/// retiring the product, which is a launch-config decision rather than a knob.
-public(package) macro fun max_no_trade_window_ms(): u64 { 15_000 }
+/// A quarter of the shortest market cadence (`cadence_one_minute`). Past that an
+/// `AdminCap` alone would not be narrowing the adverse tail so much as retiring
+/// that cadence, which is a launch-config decision rather than a knob.
+public(package) macro fun max_no_trade_window_ms(): u64 {
+    deepbook_predict::constants::one_minute_ms!() / 4
+}
 
 public(package) fun assert_no_trade_window_ms(value: u64) {
     assert!(
