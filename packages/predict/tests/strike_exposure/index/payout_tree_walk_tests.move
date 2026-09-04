@@ -21,6 +21,7 @@ use deepbook_predict::{
     constants,
     oracle_fixture::{Self, OracleBundle, OracleFixture},
     pricing::{Self, Pricer},
+    pricing_reference_data as ref_data,
     range_codec::{Self, Strike},
     strike_payout_tree::{Self, StrikePayoutTree},
     test_constants
@@ -61,6 +62,15 @@ const GC_SETTLEMENT_C_ONLY_TICK: u64 = 106;
 const CANCEL_LOWER_TICK: u64 = 90;
 const CANCEL_SHARED_TICK: u64 = 100;
 const CANCEL_QUANTITY: u64 = 3_000_000;
+/// Adjacent $10-grid ticks on committed real scenario 0 whose UP prices RISE by one
+/// raw unit: `N(d2)` sits on the deep-ITM plateau while the floored skew term steps.
+/// The surface itself is valid and butterfly-free — the rise is the pricer's own
+/// fixed point, which is why it must not abort a mandatory walk.
+const DUST_INVERSION_LOWER_TICK: u64 = 55_240;
+const DUST_INVERSION_HIGHER_TICK: u64 = 55_250;
+/// Shared upper boundary near scenario 0's forward, so both ranges price near 0.5.
+const DUST_INVERSION_SHARED_TICK: u64 = 75_800;
+const DUST_INVERSION_QUANTITY: u64 = 2_000_000_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -220,6 +230,63 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 
 /// Strike for a tick under the default `tick_size` (tick 0 and `pos_inf_tick`
 /// map to the open-ended sentinels).
+/// Two ordinary ranges whose lower boundaries straddle a one-unit fixed-point
+/// inversion on a REAL committed surface walk to the per-order figure instead of
+/// aborting. The prices are asserted to invert first, so the test drives the guard
+/// rather than merely passing beside it; the rise is dust by the pricer's own
+/// precision, which is what `price_monotonicity_tolerance` admits.
+#[test]
+fun a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted() {
+    let (mut fixture, oracle, pricer) = real_scenario_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(raw(DUST_INVERSION_LOWER_TICK));
+    let higher_price = pricer.up_price(raw(DUST_INVERSION_HIGHER_TICK));
+    assert!(higher_price > lower_price);
+    assert!(higher_price - lower_price <= pricing::price_monotonicity_tolerance!());
+
+    tree.insert_range(
+        DUST_INVERSION_LOWER_TICK,
+        DUST_INVERSION_SHARED_TICK,
+        DUST_INVERSION_QUANTITY,
+    );
+    tree.insert_range(
+        DUST_INVERSION_HIGHER_TICK,
+        DUST_INVERSION_SHARED_TICK,
+        DUST_INVERSION_QUANTITY,
+    );
+
+    // The netted aggregate still equals the independent per-order sum: the walk
+    // prices the inverted boundary at its quote, so admitting the dust costs the
+    // mark nothing.
+    assert_eq!(
+        walk_linear(&tree, &pricer),
+        range_reference(
+            &pricer,
+            vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
+            vector[DUST_INVERSION_SHARED_TICK, DUST_INVERSION_SHARED_TICK],
+            vector[DUST_INVERSION_QUANTITY, DUST_INVERSION_QUANTITY],
+        ),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The synthetic surface the abort tests use inverts by far more than the
+/// tolerance, so their aborts are attributable to a real inversion rather than to
+/// any rise at all.
+#[test]
+fun the_synthetic_inversion_exceeds_the_monotonicity_tolerance() {
+    let (fixture, oracle, pricer) = non_monotone_pricer();
+
+    let lower_price = pricer.up_price(raw(CANCEL_LOWER_TICK));
+    let higher_price = pricer.up_price(raw(CANCEL_SHARED_TICK));
+    assert!(higher_price - lower_price > pricing::price_monotonicity_tolerance!());
+
+    cleanup(fixture, oracle);
+}
+
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 
 /// Run the exact linear walk.
@@ -317,6 +384,32 @@ fun non_monotone_pricer(): (OracleFixture, OracleBundle, Pricer) {
         true,
         0,
         false,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+    (fixture, oracle, pricer)
+}
+
+/// A pricer carrying committed real scenario 0 — a provider-valid, butterfly-free
+/// surface, unlike `non_monotone_pricer`'s synthetic one.
+fun real_scenario_pricer(): (OracleFixture, OracleBundle, Pricer) {
+    let mut fixture = oracle_fixture::setup_oracle(
+        ref_data::creation_spot(0),
+        ref_data::tick_size(0),
+        test_constants::default_expiry_ms(),
+    );
+    let mut oracle = fixture.take_oracle_bundle();
+    fixture.prepare_real_oracle_bundle(
+        &mut oracle,
+        ref_data::spot(0),
+        ref_data::forward(0),
+        ref_data::svi_a(0),
+        false,
+        ref_data::svi_b(0),
+        ref_data::svi_sigma(0),
+        ref_data::svi_rho_magnitude(0),
+        ref_data::svi_rho_is_negative(0),
+        ref_data::svi_m_magnitude(0),
+        ref_data::svi_m_is_negative(0),
     );
     let pricer = fixture.load_pricer_bundle(&oracle);
     (fixture, oracle, pricer)
