@@ -48,6 +48,7 @@ const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
+const EMintCostAboveMaxPayout: u64 = 11;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -94,7 +95,9 @@ public struct ValuationStamp has drop, store {
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes.
+/// fee policy because it is escrowed for risk-reducing live closes. Quote
+/// construction aborts when `all_in_cost` exceeds `quantity`, the position's
+/// maximum settlement payout.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -942,13 +945,13 @@ fun mint_prepared(
             exact_quantity,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
-    // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
+    let penalty_amount = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     let builder_code_id = predict_account::builder_code_id(account);
     let referrer_account_id = account.referrer_account_id();
     let referrer_receive_address = account.referrer_receive_address();
     let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+    market.ewma.update(config.ewma_config(), clock, ctx);
     let referral_fee = if (referrer_receive_address.is_some()) {
         let referral_fee_basis =
             quote.trading_fee - quote.fee_incentive_subsidy + quote.penalty_fee;
@@ -1012,6 +1015,7 @@ fun compute_mint_quote(
         + builder_fee
         + penalty_fee
         + inventory_impact_charge;
+    assert!(all_in_cost <= quantity, EMintCostAboveMaxPayout);
 
     MintQuote {
         quantity,
