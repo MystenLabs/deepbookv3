@@ -1522,7 +1522,7 @@ worth-fixing.
 - **Response:** `abort` with `EMintCostAboveMaxPayout` from the shared quote computation, so both quote entrypoints and both mint entrypoints reject the same guaranteed-loss terms.
 - **Reasoning:** caller-supplied `max_cost` is slippage protection and can be disabled on exact-quantity mints, while the configured entry-probability band is independent tail-pricing policy. Comparing the final trader debit with `quantity` directly enforces the economic boundary across every variable fee component without coupling it to either control.
 - **Risk profile:** n/a (bound semantics, not a probabilistic risk).
-- **Pinning tests:** `mint_redeem_guard_tests.move` — `mint_cost_above_maximum_payout_aborts`; `quote_mint_tests.move` — `quote_above_maximum_payout_aborts` and `quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost` pin the rejected and admitted quote sides.
+- **Pinning tests:** `mint_redeem_guard_tests.move` — `mint_cost_above_maximum_payout_aborts`; `quote_mint_tests.move` — `quote_at_maximum_payout_mints` and `quote_above_maximum_payout_aborts` pin exact equality as admitted and one USDC base unit above as rejected.
 - **Reopen when:** settlement can pay more than `quantity`, a mint charge becomes recoverable at settlement, or the protocol intentionally supports externally compensated loss-leading positions.
 
 ---

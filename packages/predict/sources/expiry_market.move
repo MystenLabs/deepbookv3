@@ -931,13 +931,13 @@ fun mint_prepared(
             exact_quantity,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
-    // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
+    let penalty_amount = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     let builder_code_id = predict_account::builder_code_id(account);
     let referrer_account_id = account.referrer_account_id();
     let referrer_receive_address = account.referrer_receive_address();
     let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+    market.ewma.update(config.ewma_config(), clock, ctx);
     let referral_fee = if (referrer_receive_address.is_some()) {
         let referral_fee_basis =
             quote.trading_fee - quote.fee_incentive_subsidy + quote.penalty_fee;

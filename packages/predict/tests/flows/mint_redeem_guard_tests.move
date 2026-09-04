@@ -27,9 +27,11 @@ const QUANTITY: u64 = 840_000_000;
 const REDEEM_MS: u64 = 121_000;
 const REDEEM_SOURCE_TS: u64 = 120_000;
 const MAX_COST_BELOW_QUOTE: u64 = 1;
-/// Per-unit fee that makes the fixture's independently pinned at-the-money
-/// premium plus its trading fee exceed the position's maximum payout.
-const GUARANTEED_LOSS_MIN_FEE: u64 = 600_000_000;
+/// At quantity 4e6, the fixture's independent ATM probability reference plus
+/// its 21-unit approximation budget floors to premium 1,999,974. This fee rate
+/// floors to 2,000,027, putting all-in cost one USDC base unit above quantity.
+const MAX_PAYOUT_BOUNDARY_QUANTITY: u64 = 4_000_000;
+const ABOVE_MAX_PAYOUT_MIN_FEE_RATE: u64 = 500_006_750;
 // The all-in cost of the at-the-money mint below is taken from the quote rather
 // than hardcoded. That is what the boundary pair is actually about: the guard
 // must accept exactly what the quote published and reject one unit less, so
@@ -96,7 +98,7 @@ fun mint_exact_quantity_above_max_cost_aborts() {
 #[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
 fun mint_cost_above_maximum_payout_aborts() {
     let mut fx = helpers::setup_market_default();
-    fx.set_template_min_fee(GUARANTEED_LOSS_MIN_FEE);
+    fx.set_template_min_fee(ABOVE_MAX_PAYOUT_MIN_FEE_RATE);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
     let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
     let mut market = fx.take_market_bundle(expiry_id);
@@ -113,7 +115,7 @@ fun mint_cost_above_maximum_payout_aborts() {
         &mut account,
         helpers::strike_tick(),
         constants::pos_inf_tick!(),
-        test_constants::mint_quantity(),
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
         std::u64::max_value!(),
         std::u64::max_value!(),
     );
