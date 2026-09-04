@@ -352,12 +352,13 @@ public(package) fun assert_max_entry_probability(value: u64) {
 /// bool has no invalid value.
 public(package) macro fun default_use_pyth_spot_for_forward(): bool { true }
 
-/// Held strictly below `default_block_scholes_price_freshness_ms` so a
-/// re-anchor can only use a Pyth spot at least as fresh as the bound the Block
-/// Scholes spot it replaces had to clear. A stale Pyth spot skips the re-anchor
-/// silently instead of aborting, so an over-tight bound degrades pricing without
-/// any signal — 3s keeps margin over the ~1.4-1.8s push cycle RP-24 records.
-public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 3_000 }
+/// Pyth Lazer publishes on a 200ms channel, so 2s is ten refresh opportunities
+/// per window. A stale Pyth spot skips the forward re-anchor silently rather
+/// than aborting, so this bound only decides how stale an anchored forward may
+/// be, never whether trading proceeds. It does not order the two spots against
+/// each other: an in-window Pyth spot may still be older than the Block Scholes
+/// spot it re-anchors, which is RP-5's accepted residual, not a bound this fixes.
+public(package) macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 public(package) macro fun min_pyth_spot_freshness_ms(): u64 { 1 }
 
@@ -372,11 +373,12 @@ public(package) fun assert_pyth_spot_freshness_ms(value: u64) {
     );
 }
 
-/// Block Scholes spot and forward publish on a 500ms cadence, so 5s leaves ten
-/// refresh opportunities per window. Unlike the Pyth bound, a stale value here
-/// aborts every live trade, so the window carries the keeper's landing latency
-/// and transient submission backoff, not just its publish cadence.
-public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 5_000 }
+/// Block Scholes spot and forward publish on a 500ms cadence, so 2s is four
+/// refresh opportunities per window. This is the binding constraint of the two:
+/// a stale value here aborts every live trade, so the window absorbs landing
+/// latency and transient submission backoff as well as publish cadence. Raise
+/// this before anything else if `EBlockScholesPriceStale` starts appearing.
+public(package) macro fun default_block_scholes_price_freshness_ms(): u64 { 2_000 }
 
 public(package) macro fun min_block_scholes_price_freshness_ms(): u64 { 1 }
 

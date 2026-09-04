@@ -21,8 +21,8 @@ const SVI_FRESHNESS_ABOVE_MAX: u64 = 120_001;
 #[test]
 fun defaults_are_the_deployed_values() {
     let config = pricing_config::new();
-    assert_eq!(config.pyth_spot_freshness_ms(), 3_000);
-    assert_eq!(config.block_scholes_price_freshness_ms(), 5_000);
+    assert_eq!(config.pyth_spot_freshness_ms(), 2_000);
+    assert_eq!(config.block_scholes_price_freshness_ms(), 2_000);
     assert_eq!(config.block_scholes_svi_freshness_ms(), 60_000);
     destroy(config);
 }

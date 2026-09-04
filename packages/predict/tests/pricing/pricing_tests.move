@@ -55,7 +55,7 @@ const AT_THE_FORWARD_UP_BUDGET: u64 = 21;
 const DIVERGED_PYTH_SPOT: u64 = 102_000_000_000;
 // The boundary tests below need a Pyth window strictly shorter than the BS price window; the
 // production defaults are equal (10s each), so the tests tighten Pyth explicitly.
-const TIGHT_PYTH_FRESHNESS_MS: u64 = 2_000;
+const TIGHT_PYTH_FRESHNESS_MS: u64 = 1_000;
 
 /// Source timestamp for the diverged Pyth print. Strictly newer than the bootstrap
 /// tick's `live_source_timestamp_ms` (99_000) so the feed accepts the overwrite
