@@ -30,6 +30,7 @@ use deepbook_predict::{
     pricing_reference_data as ref_data,
     protocol_config::{Self, ProtocolConfig},
     range_codec,
+    strike_exposure_config,
     test_constants,
     vault_events
 };
@@ -387,18 +388,11 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
 #[test]
 fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
     let mut fx = helpers::setup_market_default();
-    fx.bootstrap_lock(IDLE_SEED);
-    let e = fx.create_expiry(test_constants::default_expiry_ms());
-    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let (mut market, mut account) = real_scenario_market(&mut fx);
 
-    fx.scenario_mut().next_tx(test_constants::alice());
-    let mut market = fx.take_market_bundle(e);
-    let mut account = fx.take_account_bundle(&trader);
-    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    fx.rebalance_expiry_cash_bundle(&mut market);
-    seed_real_scenario_surface(&mut fx, &mut market);
-
-    // Both ranges are ordinary: on the admission grid, and priced near 0.5.
+    // Both ranges are ordinary: on the admission grid, and priced near 0.5. The
+    // entry band sees the RANGE price (~0.476), never the inverting boundary's
+    // own ~0.999999995.
     let quote = fx.quote_mint_bundle(&market, DUST_LOWER_TICK, DUST_SHARED_TICK, DUST_QUANTITY);
     assert!(quote.entry_probability() > 400_000_000);
     assert!(quote.entry_probability() < 600_000_000);
@@ -441,6 +435,30 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
 
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+/// The entry band is the reason this looks unreachable and is not: it bounds the
+/// RANGE price, so it rejects the open-topped order at the same lower boundary
+/// (that one really is a ~0.999999995 contract) while admitting the two-sided
+/// range over it at ~0.476. The inverting boundary's own price never faces the
+/// band — only the admission grid applies to a boundary tick.
+#[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
+fun the_entry_band_bounds_the_range_not_the_boundary() {
+    let mut fx = helpers::setup_market_default();
+    let (mut market, mut account) = real_scenario_market(&mut fx);
+
+    let admitted = fx.quote_mint_bundle(&market, DUST_LOWER_TICK, DUST_SHARED_TICK, DUST_QUANTITY);
+    assert!(admitted.entry_probability() > 400_000_000);
+    assert!(admitted.entry_probability() < 600_000_000);
+
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        DUST_LOWER_TICK,
+        constants::pos_inf_tick!(),
+        DUST_QUANTITY,
+    );
+    abort 999
 }
 
 // === Completeness proof ===
@@ -1067,6 +1085,23 @@ fun set_protocol_reserve_profit_share_above_max_aborts() {
 /// Bootstrap pool idle via the genesis `lock_capital` so nonzero NAV has matching PLP
 /// supply (`idle == total_supply == amount` at a 1.0 mark). The lock is
 /// operator-gated and needs no trader account.
+/// A funded market carrying committed real scenario 0, with the trader's account
+/// bundle taken, ready to mint into.
+fun real_scenario_market(
+    fx: &mut helpers::Fixture,
+): (helpers::MarketBundle, helpers::AccountBundle) {
+    fx.bootstrap_lock(IDLE_SEED);
+    let e = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(e);
+    let account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    seed_real_scenario_surface(fx, &mut market);
+    (market, account)
+}
+
 /// Install committed real scenario 0 over a prepared market.
 fun seed_real_scenario_surface(fx: &mut helpers::Fixture, market: &mut helpers::MarketBundle) {
     let ts = test_constants::live_source_timestamp_ms() + 1;
