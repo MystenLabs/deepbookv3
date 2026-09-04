@@ -20,6 +20,8 @@ from . import cancellation, config
 
 _IGNORE = shutil.ignore_patterns(*config.STAGE_IGNORE)
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_SAFE_SUBDIR_PART = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._-]*$")
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,24 @@ def _git_source(manifest: dict, name: str) -> dict:
     return {field: str(source[field]) for field in required}
 
 
+def validate_git_coordinate(repo: str, subdir: str) -> None:
+    """Reject a git coordinate that is not a safe, allowlisted fetch target."""
+    if _CONTROL.search(repo) or _CONTROL.search(subdir):
+        raise ValueError("git dependency coordinate contains a control character")
+    if repo not in config.ALLOWED_GIT_REPOS:
+        raise ValueError(f"git dependency repository is not allowlisted: {repo}")
+    parts = subdir.split("/")
+    if (
+        not subdir
+        or subdir.startswith("/")
+        or "\\" in subdir
+        or ":" in subdir
+        or any(part in {".", ".."} or part.startswith("-") for part in parts)
+        or not all(_SAFE_SUBDIR_PART.fullmatch(part) for part in parts)
+    ):
+        raise ValueError(f"git dependency subdir is not a safe relative path: {subdir}")
+
+
 def external_dependency_specs(
     packages_dir: Path = config.PACKAGES_DIR,
 ) -> dict[str, GitDependency]:
@@ -77,6 +97,7 @@ def external_dependency_specs(
         source = next(iter(sources.values()))
         if not _FULL_SHA.fullmatch(source["rev"]):
             raise ValueError(f"{name} must use a full 40-character commit SHA")
+        validate_git_coordinate(source["git"], source["subdir"])
         specs[name] = GitDependency(
             name=name,
             repo=source["git"],
@@ -191,6 +212,7 @@ def _stage_git_dep(
     destination: Path,
     cancel_event: threading.Event | None = None,
 ) -> None:
+    validate_git_coordinate(spec.repo, spec.subdir)
     cache = spec.cache_root()
     if _git_has_commit(cache, spec.rev, cancel_event):
         _export_git_tree(
@@ -210,7 +232,20 @@ def _stage_git_dep(
         capture_output=True,
     )
     cancellation.run(
-        ["git", "-C", str(checkout), "fetch", "-q", "--depth", "1", spec.repo, spec.rev],
+        [
+            "git",
+            "-C",
+            str(checkout),
+            "-c",
+            "protocol.ext.allow=never",
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "--",
+            spec.repo,
+            spec.rev,
+        ],
         cancel_event=cancel_event,
         check_result=True,
         capture_output=True,
@@ -235,7 +270,15 @@ def _git_has_commit(
     if not repository.is_dir():
         return False
     result = cancellation.run(
-        ["git", "-C", str(repository), "cat-file", "-e", f"{revision}^{{commit}}"],
+        [
+            "git",
+            "-C",
+            str(repository),
+            "cat-file",
+            "-e",
+            "--",
+            f"{revision}^{{commit}}",
+        ],
         cancel_event=cancel_event,
         capture_output=True,
     )
@@ -255,8 +298,11 @@ def _export_git_tree(
             "git",
             "-C",
             str(repository),
+            "-c",
+            "protocol.ext.allow=never",
             "archive",
             "--format=tar",
+            "--",
             f"{revision}:{subdir}",
         ],
         cancel_event=cancel_event,
