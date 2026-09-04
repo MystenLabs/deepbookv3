@@ -313,7 +313,7 @@ public fun quote_mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -346,7 +346,7 @@ public fun quote_mint_for_account(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     let account = wrapper.load_account();
     let max_premium = max_premium.min(account.balance<USDC>(root, clock));
     let terms = market
@@ -441,7 +441,7 @@ public fun mint_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     market.mint_prepared(
@@ -488,7 +488,7 @@ public fun mint_exact_amount(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     assert!(max_cost > 0, EMintCostCapRequired);
     wrapper.settle<USDC>(root, clock);
     let max_premium = max_premium.min(wrapper.load_account().balance<USDC>(root, clock));
@@ -537,7 +537,7 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    market.assert_live_flow_allowed(config, pricer);
+    market.assert_live_flow_allowed(config, pricer, clock);
     market.redeem_live_with_auth(
         wrapper,
         auth,
@@ -871,8 +871,13 @@ fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &Protocol
 }
 
 // --- Gates: the first call of every public entry ---
-fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
-    market.assert_live_flow_allowed(config, pricer);
+fun assert_live_mint_allowed(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+) {
+    market.assert_live_flow_allowed(config, pricer, clock);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
 }
@@ -884,10 +889,19 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 // so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
 // mid-stamp cash move would skew the figures the seal freezes. That stage is one
 // PTB, so this never blocks a trade in any other transaction.
-fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
+fun assert_live_flow_allowed(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+) {
     config.assert_version();
     config.assert_snapshot_not_in_progress();
     market.assert_pricer_bound(pricer);
+    // Shared by every live mint, quote, and live redeem, so the pre-expiry block
+    // lands once here. Settlement, settled redemption, and liquidation take other
+    // paths and stay open: the window closes new and closing risk, not exits.
+    config.assert_trade_window_open(market.expiry, clock);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {

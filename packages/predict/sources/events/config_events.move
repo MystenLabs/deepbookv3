@@ -49,6 +49,13 @@ public struct PlpFeeRatesUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when the pre-expiry no-trade window changes.
+public struct NoTradeWindowUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    no_trade_window_ms: u64,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when global trading pause state changes.
 public struct TradingPausedUpdated has copy, drop, store {
     protocol_config_id: ID,
@@ -178,6 +185,18 @@ public(package) fun emit_plp_fee_rates_updated(
     event::emit(PlpFeeRatesUpdated {
         plp_supply_fee_rate,
         plp_withdraw_fee_rate,
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_no_trade_window_updated(
+    protocol_config_id: ID,
+    no_trade_window_ms: u64,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(NoTradeWindowUpdated {
+        protocol_config_id,
+        no_trade_window_ms,
         onchain_timestamp_ms,
     });
 }

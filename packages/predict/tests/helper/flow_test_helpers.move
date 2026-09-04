@@ -505,6 +505,11 @@ public fun set_pyth_spot_freshness_bundle(
     market.config.set_pyth_spot_freshness_ms(&self.admin_cap, freshness_ms, &self.clock);
 }
 
+/// Set the pre-expiry no-trade window through the real admin path.
+public fun set_no_trade_window_bundle(self: &Fixture, market: &mut MarketBundle, window_ms: u64) {
+    market.config.set_no_trade_window_ms(&self.admin_cap, window_ms, &self.clock);
+}
+
 /// Enable the EWMA congestion penalty with explicit parameters through the
 /// real admin path.
 public fun set_ewma_penalty(
