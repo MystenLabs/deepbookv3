@@ -58,6 +58,7 @@ const FUTURE_VERSION: u64 = 2;
 
 public struct BASE has store {}
 public struct QUOTE has store {}
+public struct JUNK has store {}
 
 public struct SpotFixture {
     scenario: Scenario,
@@ -545,6 +546,83 @@ fun retired_package_version_cannot_use_spot_wrapper() {
     abort EUnexpectedSuccess
 }
 
+#[test, expected_failure(abort_code = sessions::EPoolNotAllowed)]
+fun empty_allowlist_cannot_place_spot_order() {
+    let mut fixture = setup_spot_fixture();
+    authorize_session_with_pools(&mut fixture, vector[]);
+    let registry_id = fixture.registry_id;
+    let pool_id = fixture.pool_id;
+    let wrapper_id = fixture.wrapper_id;
+
+    fixture.scenario.next_tx(SESSION);
+    let registry = fixture.scenario.take_shared_by_id<Registry>(registry_id);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<BASE, QUOTE>>(pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    let root = fixture.scenario.take_shared<AccumulatorRoot>();
+    let clock = fixture.scenario.take_shared<Clock>();
+    let _ = sessions::place_limit_order<BASE, QUOTE>(
+        &mut pool,
+        &registry,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        LIMIT_ORDER_CLIENT_ID,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(),
+        constants::min_size(),
+        false,
+        true,
+        constants::max_u64(),
+        &root,
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EPoolNotAllowed)]
+fun session_cannot_place_spot_order_on_unlisted_pool() {
+    let mut fixture = setup_spot_fixture();
+    let registry_id = fixture.registry_id;
+    let junk_pool_id = create_junk_pool(&mut fixture.scenario, registry_id);
+    authorize_session(&mut fixture);
+
+    fixture.scenario.next_tx(SESSION);
+    let registry = fixture.scenario.take_shared_by_id<Registry>(fixture.registry_id);
+    let account_registry = fixture.scenario.take_shared<AccountRegistry>();
+    let mut pool = fixture.scenario.take_shared_by_id<Pool<JUNK, QUOTE>>(junk_pool_id);
+    let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(fixture.wrapper_id);
+    let sessions_config = fixture
+        .scenario
+        .take_shared_by_id<SessionsConfig>(fixture.sessions_config_id);
+    let root = fixture.scenario.take_shared<AccumulatorRoot>();
+    let clock = fixture.scenario.take_shared<Clock>();
+    let _ = sessions::place_limit_order<JUNK, QUOTE>(
+        &mut pool,
+        &registry,
+        &account_registry,
+        &mut wrapper,
+        &sessions_config,
+        LIMIT_ORDER_CLIENT_ID,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        constants::float_scaling(),
+        constants::min_size(),
+        false,
+        true,
+        constants::max_u64(),
+        &root,
+        &clock,
+        fixture.scenario.ctx(),
+    );
+    abort EUnexpectedSuccess
+}
+
 fun setup_spot_fixture(): SpotFixture {
     let mut scenario = test::begin(ADMIN);
 
@@ -578,6 +656,11 @@ fun setup_spot_fixture(): SpotFixture {
 }
 
 fun authorize_session(fixture: &mut SpotFixture) {
+    let pool_id = fixture.pool_id;
+    authorize_session_with_pools(fixture, vector[pool_id]);
+}
+
+fun authorize_session_with_pools(fixture: &mut SpotFixture, allowed_pools: vector<ID>) {
     let wrapper_id = fixture.wrapper_id;
     fixture.scenario.next_tx(ALICE);
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
@@ -590,6 +673,7 @@ fun authorize_session(fixture: &mut SpotFixture) {
         &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
+        allowed_pools,
         &clock,
         fixture.scenario.ctx(),
     );
@@ -597,6 +681,7 @@ fun authorize_session(fixture: &mut SpotFixture) {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(SESSION_EXPIRES_AT_MS),
     );
+    assert_eq!(sessions::session_allowed_pools(&wrapper, SESSION), option::some(allowed_pools));
     return_shared(clock);
     return_shared(sessions_config);
     return_shared(wrapper);
@@ -608,6 +693,7 @@ fun revoke_session(fixture: &mut SpotFixture) {
     let mut wrapper = fixture.scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     sessions::revoke_session(&mut wrapper, SESSION, fixture.scenario.ctx());
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
+    assert!(sessions::session_allowed_pools(&wrapper, SESSION).is_none());
     return_shared(wrapper);
 }
 
@@ -725,6 +811,25 @@ fun create_pool(scenario: &mut Scenario, registry_id: ID): ID {
     let admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
     let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
     let pool_id = pool::create_pool_admin<BASE, QUOTE>(
+        &mut registry,
+        constants::tick_size(),
+        constants::lot_size(),
+        constants::min_size(),
+        true,
+        false,
+        &admin_cap,
+        scenario.ctx(),
+    );
+    return_shared(registry);
+    destroy(admin_cap);
+    pool_id
+}
+
+fun create_junk_pool(scenario: &mut Scenario, registry_id: ID): ID {
+    scenario.next_tx(ADMIN);
+    let admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let pool_id = pool::create_pool_admin<JUNK, QUOTE>(
         &mut registry,
         constants::tick_size(),
         constants::lot_size(),
