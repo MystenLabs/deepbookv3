@@ -4733,6 +4733,11 @@ export function assertScriptRecovery(
         );
 }
 
+export function assertRecordedScriptBinding(result: DeploymentResult, actualCommit: string): void {
+    const recorded = result.scriptCommits?.at(-1) ?? result.sourceCommit;
+    if (recorded) assertSourceBinding(recorded, actualCommit);
+}
+
 async function run(mode: DeploymentMode): Promise<void> {
     if (!/^[1-9][0-9]*$/.test(PACKAGE_GAS_BUDGET) || TRANSACTION_GAS_BUDGET <= 0n) {
         throw new Error("gas budgets must be positive integers");
@@ -4747,18 +4752,14 @@ async function run(mode: DeploymentMode): Promise<void> {
             .split("\n")
             .filter(Boolean);
         assertScriptRecovery(result, mode.resumeScriptFrom, changed);
+    } else if (mode.command === "deploy") {
+        assertRecordedScriptBinding(result, sourceCommit);
     } else if (result.sourceCommit && result.sourceCommit !== sourceCommit) {
-        const executionSource =
-            mode.command === "issue-caps"
-                ? (result.scriptCommits?.at(-1) ?? result.sourceCommit)
-                : result.sourceCommit;
+        const executionSource = result.scriptCommits?.at(-1) ?? result.sourceCommit;
         const changed = git(["diff", "--name-only", executionSource, sourceCommit])
             .split("\n")
             .filter(Boolean);
-        if (
-            mode.command !== "issue-caps" ||
-            unexpectedDeploymentPaths(changed, PACKAGES, true).length
-        ) {
+        if (unexpectedDeploymentPaths(changed, PACKAGES, true).length) {
             throw new Error(
                 `deployment started from ${result.sourceCommit}, HEAD is ${sourceCommit}`,
             );
@@ -4829,9 +4830,8 @@ async function run(mode: DeploymentMode): Promise<void> {
         }
         await runBroadcastBoundary(mode.execute, async () => {
             if (mode.command === "deploy" && mode.resumeScriptFrom) {
-                result.scriptCommits = [
-                    ...new Set([...(result.scriptCommits ?? []), sourceCommit]),
-                ];
+                if (result.scriptCommits?.at(-1) !== sourceCommit)
+                    result.scriptCommits = [...(result.scriptCommits ?? []), sourceCommit];
                 writeState(result);
             }
             if (mode.command === "deploy") await executeDeployment(runtime, executionBindings);

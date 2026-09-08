@@ -12,6 +12,7 @@ import {
     MANIFEST_RELATIVE,
     STATE_RELATIVE,
     assertScriptRecovery,
+    assertRecordedScriptBinding,
     PENDING_CURRENCY_OWNER,
     objectEvidence as readObjectEvidence,
     assertDeploymentTarget,
@@ -95,6 +96,14 @@ test("explicit script-only recovery preserves the published source and fails clo
         package: null,
         startedAt: "2026-09-08T00:00:00Z",
     };
+    const correction = "c".repeat(40);
+    state.scriptCommits = [correction];
+    assert.doesNotThrow(() => assertRecordedScriptBinding(state, correction));
+    assert.throws(() => assertRecordedScriptBinding(state, anchor), /source commit changed/);
+    assert.throws(
+        () => assertRecordedScriptBinding(state, "d".repeat(40)),
+        /source commit changed/,
+    );
     assert.throws(() => assertScriptRecovery(state, anchor, []), /reconciled/);
     state.inFlight = null;
     delete state.publishTx.sessions;
