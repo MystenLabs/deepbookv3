@@ -90,7 +90,7 @@ const PACKAGES = [
 type PackageName = (typeof PACKAGES)[number];
 
 export type DeploymentMode =
-    | { command: "deploy"; execute: boolean }
+    | { command: "deploy"; execute: boolean; resumeScriptFrom?: string }
     | { command: "issue-caps"; execute: boolean; recipient: string };
 
 const LINKED = {
@@ -503,6 +503,7 @@ export interface DeploymentResult {
     rpcUrl: string | null;
     clientConfigDigest: string | null;
     sourceCommit: string | null;
+    scriptCommits?: string[];
     deployer: string;
     packageGasBudget: string | null;
     transactionGasBudget: string | null;
@@ -2984,7 +2985,7 @@ async function inspectU64(
     return parseU64(returnBytes(await devInspect(runtime, label, tx)));
 }
 
-async function objectEvidence(
+export async function objectEvidence(
     runtime: Runtime,
     id: string,
     expectedType: string | "package",
@@ -3246,6 +3247,8 @@ async function ensureDeepbookCoreAppAuthorized(runtime: Runtime): Promise<void> 
 }
 
 type CurrencyName = keyof WiringState["currencies"];
+// Transfer-to-object uses AddressOwner; finalize_registration receives it from 0xc.
+export const PENDING_CURRENCY_OWNER = "0xc";
 
 function deploymentCurrencyType(result: DeploymentResult, name: CurrencyName): string {
     return name === "usdc" ? usdcType(result) : plpType(result);
@@ -3280,7 +3283,7 @@ async function ensureCurrencyRegistration(runtime: Runtime, name: CurrencyName):
             runtime,
             state.pendingId,
             `coin_registry::Currency<${type}>`,
-            "object:0xc",
+            PENDING_CURRENCY_OWNER,
         );
         const tx = new Transaction();
         call(
@@ -4703,6 +4706,33 @@ export async function executeDeployment(
     }
 }
 
+export function assertScriptRecovery(
+    result: DeploymentResult,
+    originalCommit: string,
+    changed: readonly string[],
+): void {
+    if (result.sourceCommit !== originalCommit || result.inFlight || result.status === "complete") {
+        throw new Error(
+            "script recovery requires the original source anchor and an interrupted, reconciled run",
+        );
+    }
+    if (!PACKAGES.every((pkg) => result.packages[pkg] && result.publishTx[pkg])) {
+        throw new Error("script recovery requires all packages to be published");
+    }
+    const scriptPaths = new Set([
+        "packages/predict/deployment/deploy.ts",
+        "packages/predict/deployment/deploy.test.ts",
+        "packages/predict/deployment/README.md",
+    ]);
+    const unexpected = unexpectedDeploymentPaths(changed, PACKAGES, true).filter(
+        (path) => !scriptPaths.has(path),
+    );
+    if (unexpected.length)
+        throw new Error(
+            `script recovery cannot change contract sources or dependencies: ${unexpected.join(", ")}`,
+        );
+}
+
 async function run(mode: DeploymentMode): Promise<void> {
     if (!/^[1-9][0-9]*$/.test(PACKAGE_GAS_BUDGET) || TRANSACTION_GAS_BUDGET <= 0n) {
         throw new Error("gas budgets must be positive integers");
@@ -4712,8 +4742,17 @@ async function run(mode: DeploymentMode): Promise<void> {
     assertPackageCheckpoints(result);
     assertExpectedWorktree(result);
     const sourceCommit = git(["rev-parse", "HEAD"]);
-    if (result.sourceCommit && result.sourceCommit !== sourceCommit) {
-        const changed = git(["diff", "--name-only", result.sourceCommit, sourceCommit])
+    if (mode.command === "deploy" && mode.resumeScriptFrom) {
+        const changed = git(["diff", "--name-only", mode.resumeScriptFrom, sourceCommit])
+            .split("\n")
+            .filter(Boolean);
+        assertScriptRecovery(result, mode.resumeScriptFrom, changed);
+    } else if (result.sourceCommit && result.sourceCommit !== sourceCommit) {
+        const executionSource =
+            mode.command === "issue-caps"
+                ? (result.scriptCommits?.at(-1) ?? result.sourceCommit)
+                : result.sourceCommit;
+        const changed = git(["diff", "--name-only", executionSource, sourceCommit])
             .split("\n")
             .filter(Boolean);
         if (
@@ -4789,6 +4828,12 @@ async function run(mode: DeploymentMode): Promise<void> {
             console.log("[deploy] preflight complete; no transactions submitted (pass --execute)");
         }
         await runBroadcastBoundary(mode.execute, async () => {
+            if (mode.command === "deploy" && mode.resumeScriptFrom) {
+                result.scriptCommits = [
+                    ...new Set([...(result.scriptCommits ?? []), sourceCommit]),
+                ];
+                writeState(result);
+            }
             if (mode.command === "deploy") await executeDeployment(runtime, executionBindings);
             else
                 console.log(
@@ -4805,11 +4850,20 @@ export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
     const command = remaining[0] === "issue-caps" ? remaining.shift() : "deploy";
     let execute = false;
     let recipient: string | undefined;
+    let resumeScriptFrom: string | undefined;
     while (remaining.length) {
         const arg = remaining.shift();
         if (arg === "--execute" && !execute) execute = true;
         else if (arg === "--recipient" && command === "issue-caps" && recipient === undefined) {
             recipient = requiredObjectId(remaining.shift(), "cap recipient");
+        } else if (
+            arg === "--resume-script-from" &&
+            command === "deploy" &&
+            resumeScriptFrom === undefined
+        ) {
+            resumeScriptFrom = remaining.shift();
+            if (!resumeScriptFrom || !/^[0-9a-f]{40}$/.test(resumeScriptFrom))
+                throw new Error("--resume-script-from requires the full original source commit");
         } else throw new Error(`unknown deployment argument: ${arg}`);
     }
     if (command === "issue-caps") {
@@ -4817,7 +4871,7 @@ export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
             throw new Error("issue-caps requires a nonzero --recipient address");
         return { command, execute, recipient };
     }
-    return { command: "deploy", execute };
+    return { command: "deploy", execute, ...(resumeScriptFrom ? { resumeScriptFrom } : {}) };
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {

@@ -11,6 +11,9 @@ import {
     EXPECTED_PROTOCOL_CONFIG,
     MANIFEST_RELATIVE,
     STATE_RELATIVE,
+    assertScriptRecovery,
+    PENDING_CURRENCY_OWNER,
+    objectEvidence as readObjectEvidence,
     assertDeploymentTarget,
     assertExactPackageGraph,
     assertExecutionBindings,
@@ -49,6 +52,92 @@ import {
 } from "./deploy.ts";
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
+
+test("explicit script-only recovery preserves the published source and fails closed", () => {
+    const state = completeStateFixture();
+    state.packages = {
+        fixed_math: id("1"),
+        usdc: id("2"),
+        account: id("3"),
+        propbook: id("4"),
+        predict: id("5"),
+        deepbook_core_account: id("6"),
+        sessions: id("7"),
+    };
+    state.publishTx = {
+        fixed_math: "math-tx",
+        usdc: "usdc-tx",
+        account: "account-tx",
+        propbook: "propbook-tx",
+        predict: "predict-tx",
+        deepbook_core_account: "wrapper-tx",
+        sessions: "sessions-tx",
+    };
+    const anchor = state.sourceCommit!;
+    assert.throws(() => assertScriptRecovery(state, anchor, []), /interrupted/);
+    state.status = "partial";
+    assert.doesNotThrow(() =>
+        assertScriptRecovery(state, anchor, ["packages/predict/deployment/deploy.ts"]),
+    );
+    for (const path of [
+        "packages/predict/sources/plp.move",
+        "packages/usdc/Move.toml",
+        "packages/predict/package-lock.json",
+        "packages/predict/deployment/other.ts",
+    ]) {
+        assert.throws(() => assertScriptRecovery(state, anchor, [path]), /cannot change/);
+    }
+    assert.throws(() => assertScriptRecovery(state, "b".repeat(40), []), /original source anchor/);
+    state.inFlight = {
+        kind: "transaction",
+        label: "bootstrap_pool",
+        digest: null,
+        package: null,
+        startedAt: "2026-09-08T00:00:00Z",
+    };
+    assert.throws(() => assertScriptRecovery(state, anchor, []), /reconciled/);
+    state.inFlight = null;
+    delete state.publishTx.sessions;
+    assert.throws(() => assertScriptRecovery(state, anchor, []), /all packages/);
+    assert.deepEqual(parseDeploymentArgs(["--resume-script-from", anchor]), {
+        command: "deploy",
+        execute: false,
+        resumeScriptFrom: anchor,
+    });
+    assert.throws(
+        () => parseDeploymentArgs(["--resume-script-from", "short"]),
+        /full original source/,
+    );
+});
+
+test("pending currency registration requires address ownership by the coin registry", async () => {
+    const object = {
+        type: "0x2::coin_registry::Currency<0x1::usdc::USDC>",
+        owner: { AddressOwner: "0xc" },
+        version: "1",
+        digest: "currency-digest",
+    };
+    const runtime = { client: { getObject: async () => ({ object }) } } as unknown as Parameters<
+        typeof readObjectEvidence
+    >[0];
+    const evidence = await readObjectEvidence(
+        runtime,
+        id("1"),
+        "coin_registry::Currency<0x1::usdc::USDC>",
+        PENDING_CURRENCY_OWNER,
+    );
+    assert.equal(evidence.owner, `0x${"0".repeat(63)}c`);
+    object.owner.AddressOwner = "0xd";
+    await assert.rejects(
+        readObjectEvidence(
+            runtime,
+            id("1"),
+            "coin_registry::Currency<0x1::usdc::USDC>",
+            PENDING_CURRENCY_OWNER,
+        ),
+        /is owned by/,
+    );
+});
 
 function manifestFixture(): IntegrationManifest {
     const predict = id("4");
