@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  SUI_VERSION: testnet-v1.74.1
+  SUI_VERSION: mainnet-v1.78.1
 
 jobs:
   upgraded-twin-parity:

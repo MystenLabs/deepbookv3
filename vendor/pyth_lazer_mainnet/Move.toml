@@ -1,0 +1,10 @@
+[package]
+name = "pyth_lazer"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies.wormhole]
+git = "https://github.com/wormhole-foundation/wormhole.git"
+subdir = "sui/wormhole"
+rev = "b71be5cbb9537c4aac8e23e74371affa3825efcd"
+rename-from = "Wormhole"

@@ -24,7 +24,7 @@ Authority pointers flow from entrypoints, directives, workflows, and consumers t
 ## Repository map
 
 - `packages/` contains Sui Move packages.
-- `vendor/` contains pinned third-party Move source; [Pyth provenance](vendor/pyth_lazer/README.md) owns its source and publication records.
+- `vendor/` contains pinned third-party Move source; [Testnet Pyth provenance](vendor/pyth_lazer/README.md) and [Mainnet Pyth provenance](vendor/pyth_lazer_mainnet/README.md) own their source and publication records.
 - `crates/` contains the DeepBook indexer, server, and schema crates.
 - `scripts/` contains protocol package-upgrade transactions and SDK examples.
 - `.claude/rules/` contains scoped contributor guidance.

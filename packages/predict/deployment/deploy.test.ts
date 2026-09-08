@@ -107,6 +107,37 @@ test("vendored Pyth sources match the pinned upstream inventory and hashes", () 
     }
 });
 
+test("Mainnet Pyth differs from its pinned source only by declared publication inputs", () => {
+    const root = new URL("../../../vendor/pyth_lazer_mainnet/", import.meta.url);
+    const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
+    const inventory = [
+        "LICENSE",
+        "Move.toml",
+        "Published.toml",
+        ...readdirSync(new URL("sources/", root)).map((file) => `sources/${file}`),
+    ];
+    assert.deepEqual(inventory.sort(), Object.keys(provenance.files).sort());
+    assert.deepEqual(provenance.replacements.map((r: { path: string }) => r.path).sort(), [
+        "Move.toml",
+        "sources/meta.move",
+    ]);
+    for (const file of inventory) {
+        let content = readFileSync(new URL(file, root));
+        for (const replacement of provenance.replacements.filter(
+            (r: { path: string }) => r.path === file,
+        )) {
+            const text = content.toString();
+            assert.equal(text.split(replacement.to).length, 2, file);
+            content = Buffer.from(text.replace(replacement.to, replacement.from));
+        }
+        assert.equal(
+            createHash("sha256").update(content).digest("hex"),
+            provenance.files[file],
+            file,
+        );
+    }
+});
+
 test("fresh publication staging preserves the vendored dependency outside packages", () => {
     let stagedRoot = "";
     withFreshPackageStage("predict", (directory) => {
@@ -125,6 +156,15 @@ test("fresh publication staging preserves the vendored dependency outside packag
         );
         assert.match(readFileSync(join(pyth, "Published.toml"), "utf8"), /\[published.testnet\]/);
         assert.equal(existsSync(join(directory, "Published.toml")), false);
+        const mainnetPyth = join(stagedRoot, "vendor", "pyth_lazer_mainnet");
+        assert.match(
+            readFileSync(join(mainnetPyth, "sources", "meta.move"), "utf8"),
+            /fun version\(\): u64 \{\s+2\s+\}/,
+        );
+        assert.match(
+            readFileSync(join(mainnetPyth, "Published.toml"), "utf8"),
+            /\[published.mainnet\]/,
+        );
     });
     assert.equal(existsSync(stagedRoot), false);
 });
@@ -698,7 +738,7 @@ test("target, toolchain, source, and worktree bindings fail closed", () => {
         /deployment target/,
     );
     assert.throws(() => assertDeploymentTarget("testnet", "bad", id("a")), /deployment target/);
-    assert.doesNotThrow(() => assertSuiCliVersion("sui 1.74.1-8fc60f1fa966"));
+    assert.doesNotThrow(() => assertSuiCliVersion("sui 1.78.1-722ac4fcf484"));
     assert.throws(() => assertSuiCliVersion("sui 1.78.0"), /Sui CLI must be/);
     assert.doesNotThrow(() => assertNoKeystoreOverride(undefined));
     assert.throws(() => assertNoKeystoreOverride("/tmp/alternate.keystore"), /unsupported/);
@@ -717,7 +757,7 @@ test("target, toolchain, source, and worktree bindings fail closed", () => {
     assert.deepEqual(unexpectedDeploymentPaths([MANIFEST_RELATIVE], [], true), []);
     const state = createDeploymentState();
     const bindings = {
-        suiVersion: "sui 1.74.1-8fc60f1fa966",
+        suiVersion: "sui 1.78.1-722ac4fcf484",
         suiBinaryPath: "/opt/sui",
         suiBinaryDigest: "binary",
         rpcUrl: "https://example.testnet.invalid",
@@ -753,7 +793,7 @@ chain-id = "4c78adac"
 published-at = "${packageId}"
 original-id = "${packageId}"
 version = 1
-toolchain-version = "1.74.1"
+toolchain-version = "1.78.1"
 build-config = { flavor = "sui", edition = "2024" }
 upgrade-capability = "${upgradeCapability}"
 `,
@@ -909,7 +949,7 @@ function testRuntime(result = createDeploymentState()) {
 }
 
 const testBindings = {
-    suiVersion: "sui 1.74.1-8fc60f1fa966",
+    suiVersion: "sui 1.78.1-722ac4fcf484",
     suiBinaryPath: "/test/sui",
     suiBinaryDigest: "binary",
     rpcUrl: "http://test.invalid",

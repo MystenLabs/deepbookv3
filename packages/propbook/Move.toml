@@ -24,6 +24,6 @@ bs_sid = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir
 
 [dep-replacements.mainnet]
 # Pyth's publication record selects v2 while preserving the original type identity.
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "740673b01cf9b0d764fb4e6a2051534f2943e560" }
+pyth_lazer = { local = "../../vendor/pyth_lazer_mainnet" }
 bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
 bs_sid = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_sid", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }

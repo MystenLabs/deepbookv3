@@ -1,0 +1,37 @@
+{
+  "repository": "https://github.com/pyth-network/pyth-crosschain.git",
+  "revision": "740673b01cf9b0d764fb4e6a2051534f2943e560",
+  "subdir": "lazer/contracts/sui",
+  "files": {
+    "LICENSE": "5d3028d6a4592795fff63b36871eb965b72e55caff6f5a007e3b5958bc69e9f7",
+    "Move.toml": "990fb3e3cc3a3f51cf4d5d050509ed3e6268f48ffe56ebf7c58feb786f7be200",
+    "Published.toml": "ab6228a292cbe9105bec3b02958fa49b649e1a2bf5114a71e87b49f9bf77e9a9",
+    "sources/actions.move": "aea68ee5237b4e49745a6b618be77a5e41affd01bf04a3896285cd10b5944451",
+    "sources/channel.move": "5836ff2f8ca2c9f6c0e53b4d8ef9c4e73bc0b5f62773207fa94dbb7232537a50",
+    "sources/channel_v2.move": "c395007600017db166a71a748c79148a4b6ed6b3f9e77d7a6d5d0b8a2e7db123",
+    "sources/feed.move": "e31f189357e8bd951bb35d3ad974cb75bb0e459411576e34686fb5f627419df2",
+    "sources/governance.move": "6cf2a75b4f714a0b09643d9339f927004def1df915679882804047b348d9c898",
+    "sources/i16.move": "3f594cc703abbf727dded97038d976663a0a51b37d1d31a72076bc817963a675",
+    "sources/i64.move": "24328c8bef76f38cb4d2f02048544e63857e8954aee844f0b75436bf87a39371",
+    "sources/market_session.move": "a32b107cfd6f491eae9afe8608ce22506cbde6724bb2712f1b0f42dc2318ec2c",
+    "sources/meta.move": "c061da3ebdac9c01aaa9650c3a302f026a04bb08d494ff0c14b67c8eef6c40e6",
+    "sources/meta.move.mustache": "62982d5f77c8b56c9234caaf0c13a6427c46cf9dee37de8bba975d015091897e",
+    "sources/parser.move": "d850456eae3e770c9621edfc711f702f9f141c4becfbd43ee71eb590e6ee7f26",
+    "sources/pyth_lazer.move": "252adb8c26790b72d310e5f7bfccde88d4c393db3b0c897fdff837e255999b7c",
+    "sources/state.move": "c265fa7858c8ed33c80a23ae731bd896b3f8d88460c2ed495d09b63b555988e3",
+    "sources/update.move": "8f3e3924c3a49da720dc57a6518da4195b12293cb18cfe7a1e9b1fb7f4a64107",
+    "sources/update_v2.move": "34fc0c2e95a6cb7ad7b729057126bd5d5837217bdad524383855ec7b8fab414b"
+  },
+  "replacements": [
+    {
+      "path": "Move.toml",
+      "from": "rev = \"c5a2eabe0a48654fcb1d3c98537915c2fb671c80\"",
+      "to": "rev = \"b71be5cbb9537c4aac8e23e74371affa3825efcd\"\nrename-from = \"Wormhole\""
+    },
+    {
+      "path": "sources/meta.move",
+      "from": "public(package) fun version(): u64 {\n    1\n}",
+      "to": "public(package) fun version(): u64 {\n    2\n}"
+    }
+  ]
+}

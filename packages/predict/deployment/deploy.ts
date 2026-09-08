@@ -69,7 +69,7 @@ let CHAIN_ID = "4c78adac";
 let DEPLOYMENT = "deepbook-predict-testnet";
 // Never infer a deployer from a wallet or ship an operator's address in source.
 let DEPLOYER = "";
-const SUI_VERSION = "sui 1.74.1-8fc60f1fa966";
+const SUI_VERSION = "sui 1.78.1-722ac4fcf484";
 const OBJECT_ID = /^0x[0-9a-f]{64}$/;
 const CLOCK_ID = "0x0000000000000000000000000000000000000000000000000000000000000006";
 const ACCUMULATOR_ROOT_ID = "0x0000000000000000000000000000000000000000000000000000000000000acc";
@@ -1620,7 +1620,7 @@ chain-id = "${CHAIN_ID}"
 published-at = "${normalizedPackage}"
 original-id = "${normalizedPackage}"
 version = 1
-toolchain-version = "1.74.1"
+toolchain-version = "1.78.1"
 build-config = { flavor = "sui", edition = "2024" }
 upgrade-capability = "${normalizedUpgradeCapability}"
 `;
@@ -2294,25 +2294,28 @@ function verifyPublishedSource(runtime: Runtime, pkg: PackageName): void {
         NETWORK,
         "--warnings-are-errors",
         "--force",
+        "--toolchain",
+        suiBinaryIdentity().path,
         "--json",
     ]);
 }
 
-function verifyDependencySources(runtime: Runtime, pkg: PackageName): void {
-    // Sui 1.74.1's publish command does not run source verification, irrespective
-    // of its verification flags. Run the verifier explicitly and fail closed.
-    // Historical compiler/framework and provider-source mismatches need a reviewed
-    // resolution; this workflow does not automatically waive those mismatches.
-    suiClient(runtime.snapshot, [
-        "verify-source",
-        resolve(REPO_ROOT, "packages", pkg),
-        "--build-env",
+function verifyDependencySources(runtime: Runtime): void {
+    // The current CLI verifies one published root, not its entire dependency
+    // closure. Check every existing package explicitly before publication.
+    const report = command("python3", [
+        resolve(REPO_ROOT, "packages/predict/deployment/verify_dependencies.py"),
+        "--repo",
+        REPO_ROOT,
+        "--network",
         NETWORK,
-        "--warnings-are-errors",
-        "--verify-deps",
-        "--skip-source",
-        "--json",
+        "--sui",
+        suiBinaryIdentity().path,
+        "--client-config",
+        runtime.snapshot.configPath,
+        ...(process.env.SUI_LEGACY_BINARY ? ["--legacy-sui", process.env.SUI_LEGACY_BINARY] : []),
     ]);
+    console.log(report);
 }
 
 function assertPublishedPackageGraph(runtime: Runtime, pkg: PackageName, id: string): void {
@@ -2393,7 +2396,7 @@ function assertResolvedLinkedPackages(): void {
         deepbook: debugPackageId(resolve(debug, "deepbook", "registry.json")),
         deep: resolvedModuleAddress(debug, "deep.json"),
         pyth_lazer: debugPackageId(resolve(debug, "pyth_lazer", "channel.json")),
-        wormhole: debugPackageId(resolve(debug, "wormhole", "external_address.json")),
+        wormhole: resolvedModuleAddress(debug, "external_address.json"),
         bs_oracle: debugPackageId(resolve(debug, "bs_oracle", "verify.json")),
         bs_sid: debugPackageId(resolve(debug, "bs_sid", "sid.json")),
     };
@@ -2742,7 +2745,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     assertExpectedWorktree(runtime.result);
     assertSourceCommit(runtime.sourceCommit);
     assertCliTarget(runtime.snapshot);
-    verifyDependencySources(runtime, pkg);
+    verifyDependencySources(runtime);
     runtime.result.inFlight = {
         kind: "publish",
         label: `publish_${pkg}`,
@@ -5138,7 +5141,7 @@ async function run(mode: DeploymentMode): Promise<void> {
         assertResolvedLinkedPackages();
         assertExpectedWorktree(result);
         await verifyExternalDependencies(runtime);
-        for (const pkg of PACKAGES) verifyDependencySources(runtime, pkg);
+        verifyDependencySources(runtime);
         if (mode.command === "deploy") {
             await assertGasFunding(runtime);
             await assertFunding(runtime);
