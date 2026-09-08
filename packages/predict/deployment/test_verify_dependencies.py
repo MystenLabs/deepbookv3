@@ -218,6 +218,33 @@ class DependencyVerificationTests(unittest.TestCase):
             with self.assertRaisesRegex(verifier.VerificationError, "zero"):
                 verifier.publication(package, "mainnet")
 
+    def test_deepbook_stage_uses_locked_local_token_without_changing_canonical_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            canonical = root / "canonical/deepbook"
+            staged = root / "stage/deepbook"
+            token = root / "stage/packages/token"
+            for directory in (canonical, staged, token):
+                directory.mkdir(parents=True)
+            source = ('[package]\nname="deepbook"\n'
+                      '[dependencies.token]\ngit="https://github.com/example/token.git"\nrev="main"\n')
+            (canonical / "Move.toml").write_text(source)
+            (staged / "Move.toml").write_text(source)
+            lock = {"token": {"source": {"git": "https://github.com/example/token.git", "rev": "main"}},
+                    "token_1": {"source": {"local": "../token"}}}
+            packages = {"token": root / "stage/git-token", "token_1": token}
+            verifier.stage_deepbook_token(staged, lock, packages, {"token": "token", "token_1": "token"})
+            self.assertEqual((canonical / "Move.toml").read_text(), source)
+            self.assertEqual((staged / "Move.toml").read_text(), source.rstrip() +
+                             '\n\n[dep-replacements.mainnet]\ntoken = { local = ' +
+                             json.dumps(str(token.resolve())) + ', override = true }\n')
+            self.assertEqual(verifier.read_toml(staged / "Move.toml")["dep-replacements"]["mainnet"],
+                             {"token": {"local": str(token.resolve()), "override": True}})
+
+    def test_deepbook_stage_rejects_missing_local_token(self):
+        with self.assertRaisesRegex(verifier.VerificationError, "one resolved local token"):
+            verifier.stage_deepbook_token(Path("unused"), {}, {}, {})
+
 
 if __name__ == "__main__":
     unittest.main()

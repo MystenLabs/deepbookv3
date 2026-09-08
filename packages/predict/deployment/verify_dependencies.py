@@ -352,6 +352,26 @@ def verify_modern(sui, config, network, directory, record):
         raise VerificationError(f"{directory.name}: source verifier publication mismatch")
 
 
+def stage_deepbook_token(directory, lock, packages, names):
+    """Carry the resolved Mainnet token override into the disposable DeepBook root."""
+    candidates = {
+        packages[key].resolve() for key in packages
+        if names[key] == "token" and "local" in lock[key]["source"]
+    }
+    if len(candidates) != 1:
+        raise VerificationError("DeepBook verification requires one resolved local token source")
+    token = candidates.pop()
+    manifest = directory / "Move.toml"
+    text = manifest.read_text()
+    parsed = tomllib.loads(text)
+    if "mainnet" in parsed.get("dep-replacements", {}):
+        raise VerificationError("staged DeepBook already has Mainnet replacements; reconcile the locked token source")
+    manifest.write_text(
+        text.rstrip() + "\n\n[dep-replacements.mainnet]\n"
+        + f"token = {{ local = {json.dumps(str(token))}, override = true }}\n"
+    )
+
+
 def verify(repo, network, sui, config, legacy=None):
     if network == "mainnet" and legacy is None:
         raise VerificationError("Mainnet verification requires --legacy-sui or SUI_LEGACY_BINARY")
@@ -434,6 +454,8 @@ def verify(repo, network, sui, config, legacy=None):
             if key in legacy_modules:
                 compare_modules(name, legacy_modules[key], live)
             else:
+                if network == "mainnet" and name == "deepbook" and "git" in lock[key]["source"]:
+                    stage_deepbook_token(packages[key], lock, packages, names)
                 verify_modern(sui, config, network, packages[key], record)
             seen[record.latest] = record
             print(f"verified {name}: {len(live)} modules, version {record.version}, {record.latest}", flush=True)
