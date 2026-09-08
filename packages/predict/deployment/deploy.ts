@@ -3749,7 +3749,7 @@ function integerEventField(fields: Record<string, unknown>, name: string): strin
     return String(value);
 }
 
-function validateBootstrapReceipt(
+export function validateBootstrapReceipt(
     receipt: Receipt,
     vaultId: string,
     accountId: string,
@@ -3778,9 +3778,9 @@ function validateBootstrapReceipt(
         integerEventField(requested, "min_plp_out") !== "0" ||
         integerEventField(requested, "requests_pending_after") !== "1" ||
         integerEventField(filled, "index") !== requestIndex ||
-        integerEventField(filled, "dusdc_amount") !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+        integerEventField(filled, "usdc_amount") !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
         sharesMinted !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
-        integerEventField(filled, "dusdc_remaining") !== "0" ||
+        integerEventField(filled, "usdc_remaining") !== "0" ||
         integerEventField(filled, "requests_pending_after") !== "0"
     ) {
         throw new Error(`bootstrap transaction ${receipt.digest} has unexpected supply events`);

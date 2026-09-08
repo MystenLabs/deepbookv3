@@ -48,11 +48,71 @@ import {
     runBroadcastBoundary,
     sameObjectReference,
     unexpectedDeploymentPaths,
+    validateBootstrapReceipt,
     type IntegrationManifest,
     type Receipt,
 } from "./deploy.ts";
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
+
+test("bootstrap receipt validation uses the deployed USDC supply event schema", () => {
+    const vault = id("1");
+    const account = id("2");
+    const wrapper = id("3");
+    // Field names follow vault_events.move; amounts represent the approved 250,000 USDC supply.
+    const requested = {
+        pool_vault_id: vault,
+        account_id: account,
+        recipient: wrapper,
+        index: "0",
+        amount: "250000000000",
+        min_plp_out: "0",
+        requests_pending_after: "1",
+    };
+    const filled = {
+        pool_vault_id: vault,
+        account_id: account,
+        recipient: wrapper,
+        index: "0",
+        usdc_amount: "250000000000",
+        shares_minted: "250000000000",
+        fee_usdc: "0",
+        usdc_remaining: "0",
+        requests_pending_after: "0",
+    };
+    const receipt: Receipt = {
+        digest: "bootstrap-tx",
+        events: [
+            { type: `${id("4")}::vault_events::SupplyRequested`, parsedJson: requested },
+            { type: `${id("4")}::vault_events::SupplyFilled`, parsedJson: filled },
+        ],
+    };
+    assert.deepEqual(validateBootstrapReceipt(receipt, vault, account, wrapper), {
+        requestIndex: "0",
+        sharesMinted: "250000000000",
+    });
+    for (const [field, badValue] of [
+        ["usdc_amount", "249999999999"],
+        ["usdc_remaining", "1"],
+        ["shares_minted", "249999999999"],
+        ["requests_pending_after", "1"],
+        ["index", "1"],
+        ["account_id", id("5")],
+        ["recipient", id("5")],
+        ["pool_vault_id", id("5")],
+    ]) {
+        const invalid = structuredClone(receipt);
+        (invalid.events![1].parsedJson as Record<string, unknown>)[field] = badValue;
+        assert.throws(() => validateBootstrapReceipt(invalid, vault, account, wrapper));
+    }
+    const legacy = structuredClone(receipt);
+    const fields = legacy.events![1].parsedJson as Record<string, unknown>;
+    fields.dusdc_amount = fields.usdc_amount;
+    fields.dusdc_remaining = fields.usdc_remaining;
+    delete fields.usdc_amount;
+    delete fields.usdc_remaining;
+    assert.throws(() => validateBootstrapReceipt(legacy, vault, account, wrapper), /not numeric/);
+});
 
 test("explicit script-only recovery preserves the published source and fails closed", () => {
     const state = completeStateFixture();
