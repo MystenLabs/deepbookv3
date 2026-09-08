@@ -13,7 +13,7 @@ Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining i
 The remaining gates are:
 
 - The [deployment workflow](../deployment/README.md#execution-gates) requires exact dependency source verification with the pinned build compiler, Circle/Wormhole reproduction compiler, Mainnet Pyth generated metadata, and Mainnet Wormhole source. A publication dry run alone proves linkage/execution compatibility, not source equality; every execution rechecks the full dependency closure and live framework.
-- DEEP's checked-in `deep.move` does not reproduce its Mainnet module. The on-chain initializer mints before freezing metadata and creating the protected treasury UID; the checked-in source performs those operations in a different order. Matching publication source is required; no token source reconstruction or verification exception is approved.
+- DEEP's checked-in `packages/token/sources/deep.move` does not reproduce its Mainnet module. The on-chain initializer mints before freezing metadata and creating the protected treasury UID; the checked-in source performs those operations in a different order. Matching publication source is required; no token source reconstruction or verification exception is approved.
 - The complete Mainnet publication/wiring gas plan must be measured before lowering the conservative per-step caps.
 
 Pyth Mainnet must link v2: the live State's version guard rejects v1 even when the consumed Update ABI exists in both versions. Migrating to the distinct newer Testnet lineage is outside this deployment scope. No upstream Block Scholes publication is required; its Mainnet identities already exist.
