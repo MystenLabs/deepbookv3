@@ -11,10 +11,8 @@ deepbook = { local = "../deepbook" }
 propbook = { local = "../propbook" }
 fixed_math = { local = "../fixed_math" }
 usdc = { local = "../usdc" }
-# The spot wrapper reaches DeepBook core, which pins the released `token` source by
-# git; resolve it through the byte-identical in-tree copy so one identity publishes.
-# (Predict no longer depends on `token` at all — DEEP staking was removed.)
-token = { local = "../token", override = true }
+# Sessions and the spot wrapper share DeepBook's in-repository token dependency.
+token = { local = "../token" }
 # This publishable root repeats Predict's direct Pyth source so the testnet
 # replacement identities below apply to the transitive Pyth/Wormhole graph.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
@@ -24,3 +22,8 @@ bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", sub
 [dep-replacements.testnet]
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
 wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
+
+[dep-replacements.mainnet]
+usdc = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/usdc", rev = "23fff2ed82a7fdc26e408a56553b1e1d0ba7b06f" }
+pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "740673b01cf9b0d764fb4e6a2051534f2943e560" }
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }

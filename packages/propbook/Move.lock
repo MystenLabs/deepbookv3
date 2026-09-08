@@ -4,6 +4,66 @@
 [move]
 version = 4
 
+[pinned.mainnet.MoveStdlib]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "b124567746b3a78a7e294ac2de265f693401ec9d" }
+use_environment = "mainnet"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
+[pinned.mainnet.MoveStdlib_1]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "c2428b3aaf9c24270b609001e56d96cb10c76d28" }
+use_environment = "mainnet"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
+[pinned.mainnet.Sui]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "b124567746b3a78a7e294ac2de265f693401ec9d" }
+use_environment = "mainnet"
+manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
+deps = { MoveStdlib = "MoveStdlib" }
+
+[pinned.mainnet.Sui_1]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "c2428b3aaf9c24270b609001e56d96cb10c76d28" }
+use_environment = "mainnet"
+manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
+deps = { MoveStdlib = "MoveStdlib_1" }
+
+[pinned.mainnet.bs_oracle]
+source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
+use_environment = "mainnet"
+manifest_digest = "224670ACA4BA33899A333BCF24112E6923A11AB974F5B751E4670E7DC8C5D352"
+deps = { MoveStdlib = "MoveStdlib_1", Sui = "Sui_1" }
+
+[pinned.mainnet.bs_sid]
+source = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_sid", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
+use_environment = "mainnet"
+manifest_digest = "224670ACA4BA33899A333BCF24112E6923A11AB974F5B751E4670E7DC8C5D352"
+deps = { MoveStdlib = "MoveStdlib_1", Sui = "Sui_1" }
+
+[pinned.mainnet.fixed_math]
+source = { local = "../fixed_math" }
+use_environment = "mainnet"
+manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
+deps = { std = "MoveStdlib", sui = "Sui" }
+
+[pinned.mainnet.propbook]
+source = { root = true }
+use_environment = "mainnet"
+manifest_digest = "94EC73591FC08E842033F4D98F891573F63BBA7466DE879745806CDE993C6243"
+deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui" }
+
+[pinned.mainnet.pyth_lazer]
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "740673b01cf9b0d764fb4e6a2051534f2943e560" }
+use_environment = "mainnet"
+manifest_digest = "6B38AB3F364FFA0081F4BA68D40A1F6BA0C3BB4118D02D0451C62C08F757BF3D"
+deps = { std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
+
+[pinned.mainnet.wormhole]
+source = { git = "https://github.com/wormhole-foundation/wormhole.git", subdir = "sui/wormhole", rev = "c5a2eabe0a48654fcb1d3c98537915c2fb671c80" }
+use_environment = "mainnet"
+manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
+deps = { std = "MoveStdlib", sui = "Sui" }
+
 [pinned.testnet.MoveStdlib]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "b124567746b3a78a7e294ac2de265f693401ec9d" }
 use_environment = "testnet"
