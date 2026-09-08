@@ -10,7 +10,7 @@ export interface CadenceConfig {
   tickSize: bigint; // raw price unit ($0.01 = 10_000_000)
   admissionTickSize: bigint; // raw price unit ($1 = 1_000_000_000); admission/tick = 100
   maxExpiryAllocation: bigint; // USDC
-  initialExpiryCash: bigint; // USDC (>= expiry_cash_floor 10k, <= maxExpiryAllocation)
+  initialExpiryCash: bigint; // USDC (>= expiry_cash_floor 1k, <= maxExpiryAllocation)
   windowSize: bigint; // number of cadence periods in the rolling future horizon
 }
 
