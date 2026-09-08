@@ -27,7 +27,7 @@ Both target arguments are required even for preflight. Without `--execute`, the 
 ## Mainnet sequence
 
 1. Publish `fixed_math`, `account`, `propbook`, `predict`, `deepbook_core_account`, and `sessions` in dependency order. Circle USDC, DeepBook, DEEP, Pyth, Wormhole, and Block Scholes remain existing dependencies.
-2. Verify native USDC's type identity and immutable six-decimal `CoinMetadata`; finalize only the new PLP registration. No Circle treasury or metadata authority is acquired or used.
+2. Verify native USDC's existing shared `coin_registry::Currency`, exact type identity, six decimals, and symbol; finalize only the new PLP registration. No Circle treasury or metadata authority is acquired or used.
 3. Authorize Predict, the DeepBook Account wrapper, and Sessions in the fresh Account registry. Create and bind BTC oracle objects, register BTC, and configure cadences.
 4. Lock exactly 10 USDC. Verify the `CapitalLocked` event's vault and amount. There is no bootstrap Account, LP supply request, valuation flush, or user PLP allocation. The 10,000,000 total PLP units represent locked liquidity, not user-owned PLP.
 5. Create initial BTC 1-minute and 5-minute market objects, bounded to two per cadence and available slots. A higher-cadence overlap can leave one slot unavailable. Persist receipts; do not replace expired initial markets on resume.
@@ -64,7 +64,7 @@ Preserve the journal, exact source commit, binary, configuration, gas caps, and 
 
 An authorized script-only correction after all publications can use `--resume-script-from <full-original-source-commit>` with `--execute`. This rejects in-flight transactions and changes outside deployment script/tests/README and generated artifacts. It re-verifies packages, retains `sourceCommit`, and records correction commits in ordered `scriptCommits`. Subsequent interruptions use ordinary `--execute` at that recorded commit. A script switch cannot resume a complete deployment or publish changed contracts.
 
-`deployment.testnet.json` retains integration schema 8. `deployment.mainnet.json` uses schema 9: `objects.usdcCurrency` is null and `objects.usdcCoinMetadata` names Circle's existing metadata. Both contain stable package/shared/oracle identities, external authorization, replay checkpoint, units, and version/digest-anchored initial configuration. They exclude operator addresses, bootstrap accounts, receipts, and admin caps. Runtime consumers read mutable policy from chain. Only a complete audited journal can generate a manifest.
+`deployment.testnet.json` retains integration schema 8. `deployment.mainnet.json` uses schema 9: `objects.usdcCurrency` names native USDC's existing shared Currency rather than a newly published test currency. Both contain stable package/shared/oracle identities, external authorization, replay checkpoint, units, and version/digest-anchored initial configuration. They exclude operator addresses, bootstrap accounts, receipts, and admin caps. Runtime consumers read mutable policy from chain. Only a complete audited journal can generate a manifest.
 
 ## Verification
 

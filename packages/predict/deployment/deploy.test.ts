@@ -22,6 +22,7 @@ import {
     availableGasBalance,
     parseTargetArgs,
     MAINNET_USDC,
+    verifyNativeUsdc,
     lockedCapitalTransaction,
     ensureLockedCapital,
     validateLockedCapitalReceipt,
@@ -1742,14 +1743,51 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
             assert.equal(fixture.mutations.length, new Set(fixture.mutations).size, boundary);
             assert.deepEqual(fixture.runtime.result.issuedCaps, {});
             assert.equal(fixture.manifests[0].schemaVersion, 9);
-            assert.equal(fixture.manifests[0].objects.usdcCurrency, null);
             assert.equal(
-                fixture.manifests[0].objects.usdcCoinMetadata,
+                fixture.manifests[0].objects.usdcCurrency,
                 "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a",
             );
+            assert.equal("usdcCoinMetadata" in fixture.manifests[0].objects, false);
         }
     } finally {
         configureDeployment("testnet", id("a"));
+    }
+});
+
+test("native USDC verification accepts its registered Currency and rejects wrong type, custody, or metadata", async () => {
+    const objectId = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
+    const type = `0x${"0".repeat(63)}2::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`;
+    const object = {
+        objectId,
+        type,
+        version: "877862839",
+        digest: "recorded-currency-digest",
+        owner: { $kind: "Shared", Shared: { initialSharedVersion: "648066630" } },
+        json: { decimals: 6, symbol: "USDC" },
+    };
+    const runtime = (value: unknown) =>
+        ({
+            client: {
+                getObject: async (request: { objectId: string }) => {
+                    assert.equal(request.objectId, objectId);
+                    return { object: value };
+                },
+            },
+        }) as unknown as Parameters<typeof verifyNativeUsdc>[0];
+    const evidence = await verifyNativeUsdc(runtime(object));
+    assert.equal(evidence.objectId, objectId);
+    assert.equal(evidence.type, type);
+    assert.equal(evidence.owner, "shared");
+    for (const invalid of [
+        { ...object, type: type.replace("coin_registry::Currency", "coin::CoinMetadata") },
+        { ...object, type: type.replace(MAINNET_USDC, id("a")) },
+        { ...object, type: type.replace(`0x${"0".repeat(63)}2::`, `${id("b")}::`) },
+        { ...object, owner: { $kind: "Immutable", Immutable: true } },
+        { ...object, owner: { $kind: "AddressOwner", AddressOwner: id("a") } },
+        { ...object, json: { decimals: 9, symbol: "USDC" } },
+        { ...object, json: { decimals: 6, symbol: "DUSDC" } },
+    ]) {
+        await assert.rejects(verifyNativeUsdc(runtime(invalid)));
     }
 });
 

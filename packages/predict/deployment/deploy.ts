@@ -77,7 +77,7 @@ let DEEPBOOK_REGISTRY = "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a70
 let DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
 let PYTH_ORIGINAL = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21";
 export const MAINNET_USDC = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7";
-const MAINNET_USDC_METADATA = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
+const MAINNET_USDC_CURRENCY = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
 
 const TESTNET_PACKAGES = [
     "fixed_math",
@@ -662,8 +662,7 @@ export interface IntegrationManifest {
         plp: string;
     };
     objects: {
-        usdcCurrency: string | null;
-        usdcCoinMetadata?: string;
+        usdcCurrency: string;
         plpCurrency: string;
         accountRegistry: string;
         oracleRegistry: string;
@@ -950,21 +949,10 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
             plp: `${predict}::plp::PLP`,
         },
         objects: {
-            usdcCurrency:
-                NETWORK === "mainnet"
-                    ? null
-                    : requiredObjectId(
-                          verification.currencies.usdc.objectId,
-                          "verified USDC currency",
-                      ),
-            ...(NETWORK === "mainnet"
-                ? {
-                      usdcCoinMetadata: requiredObjectId(
-                          verification.currencies.usdc.objectId,
-                          "verified USDC coin metadata",
-                      ),
-                  }
-                : {}),
+            usdcCurrency: requiredObjectId(
+                verification.currencies.usdc.objectId,
+                "verified USDC currency",
+            ),
             plpCurrency: requiredObjectId(
                 verification.currencies.plp.objectId,
                 "verified PLP currency",
@@ -1145,7 +1133,6 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         objects,
         [
             "usdcCurrency",
-            ...(NETWORK === "mainnet" ? ["usdcCoinMetadata"] : []),
             "plpCurrency",
             "accountRegistry",
             "oracleRegistry",
@@ -1160,16 +1147,11 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "objects",
     );
     for (const [name, id] of Object.entries(objects)) {
-        if (NETWORK === "mainnet" && name === "usdcCurrency") {
-            if (id !== null)
-                throw new Error(
-                    "Mainnet USDC uses legacy CoinMetadata, not a new Currency registration",
-                );
-        } else requiredObjectId(id, `objects.${name}`);
+        requiredObjectId(id, `objects.${name}`);
     }
     if (
         NETWORK === "mainnet" &&
-        (packages.usdc !== MAINNET_USDC || objects.usdcCoinMetadata !== MAINNET_USDC_METADATA)
+        (packages.usdc !== MAINNET_USDC || objects.usdcCurrency !== MAINNET_USDC_CURRENCY)
     ) {
         throw new Error("Mainnet collateral identity is not native USDC");
     }
@@ -3316,17 +3298,16 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
     return { packages, objects };
 }
 
-async function verifyNativeUsdc(runtime: Runtime): Promise<ObjectEvidence> {
+export async function verifyNativeUsdc(runtime: Runtime): Promise<ObjectEvidence> {
     const evidence = await objectEvidence(
         runtime,
-        MAINNET_USDC_METADATA,
-        `coin::CoinMetadata<${MAINNET_USDC}::usdc::USDC>`,
-        null,
+        MAINNET_USDC_CURRENCY,
+        `${normalizeId("0x2")}::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`,
+        "shared",
     );
-    if (evidence.owner !== "immutable") throw new Error("native USDC metadata is not immutable");
-    const fields = await moveObjectFields(runtime, MAINNET_USDC_METADATA);
+    const fields = await moveObjectFields(runtime, MAINNET_USDC_CURRENCY);
     if (String(fields.decimals) !== "6" || fields.symbol !== "USDC") {
-        throw new Error("native USDC metadata must have six decimals and symbol USDC");
+        throw new Error("native USDC currency must have six decimals and symbol USDC");
     }
     return evidence;
 }
@@ -3448,9 +3429,9 @@ function deploymentCurrencyPackage(name: CurrencyName): PackageName {
 async function ensureCurrencyRegistration(runtime: Runtime, name: CurrencyName): Promise<string> {
     if (NETWORK === "mainnet" && name === "usdc") {
         await verifyNativeUsdc(runtime);
-        runtime.result.wiring.currencies.usdc.id = MAINNET_USDC_METADATA;
+        runtime.result.wiring.currencies.usdc.id = MAINNET_USDC_CURRENCY;
         writeState(runtime.result);
-        return MAINNET_USDC_METADATA;
+        return MAINNET_USDC_CURRENCY;
     }
     const result = runtime.result;
     const state = result.wiring.currencies[name];
