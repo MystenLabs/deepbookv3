@@ -7,8 +7,8 @@
 /// each component nonzero (sponsor subsidy, builder fee, EWMA congestion
 /// penalty); the account-aware quote diverges from the anonymous
 /// quote in the right direction per component; quotes share the mint path's
-/// gates and admission aborts; and the settlement readers answer without
-/// aborting on a live market.
+/// gates, admission aborts, and maximum-payout bound; and the settlement readers
+/// answer without aborting on a live market.
 #[test_only]
 module deepbook_predict::quote_mint_tests;
 
@@ -38,6 +38,15 @@ use usdc::usdc::USDC;
 /// quantity = 5_000_000; with no builder code, no fee-incentive balance, and no
 /// EWMA variance, every other component is zero.
 const MIN_TRADING_FEE: u64 = 5_000_000;
+/// At quantity 4e6, the independent ATM probability reference and its full
+/// 21-unit approximation budget both floor to premium 1,999,974. The two fee
+/// rates below therefore put all-in cost exactly at quantity and one USDC base
+/// unit above it, respectively.
+const MAX_PAYOUT_BOUNDARY_QUANTITY: u64 = 4_000_000;
+const MAX_PAYOUT_BOUNDARY_PREMIUM: u64 = 1_999_974;
+const MAX_PAYOUT_BOUNDARY_FEE: u64 = 2_000_026;
+const MAX_PAYOUT_BOUNDARY_MIN_FEE_RATE: u64 = 500_006_500;
+const ABOVE_MAX_PAYOUT_MIN_FEE_RATE: u64 = 500_006_750;
 
 /// Sponsoring the protocol-minimum incentive (10e6, fully allocated to the
 /// market by one live rebalance) leaves the balance far above the rate cap, so
@@ -65,6 +74,75 @@ const GAS_SPIKE: u64 = 3_000;
 /// second EWMA fold, still inside the oracle freshness window after re-seeding.
 const SPIKE_MS: u64 = 121_000;
 const SPIKE_SOURCE_TS: u64 = 120_000;
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun quote_above_maximum_payout_aborts() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(ABOVE_MAX_PAYOUT_MIN_FEE_RATE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+
+    fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
+    );
+
+    abort 999
+}
+
+#[test]
+fun quote_at_maximum_payout_mints() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(MAX_PAYOUT_BOUNDARY_MIN_FEE_RATE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    assert_eq!(quote.premium(), MAX_PAYOUT_BOUNDARY_PREMIUM);
+    assert_eq!(quote.trading_fee(), MAX_PAYOUT_BOUNDARY_FEE);
+    assert_eq!(quote.fee_incentive_subsidy(), 0);
+    assert_eq!(quote.builder_fee(), 0);
+    assert_eq!(quote.penalty_fee(), 0);
+    assert_eq!(quote.inventory_impact_charge(), 0);
+    assert_eq!(quote.all_in_cost(), MAX_PAYOUT_BOUNDARY_QUANTITY);
+
+    let order = fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
+        MAX_PAYOUT_BOUNDARY_QUANTITY,
+        std::u64::max_value!(),
+    );
+
+    assert!(helpers::has_position_bundle(&account, expiry_id, order));
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - MAX_PAYOUT_BOUNDARY_QUANTITY,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
 
 #[test]
 fun quote_matches_independent_costs_and_mint_debits_exactly_all_in_cost() {

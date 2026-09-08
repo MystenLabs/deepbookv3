@@ -29,6 +29,7 @@ const EPackageVersionDisabled: u64 = 3;
 const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
+const ETradeWindowClosed: u64 = 7;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -66,6 +67,10 @@ public struct ProtocolConfig has key {
     /// settlement — trading continues — so this also bounds LP-fill latency and is
     /// tuned alongside flush cadence (RP-29).
     max_valuation_window_ms: u64,
+    /// Window before a market's expiry in which live quotes, mints, and live
+    /// redeems abort. Read live at trade time rather than snapshotted per market,
+    /// so it can be widened on markets already trading. `0` disables.
+    no_trade_window_ms: u64,
     strike_exposure_template_config: StrikeExposureConfig,
     ewma_config: EwmaConfig,
     /// Minimum package version permitted to run version-gated flows. Monotonic;
@@ -134,6 +139,14 @@ public fun valuation_in_progress(config: &ProtocolConfig): bool {
 /// Return the live referral fee rate for SDK and devInspect reads.
 public fun referral_fee_rate(config: &ProtocolConfig): u64 {
     config.referral_fee_rate
+}
+
+/// Window before expiry in which live quotes, mints, and live redeems abort.
+/// `public` for SDK and devInspect reads: a client that cannot see this value
+/// can only learn the window closed by decoding `ETradeWindowClosed` from a
+/// failed quote.
+public fun no_trade_window_ms(config: &ProtocolConfig): u64 {
+    config.no_trade_window_ms
 }
 
 /// Set the base fee multiplier snapshotted by newly created expiry markets.
@@ -390,6 +403,26 @@ public fun set_ewma_enabled(
     config_events::emit_ewma_config_updated(&config.ewma_config, clock.timestamp_ms());
 }
 
+/// Set the window before expiry in which live quotes, mints, and live redeems
+/// abort. `0` disables the block. Read live at trade time, so a change applies
+/// to markets already trading and stays available as an incident control.
+///
+/// Deliberately not gated on `assert_not_valuation_in_progress`, matching
+/// `set_trading_paused`: a stalled flush must not be able to trap a safety
+/// control. Nothing in the flush reads this value, so a mid-valuation change
+/// cannot skew a frozen mark.
+public fun set_no_trade_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_no_trade_window_ms(value);
+    config.no_trade_window_ms = value;
+    config_events::emit_no_trade_window_updated(value, clock.timestamp_ms());
+}
+
 /// Set whether trading is paused.
 public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
     config.assert_version();
@@ -550,6 +583,22 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
 }
 
+/// Abort when `expiry_ms` is inside the no-trade window. The blocked region is
+/// `remaining <= window`, so a `0` window blocks nothing and disables the check.
+/// `now < expiry_ms` guards the subtraction against underflow for any future
+/// caller; on today's paths it cannot be false, because a `&Pricer` only exists
+/// if `load_live_pricer` already asserted `now < expiry` in the same transaction.
+public(package) fun assert_trade_window_open(
+    config: &ProtocolConfig,
+    expiry_ms: u64,
+    clock: &Clock,
+) {
+    let window = config.no_trade_window_ms();
+    if (window == 0) return;
+    let now = clock.timestamp_ms();
+    assert!(now < expiry_ms && expiry_ms - now > window, ETradeWindowClosed);
+}
+
 /// Abort unless a valuation lock is currently active.
 public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
     assert!(config.valuation_in_progress, EValuationNotInProgress);
@@ -641,6 +690,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         lp_request_limit_flush_attempts: config_constants::default_lp_request_limit_flush_attempts!(),
         max_lp_pool_value: config_constants::default_max_lp_pool_value!(),
         max_valuation_window_ms: config_constants::default_max_valuation_window_ms!(),
+        no_trade_window_ms: config_constants::default_no_trade_window_ms!(),
         strike_exposure_template_config: strike_exposure_config::new(),
         ewma_config: ewma_config::new(),
         version_watermark: constants::current_version!(),

@@ -103,7 +103,7 @@ The honest framing: admin trust is real but bounded. The funds-custody boundary 
 Every position is 1x: its live value is `quantity × range_probability`, and a winning position settles for its full `quantity`. There is no floor, no financing, and no liquidation — a position can lose value as the range probability moves against it, down to zero, but it can never be extinguished before expiry or settlement, and it never owes more than the premium the holder already paid.
 
 - **Range value can fall to zero pre-settlement.** A position that is comfortably in the money at mint can lose most or all of its live value if the range probability reprices lower; the holder's maximum loss is bounded by what they paid to mint it.
-- **Mint admission is a price-and-size gate, not a leverage gate.** The protocol only mints a position whose `entry_probability` lies inside a configured `[min_entry_probability, max_entry_probability]` band and whose net premium (`entry_probability × quantity`) is at least the configured minimum. This declines tail-probability and dust-sized orders.
+- **Mint admission is a price-and-size gate, not a leverage gate.** The protocol only mints a position whose `entry_probability` lies inside a configured `[min_entry_probability, max_entry_probability]` band, whose net premium (`entry_probability × quantity`) is at least the configured minimum, and whose complete all-in cost does not exceed its maximum settlement payout. This declines tail-probability, dust-sized, and guaranteed-loss orders.
 
 ## Liquidity-provider (PLP) risk
 

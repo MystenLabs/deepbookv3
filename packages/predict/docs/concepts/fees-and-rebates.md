@@ -46,6 +46,8 @@ As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interi
 
 Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
 
+After every fee component and inventory-impact charge is assembled, mint admission requires `all_in_cost <= quantity`. Because `quantity` is the position's maximum settlement payout, a trader cannot mint a position whose total debit exceeds what the position can ever pay at settlement; the check uses the trader-paid fee after any sponsor subsidy.
+
 ## 2. Expiry fee ramp
 
 As an expiry approaches, the remaining time for an LP to hedge or for a contract to revalue shrinks, while last-minute trades concentrate risk against the pool. The expiry ramp lifts the fee over a final window before expiry:

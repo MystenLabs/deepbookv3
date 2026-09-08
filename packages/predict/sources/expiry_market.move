@@ -48,6 +48,7 @@ const ERedeemProbabilityBelowMin: u64 = 7;
 const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
+const EMintCostAboveMaxPayout: u64 = 11;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -94,7 +95,9 @@ public struct ValuationStamp has drop, store {
 /// `all_in_cost` is the resulting account withdrawal:
 /// `premium + (trading_fee - fee_incentive_subsidy) + builder_fee + penalty_fee
 /// + inventory_impact_charge`. Inventory impact is isolated from every ordinary
-/// fee policy because it is escrowed for risk-reducing live closes.
+/// fee policy because it is escrowed for risk-reducing live closes. Quote
+/// construction aborts when `all_in_cost` exceeds `quantity`, the position's
+/// maximum settlement payout.
 public struct MintQuote has copy, drop {
     quantity: u64,
     entry_probability: u64,
@@ -313,7 +316,7 @@ public fun quote_mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     let terms = market
         .strike_exposure
         .quote_mint_terms(
@@ -346,7 +349,7 @@ public fun quote_mint_for_account(
     clock: &Clock,
     ctx: &mut TxContext,
 ): MintQuote {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     let account = wrapper.load_account();
     let max_premium = max_premium.min(account.balance<USDC>(root, clock));
     let terms = market
@@ -441,7 +444,7 @@ public fun mint_exact_quantity(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     wrapper.settle<USDC>(root, clock);
     let account = wrapper.load_account_mut(auth);
     market.mint_prepared(
@@ -488,7 +491,7 @@ public fun mint_exact_amount(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    market.assert_live_mint_allowed(config, pricer);
+    market.assert_live_mint_allowed(config, pricer, clock);
     assert!(max_cost > 0, EMintCostCapRequired);
     wrapper.settle<USDC>(root, clock);
     let max_premium = max_premium.min(wrapper.load_account().balance<USDC>(root, clock));
@@ -537,7 +540,7 @@ public fun redeem_live(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    market.assert_live_flow_allowed(config, pricer);
+    market.assert_live_flow_allowed(config, pricer, clock);
     market.redeem_live_with_auth(
         wrapper,
         auth,
@@ -871,8 +874,13 @@ fun reconcile_stale_valuation_stamp(market: &mut ExpiryMarket, config: &Protocol
 }
 
 // --- Gates: the first call of every public entry ---
-fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
-    market.assert_live_flow_allowed(config, pricer);
+fun assert_live_mint_allowed(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+) {
+    market.assert_live_flow_allowed(config, pricer, clock);
     config.assert_trading_allowed();
     assert!(!market.mint_paused, EMintPaused);
 }
@@ -884,10 +892,19 @@ fun assert_live_mint_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pri
 // so the keeper cannot compose a mint or redeem into its own snapshot PTB, where a
 // mid-stamp cash move would skew the figures the seal freezes. That stage is one
 // PTB, so this never blocks a trade in any other transaction.
-fun assert_live_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig, pricer: &Pricer) {
+fun assert_live_flow_allowed(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    pricer: &Pricer,
+    clock: &Clock,
+) {
     config.assert_version();
     config.assert_snapshot_not_in_progress();
     market.assert_pricer_bound(pricer);
+    // Shared by every live mint, quote, and live redeem, so the pre-expiry block
+    // lands once here. Settlement and settled redemption take other paths and stay
+    // open, so the window delays a close rather than stranding the position.
+    config.assert_trade_window_open(market.expiry, clock);
 }
 
 fun assert_settled_flow_allowed(market: &ExpiryMarket, config: &ProtocolConfig) {
@@ -928,13 +945,13 @@ fun mint_prepared(
             exact_quantity,
         );
     assert!(terms.entry_probability() <= max_probability, EMintProbabilityAboveMax);
-    // Same pre-fold penalty the quotes compute; ewma_penalty folds after charging.
-    let penalty_amount = market.ewma_penalty(config.ewma_config(), terms.quantity(), clock, ctx);
+    let penalty_amount = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     let builder_code_id = predict_account::builder_code_id(account);
     let referrer_account_id = account.referrer_account_id();
     let referrer_receive_address = account.referrer_receive_address();
     let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
+    market.ewma.update(config.ewma_config(), clock, ctx);
     let referral_fee = if (referrer_receive_address.is_some()) {
         let referral_fee_basis =
             quote.trading_fee - quote.fee_incentive_subsidy + quote.penalty_fee;
@@ -998,6 +1015,7 @@ fun compute_mint_quote(
         + builder_fee
         + penalty_fee
         + inventory_impact_charge;
+    assert!(all_in_cost <= quantity, EMintCostAboveMaxPayout);
 
     MintQuote {
         quantity,
