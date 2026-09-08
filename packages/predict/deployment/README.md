@@ -10,6 +10,8 @@ The build and deployment compiler is `sui 1.78.1-722ac4fcf484`; CI owns the rele
 
 Default gas caps reserve 5 SUI per package and 1 SUI per remaining transaction. They are conservative limits, not measured fees; a fresh Mainnet run funded with 10 SUI does not pass this gate. `PACKAGE_GAS_BUDGET` and `TRANSACTION_GAS_BUDGET` accept positive base-unit caps and become immutable journal bindings. Select lower caps only after measuring the complete publication and wiring plan with the reviewed source and toolchain. Every SDK transaction is simulated with checks enabled before signing.
 
+DEEP source verification remains an execution blocker: the checked-in token initializer orders operations differently from the immutable Mainnet module. The verifier rejects it. [S-7](../predeploy/open-items.md#s-7-mainnet-publication-verification-and-gas-plan) tracks that source requirement and the gas plan. Mainnet consumers pin DeepBook's v8 publication revision rather than the development checkout's unpublished APIs; DEEP's identity is unchanged.
+
 ## Operator inputs
 
 Use the exact pinned CLI, Python 3.11 or newer, a clean committed deployment branch, and a client configuration whose active signer matches `--deployer`. The requested network must have its correct chain identifier in that configuration. `SUI_BINARY` selects the CLI; Mainnet additionally requires `SUI_LEGACY_BINARY` pointing to the historical compiler above. `SUI_CLIENT_CONFIG` optionally selects the configuration. No deployer or operational recipient is embedded in source. CLI and SDK share one mode-restricted configuration snapshot and keystore. The snapshot selects the requested network without changing the operator's active environment. Do not set `SUI_KEYSTORE_PATH`.
