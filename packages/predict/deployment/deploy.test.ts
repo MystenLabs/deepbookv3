@@ -138,6 +138,30 @@ test("Mainnet Pyth differs from its pinned source only by declared publication i
     }
 });
 
+test("Mainnet DEEP reconstruction preserves its source provenance and Testnet source", () => {
+    const root = new URL("../../../vendor/deep_mainnet/", import.meta.url);
+    const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
+    assert.equal(provenance.kind, "bytecode-backed-reconstruction");
+    assert.equal(
+        createHash("sha256")
+            .update(readFileSync(new URL(provenance.source.path, root)))
+            .digest("hex"),
+        provenance.source.sha256,
+    );
+    assert.equal(
+        createHash("sha256")
+            .update(
+                readFileSync(new URL("../../../packages/token/sources/deep.move", import.meta.url)),
+            )
+            .digest("hex"),
+        provenance.baseline.sha256,
+    );
+    assert.deepEqual(readdirSync(new URL("sources/", root)), ["deep.move"]);
+    const publication = readFileSync(new URL("Published.toml", root), "utf8");
+    assert.match(publication, /\[published.mainnet\]/);
+    assert.doesNotMatch(publication, /\[published.testnet\]/);
+});
+
 test("fresh publication staging preserves the vendored dependency outside packages", () => {
     let stagedRoot = "";
     withFreshPackageStage("predict", (directory) => {
@@ -164,6 +188,14 @@ test("fresh publication staging preserves the vendored dependency outside packag
         assert.match(
             readFileSync(join(mainnetPyth, "Published.toml"), "utf8"),
             /\[published.mainnet\]/,
+        );
+        const deep = join(stagedRoot, "vendor", "deep_mainnet");
+        assert.equal(
+            readFileSync(join(deep, "sources", "deep.move"), "utf8"),
+            readFileSync(
+                new URL("../../../vendor/deep_mainnet/sources/deep.move", import.meta.url),
+                "utf8",
+            ),
         );
     });
     assert.equal(existsSync(stagedRoot), false);

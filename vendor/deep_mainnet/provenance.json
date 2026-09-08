@@ -1,0 +1,33 @@
+{
+  "kind": "bytecode-backed-reconstruction",
+  "baseline": {
+    "repository": "https://github.com/MystenLabs/deepbookv3.git",
+    "revision": "510f49f65d28a30838318fbe5bef3c9cf0a907f3",
+    "path": "packages/token/sources/deep.move",
+    "sha256": "fc143eeb9a291d5e63a6746647a324ac3bbf51ad2d3a5ada1a7261882ae6274a"
+  },
+  "source": {
+    "path": "sources/deep.move",
+    "sha256": "537e0e3154c3050ce0b2130dac555214a870b62aeff1bd70a136cc8acd49afd0"
+  },
+  "publication": {
+    "network": "mainnet",
+    "chainId": "35834a8a",
+    "originalId": "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270",
+    "publishedAt": "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270",
+    "version": 1,
+    "digest": "DiCZe8oa3PPNuaMpm83t6tp8bxHtykDeF6ThMHVHpg37",
+    "modules": {
+      "deep": {
+        "bytes": 1308,
+        "sha256": "4cc96471f5d39c80d7fcb77b060b5f95a1ec413b45aedbf299078b306da83811"
+      }
+    }
+  },
+  "reproducingCompiler": "sui 1.32.2-a5eab1a75fa8",
+  "changes": [
+    "Named supply and decimal constants reproduce constant-table loads.",
+    "Declaration and local-variable ordering reproduce function and local-slot tables.",
+    "Mint before freezing metadata and creating the protected treasury UID."
+  ]
+}

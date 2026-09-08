@@ -10,4 +10,4 @@ token = { local = "../token" }
 
 [dep-replacements.mainnet]
 deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "2f83e49f21c3aaf96b779f24be0fd6951bc75b29" }
-token = { local = "../token", override = true }
+token = { local = "../../vendor/deep_mainnet", override = true }

@@ -8,12 +8,11 @@ Updated 2026-08-17. This is the live work register governed by the [predeploy li
 
 **Severity:** Deploy gate.
 
-Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. DeepBook and its consumers resolve one in-repository DEEP dependency. The package pins are owned by `packages/{predict,propbook,sessions}/Move.toml`.
+Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. DeepBook v8 and its consumers select the [Mainnet DEEP reconstruction](../../../vendor/deep_mainnet/README.md); the Testnet token source is unchanged. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
 
 The remaining gates are:
 
-- The [deployment workflow](../deployment/README.md#execution-gates) requires exact dependency source verification with the pinned build compiler, Circle/Wormhole reproduction compiler, Mainnet Pyth generated metadata, and Mainnet Wormhole source. A publication dry run alone proves linkage/execution compatibility, not source equality; every execution rechecks the full dependency closure and live framework.
-- DEEP's checked-in `packages/token/sources/deep.move` does not reproduce its Mainnet module. The on-chain initializer mints before freezing metadata and creating the protected treasury UID; the checked-in source performs those operations in a different order. Matching publication source is required; no token source reconstruction or verification exception is approved.
+- The [deployment workflow](../deployment/README.md#execution-gates) requires exact dependency source verification with the pinned build compiler, Circle/Wormhole/DEEP reproduction compiler, Mainnet Pyth generated metadata, and Mainnet Wormhole source. A publication dry run alone proves linkage/execution compatibility, not source equality; every execution rechecks the full dependency closure and live framework.
 - The complete Mainnet publication/wiring gas plan must be measured before lowering the conservative per-step caps.
 
 Pyth Mainnet must link v2: the live State's version guard rejects v1 even when the consumed Update ABI exists in both versions. Migrating to the distinct newer Testnet lineage is outside this deployment scope. No upstream Block Scholes publication is required; its Mainnet identities already exist.

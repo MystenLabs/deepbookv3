@@ -10,11 +10,23 @@ use_environment = "mainnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
 
+[pinned.mainnet.MoveStdlib_1]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "a4185da5659d8d299d34e1bb2515ff1f7e32a20a" }
+use_environment = "mainnet"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
 [pinned.mainnet.Sui]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "2a0becb2fcc6989e492981104af67f62f2c9511a" }
 use_environment = "mainnet"
 manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
 deps = { MoveStdlib = "MoveStdlib" }
+
+[pinned.mainnet.Sui_1]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "a4185da5659d8d299d34e1bb2515ff1f7e32a20a" }
+use_environment = "mainnet"
+manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
+deps = { MoveStdlib = "MoveStdlib_1" }
 
 [pinned.mainnet.account]
 source = { local = "../account" }
@@ -31,7 +43,7 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.mainnet.deepbook_core_account]
 source = { root = true }
 use_environment = "mainnet"
-manifest_digest = "16B991B0D5724C4D5F6B42D2665D7039131429B499D6EB79CC80B6A3CEB46211"
+manifest_digest = "599E272D0122B5E550A46AAC9A805AD2333FA81EC2ED0FCD71FF4E63E174A142"
 deps = { account = "account", deepbook = "deepbook", std = "MoveStdlib", sui = "Sui", token = "token_1" }
 
 [pinned.mainnet.token]
@@ -41,10 +53,10 @@ manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5E
 deps = { std = "MoveStdlib", sui = "Sui" }
 
 [pinned.mainnet.token_1]
-source = { local = "../token" }
+source = { local = "../../vendor/deep_mainnet" }
 use_environment = "mainnet"
-manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
-deps = { std = "MoveStdlib", sui = "Sui" }
+manifest_digest = "A441490BFF45892FF2D2F51A362331BAB479ECDAF138E673D20F5D457D2F65B9"
+deps = { Sui = "Sui_1" }
 
 [pinned.testnet.MoveStdlib]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "2a0becb2fcc6989e492981104af67f62f2c9511a" }
