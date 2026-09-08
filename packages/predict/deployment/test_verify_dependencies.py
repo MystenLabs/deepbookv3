@@ -122,11 +122,11 @@ class DependencyVerificationTests(unittest.TestCase):
             root = Path(temp)
             cache_repo = root / "cache/git" / ("https___github_com_example_repo-name_git_" + revision)
             cache_repo.mkdir(parents=True)
-            with patch.object(verifier, "run", side_effect=[revision, buffer.getvalue()]) as command:
+            with patch.object(verifier, "run", side_effect=[revision, "100644 blob hash", content.decode(), buffer.getvalue()]) as command:
                 staged = verifier.stage_git(source, root / "stage", root / "cache")
                 self.assertEqual((staged / "Move.toml").read_bytes(), content)
-                self.assertEqual(command.call_args_list[1].args[0],
-                                 ["git", "-C", str(cache_repo), "archive", revision, "--", "packages"])
+                self.assertEqual(command.call_args_list[3].args[0],
+                                 ["git", "-C", str(cache_repo), "archive", revision, "--", "packages/token"])
                 self.assertFalse((cache_repo / "packages").exists())
 
     def test_failed_verification_removes_disposable_stage(self):
@@ -139,6 +139,54 @@ class DependencyVerificationTests(unittest.TestCase):
                 verifier.verify(Path("/unused"), "testnet", "sui", "config")
         self.assertEqual(len(captured), 1)
         self.assertFalse(captured[0].exists())
+
+    def test_unrelated_sibling_symlink_is_not_exported(self):
+        revision = "b" * 40
+        manifest = '[package]\nname="Wormhole"\n'
+
+        def git_command(arguments, *, binary=False):
+            if "rev-parse" in arguments:
+                return revision
+            if "show" in arguments:
+                return manifest
+            if "ls-tree" in arguments:
+                return "100644 blob hash"
+            self.assertIn("archive", arguments)
+            exported = arguments[arguments.index("--") + 1:]
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer, mode="w") as archive:
+                member = tarfile.TarInfo("sui/wormhole/Move.toml")
+                member.size = len(manifest)
+                archive.addfile(member, io.BytesIO(manifest.encode()))
+                if "sui" in exported:
+                    sibling = tarfile.TarInfo("sui/token_bridge/Move.toml")
+                    sibling.type = tarfile.SYMTYPE
+                    sibling.linkname = "Move.mainnet.toml"
+                    archive.addfile(sibling)
+            return buffer.getvalue()
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cache = root / "cache"
+            (cache / "git" / ("https___github_com_example_wormhole_git_" + revision)).mkdir(parents=True)
+            source = {"git": "https://github.com/example/wormhole.git", "rev": revision, "subdir": "sui/wormhole"}
+            with patch.object(verifier, "run", side_effect=git_command):
+                result = verifier.stage_git(source, root / "stage", cache)
+            self.assertEqual((result / "Move.toml").read_text(), manifest)
+            self.assertFalse((root / "stage/sui/token_bridge").exists())
+
+    def test_manifest_links_follow_exact_commit_and_reject_escapes(self):
+        revision = "b" * 40
+        with patch.object(verifier, "run", side_effect=[
+            "120000 blob hash", "Move.mainnet.toml", "100644 blob hash", '[package]\nname="Wormhole"\n',
+        ]) as command:
+            self.assertEqual(verifier.git_manifest(Path("cache"), revision, "sui/wormhole/Move.toml"),
+                             {"package": {"name": "Wormhole"}})
+            self.assertEqual(command.call_args.args[0],
+                             ["git", "-C", "cache", "show", revision + ":sui/wormhole/Move.mainnet.toml"])
+        with patch.object(verifier, "run", side_effect=["120000 blob hash", "../../../outside"]):
+            with self.assertRaisesRegex(verifier.VerificationError, "escapes"):
+                verifier.git_manifest(Path("cache"), revision, "sui/wormhole/Move.toml")
 
     def test_publication_rejects_wrong_chain_and_zero_identity(self):
         with tempfile.TemporaryDirectory() as temp:

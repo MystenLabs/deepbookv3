@@ -2,7 +2,7 @@
 """Verify Predict's published dependency sources without signing or broadcasting.
 
 Run after building sessions. Modern packages use Sui's source verifier; historical
-Mainnet packages use their publishing compiler and exact serialized module bytes.
+Mainnet packages use a verified reproduction compiler and exact serialized module bytes.
 Compiler input roots are disposable copies. Client configuration is only passed
 to the selected CLI; this script never opens configuration or keystore files.
 """
@@ -100,8 +100,26 @@ def publication(directory, network):
     return result
 
 
+def git_manifest(repository, rev, path):
+    visited = set()
+    while path not in visited:
+        visited.add(path)
+        entry = run(["git", "-C", str(repository), "ls-tree", rev, "--", path])
+        if not entry:
+            raise VerificationError(f"missing locked source manifest: {path}")
+        content = run(["git", "-C", str(repository), "show", f"{rev}:{path}"])
+        if entry.split()[0] != "120000":
+            return tomllib.loads(content)
+        if Path(content).is_absolute():
+            raise VerificationError(f"absolute source manifest link: {path}")
+        path = os.path.normpath(str(Path(path).parent / content))
+        if path == ".." or path.startswith("../"):
+            raise VerificationError("source manifest link escapes Git tree")
+    raise VerificationError(f"cyclic source manifest link: {path}")
+
+
 def stage_git(source, destination, cache):
-    """Export the locked commit, including siblings needed by relative dependencies."""
+    """Export the package and its relative dependencies from the locked commit."""
     rev, url = source["rev"], source["git"]
     if not re.fullmatch(r"[0-9a-f]{40}", rev):
         raise VerificationError(f"Git source is not an exact revision: {rev}")
@@ -119,13 +137,39 @@ def stage_git(source, destination, cache):
     resolved = run(["git", "-C", str(repository), "rev-parse", f"{rev}^{{commit}}"])
     if resolved != rev:
         raise VerificationError("source revision did not resolve exactly")
-    subtree = str(subdir.parent) if str(subdir.parent) != "." else str(subdir)
-    archive = run(["git", "-C", str(repository), "archive", rev, "--", subtree], binary=True)
+    pending, subtrees = [str(subdir)], set()
+    while pending:
+        subtree = pending.pop()
+        if subtree in subtrees:
+            continue
+        subtrees.add(subtree)
+        manifest = git_manifest(repository, rev, f"{subtree}/Move.toml")
+        tables = [manifest]
+        while tables:
+            table = tables.pop()
+            for value in table.values():
+                if not isinstance(value, dict):
+                    continue
+                tables.append(value)
+                if "local" not in value:
+                    continue
+                relative = value["local"]
+                if not isinstance(relative, str) or Path(relative).is_absolute():
+                    raise VerificationError(f"invalid relative source dependency: {relative}")
+                dependency = os.path.normpath(str(Path(subtree) / relative))
+                if dependency == ".." or dependency.startswith("../"):
+                    raise VerificationError(f"relative dependency escapes Git source: {relative}")
+                pending.append(dependency)
+    archive = run(["git", "-C", str(repository), "archive", rev, "--", *sorted(subtrees)], binary=True)
     with tarfile.open(fileobj=io.BytesIO(archive)) as bundle:
         for member in bundle.getmembers():
             target = (destination / member.name).resolve()
-            if not target.is_relative_to(destination.resolve()) or member.issym() or member.islnk():
+            if not target.is_relative_to(destination.resolve()) or member.islnk():
                 raise VerificationError(f"unsafe source archive member: {member.name}")
+            if member.issym():
+                linked = (target.parent / member.linkname).resolve()
+                if not linked.is_relative_to(destination.resolve()):
+                    raise VerificationError(f"source archive link escapes stage: {member.name}")
         bundle.extractall(destination, filter="data")
     package = destination / subdir
     if not (package / "Move.toml").is_file():
@@ -322,9 +366,10 @@ def verify(repo, network, sui, config, legacy=None):
                 if identity not in source_stages:
                     destination = temporary / f"git-{len(source_stages)}"
                     destination.mkdir()
-                    stage_git(source, destination, cache)
                     source_stages[identity] = destination
                 package = source_stages[identity] / source["subdir"]
+                if not (package / "Move.toml").is_file():
+                    stage_git(source, source_stages[identity], cache)
             else:
                 raise VerificationError(f"unknown dependency source: {key}")
             name = read_toml(package / "Move.toml")["package"]["name"]
