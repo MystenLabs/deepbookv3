@@ -87,7 +87,26 @@ class DependencyVerificationTests(unittest.TestCase):
                         ("sui 1.78.1", "35834a8a", "sui 1.32.2-unknown")):
             with self.subTest(outputs=outputs), patch.object(verifier, "run", side_effect=outputs):
                 with self.assertRaises(verifier.VerificationError):
-                    verifier.validate_target("sui", "config", "mainnet", "legacy")
+                    verifier.validate_target("sui", "/tmp/client.yaml", "mainnet", "legacy")
+
+    def test_nonstandard_config_filename_fails_before_any_command(self):
+        with patch.object(verifier, "run") as command:
+            with self.assertRaisesRegex(verifier.VerificationError, "must be named client.yaml"):
+                verifier.validate_target("sui", "/tmp/custom.yaml", "mainnet")
+            command.assert_not_called()
+
+    def test_subprocess_timeouts_bound_chain_and_build_commands(self):
+        cases = [(["sui", "client", "object", "0x2", "--json"], 60),
+                 (["sui", "client", "verify-source", "package"], 120),
+                 (["sui", "move", "build", "--path", "package"], 120),
+                 (["git", "fetch", "origin", "revision"], 120)]
+        for arguments, seconds in cases:
+            with self.subTest(arguments=arguments), patch.object(
+                verifier.subprocess, "run", side_effect=subprocess.TimeoutExpired(arguments, seconds)
+            ) as command:
+                with self.assertRaisesRegex(verifier.VerificationError, f"timed out after {seconds}s"):
+                    verifier.run(arguments)
+                self.assertEqual(command.call_args.kwargs["timeout"], seconds)
 
     def test_command_failure_propagates_with_diagnostics(self):
         failure = subprocess.CompletedProcess(["sui"], 1, stdout=b"verification failed", stderr=b"compiler error\n")

@@ -41,7 +41,13 @@ class VerificationError(RuntimeError):
 
 
 def run(arguments, *, binary=False):
-    result = subprocess.run(arguments, capture_output=True, check=False)
+    timeout = 60 if "client" in arguments and "verify-source" not in arguments else 120
+    try:
+        result = subprocess.run(arguments, capture_output=True, check=False, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        raise VerificationError(
+            f"command timed out after {timeout}s: {' '.join(map(str, arguments))}"
+        ) from error
     if result.returncode:
         raise VerificationError(
             f"command failed ({result.returncode}): {' '.join(map(str, arguments))}\n"
@@ -289,6 +295,12 @@ def client_command(sui, config, network, *arguments):
 
 
 def validate_target(sui, config, network, legacy=None):
+    if Path(config).name != "client.yaml":
+        raise VerificationError(
+            "--client-config must be named client.yaml: Sui source verification passes "
+            "its parent directory to the compiler; copy the intended client configuration "
+            "to an isolated directory as client.yaml and pass that path"
+        )
     version = run([str(sui), "--version"])
     if not re.fullmatch(r"sui 1\.78\.1(?:-[A-Za-z0-9.-]+)?", version):
         raise VerificationError(f"expected Sui 1.78.1, received {version}")
