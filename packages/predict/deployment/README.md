@@ -1,19 +1,10 @@
 # Official Predict Testnet deployment
 
-This directory owns the reproducible `deepbook-predict-testnet` contract deployment. Operator recovery data and the stable public integration surface are separate artifacts.
+This directory publishes, wires, capitalizes, and verifies the `deepbook-predict-testnet` contract suite. Operational capability issuance is a separate command with an explicit recipient.
 
-## Files
+## Deployment
 
--   `deploy.ts` is the resumable deployment state machine. It publishes `fixed_math`, USDC, Account, Propbook, Predict, the DeepBook core Account wrapper, and Sessions; finalizes the USDC and PLP currency registrations; mints Testnet USDC; authorizes the fresh Account apps; wires BTC oracle state; applies cadence policy; bootstraps the pool; fills the initial market windows; hands off both operational capabilities; and audits the result from Testnet.
--   `deployment.testnet.state.json` is the mode-`0600`, gitignored operator journal. It contains in-flight intent, transaction receipts, temporary currency objects, bootstrap-account data, and privileged capabilities.
--   `deployment.testnet.json` is the public integration manifest. The script writes it only after the complete Testnet audit and external DeepBook authorization pass.
--   `deploy.test.ts` pins the non-broadcasting default, state/manifest boundary, official economics, publication plan, package recovery, every irreversible transaction boundary, SID parity, and schema-7 manifest boundary.
-
-No deployment artifact contains signer key material. The workflow reads the selected signer from a mode-restricted snapshot of the existing Sui client configuration and removes the snapshot on exit.
-
-## Run
-
-Use Sui CLI `sui 1.77.1-4e476c5c8184`, a clean committed `deepbook-predict-testnet` branch, and the Testnet client environment whose active address is the funded deployer. Do not set `SUI_KEYSTORE_PATH`; the CLI and SDK both use the keystore pinned by the client configuration.
+Use `sui 1.77.1-4e476c5c8184`, a clean committed deployment branch, and the Testnet client configuration whose active address is the funded deployer. The CLI and SDK use the same mode-restricted client-configuration snapshot; do not set `SUI_KEYSTORE_PATH`.
 
 ```sh
 cd packages/predict
@@ -21,38 +12,47 @@ corepack npm exec -- tsx deployment/deploy.ts
 corepack npm exec -- tsx deployment/deploy.ts --execute
 ```
 
-The first command builds every package with warnings denied, verifies the seven-package plan and dependency identities, checks the chain, signer, external objects, capability owners, gas for the complete transaction plan, and source bindings, and submits no transaction. The second command broadcasts.
+The default command builds and checks the package graph, chain, signer, source, dependencies, and funding without submitting transactions. `--execute` submits the following resumable sequence:
 
-The broadcast publishes `fixed_math`, `usdc`, `account`, `propbook`, `predict`, `deepbook_core_account`, and `sessions` in dependency order. All package upgrade capabilities, the USDC TreasuryCap and MetadataCap, the PLP MetadataCap, and the Account, Propbook, Predict, and Sessions administrative capabilities remain owned by the deployer.
+1. Publish `fixed_math`, `usdc`, `account`, `propbook`, `predict`, `deepbook_core_account`, and `sessions` in dependency order.
+2. Finalize USDC and PLP currency registration, mint 100,000,000 Testnet USDC to the deployer, and authorize Predict, the DeepBook Account wrapper, and Sessions in the fresh Account registry.
+3. Create and bind the BTC Pyth feed and Block Scholes stores, register BTC in Predict, and configure the protocol and cadences.
+4. Lock 10 USDC and supply 250,000 USDC through the deployer's Account, completing the initial PLP allocation with an empty-pool valuation before any market exists.
+5. Create the initial BTC 1-minute and 5-minute market objects, bounded to two per cadence and the contract's available cadence slots. A higher-cadence overlap may leave one slot unavailable. Creation receipts persist across resumes; elapsed expiries do not trigger replacement markets.
+6. Audit package provenance, dependency identities, shared objects, application authorization, oracle bindings, currencies, retained caps, configuration, initial market objects, and capital accounting; generate the integration manifest only after this audit succeeds.
 
-The fresh collateral type is `<usdc-package>::usdc::USDC`; its six-decimal display symbol is `DUSDC`. The workflow permissionlessly finalizes its Sui coin-registry registration, retains its TreasuryCap and MetadataCap, and performs one recorded mint of 100,000,000 USDC to the deployer. It also finalizes the fresh PLP registration before pool bootstrap.
+The fresh collateral type is `<usdc-package>::usdc::USDC`, with six decimals and display symbol `DUSDC`. Each enabled cadence has a two-market window, 2,000 USDC initial expiry cash policy, 10,000 USDC maximum expiry allocation, a 0.01 USD pricing tick, and a 1 USD admission tick. Other cadences are disabled. The protocol audit verifies the 500,000 USDC pool-value cap, five-minute valuation window, and 2,000 ms no-trade window.
 
-The official initial pool locks 10 USDC and supplies 250,000 USDC to the deployer Account, creating the corresponding PLP position. The protocol retains the source defaults of a 500,000 USDC maximum LP-attributable pool value and a five-minute maximum valuation window.
+Deployment creates oracle objects and bindings without requiring live observations. It neither reads nor sets reference prices, funds individual markets, nor launches writers. Initial capital remains in the pool. Market creation requires a lifecycle cap, while processing the initial supply requires a valuation cap; both setup caps remain with the deployer alongside all package upgrade, root/admin, treasury, and metadata capabilities.
 
-BTC is the only registered underlying. The workflow enables only 1-minute and 5-minute cadences; each has a two-market window, 2,000 USDC initial expiry cash, 10,000 USDC maximum allocation, a 0.01 USD pricing tick, and a 1 USD admission tick. The remaining cadence records are explicitly disabled.
+Authorization of the fresh `DeepbookCoreAccountApp` in the existing DeepBook registry belongs to that registry's administrator. The audit records its observed boolean status in the manifest; pending authorization does not block Predict deployment completion. The wrapper cannot interact with DeepBook core until that authorization is granted.
 
-The workflow creates the fresh BTC Pyth feed and Block Scholes store pair, verifies the on-chain spot, forward, and SVI SIDs against the subscription-side derivation, and requires fresh provider source timestamps before moving collateral. A first execution normally stops with `awaiting_oracle_data` after publishing and wiring the new object IDs; configure the Propbook writer for those IDs, allow observations to land, and rerun the same committed source and state journal.
+## Issue operational capabilities
 
-Each new market receives its exact previous-window Pyth reference tick before pool cash is rebalanced into it. Missing reference observations fail closed and are retried by resuming after the updater has inserted the required boundary observation.
-
-The workflow mints both `MarketLifecycleCap` and `PoolValuationCap` to the deployer for setup. After package, currency, authorization, oracle, configuration, funding, reference-tick, live-market, and pool-accounting audits pass, it transfers both capabilities atomically with `sui::transfer::public_party_transfer` to the configured Predict writer and verifies their `ConsensusAddressOwner` custody.
-
-The existing DeepBook registry's consensus-owned `DeepbookAdminCap` has a different owner. The workflow audits whether that owner has authorized the fresh `DeepbookCoreAccountApp` type; when authorization is absent, the journal remains `awaiting_external_authorization` and no integration manifest is written. After the external owner authorizes the type, rerun the same command to verify the mutated DeepBook registry, establish the final checkpoint fence, and complete.
-
-No transaction targets the existing Predict v4 packages or shared objects. Reusing the v4 writer addresses only selects final custody; it does not launch a duplicate keeper or updater.
-
-If a run is interrupted, preserve the source commit, exact Sui binary, client configuration, gas budgets, generated `Published.toml` files, and state journal, then rerun the execute command. A successful known digest is reconciled on-chain, including reconstruction of missing publication metadata from the verified receipt; a definitively failed digest is checkpointed and made retryable, and an unknown submission outcome fails closed until it is reconciled.
-
-Commit the reviewed workflow before the first execute run; that commit is the immutable source anchor for every resume. After the final audit succeeds, commit the generated `Published.toml` files and integration manifest without changing the source anchor. Never commit the state journal or regenerated `Move.lock` files.
+After contract deployment completes, provide the recipient's full nonzero Sui address:
 
 ```sh
-cd packages/predict
-corepack npm run build
-corepack npm exec -- tsx --test deployment/deploy.test.ts
+corepack npm exec -- tsx deployment/deploy.ts issue-caps --recipient <address>
+corepack npm exec -- tsx deployment/deploy.ts issue-caps --recipient <address> --execute
 ```
 
-## Integration manifest
+The first invocation checks the target without broadcasting. The execution command mints a new `MarketLifecycleCap` and `PoolValuationCap` and transfers both using `sui::transfer::public_party_transfer` in one transaction. It verifies each object's `ConsensusAddressOwner`, records both IDs and the transaction in the private journal, and prints the result. Setup caps and root capabilities are retained; no existing capability is handed off.
 
-The schema-7 manifest contains the seven fresh package IDs, finalized currency and shared-object IDs, coin types, oracle bindings, writer identities, lifecycle and pool-valuation capabilities, earliest publication checkpoint, completed DeepBook wrapper authorization, numeric units, and the initial protocol and cadence snapshot. Mutable `ProtocolConfig`, Predict `Registry`, Propbook `OracleRegistry`, `SessionsConfig`, and DeepBook `Registry` values are anchored to the exact object versions and digests bracketing the final audit reads.
+Each recipient has one recorded issuance. Repeating the same command verifies the original receipt and ownership without minting again. A different recipient is a new explicit issuance. An in-flight issuance must be reconciled using its original recipient before another command or recipient can proceed. Issuance does not regenerate the deployment configuration snapshot.
 
-The manifest excludes the deployer, transaction digests, receipts, bootstrap accounts, temporary markets, balances, rebalances, and publisher, upgrade, admin, treasury, or metadata capabilities. Runtime consumers must read mutable protocol and cadence policy from the shared objects on-chain.
+## Recovery and artifacts
+
+`deployment.testnet.state.json` is the mode-`0600`, gitignored schema-5 operator journal. It holds source and execution bindings, package identities, transaction intents and receipts, bootstrap attribution, setup capabilities, and recipient-specific issuance records. It contains no signing keys. A schema-4 journal cannot be resumed with this workflow.
+
+Preserve the journal, exact source commit, Sui binary, client configuration, gas budgets, and generated publication metadata across an interrupted deployment. Known digests are reconciled on-chain; ambiguous submissions never trigger a replacement broadcast. Every deployment completion runs a fresh audit. After success, commit the generated `Published.toml` records and `deployment.testnet.json` without changing deployment source. Cap issuance permits these artifact-only commits; deployment resumes require the original source commit.
+
+`deployment.testnet.json` is the public schema-8 integration manifest: packages, currencies, shared objects, oracle dependencies and bindings, external authorization status, replay checkpoint, units, and version/digest-anchored initial configuration. It contains no preselected writer addresses, operational caps, bootstrap accounts, transaction receipts, or administrative capabilities. Runtime consumers read mutable policy from the chain. Later cap issuance is reported through its separate command and private journal.
+
+## Verification
+
+```sh
+corepack npm run build
+corepack npm test
+```
+
+Tests cover publication identity and recovery, non-broadcasting defaults, deployment orchestration and interruption/resume boundaries, capitalization before market creation, expired-market resume, pending external authorization, explicit recipient parsing, atomic cap-issuance transaction construction, ownership verification, receipt recovery, and manifest validation.

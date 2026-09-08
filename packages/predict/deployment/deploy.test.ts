@@ -16,7 +16,11 @@ import {
     assertExecutionBindings,
     assertNoKeystoreOverride,
     assertIntegrationManifest,
-    assertMatchingSid,
+    assertCapsIssuanceReady,
+    capIssuanceTransaction,
+    issueOperationalCaps,
+    executeDeployment,
+    ensureMarkets,
     assertPackagePlan,
     assertRecoverableInFlight,
     assertSourceBinding,
@@ -41,6 +45,7 @@ import {
     sameObjectReference,
     unexpectedDeploymentPaths,
     type IntegrationManifest,
+    type Receipt,
 } from "./deploy.ts";
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
@@ -49,7 +54,7 @@ function manifestFixture(): IntegrationManifest {
     const predict = id("4");
     const usdc = id("2");
     return {
-        schemaVersion: 7,
+        schemaVersion: 8,
         deployment: "deepbook-predict-testnet",
         network: "testnet",
         chainId: "4c78adac",
@@ -93,23 +98,13 @@ function manifestFixture(): IntegrationManifest {
                 blockScholesSviStore: id("f"),
             },
         },
-        writers: {
-            keeper: {
-                address: "0xff241a369609060d3f34828b97a47a2d330644615ff57dfdd49f4f0dd299207f",
-                lifecycleCap: id("1"),
-                poolValuationCap: id("2"),
-            },
-            priceUpdater: {
-                address: "0x921e2bd3432c784dce15b4073ba666d5067e6f8a41704eb63555235fec2e2e41",
-                pythLazerPackage:
-                    "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
-                pythLazerState:
-                    "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
-                blockScholesOraclePackage:
-                    "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
-                blockScholesSignerRegistry:
-                    "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
-            },
+        oracleDependencies: {
+            pythLazerPackage: "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+            pythLazerState: "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
+            blockScholesOraclePackage:
+                "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+            blockScholesSignerRegistry:
+                "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
         },
         externalAuthorizations: {
             deepbookCoreAccount: {
@@ -158,6 +153,7 @@ function manifestFixture(): IntegrationManifest {
                 lpRequestLimitFlushAttempts: EXPECTED_PROTOCOL_CONFIG.lpRequestLimitFlushAttempts,
                 maxLpPoolValue: EXPECTED_PROTOCOL_CONFIG.maxLpPoolValue,
                 maxValuationWindowMs: EXPECTED_PROTOCOL_CONFIG.maxValuationWindowMs,
+                noTradeWindowMs: "2000",
             },
             futureMarketTemplate: {
                 backingBufferLambda: EXPECTED_PROTOCOL_CONFIG.backingBufferLambda,
@@ -222,11 +218,11 @@ function completeStateFixture() {
                 "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24",
             ),
             deep: objectEvidence(manifest.coinTypes.deep.split("::")[0]),
-            pyth_lazer: objectEvidence(manifest.writers.priceUpdater.pythLazerPackage),
+            pyth_lazer: objectEvidence(manifest.oracleDependencies.pythLazerPackage),
             wormhole: objectEvidence(
                 "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2",
             ),
-            bs_oracle: objectEvidence(manifest.writers.priceUpdater.blockScholesOraclePackage),
+            bs_oracle: objectEvidence(manifest.oracleDependencies.blockScholesOraclePackage),
             bs_sid: objectEvidence(
                 "0x6a54299d593fca24edf6b17bf8c3aff0b7ba8bc8f4276e9c1065689c50223bba",
             ),
@@ -234,12 +230,12 @@ function completeStateFixture() {
         linkedObjects: {
             clock: objectEvidence(manifest.objects.clock),
             accumulatorRoot: objectEvidence(manifest.objects.accumulatorRoot),
-            pythLazerState: objectEvidence(manifest.writers.priceUpdater.pythLazerState),
+            pythLazerState: objectEvidence(manifest.oracleDependencies.pythLazerState),
             wormholeState: objectEvidence(
                 "0x3c89c52e413edb9b0d9a145e02258c96916c79b1e57a12861bb61791ee5c5f81",
             ),
             blockScholesSignerRegistry: objectEvidence(
-                manifest.writers.priceUpdater.blockScholesSignerRegistry,
+                manifest.oracleDependencies.blockScholesSignerRegistry,
             ),
             deepbookRegistry: objectEvidence(
                 manifest.objects.deepbookRegistry,
@@ -300,9 +296,8 @@ function completeStateFixture() {
             mintedAmount: "100000000000000",
             deployerBalance: "99749990000000",
         },
-        lifecycleCap: objectEvidence(manifest.writers.keeper.lifecycleCap),
-        valuationCap: objectEvidence(manifest.writers.keeper.poolValuationCap),
-        oracleReadiness: [],
+        lifecycleCap: objectEvidence(id("1")),
+        valuationCap: objectEvidence(id("2")),
         cadences: CADENCES.map((cadence) => ({
             id: cadence.id,
             name: cadence.name,
@@ -329,14 +324,13 @@ function completeStateFixture() {
 }
 
 test("the default invocation is non-broadcasting", async () => {
-    assert.deepEqual(parseDeploymentArgs([]), { execute: false, sessions: false, smoke: false });
+    assert.deepEqual(parseDeploymentArgs([]), { command: "deploy", execute: false });
     assert.deepEqual(parseDeploymentArgs(["--execute"]), {
         execute: true,
-        sessions: false,
-        smoke: false,
+        command: "deploy",
     });
-    assert.throws(() => parseDeploymentArgs(["--sessions"]), /unknown deployment arguments/);
-    assert.throws(() => parseDeploymentArgs(["--smoke"]), /unknown deployment arguments/);
+    assert.throws(() => parseDeploymentArgs(["--sessions"]), /unknown deployment argument/);
+    assert.throws(() => parseDeploymentArgs(["--smoke"]), /unknown deployment argument/);
     let broadcasts = 0;
     assert.equal(
         await runBroadcastBoundary(false, async () => {
@@ -439,7 +433,8 @@ test("the deployment policy pins approved defaults and cadence windows", () => {
     assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
     assert.equal(state.wiring.bootstrap.supplyAmount, "250000000000");
     assert.equal(state.wiring.currencies.usdc.mintedAmount, "100000000000000");
-    assert.equal(state.wiring.lifecycleCap.recipient, state.wiring.valuationCap.recipient);
+    assert.equal(EXPECTED_PROTOCOL_CONFIG.noTradeWindowMs, "2000");
+    assert.deepEqual(state.issuedCaps, {});
 });
 
 test("the package plan is complete and topological", () => {
@@ -460,9 +455,9 @@ test("the package plan is complete and topological", () => {
 });
 
 test("gas funding derives the complete fresh transaction plan", () => {
-    assert.equal(plannedTransactionCount(), 28);
-    assert.equal(maximumTransactionCountPerRun(), 40);
-    assert.equal(irreversibleDeploymentSteps().length, 35);
+    assert.equal(plannedTransactionCount(), 19);
+    assert.equal(maximumTransactionCountPerRun(), 19);
+    assert.equal(irreversibleDeploymentSteps().length, 26);
 });
 
 test("target, toolchain, source, and worktree bindings fail closed", () => {
@@ -590,20 +585,7 @@ test("known-digest recovery checkpoints once and unknown outcomes fail closed", 
 });
 
 test("every irreversible publish and transaction boundary resumes without rebroadcast", async () => {
-    const runtimeMarketIds = CADENCES.filter((cadence) => cadence.marketsToCreate > 0).flatMap(
-        (cadence) =>
-            Array.from({ length: cadence.marketsToCreate }, (_, index) =>
-                id(`${cadence.id + 1}${index + 1}`),
-            ),
-    );
-    const transactionLabels = [
-        ...plannedTransactionSteps().filter(
-            (label) =>
-                !label.startsWith("set_reference_tick_") && !label.startsWith("rebalance_market_"),
-        ),
-        ...runtimeMarketIds.map((marketId) => `set_reference_tick_${marketId}`),
-        ...runtimeMarketIds.map((marketId) => `rebalance_market_${marketId}`),
-    ];
+    const transactionLabels = plannedTransactionSteps();
     const cases = [
         ...(
             [
@@ -680,10 +662,10 @@ test("manifest validation requires all seven fresh packages and mutable-state an
     assert.throws(() => assertIntegrationManifest(operatorField), /integration manifest keys/);
     const unauthorized = structuredClone(manifest);
     unauthorized.externalAuthorizations.deepbookCoreAccount.authorized = false;
-    assert.throws(() => assertIntegrationManifest(unauthorized), /externalAuthorizations/);
+    assert.doesNotThrow(() => assertIntegrationManifest(unauthorized));
 });
 
-test("a complete audited state generates the independent schema-7 fixture", () => {
+test("a complete audited state generates the independent schema-8 fixture", () => {
     assert.deepEqual(buildIntegrationManifest(completeStateFixture()), manifestFixture());
 });
 
@@ -691,9 +673,343 @@ test("a manifest cannot be generated before the chain audit completes", () => {
     assert.throws(() => buildIntegrationManifest(createDeploymentState()), /complete, verified/);
 });
 
-test("Block Scholes SID parity fails closed", () => {
-    assert.doesNotThrow(() => assertMatchingSid("BTC spot", 7n, 7n));
-    assert.throws(() => assertMatchingSid("BTC spot", 7n, 8n), /subscription derives/);
+test("deployment completion reports pending external authorization and the no-trade window", () => {
+    const state = completeStateFixture();
+    state.verification!.account.deepbookCoreAuthorized = false;
+    const manifest = buildIntegrationManifest(state);
+    assert.equal(manifest.externalAuthorizations.deepbookCoreAccount.authorized, false);
+    assert.equal(manifest.initialConfiguration.liveProtocol.noTradeWindowMs, "2000");
+    assert.equal("writers" in manifest, false);
+    state.verification!.protocolConfig.noTradeWindowMs = "0";
+    assert.throws(() => buildIntegrationManifest(state), /ProtocolConfig/);
+});
+
+function testRuntime(result = createDeploymentState()) {
+    return { result, sourceCommit: "a".repeat(40) } as Parameters<typeof executeDeployment>[0];
+}
+
+const testBindings = {
+    suiVersion: "sui 1.77.1-4e476c5c8184",
+    suiBinaryPath: "/test/sui",
+    suiBinaryDigest: "binary",
+    rpcUrl: "http://test.invalid",
+    clientConfigDigest: "config",
+    packageGasBudget: "5000000000",
+    transactionGasBudget: "1000000000",
+};
+
+function orchestrationFixture(failAfter?: string) {
+    const runtime = testRuntime();
+    const mutations: string[] = [];
+    const calls: string[] = [];
+    const manifests: IntegrationManifest[] = [];
+    let failed = false;
+    let auditFails = false;
+    let audits = 0;
+    const persist = () => {};
+    const step = async (label: string) => {
+        calls.push(label);
+        if (!runtime.result.transactions[label]) {
+            runtime.result.transactions[label] = `tx-${label}`;
+            mutations.push(label);
+            if (!failed && label === failAfter) {
+                failed = true;
+                throw new Error(`interrupted ${label}`);
+            }
+        }
+    };
+    const ops: NonNullable<Parameters<typeof executeDeployment>[2]> = {
+        writeState: persist,
+        publishPackage: async (_runtime, pkg) => {
+            runtime.result.packages[pkg] = id("1");
+            runtime.result.publishTx[pkg] = `publish-${pkg}`;
+            await step(`publish_${pkg}`);
+        },
+        verifyPublishedPackageCheckpoint: async (_runtime, pkg) => {
+            assert.ok(runtime.result.publishTx[pkg]);
+            calls.push(`verify_${pkg}`);
+        },
+        ensureCurrencyRegistration: async (_runtime, currency) => {
+            await step(`currency_${currency}`);
+            return id("1");
+        },
+        ensureDeployerUsdcMint: () => step("mint_usdc"),
+        ensureAccountAppsAuthorized: () => step("authorize_apps"),
+        ensureDeepbookCoreAppAuthorized: async () => {
+            runtime.result.wiring.deepbook.coreAppAuthorized = false;
+        },
+        ensureLifecycleCap: async () => {
+            await step("lifecycle_cap");
+            return id("1");
+        },
+        ensureValuationCap: async () => {
+            await step("valuation_cap");
+            return id("2");
+        },
+        ensureOracleObjects: () => step("wire_empty_oracle_objects"),
+        ensureUnderlyingRegistered: () => step("underlying"),
+        ensureCadences: () => step("cadences"),
+        ensureAccountWrapper: async () => {
+            await step("account");
+            return id("3");
+        },
+        ensureBootstrap: () => step("capitalization"),
+        ensureMarkets: async () => {
+            assert.ok(
+                runtime.result.transactions.capitalization,
+                "capitalization precedes market creation",
+            );
+            await step("markets");
+        },
+        verifyDeployment: async () => {
+            audits++;
+            if (auditFails) throw new Error("fresh audit rejected changed config");
+            const verification = completeStateFixture().verification!;
+            verification.account.deepbookCoreAuthorized = false;
+            return verification;
+        },
+        writeIntegrationManifest: (manifest) => manifests.push(manifest),
+    };
+    return {
+        runtime,
+        ops,
+        mutations,
+        calls,
+        manifests,
+        get audits() {
+            return audits;
+        },
+        failAudit() {
+            auditFails = true;
+        },
+    };
+}
+
+test("the deployment orchestration completes without prices, references, authorization, or cap handoff", async () => {
+    const fixture = orchestrationFixture();
+    await executeDeployment(fixture.runtime, testBindings, fixture.ops);
+    assert.equal(fixture.runtime.result.status, "complete");
+    assert.equal(fixture.manifests.length, 1);
+    assert.equal(fixture.manifests[0].externalAuthorizations.deepbookCoreAccount.authorized, false);
+    assert.deepEqual(fixture.runtime.result.issuedCaps, {});
+    assert.ok(fixture.calls.indexOf("capitalization") < fixture.calls.indexOf("markets"));
+    assert.equal(fixture.audits, 1);
+});
+
+test("the full orchestration re-enters after every stage without repeating completed mutations", async () => {
+    for (const boundary of [
+        "publish_fixed_math",
+        "publish_usdc",
+        "publish_account",
+        "publish_propbook",
+        "publish_predict",
+        "publish_deepbook_core_account",
+        "publish_sessions",
+        "currency_usdc",
+        "currency_plp",
+        "mint_usdc",
+        "authorize_apps",
+        "lifecycle_cap",
+        "valuation_cap",
+        "wire_empty_oracle_objects",
+        "underlying",
+        "cadences",
+        "account",
+        "capitalization",
+        "markets",
+    ]) {
+        const fixture = orchestrationFixture(boundary);
+        await assert.rejects(
+            executeDeployment(fixture.runtime, testBindings, fixture.ops),
+            /interrupted/,
+        );
+        assert.equal(fixture.manifests.length, 0, boundary);
+        await executeDeployment(fixture.runtime, testBindings, fixture.ops);
+        assert.equal(fixture.runtime.result.status, "complete", boundary);
+        assert.equal(fixture.mutations.length, new Set(fixture.mutations).size, boundary);
+        assert.equal(fixture.manifests.length, 1, boundary);
+        fixture.failAudit();
+        await assert.rejects(
+            executeDeployment(fixture.runtime, testBindings, fixture.ops),
+            /fresh audit/,
+        );
+        assert.equal(
+            fixture.manifests.length,
+            1,
+            "failed re-audit must not replace the prior manifest",
+        );
+        assert.equal(fixture.runtime.result.verification, null);
+        assert.equal(fixture.audits, 2);
+    }
+});
+
+test("initial market creation needs no observations and does not recreate expired markets on resume", async () => {
+    const runtime = testRuntime();
+    runtime.result.packages.predict = id("4");
+    runtime.result.sharedObjects.predict = {
+        "registry::Registry": id("5"),
+        "plp::PoolVault": id("6"),
+        "protocol_config::ProtocolConfig": id("7"),
+    };
+    runtime.result.sharedObjects.propbook = { "registry::OracleRegistry": id("8") };
+    let now = 301_000n;
+    let submitted = 0;
+    let interrupted = false;
+    const receipts = new Map<string, Receipt>();
+    const ops: NonNullable<Parameters<typeof ensureMarkets>[2]> = {
+        currentClockMs: async () => now,
+        discoverMarkets: async () => {},
+        executeTransaction: async (_runtime, label, tx) => {
+            const targets = tx
+                .getData()
+                .commands.map((command) => command.MoveCall?.function)
+                .filter(Boolean);
+            assert.deepEqual(targets, ["create_and_share_expiry_market"]);
+            if (!receipts.has(label)) {
+                submitted++;
+                const cadence = label.includes("_5m_") ? 300_000n : 60_000n;
+                receipts.set(label, {
+                    digest: `tx-${label}`,
+                    events: [
+                        {
+                            type: `${id("4")}::events::MarketCreated`,
+                            parsedJson: {
+                                expiry_market_id: id(String(submitted)),
+                                expiry: String((now / cadence + 1n) * cadence),
+                            },
+                        },
+                    ],
+                });
+                if (!interrupted) {
+                    interrupted = true;
+                    throw new Error("lost response");
+                }
+            }
+            const receipt = receipts.get(label)!;
+            runtime.result.transactions[label] = receipt.digest!;
+            return receipt;
+        },
+        writeState() {},
+    };
+    await assert.rejects(ensureMarkets(runtime, id("9"), ops), /lost response/);
+    now += 3_600_000n;
+    await ensureMarkets(runtime, id("9"), ops);
+    assert.equal(submitted, 4);
+    assert.equal(runtime.result.wiring.markets.length, 4);
+    now += 86_400_000n;
+    await ensureMarkets(runtime, id("9"), ops);
+    assert.equal(submitted, 4);
+});
+
+test("cap issuance requires an explicit recipient and is non-broadcasting by default", async () => {
+    assert.deepEqual(parseDeploymentArgs(["issue-caps", "--recipient", id("a")]), {
+        command: "issue-caps",
+        execute: false,
+        recipient: id("a"),
+    });
+    for (const args of [
+        ["issue-caps"],
+        ["issue-caps", "--recipient", id("0")],
+        ["issue-caps", "--recipient", "bad"],
+        ["--recipient", id("a")],
+    ]) {
+        assert.throws(() => parseDeploymentArgs(args));
+    }
+    assert.throws(() => assertCapsIssuanceReady(createDeploymentState(), id("a")), /completed/);
+    const state = completeStateFixture();
+    state.inFlight = {
+        kind: "transaction",
+        label: `issue_operational_caps_${id("b")}`,
+        digest: "pending",
+        package: null,
+        startedAt: "now",
+    };
+    assert.throws(() => assertCapsIssuanceReady(state, id("a")), /change recipient/);
+});
+
+test("cap issuance mints and party-transfers both capabilities atomically and recovers the receipt", async () => {
+    const state = completeStateFixture();
+    state.packages.predict = id("4");
+    state.sharedObjects.predict = {
+        "registry::Registry": id("5"),
+        "protocol_config::ProtocolConfig": id("6"),
+    };
+    state.ownedCaps.predict = { "admin::AdminCap": id("7") };
+    const recipient = id("a");
+    const tx = capIssuanceTransaction(state, recipient);
+    assert.deepEqual(
+        tx.getData().commands.map((command) => command.MoveCall?.function),
+        [
+            "mint_lifecycle_cap",
+            "mint_pool_valuation_cap",
+            "single_owner",
+            "public_party_transfer",
+            "single_owner",
+            "public_party_transfer",
+        ],
+    );
+    const inputs = tx.getData().inputs;
+    const parties = tx
+        .getData()
+        .commands.filter((command) => command.MoveCall?.function === "single_owner");
+    for (const party of parties) {
+        const argument = party.MoveCall!.arguments[0];
+        assert.equal(argument.$kind, "Input");
+        if (argument.$kind !== "Input") throw new Error("party address must be an input");
+        const index = argument.Input;
+        assert.equal(
+            inputs[index].Pure?.bytes,
+            Buffer.from(recipient.slice(2), "hex").toString("base64"),
+        );
+    }
+    const runtime = testRuntime(state);
+    let broadcasts = 0;
+    let failOwnerRead = true;
+    const owners: string[] = [];
+    const ops: NonNullable<Parameters<typeof issueOperationalCaps>[2]> = {
+        executeTransaction: async (_runtime, label) => {
+            if (!state.transactions[label]) {
+                broadcasts++;
+                state.transactions[label] = "issued";
+            }
+            return {
+                digest: "issued",
+                objectChanges: [
+                    {
+                        type: "created",
+                        objectType: `${id("4")}::market_lifecycle_cap::MarketLifecycleCap`,
+                        objectId: id("b"),
+                    },
+                    {
+                        type: "created",
+                        objectType: `${id("4")}::pool_valuation_cap::PoolValuationCap`,
+                        objectId: id("c"),
+                    },
+                ],
+            };
+        },
+        objectEvidence: async (_runtime, object, _type, owner) => {
+            if (failOwnerRead) {
+                failOwnerRead = false;
+                throw new Error("owner read unavailable");
+            }
+            owners.push(owner!);
+            return objectEvidence(object);
+        },
+        writeState() {},
+    };
+    await assert.rejects(issueOperationalCaps(runtime, recipient, ops), /owner read/);
+    assert.deepEqual(state.issuedCaps, {});
+    const issued = await issueOperationalCaps(runtime, recipient, ops);
+    assert.equal(broadcasts, 1);
+    assert.deepEqual(issued, {
+        recipient,
+        lifecycleCap: id("b"),
+        poolValuationCap: id("c"),
+        transaction: "issued",
+    });
+    assert.deepEqual(owners, [`party:${recipient}`, `party:${recipient}`]);
+    assert.equal(state.status, "complete");
 });
 
 test("Block Scholes store-pair inspection decodes both IDs and the base asset", () => {

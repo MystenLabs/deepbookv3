@@ -7,10 +7,10 @@
  * A run publishes fixed_math, USDC, Account, Propbook, Predict, the DeepBook core
  * Account wrapper, and Sessions; finalizes both currency registrations; mints the
  * Testnet collateral; authorizes the apps; wires BTC oracle state; stores the
- * cadence policy; bootstraps and funds the live windows; and atomically hands both
- * operational capabilities to the Predict writer. Resumable operator-only progress
+ * cadence policy; capitalizes the pool; and creates initial market objects.
+ * Operational capabilities are issued separately to an explicit recipient. Recovery
  * is written to deployment.testnet.state.json. The public integration manifest is
- * derived only after the full Testnet audit and external DeepBook authorization.
+ * derived after the contract deployment audit; external authorization is reported separately.
  *
  * The default invocation is non-broadcasting:
  *   SUI_BINARY=/path/to/sui node --import tsx packages/predict/deployment/deploy.ts
@@ -53,7 +53,6 @@ import {
     type TransactionResult,
 } from "@mysten/sui/transactions";
 import { fromBase58, fromBase64, toHex } from "@mysten/sui/utils";
-import { forwardSid, spotSid, sviSid } from "../devtools/ts/blockScholesSid.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..", "..");
@@ -70,8 +69,6 @@ const NETWORK = "testnet";
 const CHAIN_ID = "4c78adac";
 const DEPLOYMENT = "deepbook-predict-testnet";
 const DEPLOYER = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
-const PREDICT_WRITER = "0xff241a369609060d3f34828b97a47a2d330644615ff57dfdd49f4f0dd299207f";
-const PROPBOOK_WRITER = "0x921e2bd3432c784dce15b4073ba666d5067e6f8a41704eb63555235fec2e2e41";
 const SUI_VERSION = "sui 1.77.1-4e476c5c8184";
 const OBJECT_ID = /^0x[0-9a-f]{64}$/;
 const CLOCK_ID = "0x0000000000000000000000000000000000000000000000000000000000000006";
@@ -80,7 +77,6 @@ const DEEPBOOK_REGISTRY = "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a
 const DEEPBOOK_ADMIN_CAP = "0x29a62a5385c549dd8e9565312265d2bda0b8700c1560b3e34941671325daae77";
 const DEEPBOOK_ADMIN_OWNER = "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e";
 const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
-const MARKET_ROLLOVER_RESERVE_PER_CADENCE = 2;
 
 const PACKAGES = [
     "fixed_math",
@@ -93,11 +89,9 @@ const PACKAGES = [
 ] as const;
 type PackageName = (typeof PACKAGES)[number];
 
-export interface DeploymentMode {
-    execute: boolean;
-    sessions: false;
-    smoke: false;
-}
+export type DeploymentMode =
+    | { command: "deploy"; execute: boolean }
+    | { command: "issue-caps"; execute: boolean; recipient: string };
 
 const LINKED = {
     deepbook: "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24",
@@ -237,6 +231,7 @@ export const EXPECTED_PROTOCOL_CONFIG: ProtocolConfigRecord = {
     lpRequestLimitFlushAttempts: "1",
     maxLpPoolValue: "500000000000",
     maxValuationWindowMs: "300000",
+    noTradeWindowMs: "2000",
     backingBufferLambda: "310000000",
     inventoryImpactMaxRate: "0",
     baseFee: "100000000",
@@ -333,9 +328,6 @@ interface MarketRecord {
     maxExpiryAllocation: string;
     initialExpiryCash: string;
     createTx: string | null;
-    referenceTick: string | null;
-    setReferenceTickTx: string | null;
-    rebalanceTx: string | null;
     cashBalance: string | null;
 }
 
@@ -374,17 +366,13 @@ interface WiringState {
     };
     lifecycleCap: {
         id: string | null;
-        recipient: string;
-        owner: "deployer" | "recipient" | null;
+        owner: "deployer" | null;
         mintTx: string | null;
-        transferTx: string | null;
     };
     valuationCap: {
         id: string | null;
-        recipient: string;
-        owner: "deployer" | "recipient" | null;
+        owner: "deployer" | null;
         mintTx: string | null;
-        transferTx: string | null;
     };
     asset: {
         name: string;
@@ -440,6 +428,7 @@ interface ProtocolConfigRecord {
     lpRequestLimitFlushAttempts: string;
     maxLpPoolValue: string;
     maxValuationWindowMs: string;
+    noTradeWindowMs: string;
     backingBufferLambda: string;
     inventoryImpactMaxRate: string;
     baseFee: string;
@@ -480,15 +469,6 @@ interface Verification {
     };
     lifecycleCap: ObjectEvidence;
     valuationCap: ObjectEvidence;
-    oracleReadiness: Array<{
-        expiryMs: string;
-        spotSid: string;
-        forwardSid: string;
-        sviSid: string;
-        spotSourceTimestampMs: string;
-        forwardSourceTimestampMs: string;
-        sviSourceTimestampMs: string;
-    }>;
     cadences: CadenceRecord[];
     protocolConfig: ProtocolConfigRecord;
     pool: {
@@ -510,9 +490,6 @@ export interface DeploymentResult {
         | "publishing"
         | "wiring"
         | "verifying"
-        | "handoff"
-        | "awaiting_oracle_data"
-        | "awaiting_external_authorization"
         | "partial"
         | "failed"
         | "ambiguous"
@@ -543,6 +520,10 @@ export interface DeploymentResult {
     failedTransactions: Record<string, { digest: string; error: string; recordedAt: string }>;
     wiring: WiringState;
     verification: Verification | null;
+    issuedCaps: Record<
+        string,
+        { lifecycleCap: string; poolValuationCap: string; transaction: string }
+    >;
 }
 
 const FIXED_TRANSACTION_STEPS = [
@@ -561,21 +542,17 @@ const FIXED_TRANSACTION_STEPS = [
     "set_cadence_configs",
     "create_deployer_account",
     "bootstrap_pool",
-    "transfer_operational_caps_to_keeper",
 ] as const;
 
 export function plannedTransactionSteps(): string[] {
-    const marketSteps = CADENCES.flatMap((cadence) =>
-        Array.from({ length: cadence.marketsToCreate }, (_, index) => [
-            `create_market_${cadence.name}_${index}`,
-            `set_reference_tick_${cadence.name}_${index}`,
-            `rebalance_market_${cadence.name}_${index}`,
-        ]).flat(),
-    );
     return [
-        ...FIXED_TRANSACTION_STEPS.slice(0, -1),
-        ...marketSteps,
-        FIXED_TRANSACTION_STEPS.at(-1)!,
+        ...FIXED_TRANSACTION_STEPS,
+        ...CADENCES.flatMap((cadence) =>
+            Array.from(
+                { length: cadence.marketsToCreate },
+                (_, index) => `create_market_${cadence.name}_${index}`,
+            ),
+        ),
     ];
 }
 
@@ -584,15 +561,7 @@ export function plannedTransactionCount(): number {
 }
 
 export function maximumTransactionCountPerRun(): number {
-    const marketTransactions = CADENCES.reduce(
-        (total, cadence) =>
-            total +
-            (cadence.marketsToCreate === 0
-                ? 0
-                : (cadence.marketsToCreate + MARKET_ROLLOVER_RESERVE_PER_CADENCE) * 3),
-        0,
-    );
-    return FIXED_TRANSACTION_STEPS.length + marketTransactions;
+    return plannedTransactionCount();
 }
 
 export function irreversibleDeploymentSteps(): string[] {
@@ -600,7 +569,7 @@ export function irreversibleDeploymentSteps(): string[] {
 }
 
 export interface IntegrationManifest {
-    schemaVersion: 7;
+    schemaVersion: 8;
     deployment: string;
     network: string;
     chainId: string;
@@ -644,19 +613,11 @@ export interface IntegrationManifest {
             blockScholesSviStore: string;
         };
     };
-    writers: {
-        keeper: {
-            address: string;
-            lifecycleCap: string;
-            poolValuationCap: string;
-        };
-        priceUpdater: {
-            address: string;
-            pythLazerPackage: string;
-            pythLazerState: string;
-            blockScholesOraclePackage: string;
-            blockScholesSignerRegistry: string;
-        };
+    oracleDependencies: {
+        pythLazerPackage: string;
+        pythLazerState: string;
+        blockScholesOraclePackage: string;
+        blockScholesSignerRegistry: string;
     };
     externalAuthorizations: {
         deepbookCoreAccount: {
@@ -721,6 +682,7 @@ export interface IntegrationManifest {
             lpRequestLimitFlushAttempts: string;
             maxLpPoolValue: string;
             maxValuationWindowMs: string;
+            noTradeWindowMs: string;
         };
         futureMarketTemplate: {
             backingBufferLambda: string;
@@ -763,7 +725,6 @@ interface Runtime {
     signer: Ed25519Keypair;
     sourceCommit: string;
     packageMetadataCache: Map<string, PublishedPackageMetadata>;
-    marketCreationsThisRun: Record<number, number>;
 }
 
 interface LockHandle {
@@ -779,10 +740,6 @@ class DryRunFailure extends Error {
         super(`${label} dry run failed: ${detail}`);
     }
 }
-
-class AwaitingOracleData extends Error {}
-
-class AwaitingExternalAuthorization extends Error {}
 
 function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -875,9 +832,6 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
     if (JSON.stringify(protocol) !== JSON.stringify(EXPECTED_PROTOCOL_CONFIG)) {
         throw new Error("verified ProtocolConfig does not match the deployment policy");
     }
-    if (!verification.account.deepbookCoreAuthorized) {
-        throw new Error("integration manifest requires DeepBook core wrapper authorization");
-    }
     const cadences = verification.cadences.map((record) => {
         const spec = CADENCES.find((candidate) => candidate.id === record.id);
         if (!spec || !cadenceMatches(record, spec)) {
@@ -896,7 +850,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
         };
     });
     const manifest: IntegrationManifest = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         deployment: DEPLOYMENT,
         network: NETWORK,
         chainId: CHAIN_ID,
@@ -955,25 +909,11 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
                 ),
             },
         },
-        writers: {
-            keeper: {
-                address: PREDICT_WRITER,
-                lifecycleCap: requiredObjectId(
-                    verification.lifecycleCap.objectId,
-                    "verified lifecycle cap",
-                ),
-                poolValuationCap: requiredObjectId(
-                    verification.valuationCap.objectId,
-                    "verified pool valuation cap",
-                ),
-            },
-            priceUpdater: {
-                address: PROPBOOK_WRITER,
-                pythLazerPackage: verifiedLinkedPackage("pyth_lazer"),
-                pythLazerState: verifiedLinkedObject("pythLazerState"),
-                blockScholesOraclePackage: verifiedLinkedPackage("bs_oracle"),
-                blockScholesSignerRegistry: verifiedLinkedObject("blockScholesSignerRegistry"),
-            },
+        oracleDependencies: {
+            pythLazerPackage: verifiedLinkedPackage("pyth_lazer"),
+            pythLazerState: verifiedLinkedObject("pythLazerState"),
+            blockScholesOraclePackage: verifiedLinkedPackage("bs_oracle"),
+            blockScholesSignerRegistry: verifiedLinkedObject("blockScholesSignerRegistry"),
         },
         externalAuthorizations: {
             deepbookCoreAccount: {
@@ -1041,6 +981,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
                 lpRequestLimitFlushAttempts: protocol.lpRequestLimitFlushAttempts,
                 maxLpPoolValue: protocol.maxLpPoolValue,
                 maxValuationWindowMs: protocol.maxValuationWindowMs,
+                noTradeWindowMs: protocol.noTradeWindowMs,
             },
             futureMarketTemplate: {
                 backingBufferLambda: protocol.backingBufferLambda,
@@ -1073,7 +1014,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
             "coinTypes",
             "objects",
             "underlyings",
-            "writers",
+            "oracleDependencies",
             "externalAuthorizations",
             "indexing",
             "initialConfiguration",
@@ -1081,7 +1022,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "integration manifest",
     );
     if (
-        manifest.schemaVersion !== 7 ||
+        manifest.schemaVersion !== 8 ||
         manifest.deployment !== DEPLOYMENT ||
         manifest.network !== NETWORK ||
         manifest.chainId !== CHAIN_ID ||
@@ -1158,35 +1099,24 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         requiredObjectId(btc[name], `underlyings.BTC.${name}`);
     }
 
-    const writers = asRecord(manifest.writers);
-    exactKeys(writers, ["keeper", "priceUpdater"], "writers");
-    const keeper = asRecord(writers.keeper);
-    exactKeys(keeper, ["address", "lifecycleCap", "poolValuationCap"], "writers.keeper");
-    if (keeper.address !== PREDICT_WRITER) {
-        throw new Error("writers.keeper address does not match the deployment policy");
-    }
-    requiredObjectId(keeper.lifecycleCap, "writers.keeper.lifecycleCap");
-    requiredObjectId(keeper.poolValuationCap, "writers.keeper.poolValuationCap");
-    const priceUpdater = asRecord(writers.priceUpdater);
+    const dependencies = asRecord(manifest.oracleDependencies);
     exactKeys(
-        priceUpdater,
+        dependencies,
         [
-            "address",
             "pythLazerPackage",
             "pythLazerState",
             "blockScholesOraclePackage",
             "blockScholesSignerRegistry",
         ],
-        "writers.priceUpdater",
+        "oracleDependencies",
     );
     if (
-        priceUpdater.address !== PROPBOOK_WRITER ||
-        priceUpdater.pythLazerPackage !== LINKED.pyth_lazer ||
-        priceUpdater.pythLazerState !== LINKED_OBJECTS.pythLazerState ||
-        priceUpdater.blockScholesOraclePackage !== LINKED.bs_oracle ||
-        priceUpdater.blockScholesSignerRegistry !== LINKED_OBJECTS.blockScholesSignerRegistry
+        dependencies.pythLazerPackage !== LINKED.pyth_lazer ||
+        dependencies.pythLazerState !== LINKED_OBJECTS.pythLazerState ||
+        dependencies.blockScholesOraclePackage !== LINKED.bs_oracle ||
+        dependencies.blockScholesSignerRegistry !== LINKED_OBJECTS.blockScholesSignerRegistry
     ) {
-        throw new Error("writers.priceUpdater does not match the verified dependencies");
+        throw new Error("oracleDependencies do not match the verified dependencies");
     }
 
     const externalAuthorizations = asRecord(manifest.externalAuthorizations);
@@ -1198,7 +1128,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "externalAuthorizations.deepbookCoreAccount",
     );
     if (
-        deepbookCoreAccount.authorized !== true ||
+        typeof deepbookCoreAccount.authorized !== "boolean" ||
         deepbookCoreAccount.appType !==
             `${packages.deepbookCoreAccount}::account_data::DeepbookCoreAccountApp` ||
         deepbookCoreAccount.registry !== objects.deepbookRegistry
@@ -1300,6 +1230,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
             "lpRequestLimitFlushAttempts",
             "maxLpPoolValue",
             "maxValuationWindowMs",
+            "noTradeWindowMs",
         ],
         "initialConfiguration.liveProtocol",
     );
@@ -1349,6 +1280,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         [live.lpRequestLimitFlushAttempts, "liveProtocol.lpRequestLimitFlushAttempts"],
         [live.maxLpPoolValue, "liveProtocol.maxLpPoolValue"],
         [live.maxValuationWindowMs, "liveProtocol.maxValuationWindowMs"],
+        [live.noTradeWindowMs, "liveProtocol.noTradeWindowMs"],
         ...Object.entries(template).map(([name, item]) => [item, `futureMarketTemplate.${name}`]),
     ] as Array<[unknown, string]>;
     for (const [item, label] of numericConfig) decimalString(item, label);
@@ -1441,7 +1373,7 @@ function transactionCheckpoint(snapshot: ClientSnapshot, digest: string): string
 
 export function createDeploymentState(): DeploymentResult {
     return {
-        schemaVersion: 4,
+        schemaVersion: 5,
         status: "pending",
         network: NETWORK,
         chainId: CHAIN_ID,
@@ -1468,7 +1400,7 @@ export function createDeploymentState(): DeploymentResult {
         transactions: {},
         failedTransactions: {},
         wiring: {
-            version: 3,
+            version: 4,
             network: NETWORK,
             operator: DEPLOYER,
             updatedAt: null,
@@ -1502,17 +1434,13 @@ export function createDeploymentState(): DeploymentResult {
             },
             lifecycleCap: {
                 id: null,
-                recipient: PREDICT_WRITER,
                 owner: null,
                 mintTx: null,
-                transferTx: null,
             },
             valuationCap: {
                 id: null,
-                recipient: PREDICT_WRITER,
                 owner: null,
                 mintTx: null,
-                transferTx: null,
             },
             asset: {
                 name: ASSET.name,
@@ -1553,6 +1481,7 @@ export function createDeploymentState(): DeploymentResult {
             marketWindowChecks: [],
         },
         verification: null,
+        issuedCaps: {},
     };
 }
 
@@ -1803,7 +1732,7 @@ function assertExpectedWorktree(result: DeploymentResult): void {
     const unexpected = unexpectedDeploymentPaths(
         changedPaths(),
         generatedPackages,
-        result.status === "complete",
+        result.completedAt !== null,
     );
     if (unexpected.length > 0) {
         throw new Error(
@@ -1850,13 +1779,13 @@ function cadenceMatches(actual: CadenceRecord, expected: CadenceSpec): boolean {
 
 function assertStateFile(result: DeploymentResult): void {
     if (
-        result.schemaVersion !== 4 ||
+        result.schemaVersion !== 5 ||
         result.network !== NETWORK ||
         result.chainId !== CHAIN_ID ||
         result.buildEnvironment !== NETWORK ||
         normalizeId(result.deployer) !== DEPLOYER
     ) {
-        throw new Error(`${STATE_RELATIVE} is not the expected schema-4 Testnet deployment`);
+        throw new Error(`${STATE_RELATIVE} is not the expected schema-5 Testnet deployment`);
     }
     if (JSON.stringify(result.linked) !== JSON.stringify(LINKED)) {
         throw new Error(`linked package IDs in ${STATE_RELATIVE} do not match deploy.ts`);
@@ -1865,8 +1794,6 @@ function assertStateFile(result: DeploymentResult): void {
         throw new Error(`linked object IDs in ${STATE_RELATIVE} do not match deploy.ts`);
     }
     if (
-        result.wiring.lifecycleCap.recipient !== PREDICT_WRITER ||
-        result.wiring.valuationCap.recipient !== PREDICT_WRITER ||
         result.wiring.currencies.usdc.mintedAmount !== USDC_MINT_AMOUNT.toString() ||
         result.wiring.bootstrap.lockCapitalAmount !== LOCK_CAPITAL_AMOUNT.toString() ||
         result.wiring.bootstrap.supplyAmount !== BOOTSTRAP_SUPPLY_AMOUNT.toString()
@@ -2602,7 +2529,7 @@ async function executeTransaction(
     receipt = await settledReceipt(runtime.client, digest);
     runtime.result.transactions[label] = digest;
     runtime.result.inFlight = null;
-    runtime.result.status = "wiring";
+    if (runtime.result.status !== "complete") runtime.result.status = "wiring";
     writeState(runtime.result);
     await assertSdkTarget(runtime);
     console.log(`[deploy] ${label}: ${digest}`);
@@ -2887,21 +2814,6 @@ function parseU64(bytes: number[]): bigint {
     let value = 0n;
     for (let index = 7; index >= 0; index--) value = (value << 8n) + BigInt(bytes[index]);
     return value;
-}
-
-function parseU256(bytes: number[]): bigint {
-    if (bytes.length < 32) throw new Error(`invalid u256 return (${bytes.length} bytes)`);
-    let value = 0n;
-    for (let index = 31; index >= 0; index--) value = (value << 8n) + BigInt(bytes[index]);
-    return value;
-}
-
-function parseOptionU64(bytes: number[]): bigint | null {
-    if (bytes.length === 1 && bytes[0] === 0) return null;
-    if (bytes[0] !== 1 || bytes.length !== 9) {
-        throw new Error(`invalid Option<u64> return (${bytes.length} bytes)`);
-    }
-    return parseU64(bytes.slice(1));
 }
 
 function parseU32(bytes: number[]): number {
@@ -3464,14 +3376,10 @@ async function ensureLifecycleCap(runtime: Runtime): Promise<string> {
             null,
         );
         if (evidence.owner === DEPLOYER) result.wiring.lifecycleCap.owner = "deployer";
-        else if (evidence.owner === partyOwnerLabel(PREDICT_WRITER)) {
-            result.wiring.lifecycleCap.owner = "recipient";
-        } else {
+        else {
             throw new Error(`lifecycle cap ${recorded} has unexpected owner ${evidence.owner}`);
         }
         result.wiring.lifecycleCap.mintTx ??= result.transactions.mint_lifecycle_cap ?? null;
-        result.wiring.lifecycleCap.transferTx ??=
-            result.transactions.transfer_operational_caps_to_keeper ?? null;
         writeState(result);
         return recorded;
     }
@@ -3515,16 +3423,12 @@ async function ensureValuationCap(runtime: Runtime): Promise<string> {
             null,
         );
         if (evidence.owner === DEPLOYER) result.wiring.valuationCap.owner = "deployer";
-        else if (evidence.owner === partyOwnerLabel(PREDICT_WRITER)) {
-            result.wiring.valuationCap.owner = "recipient";
-        } else {
+        else {
             throw new Error(
                 `pool valuation cap ${recorded} has unexpected owner ${evidence.owner}`,
             );
         }
         result.wiring.valuationCap.mintTx ??= result.transactions.mint_pool_valuation_cap ?? null;
-        result.wiring.valuationCap.transferTx ??=
-            result.transactions.transfer_operational_caps_to_keeper ?? null;
         writeState(result);
         return recorded;
     }
@@ -3628,168 +3532,6 @@ async function ensureOracleObjects(runtime: Runtime): Promise<void> {
     }
     result.wiring.asset.pythBindTx ??= result.transactions.bind_pyth_to_underlying ?? null;
     writeState(result);
-}
-
-export function assertMatchingSid(label: string, onChain: bigint, subscription: bigint): void {
-    if (onChain !== subscription) {
-        throw new Error(`${label} SID is ${onChain}, subscription derives ${subscription}`);
-    }
-}
-
-async function verifyOracleReadiness(runtime: Runtime): Promise<Verification["oracleReadiness"]> {
-    const result = runtime.result;
-    const propbook = packageId(result, "propbook");
-    const valueStore = requiredObjectId(
-        result.wiring.asset.blockScholesValueStoreId,
-        "Block Scholes value store",
-    );
-    const sviStore = requiredObjectId(
-        result.wiring.asset.blockScholesSviStoreId,
-        "Block Scholes SVI store",
-    );
-    const planningClockMs = await currentClockMs(runtime);
-    const expirySet = new Set<bigint>();
-    for (const cadence of CADENCES.filter((candidate) => candidate.marketsToCreate > 0)) {
-        const firstSlot = Math.floor(Number(planningClockMs) / cadence.periodMs) + 1;
-        for (let offset = 0; offset < cadence.marketsToCreate; offset++) {
-            expirySet.add(BigInt((firstSlot + offset) * cadence.periodMs));
-        }
-    }
-    const expiries = [...expirySet].sort((left, right) => (left < right ? -1 : 1));
-    const tx = new Transaction();
-    let commandIndex = 0;
-    const clockIndex = commandIndex++;
-    call(tx, "0x2::clock::timestamp_ms", [tx.object(CLOCK_ID)]);
-    const spotSidIndex = commandIndex++;
-    call(tx, target(result, "propbook", "block_scholes_store", "spot_sid"), [
-        tx.object(valueStore),
-    ]);
-    const valueReadType = `${propbook}::block_scholes_store::BsRead<u128>`;
-    const spotRead = call(tx, target(result, "propbook", "block_scholes_store", "spot"), [
-        tx.object(valueStore),
-    ]);
-    commandIndex++;
-    const borrowedSpot = call(tx, "0x1::option::borrow", [spotRead], [valueReadType]);
-    commandIndex++;
-    const spotTimestampIndex = commandIndex++;
-    call(
-        tx,
-        target(result, "propbook", "block_scholes_store", "read_source_timestamp_ms"),
-        [borrowedSpot],
-        ["u128"],
-    );
-    const sviValueType = `${propbook}::block_scholes_store::SVIParams`;
-    const sviReadType = `${propbook}::block_scholes_store::BsRead<${sviValueType}>`;
-    const indexes: Array<{
-        expiryMs: bigint;
-        forwardSid: number;
-        sviSid: number;
-        forwardTimestamp: number;
-        sviTimestamp: number;
-    }> = [];
-    for (const expiryMs of expiries) {
-        const forwardSidIndex = commandIndex++;
-        call(tx, target(result, "propbook", "block_scholes_store", "forward_sid"), [
-            tx.object(valueStore),
-            tx.pure.u64(expiryMs),
-        ]);
-        const sviSidIndex = commandIndex++;
-        call(tx, target(result, "propbook", "block_scholes_store", "svi_sid"), [
-            tx.object(sviStore),
-            tx.pure.u64(expiryMs),
-        ]);
-        const forwardRead = call(tx, target(result, "propbook", "block_scholes_store", "forward"), [
-            tx.object(valueStore),
-            tx.pure.u64(expiryMs),
-        ]);
-        commandIndex++;
-        const borrowedForward = call(tx, "0x1::option::borrow", [forwardRead], [valueReadType]);
-        commandIndex++;
-        const forwardTimestampIndex = commandIndex++;
-        call(
-            tx,
-            target(result, "propbook", "block_scholes_store", "read_source_timestamp_ms"),
-            [borrowedForward],
-            ["u128"],
-        );
-        const sviRead = call(tx, target(result, "propbook", "block_scholes_store", "svi"), [
-            tx.object(sviStore),
-            tx.pure.u64(expiryMs),
-        ]);
-        commandIndex++;
-        const borrowedSvi = call(tx, "0x1::option::borrow", [sviRead], [sviReadType]);
-        commandIndex++;
-        const sviTimestampIndex = commandIndex++;
-        call(
-            tx,
-            target(result, "propbook", "block_scholes_store", "read_source_timestamp_ms"),
-            [borrowedSvi],
-            [sviValueType],
-        );
-        indexes.push({
-            expiryMs,
-            forwardSid: forwardSidIndex,
-            sviSid: sviSidIndex,
-            forwardTimestamp: forwardTimestampIndex,
-            sviTimestamp: sviTimestampIndex,
-        });
-    }
-    let response: unknown;
-    try {
-        response = await devInspect(runtime, "block_scholes_sid_and_source_clock_audit", tx);
-    } catch (error) {
-        throw new AwaitingOracleData(
-            `Block Scholes observations are not ready for the initial market window: ${String(error)}`,
-        );
-    }
-    const now = parseU64(returnBytes(response, clockIndex));
-    const onChainSpotSid = parseU256(returnBytes(response, spotSidIndex));
-    const subscriptionSpotSid = spotSid(LINKED.bs_oracle, ASSET.blockScholesBaseAsset);
-    assertMatchingSid("BTC spot", onChainSpotSid, subscriptionSpotSid);
-    const spotSourceTimestampMs = parseU64(returnBytes(response, spotTimestampIndex));
-    const checks: Verification["oracleReadiness"] = [];
-    for (const index of indexes) {
-        const { expiryMs } = index;
-        const onChainForwardSid = parseU256(returnBytes(response, index.forwardSid));
-        const onChainSviSid = parseU256(returnBytes(response, index.sviSid));
-        const subscriptionForwardSid = forwardSid(
-            LINKED.bs_oracle,
-            ASSET.blockScholesBaseAsset,
-            expiryMs,
-        );
-        const subscriptionSviSid = sviSid(LINKED.bs_oracle, ASSET.blockScholesBaseAsset, expiryMs);
-        assertMatchingSid(`BTC forward ${expiryMs}`, onChainForwardSid, subscriptionForwardSid);
-        assertMatchingSid(`BTC SVI ${expiryMs}`, onChainSviSid, subscriptionSviSid);
-        const forwardSourceTimestampMs = parseU64(returnBytes(response, index.forwardTimestamp));
-        const sviSourceTimestampMs = parseU64(returnBytes(response, index.sviTimestamp));
-        if (
-            spotSourceTimestampMs === 0n ||
-            forwardSourceTimestampMs === 0n ||
-            sviSourceTimestampMs === 0n ||
-            spotSourceTimestampMs > now ||
-            forwardSourceTimestampMs > now ||
-            sviSourceTimestampMs > now ||
-            now - spotSourceTimestampMs >
-                BigInt(EXPECTED_PROTOCOL_CONFIG.blockScholesPriceFreshnessMs) ||
-            now - forwardSourceTimestampMs >
-                BigInt(EXPECTED_PROTOCOL_CONFIG.blockScholesPriceFreshnessMs) ||
-            now - sviSourceTimestampMs > BigInt(EXPECTED_PROTOCOL_CONFIG.blockScholesSviFreshnessMs)
-        ) {
-            throw new AwaitingOracleData(
-                `Block Scholes source clocks are not fresh for expiry ${expiryMs}: now=${now} spot=${spotSourceTimestampMs} forward=${forwardSourceTimestampMs} svi=${sviSourceTimestampMs}`,
-            );
-        }
-        checks.push({
-            expiryMs: expiryMs.toString(),
-            spotSid: onChainSpotSid.toString(),
-            forwardSid: onChainForwardSid.toString(),
-            sviSid: onChainSviSid.toString(),
-            spotSourceTimestampMs: spotSourceTimestampMs.toString(),
-            forwardSourceTimestampMs: forwardSourceTimestampMs.toString(),
-            sviSourceTimestampMs: sviSourceTimestampMs.toString(),
-        });
-    }
-    return checks;
 }
 
 export function isUnderlyingNotRegisteredError(error: unknown): boolean {
@@ -4187,35 +3929,19 @@ async function marketState(
 ): Promise<{
     underlying: number;
     expiryMs: bigint;
-    referenceTickSourceTimestampMs: bigint;
-    referenceTick: bigint | null;
     cashBalance: bigint;
 }> {
     const result = runtime.result;
     const tx = new Transaction();
     call(tx, target(result, "predict", "expiry_market", "propbook_underlying_id"), [tx.object(id)]);
     call(tx, target(result, "predict", "expiry_market", "expiry"), [tx.object(id)]);
-    call(tx, target(result, "predict", "expiry_market", "reference_tick_source_timestamp_ms"), [
-        tx.object(id),
-    ]);
-    call(tx, target(result, "predict", "expiry_market", "reference_tick"), [tx.object(id)]);
     call(tx, target(result, "predict", "expiry_market", "cash_balance"), [tx.object(id)]);
     const response = await devInspect(runtime, `market_state_${id}`, tx);
     return {
         underlying: parseU32(returnBytes(response, 0)),
         expiryMs: parseU64(returnBytes(response, 1)),
-        referenceTickSourceTimestampMs: parseU64(returnBytes(response, 2)),
-        referenceTick: parseOptionU64(returnBytes(response, 3)),
-        cashBalance: parseU64(returnBytes(response, 4)),
+        cashBalance: parseU64(returnBytes(response, 2)),
     };
-}
-
-function cadenceForPeriod(periodMs: bigint): CadenceSpec {
-    const match = CADENCES.find(
-        (cadence) => cadence.windowSize > 0n && BigInt(cadence.periodMs) === periodMs,
-    );
-    if (!match) throw new Error(`cannot infer cadence for period ${periodMs}`);
-    return match;
 }
 
 function cadenceForMarketLabel(label: string): CadenceSpec {
@@ -4245,9 +3971,6 @@ function marketFromEvent(receipt: Receipt, cadence: CadenceSpec): MarketRecord {
         maxExpiryAllocation: String(parsed.max_expiry_allocation ?? cadence.maxExpiryAllocation),
         initialExpiryCash: String(parsed.initial_expiry_cash ?? cadence.initialExpiryCash),
         createTx: receipt.digest ?? null,
-        referenceTick: null,
-        setReferenceTickTx: null,
-        rebalanceTx: null,
         cashBalance: "0",
     };
 }
@@ -4278,75 +4001,26 @@ async function rebuildMarketsFromTransactions(runtime: Runtime): Promise<void> {
 }
 
 async function discoverMarkets(runtime: Runtime): Promise<void> {
-    const result = runtime.result;
     await rebuildMarketsFromTransactions(runtime);
-    const byId = new Map(result.wiring.markets.map((market) => [market.id, market]));
     for (const id of await activeMarketIds(runtime)) {
+        const record = runtime.result.wiring.markets.find((market) => market.id === id);
         const state = await marketState(runtime, id);
-        if (state.underlying !== ASSET.propbookUnderlyingId) {
-            throw new Error(`active market ${id} belongs to underlying ${state.underlying}`);
+        if (
+            !record ||
+            state.underlying !== ASSET.propbookUnderlyingId ||
+            state.expiryMs.toString() !== record.expiryMs
+        ) {
+            throw new Error(`active market ${id} does not match a deployment receipt`);
         }
-        if (state.referenceTickSourceTimestampMs >= state.expiryMs) {
-            throw new Error(
-                `active market ${id} has invalid reference timestamp ${state.referenceTickSourceTimestampMs}`,
-            );
-        }
-        const cadence = cadenceForPeriod(state.expiryMs - state.referenceTickSourceTimestampMs);
-        const existing = byId.get(id);
-        if (existing) {
-            existing.cashBalance = state.cashBalance.toString();
-            existing.referenceTick = state.referenceTick?.toString() ?? null;
-            existing.setReferenceTickTx ??= result.transactions[`set_reference_tick_${id}`] ?? null;
-            existing.rebalanceTx ??= result.transactions[`rebalance_market_${id}`] ?? null;
-        } else {
-            const evidence = await objectEvidence(
-                runtime,
-                id,
-                `${packageId(result, "predict")}::expiry_market::ExpiryMarket`,
-                "shared",
-            );
-            const market: MarketRecord = {
-                id,
-                cadenceId: cadence.id,
-                cadence: cadence.name,
-                expiryMs: state.expiryMs.toString(),
-                tickSize: cadence.tickSize.toString(),
-                admissionTickSize: cadence.admissionTickSize.toString(),
-                maxExpiryAllocation: cadence.maxExpiryAllocation.toString(),
-                initialExpiryCash: cadence.initialExpiryCash.toString(),
-                createTx: state.cashBalance === 0n ? evidence.previousTransaction : null,
-                referenceTick: state.referenceTick?.toString() ?? null,
-                setReferenceTickTx: result.transactions[`set_reference_tick_${id}`] ?? null,
-                rebalanceTx: state.cashBalance > 0n ? evidence.previousTransaction : null,
-                cashBalance: state.cashBalance.toString(),
-            };
-            result.wiring.markets.push(market);
-            byId.set(id, market);
-        }
+        record.cashBalance = state.cashBalance.toString();
     }
-    result.wiring.markets.sort((left, right) =>
-        Number(BigInt(left.expiryMs) - BigInt(right.expiryMs)),
-    );
-    writeState(result);
+    writeState(runtime.result);
 }
 
 async function currentClockMs(runtime: Runtime): Promise<bigint> {
     return inspectU64(runtime, "clock_timestamp_ms", "0x2::clock::timestamp_ms", (tx) => [
         tx.object(CLOCK_ID),
     ]);
-}
-
-async function waitForCadenceLead(runtime: Runtime, cadence: CadenceSpec): Promise<void> {
-    const now = Number(await currentClockMs(runtime));
-    const nextExpiry = (Math.floor(now / cadence.periodMs) + 1) * cadence.periodMs;
-    const lead = nextExpiry - now;
-    const minimumLead = Math.min(90_000, Math.floor(cadence.periodMs / 2));
-    if (lead >= minimumLead) return;
-    const wait = lead + 1_500;
-    console.log(
-        `[deploy] ${cadence.name} next slot has ${lead}ms lead; waiting ${wait}ms for a fresh slot`,
-    );
-    await new Promise((done) => setTimeout(done, wait));
 }
 
 function isCadenceWindowFull(error: unknown): boolean {
@@ -4382,260 +4056,53 @@ function nextMarketLabel(result: DeploymentResult, cadence: CadenceSpec): string
     return `create_market_${cadence.name}_${sequence}`;
 }
 
-async function liveMarketSnapshot(runtime: Runtime): Promise<{
-    clockMs: bigint;
-    markets: MarketRecord[];
-}> {
-    const [clockMs, activeIds] = await Promise.all([
-        currentClockMs(runtime),
-        activeMarketIds(runtime),
-    ]);
-    const active = new Set(activeIds);
-    return {
-        clockMs,
-        markets: runtime.result.wiring.markets.filter(
-            (market) => active.has(market.id) && BigInt(market.expiryMs) > clockMs,
-        ),
-    };
-}
+const marketOperations = { discoverMarkets, currentClockMs, executeTransaction, writeState };
 
-async function assertLiveMarketWindows(
+export async function ensureMarkets(
     runtime: Runtime,
     lifecycleCapId: string,
-    canProbe: boolean,
+    ops = marketOperations,
 ): Promise<void> {
-    await discoverMarkets(runtime);
-    const snapshot = await liveMarketSnapshot(runtime);
-    const checks: WiringState["marketWindowChecks"] = [];
-    for (const cadence of CADENCES.filter((candidate) => candidate.marketsToCreate > 0)) {
-        const recorded = snapshot.markets.filter(
+    const result = runtime.result;
+    await ops.discoverMarkets(runtime);
+    // Creation receipts are durable progress. Expiry does not reopen a deployment step.
+    for (const cadence of CADENCES.filter((spec) => spec.marketsToCreate > 0)
+        .slice()
+        .reverse()) {
+        if (result.wiring.marketWindowChecks.some((check) => check.cadenceId === cadence.id))
+            continue;
+        let recorded = result.wiring.markets.filter(
             (market) => market.cadenceId === cadence.id,
         ).length;
         let windowFull = false;
-        if (recorded < cadence.marketsToCreate) {
-            if (canProbe) {
-                const tx = marketCreationTransaction(runtime.result, lifecycleCapId, cadence);
-                tx.setSender(DEPLOYER);
-                tx.setGasBudget(TRANSACTION_GAS_BUDGET);
-                const bytes = await tx.build({ client: runtime.client });
-                try {
-                    await dryRun(runtime, `check_${cadence.name}_market_window`, bytes);
-                } catch (error) {
-                    if (!isCadenceWindowFull(error)) throw error;
-                    windowFull = true;
-                }
-                if (!windowFull) {
-                    throw new Error(`${cadence.name} still has a deployable market slot`);
-                }
-            } else {
-                const prior = runtime.result.wiring.marketWindowChecks.find(
-                    (check) => check.cadenceId === cadence.id,
+        while (recorded < cadence.marketsToCreate) {
+            try {
+                const receipt = await ops.executeTransaction(
+                    runtime,
+                    nextMarketLabel(result, cadence),
+                    marketCreationTransaction(result, lifecycleCapId, cadence),
                 );
-                if (
-                    !prior?.windowFull ||
-                    prior.recorded !== recorded ||
-                    !prior.checkedAtChainMs ||
-                    snapshot.clockMs < BigInt(prior.checkedAtChainMs) ||
-                    snapshot.clockMs / BigInt(cadence.periodMs) !==
-                        BigInt(prior.checkedAtChainMs) / BigInt(cadence.periodMs)
-                ) {
-                    throw new Error(
-                        `${cadence.name} has only ${recorded}/${cadence.marketsToCreate} future markets after lifecycle-cap handoff`,
-                    );
-                }
+                result.wiring.markets.push(marketFromEvent(receipt, cadence));
+                recorded++;
+                ops.writeState(result);
+            } catch (error) {
+                if (!isCadenceWindowFull(error)) throw error;
                 windowFull = true;
+                break;
             }
         }
-        checks.push({
+        if (recorded === 0) throw new Error(`${cadence.name} has no initial market`);
+        result.wiring.marketWindowChecks.push({
             cadenceId: cadence.id,
             cadence: cadence.name,
             target: cadence.marketsToCreate,
             recorded,
             windowFull,
-            checkedAtChainMs: snapshot.clockMs.toString(),
+            checkedAtChainMs: (await ops.currentClockMs(runtime)).toString(),
             checkedAt: new Date().toISOString(),
         });
+        ops.writeState(result);
     }
-    if (canProbe) {
-        runtime.result.wiring.marketWindowChecks = checks;
-        writeState(runtime.result);
-    }
-}
-
-async function ensureReferenceTick(runtime: Runtime, market: MarketRecord): Promise<void> {
-    let state = await marketState(runtime, market.id);
-    if (state.referenceTick === null) {
-        const result = runtime.result;
-        const tx = new Transaction();
-        call(tx, target(result, "predict", "expiry_market", "set_reference_tick"), [
-            tx.object(market.id),
-            tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
-            tx.object(sharedId(result, "propbook", "registry::OracleRegistry")),
-            tx.object(requiredObjectId(result.wiring.asset.pythFeedId, "BTC Pyth feed")),
-            tx.object(CLOCK_ID),
-        ]);
-        let receipt: Receipt;
-        try {
-            receipt = await executeTransaction(runtime, `set_reference_tick_${market.id}`, tx);
-        } catch (error) {
-            if (error instanceof DryRunFailure) {
-                throw new AwaitingOracleData(
-                    `market ${market.id} is waiting for its exact Pyth reference observation at ${state.referenceTickSourceTimestampMs}`,
-                );
-            }
-            throw error;
-        }
-        market.setReferenceTickTx = receipt.digest ?? null;
-        state = await marketState(runtime, market.id);
-    }
-    if (state.referenceTick === null) {
-        throw new Error(`market ${market.id} has no reference tick after initialization`);
-    }
-    market.referenceTick = state.referenceTick.toString();
-    market.setReferenceTickTx ??=
-        runtime.result.transactions[`set_reference_tick_${market.id}`] ?? null;
-    writeState(runtime.result);
-}
-
-async function rebalanceMarket(runtime: Runtime, market: MarketRecord): Promise<void> {
-    if (market.cashBalance && BigInt(market.cashBalance) > 0n) return;
-    const result = runtime.result;
-    const tx = new Transaction();
-    call(tx, target(result, "predict", "plp", "rebalance_expiry_cash"), [
-        tx.object(sharedId(result, "predict", "plp::PoolVault")),
-        tx.object(market.id),
-        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
-        tx.object(CLOCK_ID),
-    ]);
-    const label = `rebalance_market_${market.id}`;
-    const receipt = await executeTransaction(runtime, label, tx);
-    market.rebalanceTx = receipt.digest ?? null;
-    market.cashBalance = (await marketState(runtime, market.id)).cashBalance.toString();
-    if (BigInt(market.cashBalance) === 0n) {
-        throw new Error(`market ${market.id} remained unfunded after rebalance`);
-    }
-    writeState(result);
-}
-
-async function ensureMarkets(runtime: Runtime, lifecycleCapId: string): Promise<void> {
-    const result = runtime.result;
-    if (result.wiring.lifecycleCap.owner === "recipient") {
-        await assertLiveMarketWindows(runtime, lifecycleCapId, false);
-        return;
-    }
-    await discoverMarkets(runtime);
-    for (const market of (await liveMarketSnapshot(runtime)).markets) {
-        await ensureReferenceTick(runtime, market);
-        await rebalanceMarket(runtime, market);
-    }
-
-    const enabledCadences = CADENCES.filter((candidate) => candidate.marketsToCreate > 0)
-        .slice()
-        .sort((left, right) => right.periodMs - left.periodMs);
-    for (const cadence of enabledCadences) {
-        while (
-            (await liveMarketSnapshot(runtime)).markets.filter(
-                (market) => market.cadenceId === cadence.id,
-            ).length < cadence.marketsToCreate
-        ) {
-            const creationLimit = cadence.marketsToCreate + MARKET_ROLLOVER_RESERVE_PER_CADENCE;
-            const creationsThisRun = runtime.marketCreationsThisRun[cadence.id] ?? 0;
-            if (creationsThisRun >= creationLimit) {
-                throw new Error(
-                    `${cadence.name} exceeded its per-run market rollover bound (${creationLimit}); preserve the journal and resume`,
-                );
-            }
-            await waitForCadenceLead(runtime, cadence);
-            const tx = marketCreationTransaction(result, lifecycleCapId, cadence);
-            const label = nextMarketLabel(result, cadence);
-            let receipt: Receipt;
-            try {
-                receipt = await executeTransaction(runtime, label, tx);
-            } catch (error) {
-                if (isCadenceWindowFull(error)) {
-                    console.log(`[deploy] ${cadence.name} cadence window is full`);
-                    break;
-                }
-                throw error;
-            }
-            runtime.marketCreationsThisRun[cadence.id] = creationsThisRun + 1;
-            const market = marketFromEvent(receipt, cadence);
-            result.wiring.markets.push(market);
-            writeState(result);
-            await ensureReferenceTick(runtime, market);
-            await rebalanceMarket(runtime, market);
-        }
-    }
-    await assertLiveMarketWindows(runtime, lifecycleCapId, true);
-}
-
-async function transferOperationalCaps(
-    runtime: Runtime,
-    lifecycleCapId: string,
-    valuationCapId: string,
-): Promise<void> {
-    const result = runtime.result;
-    const lifecycleEvidence = await objectEvidence(
-        runtime,
-        lifecycleCapId,
-        `${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
-        null,
-    );
-    const valuationEvidence = await objectEvidence(
-        runtime,
-        valuationCapId,
-        `${packageId(result, "predict")}::pool_valuation_cap::PoolValuationCap`,
-        null,
-    );
-    const recipientOwner = partyOwnerLabel(PREDICT_WRITER);
-    if (lifecycleEvidence.owner === recipientOwner && valuationEvidence.owner === recipientOwner) {
-        result.wiring.lifecycleCap.owner = "recipient";
-        result.wiring.valuationCap.owner = "recipient";
-        result.wiring.lifecycleCap.transferTx ??=
-            result.transactions.transfer_operational_caps_to_keeper ?? null;
-        result.wiring.valuationCap.transferTx ??=
-            result.transactions.transfer_operational_caps_to_keeper ?? null;
-        writeState(result);
-        return;
-    }
-    if (lifecycleEvidence.owner !== DEPLOYER || valuationEvidence.owner !== DEPLOYER) {
-        throw new Error(
-            `operational caps are owned by ${lifecycleEvidence.owner}/${valuationEvidence.owner}, expected both ${DEPLOYER}`,
-        );
-    }
-    const tx = new Transaction();
-    const lifecycleParty = call(tx, "0x2::party::single_owner", [tx.pure.address(PREDICT_WRITER)]);
-    call(
-        tx,
-        "0x2::transfer::public_party_transfer",
-        [tx.object(lifecycleCapId), lifecycleParty],
-        [`${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`],
-    );
-    const valuationParty = call(tx, "0x2::party::single_owner", [tx.pure.address(PREDICT_WRITER)]);
-    call(
-        tx,
-        "0x2::transfer::public_party_transfer",
-        [tx.object(valuationCapId), valuationParty],
-        [`${packageId(result, "predict")}::pool_valuation_cap::PoolValuationCap`],
-    );
-    const receipt = await executeTransaction(runtime, "transfer_operational_caps_to_keeper", tx);
-    await objectEvidence(
-        runtime,
-        lifecycleCapId,
-        `${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
-        recipientOwner,
-    );
-    await objectEvidence(
-        runtime,
-        valuationCapId,
-        `${packageId(result, "predict")}::pool_valuation_cap::PoolValuationCap`,
-        recipientOwner,
-    );
-    result.wiring.lifecycleCap.owner = "recipient";
-    result.wiring.valuationCap.owner = "recipient";
-    result.wiring.lifecycleCap.transferTx = receipt.digest ?? null;
-    result.wiring.valuationCap.transferTx = receipt.digest ?? null;
-    writeState(result);
 }
 
 function boolField(fields: Record<string, unknown>, name: string): boolean {
@@ -4676,6 +4143,7 @@ async function readProtocolConfig(runtime: Runtime): Promise<Verification["proto
         lpRequestLimitFlushAttempts: stringField(fields, "lp_request_limit_flush_attempts"),
         maxLpPoolValue: stringField(fields, "max_lp_pool_value"),
         maxValuationWindowMs: stringField(fields, "max_valuation_window_ms"),
+        noTradeWindowMs: stringField(fields, "no_trade_window_ms"),
         backingBufferLambda: stringField(strike, "backing_buffer_lambda"),
         inventoryImpactMaxRate: stringField(strike, "inventory_impact_max_rate"),
         baseFee: stringField(strike, "base_fee"),
@@ -4701,7 +4169,6 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     const external = await verifyExternalDependencies(runtime);
     if (!result.wiring.lifecycleCap.id) throw new Error("lifecycle cap is missing");
     if (!result.wiring.valuationCap.id) throw new Error("pool valuation cap is missing");
-    await assertLiveMarketWindows(runtime, result.wiring.lifecycleCap.id, true);
     const packages: Record<string, ObjectEvidence> = {};
     const sharedObjects: Record<string, Record<string, ObjectEvidence>> = {};
     const ownedCaps: Record<string, Record<string, ObjectEvidence>> = {};
@@ -4775,7 +4242,6 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
             "shared",
         ),
     };
-    const oracleReadiness = await verifyOracleReadiness(runtime);
 
     const predictAppAuthorized = await accountAppAuthorized(
         runtime,
@@ -4889,20 +4355,14 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     }
     await discoverMarkets(runtime);
     const activeIds = await activeMarketIds(runtime);
-    const verificationClockMs = await currentClockMs(runtime);
     let activeMarketCash = 0n;
     const verifiedMarkets: MarketRecord[] = [];
     for (const id of activeIds) {
         const state = await marketState(runtime, id);
         const record = result.wiring.markets.find((market) => market.id === id);
         if (!record) throw new Error(`active market ${id} is absent from ${STATE_RELATIVE}`);
-        if (state.cashBalance === 0n) throw new Error(`active market ${id} has zero cash`);
-        if (state.referenceTick === null) {
-            throw new Error(`active market ${id} has no initialized reference tick`);
-        }
         activeMarketCash += state.cashBalance;
         record.cashBalance = state.cashBalance.toString();
-        record.referenceTick = state.referenceTick.toString();
         await objectEvidence(
             runtime,
             id,
@@ -4912,22 +4372,18 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         verifiedMarkets.push({ ...record });
     }
     for (const cadence of CADENCES.filter((spec) => spec.marketsToCreate > 0)) {
-        const futureCount = verifiedMarkets.filter(
-            (market) =>
-                market.cadenceId === cadence.id && BigInt(market.expiryMs) > verificationClockMs,
-        ).length;
+        const created = verifiedMarkets.filter((market) => market.cadenceId === cadence.id).length;
         const check = result.wiring.marketWindowChecks.find(
-            (candidate) => candidate.cadenceId === cadence.id,
+            (entry) => entry.cadenceId === cadence.id,
         );
         if (
-            futureCount === 0 ||
             !check ||
-            check.recorded !== futureCount ||
-            (futureCount < cadence.marketsToCreate && !check.windowFull)
+            created === 0 ||
+            created !== check.recorded ||
+            (created < cadence.marketsToCreate && !check.windowFull) ||
+            created > cadence.marketsToCreate
         ) {
-            throw new Error(
-                `${cadence.name} future market window is incomplete (${futureCount}/${cadence.marketsToCreate})`,
-            );
+            throw new Error(`${cadence.name} initial market creation is incomplete`);
         }
     }
 
@@ -4989,7 +4445,13 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         verifiedAt: new Date().toISOString(),
         chainId: await shortChainId(runtime.client),
         indexingStartCheckpoint,
-        verifiedAfterCheckpoint: null,
+        verifiedAfterCheckpoint: [
+            ...Object.values(result.publishTx),
+            ...Object.values(result.transactions),
+        ]
+            .map((digest) => BigInt(transactionCheckpoint(runtime.snapshot, digest)))
+            .reduce((latest, checkpoint) => (checkpoint > latest ? checkpoint : latest), 0n)
+            .toString(),
         packages,
         linkedPackages: external.packages,
         linkedObjects,
@@ -5010,7 +4472,6 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         },
         lifecycleCap,
         valuationCap,
-        oracleReadiness,
         cadences,
         protocolConfig: protocolSnapshot.value,
         pool: {
@@ -5027,77 +4488,6 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     writeState(result);
     await assertSdkTarget(runtime);
     return verification;
-}
-
-async function finalizeOperationalCapHandoff(
-    runtime: Runtime,
-    verification: Verification,
-): Promise<Verification> {
-    await assertSdkTarget(runtime);
-    const lifecycleCap = await objectEvidence(
-        runtime,
-        requiredObjectId(runtime.result.wiring.lifecycleCap.id, "lifecycle capability"),
-        `${packageId(runtime.result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
-        partyOwnerLabel(PREDICT_WRITER),
-    );
-    const valuationCap = await objectEvidence(
-        runtime,
-        requiredObjectId(runtime.result.wiring.valuationCap.id, "pool valuation capability"),
-        `${packageId(runtime.result, "predict")}::pool_valuation_cap::PoolValuationCap`,
-        partyOwnerLabel(PREDICT_WRITER),
-    );
-    const capTransferCheckpoint = transactionCheckpoint(
-        runtime.snapshot,
-        requiredString(
-            runtime.result.wiring.lifecycleCap.transferTx &&
-                runtime.result.wiring.valuationCap.transferTx ===
-                    runtime.result.wiring.lifecycleCap.transferTx
-                ? runtime.result.wiring.lifecycleCap.transferTx
-                : null,
-            "atomic operational capability transfer digest",
-        ),
-    );
-    const deepbookSnapshot = await stableObjectSnapshot(
-        runtime,
-        DEEPBOOK_REGISTRY,
-        `${DEEPBOOK_ORIGINAL}::registry::Registry`,
-        () => deepbookCoreAppAuthorized(runtime),
-    );
-    if (!deepbookSnapshot.value) {
-        throw new AwaitingExternalAuthorization(
-            "DeepBook core wrapper authorization is still pending external admin-cap execution",
-        );
-    }
-    const authorizationCheckpoint = transactionCheckpoint(
-        runtime.snapshot,
-        requiredString(
-            deepbookSnapshot.evidence.previousTransaction,
-            "DeepBook registry authorization transaction",
-        ),
-    );
-    const verifiedAfterCheckpoint = (
-        BigInt(capTransferCheckpoint) > BigInt(authorizationCheckpoint)
-            ? BigInt(capTransferCheckpoint)
-            : BigInt(authorizationCheckpoint)
-    ).toString();
-    if (BigInt(verifiedAfterCheckpoint) < BigInt(verification.indexingStartCheckpoint)) {
-        throw new Error("configuration verification fence precedes package publication");
-    }
-    return {
-        ...verification,
-        verifiedAt: new Date().toISOString(),
-        verifiedAfterCheckpoint,
-        linkedObjects: {
-            ...verification.linkedObjects,
-            deepbookRegistry: deepbookSnapshot.evidence,
-        },
-        account: {
-            ...verification.account,
-            deepbookCoreAuthorized: true,
-        },
-        lifecycleCap,
-        valuationCap,
-    };
 }
 
 async function assertFunding(runtime: Runtime): Promise<void> {
@@ -5131,9 +4521,7 @@ async function assertGasFunding(runtime: Runtime): Promise<void> {
         (label) => !runtime.result.transactions[label],
     ).length;
     const remainingMarketTransactions =
-        runtime.result.wiring.lifecycleCap.owner === "recipient"
-            ? 0
-            : maximumTransactionCountPerRun() - FIXED_TRANSACTION_STEPS.length;
+        maximumTransactionCountPerRun() - FIXED_TRANSACTION_STEPS.length;
     const required =
         BigInt(PACKAGE_GAS_BUDGET) * BigInt(remainingPackages) +
         TRANSACTION_GAS_BUDGET * BigInt(remainingFixedTransactions + remainingMarketTransactions);
@@ -5153,7 +4541,116 @@ export async function runBroadcastBoundary(
     return true;
 }
 
-async function executeDeployment(runtime: Runtime, bindings: ExecutionBindings): Promise<void> {
+const deploymentOperations = {
+    writeState,
+    verifyPublishedPackageCheckpoint,
+    publishPackage,
+    ensureCurrencyRegistration,
+    ensureDeployerUsdcMint,
+    ensureAccountAppsAuthorized,
+    ensureDeepbookCoreAppAuthorized,
+    ensureLifecycleCap,
+    ensureValuationCap,
+    ensureOracleObjects,
+    ensureUnderlyingRegistered,
+    ensureCadences,
+    ensureAccountWrapper,
+    ensureBootstrap,
+    ensureMarkets,
+    verifyDeployment,
+    writeIntegrationManifest,
+};
+
+export function assertCapsIssuanceReady(result: DeploymentResult, recipient: string): void {
+    requiredObjectId(recipient, "cap recipient");
+    if (BigInt(recipient) === 0n) throw new Error("cap recipient must be nonzero");
+    if (result.status !== "complete" || !result.completedAt || !result.verification) {
+        throw new Error("cap issuance requires a completed contract deployment");
+    }
+    if (result.inFlight && result.inFlight.label !== `issue_operational_caps_${recipient}`) {
+        throw new Error(
+            `cannot change recipient or command while ${result.inFlight.label} is in flight`,
+        );
+    }
+}
+
+export function capIssuanceTransaction(result: DeploymentResult, recipient: string): Transaction {
+    assertCapsIssuanceReady(result, recipient);
+    const tx = new Transaction();
+    const registry = sharedId(result, "predict", "registry::Registry");
+    const config = sharedId(result, "predict", "protocol_config::ProtocolConfig");
+    const admin = capId(result, "predict", "admin::AdminCap");
+    const lifecycle = call(tx, target(result, "predict", "registry", "mint_lifecycle_cap"), [
+        tx.object(registry),
+        tx.object(config),
+        tx.object(admin),
+    ]);
+    const valuation = call(tx, target(result, "predict", "registry", "mint_pool_valuation_cap"), [
+        tx.object(registry),
+        tx.object(admin),
+        tx.object(config),
+    ]);
+    for (const [cap, type] of [
+        [lifecycle, "market_lifecycle_cap::MarketLifecycleCap"],
+        [valuation, "pool_valuation_cap::PoolValuationCap"],
+    ] as const) {
+        const party = call(tx, "0x2::party::single_owner", [tx.pure.address(recipient)]);
+        call(
+            tx,
+            "0x2::transfer::public_party_transfer",
+            [cap, party],
+            [`${packageId(result, "predict")}::${type}`],
+        );
+    }
+    return tx;
+}
+
+const capIssuanceOperations = { executeTransaction, objectEvidence, writeState };
+
+export async function issueOperationalCaps(
+    runtime: Runtime,
+    recipient: string,
+    ops = capIssuanceOperations,
+) {
+    const result = runtime.result;
+    assertCapsIssuanceReady(result, recipient);
+    const label = `issue_operational_caps_${recipient}`;
+    // executeTransaction reconciles the same recipient's receipt rather than minting again.
+    const receipt = await ops.executeTransaction(
+        runtime,
+        label,
+        capIssuanceTransaction(result, recipient),
+    );
+    const lifecycleCap = createdObjectId(receipt, "::market_lifecycle_cap::MarketLifecycleCap");
+    const poolValuationCap = createdObjectId(receipt, "::pool_valuation_cap::PoolValuationCap");
+    const owner = partyOwnerLabel(recipient);
+    await ops.objectEvidence(
+        runtime,
+        lifecycleCap,
+        `${packageId(result, "predict")}::market_lifecycle_cap::MarketLifecycleCap`,
+        owner,
+    );
+    await ops.objectEvidence(
+        runtime,
+        poolValuationCap,
+        `${packageId(result, "predict")}::pool_valuation_cap::PoolValuationCap`,
+        owner,
+    );
+    const issued = {
+        lifecycleCap,
+        poolValuationCap,
+        transaction: requiredString(receipt.digest, "cap issuance digest"),
+    };
+    result.issuedCaps[recipient] = issued;
+    ops.writeState(result);
+    return { recipient, ...issued };
+}
+
+export async function executeDeployment(
+    runtime: Runtime,
+    bindings: ExecutionBindings,
+    ops = deploymentOperations,
+): Promise<void> {
     const result = runtime.result;
     result.suiVersion ??= bindings.suiVersion;
     result.suiBinaryPath ??= bindings.suiBinaryPath;
@@ -5164,96 +4661,49 @@ async function executeDeployment(runtime: Runtime, bindings: ExecutionBindings):
     result.packageGasBudget ??= bindings.packageGasBudget;
     result.transactionGasBudget ??= bindings.transactionGasBudget;
     result.startedAt ??= new Date().toISOString();
-    result.completedAt = null;
+    result.verification = null;
     result.lastError = null;
     result.status = "publishing";
-    writeState(result);
-
+    ops.writeState(result);
     try {
         for (const pkg of PACKAGES) {
             if (irreversibleStepDigest(result, "publish", `publish_${pkg}`, pkg)) {
-                await verifyPublishedPackageCheckpoint(runtime, pkg);
-                console.log(`[deploy] ${pkg} checkpoint verified; skipping publish`);
+                await ops.verifyPublishedPackageCheckpoint(runtime, pkg);
             } else {
-                await publishPackage(runtime, pkg);
+                await ops.publishPackage(runtime, pkg);
             }
         }
         result.status = "wiring";
-        writeState(result);
-
-        await ensureCurrencyRegistration(runtime, "usdc");
-        await ensureCurrencyRegistration(runtime, "plp");
-        await ensureDeployerUsdcMint(runtime);
-        await ensureAccountAppsAuthorized(runtime);
-        await ensureDeepbookCoreAppAuthorized(runtime);
-        const lifecycleCapId = await ensureLifecycleCap(runtime);
-        const valuationCapId = await ensureValuationCap(runtime);
-        if (
-            result.wiring.lifecycleCap.owner === "recipient" ||
-            result.wiring.valuationCap.owner === "recipient"
-        ) {
-            if (
-                result.wiring.lifecycleCap.owner !== "recipient" ||
-                result.wiring.valuationCap.owner !== "recipient"
-            ) {
-                throw new Error("operational capability handoff is not atomic on-chain");
-            }
-            if (!result.verification) {
-                throw new Error(
-                    "operational capabilities were handed off without a persisted pre-handoff audit",
-                );
-            }
-            result.verification = await finalizeOperationalCapHandoff(runtime, result.verification);
-            result.status = "complete";
-            result.completedAt = new Date().toISOString();
-            result.lastError = null;
-            writeState(result);
-            writeIntegrationManifest(buildIntegrationManifest(result));
-            console.log(`[deploy] complete state: ${STATE}`);
-            console.log(`[deploy] integration manifest: ${MANIFEST}`);
-            return;
-        }
-        result.verification = null;
-        await ensureOracleObjects(runtime);
-        await ensureUnderlyingRegistered(runtime);
-        await ensureCadences(runtime);
-        await verifyOracleReadiness(runtime);
-        const accountWrapperId = await ensureAccountWrapper(runtime);
-        await ensureBootstrap(runtime, valuationCapId, accountWrapperId);
-        await ensureMarkets(runtime, lifecycleCapId);
-
+        ops.writeState(result);
+        await ops.ensureCurrencyRegistration(runtime, "usdc");
+        await ops.ensureCurrencyRegistration(runtime, "plp");
+        await ops.ensureDeployerUsdcMint(runtime);
+        await ops.ensureAccountAppsAuthorized(runtime);
+        await ops.ensureDeepbookCoreAppAuthorized(runtime);
+        const lifecycleCap = await ops.ensureLifecycleCap(runtime);
+        const valuationCap = await ops.ensureValuationCap(runtime);
+        await ops.ensureOracleObjects(runtime);
+        await ops.ensureUnderlyingRegistered(runtime);
+        await ops.ensureCadences(runtime);
+        const wrapper = await ops.ensureAccountWrapper(runtime);
+        await ops.ensureBootstrap(runtime, valuationCap, wrapper);
+        await ops.ensureMarkets(runtime, lifecycleCap);
         result.status = "verifying";
-        writeState(result);
-        result.verification = await verifyDeployment(runtime);
-        result.status = "handoff";
-        writeState(result);
-        await transferOperationalCaps(runtime, lifecycleCapId, valuationCapId);
-        result.verification = await finalizeOperationalCapHandoff(runtime, result.verification);
+        ops.writeState(result);
+        result.verification = await ops.verifyDeployment(runtime);
         result.status = "complete";
         result.completedAt = new Date().toISOString();
-        result.lastError = null;
-        writeState(result);
-        writeIntegrationManifest(buildIntegrationManifest(result));
-        console.log(`[deploy] complete state: ${STATE}`);
-        console.log(`[deploy] integration manifest: ${MANIFEST}`);
+        ops.writeState(result);
+        ops.writeIntegrationManifest(buildIntegrationManifest(result));
     } catch (error) {
-        result.status = result.inFlight
-            ? "ambiguous"
-            : error instanceof AwaitingOracleData
-              ? "awaiting_oracle_data"
-              : error instanceof AwaitingExternalAuthorization
-                ? "awaiting_external_authorization"
-                : Object.keys(result.publishTx).length > 0 ||
-                    Object.keys(result.transactions).length > 0
-                  ? "partial"
-                  : "failed";
+        result.status = result.inFlight ? "ambiguous" : "partial";
         result.lastError = error instanceof Error ? error.message : String(error);
-        writeState(result);
+        ops.writeState(result);
         throw error;
     }
 }
 
-async function run(execute: boolean): Promise<void> {
+async function run(mode: DeploymentMode): Promise<void> {
     if (!/^[1-9][0-9]*$/.test(PACKAGE_GAS_BUDGET) || TRANSACTION_GAS_BUDGET <= 0n) {
         throw new Error("gas budgets must be positive integers");
     }
@@ -5263,7 +4713,17 @@ async function run(execute: boolean): Promise<void> {
     assertExpectedWorktree(result);
     const sourceCommit = git(["rev-parse", "HEAD"]);
     if (result.sourceCommit && result.sourceCommit !== sourceCommit) {
-        throw new Error(`deployment started from ${result.sourceCommit}, HEAD is ${sourceCommit}`);
+        const changed = git(["diff", "--name-only", result.sourceCommit, sourceCommit])
+            .split("\n")
+            .filter(Boolean);
+        if (
+            mode.command !== "issue-caps" ||
+            unexpectedDeploymentPaths(changed, PACKAGES, true).length
+        ) {
+            throw new Error(
+                `deployment started from ${result.sourceCommit}, HEAD is ${sourceCommit}`,
+            );
+        }
     }
     const binary = suiBinaryIdentity();
     const suiVersion = sui(["--version"]);
@@ -5283,7 +4743,6 @@ async function run(execute: boolean): Promise<void> {
             signer,
             sourceCommit,
             packageMetadataCache: new Map(),
-            marketCreationsThisRun: {},
         };
         const executionBindings: ExecutionBindings = {
             suiVersion,
@@ -5296,45 +4755,76 @@ async function run(execute: boolean): Promise<void> {
         };
         if (result.startedAt) assertExecutionBindings(result, executionBindings);
         await assertSdkTarget(runtime);
+        if (mode.command === "issue-caps") assertCapsIssuanceReady(result, mode.recipient);
+        else if (result.inFlight?.label.startsWith("issue_operational_caps_")) {
+            throw new Error("resume the in-flight issue-caps command with its original recipient");
+        }
         if (result.inFlight) await reconcileInFlight(runtime);
 
         console.log("[deploy] compiling Predict and proving resolved Testnet package IDs");
         assertResolvedLinkedPackages();
         assertExpectedWorktree(result);
         await verifyExternalDependencies(runtime);
-        await assertGasFunding(runtime);
-        await assertFunding(runtime);
+        if (mode.command === "deploy") {
+            await assertGasFunding(runtime);
+            await assertFunding(runtime);
+        } else {
+            assertCapsIssuanceReady(result, mode.recipient);
+            for (const pkg of PACKAGES) await verifyPublishedPackageCheckpoint(runtime, pkg);
+            const balance = await runtime.client.getBalance({ owner: DEPLOYER });
+            if (BigInt(balance.balance.balance) < TRANSACTION_GAS_BUDGET)
+                throw new Error("insufficient SUI for cap issuance");
+            console.log(`[deploy] mint consensus-owned operational caps to: ${mode.recipient}`);
+        }
 
         console.log(`[deploy] network: ${NETWORK} (${CHAIN_ID})`);
         console.log(`[deploy] deployer: ${DEPLOYER}`);
         console.log(`[deploy] source: ${sourceCommit}`);
         console.log(`[deploy] Sui CLI: ${suiVersion}`);
         console.log(`[deploy] package plan: ${PACKAGES.join(" -> ")}`);
-        console.log(`[deploy] Predict writer and operational-cap owner: ${PREDICT_WRITER}`);
-        console.log(`[deploy] Propbook writer: ${PROPBOOK_WRITER}`);
         console.log(
             `[deploy] USDC mint=${USDC_MINT_AMOUNT} (display DUSDC); PLP lock=${LOCK_CAPITAL_AMOUNT} supply=${BOOTSTRAP_SUPPLY_AMOUNT}`,
         );
-        if (!execute) {
+        if (!mode.execute) {
             console.log("[deploy] preflight complete; no transactions submitted (pass --execute)");
         }
-        await runBroadcastBoundary(execute, () => executeDeployment(runtime, executionBindings));
+        await runBroadcastBoundary(mode.execute, async () => {
+            if (mode.command === "deploy") await executeDeployment(runtime, executionBindings);
+            else
+                console.log(
+                    JSON.stringify(await issueOperationalCaps(runtime, mode.recipient), null, 2),
+                );
+        });
     } finally {
         rmSync(snapshot.directory, { recursive: true, force: true });
     }
 }
 
 export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
-    const unknown = args.filter((arg) => arg !== "--execute");
-    if (unknown.length > 0) throw new Error(`unknown deployment arguments: ${unknown.join(", ")}`);
-    return { execute: args.includes("--execute"), sessions: false, smoke: false };
+    const remaining = [...args];
+    const command = remaining[0] === "issue-caps" ? remaining.shift() : "deploy";
+    let execute = false;
+    let recipient: string | undefined;
+    while (remaining.length) {
+        const arg = remaining.shift();
+        if (arg === "--execute" && !execute) execute = true;
+        else if (arg === "--recipient" && command === "issue-caps" && recipient === undefined) {
+            recipient = requiredObjectId(remaining.shift(), "cap recipient");
+        } else throw new Error(`unknown deployment argument: ${arg}`);
+    }
+    if (command === "issue-caps") {
+        if (!recipient || BigInt(recipient) === 0n)
+            throw new Error("issue-caps requires a nonzero --recipient address");
+        return { command, execute, recipient };
+    }
+    return { command: "deploy", execute };
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
     const mode = parseDeploymentArgs(args);
     const lock = acquireLock();
     try {
-        await run(mode.execute);
+        await run(mode);
     } finally {
         releaseLock(lock);
     }
