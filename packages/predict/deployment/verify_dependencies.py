@@ -372,6 +372,49 @@ def stage_deepbook_token(directory, lock, packages, names):
     )
 
 
+def resolve_mainnet_token(lock, packages, names, records, staged_repo):
+    """Resolve the explicit source override, checking identities before shadowing."""
+    sessions = staged_repo / "packages/sessions"
+    override = read_toml(sessions / "Move.toml").get("dep-replacements", {}).get("mainnet", {}).get("token", {})
+    relative = override.get("local")
+    if override.get("override") is not True or not isinstance(relative, str) or Path(relative).is_absolute():
+        raise VerificationError("Mainnet token requires an explicit local Sessions override")
+    selected_path = (sessions / relative).resolve()
+    if not selected_path.is_relative_to(staged_repo.resolve()):
+        raise VerificationError("Mainnet token override escapes staged repository")
+    token_keys = {key for key in packages if names[key] == "token"}
+    selected = [key for key in token_keys if "local" in lock[key]["source"]
+                and (sessions / lock[key]["source"]["local"]).resolve() == selected_path
+                and packages[key].resolve() == selected_path]
+    if len(selected) != 1:
+        raise VerificationError("Mainnet token override must select exactly one resolved local token")
+    key = selected[0]
+    manifest = read_toml(selected_path / "Move.toml")
+    if manifest["package"]["name"] != "token":
+        raise VerificationError("Mainnet token override package name mismatch")
+    if key not in records or address(manifest.get("addresses", {}).get("token")) != records[key].original:
+        raise VerificationError("Mainnet token override original identity mismatch")
+    shadowed = token_keys - {key}
+    for other in shadowed:
+        if "git" not in lock[other]["source"]:
+            raise VerificationError("ambiguous local Mainnet token sources")
+        if other not in records or records[other] != records[key]:
+            raise VerificationError(f"shadowed token publication identity mismatch: {other}")
+    # A shadowed source is excluded only after matching the explicitly selected
+    # original ID, latest ID, and version. Consumers link to the selected record.
+    resolved = {
+        name: {**entry, "deps": {alias: key if target in shadowed else target
+                                 for alias, target in entry.get("deps", {}).items()}}
+        for name, entry in lock.items()
+    }
+    return resolved, shadowed, key
+
+
+def build_legacy_token(legacy, directory):
+    run([str(legacy), "move", "build", "--path", str(directory), "--skip-fetch-latest-git-deps"])
+    return modules(directory / "build/token/bytecode_modules")
+
+
 def verify(repo, network, sui, config, legacy=None):
     if network == "mainnet" and legacy is None:
         raise VerificationError("Mainnet verification requires --legacy-sui or SUI_LEGACY_BINARY")
@@ -415,6 +458,12 @@ def verify(repo, network, sui, config, legacy=None):
             if name not in SYSTEM:
                 records[key] = publication(package, network)
 
+        token_key = None
+        if network == "mainnet":
+            lock, shadowed, token_key = resolve_mainnet_token(lock, packages, names, records, local)
+            for key in shadowed:
+                del records[key]
+
         # These framework bytes come from the canonical, just-built closure.
         artifacts = repo / "packages/sessions/build/deepbook_sessions/bytecode_modules/dependencies"
         for name, package_id in SYSTEM.items():
@@ -427,6 +476,7 @@ def verify(repo, network, sui, config, legacy=None):
 
         legacy_modules = {}
         if network == "mainnet":
+            legacy_modules[token_key] = build_legacy_token(legacy, packages[token_key])
             circle = {name: next(key for key in records if names[key] == name)
                       for name in ("usdc", "stablecoin", "sui_extensions")}
             bind_circle_addresses({name: packages[key] for name, key in circle.items()},

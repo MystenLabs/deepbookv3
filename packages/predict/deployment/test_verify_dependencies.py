@@ -245,6 +245,94 @@ class DependencyVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(verifier.VerificationError, "one resolved local token"):
             verifier.stage_deepbook_token(Path("unused"), {}, {}, {})
 
+    def token_override_fixture(self, temporary):
+        root = Path(temporary)
+        sessions = root / "packages/sessions"
+        selected = root / "vendor/deep_mainnet"
+        sessions.mkdir(parents=True)
+        selected.mkdir(parents=True)
+        (sessions / "Move.toml").write_text(
+            '[package]\nname="deepbook_sessions"\n[dep-replacements.mainnet]\n'
+            'token = { local = "../../vendor/deep_mainnet", override = true }\n')
+        (selected / "Move.toml").write_text('[package]\nname="token"\n[addresses]\ntoken="0x3"\n')
+        lock = {
+            "deepbook_sessions": {"deps": {"deepbook": "deepbook", "token": "token_1"}},
+            "deepbook": {"deps": {"token": "token"}},
+            "token": {"source": {"git": "https://github.com/example/token.git", "rev": "a" * 40}},
+            "token_1": {"source": {"local": "../../vendor/deep_mainnet"}},
+        }
+        packages = {"token": root / "git/token", "token_1": selected}
+        names = {"token": "token", "token_1": "token"}
+        records = {"token": RECORD, "token_1": RECORD}
+        return root, lock, packages, names, records
+
+    def test_explicit_token_override_redirects_consumers_after_identity_validation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root, lock, packages, names, records = self.token_override_fixture(temp)
+            resolved, shadowed, selected = verifier.resolve_mainnet_token(lock, packages, names, records, root)
+            self.assertEqual(shadowed, {"token"})
+            self.assertEqual(selected, "token_1")
+            self.assertEqual(resolved["deepbook"]["deps"], {"token": "token_1"})
+            self.assertEqual(verifier.closure(resolved, "deepbook_sessions"), {"deepbook", "token_1"})
+            self.assertEqual(lock["deepbook"]["deps"], {"token": "token"})
+
+    def test_token_override_rejects_shadowed_publication_identity_changes(self):
+        candidates = [verifier.Publication(LATEST, LATEST, 2),
+                      verifier.Publication(ORIGINAL, ORIGINAL, 2),
+                      verifier.Publication(ORIGINAL, LATEST, 3)]
+        for candidate in candidates:
+            with self.subTest(candidate=candidate), tempfile.TemporaryDirectory() as temp:
+                root, lock, packages, names, records = self.token_override_fixture(temp)
+                records["token"] = candidate
+                with self.assertRaisesRegex(verifier.VerificationError, "shadowed token publication"):
+                    verifier.resolve_mainnet_token(lock, packages, names, records, root)
+
+    def test_token_override_rejects_missing_nonoverride_or_wrong_path(self):
+        entries = ['', 'token = { local = "../../vendor/deep_mainnet" }',
+                   'token = { local = "../token", override = true }',
+                   'token = { local = "/outside", override = true }',
+                   'token = { local = "../../../outside", override = true }']
+        for entry in entries:
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as temp:
+                root, lock, packages, names, records = self.token_override_fixture(temp)
+                (root / "packages/sessions/Move.toml").write_text('[dep-replacements.mainnet]\n' + entry + '\n')
+                with self.assertRaises(verifier.VerificationError):
+                    verifier.resolve_mainnet_token(lock, packages, names, records, root)
+
+    def test_token_override_rejects_ambiguous_selection_or_wrong_manifest_identity(self):
+        for kind in ("duplicate", "different_local", "name", "address"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temp:
+                root, lock, packages, names, records = self.token_override_fixture(temp)
+                if kind in ("duplicate", "different_local"):
+                    path = "../../vendor/deep_mainnet" if kind == "duplicate" else "../token"
+                    lock["token"]["source"] = {"local": path}
+                    if kind == "duplicate":
+                        packages["token"] = packages["token_1"]
+                else:
+                    manifest = '[package]\nname="other"\n[addresses]\ntoken="0x3"\n' if kind == "name" else \
+                               '[package]\nname="token"\n[addresses]\ntoken="0x4"\n'
+                    (packages["token_1"] / "Move.toml").write_text(manifest)
+                with self.assertRaises(verifier.VerificationError):
+                    verifier.resolve_mainnet_token(lock, packages, names, records, root)
+
+    def test_selected_token_legacy_build_reads_exact_output_and_propagates_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "vendor/deep_mainnet"
+            output = source / "build/token/bytecode_modules"
+            output.mkdir(parents=True)
+            (output / "deep.mv").write_bytes(MODULE)
+            with patch.object(verifier, "run") as command:
+                compiled = verifier.build_legacy_token(Path("/tools/legacy-sui"), source)
+                self.assertEqual(compiled, {"deep": MODULE})
+                command.assert_called_once_with([
+                    "/tools/legacy-sui", "move", "build", "--path", str(source), "--skip-fetch-latest-git-deps",
+                ])
+            with self.assertRaisesRegex(verifier.VerificationError, "bytecode mismatch"):
+                verifier.compare_modules("token", compiled, {"deep": MODULE + b"changed"})
+            with patch.object(verifier, "run", side_effect=verifier.VerificationError("compiler failed")):
+                with self.assertRaisesRegex(verifier.VerificationError, "compiler failed"):
+                    verifier.build_legacy_token(Path("/tools/legacy-sui"), source)
+
 
 if __name__ == "__main__":
     unittest.main()
