@@ -204,6 +204,8 @@ def stage_closure(
     dependency_dir = workspace / "deps"
     package_dir.mkdir(parents=True, exist_ok=True)
     dependency_dir.mkdir(parents=True, exist_ok=True)
+    # Preserve network-specific local replacements even though the harness uses Testnet.
+    shutil.copytree(config.REPO_DIR / "vendor", workspace / "vendor", ignore=_IGNORE)
 
     for name in config.LOCAL_CLOSURE:
         cancellation.check(cancel_event)
@@ -225,7 +227,7 @@ def stage_closure(
                 if "local" not in source:
                     continue
                 text, count = re.subn(
-                    rf'(?m)^{re.escape(name)}\s*=\s*\{{\s*local\s*=\s*"[^"]+"\s*\}}',
+                    rf'(?m)^{re.escape(name)}\s*=\s*\{{\s*local\s*=\s*"{re.escape(source["local"])}"\s*\}}',
                     f'{name} = {{ local = "../../deps/{name}" }}',
                     text,
                 )

@@ -49,6 +49,10 @@ class StagingTests(unittest.TestCase):
                 manifest = staging._manifest(paths[name] / "Move.toml")
                 target = (paths[name] / manifest["dependencies"]["pyth_lazer"]["local"]).resolve()
                 self.assertEqual(target, paths["pyth_lazer"].resolve())
+                self.assertEqual(
+                    manifest["dep-replacements"]["mainnet"]["pyth_lazer"],
+                    {"local": "../../vendor/pyth_lazer_mainnet"},
+                )
             publish.rewrite_pyth_lazer(paths["pyth_lazer"] / "Move.toml", paths["wormhole"], "0x22")
             publish.reset_staged_lock(paths["pyth_lazer"])
             self.assertEqual(
@@ -221,7 +225,7 @@ class PublicationPlanTests(unittest.TestCase):
             rewritten = staging._manifest(manifest)
             self.assertEqual(rewritten["dependencies"]["pyth_lazer"], {"local": str(root / "pyth")})
             self.assertEqual(rewritten["dep-replacements"]["testnet"]["wormhole"]["original-id"], "0x22")
-            self.assertEqual(rewritten["dep-replacements"]["mainnet"]["pyth_lazer"]["rev"], "740673b01cf9b0d764fb4e6a2051534f2943e560")
+            self.assertEqual(rewritten["dep-replacements"]["mainnet"]["pyth_lazer"], {"local": "../../vendor/pyth_lazer_mainnet"})
             publish.reset_staged_lock(root)
             self.assertFalse((root / "Move.lock").exists())
         self.assertEqual(canonical.read_bytes(), before)

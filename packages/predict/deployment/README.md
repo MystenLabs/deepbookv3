@@ -4,15 +4,15 @@ This workflow publishes, wires, capitalizes, and verifies a Predict contract sui
 
 ## Execution gates
 
-Legacy Testnet Pyth source and its reconstructed publication record are [vendored with provenance](../../../vendor/pyth_lazer/README.md). Wormhole remains a pinned upstream Git dependency with its own publication record. Both network closures resolve from an empty Move cache; no cache metadata patches are required. Mainnet uses its separate upstream Pyth v2 dependency replacement.
+Legacy Testnet Pyth source and its reconstructed publication record are [vendored with provenance](../../../vendor/pyth_lazer/README.md). [Mainnet Pyth v2](../../../vendor/pyth_lazer_mainnet/README.md) records its generated version metadata and exact Wormhole Mainnet source. Both network closures resolve without cache metadata patches.
 
-Mainnet execution is blocked by unresolved dependency source-verification differences. The pinned `sui 1.74.1-8fc60f1fa966` publication command does not itself enforce dependency source verification; the workflow explicitly runs `verify-source --verify-deps --skip-source` before any publication and again before each publication. Historical framework, Wormhole, Circle, and Pyth source differences require a reviewed dependency/toolchain resolution. There is no automatic verification bypass.
+The build and deployment compiler is `sui 1.78.1-722ac4fcf484`; CI owns the release pin. Before publication and again before each package, `verify_dependencies.py` checks the Sessions dependency closure against the selected chain. Modern dependencies use the CLI's per-package `verify-source`. Mainnet Circle and Wormhole use isolated offline builds with `sui 1.32.2-a5eab1a75fa8` and complete serialized-module comparison; this reproducing compiler is not claimed to be Wormhole's original publication compiler. Original IDs, package versions, and nonframework linkage must match publication records. The compiled Sui/stdlib module sets must match the live framework. Any mismatch blocks execution; there is no verification bypass.
 
 Default gas caps reserve 5 SUI per package and 1 SUI per remaining transaction. They are conservative limits, not measured fees; a fresh Mainnet run funded with 10 SUI does not pass this gate. `PACKAGE_GAS_BUDGET` and `TRANSACTION_GAS_BUDGET` accept positive base-unit caps and become immutable journal bindings. Select lower caps only after measuring the complete publication and wiring plan with the reviewed source and toolchain. Every SDK transaction is simulated with checks enabled before signing.
 
 ## Operator inputs
 
-Use the exact pinned CLI, a clean committed deployment branch, and a client configuration whose active signer matches `--deployer`. The requested network must have its correct chain identifier in that configuration. `SUI_BINARY` selects the CLI; `SUI_CLIENT_CONFIG` optionally selects the configuration. No deployer or operational recipient is embedded in source. CLI and SDK share one mode-restricted configuration snapshot and keystore. The snapshot selects the requested network without changing the operator's active environment. Do not set `SUI_KEYSTORE_PATH`.
+Use the exact pinned CLI, Python 3.11 or newer, a clean committed deployment branch, and a client configuration whose active signer matches `--deployer`. The requested network must have its correct chain identifier in that configuration. `SUI_BINARY` selects the CLI; Mainnet additionally requires `SUI_LEGACY_BINARY` pointing to the historical compiler above. `SUI_CLIENT_CONFIG` optionally selects the configuration. No deployer or operational recipient is embedded in source. CLI and SDK share one mode-restricted configuration snapshot and keystore. The snapshot selects the requested network without changing the operator's active environment. Do not set `SUI_KEYSTORE_PATH`.
 
 ```sh
 cd packages/predict
@@ -69,6 +69,7 @@ An authorized script-only correction after all publications can use `--resume-sc
 ```sh
 corepack npm run build
 node --import tsx --test deployment/deploy.test.ts
+python3 -m unittest discover -s deployment -p 'test_*.py'
 ```
 
 Tests cover explicit targets, non-broadcasting defaults, source/package binding, identity validation, network publication history, recovery, both orchestration paths, interruption boundaries, native-USDC lock transaction and event validation, market resume, explicit recipient parsing, atomic cap issuance, and manifest validation. These deterministic tests do not prove live dependency verification or the funded gas budget passes.

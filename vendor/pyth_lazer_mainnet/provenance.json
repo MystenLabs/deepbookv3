@@ -26,7 +26,7 @@
     {
       "path": "Move.toml",
       "from": "rev = \"c5a2eabe0a48654fcb1d3c98537915c2fb671c80\"",
-      "to": "rev = \"b71be5cbb9537c4aac8e23e74371affa3825efcd\"\nrename-from = \"Wormhole\""
+      "to": "rev = \"b71be5cbb9537c4aac8e23e74371affa3825efcd\""
     },
     {
       "path": "sources/meta.move",

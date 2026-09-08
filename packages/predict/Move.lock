@@ -97,7 +97,7 @@ deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", 
 [pinned.mainnet.pyth_lazer]
 source = { local = "../../vendor/pyth_lazer_mainnet" }
 use_environment = "mainnet"
-manifest_digest = "864B69B38B455F31B25A789F0FB697E54A34F21C2C97CD01EC9CD05C2439A83B"
+manifest_digest = "F3D90069D1859106BE06A7A1A326954E775E3425188EB36FDB63BAF2C1614B47"
 deps = { std = "MoveStdlib", sui = "Sui", wormhole = "Wormhole" }
 
 [pinned.mainnet.stablecoin]

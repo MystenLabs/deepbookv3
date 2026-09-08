@@ -12,7 +12,7 @@ Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining i
 
 The remaining gates are:
 
-- Explicit dependency-source verification reports historical framework, Circle, and Wormhole bytecode differences and Pyth's generated `meta.move` version difference. The selected Sui publication command ignores its dependency-verification flags; a successful publication dry run proves linkage/execution compatibility, not source equality. The [deployment workflow](../deployment/README.md#execution-gates) runs a separate verifier and fails closed.
+- The [deployment workflow](../deployment/README.md#execution-gates) requires exact dependency source verification with the pinned build compiler, Circle/Wormhole reproduction compiler, Mainnet Pyth generated metadata, and Mainnet Wormhole source. A publication dry run alone proves linkage/execution compatibility, not source equality; every execution rechecks the full dependency closure and live framework.
 - The complete Mainnet publication/wiring gas plan must be measured before lowering the conservative per-step caps.
 
 Pyth Mainnet must link v2: the live State's version guard rejects v1 even when the consumed Update ABI exists in both versions. Migrating to the distinct newer Testnet lineage is outside this deployment scope. No upstream Block Scholes publication is required; its Mainnet identities already exist.
