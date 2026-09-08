@@ -155,10 +155,10 @@ Idle pool cash is funded into expiries to back trading, and surplus is swept bac
 
 Each expiry has a **required cash** floor of `payout_liability + inventory_impact_reserve`. The pool rebalances each active expiry toward a target derived from a **rebalance band** around that requirement:
 
-- `target_cash = max(required_cash × (1 + band), expiry_cash_floor)`
-- `sweep_threshold = max(required_cash × (1 + 2 × band), expiry_cash_floor)`
+- `target_cash = max(required_cash × (1 + band), initial_expiry_cash)`
+- `sweep_threshold = max(required_cash × (1 + 2 × band), initial_expiry_cash)`
 
-where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_floor` is a fixed minimum cash floor per expiry. The hysteresis between the top-up target and the higher sweep threshold prevents thrashing cash back and forth on small moves.
+where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `initial_expiry_cash` is the admin-configured cadence target snapshotted when the market is created. Enabled cadences require a target of at least 1,000 USDC, enforced by the upgrade-required `constants::expiry_cash_floor`, and no more than `max_expiry_allocation`. Updating the cadence does not change existing markets' targets. The hysteresis between the top-up target and the higher sweep threshold prevents thrashing cash back and forth on small moves.
 
 - **Top up:** if `cash_balance < target_cash`, the pool sends `target_cash − cash_balance`, capped by available idle USDC and by the expiry's remaining **funding room**.
 - **Sweep:** if `cash_balance > sweep_threshold`, the pool pulls `cash_balance − target_cash` back to idle. The expiry only releases surplus above its own required backing — a sweep can never break solvency.
