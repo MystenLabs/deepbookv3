@@ -2,9 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    readdirSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import {
     CADENCES,
@@ -59,12 +68,66 @@ import {
     sameObjectReference,
     unexpectedDeploymentPaths,
     validateBootstrapReceipt,
+    withFreshPackageStage,
     type IntegrationManifest,
     type Receipt,
 } from "./deploy.ts";
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
 configureDeployment("testnet", id("a"));
+
+test("vendored Pyth sources match the pinned upstream inventory and hashes", () => {
+    const root = new URL("../../../vendor/pyth_lazer/", import.meta.url);
+    const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
+    const inventory = [
+        "LICENSE",
+        "Move.toml",
+        ...["sources", "tests"].flatMap((dir) =>
+            readdirSync(new URL(`${dir}/`, root)).map((file) => `${dir}/${file}`),
+        ),
+    ];
+    assert.deepEqual(inventory.sort(), Object.keys(provenance.files).sort());
+    for (const file of inventory) {
+        let content = readFileSync(new URL(file, root));
+        if (file === "Move.toml") {
+            const text = content.toString();
+            assert.equal(text.split(provenance.manifestReplacement.to).length, 2);
+            content = Buffer.from(
+                text.replace(
+                    provenance.manifestReplacement.to,
+                    provenance.manifestReplacement.from,
+                ),
+            );
+        }
+        assert.equal(
+            createHash("sha256").update(content).digest("hex"),
+            provenance.files[file],
+            file,
+        );
+    }
+});
+
+test("fresh publication staging preserves the vendored dependency outside packages", () => {
+    let stagedRoot = "";
+    withFreshPackageStage("predict", (directory) => {
+        stagedRoot = resolve(directory, "../..");
+        const manifest = readFileSync(join(directory, "Move.toml"), "utf8");
+        const local = manifest.match(/^pyth_lazer = \{ local = "([^"]+)" \}/m)?.[1];
+        assert.ok(local);
+        const pyth = resolve(directory, local);
+        assert.equal(pyth, join(stagedRoot, "vendor", "pyth_lazer"));
+        assert.equal(
+            readFileSync(join(pyth, "sources", "update.move"), "utf8"),
+            readFileSync(
+                new URL("../../../vendor/pyth_lazer/sources/update.move", import.meta.url),
+                "utf8",
+            ),
+        );
+        assert.match(readFileSync(join(pyth, "Published.toml"), "utf8"), /\[published.testnet\]/);
+        assert.equal(existsSync(join(directory, "Published.toml")), false);
+    });
+    assert.equal(existsSync(stagedRoot), false);
+});
 
 test("bootstrap receipt validation uses the deployed USDC supply event schema", () => {
     const vault = id("1");

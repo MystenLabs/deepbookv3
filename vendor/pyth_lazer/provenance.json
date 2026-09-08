@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/pyth-network/pyth-crosschain.git",
+  "revision": "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf",
+  "subdir": "lazer/contracts/sui",
+  "files": {
+    "LICENSE": "5d3028d6a4592795fff63b36871eb965b72e55caff6f5a007e3b5958bc69e9f7",
+    "Move.toml": "8f59d5211d530a5f9f78cd9605987c0bbba90a81abac0eaf0c51ed5f868876ff",
+    "sources/actions.move": "aea68ee5237b4e49745a6b618be77a5e41affd01bf04a3896285cd10b5944451",
+    "sources/channel.move": "15340875cdba32d275c81d4e5ff9044740c58ca16a9bd5d5e5a0ac8984e91682",
+    "sources/feed.move": "e31f189357e8bd951bb35d3ad974cb75bb0e459411576e34686fb5f627419df2",
+    "sources/governance.move": "6cf2a75b4f714a0b09643d9339f927004def1df915679882804047b348d9c898",
+    "sources/i16.move": "3f594cc703abbf727dded97038d976663a0a51b37d1d31a72076bc817963a675",
+    "sources/i64.move": "24328c8bef76f38cb4d2f02048544e63857e8954aee844f0b75436bf87a39371",
+    "sources/market_session.move": "a32b107cfd6f491eae9afe8608ce22506cbde6724bb2712f1b0f42dc2318ec2c",
+    "sources/meta.move": "c061da3ebdac9c01aaa9650c3a302f026a04bb08d494ff0c14b67c8eef6c40e6",
+    "sources/meta.move.mustache": "62982d5f77c8b56c9234caaf0c13a6427c46cf9dee37de8bba975d015091897e",
+    "sources/parser.move": "d850456eae3e770c9621edfc711f702f9f141c4becfbd43ee71eb590e6ee7f26",
+    "sources/pyth_lazer.move": "6774a6806d5f734f7638614252d9c981a8eef3882e65f2dc9d8d9876e56a2c8e",
+    "sources/state.move": "c265fa7858c8ed33c80a23ae731bd896b3f8d88460c2ed495d09b63b555988e3",
+    "sources/update.move": "9e6e361e31a8efd3d56a47f1ae890a804521a641caea18e05a36de913f31817e",
+    "tests/pyth_lazer_tests.move": "f9c292a466a5f52f672b138a960b011506e8ed26b1134113c242ade77480b154"
+  },
+  "manifestReplacement": {
+    "from": "rev = \"sui-testnet\"",
+    "to": "rev = \"a596dc27243e6b6dab95539c98b0af9836af2bc2\""
+  }
+}

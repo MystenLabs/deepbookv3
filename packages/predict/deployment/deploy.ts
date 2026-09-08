@@ -1797,11 +1797,15 @@ function assertPackageCheckpoints(result: DeploymentResult): void {
     }
 }
 
-function withFreshPackageStage<T>(pkg: PackageName, operation: (directory: string) => T): T {
+export function withFreshPackageStage<T>(pkg: PackageName, operation: (directory: string) => T): T {
     const directory = mkdtempSync(join(tmpdir(), `${DEPLOYMENT}-${pkg}-`));
     const stagedPackages = resolve(directory, "packages");
     try {
         cpSync(resolve(REPO_ROOT, "packages"), stagedPackages, {
+            recursive: true,
+            filter: (source) => !["build", "node_modules"].includes(basename(source)),
+        });
+        cpSync(resolve(REPO_ROOT, "vendor"), resolve(directory, "vendor"), {
             recursive: true,
             filter: (source) => !["build", "node_modules"].includes(basename(source)),
         });

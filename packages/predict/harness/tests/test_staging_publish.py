@@ -29,11 +29,44 @@ from harness import (
 
 
 class StagingTests(unittest.TestCase):
+    def test_stage_relocates_vendored_pyth_without_changing_canonical_source(self) -> None:
+        before = staging.checkout_fingerprint()
+
+        def stage_git(spec, destination, cancel_event=None):
+            destination.mkdir(parents=True)
+            (destination / "Move.toml").write_text(f'[package]\nname = "{spec.name}"\n')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "stage"
+            with mock.patch.object(staging, "_stage_git_dep", side_effect=stage_git) as git_stage:
+                paths = staging.stage_closure(workspace)
+            self.assertEqual(git_stage.call_count, 3)
+            self.assertEqual(
+                (paths["pyth_lazer"] / "sources" / "update.move").read_bytes(),
+                (config.REPO_DIR / "vendor" / "pyth_lazer" / "sources" / "update.move").read_bytes(),
+            )
+            for name in ("predict", "propbook"):
+                manifest = staging._manifest(paths[name] / "Move.toml")
+                target = (paths[name] / manifest["dependencies"]["pyth_lazer"]["local"]).resolve()
+                self.assertEqual(target, paths["pyth_lazer"].resolve())
+            publish.rewrite_pyth_lazer(paths["pyth_lazer"] / "Move.toml", paths["wormhole"], "0x22")
+            publish.reset_staged_lock(paths["pyth_lazer"])
+            self.assertEqual(
+                staging._manifest(paths["pyth_lazer"] / "Move.toml")["dependencies"]["wormhole"],
+                {"local": str(paths["wormhole"])},
+            )
+        self.assertEqual(staging.checkout_fingerprint(), before)
+
     def test_external_specs_come_from_matching_canonical_manifests(self) -> None:
         specs = staging.external_dependency_specs()
 
-        self.assertEqual(set(specs), set(config.GIT_DEP_NAMES))
+        self.assertEqual(set(specs), set(config.EXTERNAL_DEP_NAMES))
+        self.assertIsInstance(specs["pyth_lazer"], staging.LocalDependency)
+        self.assertEqual(specs["pyth_lazer"].path, config.REPO_DIR / "vendor" / "pyth_lazer")
+        self.assertEqual(specs["wormhole"].rev, "a596dc27243e6b6dab95539c98b0af9836af2bc2")
         for spec in specs.values():
+            if isinstance(spec, staging.LocalDependency):
+                continue
             self.assertEqual(len(spec.rev), 40)
             self.assertRegex(spec.rev, r"^[0-9a-f]{40}$")
             self.assertTrue(spec.repo.startswith("https://"))
@@ -73,7 +106,7 @@ class StagingTests(unittest.TestCase):
                 (package / "Move.toml").write_text(
                     f'[package]\nname = "{name}"\n\n[dependencies]\n'
                 )
-            for name in config.GIT_DEP_NAMES:
+            for name in config.EXTERNAL_DEP_NAMES:
                 package = workspace / "deps" / name
                 package.mkdir(parents=True)
                 (package / "Move.toml").write_text(
@@ -99,7 +132,7 @@ class StagingTests(unittest.TestCase):
                 (package / "Move.toml").write_text(
                     f'[package]\nname = "{name}"\n\n[dependencies]\n'
                 )
-            for name in config.GIT_DEP_NAMES:
+            for name in config.EXTERNAL_DEP_NAMES:
                 package = workspace / "deps" / name
                 package.mkdir(parents=True)
                 (package / "Move.toml").write_text(
@@ -174,6 +207,25 @@ class StagingTests(unittest.TestCase):
 
 
 class PublicationPlanTests(unittest.TestCase):
+    def test_consumer_rewrite_accepts_vendored_pyth_without_testnet_replacements(self) -> None:
+        canonical = config.PACKAGES_DIR / "predict" / "Move.toml"
+        before = canonical.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "Move.toml"
+            manifest.write_bytes(before)
+            publish.rewrite_consumer(
+                manifest, root / "pyth", "0x11", root / "wormhole", "0x22",
+                root / "bs_oracle", "0x33", root / "bs_sid", "0x44",
+            )
+            rewritten = staging._manifest(manifest)
+            self.assertEqual(rewritten["dependencies"]["pyth_lazer"], {"local": str(root / "pyth")})
+            self.assertEqual(rewritten["dep-replacements"]["testnet"]["wormhole"]["original-id"], "0x22")
+            self.assertEqual(rewritten["dep-replacements"]["mainnet"]["pyth_lazer"]["rev"], "740673b01cf9b0d764fb4e6a2051534f2943e560")
+            publish.reset_staged_lock(root)
+            self.assertFalse((root / "Move.lock").exists())
+        self.assertEqual(canonical.read_bytes(), before)
+
     def test_publication_order_is_topological(self) -> None:
         order = publish.publication_order()
         positions = {name: index for index, name in enumerate(order)}

@@ -109,13 +109,13 @@ deps = { std = "MoveStdlib", sui = "Sui" }
 [pinned.testnet.propbook]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "B7500D178DEDFD12B51F96B38331833FD5D9E07FC0D96660CC173838F243DC20"
-deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
+manifest_digest = "949C5E808071382BCAA3B74A9348FA5B13EC71CC2D97D36243E07267C3A67F43"
+deps = { bs_oracle = "bs_oracle", bs_sid = "bs_sid", fixed_math = "fixed_math", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.pyth_lazer]
-source = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
+source = { local = "../../vendor/pyth_lazer" }
 use_environment = "testnet"
-manifest_digest = "F288C113E77B36A432FB5039A19D4903E4D010F3359CFAA71EB297F9F67E3224"
+manifest_digest = "5E81FDEC2755540FD0DF094D7E6438DA76297B3F84F3AF7F1F0AECBF78801788"
 deps = { std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
 
 [pinned.testnet.wormhole]

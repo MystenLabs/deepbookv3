@@ -4,7 +4,7 @@ Updated 2026-08-17. This is the live work register governed by the [predeploy li
 
 ## Deploy Gates
 
-### S-7: Mainnet publication verification and legacy Testnet metadata
+### S-7: Mainnet publication verification and gas plan
 
 **Severity:** Deploy gate.
 
@@ -13,7 +13,6 @@ Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining i
 The remaining gates are:
 
 - Explicit dependency-source verification reports historical framework, Circle, and Wormhole bytecode differences and Pyth's generated `meta.move` version difference. The selected Sui publication command ignores its dependency-verification flags; a successful publication dry run proves linkage/execution compatibility, not source equality. The [deployment workflow](../deployment/README.md#execution-gates) runs a separate verifier and fails closed.
-- The pinned legacy Testnet Pyth and Wormhole sources lack upstream publication records. Address-only replacements are not applied by the selected package manager. A reproducible source/publication-metadata strategy must preserve the existing Testnet package identities without relying on harness-modified local caches.
 - The complete Mainnet publication/wiring gas plan must be measured before lowering the conservative per-step caps.
 
 Pyth Mainnet must link v2: the live State's version guard rejects v1 even when the consumed Update ABI exists in both versions. Migrating to the distinct newer Testnet lineage is outside this deployment scope. No upstream Block Scholes publication is required; its Mainnet identities already exist.

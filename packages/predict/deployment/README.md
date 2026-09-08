@@ -4,6 +4,8 @@ This workflow publishes, wires, capitalizes, and verifies a Predict contract sui
 
 ## Execution gates
 
+Legacy Testnet Pyth source and its reconstructed publication record are [vendored with provenance](../../../vendor/pyth_lazer/README.md). Wormhole remains a pinned upstream Git dependency with its own publication record. Both network closures resolve from an empty Move cache; no cache metadata patches are required. Mainnet uses its separate upstream Pyth v2 dependency replacement.
+
 Mainnet execution is blocked by unresolved dependency source-verification differences. The pinned `sui 1.74.1-8fc60f1fa966` publication command does not itself enforce dependency source verification; the workflow explicitly runs `verify-source --verify-deps --skip-source` before any publication and again before each publication. Historical framework, Wormhole, Circle, and Pyth source differences require a reviewed dependency/toolchain resolution. There is no automatic verification bypass.
 
 Default gas caps reserve 5 SUI per package and 1 SUI per remaining transaction. They are conservative limits, not measured fees; a fresh Mainnet run funded with 10 SUI does not pass this gate. `PACKAGE_GAS_BUDGET` and `TRANSACTION_GAS_BUDGET` accept positive base-unit caps and become immutable journal bindings. Select lower caps only after measuring the complete publication and wiring plan with the reviewed source and toolchain. Every SDK transaction is simulated with checks enabled before signing.
