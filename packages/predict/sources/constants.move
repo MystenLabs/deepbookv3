@@ -30,8 +30,8 @@ public macro fun min_premium(): u64 { 1_000_000 }
 
 // === Pool Funding ===
 
-/// USDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
-public(package) macro fun expiry_cash_floor(): u64 { 10_000_000_000 }
+/// Minimum configurable per-expiry cash target, in 6-decimal USDC units.
+public(package) macro fun expiry_cash_floor(): u64 { 1_000_000_000 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }

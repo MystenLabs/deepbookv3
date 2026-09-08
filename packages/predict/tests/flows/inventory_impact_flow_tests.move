@@ -160,7 +160,7 @@ fun setup_enabled_market(): (helpers::Fixture, ID, helpers::Trader) {
     let mut fx = helpers::setup_market_default();
     fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
     fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    fx.set_default_cadence_allocation(IMPACT_SCALE, test_constants::default_initial_expiry_cash());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     let trader = fx.create_funded_manager(test_constants::mint_deposit());
     (fx, expiry_id, trader)
@@ -170,7 +170,7 @@ fun setup_enabled_referred_market(): (helpers::Fixture, ID, helpers::Trader) {
     let mut fx = helpers::setup_market_default();
     fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
     fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
-    fx.set_default_cadence_allocation(IMPACT_SCALE, constants::expiry_cash_floor!());
+    fx.set_default_cadence_allocation(IMPACT_SCALE, test_constants::default_initial_expiry_cash());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     let referrer = fx.create_funded_manager_as(test_constants::bob(), 0);
     let trader = fx.create_funded_manager_with_referrer_as(

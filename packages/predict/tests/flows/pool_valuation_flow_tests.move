@@ -51,6 +51,8 @@ const MID_FLUSH_EXPIRY_MS: u64 = 360_000;
 /// pinned against the ledger fields — none of it restates the digital, which is
 /// checked independently at each mint.
 const MARKET_CASH_TARGET: u64 = 10_000_000_000;
+const MINIMUM_CASH_TARGET: u64 = 1_000_000_000;
+const SMALL_CASH_TARGET: u64 = 2_000_000_000;
 const MINT_MIN_FEE: u64 = 10_000_000;
 /// Leave exactly 1e9 idle after funding a 250e9 expiry. With 251e9 PLP supply,
 /// that mark is a very low but executable fair PLP price.
@@ -82,6 +84,38 @@ const ABOVE_MAX_PRICE_POOL_NAV: u64 = 9_910_000_000;
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
 // === Happy path: aggregation ===
+
+#[test]
+fun minimum_cash_target_rebalances_without_changing_pool_capital() {
+    assert_small_cash_target_rebalance(MINIMUM_CASH_TARGET);
+}
+
+#[test]
+fun above_minimum_cash_target_rebalances_without_changing_pool_capital() {
+    assert_small_cash_target_rebalance(SMALL_CASH_TARGET);
+}
+
+fun assert_small_cash_target_rebalance(target: u64) {
+    let mut fx = helpers::setup_market_default();
+    fx.set_default_cadence_allocation(target, target);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let expiry = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut bundle = fx.take_market_bundle(expiry);
+    assert_eq!(helpers::market(&bundle).cash_balance(), 0);
+    fx.rebalance_expiry_cash_bundle(&mut bundle);
+    assert_eq!(helpers::market(&bundle).cash_balance(), target);
+    assert_eq!(helpers::market(&bundle).payout_liability(), 0);
+    assert_eq!(helpers::vault(&bundle).idle_balance(), IDLE_SEED - target);
+    assert_eq!(helpers::vault(&bundle).profit_basis_debits(), target);
+    // A repeated rebalance must not fund the same target twice.
+    fx.rebalance_expiry_cash_bundle(&mut bundle);
+    assert_eq!(helpers::market(&bundle).cash_balance(), target);
+    assert_eq!(helpers::vault(&bundle).idle_balance(), IDLE_SEED - target);
+    assert_eq!(helpers::vault(&bundle).profit_basis_debits(), target);
+    helpers::return_market_bundle(bundle);
+    fx.finish();
+}
 
 #[test]
 fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
@@ -267,15 +301,9 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
-    assert_eq!(
-        fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs),
-        constants::expiry_cash_floor!(),
-    );
-    assert_eq!(
-        fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs),
-        constants::expiry_cash_floor!(),
-    );
-    assert_eq!(vault.profit_basis_debits(), 2 * constants::expiry_cash_floor!());
+    assert_eq!(fx.current_nav(&m1, &config, &oracle_registry, &pyth, &bs), MARKET_CASH_TARGET);
+    assert_eq!(fx.current_nav(&m2, &config, &oracle_registry, &pyth, &bs), MARKET_CASH_TARGET);
+    assert_eq!(vault.profit_basis_debits(), 2 * MARKET_CASH_TARGET);
     assert_eq!(vault.profit_basis_credits(), 0);
     assert_eq!(pool_nav, IDLE_SEED);
 
@@ -825,10 +853,7 @@ fun finish_flush_releases_the_valuation_flag_and_a_mint_succeeds() {
     assert!(helpers::valuation_in_progress_bundle(&market));
     fx.value_expiry_bundle(&mut market);
     let pool_nav = fx.finish_flush_bundle(&mut market);
-    assert_eq!(
-        pool_nav,
-        constants::expiry_cash_floor!() + (IDLE_SEED - constants::expiry_cash_floor!()),
-    );
+    assert_eq!(pool_nav, IDLE_SEED);
 
     // Finish releases the flag — asserted on the flag itself, because trading is
     // not blocked by a flush and cannot witness the release. The flag is what

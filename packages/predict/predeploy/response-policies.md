@@ -1525,4 +1525,15 @@ worth-fixing.
 - **Pinning tests:** `mint_redeem_guard_tests.move` — `mint_cost_above_maximum_payout_aborts`; `quote_mint_tests.move` — `quote_at_maximum_payout_mints` and `quote_above_maximum_payout_aborts` pin exact equality as admitted and one USDC base unit above as rejected.
 - **Reopen when:** settlement can pay more than `quantity`, a mint charge becomes recoverable at settlement, or the protocol intentionally supports externally compensated loss-leading positions.
 
+## RP-34: Enabled cadences admit cash targets starting at 1,000 USDC
+
+- **Trigger state:** an administrator configures an enabled cadence's `initial_expiry_cash` below 1,000 USDC.
+- **Controller:** protocol administrator through `registry::set_template_cadence_config`.
+- **Blast radius:** the configuration transaction; existing markets retain their creation-time cash targets.
+- **Response:** reject with `EInvalidCadenceConfig`; admit targets at or above 1,000 USDC and no greater than `max_expiry_allocation`. A fully zeroed cadence remains disabled. The minimum stays upgrade-required, with no new admin setter or network-specific exception.
+- **Duty inventory:** the relaxed 10,000-USDC guard set the minimum initial cash target and, through `initial_expiry_cash <= max_expiry_allocation`, the minimum allocation cap and inventory-impact scale. Both minima become 1,000 USDC and remain strictly positive. The constant has no other production consumer. Runtime rebalancing uses each market's snapshotted target; payout backing, impact reserves, net-allocation limits, and active-market/node bounds are unchanged. No arithmetic upper bound or denominator positivity check is removed.
+- **Risk profile:** smaller targets and allocation caps allow less prefunded trading capacity and a smaller inventory-impact scale; they do not authorize underbacked trades or force capital out of existing markets. This is a configuration-envelope decision, not a throughput or liquidity measurement.
+- **Pinning tests:** `registry_create_tests.move` — `set_cadence_config_accepts_1000_and_2000_usdc_targets`, `set_cadence_config_initial_cash_below_floor_aborts`, `set_cadence_config_initial_cash_above_allocation_aborts`, `cadence_configs_disable_round_trip`; `pool_valuation_flow_tests.move` — `minimum_cash_target_rebalances_without_changing_pool_capital`, `above_minimum_cash_target_rebalances_without_changing_pool_capital`.
+- **Reopen when:** the floor gains a runtime consumer, allocation-cap scaling changes, or existing market targets become mutable.
+
 ---
