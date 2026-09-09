@@ -56,10 +56,18 @@ LOCAL_CLOSURE = [
     "predict",
 ]
 
-# Upstream packages that localnet must publish independently. Their repository,
-# subdirectory, and exact revision are read from the canonical Predict/Propbook
-# manifests by staging.py; the harness keeps no duplicate dependency pins.
+# Upstream packages that localnet must publish independently. Subdirectory and
+# exact revision are read from the canonical Predict/Propbook manifests; the
+# harness keeps no duplicate revision pins. Repository URLs must match this
+# allowlist — a new upstream is a deliberate harness change.
 GIT_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle", "bs_sid")
+ALLOWED_GIT_REPOS = frozenset(
+    {
+        "https://github.com/pyth-network/pyth-crosschain.git",
+        "https://github.com/pyth-network/wormhole.git",
+        "https://github.com/blockscholes/sui-signed-oracle.git",
+    }
+)
 
 # Directory names never worth copying into the scratch workspace.
 STAGE_IGNORE = (
