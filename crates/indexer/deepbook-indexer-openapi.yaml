@@ -360,15 +360,21 @@ paths:
           schema: { type: string }
         - in: query
           name: start_time
-          schema: { type: integer, format: int64 }
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: |
+            Unix seconds. Defaults to 24 hours before end_time. The window must be ordered and at
+            most 365 days wide.
         - in: query
           name: end_time
-          schema: { type: integer, format: int64 }
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Unix seconds. Defaults to now.
         - in: query
           name: interval
-          required: true
-          schema: { type: integer, format: int64, minimum: 1 }
-          description: Interval length in seconds.
+          schema: { type: integer, format: int64, minimum: 1, default: 3600 }
+          description: |
+            Interval length in seconds. The window is split into floor((end_time - start_time) /
+            interval) buckets, which must not exceed 500. A window narrower than one interval
+            yields no buckets and returns an empty object.
         - in: query
           name: volume_in_base
           schema: { type: boolean, default: false }
@@ -380,6 +386,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IntervalMakerTakerVolumes"
+        "400":
+          description: |
+            Invalid interval, unordered or negative window, a window wider than 365 days, a window
+            needing more than 500 buckets, or no valid pool names.
       x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
 
   /summary:
