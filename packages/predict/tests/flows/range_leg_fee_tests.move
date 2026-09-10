@@ -11,7 +11,7 @@ use deepbook_predict::{
     pricing::RangePrice,
     range_codec::strike_for_testing as strike,
     range_test_helpers,
-    strike_exposure_config,
+    strike_exposure_config::{Self, StrikeExposureConfig},
     test_constants
 };
 use std::unit_test::{assert_eq, destroy};
@@ -52,6 +52,12 @@ fun bounded_range(): RangePrice {
         LOWER_TICK * test_constants::default_tick_size(),
         HIGHER_TICK * test_constants::default_tick_size(),
     )
+}
+
+// Fixture prerequisites must not throw the policy abort expected from the target call.
+fun assert_admissible_probability(config: &StrikeExposureConfig, probability: u64) {
+    assert!(probability >= config.min_entry_probability());
+    assert!(probability <= config.max_entry_probability());
 }
 
 #[test]
@@ -203,7 +209,7 @@ fun lower_tail_invalidates_an_otherwise_admissible_range() {
         FAR_LOWER_TICK * test_constants::default_tick_size(),
         LOWER_TICK * test_constants::default_tick_size(),
     );
-    config.assert_mint_probability_policy(price.probability());
+    assert_admissible_probability(&config, price.probability());
     config.assert_range_mint_probability_policy(&price);
     abort 999
 }
@@ -215,7 +221,7 @@ fun upper_tail_invalidates_an_otherwise_admissible_range() {
         LOWER_TICK * test_constants::default_tick_size(),
         FAR_HIGHER_TICK * test_constants::default_tick_size(),
     );
-    config.assert_mint_probability_policy(price.probability());
+    assert_admissible_probability(&config, price.probability());
     config.assert_range_mint_probability_policy(&price);
     abort 999
 }
@@ -225,8 +231,8 @@ fun admissible_legs_do_not_rescue_a_too_narrow_range() {
     let mut config = strike_exposure_config::new();
     config.set_min_entry_probability(NARROW_MIN_PROBABILITY);
     let price = bounded_range();
-    config.assert_mint_probability_policy(price.lower_up().destroy_some());
-    config.assert_mint_probability_policy(1_000_000_000 - price.higher_up().destroy_some());
+    assert_admissible_probability(&config, price.lower_up().destroy_some());
+    assert_admissible_probability(&config, 1_000_000_000 - price.higher_up().destroy_some());
     config.assert_range_mint_probability_policy(&price);
     abort 999
 }
@@ -236,9 +242,9 @@ fun upper_leg_eligibility_uses_below_probability_under_asymmetric_bounds() {
     let mut config = strike_exposure_config::new();
     config.set_max_entry_probability(ASYMMETRIC_MAX_PROBABILITY);
     let price = bounded_range();
-    config.assert_mint_probability_policy(price.lower_up().destroy_some());
-    config.assert_mint_probability_policy(price.higher_up().destroy_some());
-    config.assert_mint_probability_policy(price.probability());
+    assert_admissible_probability(&config, price.lower_up().destroy_some());
+    assert_admissible_probability(&config, price.higher_up().destroy_some());
+    assert_admissible_probability(&config, price.probability());
     config.assert_range_mint_probability_policy(&price);
     abort 999
 }

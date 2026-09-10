@@ -47,9 +47,7 @@ fun settled_redeem_requires_explicit_settlement() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -321,9 +319,7 @@ fun try_settle_materializes_exact_terminal_liability() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     fx.mint_bundle(
         &mut market,
@@ -357,9 +353,7 @@ fun settled_order_payout_reads_loser_as_zero() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -390,9 +384,7 @@ fun settled_order_payout_of_live_market_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -421,9 +413,7 @@ fun settled_redeem_twice_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -460,9 +450,7 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
@@ -507,9 +495,7 @@ fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -526,9 +512,6 @@ fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 
@@ -551,9 +534,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
@@ -571,9 +552,6 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
     fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
     assert_eq!(fx.try_settle_bundle(&mut market), true);
 
@@ -616,9 +594,7 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
     let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
     let premium = finite_range_premium(&mut fx, &market);
@@ -810,9 +786,7 @@ fun settled_order_payout_reads_winner_terminal_payout() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,

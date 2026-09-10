@@ -27,9 +27,7 @@ fun finite_range_partial_close_preserves_live_solvency() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
-    if (fx.clock().timestamp_ms() < test_constants::short_expiry_ms()) {
-        deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
-    };
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     // --- Baseline: the fixture seeded the fresh expiry with cash while pool
     // funding is absent; nothing owed, nothing spent.

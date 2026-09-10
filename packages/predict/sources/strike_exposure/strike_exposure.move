@@ -206,7 +206,7 @@ public(package) fun live_order_value(
     pricer: &Pricer,
     order: &Order,
 ): u64 {
-    math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
+    math::mul_down(exposure.order_range_price(pricer, order).probability(), order.quantity())
 }
 
 /// Return one settled order's full terminal payout.
@@ -420,10 +420,7 @@ public(package) fun quote_live_close(
     order::assert_valid_quantity(close_quantity);
     assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
 
-    let price = pricer.range_prices(
-        range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
-        range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
-    );
+    let price = exposure.order_range_price(pricer, order);
     let range_probability = price.probability();
     let terms = LiveCloseTerms {
         expiry_market_id: exposure.expiry_market_id,
@@ -615,8 +612,8 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
     );
 }
 
-fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
-    pricer.range_price(
+fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): RangePrice {
+    pricer.range_prices(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )
