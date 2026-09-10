@@ -49,6 +49,13 @@ public struct Pricer has copy, drop {
     block_scholes_svi_source_timestamp_ms: u64,
 }
 
+/// Boundary probabilities from one pricing snapshot. Absent boundaries are the
+/// negative/positive infinity sentinels, not finite strikes priced at zero or one.
+public struct RangePrice has copy, drop {
+    lower_up: Option<u64>,
+    higher_up: Option<u64>,
+}
+
 /// The flush's storable form of a `Pricer`. `seal_valuation_snapshot` freezes one
 /// per market inside `plp::PoolValuation` so every market is marked at one instant
 /// even though valuation spans transactions; `snapshot_nav` thaws it back to a
@@ -151,12 +158,7 @@ public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
     pricer.range_prices(lower, higher).probability()
 }
 
-/// Boundary probabilities from one pricing snapshot. Absent boundaries are the
-/// negative/positive infinity sentinels, not finite strikes priced at zero or one.
-public struct RangePrice has copy, drop {
-    lower_up: Option<u64>,
-    higher_up: Option<u64>,
-}
+// === Public-Package Functions ===
 
 public(package) fun lower_up(price: &RangePrice): Option<u64> {
     price.lower_up
@@ -166,6 +168,7 @@ public(package) fun higher_up(price: &RangePrice): Option<u64> {
     price.higher_up
 }
 
+/// Preserve the existing zero floor if approximated boundary prices invert.
 public(package) fun probability(price: &RangePrice): u64 {
     let lower = price.lower_up.get_with_default(math::float_scaling!());
     let higher = price.higher_up.get_with_default(0);
@@ -181,8 +184,6 @@ public(package) fun range_prices(pricer: &Pricer, lower: Strike, higher: Strike)
         else option::some(pricer.up_price(higher)),
     }
 }
-
-// === Public-Package Functions ===
 
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {

@@ -141,6 +141,8 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+
     // First create a normal order with live boundaries at ticks 90 and 100. Then
     // replace the oracle surface with a synthetic bad surface where the higher
     // strike has a higher UP price than the lower strike. NAV should reject that
@@ -156,7 +158,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
     // min `sigma`, and `rho = -1`. Together they make the model report a higher
     // chance of finishing above tick 100 than above tick 90, which is impossible
     // for a valid UP price curve.
-    fx.set_clock_for_testing(test_constants::now_ms() + 1);
+    fx.set_clock_for_testing(test_constants::now_ms() + 2);
     fx.seed_bs_surface_with_svi_bundle(
         &mut market,
         test_constants::default_live_price(),
@@ -169,7 +171,7 @@ fun current_nav_rejects_non_monotone_active_book_surface() {
         true,
         0,
         false,
-        test_constants::now_ms() + 1,
+        test_constants::now_ms() + 2,
     );
 
     fx.current_nav_bundle(&market);

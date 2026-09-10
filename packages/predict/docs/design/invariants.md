@@ -100,7 +100,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Mint admission
 
-- Raw `entry_probability` must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in this admission bound.
+- Raw `entry_probability` and every finite leg's probability (lower ABOVE, upper BELOW) must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in these mint-only bounds, and infinite sentinels are exempt.
 - `premium = entry_probability × quantity ≥ min_premium`; the holder pays this in full — there is no financed remainder.
 - `all_in_cost ≤ quantity`; the complete trader debit cannot exceed the position's maximum settlement payout.
 

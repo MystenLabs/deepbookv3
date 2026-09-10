@@ -149,7 +149,7 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 **No writes during pool valuation.** The full-pool flush computes NAV against a frozen snapshot, so Predict's valuation lock blocks Predict trading and admin changes mid-valuation; see [liquidity and NAV](./liquidity-and-nav.md). The propbook feeds are independent objects and are not part of that lock — but the flush is privileged and the flush operator is trusted not to push the oracle mid-flush, which is the model that makes the single frozen mark sound (see the audit-L8 note in [liquidity and NAV](./liquidity-and-nav.md)).
 
-**Min/max entry probability bounds.** A raw probability near `0` or `1` must not become an admitted mint just because the fee moves the all-in cash outlay away from the edge. These bounds live in `StrikeExposureConfig` (snapshotted per expiry from a global template), not in the pricing config: pricing produces the probability, and the mint-admission flow enforces the raw-probability envelope. At mint, `entry_probability` must lie within `[min_entry_probability, max_entry_probability]`. See [configuration](../design/configuration.md) for the bound values.
+**Min/max entry probability bounds.** Mint admission requires the range probability and each finite leg's probability to lie within `[min_entry_probability, max_entry_probability]`. The lower leg uses ABOVE probability and the upper leg uses BELOW probability; infinite sentinels are exempt. `StrikeExposureConfig` owns these snapshotted bounds. Pricing still produces probabilities for valuation and live closes outside the entry band. Fees do not move a probability into eligibility. See [configuration](../design/configuration.md) for the bound values.
 
 ## Settlement
 

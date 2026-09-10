@@ -351,7 +351,6 @@ public(package) fun quote_mint_terms(
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        exposure.config.assert_mint_probability_policy(entry_probability);
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
