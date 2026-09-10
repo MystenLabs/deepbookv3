@@ -239,7 +239,7 @@ fun quote_mint(
     pricer: &deepbook_predict::pricing::Pricer,
     quantity: u64,
     clock: &Clock,
-): deepbook_predict::strike_exposure::MintTerms {
+): deepbook_predict::strike_exposure::PricedMintTerms {
     quote_range_mint(
         exposure,
         pricer,
@@ -257,7 +257,7 @@ fun quote_range_mint(
     higher_tick: u64,
     quantity: u64,
     _clock: &Clock,
-): deepbook_predict::strike_exposure::MintTerms {
+): deepbook_predict::strike_exposure::PricedMintTerms {
     exposure.quote_mint_terms(
         pricer,
         lower_tick,

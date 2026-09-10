@@ -148,7 +148,38 @@ public fun up_price(pricer: &Pricer, strike: Strike): u64 {
 /// Return the current probability for `(lower, higher]`, floored at zero if the
 /// two approximated boundary probabilities invert.
 public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    compute_range_price(&pricer.svi, pricer.forward, lower, higher)
+    pricer.range_prices(lower, higher).probability()
+}
+
+/// Boundary probabilities from one pricing snapshot. Absent boundaries are the
+/// negative/positive infinity sentinels, not finite strikes priced at zero or one.
+public struct RangePrice has copy, drop {
+    lower_up: Option<u64>,
+    higher_up: Option<u64>,
+}
+
+public(package) fun lower_up(price: &RangePrice): Option<u64> {
+    price.lower_up
+}
+
+public(package) fun higher_up(price: &RangePrice): Option<u64> {
+    price.higher_up
+}
+
+public(package) fun probability(price: &RangePrice): u64 {
+    let lower = price.lower_up.get_with_default(math::float_scaling!());
+    let higher = price.higher_up.get_with_default(0);
+    lower.saturating_sub(higher)
+}
+
+/// Retain both finite boundary prices for trade fees and mint admission.
+public(package) fun range_prices(pricer: &Pricer, lower: Strike, higher: Strike): RangePrice {
+    assert!(lower.value() < higher.value(), EInvalidRange);
+    RangePrice {
+        lower_up: if (lower.is_neg_inf()) option::none() else option::some(pricer.up_price(lower)),
+        higher_up: if (higher.is_pos_inf()) option::none()
+        else option::some(pricer.up_price(higher)),
+    }
 }
 
 // === Public-Package Functions ===
@@ -588,17 +619,6 @@ fun min_svi_variance_increment(svi: &RawSVI): u64 {
     let one_minus_rho_squared = math::float_scaling!() - math::mul_down(rho_mag, rho_mag);
     let sqrt_one_minus_rho_squared = math::sqrt_down(one_minus_rho_squared);
     math::mul_down(svi.b(), math::mul_down(svi.sigma(), sqrt_one_minus_rho_squared))
-}
-
-/// Compute the approximated probability for `(lower, higher]`.
-fun compute_range_price(svi: &PricingSVI, forward: u64, lower: Strike, higher: Strike): u64 {
-    assert!(lower.value() < higher.value(), EInvalidRange);
-
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
-    // Fixed-point approximation or a non-monotone SVI surface can invert the
-    // boundary prices; the range probability is floored at zero.
-    lower_up_price.saturating_sub(higher_up_price)
 }
 
 /// Compute the adjusted UP digital probability for `strike`.

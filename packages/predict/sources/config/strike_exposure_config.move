@@ -9,7 +9,7 @@
 /// themselves contract probability.
 module deepbook_predict::strike_exposure_config;
 
-use deepbook_predict::{config_constants, constants};
+use deepbook_predict::{config_constants, constants, pricing::RangePrice};
 use fixed_math::math;
 
 const EEntryProbabilityOutOfBounds: u64 = 0;
@@ -87,6 +87,37 @@ public(package) fun trading_fee(
     timestamp_ms: u64,
 ): u64 {
     math::mul_down(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
+}
+
+/// Charge each finite boundary independently, including its floor and rounding.
+/// Infinite boundaries contribute no fee; a finite tail still pays the floor.
+public(package) fun range_trading_fee(
+    config: &StrikeExposureConfig,
+    expiry_ms: u64,
+    price: &RangePrice,
+    quantity: u64,
+    timestamp_ms: u64,
+): u64 {
+    let lower_fee = price
+        .lower_up()
+        .map!(|p| config.trading_fee(expiry_ms, p, quantity, timestamp_ms))
+        .get_with_default(0);
+    let higher_fee = price
+        .higher_up()
+        .map!(|p| config.trading_fee(expiry_ms, p, quantity, timestamp_ms))
+        .get_with_default(0);
+    lower_fee + higher_fee
+}
+
+/// Apply entry policy to the actual lower-ABOVE and upper-BELOW legs and to
+/// their combined range. This is mint-only; tail positions remain closable.
+public(package) fun assert_range_mint_probability_policy(
+    config: &StrikeExposureConfig,
+    price: &RangePrice,
+) {
+    price.lower_up().do!(|p| config.assert_mint_probability_policy(p));
+    price.higher_up().do!(|p| config.assert_mint_probability_policy(math::float_scaling!() - p));
+    config.assert_mint_probability_policy(price.probability());
 }
 
 /// Assert entry-probability policy without deriving quantity-dependent mint

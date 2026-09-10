@@ -25,7 +25,7 @@ use deepbook_predict::{
     pricing::{Self, Pricer, FrozenPricer},
     protocol_config::ProtocolConfig,
     range_codec,
-    strike_exposure::{Self, MintTerms, StrikeExposure},
+    strike_exposure::{Self, PricedMintTerms, StrikeExposure},
     strike_exposure_config
 };
 use fixed_math::math;
@@ -995,7 +995,7 @@ fun mint_prepared(
 /// Assemble the cost decomposition shared by mint quotes and execution.
 fun compute_mint_quote(
     market: &ExpiryMarket,
-    terms: &MintTerms,
+    terms: &PricedMintTerms,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
     clock: &Clock,
@@ -1004,7 +1004,7 @@ fun compute_mint_quote(
     let quantity = terms.quantity();
     let trading_fee = market
         .strike_exposure
-        .trading_fee(market.expiry, entry_probability, quantity, clock);
+        .trading_fee(market.expiry, terms.mint_price(), quantity, clock);
     let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let premium = terms.premium();
@@ -1127,7 +1127,7 @@ fun redeem_live_with_auth(
         .strike_exposure
         .trading_fee(
             market.expiry,
-            range_probability,
+            terms.close_price(),
             close_quantity,
             clock,
         )

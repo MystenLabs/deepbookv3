@@ -15,9 +15,10 @@ Predict prices a range contract at its range probability `p` — the model's est
 The fee is computed in `StrikeExposureConfig`, which each expiry snapshots at creation so that later admin changes do not reprice contracts already trading. The composition, in the order the protocol applies it, is:
 
 ```text
-base_fee_rate   = max( base_fee * sqrt(p * (1 - p)) , min_fee )
-ramped_rate     = base_fee_rate * expiry_fee_multiplier(time_to_expiry)   (>= base_fee_rate)
-trading_fee     = ramped_rate * quantity
+leg_base_rate   = max( base_fee * sqrt(p_leg * (1 - p_leg)) , min_fee )
+leg_ramped_rate = leg_base_rate * expiry_fee_multiplier(time_to_expiry)
+leg_fee        = leg_ramped_rate * quantity
+trading_fee    = sum(leg_fee for each finite boundary)
 
 builder_fee     = min( trading_fee * builder_fee_multiplier , quantity * max_builder_fee_rate )
 congestion_fee  = penalty_rate * quantity                    (only when gas is a high outlier)
@@ -28,7 +29,7 @@ The base trading fee and the expiry ramp together set the **fee rate** a trader 
 
 ## 1. Base trading fee — a variance (Bernoulli) fee
 
-A range contract settling inside or outside its range is a Bernoulli outcome with success probability `p`. The variance of that outcome is `p · (1 − p)`, and its standard deviation is `sqrt(p · (1 − p))`. The base fee is proportional to that standard deviation:
+Each finite boundary defines a Bernoulli leg with probability `p`. Its fee is proportional to `sqrt(p · (1 − p))`. A bounded range pays the sum of its two leg fees, each with its own minimum and rounding; above/below contracts pay one leg fee. Infinite boundaries contribute no fee, while finite strikes priced at zero or one still pay the minimum. The range probability continues to determine premium and live value.
 
 ```text
 raw_fee_rate = base_fee * sqrt(p * (1 - p))
@@ -44,7 +45,7 @@ base_fee_rate = max( raw_fee_rate , min_fee )
 
 As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
 
-Mint admission gates the raw entry probability `p` against the configured `[min_entry_probability, max_entry_probability]` band before fees are applied. The fee is still charged on top of the net premium, but it no longer rescues otherwise too-small or too-large probabilities into the admission range.
+Mint admission requires both the combined range probability and every finite leg's probability to lie in the configured `[min_entry_probability, max_entry_probability]` band. The lower leg uses ABOVE probability; the upper leg uses BELOW probability. Infinite boundaries are exempt. Minimum premium and the maximum-payout cost limit apply to the actual range purchase. These entry bounds do not restrict live closes: the summed leg fee is capped at the range's redemption value. The upgraded fee calculation also applies to positions opened before activation.
 
 After every fee component and inventory-impact charge is assembled, mint admission requires `all_in_cost <= quantity`. Because `quantity` is the position's maximum settlement payout, a trader cannot mint a position whose total debit exceeds what the position can ever pay at settlement; the check uses the trader-paid fee after any sponsor subsidy.
 
