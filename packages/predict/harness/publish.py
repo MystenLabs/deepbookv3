@@ -137,9 +137,7 @@ def rewrite_block_scholes_package(toml_path: Path) -> None:
 def reset_staged_lock(package_path: Path) -> None:
     """Force an external staged root to resolve against the localnet framework."""
     lock_path = package_path / "Move.lock"
-    if not lock_path.is_file():
-        raise FileNotFoundError(f"staged external package has no Move.lock: {lock_path}")
-    lock_path.unlink()
+    lock_path.unlink(missing_ok=True)
 
 
 def rewrite_consumer(
@@ -157,7 +155,7 @@ def rewrite_consumer(
     """Point a staged Propbook/Predict manifest at staged oracle packages."""
     text = toml_path.read_text()
     text = _replace_first(
-        r"pyth_lazer = \{ git[^}]*\}",
+        r"(?m)^pyth_lazer = \{ (?:git|local)[^}]*\}",
         f'pyth_lazer = {{ local = "{pyth_lazer_local}" }}',
         text,
         "pyth_lazer dependency",
@@ -177,8 +175,8 @@ def rewrite_consumer(
             "bs_sid dependency",
         )
     text, count = re.subn(r"\[dep-replacements\.testnet\][^\[]*", "", text)
-    if count != 1:
-        raise ValueError(f"expected one testnet dependency-replacement section, found {count}")
+    if count > 1:
+        raise ValueError(f"duplicate testnet dependency-replacement sections: {count}")
     replacements = (
         f"\n\n[dep-replacements.{build_env}]\n"
         f'pyth_lazer = {{ local = "{pyth_lazer_local}", '
@@ -314,7 +312,7 @@ def publish_closure(
                 f"cannot publish {name}; unpublished dependencies: {sorted(missing)}"
             )
 
-        if name in config.GIT_DEP_NAMES:
+        if name in config.EXTERNAL_DEP_NAMES:
             reset_staged_lock(paths[name])
         if name == "pyth_lazer":
             rewrite_pyth_lazer(

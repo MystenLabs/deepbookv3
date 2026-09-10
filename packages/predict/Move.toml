@@ -20,32 +20,18 @@ account = { local = "../account" }
 propbook = { local = "../propbook" }
 # Official Pyth Lazer Sui package — now a transitive dependency through `propbook`
 # (which consumes the verified `pyth_lazer::update::Update`). Kept as a direct dep
-# so the publishable root declares the `dep-replacements` linking below. Pinned
-# to the exact source used by the testnet deployment.
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }
+# so the publishable root declares the Mainnet replacement below. The vendored
+# legacy Testnet source and its reconstructed publication record have provenance
+# in vendor/pyth_lazer/README.md.
+pyth_lazer = { local = "../../vendor/pyth_lazer" }
 # Block Scholes verifier. Predict source reads asset-bound observations through
 # propbook's typed store API; the direct dependency remains for test fixtures
 # that mint verifier-authenticated batches.
 bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "83bfec450540068a27277b40babcb6fbb26c7e11" }
 
-# `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
-# for typechecking only; `dep-replacements` tells `sui client publish` to link
-# against the on-chain packages instead of re-publishing them. Addresses come
-# from `contract_manager/src/store/contracts/SuiLazerContracts.json` in the
-# pinned pyth-network/pyth-crosschain source revision.
-[dep-replacements.testnet]
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
-wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
-
 [dep-replacements.mainnet]
-# Native USDC is Circle's package, published and never upgraded (version 1, single
-# module `usdc`, `USDC` has `drop`, 6 decimals — verified on chain 2026-09-03), so
-# `published-at` and `original-id` are the same address. The in-repo `usdc` package
-# supplies the type for typechecking only; this replacement links the real one so the
-# mainnet publish never republishes a collateral identity we do not own. Because that
-# source is a type declaration and not Circle's, it cannot reproduce the on-chain
-# bytecode: the mainnet publish needs `--skip-dependency-verification`, scoped and
-# justified per `.claude/rules/predict-deployment.md`.
-usdc = { local = "../usdc", published-at = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7", original-id = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7" }
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf", published-at = "0x7b502c8a7bcb3915892347f11086745570e759fe9708d03c03accf4c90bbf580", original-id = "0x7b502c8a7bcb3915892347f11086745570e759fe9708d03c03accf4c90bbf580" }
-wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "a596dc27243e6b6dab95539c98b0af9836af2bc2", published-at = "0x5306f64e312b581766351c07af79c72fcb1cd25147157fdc2f8ad76de9a3fb6a", original-id = "0x5306f64e312b581766351c07af79c72fcb1cd25147157fdc2f8ad76de9a3fb6a" }
+# Circle's source and legacy publication records resolve native Mainnet USDC.
+usdc = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/usdc", rev = "23fff2ed82a7fdc26e408a56553b1e1d0ba7b06f" }
+# Pyth v2's generated metadata and Mainnet Wormhole source have vendored provenance.
+pyth_lazer = { local = "../../vendor/pyth_lazer_mainnet" }
+bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }

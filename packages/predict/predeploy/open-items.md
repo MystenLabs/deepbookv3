@@ -4,50 +4,20 @@ Updated 2026-08-17. This is the live work register governed by the [predeploy li
 
 ## Deploy Gates
 
-### S-7: Predict cannot resolve a mainnet publication graph
+### S-7: Mainnet publication verification and gas plan
 
 **Severity:** Deploy gate.
 
-Neither `packages/predict/Move.toml` nor `packages/propbook/Move.toml` could
-link a mainnet publish: several of the external dependency identities a mainnet
-publish needs do not exist. `[dep-replacements.mainnet]` now carries the
-resolvable half — `pyth_lazer` and `wormhole`, verified on chain 2026-08-06,
-and `usdc`, verified 2026-09-03 — and `packages/token/Published.toml` already
-records a mainnet entry. One identity is still open, and it is not a manifest
-fix:
+Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. DeepBook v8 and its consumers select the [Mainnet DEEP reconstruction](../../../vendor/deep_mainnet/README.md); the Testnet token source is unchanged. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
 
-- **`bs_oracle` and `bs_sid` are unpublished on mainnet.** The pinned upstream
-  revision's publication metadata records testnet only. Closed by the provider
-  publishing to mainnet and handing over the package identity, the same
-  handover the signer-custody confirmation waits on.
+The remaining gates are:
 
-**Collateral naming is settled.** Predict names its collateral `usdc::usdc::USDC`
-on every network, so mainnet links native USDC by address replacement alone; the
-mechanism and the testnet consequence are owned by [design decisions](../docs/design/decisions.md).
+- The [deployment workflow](../deployment/README.md#execution-gates) requires exact dependency source verification with the pinned build compiler, Circle/Wormhole/DEEP reproduction compiler, Mainnet Pyth generated metadata, and Mainnet Wormhole source. A publication dry run alone proves linkage/execution compatibility, not source equality; every execution rechecks the full dependency closure and live framework.
+- The complete Mainnet publication/wiring gas plan must be measured before lowering the conservative per-step caps.
 
-**Recorded, not blocking: mainnet `pyth_lazer` links version 1 on purpose.**
-The lineage has been upgraded — version 2 adds `channel_v2` and `update_v2`,
-purely additively — so `published-at` had a choice to make. It links version 1,
-because that is the version the pinned source revision describes exactly (its
-module set matches, and matches the testnet package already linked) and it is
-also the single package id Pyth documents for Sui mainnet. Linking the version
-2 head would point the linkage table at bytecode this repo's pinned source does
-not describe, for modules Predict does not use. Advancing to version 2 would
-mean advancing the source pin — which also serves live testnet — and is only
-worth doing if Predict ever needs the `_v2` surface.
+Pyth Mainnet must link v2: the live State's version guard rejects v1 even when the consumed Update ABI exists in both versions. Migrating to the distinct newer Testnet lineage is outside this deployment scope. No upstream Block Scholes publication is required; its Mainnet identities already exist.
 
-**Action:** Do not attempt a mainnet publish while the bullet above is open,
-and never resolve one with `--with-unpublished-dependencies`: that
-republishes packages this repo does not own and changes their type identity.
-Close this gate by recording each identity as it lands, then re-resolving both
-manifests against a mainnet environment.
-
-**Adjacent testnet observation, not part of this gate.** The linked testnet
-`pyth_lazer` and the deployment Pyth currently documents are both version 1 of
-*separate* lineages — Pyth republished rather than upgraded — so the linked
-package is superseded though still live. Whether the relayer and the live
-testnet deployment should move to the current lineage is an open question for
-whoever owns the next testnet republish.
+**Action:** Resolve these checks before Mainnet execution. Do not republish external packages or use `--with-unpublished-dependencies`. Keep S-6's live SID/base-asset validation as a separate deployment requirement.
 
 ### S-6: The `bs_sid` copy the deployment executes is never the one anything tests
 

@@ -1,0 +1,9 @@
+# Reconstructed from the successful upstream Testnet publication; see README.md.
+# The historical compiler version is unavailable, not the current build toolchain.
+[published.testnet]
+chain-id = "4c78adac"
+published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21"
+original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21"
+version = 1
+toolchain-version = "unknown"
+upgrade-capability = "0x6b9d46bf924eb34879eb4868441e996b0b8ccb1b36e25d264b5f53d8ea18d143"
