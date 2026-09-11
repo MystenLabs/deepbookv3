@@ -37,7 +37,7 @@
 /// stood at the snapshot instant through the same walk the live read uses.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, pricing::Pricer, range_codec};
+use deepbook_predict::{constants, pricing::{Self, Pricer}, range_codec};
 use fixed_math::math;
 use sui::table::{Self, Table};
 
@@ -186,14 +186,14 @@ public(package) fun settled_payout_liability(
 /// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
 /// are never stored (`P = 0`).
 public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_size: u64): u64 {
-    let mut previous_price = option::none();
+    let mut price_envelope = option::none();
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         0,
-        &mut previous_price,
+        &mut price_envelope,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
     // once. This can differ from pricing and flooring each order independently.
@@ -215,14 +215,14 @@ public(package) fun walk_linear_frozen(
         tree.snapshot_active && tree.snapshot_seq == snapshot_seq && snapshot_seq != 0,
         EStaleValuationSnapshot,
     );
-    let mut previous_price = option::none();
+    let mut price_envelope = option::none();
     let (start_total, end_total) = walk_linear_subtree(
         &tree.nodes,
         tree.root,
         pricer,
         tick_size,
         snapshot_seq,
-        &mut previous_price,
+        &mut price_envelope,
     );
     (tree.snapshot_base + start_total).saturating_sub(end_total)
 }
@@ -604,7 +604,7 @@ fun walk_linear_subtree(
     pricer: &Pricer,
     tick_size: u64,
     frozen_seq: u64,
-    previous_price: &mut Option<u64>,
+    price_envelope: &mut Option<u64>,
 ): (u64, u64) {
     if (root.is_none()) return (0, 0);
     let tick = *root.borrow();
@@ -616,7 +616,7 @@ fun walk_linear_subtree(
         pricer,
         tick_size,
         frozen_seq,
-        previous_price,
+        price_envelope,
     );
 
     let (local_start, local_end) = if (frozen_seq != 0 && node.snapshot_seq == frozen_seq) {
@@ -630,13 +630,32 @@ fun walk_linear_subtree(
     if (local_start != 0 || local_end != 0) {
         let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
         // UP price is non-increasing in strike and the in-order walk visits
-        // ascending ticks, so a rising price is a non-monotone surface: the netted
-        // aggregate below would understate the per-order liability the protocol
-        // actually honors.
-        if (previous_price.is_some()) {
-            assert!(price <= *previous_price.borrow(), ENonMonotonePrice);
+        // ascending ticks, so a rise is either the pricer's own fixed-point dust
+        // or a genuinely inverted surface. What the netted aggregate below loses
+        // to a rise is bounded by the rise itself — `range_price` floors an
+        // inverted pair to zero for a single order while the aggregate lets it
+        // cancel — so bounding the rise bounds the understatement, and the
+        // boundary keeps its quoted price either way, leaving the aggregate the
+        // same per-order sum a monotone book produces. A rise within
+        // `price_monotonicity_tolerance` therefore proceeds: this walk is the
+        // pool-wide flush's mandatory leg, and the ticks it prices are positioned
+        // by whoever mints, so a price cannot carry a hard assert here (move.md's
+        // blast-radius ladder). A rise past that bound is a real inversion and
+        // still fails closed for the provider to correct (RP-15).
+        //
+        // The comparison is against the running minimum rather than the last
+        // boundary, so dust accumulated over many boundaries trips the same bound
+        // instead of ratcheting underneath it.
+        if (price_envelope.is_some()) {
+            let envelope = *price_envelope.borrow();
+            assert!(
+                price <= envelope + pricing::price_monotonicity_tolerance!(),
+                ENonMonotonePrice,
+            );
+            *price_envelope = option::some(envelope.min(price));
+        } else {
+            *price_envelope = option::some(price);
         };
-        *previous_price = option::some(price);
 
         if (local_start != local_end) {
             start_total = math::mul_down(price, local_start);
@@ -650,7 +669,7 @@ fun walk_linear_subtree(
         pricer,
         tick_size,
         frozen_seq,
-        previous_price,
+        price_envelope,
     );
     (start_total + left_start + right_start, end_total + left_end + right_end)
 }
