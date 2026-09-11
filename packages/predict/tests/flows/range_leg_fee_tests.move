@@ -7,6 +7,7 @@ module deepbook_predict::range_leg_fee_tests;
 
 use deepbook_predict::{
     constants,
+    expiry_market,
     flow_test_helpers as helpers,
     pricing::RangePrice,
     range_codec::strike_for_testing as strike,
@@ -33,6 +34,113 @@ const DOUBLE_MULTIPLIER: u64 = 2_000_000_000;
 const NARROW_MIN_PROBABILITY: u64 = 200_000_000;
 const ASYMMETRIC_MAX_PROBABILITY: u64 = 600_000_000;
 const CAPPED_LEG_FEE: u64 = 300_000_000;
+const SHIPPED_BASE_FEE: u64 = 100_000_000;
+const SHIPPED_MIN_FEE: u64 = 22_000_000;
+const WIDE_LOWER_TICK: u64 = 60;
+const QUOTABLE_WIDE_HIGHER_TICK: u64 = 130;
+const TOO_WIDE_HIGHER_TICK: u64 = 140;
+const WIDE_RANGE_SPOT: u64 = 90_000_000_000;
+const WIDE_RANGE_VARIANCE: u64 = 40_000_000;
+
+fun prepare_wide_range(fx: &mut helpers::Fixture, market: &mut helpers::MarketBundle) {
+    let timestamp_ms = fx.clock().timestamp_ms() + 1;
+    fx.set_clock_for_testing(timestamp_ms);
+    fx.seed_bs_surface_with_svi_bundle(
+        market,
+        WIDE_RANGE_SPOT,
+        WIDE_RANGE_SPOT,
+        WIDE_RANGE_VARIANCE,
+        false,
+        0,
+        test_constants::default_svi_sigma(),
+        0,
+        false,
+        0,
+        false,
+        timestamp_ms,
+    );
+}
+
+#[test]
+fun wide_range_mints_below_the_two_floor_cost_limit() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_base_fee(SHIPPED_BASE_FEE);
+    fx.set_template_min_fee(SHIPPED_MIN_FEE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, WIDE_RANGE_SPOT);
+    prepare_wide_range(&mut fx, &mut market);
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut account = fx.take_account_bundle(&trader);
+    let quote = fx.quote_mint_bundle(
+        &market,
+        WIDE_LOWER_TICK,
+        QUOTABLE_WIDE_HIGHER_TICK,
+        test_constants::mint_quantity(),
+    );
+    // At forward 90 and total variance 0.04, (60,130] is below 95.6%; both fees bind at 2.2%.
+    assert_eq!(quote.trading_fee(), 2 * SHIPPED_MIN_FEE);
+    assert!(quote.all_in_cost() <= quote.quantity());
+    let before = fx.account_balance_bundle<USDC>(&account);
+    let order = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        WIDE_LOWER_TICK,
+        QUOTABLE_WIDE_HIGHER_TICK,
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), before - quote.all_in_cost());
+    assert!(helpers::has_position_bundle(&account, expiry_id, order));
+    helpers::assert_market_backed_bundle(&market);
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun eligible_wide_range_aborts_above_the_two_floor_cost_limit() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_base_fee(SHIPPED_BASE_FEE);
+    fx.set_template_min_fee(SHIPPED_MIN_FEE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, WIDE_RANGE_SPOT);
+    prepare_wide_range(&mut fx, &mut market);
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut account = fx.take_account_bundle(&trader);
+    let pricer = fx.load_pricer_bundle(&market);
+    let price = pricer.range_prices(
+        strike(WIDE_LOWER_TICK * test_constants::default_tick_size()),
+        strike(TOO_WIDE_HIGHER_TICK * test_constants::default_tick_size()),
+    );
+    let config = strike_exposure_config::new();
+    assert_admissible_probability(&config, price.lower_up().destroy_some());
+    assert_admissible_probability(&config, 1_000_000_000 - price.higher_up().destroy_some());
+    assert_admissible_probability(&config, price.probability());
+    // Extending the upper boundary to 140 pushes the combined probability above 95.6%.
+    assert!(price.probability() > 1_000_000_000 - 2 * SHIPPED_MIN_FEE);
+    destroy(config);
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        WIDE_LOWER_TICK,
+        TOO_WIDE_HIGHER_TICK,
+        test_constants::mint_quantity(),
+        std::u64::max_value!(),
+        std::u64::max_value!(),
+    );
+    abort 999
+}
 
 fun range(lower: u64, higher: u64): RangePrice {
     let mut fx = helpers::setup_market_default();

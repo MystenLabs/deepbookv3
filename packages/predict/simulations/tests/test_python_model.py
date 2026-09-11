@@ -77,5 +77,48 @@ class ScenarioParserTests(unittest.TestCase):
             replay.parse_scenario_text(text)
 
 
+class RangeFeeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        config = replay.load_scenario_config()
+        config["protocol"].update(base_fee="100000000", min_fee="22000000")
+        replay.apply_scenario_config(config)
+
+    def tearDown(self) -> None:
+        replay.apply_scenario_config(replay.load_scenario_config())
+
+    def test_finite_legs_and_sentinels_have_independent_fees(self) -> None:
+        # At p=1/2 the rate is 0.05; finite endpoints pay the 0.022 floor.
+        for prices, expected in [
+            ((500_000_000, None), 50_000_000),
+            ((None, 500_000_000), 50_000_000),
+            ((None, None), 0),
+            ((1_000_000_000, 0), 44_000_000),
+            ((500_000_000, 0), 72_000_000),
+        ]:
+            with self.subTest(prices=prices):
+                self.assertEqual(replay.range_trading_fee(prices, 1_000_000_000, None), expected)
+
+    def test_floor_amounts_round_before_summing_and_after_ramp(self) -> None:
+        # Each 0.022 * 75 floors to 1. At 1.5x, each 0.033 * 75 floors to 2.
+        self.assertEqual(replay.range_trading_fee((1_000_000_000, 0), 75, None), 2)
+        self.assertEqual(replay.range_trading_fee((1_000_000_000, 0), 75, replay.EXPIRY_FEE_WINDOW_MS // 2), 4)
+
+    def test_individual_legs_and_upper_below_must_be_eligible(self) -> None:
+        for prices in [(1_000_000_000, 500_000_000), (500_000_000, 0)]:
+            with self.subTest(prices=prices), self.assertRaisesRegex(ValueError, "entry probability"):
+                replay.assert_range_entry_bounds(prices)
+        replay.MAX_ENTRY_PROBABILITY = 600_000_000
+        with self.assertRaisesRegex(ValueError, "entry probability"):
+            replay.assert_range_entry_bounds((550_000_000, 200_000_000))
+
+    def test_finite_range_decodes_both_ticks_and_rejects_inverted_bounds(self) -> None:
+        row = {"strike": 100_000_000_000, "isUp": True, "higherStrike": 110_000_000_000}
+        self.assertEqual(replay.mint_range_ticks(row), (100, 110))
+        with self.assertRaisesRegex(ValueError, "requires is_up"):
+            replay.mint_range_ticks({**row, "isUp": False})
+        with self.assertRaisesRegex(ValueError, "must exceed"):
+            replay.mint_range_ticks({**row, "higherStrike": row["strike"]})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -113,10 +113,7 @@ Predict reads it but does not own it.
 
 ## Fees
 
-- **Trading fee** — the variance-based per-trade fee,
-  `max(base_fee × sqrt(p(1−p)), min_fee)` times an expiry ramp multiplier; a
-  transaction cost, never part of the contract's terms. See
-  [fees and rebates](./concepts/fees-and-rebates.md).
+- **Trading fee** — the sum of independently floored, expiry-ramped, and rounded fees for each finite boundary; a transaction cost, never part of the contract's terms. Infinite boundaries contribute zero. See [fees and rebates](./concepts/fees-and-rebates.md).
 - **Congestion surcharge** — a flat per-unit penalty added when the gas-price
   EWMA flags abnormal congestion. Code keeps DeepBook core's penalty
   vocabulary: the charged amount is `penalty_fee` (event field), the tunable
