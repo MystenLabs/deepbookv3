@@ -10,13 +10,15 @@ The Account registry administrator must authorize `SessionsApp` before any wrapp
 
 An Account owner opts in by calling `authorize_session` on the Account's shared `AccountWrapper`. Owner authorization is derived from the transaction sender, so this flow supports EOA-owned Accounts and does not authorize object-owned Accounts.
 
-A session grant contains only the session address and its expiration timestamp in milliseconds. Each Account may store at most 20 session addresses. The requested duration must be greater than zero and no more than 30 days. Expiration is calculated from the on-chain `Clock` at execution time, and reauthorizing the same address replaces its stored expiration without consuming another slot.
+A session grant contains the session address, its expiration timestamp in milliseconds, and the DeepBook pool IDs that session may trade. Each Account may store at most 20 session addresses, and each grant may list at most 20 pool IDs. Duplicate pool IDs abort. An empty pool list is valid and means the session cannot call any spot wrapper. The requested duration must be greater than zero and no more than 30 days. Expiration is calculated from the on-chain `Clock` at execution time, and reauthorizing the same address replaces its stored expiration and pool allowlist without consuming another slot.
 
 Every trading wrapper requires both of these conditions:
 
 - The executing Sessions package version is at or above the shared `SessionsConfig.version_watermark`.
 - The transaction sender has a stored session grant for the supplied Account.
 - The current clock timestamp is strictly less than the stored expiration.
+
+DeepBook spot wrappers also require the supplied pool's ID to be in that grant's allowlist.
 
 At the exact expiration timestamp, the session is no longer authorized.
 
@@ -28,11 +30,17 @@ public fun session_expiration_ms(
     session: address,
 ): Option<u64>
 
+public fun session_allowed_pools(
+    wrapper: &AccountWrapper,
+    session: address,
+): Option<vector<ID>>
+
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
     session: address,
     duration_ms: u64,
+    allowed_pools: vector<ID>,
     clock: &Clock,
     ctx: &mut TxContext,
 )
@@ -46,9 +54,11 @@ public fun revoke_session(
 
 `session_expiration_ms` returns the stored expiration for a known session and `none` for a session that was never authorized or has been revoked. It does not classify the timestamp as active or expired; callers that need that distinction must compare it with the current on-chain time.
 
-The shared `AccountWrapper` can be supplied as an object input in a programmable transaction block and borrowed immutably for `session_expiration_ms`. SDKs may also use the function through dev-inspect reads.
+`session_allowed_pools` returns the stored DeepBook pool allowlist for a known session and `none` for a session that was never authorized or has been revoked. An empty vector means the session cannot call spot wrappers.
 
-Revoking a known session removes it from the session map immediately, whether it is active or already expired, and frees its slot for another address. Once the Sessions app-data slot has been attached to an Account, it remains attached even when the session map becomes empty. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; they continue to count toward the 20-session limit until the owner revokes them, while reauthorization replaces the expiration in place.
+The shared `AccountWrapper` can be supplied as an object input in a programmable transaction block and borrowed immutably for the session getters. SDKs may also use the functions through dev-inspect reads.
+
+Revoking a known session removes it from the session map immediately, whether it is active or already expired, and frees its slot for another address. Once the Sessions app-data slot has been attached to an Account, it remains attached even when the session map becomes empty. Revoking an unknown session is a no-op. Expired entries are not removed automatically because time passing does not execute Move code; they continue to count toward the 20-session limit until the owner revokes them, while reauthorization replaces the expiration and pool allowlist in place.
 
 Session reads and revocation remain available after a package version is retired so owners can inspect and remove grants without using a trading-capable package version.
 
@@ -81,9 +91,9 @@ An active session may call these Account-backed DeepBook spot wrappers:
 - `cancel_live_orders`
 - `withdraw_settled_amounts`
 
-Each wrapper validates the package version and session against the supplied Account, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
+Each wrapper validates the package version and session against the supplied Account, checks that the supplied pool ID is in the grant allowlist, generates app authorization internally, and immediately passes it into the corresponding `deepbook_core_account` function. Order parameters remain caller-selected and are validated by the Account wrapper and DeepBook core. The permissionless settled-amount withdrawal is not duplicated here because it does not require session authority.
 
-The session can therefore submit adverse Predict and spot trades, cancel the Account's spot orders, and sweep settled spot proceeds back into Account custody until it expires or is revoked. A grant should be treated as trading authority, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed.
+A grant with an empty pool list can still submit adverse Predict trades. A grant with listed pools can submit adverse spot trades on those pools only, cancel the Account's orders there, and sweep settled proceeds from those pools. A grant should be treated as trading authority for Predict and for the listed pools, not read-only access. Revocation and expiration stop future wrapper calls but do not unwind positions, orders, or transactions that already executed.
 
 ## Events
 
@@ -94,6 +104,7 @@ public struct SessionAuthorized has copy, drop {
     account_id: ID,
     session: address,
     expires_at_ms: u64,
+    allowed_pools: vector<ID>,
 }
 ```
 

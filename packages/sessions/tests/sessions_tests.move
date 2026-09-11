@@ -72,6 +72,8 @@ const MAX_SESSION_EXPIRES_AT_MS: u64 = 2_592_001_000; // 1_000 + 30 days.
 const ABOVE_MAX_SESSION_DURATION_MS: u64 = 2_592_000_001;
 const ZERO_DURATION_MS: u64 = 0;
 const MAX_SESSIONS: u64 = 20;
+const MAX_ALLOWED_POOLS: u64 = 20;
+const ALLOWED_POOL_ADDRESS: address = @0xB0A;
 const FIRST_SESSION_INDEX: u64 = 0;
 const LAST_SESSION_INDEX: u64 = 19;
 const EXCESS_SESSION_INDEX: u64 = 20;
@@ -100,6 +102,7 @@ public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
     session: address,
     expires_at_ms: u64,
+    allowed_pools: vector<ID>,
 }
 
 public struct ExpectedSessionRevoked has copy, drop {
@@ -149,11 +152,13 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
     let account_id = wrapper.load_account().account_id();
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
+    assert!(sessions::session_allowed_pools(&wrapper, SESSION).is_none());
     sessions::authorize_session(
         &mut wrapper,
         &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -161,6 +166,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(SESSION_EXPIRES_AT_MS),
     );
+    assert_eq!(sessions::session_allowed_pools(&wrapper, SESSION), option::some(vector[]));
     let authorized = event::events_by_type<SessionAuthorized>();
     assert_eq!(authorized.length(), ONE_EVENT);
     assert_session_authorized_event(
@@ -168,6 +174,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         account_id,
         SESSION,
         SESSION_EXPIRES_AT_MS,
+        vector[],
     );
     return_shared(sessions_config);
     return_shared(wrapper);
@@ -176,11 +183,13 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     clock.set_for_testing(REAUTH_NOW_MS);
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    let reauth_pools = vector[object::id_from_address(ALLOWED_POOL_ADDRESS)];
     sessions::authorize_session(
         &mut wrapper,
         &sessions_config,
         SESSION,
         REAUTH_DURATION_MS,
+        reauth_pools,
         &clock,
         scenario.ctx(),
     );
@@ -188,6 +197,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         sessions::session_expiration_ms(&wrapper, SESSION),
         option::some(REAUTH_EXPIRES_AT_MS),
     );
+    assert_eq!(sessions::session_allowed_pools(&wrapper, SESSION), option::some(reauth_pools));
     let reauthorized = event::events_by_type<SessionAuthorized>();
     assert_eq!(reauthorized.length(), ONE_EVENT);
     assert_session_authorized_event(
@@ -195,6 +205,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
         account_id,
         SESSION,
         REAUTH_EXPIRES_AT_MS,
+        reauth_pools,
     );
     return_shared(sessions_config);
     return_shared(wrapper);
@@ -203,6 +214,7 @@ fun owner_authorizes_reauthorizes_and_revokes_session() {
     let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
     sessions::revoke_session(&mut wrapper, SESSION, scenario.ctx());
     assert!(sessions::session_expiration_ms(&wrapper, SESSION).is_none());
+    assert!(sessions::session_allowed_pools(&wrapper, SESSION).is_none());
     assert!(wrapper.load_account().has_data<SessionsApp>());
     let revoked = event::events_by_type<SessionRevoked>();
     assert_eq!(revoked.length(), ONE_EVENT);
@@ -237,6 +249,7 @@ fun maximum_session_duration_is_accepted() {
         &sessions_config,
         SESSION,
         MAX_SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -265,6 +278,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
             &sessions_config,
             session_addresses[index],
             SESSION_DURATION_MS,
+            vector[],
             &clock,
             scenario.ctx(),
         );
@@ -285,6 +299,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         &sessions_config,
         session_addresses[LAST_SESSION_INDEX],
         REAUTH_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -306,6 +321,7 @@ fun session_limit_allows_reauthorization_and_reuse_after_revocation() {
         &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -338,6 +354,7 @@ fun twenty_first_distinct_session_aborts() {
             &sessions_config,
             session_addresses[index],
             SESSION_DURATION_MS,
+            vector[],
             &clock,
             scenario.ctx(),
         );
@@ -353,6 +370,7 @@ fun twenty_first_distinct_session_aborts() {
         &sessions_config,
         session_addresses[EXCESS_SESSION_INDEX],
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -372,6 +390,7 @@ fun zero_session_duration_aborts() {
         &sessions_config,
         SESSION,
         ZERO_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -391,11 +410,77 @@ fun session_duration_above_maximum_aborts() {
         &sessions_config,
         SESSION,
         ABOVE_MAX_SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
 
     abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EDuplicateAllowedPool)]
+fun duplicate_allowed_pool_aborts() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    let pool_id = object::id_from_address(ALLOWED_POOL_ADDRESS);
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        SESSION_DURATION_MS,
+        vector[pool_id, pool_id],
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = sessions::EAllowedPoolLimitExceeded)]
+fun twenty_first_allowed_pool_aborts() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        SESSION_DURATION_MS,
+        dummy_pool_ids(MAX_ALLOWED_POOLS + 1),
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun maximum_allowed_pools_are_accepted() {
+    let (mut scenario, clock, wrapper_id, sessions_config_id) = setup_account();
+    scenario.next_tx(ALICE);
+    let mut wrapper = scenario.take_shared_by_id<AccountWrapper>(wrapper_id);
+    let sessions_config = scenario.take_shared_by_id<SessionsConfig>(sessions_config_id);
+    let allowed_pools = dummy_pool_ids(MAX_ALLOWED_POOLS);
+
+    sessions::authorize_session(
+        &mut wrapper,
+        &sessions_config,
+        SESSION,
+        SESSION_DURATION_MS,
+        allowed_pools,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(sessions::session_allowed_pools(&wrapper, SESSION), option::some(allowed_pools));
+    return_shared(sessions_config);
+    return_shared(wrapper);
+    clock.destroy_for_testing();
+    scenario.end();
 }
 
 #[test, expected_failure(abort_code = account::EInvalidOwner)]
@@ -410,6 +495,7 @@ fun non_owner_cannot_authorize_session() {
         &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -428,6 +514,7 @@ fun non_owner_cannot_revoke_session() {
         &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -454,6 +541,7 @@ fun retired_package_version_cannot_authorize_session() {
         &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -472,6 +560,7 @@ fun retired_package_version_keeps_reads_and_revocation_available() {
         &sessions_config,
         SESSION,
         SESSION_DURATION_MS,
+        vector[],
         &clock,
         scenario.ctx(),
     );
@@ -1062,6 +1151,39 @@ fun session_addresses(): vector<address> {
     ]
 }
 
+fun dummy_pool_ids(count: u64): vector<ID> {
+    let all = vector[
+        object::id_from_address(@0x1),
+        object::id_from_address(@0x2),
+        object::id_from_address(@0x3),
+        object::id_from_address(@0x4),
+        object::id_from_address(@0x5),
+        object::id_from_address(@0x6),
+        object::id_from_address(@0x7),
+        object::id_from_address(@0x8),
+        object::id_from_address(@0x9),
+        object::id_from_address(@0xA),
+        object::id_from_address(@0xB),
+        object::id_from_address(@0xC),
+        object::id_from_address(@0xD),
+        object::id_from_address(@0xE),
+        object::id_from_address(@0xF),
+        object::id_from_address(@0x10),
+        object::id_from_address(@0x11),
+        object::id_from_address(@0x12),
+        object::id_from_address(@0x13),
+        object::id_from_address(@0x14),
+        object::id_from_address(@0x15),
+    ];
+    let mut ids = vector[];
+    let mut index = 0;
+    while (index < count) {
+        ids.push_back(all[index]);
+        index = index + 1;
+    };
+    ids
+}
+
 fun setup_account(): (Scenario, Clock, ID, ID) {
     let mut scenario = test::begin(ADMIN);
     account_registry::init_for_testing(scenario.ctx());
@@ -1086,8 +1208,9 @@ fun assert_session_authorized_event(
     account_id: ID,
     session: address,
     expires_at_ms: u64,
+    allowed_pools: vector<ID>,
 ) {
-    let expected = ExpectedSessionAuthorized { account_id, session, expires_at_ms };
+    let expected = ExpectedSessionAuthorized { account_id, session, expires_at_ms, allowed_pools };
     assert_eq!(bcs::to_bytes(actual), bcs::to_bytes(&expected));
 }
 
@@ -1157,6 +1280,7 @@ fun authorize_flow_session(fixture: &mut SessionFlowFixture, duration_ms: u64) {
         &sessions_config,
         SESSION,
         duration_ms,
+        vector[],
         clock,
         scenario.ctx(),
     );

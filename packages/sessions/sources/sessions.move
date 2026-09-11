@@ -4,6 +4,7 @@
 /// Owns time-limited trading session grants attached to canonical Accounts.
 /// Account owners grant and revoke sessions; an active session can only generate
 /// app auth inside the Predict and DeepBook spot wrappers exposed here.
+/// Spot wrappers additionally require the pool ID to be in the grant allowlist.
 module deepbook_sessions::sessions;
 
 use account::{account::{Self, AccountWrapper, Auth}, account_registry::AccountRegistry};
@@ -23,6 +24,9 @@ use sui::{accumulator::AccumulatorRoot, clock::Clock, event, vec_map::{Self, Vec
 const EInvalidSessionDuration: u64 = 0;
 const ESessionNotAuthorized: u64 = 1;
 const ESessionLimitExceeded: u64 = 2;
+const EPoolNotAllowed: u64 = 3;
+const EAllowedPoolLimitExceeded: u64 = 4;
+const EDuplicateAllowedPool: u64 = 5;
 
 // === Constants ===
 
@@ -30,14 +34,23 @@ macro fun max_session_duration_ms(): u64 { 30 * 24 * 60 * 60 * 1000 }
 
 macro fun max_sessions(): u64 { 20 }
 
+macro fun max_allowed_pools(): u64 { 20 }
+
 // === Structs ===
 
 /// App witness for Account registry authorization and per-account data namespacing.
 public struct SessionsApp has drop {}
 
-/// Session expiration timestamps keyed by transaction signer address.
+/// Per-session grant. `allowed_pools` is the DeepBook spot allowlist; empty
+/// forbids every spot wrapper.
+public struct SessionGrant has copy, drop, store {
+    expires_at_ms: u64,
+    allowed_pools: vector<ID>,
+}
+
+/// Session grants keyed by transaction signer address.
 public struct SessionsData has store {
-    sessions: VecMap<address, u64>,
+    sessions: VecMap<address, SessionGrant>,
 }
 
 /// A session was authorized or reauthorized through `expires_at_ms`.
@@ -45,6 +58,7 @@ public struct SessionAuthorized has copy, drop {
     account_id: ID,
     session: address,
     expires_at_ms: u64,
+    allowed_pools: vector<ID>,
 }
 
 /// An existing session grant was removed before or after its expiration.
@@ -58,24 +72,34 @@ public struct SessionRevoked has copy, drop {
 
 /// Return a known session's expiration timestamp for SDK and devInspect reads.
 public fun session_expiration_ms(wrapper: &AccountWrapper, session: address): Option<u64> {
-    let account = wrapper.load_account();
-    if (!account.has_data<SessionsApp>()) return option::none();
-    let data = account.borrow_data<SessionsApp, SessionsData>();
-    data.sessions.try_get(&session)
+    let grant = session_grant(wrapper, session);
+    if (grant.is_none()) return option::none();
+    option::some(grant.destroy_some().expires_at_ms)
+}
+
+/// Return a known session's allowed DeepBook pool IDs for SDK and devInspect reads.
+/// `none` means the session is unknown; `some` of empty means no spot wrappers.
+public fun session_allowed_pools(wrapper: &AccountWrapper, session: address): Option<vector<ID>> {
+    let grant = session_grant(wrapper, session);
+    if (grant.is_none()) return option::none();
+    option::some(grant.destroy_some().allowed_pools)
 }
 
 /// Authorize `session` from execution time for at most 30 days.
 /// Accounts may store at most 20 addresses; reauthorization replaces in place.
+/// `allowed_pools` is the DeepBook spot allowlist; empty forbids every spot wrapper.
 public fun authorize_session(
     wrapper: &mut AccountWrapper,
     sessions_config: &SessionsConfig,
     session: address,
     duration_ms: u64,
+    allowed_pools: vector<ID>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     sessions_config.assert_version();
     assert!(duration_ms > 0 && duration_ms <= max_session_duration_ms!(), EInvalidSessionDuration);
+    let allowed_pools = validated_allowed_pools(allowed_pools);
     let expires_at_ms = clock.timestamp_ms() + duration_ms;
     let account = wrapper.load_account_mut(account::generate_auth(ctx));
     let account_id = account.account_id();
@@ -83,13 +107,19 @@ public fun authorize_session(
         account.attach(permit<SessionsApp>(), SessionsData { sessions: vec_map::empty() });
     };
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
+    let grant = SessionGrant { expires_at_ms, allowed_pools };
     if (data.sessions.contains(&session)) {
-        *data.sessions.get_mut(&session) = expires_at_ms;
+        *data.sessions.get_mut(&session) = grant;
     } else {
         assert!(data.sessions.length() < max_sessions!(), ESessionLimitExceeded);
-        data.sessions.insert(session, expires_at_ms);
+        data.sessions.insert(session, grant);
     };
-    event::emit(SessionAuthorized { account_id, session, expires_at_ms });
+    event::emit(SessionAuthorized {
+        account_id,
+        session,
+        expires_at_ms,
+        allowed_pools,
+    });
 }
 
 /// Revoke `session` if it is present. Only the Account owner may call this function.
@@ -99,8 +129,12 @@ public fun revoke_session(wrapper: &mut AccountWrapper, session: address, ctx: &
     let account_id = account.account_id();
     let data = account.borrow_data_mut<SessionsApp, SessionsData>(permit<SessionsApp>());
     if (!data.sessions.contains(&session)) return;
-    let (_, expires_at_ms) = data.sessions.remove(&session);
-    event::emit(SessionRevoked { account_id, session, expires_at_ms });
+    let (_, grant) = data.sessions.remove(&session);
+    event::emit(SessionRevoked {
+        account_id,
+        session,
+        expires_at_ms: grant.expires_at_ms,
+    });
 }
 
 /// Place a DeepBook spot limit order for an Account with an active session.
@@ -122,7 +156,14 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_spot_session(
+        sessions_config,
+        account_registry,
+        wrapper,
+        pool,
+        clock,
+        ctx,
+    );
     deepbook_core_account::place_limit_order(
         pool,
         deepbook_registry,
@@ -159,7 +200,14 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): OrderInfo {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_spot_session(
+        sessions_config,
+        account_registry,
+        wrapper,
+        pool,
+        clock,
+        ctx,
+    );
     deepbook_core_account::place_market_order(
         pool,
         deepbook_registry,
@@ -187,7 +235,14 @@ public fun cancel_live_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_spot_session(
+        sessions_config,
+        account_registry,
+        wrapper,
+        pool,
+        clock,
+        ctx,
+    );
     deepbook_core_account::cancel_live_order(pool, wrapper, auth, order_id, clock, ctx);
 }
 
@@ -201,7 +256,14 @@ public fun cancel_live_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_spot_session(
+        sessions_config,
+        account_registry,
+        wrapper,
+        pool,
+        clock,
+        ctx,
+    );
     deepbook_core_account::cancel_live_orders(pool, wrapper, auth, order_ids, clock, ctx);
 }
 
@@ -214,7 +276,14 @@ public fun withdraw_settled_amounts<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let auth = generate_auth_as_session(sessions_config, account_registry, wrapper, clock, ctx);
+    let auth = generate_auth_as_spot_session(
+        sessions_config,
+        account_registry,
+        wrapper,
+        pool,
+        clock,
+        ctx,
+    );
     deepbook_core_account::withdraw_settled_amounts(pool, wrapper, auth, ctx);
 }
 
@@ -344,6 +413,37 @@ public fun redeem_settled(
 
 // === Private Functions ===
 
+fun session_grant(wrapper: &AccountWrapper, session: address): Option<SessionGrant> {
+    let account = wrapper.load_account();
+    if (!account.has_data<SessionsApp>()) return option::none();
+    let data = account.borrow_data<SessionsApp, SessionsData>();
+    data.sessions.try_get(&session)
+}
+
+fun validated_allowed_pools(allowed_pools: vector<ID>): vector<ID> {
+    assert!(allowed_pools.length() <= max_allowed_pools!(), EAllowedPoolLimitExceeded);
+    let mut unique = vector[];
+    allowed_pools.do!(|pool_id| {
+        assert!(!unique.contains(&pool_id), EDuplicateAllowedPool);
+        unique.push_back(pool_id);
+    });
+    unique
+}
+
+fun active_grant(
+    sessions_config: &SessionsConfig,
+    wrapper: &AccountWrapper,
+    clock: &Clock,
+    ctx: &TxContext,
+): SessionGrant {
+    sessions_config.assert_version();
+    let grant = session_grant(wrapper, ctx.sender());
+    assert!(grant.is_some(), ESessionNotAuthorized);
+    let grant = grant.destroy_some();
+    assert!(clock.timestamp_ms() < grant.expires_at_ms, ESessionNotAuthorized);
+    grant
+}
+
 fun generate_auth_as_session(
     sessions_config: &SessionsConfig,
     account_registry: &AccountRegistry,
@@ -351,9 +451,19 @@ fun generate_auth_as_session(
     clock: &Clock,
     ctx: &TxContext,
 ): Auth {
-    sessions_config.assert_version();
-    let expiration = session_expiration_ms(wrapper, ctx.sender());
-    assert!(expiration.is_some(), ESessionNotAuthorized);
-    assert!(clock.timestamp_ms() < *expiration.borrow(), ESessionNotAuthorized);
+    let _grant = active_grant(sessions_config, wrapper, clock, ctx);
+    account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
+}
+
+fun generate_auth_as_spot_session<BaseAsset, QuoteAsset>(
+    sessions_config: &SessionsConfig,
+    account_registry: &AccountRegistry,
+    wrapper: &AccountWrapper,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+    ctx: &TxContext,
+): Auth {
+    let grant = active_grant(sessions_config, wrapper, clock, ctx);
+    assert!(grant.allowed_pools.contains(&object::id(pool)), EPoolNotAllowed);
     account_registry.generate_auth_as_app<SessionsApp>(permit<SessionsApp>())
 }
