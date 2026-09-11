@@ -1883,7 +1883,7 @@ async fn margin_supply(
 async fn get_net_deposits(
     Path((asset_ids, timestamp)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<HashMap<String, i64>>, DeepBookError> {
+) -> Result<Json<HashMap<String, String>>, DeepBookError> {
     let timestamp_ms = timestamp
         .parse::<i64>()
         .map_err(|_| DeepBookError::bad_request("Invalid timestamp"))?
