@@ -128,6 +128,9 @@ const EBlockScholesMinVarianceInvalid: u64 = 14;
 /// write is prohibited (Pyth is checked only on the re-anchor branch).
 const EOracleWrittenInThisTransaction: u64 = 15;
 const EBlockScholesInputTooWide: u64 = 16;
+/// The Block Scholes spot and forward reads carry different source timestamps, so their ratio
+/// would fold the spot move between the two provider ticks into the basis.
+const EBlockScholesSpotForwardUnpaired: u64 = 17;
 
 /// Predict's private pricing envelope for raw propbook BS inputs. These are not
 /// oracle-source validity rules; they only bound the forward/basis and SVI inputs
@@ -446,6 +449,14 @@ fun resolve_live_pricer(
             clock,
         ),
         EBlockScholesPriceStale,
+    );
+    // Both legs of the `bs_forward / bs_spot` basis must come from the same provider tick. The
+    // writer lands spot and forwards in separate transactions, so a spot that has advanced past
+    // the forward (or the reverse) is rejected here instead of pricing a basis that carries the
+    // spot move between the two ticks.
+    assert!(
+        block_scholes_forward_source_timestamp_ms == block_scholes_spot_source_timestamp_ms,
+        EBlockScholesSpotForwardUnpaired,
     );
     let bs_forward = narrow_price(bs_forward_read.read_value());
 
