@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import csv
 import json
 from functools import lru_cache
@@ -420,7 +421,12 @@ def mint_range_ticks(row: dict[str, Any]) -> tuple[int, int]:
     if row.get("higherStrike") is not None:
         if not row["isUp"]:
             raise ValueError("higher_strike requires is_up=true")
-        higher, _ = binary_range_ticks(align_strike_to_tick(row["higherStrike"]), True)
+        higher_strike = row["higherStrike"]
+        if higher_strike % ORACLE_TICK_SIZE != 0:
+            raise ValueError("higher_strike must be a whole tick multiple")
+        higher = higher_strike // ORACLE_TICK_SIZE
+        if higher >= POS_INF_TICK:
+            raise ValueError("higher_strike must be finite")
         if lower >= higher:
             raise ValueError("higher_strike must exceed strike")
     return lower, higher
@@ -1423,13 +1429,17 @@ def mint_order(
     fee = range_trading_fee(prices, quantity, model_fee_time_to_expiry_ms(model, timestamp_ms))
     lower_tick, higher_tick = mint_range_ticks(row)
     before = live_payout_liability(model)
-    model["tree"].insert_range(lower_tick, higher_tick, quantity)
-    after = live_payout_liability(model)
+    quoted_model = {**model, "tree": deepcopy(model["tree"])}
+    quoted_model["tree"].insert_range(lower_tick, higher_tick, quantity)
+    after = live_payout_liability(quoted_model)
     impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
     total_cost = premium + fee + impact_charge
+    if total_cost > quantity:
+        raise ValueError("mint cost above maximum payout")
     if total_cost > state["account_usdc_balance"]:
         raise ValueError("insufficient account balance for mint")
 
+    model["tree"] = quoted_model["tree"]
     sequence = model["next_order_sequence"]
     model["next_order_sequence"] += 1
     model["orders"][row["orderRef"]] = {

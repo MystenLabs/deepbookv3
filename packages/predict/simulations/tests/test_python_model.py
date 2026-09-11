@@ -118,6 +118,34 @@ class RangeFeeTests(unittest.TestCase):
             replay.mint_range_ticks({**row, "isUp": False})
         with self.assertRaisesRegex(ValueError, "must exceed"):
             replay.mint_range_ticks({**row, "higherStrike": row["strike"]})
+        with self.assertRaisesRegex(ValueError, "whole tick"):
+            replay.mint_range_ticks({**row, "higherStrike": row["higherStrike"] + 1})
+        with self.assertRaisesRegex(ValueError, "must be finite"):
+            replay.mint_range_ticks({**row, "higherStrike": replay.POS_INF_TICK * replay.ORACLE_TICK_SIZE})
+
+    def test_eligible_range_above_maximum_payout_does_not_mutate_model(self) -> None:
+        replay.INVENTORY_IMPACT_MAX_RATE = 0
+        model = replay.initial_model(200_000_000)
+        state = replay.initial_state()
+        before = dict(state)
+        model["last_oracle"] = {
+            "spot": 90_000_000_000, "forward": 90_000_000_000,
+            "a": 40_000_000, "aNegative": False, "b": 0,
+            "rho": 0, "rhoNegative": False, "m": 0, "mNegative": False,
+            "sigma": 100_000_000, "riskFreeRate": 0,
+            "expiryMs": 200_000_000, "pricingTimestampMs": 120_000,
+            "sviSourceTimestampMs": 120_000,
+        }
+        row = {"strike": 60_000_000_000, "higherStrike": 140_000_000_000,
+               "isUp": True, "quantity": 1_000_000_000, "orderRef": "wide"}
+        # Flat variance 0.04 gives ~96.26% range probability; two 2.2% floors
+        # exceed the remaining payout even though both legs pass admission.
+        with self.assertRaisesRegex(ValueError, "mint cost above maximum payout"):
+            replay.mint_order(model, state, row, 120_000)
+        self.assertEqual(state, before)
+        self.assertEqual(model["orders"], {})
+        self.assertEqual(model["next_order_sequence"], 0)
+        self.assertEqual(model["tree"].payout_reserve_terms(), (0, 0))
 
 
 if __name__ == "__main__":
