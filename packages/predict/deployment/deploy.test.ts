@@ -19,10 +19,12 @@ import {
     CADENCES,
     configureDeployment,
     assertGasFunding,
+    assertFunding,
+    assertStateFile,
     availableGasBalance,
     parseTargetArgs,
     MAINNET_USDC,
-    verifyNativeUsdc,
+    verifyExistingUsdc,
     lockedCapitalTransaction,
     ensureLockedCapital,
     validateLockedCapitalReceipt,
@@ -43,12 +45,15 @@ import {
     assertCapsIssuanceReady,
     capIssuanceTransaction,
     issueOperationalCaps,
+    operationalCapOwner,
+    assertOperationalCapAllowlists,
     executeDeployment,
     ensureMarkets,
     assertPackagePlan,
     assertRecoverableInFlight,
     assertSourceBinding,
     assertSuiCliVersion,
+    assertPythStateVersion,
     buildIntegrationManifest,
     checkpointRecoveredTransaction,
     createDeploymentState,
@@ -76,6 +81,16 @@ import {
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
 configureDeployment("testnet", id("a"));
+
+test("Pyth State must accept the selected network package version", () => {
+    assertPythStateVersion({ upgrade_cap: { version: "1" } }, "1");
+    assertPythStateVersion({ upgrade_cap: { version: "2" } }, "2");
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: { version: "2" } }, "1"), /version/);
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: { version: "1" } }, "2"), /version/);
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: {} }, "1"), /version/);
+    assert.throws(() => assertPythStateVersion({}, "1"));
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: { version: "0" } }, "0"), /version/);
+});
 
 test("vendored Pyth sources match the pinned upstream inventory and hashes", () => {
     const root = new URL("../../../vendor/pyth_lazer/", import.meta.url);
@@ -139,8 +154,8 @@ test("Mainnet Pyth differs from its pinned source only by declared publication i
     }
 });
 
-test("Mainnet DEEP reconstruction preserves its source provenance and Testnet source", () => {
-    const root = new URL("../../../vendor/deep_mainnet/", import.meta.url);
+test("DEEP reconstruction preserves its provenance and the development token source", () => {
+    const root = new URL("../../../vendor/deep/", import.meta.url);
     const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
     assert.equal(provenance.kind, "bytecode-backed-reconstruction");
     assert.equal(
@@ -160,7 +175,21 @@ test("Mainnet DEEP reconstruction preserves its source provenance and Testnet so
     assert.deepEqual(readdirSync(new URL("sources/", root)), ["deep.move"]);
     const publication = readFileSync(new URL("Published.toml", root), "utf8");
     assert.match(publication, /\[published.mainnet\]/);
-    assert.doesNotMatch(publication, /\[published.testnet\]/);
+    assert.match(publication, /\[published.testnet\]/);
+    assert.equal(
+        provenance.publications.mainnet.originalId,
+        "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270",
+    );
+    assert.equal(
+        provenance.publications.testnet.originalId,
+        "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
+    );
+    for (const network of ["mainnet", "testnet"]) {
+        const record = provenance.publications[network];
+        assert.equal(record.publishedAt, record.originalId);
+        assert.equal(record.version, 1);
+        assert.equal(record.modules.deep.bytes, 1308);
+    }
 });
 
 test("fresh publication staging preserves the vendored dependency outside packages", () => {
@@ -190,11 +219,11 @@ test("fresh publication staging preserves the vendored dependency outside packag
             readFileSync(join(mainnetPyth, "Published.toml"), "utf8"),
             /\[published.mainnet\]/,
         );
-        const deep = join(stagedRoot, "vendor", "deep_mainnet");
+        const deep = join(stagedRoot, "vendor", "deep");
         assert.equal(
             readFileSync(join(deep, "sources", "deep.move"), "utf8"),
             readFileSync(
-                new URL("../../../vendor/deep_mainnet/sources/deep.move", import.meta.url),
+                new URL("../../../vendor/deep/sources/deep.move", import.meta.url),
                 "utf8",
             ),
         );
@@ -1220,7 +1249,7 @@ test("cap issuance requires an explicit recipient and is non-broadcasting by def
     assert.throws(() => assertCapsIssuanceReady(state, id("a")), /change recipient/);
 });
 
-test("cap issuance mints and party-transfers both capabilities atomically and recovers the receipt", async () => {
+test("cap handoff transfers the setup pair without minting and recovers the receipt", async () => {
     const state = completeStateFixture();
     state.packages.predict = id("4");
     state.sharedObjects.predict = {
@@ -1228,20 +1257,21 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
         "protocol_config::ProtocolConfig": id("6"),
     };
     state.ownedCaps.predict = { "admin::AdminCap": id("7") };
+    state.wiring.lifecycleCap.id = id("b");
+    state.wiring.valuationCap.id = id("c");
     const recipient = id("a");
     const tx = capIssuanceTransaction(state, recipient);
     assert.deepEqual(
         tx.getData().commands.map((command) => command.MoveCall?.function),
-        [
-            "mint_lifecycle_cap",
-            "mint_pool_valuation_cap",
-            "single_owner",
-            "public_party_transfer",
-            "single_owner",
-            "public_party_transfer",
-        ],
+        ["single_owner", "public_party_transfer", "single_owner", "public_party_transfer"],
     );
     const inputs = tx.getData().inputs;
+    assert.deepEqual(
+        inputs
+            .filter((input) => input.UnresolvedObject)
+            .map((input) => input.UnresolvedObject!.objectId),
+        [id("b"), id("c")],
+    );
     const parties = tx
         .getData()
         .commands.filter((command) => command.MoveCall?.function === "single_owner");
@@ -1259,7 +1289,11 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
     let broadcasts = 0;
     let failOwnerRead = true;
     const owners: string[] = [];
+    let allowlistReads = 0;
     const ops: NonNullable<Parameters<typeof issueOperationalCaps>[2]> = {
+        verifyOperationalCapAllowlists: async () => {
+            allowlistReads++;
+        },
         executeTransaction: async (_runtime, label) => {
             if (!state.transactions[label]) {
                 broadcasts++;
@@ -1267,18 +1301,7 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
             }
             return {
                 digest: "issued",
-                objectChanges: [
-                    {
-                        type: "created",
-                        objectType: `${id("4")}::market_lifecycle_cap::MarketLifecycleCap`,
-                        objectId: id("b"),
-                    },
-                    {
-                        type: "created",
-                        objectType: `${id("4")}::pool_valuation_cap::PoolValuationCap`,
-                        objectId: id("c"),
-                    },
-                ],
+                objectChanges: [],
             };
         },
         objectEvidence: async (_runtime, object, _type, owner) => {
@@ -1287,12 +1310,13 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
                 throw new Error("owner read unavailable");
             }
             owners.push(owner!);
-            return objectEvidence(object);
+            return { ...objectEvidence(object), owner: owner! };
         },
         writeState() {},
     };
     await assert.rejects(issueOperationalCaps(runtime, recipient, ops), /owner read/);
     assert.deepEqual(state.issuedCaps, {});
+    await assert.rejects(issueOperationalCaps(runtime, id("d"), ops), /change recipient/);
     const issued = await issueOperationalCaps(runtime, recipient, ops);
     assert.equal(broadcasts, 1);
     assert.deepEqual(issued, {
@@ -1302,7 +1326,50 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
         transaction: "issued",
     });
     assert.deepEqual(owners, [`party:${recipient}`, `party:${recipient}`]);
+    await issueOperationalCaps(runtime, recipient, ops);
+    assert.equal(broadcasts, 1);
+    assert.equal(allowlistReads, 5);
+    assert.equal(operationalCapOwner(state), `party:${recipient}`);
+    assert.equal(state.wiring.lifecycleCap.owner, "keeper");
+    assert.equal(state.wiring.valuationCap.owner, "keeper");
+    assert.equal(state.verification!.lifecycleCap.owner, `party:${recipient}`);
+    assert.equal(state.verification!.valuationCap.owner, `party:${recipient}`);
     assert.equal(state.status, "complete");
+});
+
+test("cap handoff rejects missing setup caps, additional pairs and legacy duplicate issuance", () => {
+    const state = completeStateFixture();
+    assert.throws(() => capIssuanceTransaction(state, id("a")), /setup lifecycle cap/);
+    state.wiring.lifecycleCap.id = id("b");
+    state.wiring.valuationCap.id = id("c");
+    const fields = {
+        allowed_lifecycle_caps: { contents: [id("b")] },
+        allowed_pool_valuation_caps: { contents: [id("c")] },
+    };
+    assertOperationalCapAllowlists(state, fields);
+    for (const field of Object.keys(fields)) {
+        for (const contents of [[], [id("d")], [id("b"), id("c")]]) {
+            assert.throws(
+                () => assertOperationalCapAllowlists(state, { ...fields, [field]: { contents } }),
+                /only the original/,
+            );
+        }
+    }
+    state.transactions[`issue_operational_caps_${id("a")}`] = "handoff";
+    state.issuedCaps[id("a")] = {
+        lifecycleCap: id("d"),
+        poolValuationCap: id("e"),
+        transaction: "handoff",
+    };
+    assert.throws(() => assertCapsIssuanceReady(state, id("a")), /original setup pair/);
+    state.issuedCaps[id("a")] = {
+        lifecycleCap: id("b"),
+        poolValuationCap: id("c"),
+        transaction: "handoff",
+    };
+    assert.throws(() => assertCapsIssuanceReady(state, id("f")), /change recipient/);
+    state.issuedCaps[id("f")] = state.issuedCaps[id("a")];
+    assert.throws(() => operationalCapOwner(state), /only one/);
 });
 
 test("Block Scholes store-pair inspection decodes both IDs and the base asset", () => {
@@ -1755,39 +1822,170 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
 });
 
 test("native USDC verification accepts its registered Currency and rejects wrong type, custody, or metadata", async () => {
-    const objectId = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
-    const type = `0x${"0".repeat(63)}2::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`;
-    const object = {
-        objectId,
-        type,
-        version: "877862839",
-        digest: "recorded-currency-digest",
-        owner: { $kind: "Shared", Shared: { initialSharedVersion: "648066630" } },
-        json: { decimals: 6, symbol: "USDC" },
-    };
-    const runtime = (value: unknown) =>
-        ({
-            client: {
-                getObject: async (request: { objectId: string }) => {
-                    assert.equal(request.objectId, objectId);
-                    return { object: value };
+    configureDeployment("mainnet", id("a"));
+    try {
+        const objectId = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
+        const type = `0x${"0".repeat(63)}2::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`;
+        const object = {
+            objectId,
+            type,
+            version: "877862839",
+            digest: "recorded-currency-digest",
+            owner: { $kind: "Shared", Shared: { initialSharedVersion: "648066630" } },
+            json: { decimals: 6, symbol: "USDC" },
+        };
+        const runtime = (value: unknown) =>
+            ({
+                client: {
+                    getObject: async (request: { objectId: string }) => {
+                        assert.equal(request.objectId, objectId);
+                        return { object: value };
+                    },
                 },
-            },
-        }) as unknown as Parameters<typeof verifyNativeUsdc>[0];
-    const evidence = await verifyNativeUsdc(runtime(object));
-    assert.equal(evidence.objectId, objectId);
-    assert.equal(evidence.type, type);
-    assert.equal(evidence.owner, "shared");
+            }) as unknown as Parameters<typeof verifyExistingUsdc>[0];
+        const evidence = await verifyExistingUsdc(runtime(object));
+        assert.equal(evidence.objectId, objectId);
+        assert.equal(evidence.type, type);
+        assert.equal(evidence.owner, "shared");
+        for (const invalid of [
+            { ...object, type: type.replace("coin_registry::Currency", "coin::CoinMetadata") },
+            { ...object, type: type.replace(MAINNET_USDC, id("a")) },
+            { ...object, type: type.replace(`0x${"0".repeat(63)}2::`, `${id("b")}::`) },
+            { ...object, owner: { $kind: "Immutable", Immutable: true } },
+            { ...object, owner: { $kind: "AddressOwner", AddressOwner: id("a") } },
+            { ...object, json: { decimals: 9, symbol: "USDC" } },
+            { ...object, json: { decimals: 6, symbol: "DUSDC" } },
+        ]) {
+            await assert.rejects(verifyExistingUsdc(runtime(invalid)));
+        }
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("Testnet USDC reuse requires explicit identities and binds the journal", () => {
+    const args = ["--network", "testnet", "--deployer", id("a")];
+    const reused = { packageId: id("2"), currencyId: id("d") };
+    assert.deepEqual(
+        parseTargetArgs([
+            ...args,
+            "--existing-usdc-package",
+            reused.packageId,
+            "--existing-usdc-currency",
+            reused.currencyId,
+        ]).reusedUsdc,
+        reused,
+    );
     for (const invalid of [
-        { ...object, type: type.replace("coin_registry::Currency", "coin::CoinMetadata") },
-        { ...object, type: type.replace(MAINNET_USDC, id("a")) },
-        { ...object, type: type.replace(`0x${"0".repeat(63)}2::`, `${id("b")}::`) },
-        { ...object, owner: { $kind: "Immutable", Immutable: true } },
-        { ...object, owner: { $kind: "AddressOwner", AddressOwner: id("a") } },
-        { ...object, json: { decimals: 9, symbol: "USDC" } },
-        { ...object, json: { decimals: 6, symbol: "DUSDC" } },
-    ]) {
-        await assert.rejects(verifyNativeUsdc(runtime(invalid)));
+        [...args, "--existing-usdc-package", id("2")],
+        [...args, "--existing-usdc-currency", id("d")],
+        [...args, "--existing-usdc-package", id("0"), "--existing-usdc-currency", id("d")],
+        [
+            "--network",
+            "mainnet",
+            "--deployer",
+            id("a"),
+            "--existing-usdc-package",
+            id("2"),
+            "--existing-usdc-currency",
+            id("d"),
+        ],
+    ])
+        assert.throws(() => parseTargetArgs(invalid));
+    try {
+        configureDeployment("testnet", id("a"), reused);
+        const state = createDeploymentState();
+        assertStateFile(state);
+        assert.deepEqual(state.reusedTestnetUsdc, reused);
+        assert.equal(state.wiring.currencies.usdc.mintedAmount, "0");
+        assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
+        assert.equal(state.wiring.bootstrap.supplyAmount, "250000000000");
+        assert.equal(irreversibleDeploymentSteps().length, 23);
+        assert.ok(!irreversibleDeploymentSteps().includes("publish_usdc"));
+        assert.ok(!plannedTransactionSteps().includes("mint_deployer_usdc"));
+        assert.ok(!plannedTransactionSteps().includes("finalize_usdc_currency_registration"));
+        assert.ok(plannedTransactionSteps().includes("create_deployer_account"));
+        configureDeployment("testnet", id("a"), { ...reused, currencyId: id("c") });
+        assert.throws(() => assertStateFile(state), /binding changed/);
+        configureDeployment("testnet", id("a"));
+        assert.throws(() => assertStateFile(state), /binding changed/);
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("reused Testnet USDC funding is checked before any publication", async () => {
+    try {
+        configureDeployment("testnet", id("a"), { packageId: id("2"), currencyId: id("d") });
+        const runtime = testRuntime();
+        let balance = "250009999999";
+        runtime.client = {
+            getBalance: async (request: { coinType: string }) => {
+                assert.equal(request.coinType, `${id("2")}::usdc::USDC`);
+                return { balance: { balance } };
+            },
+        } as unknown as typeof runtime.client;
+        await assert.rejects(assertFunding(runtime), /insufficient deployer USDC/);
+        balance = "250010000000";
+        await assertFunding(runtime);
+        assert.deepEqual(runtime.result.publishTx, {});
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("reused USDC orchestration resumes without minting or republication and records the existing currency", async () => {
+    try {
+        configureDeployment("testnet", id("a"), { packageId: id("2"), currencyId: id("d") });
+        for (const boundary of [
+            "publish_fixed_math",
+            "publish_account",
+            "publish_propbook",
+            "publish_predict",
+            "publish_deepbook_core_account",
+            "publish_sessions",
+            "authorize_apps",
+            "lifecycle_cap",
+            "valuation_cap",
+            "wire_empty_oracle_objects",
+            "underlying",
+            "cadences",
+            "account",
+            "capitalization",
+            "markets",
+        ]) {
+            const fixture = orchestrationFixture(boundary);
+            fixture.ops.ensureDeployerUsdcMint = async () => {
+                throw new Error("must not mint");
+            };
+            const audit = fixture.ops.verifyDeployment;
+            fixture.ops.verifyDeployment = async () => {
+                const verified = await audit(fixture.runtime);
+                verified.linkedPackages.usdc = { ...verified.packages.usdc!, objectId: id("2") };
+                delete verified.packages.usdc;
+                verified.currencies.usdc.objectId = id("d");
+                return verified;
+            };
+            await assert.rejects(
+                executeDeployment(fixture.runtime, testBindings, fixture.ops),
+                /interrupted/,
+            );
+            assert.equal(fixture.manifests.length, 0);
+            await executeDeployment(fixture.runtime, testBindings, fixture.ops);
+            assert.equal(fixture.runtime.result.status, "complete");
+            assert.ok(!fixture.calls.includes("publish_usdc"));
+            assert.ok(fixture.calls.includes("account"));
+            assert.equal(fixture.mutations.length, new Set(fixture.mutations).size);
+            const manifest = fixture.manifests[0];
+            assert.equal(manifest.packages.usdc, id("2"));
+            assert.equal(manifest.objects.usdcCurrency, id("d"));
+            assertIntegrationManifest(manifest);
+            const invalid = structuredClone(manifest);
+            invalid.objects.usdcCurrency = id("c");
+            assert.throws(() => assertIntegrationManifest(invalid), /collateral identity/);
+        }
+    } finally {
+        configureDeployment("testnet", id("a"));
     }
 });
 

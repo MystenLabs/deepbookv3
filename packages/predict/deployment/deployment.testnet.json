@@ -1,33 +1,33 @@
 {
-    "schemaVersion": 9,
-    "deployment": "deepbook-predict-mainnet",
-    "network": "mainnet",
-    "chainId": "35834a8a",
-    "sourceCommit": "7b169bde2c2a25fee3ac9aa4686e346309bfe570",
+    "schemaVersion": 8,
+    "deployment": "deepbook-predict-testnet",
+    "network": "testnet",
+    "chainId": "4c78adac",
+    "sourceCommit": "4d752fb82d909a821c85bcc5d3963725efb546f4",
     "packages": {
-        "fixedMath": "0x52ec2d263bb9ad545d1be1c00f6779cc577ed7c0408cdea8d589c2664adc22db",
-        "usdc": "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7",
-        "account": "0x4e1dd01465713c9d832313fed5f45c222a4d5c62a533d6da96764c8b2a245d58",
-        "propbook": "0xa6c8f32015b5b41d34ee09995a2e9d7a21cdecf0e1910a50b264fd252cd33831",
-        "predict": "0x89aea622e7bb3bdd598bde87dde40ee31c9eed4971b9546e23ec83de3c48bbba",
-        "deepbookCoreAccount": "0xd71b5a341dc8dc7e187517849edf61e54670b60fe496e07186c09a65fa7afdb7",
-        "sessions": "0x9a068beffa019ae756f4a6d2611e9899d3c6dd888812dd9eca87535d2ac55e2a"
+        "fixedMath": "0xf3a38ba24fd40173af692cef151a43850f5935a3e026ae037fc19bb81974c6a8",
+        "usdc": "0xc028557a1ed49e42ed091e115aedefd70a442b184c18fbec5c48d5b6c0b8c184",
+        "account": "0x1e57d6554b99e4ca68330322c3e5c409ba1b681642726b603bf1be92c1840ca9",
+        "propbook": "0xa83f9d7651de09672a40cea371c387bf954e0f3092947670d71428d4fbc9edd9",
+        "predict": "0x59d71119e990573a738dd3ff9c4c7d28d6893af69c87c1a7f3a2e90e280ce2f4",
+        "deepbookCoreAccount": "0x2a3a5f51e1c566e0a77c667596a8212d036b44aeac32790991c9eb97580fabb1",
+        "sessions": "0x1908eee49d7a08d74a537d7f23766b363a145517fe0d3e0d85635d1682831ffd"
     },
     "coinTypes": {
-        "usdc": "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
-        "deep": "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
-        "plp": "0x89aea622e7bb3bdd598bde87dde40ee31c9eed4971b9546e23ec83de3c48bbba::plp::PLP"
+        "usdc": "0xc028557a1ed49e42ed091e115aedefd70a442b184c18fbec5c48d5b6c0b8c184::usdc::USDC",
+        "deep": "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP",
+        "plp": "0x59d71119e990573a738dd3ff9c4c7d28d6893af69c87c1a7f3a2e90e280ce2f4::plp::PLP"
     },
     "objects": {
-        "usdcCurrency": "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a",
-        "plpCurrency": "0x28189f5a4eafbe81ea1b043db2cc00efe7067fbecf1e518531aae86a7890f8f2",
-        "accountRegistry": "0x8c52c6f5b2374e33f4a726d9c32337b1aee3a71410d41c18faa91d938d66e4bc",
-        "oracleRegistry": "0x5d62c0d9be43efa769a708ade53fbe5bea98c15c865b64ca7c498c87b045a698",
-        "protocolConfig": "0x5fa6efbe7691809565a660adde23f0c184ca1d19cefafa4e1c88d655fe279580",
-        "poolVault": "0x4d227a1baf8cfcaf6e652a9182d0e63f85f9ce82cd542fdf3356bb3581be3b99",
-        "registry": "0x94327dbc256a2cfabd164c2bf4b3fe033bfaa4771f7a6f716954e07cb1b4beba",
-        "sessionsConfig": "0xb2fba483748aac7508676020d4e691d68239b66f8bf7c5e7634dd1a76a329317",
-        "deepbookRegistry": "0xaf16199a2dff736e9f07a845f23c5da6df6f756eddb631aed9d24a93efc4549d",
+        "usdcCurrency": "0x3122f737aa36d0a3a55a6b15a94578b52829d60d45b8d0f48c37f1739aed3ca2",
+        "plpCurrency": "0xac6109cb41e5aa3fcfd5e76f45a23fed559f560b2b991a20c1116472de2ea50a",
+        "accountRegistry": "0x511e11f7f5d5c1043d795180657603d59e06e90fbfcafd3f90c67ff0836bbd0c",
+        "oracleRegistry": "0xf4ad65184b2e4e9d8e50d44b02a76c64e9607f63e3dbc362e110c99e20a17161",
+        "protocolConfig": "0x422a45c31128e69d0310ab3bed28bd14f730acf9f5681f70936d20c60d26bfb0",
+        "poolVault": "0x6fd178a49848387d60ccfd3e53bf06969929970246a3a7983ae5bb2a5ed52ee3",
+        "registry": "0x85cfaa857f9dfca75f6ba624eead063c4a1bc9b701201b8f21e1f9c15833ccc4",
+        "sessionsConfig": "0xc096b97289821b27badfdf758d614bbbfa386f93d3faa409ecc1fcc6075d1186",
+        "deepbookRegistry": "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1",
         "accumulatorRoot": "0x0000000000000000000000000000000000000000000000000000000000000acc",
         "clock": "0x0000000000000000000000000000000000000000000000000000000000000006"
     },
@@ -38,49 +38,49 @@
             "propbookUnderlyingId": 1,
             "pythLazerFeedId": 1,
             "blockScholesSourceId": 1,
-            "pythFeed": "0x4c5d2b4c8238f04b7687c3a8df915b69c50d5f4d291fc49aea44bdb6b52e1a20",
-            "blockScholesValueStore": "0xe83f843b15ae63045b2cea445fb8ea7ad85c5fc2a05f66db122a511e1f2c67bc",
-            "blockScholesSviStore": "0xfdd447be39d847747caf18ecf3355031bb33979c472581f1a5481375d3748bfb"
+            "pythFeed": "0x8ef99c3d14e57612d09a67bcc9b5bff568a80992df6beca2bfcd922973192faa",
+            "blockScholesValueStore": "0x1e5142471311505a7428b072230c9ffe8a747b3b9392720e39246af4aea08216",
+            "blockScholesSviStore": "0x0f1cbefd1dd2ba08ae700a7067c32e0718edf926fa18cea80bd231c02d509ece"
         }
     },
     "oracleDependencies": {
-        "pythLazerPackage": "0xefbfd064480777699fd9c557a5804d72ace7bc82661fdc8d1f1a44ea6d92ee10",
-        "pythLazerState": "0xd0db9c1e9212a98120384bf78d8b8c985d87b9ee6921dffcf9d1394062911573",
-        "blockScholesOraclePackage": "0xa408bcdeb8e7607b1cbb92c088147d61664a6255a3ea5696a8fef44711e113d8",
-        "blockScholesSignerRegistry": "0xc578b6058b0ba9cf2254962168cd779593805c4f10f80aef8749df75ef7fc0e5"
+        "pythLazerPackage": "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+        "pythLazerState": "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
+        "blockScholesOraclePackage": "0x9d2cf38611d971a0e918b93fc0113d279f5c923f43e62c407a9ad0f9d82f6698",
+        "blockScholesSignerRegistry": "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414"
     },
     "externalAuthorizations": {
         "deepbookCoreAccount": {
             "authorized": false,
-            "appType": "0xd71b5a341dc8dc7e187517849edf61e54670b60fe496e07186c09a65fa7afdb7::account_data::DeepbookCoreAccountApp",
-            "registry": "0xaf16199a2dff736e9f07a845f23c5da6df6f756eddb631aed9d24a93efc4549d"
+            "appType": "0x2a3a5f51e1c566e0a77c667596a8212d036b44aeac32790991c9eb97580fabb1::account_data::DeepbookCoreAccountApp",
+            "registry": "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1"
         }
     },
     "indexing": {
-        "startCheckpoint": "321804009"
+        "startCheckpoint": "382843322"
     },
     "initialConfiguration": {
-        "verifiedAfterCheckpoint": "321804726",
+        "verifiedAfterCheckpoint": "382844048",
         "stateAnchors": {
             "protocolConfig": {
-                "objectVersion": "1",
-                "digest": "ChMte5JVDGxLA8b6BNHtM1ym3Qbi69p8F9Lud9kptsQo"
+                "objectVersion": "1012899482",
+                "digest": "DWpkhoLL4SsA6WcamqeoWHRJS5MMeeQYaAxrSxhwVxhs"
             },
             "registry": {
-                "objectVersion": "952358392",
-                "digest": "2vF4L9HEZtYudQpBSk11kANFqdzyXFDRNihhRnWXnJ9d"
+                "objectVersion": "1012899567",
+                "digest": "AMAtQ2op734yVjPKosHWcS5VtEKKnakq2YA28s6RoC3s"
             },
             "oracleRegistry": {
                 "objectVersion": "4",
-                "digest": "44msatynCmAt8MaeYS8ArhdeeUxiV2SZwrn7SZMhD9jd"
+                "digest": "GA43QRtdLxVHSuPQtJXvbLhiiya5Kq5N188tLmx9QwS2"
             },
             "sessionsConfig": {
                 "objectVersion": "1",
-                "digest": "CGToyK3GkXsUK4BRuCKg2RrhpsZwwQqomEEGuYx3Z2kq"
+                "digest": "87AtUnWLYtB1Ty4qvQQj84fPHq9sqkncqkakrRd2ykj1"
             },
             "deepbookRegistry": {
-                "objectVersion": "996520255",
-                "digest": "C4wNj8mkg6YxaBuS7LDQBW918NpJkJH3aZJmrzJKRs6S"
+                "objectVersion": "997071603",
+                "digest": "4i2TvYKpo5hmbdxhhfE2TGpJF7yjtLhzfEc6AG7ABLFJ"
             }
         },
         "units": {
