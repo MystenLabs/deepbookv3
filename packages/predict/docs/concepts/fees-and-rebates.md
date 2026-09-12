@@ -45,7 +45,7 @@ base_fee_rate = max( raw_fee_rate , min_fee )
 
 As `p → 0` or `p → 1`, the base fee rate approaches `min_fee`; in the interior it rises with the variance term. `min_fee` is a per-unit rate, so a contract pays at least `min_fee · quantity` (the floor is applied before the expiry ramp, so inside the ramp window the effective minimum is higher).
 
-Mint admission requires both the combined range probability and every finite leg's probability to lie in the configured `[min_entry_probability, max_entry_probability]` band. The lower leg uses ABOVE probability; the upper leg uses BELOW probability. Infinite boundaries are exempt. Minimum premium and the maximum-payout cost limit apply to the actual range purchase. These entry bounds do not restrict live closes: the summed leg fee is capped at the range's redemption value. The upgraded fee calculation also applies to positions opened before activation.
+Mint admission requires both the combined range probability and every finite leg's probability to lie in the configured `[min_entry_probability, max_entry_probability]` band. The lower leg uses ABOVE probability; the upper leg uses BELOW probability. Infinite boundaries are exempt. Minimum premium and the maximum-payout cost limit apply to the actual range purchase. These entry bounds do not restrict live closes: the summed leg fee is capped at the range's redemption value.
 
 After every fee component and inventory-impact charge is assembled, mint admission requires `all_in_cost <= quantity`. Because `quantity` is the position's maximum settlement payout, a trader cannot mint a position whose total debit exceeds what the position can ever pay at settlement; the check uses the trader-paid fee after any sponsor subsidy.
 
