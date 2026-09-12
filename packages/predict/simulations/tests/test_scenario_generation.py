@@ -73,6 +73,13 @@ class ScenarioGenerationTests(unittest.TestCase):
 
             self.assertEqual(first.read_bytes(), second.read_bytes())
             self.assertNotEqual(first.read_bytes(), other.read_bytes())
+            with first.open() as source_file:
+                rows = list(csv.DictReader(source_file))
+            finite_mint, finite_close = rows[7:9]
+            self.assertEqual(finite_mint["action"], "mint")
+            self.assertLess(int(finite_mint["strike"]), int(finite_mint["higher_strike"]))
+            self.assertEqual(finite_close["action"], "redeem_live")
+            self.assertEqual(finite_close["order_ref"], finite_mint["order_ref"])
 
     def test_config_rejects_missing_and_unknown_fields(self) -> None:
         with tempfile.TemporaryDirectory() as raw_tmp:

@@ -100,7 +100,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Mint admission
 
-- Raw `entry_probability` must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in this admission bound.
+- Raw `entry_probability` and every finite leg's probability (lower ABOVE, upper BELOW) must lie in `[min_entry_probability, max_entry_probability]`; fees are not included in these mint-only bounds, and infinite sentinels are exempt.
 - `premium = entry_probability × quantity ≥ min_premium`; the holder pays this in full — there is no financed remainder.
 - `all_in_cost ≤ quantity`; the complete trader debit cannot exceed the position's maximum settlement payout.
 
@@ -126,8 +126,7 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## Fees
 
-- Trade fee = `fee_rate × quantity`, where `fee_rate = max(base_fee × √(p·(1−p)),
-  min_fee) × expiry_fee_multiplier`; the Bernoulli term is 0 at `p ∈ {0, 1}`.
+- Trade fee sums the independently rounded amount for each finite boundary, whose per-unit rate is `max(base_fee × √(p·(1−p)), min_fee) × expiry_fee_multiplier`. Infinite boundaries contribute zero; finite boundaries at `p ∈ {0, 1}` still pay the floor. Live-close collection is capped at redemption value.
 - On a referred mint, `referral_fee = floor(referral_fee_rate × ((trading_fee − fee_incentive_subsidy) + penalty_fee))`. It is split from protocol proceeds, never added to `all_in_cost`; builder fees and inventory-impact charges are excluded. The USDC destination is the stored referrer receive address, while `OrderMinted.referrer_account_id` preserves the canonical attribution even when the calculated amount is zero.
 - PLP supply and withdraw carry independent flat rates (`plp_supply_fee_rate`,
   `plp_withdraw_fee_rate`; shipped 0 and 20 bps), charged on the USDC leg

@@ -939,6 +939,7 @@ interface MintParams extends OracleFeedIds {
     wrapperId: string;
     strike: bigint;
     isUp: boolean;
+    higherStrike?: bigint; // Optional finite upper boundary for an UP range.
     quantity: bigint;
     tickSize?: bigint; // cadence tick size; live harness default is $0.01
     maxCost?: bigint; // all-in USDC withdrawal cap; U64_MAX (uncapped) if omitted
@@ -987,6 +988,20 @@ export function binaryRangeTicks(
         lowerTick: isUp ? tick : 0n,
         higherTick: isUp ? POS_INF_TICK : tick,
     };
+}
+
+export function mintRangeTicks(
+    strike: bigint,
+    isUp: boolean,
+    tickSize = ORACLE_TICK_SIZE,
+    higherStrike?: bigint,
+): { lowerTick: bigint; higherTick: bigint } {
+    const range = binaryRangeTicks(strike, isUp, tickSize);
+    if (higherStrike === undefined) return range;
+    if (!isUp) throw new Error("higher_strike requires is_up=true");
+    const higherTick = binaryRangeTicks(higherStrike, true, tickSize).lowerTick;
+    if (range.lowerTick >= higherTick) throw new Error("higher_strike must exceed strike");
+    return { lowerTick: range.lowerTick, higherTick };
 }
 
 async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
@@ -1449,10 +1464,11 @@ function finishFlushTx(params: { poolVaultId: string; protocolConfigId: string }
 }
 
 function addMint(tx: Transaction, params: MintParams): void {
-    const { lowerTick, higherTick } = binaryRangeTicks(
+    const { lowerTick, higherTick } = mintRangeTicks(
         params.strike,
         params.isUp,
         params.tickSize,
+        params.higherStrike,
     );
     const pricer = loadLivePricer(tx, params);
     const auth = generateAuth(tx);

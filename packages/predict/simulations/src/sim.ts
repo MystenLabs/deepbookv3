@@ -12,7 +12,7 @@ import {
     writeJson,
 } from "./shared.js";
 import {
-    POOL_VAULT_ID, PROTOCOL_CONFIG_ID, address, bareFlushTx, binaryRangeTicks,
+    POOL_VAULT_ID, PROTOCOL_CONFIG_ID, address, bareFlushTx, mintRangeTicks,
     bindFeedsToUnderlyingTx, clockTimestampMs, createAccountTx, createExpiryMarketTx,
     depositToAccountTx, deriveAccountWrapperId, execute, executeAndWait,
     finalizeUsdcCurrencyRegistrationTx, keeperSettleTx, lockCapitalTx,
@@ -104,7 +104,7 @@ function oracleInput(value: OracleRefreshData | null): Record<string, unknown> {
 function rowInput(row: ScenarioRow, tickSize: bigint): Record<string, unknown> {
     const oracle = oracleInput(oracleFor(row));
     if (row.action === "mint") {
-        const { lowerTick, higherTick } = binaryRangeTicks(row.strike, row.isUp, tickSize);
+        const { lowerTick, higherTick } = mintRangeTicks(row.strike, row.isUp, tickSize, row.higherStrike);
         return { ...oracle, order_ref: row.orderRef, lower_tick: lowerTick.toString(), higher_tick: higherTick.toString(), quantity: row.quantity.toString() };
     }
     if (row.action === "redeem_live") return { ...oracle, order_ref: row.orderRef, close_quantity: row.closeQuantity.toString(), replacement_order_ref: row.replacementOrderRef };
@@ -221,7 +221,7 @@ function oracleParams(value: OracleRefreshData) {
 
 async function executeRow(row: ScenarioRow, state: SimState, aliases: Aliases): Promise<ExecutionReceipt> {
     const common = { expiryMarketId: state.expiryMarketId, protocolConfigId: state.protocolConfigId, wrapperId: state.accountWrapperId, pythFeedId: state.pythFeedId, bsValueStoreId: state.bsValueStoreId, bsSviStoreId: state.bsSviStoreId };
-    if (row.action === "mint") return execute(() => refreshOracleAndMintTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row), strike: row.strike, isUp: row.isUp, quantity: row.quantity, tickSize: BigInt(state.tickSize) }), `scenario_${row.step}_mint`);
+    if (row.action === "mint") return execute(() => refreshOracleAndMintTxs({ ...common, expiry: BigInt(state.expiryMs), ...oracleParams(row), strike: row.strike, isUp: row.isUp, higherStrike: row.higherStrike, quantity: row.quantity, tickSize: BigInt(state.tickSize) }), `scenario_${row.step}_mint`);
     if (row.action === "redeem_live") {
         const orderId = aliases.orderIds.get(row.orderRef);
         if (!orderId) throw new Error(`unknown order_ref ${row.orderRef}`);

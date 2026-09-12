@@ -64,13 +64,15 @@ fun oracle_fixture_brings_up_priceable_oracle_smoke() {
     // probability is in [0, FLOAT_SCALING]; a non-degenerate range is strictly
     // inside.)
     let pricer = fx.load_pricer_bundle(&oracle);
-    let up = pricer.range_price(
-        strike_from_tick(
-            test_constants::default_strike_tick(),
-            test_constants::default_tick_size(),
-        ),
-        strike(constants::pos_inf!()),
-    );
+    let up = pricer
+        .range_price(
+            strike_from_tick(
+                test_constants::default_strike_tick(),
+                test_constants::default_tick_size(),
+            ),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
     assert!(up > 0);
     assert!(up < test_constants::float());
 

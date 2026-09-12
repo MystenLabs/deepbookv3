@@ -118,7 +118,7 @@ After settlement, a position is closed for its settled payout. `redeem_settled` 
 | --- | --- | --- | --- |
 | `Registry` | Underlying approval, cadence deployment configs (tick sizes, caps, windows), expiry uniqueness, pause caps, creation entrypoints (versioning lives on `ProtocolConfig.version_watermark`) | package init | shared |
 | `PythFeed` (propbook) | One Pyth Lazer feed's global spot | `propbook` (permissionless) | shared |
-| `BlockScholesValueStore` (propbook) | One underlying's latest BS spot and forward observations, keyed by signed series id | `propbook` (admin-gated, once per underlying) | shared |
+| `BlockScholesValueStore` (propbook) | One underlying's ten recent BS spots, latest forwards keyed by signed series id, and exact minute-boundary spot history | `propbook` (admin-gated, once per underlying) | shared |
 | `BlockScholesSVIStore` (propbook) | One underlying's latest BS SVI parameter sets, keyed by signed series id | `propbook` (admin-gated, once per underlying) | shared |
 | `ExpiryMarket` | Per-expiry exposure, payout backing, cash, NAV; Propbook underlying ID | `create_and_share_expiry_market` (one per underlying and expiry) | shared |
 | `AccountWrapper` / `Account` | Account-package custody plus Predict positions keyed by `(expiry_market_id, order_id)` | `account_registry::new` / `new_self_owned` | shared wrapper |

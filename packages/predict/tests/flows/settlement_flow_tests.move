@@ -31,8 +31,8 @@ const ONE_MS: u64 = 1;
 const ZERO_SPOT: u128 = 0;
 const ONE_U128: u128 = 1;
 
-/// Per-trade fee floor for the default flow fixture.
-const MINT_MIN_FEE: u64 = 5_000_000;
+/// Two per-leg fee floors for the finite-range flow fixture.
+const MINT_MIN_FEE: u64 = 10_000_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
 
@@ -47,6 +47,7 @@ fun settled_redeem_requires_explicit_settlement() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -318,6 +319,7 @@ fun try_settle_materializes_exact_terminal_liability() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     fx.mint_bundle(
         &mut market,
@@ -351,6 +353,7 @@ fun settled_order_payout_reads_loser_as_zero() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -381,6 +384,7 @@ fun settled_order_payout_of_live_market_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -409,6 +413,7 @@ fun settled_redeem_twice_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -445,6 +450,7 @@ fun explicitly_settled_redeem_pays_terminal_payout() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
@@ -489,6 +495,7 @@ fun deauthorized_predict_app_blocks_permissionless_settled_redeem() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,
@@ -527,6 +534,7 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let premium = finite_range_premium(&mut fx, &market);
     let order_id = fx.mint_bundle(
@@ -586,6 +594,7 @@ fun try_settle_is_idempotent_and_keeps_settlement_price() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
     let wrong_pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(wrong_pyth_id);
 
     let premium = finite_range_premium(&mut fx, &market);
@@ -742,9 +751,7 @@ fun finite_range_premium(fx: &mut helpers::Fixture, market: &helpers::MarketBund
         helpers::strike_tick() + 10,
         test_constants::mint_quantity(),
     );
-    // The upper boundary is ~315 sigma out and clamps to zero, so this finite
-    // range prices as the at-the-money digital itself.
-    helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
+    assert_eq!(quote.trading_fee(), MINT_MIN_FEE);
     quote.premium()
 }
 
@@ -779,6 +786,7 @@ fun settled_order_payout_reads_winner_terminal_payout() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
 
     let order_id = fx.mint_bundle(
         &mut market,

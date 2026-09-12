@@ -32,6 +32,8 @@ macro fun exact_spot_period_ms(): u64 { 60_000 }
 
 macro fun spot_batch_length(): u64 { 1 }
 
+macro fun spot_history_capacity(): u64 { 10 }
+
 /// One accepted observation paired with its signed source time and on-chain recording time.
 public struct BsRead<Value: copy + drop + store> has copy, drop, store {
     /// Provider value/SVI time in Unix milliseconds. Latest ordering, exact history, freshness,
@@ -59,8 +61,8 @@ public struct SVIParams has copy, drop, store {
     m_is_negative: bool,
 }
 
-/// Latest spot and forward observations plus exact minute-boundary spot history for one Block
-/// Scholes base asset.
+/// Ten recent spot observations, latest forwards, and separate exact minute-boundary spot
+/// history for one Block Scholes base asset.
 public struct BlockScholesValueStore has key {
     id: UID,
     propbook_underlying_id: u32,
@@ -68,6 +70,10 @@ public struct BlockScholesValueStore has key {
     /// Package version this store runs at; writes require an exact match and `migrate` advances it
     /// forward-only after a package upgrade.
     version: u64,
+    spot_reads: vector<BsRead<u128>>,
+    /// Next slot to overwrite; also the next append position until the buffer fills.
+    next_spot_write: u64,
+    /// Latest forward by canonical SID; spot observations live only in `spot_reads`.
     values: Table<u256, BsRead<u128>>,
     /// First positive `u64`-representable canonical spot at each exact minute boundary.
     exact_spot_reads: Table<u64, BsRead<u128>>,
@@ -162,7 +168,25 @@ public fun svi_sid(store: &BlockScholesSVIStore, expiry_ms: u64): u256 {
 
 /// Returns the latest canonical spot observation, or `none` if none has landed.
 public fun spot(store: &BlockScholesValueStore): Option<BsRead<u128>> {
-    read(&store.values, store.spot_sid())
+    if (store.spot_reads.is_empty()) return option::none();
+    let latest = if (store.next_spot_write == 0) store.spot_reads.length() - 1
+    else store.next_spot_write - 1;
+    option::some(store.spot_reads[latest])
+}
+
+/// Returns an exact source-time match from the ten recent spot observations for live pricing.
+/// This bounded buffer is independent of the permanent minute-boundary settlement history.
+public fun recent_spot_at(
+    store: &BlockScholesValueStore,
+    source_timestamp_ms: u64,
+): Option<BsRead<u128>> {
+    let mut i = 0;
+    while (i < store.spot_reads.length()) {
+        let read = &store.spot_reads[i];
+        if (read.source_timestamp_ms == source_timestamp_ms) return option::some(*read);
+        i = i + 1;
+    };
+    option::none()
 }
 
 /// Returns the canonical spot observation whose provider source timestamp is exactly
@@ -246,7 +270,7 @@ public fun apply_spot_batch(
         clock,
         ctx,
     );
-    let stored = store.apply_value(expected_sid, series_kind_spot!(), 0, read);
+    let stored = store.apply_spot(expected_sid, read);
     let _ = store.insert_exact_spot(read);
     event::emit(BlockScholesBatchIngested {
         propbook_underlying_id: store.propbook_underlying_id,
@@ -347,6 +371,8 @@ public(package) fun create_and_share_value_store(
         propbook_underlying_id,
         block_scholes_base_asset,
         version: constants::current_version!(),
+        spot_reads: vector[],
+        next_spot_write: 0,
         values: table::new(ctx),
         exact_spot_reads: table::new(ctx),
     };
@@ -520,7 +546,31 @@ fun apply_checked_svi_batch(
     });
 }
 
-/// Store one verified value observation, returning whether it was kept.
+/// Advance the bounded spot history only for a strictly newer valid source timestamp.
+fun apply_spot(store: &mut BlockScholesValueStore, sid: u256, read: BsRead<u128>): bool {
+    if (!read.has_valid_timestamp()) return false;
+    let latest = store.spot();
+    if (latest.is_some() && read.source_timestamp_ms <= latest.borrow().source_timestamp_ms) {
+        return false
+    };
+    if (store.spot_reads.length() < spot_history_capacity!()) {
+        store.spot_reads.push_back(read);
+    } else {
+        *&mut store.spot_reads[store.next_spot_write] = read;
+    };
+    store.next_spot_write = (store.next_spot_write + 1) % spot_history_capacity!();
+    event::emit(BlockScholesObservationRecorded<BsRead<u128>> {
+        propbook_underlying_id: store.propbook_underlying_id,
+        propbook_oracle_id: store.value_store_id(),
+        sid,
+        series_kind: series_kind_spot!(),
+        expiry_ms: 0,
+        observation: read,
+    });
+    true
+}
+
+/// Store one verified forward observation, returning whether it was kept.
 /// Returns `false` rather than aborting when the clocks are unusable or the observation does not
 /// advance the series, so one unusable entry cannot discard the rest of its verified batch.
 fun apply_value(
