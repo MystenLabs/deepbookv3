@@ -79,6 +79,8 @@ Instances live under `harness/.localnets/instances/`. Heavy validator and staged
 
 Hub snapshots and actor traces carry explicit schema versions. Scenario configuration, hub snapshots, and traces reject missing, unknown, malformed, or unsupported current-schema data instead of applying compatibility defaults.
 
+The localnet updater's landed snapshot uses schema version 3 and retains the last ten confirmed Block Scholes spot writes, including their source timestamps. Strategy pricing pairs each latest forward with its exact source-timestamp spot and skips quotes when that pair is absent or stale. Equal, rejected, or unconfirmed spot updates do not advance the history. The raw provider hub snapshot remains schema version 2 and does not represent on-chain history.
+
 ## Prerequisites
 
 - Python 3.11 or newer

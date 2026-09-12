@@ -151,6 +151,29 @@ fun recent_spot_ring_wraps_without_touching_forwards_or_settlement_history() {
     assert_eq!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some().read_value(), SPOT);
     assert!(value_store.recent_spot_at(EXACT_MINUTE_EARLY_MS).is_none());
 
+    // The next accepted write evicts exactly the oldest retained slot: rejected writes did
+    // not consume ring positions.
+    apply_values(
+        &mut value_store,
+        BATCH_LATER,
+        vector[spot_update(&btc(), EXACT_MINUTE_EARLY_MS + SPOT_WRITES, SPOT_LATER)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert!(
+        value_store
+            .recent_spot_at(EXACT_MINUTE_EARLY_MS + SPOT_WRITES - SPOT_BUFFER_SIZE)
+            .is_none(),
+    );
+    assert_eq!(
+        value_store
+            .recent_spot_at(EXACT_MINUTE_EARLY_MS + SPOT_WRITES - SPOT_BUFFER_SIZE + 1)
+            .destroy_some()
+            .read_value(),
+        SPOT + ((SPOT_WRITES - SPOT_BUFFER_SIZE + 1) as u128),
+    );
+    assert_eq!(value_store.spot().destroy_some().read_value(), SPOT_LATER);
+
     clock::destroy_for_testing(chain_clock);
     return_shared(value_store);
     scenario.end();

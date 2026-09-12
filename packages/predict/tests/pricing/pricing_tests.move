@@ -17,17 +17,25 @@
 #[test_only]
 module deepbook_predict::pricing_tests;
 
+use bs_oracle::verify;
 use deepbook_predict::{
     constants,
     oracle_fixture,
     pricing,
     pricing_reference_data as ref_data,
+    protocol_config::ProtocolConfig,
     range_codec::strike_for_testing as strike,
     test_constants,
     test_helpers
 };
 use fixed_math::{i64, math::float_scaling as float};
+use propbook::{
+    block_scholes_store::{BlockScholesValueStore, BlockScholesSVIStore},
+    pyth_feed::PythFeed,
+    registry::OracleRegistry
+};
 use std::unit_test::assert_eq;
+use sui::{clock, test_scenario::return_shared};
 
 // Forward == `default_live_price` (spot==forward, basis 1.0). The two scenario
 // strikes straddle it.
@@ -331,6 +339,81 @@ fun forward_first_prices_when_its_matching_spot_arrives() {
     );
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EOracleWrittenInThisTransaction)]
+fun matching_spot_written_in_current_transaction_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let price = test_constants::default_live_price();
+    fx.prepare_live_oracle_bundle(&mut oracle, price);
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_FORWARD_SOURCE_MS, price);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.scenario_mut().next_tx(test_constants::admin());
+
+    let _ = load_after_spot_write_in_current_transaction(
+        &mut fx,
+        BLOCK_SCHOLES_SPOT_SOURCE_MS,
+        price,
+    );
+    abort EUnexpectedSuccess
+}
+
+#[test]
+fun unpaired_spot_written_in_current_transaction_does_not_block_retained_pair() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let price = test_constants::default_live_price();
+    fx.prepare_live_oracle_bundle(&mut oracle, price);
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.scenario_mut().next_tx(test_constants::admin());
+
+    let pricer = load_after_spot_write_in_current_transaction(
+        &mut fx,
+        BLOCK_SCHOLES_SPOT_SOURCE_MS,
+        2 * price,
+    );
+    assert_eq!(
+        pricer.block_scholes_spot_source_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
+    test_helpers::assert_within(
+        pricer.up_price(strike(price)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+    fx.finish();
+}
+
+fun load_after_spot_write_in_current_transaction(
+    fx: &mut oracle_fixture::OracleFixture,
+    source_ms: u64,
+    price: u64,
+): pricing::Pricer {
+    let id = fx.bs_values_id();
+    let mut store = fx.scenario_mut().take_shared_by_id<BlockScholesValueStore>(id);
+    let batch = verify::new_value_batch_for_testing(
+        source_ms,
+        vector[verify::new_value_update_for_testing(store.spot_sid(), source_ms, (price as u128))],
+    );
+    let mut chain_clock = clock::create_for_testing(fx.scenario_mut().ctx());
+    chain_clock.set_for_testing(test_constants::now_ms());
+    store.apply_spot_batch(batch, &chain_clock, fx.scenario_mut().ctx());
+    assert_eq!(store.spot().destroy_some().read_writer_digest(), *fx.scenario_mut().ctx().digest());
+    clock::destroy_for_testing(chain_clock);
+    let pyth_id = fx.pyth_id();
+    let svi_id = fx.bs_svi_id();
+    let pyth = fx.scenario_mut().take_shared_by_id<PythFeed>(pyth_id);
+    let svi = fx.scenario_mut().take_shared_by_id<BlockScholesSVIStore>(svi_id);
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let registry = fx.scenario_mut().take_shared<OracleRegistry>();
+    let pricer = fx.load_pricer_with_stores(&config, &registry, &pyth, &store, &svi);
+    return_shared(registry);
+    return_shared(config);
+    return_shared(svi);
+    return_shared(pyth);
+    return_shared(store);
+    pricer
 }
 
 #[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
