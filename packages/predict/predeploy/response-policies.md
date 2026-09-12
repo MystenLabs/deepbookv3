@@ -176,7 +176,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Controller:** external (oracle operator).
 - **Blast radius:** every live price — entry prices and NAV marks.
   The same load sits inside mandatory `plp::value_expiry`, so one over-wide
-  observation for any active market also aborts the pool-wide flush and blocks
+  selected observation for any active market also aborts the pool-wide flush and blocks
   queued LP fills until the observation is replaced.
 - **Response:** accept provider quality inside the static pricing-safe envelope
   and disclose it (commit `057f9565`); select Pyth by its own freshness rather
