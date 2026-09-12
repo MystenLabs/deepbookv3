@@ -8,7 +8,7 @@ Updated 2026-08-17. This is the live work register governed by the [predeploy li
 
 **Severity:** Deploy gate.
 
-Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. DeepBook v8 and its consumers select the [Mainnet DEEP reconstruction](../../../vendor/deep_mainnet/README.md); the Testnet token source is unchanged. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
+Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. Mainnet DeepBook v8 and Testnet DeepBook v20 consumers select the [shared DEEP reconstruction](../../../vendor/deep/README.md) with their separate existing token identities. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
 
 The remaining gates are:
 
@@ -239,7 +239,7 @@ passes and worst-case budget usage is unchanged at 61%. The defect is that the
 tolerances are now conservative by luck rather than derived.
 
 `generate_pricing_reference.py` derives every tolerance analytically from
-`math.move`'s documented per-primitive budgets, and its `d_k` term has been
+`packages/fixed_math/sources/math.move`'s documented per-primitive budgets, and its `d_k` term has been
 corrected to the difference-of-logs form (`1e-7·(|ln strike| + |ln forward|) +
 2/F`) that RP-26 shipped. The committed `pricing_reference_data.move` was
 generated under the previous ratio model (`1/F/ratio + 1e-7·|k| + 1/F`), which
@@ -251,7 +251,7 @@ and absent from a fresh worktree, so it could not be done in the same change.
 
 **Action:** regenerate the reference data with the dataset present and confirm
 the budgets still bound the observed deviations. Until then the file's stated
-contract — "propagated from `math.move`'s documented per-primitive budgets" — is
+contract — "propagated from `packages/fixed_math/sources/math.move`'s documented per-primitive budgets" — is
 true of the generator but not of the committed data.
 
 ### P-30: The C-1 capacity model is one measurement behind the pricing path
