@@ -64,6 +64,7 @@ EXTERNAL_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle", "bs_sid")
 # Directory names never worth copying into the scratch workspace.
 STAGE_IGNORE = (
     "build",
+    "target",
     "node_modules",
     ".git",
     ".localnets",

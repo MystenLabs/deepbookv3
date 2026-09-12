@@ -51,6 +51,7 @@ import {
     assertRecoverableInFlight,
     assertSourceBinding,
     assertSuiCliVersion,
+    assertPythStateVersion,
     buildIntegrationManifest,
     checkpointRecoveredTransaction,
     createDeploymentState,
@@ -78,6 +79,16 @@ import {
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
 configureDeployment("testnet", id("a"));
+
+test("Pyth State must accept the selected network package version", () => {
+    assertPythStateVersion({ upgrade_cap: { version: "1" } }, "1");
+    assertPythStateVersion({ upgrade_cap: { version: "2" } }, "2");
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: { version: "2" } }, "1"), /version/);
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: { version: "1" } }, "2"), /version/);
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: {} }, "1"), /version/);
+    assert.throws(() => assertPythStateVersion({}, "1"));
+    assert.throws(() => assertPythStateVersion({ upgrade_cap: { version: "0" } }, "0"), /version/);
+});
 
 test("vendored Pyth sources match the pinned upstream inventory and hashes", () => {
     const root = new URL("../../../vendor/pyth_lazer/", import.meta.url);
@@ -141,8 +152,8 @@ test("Mainnet Pyth differs from its pinned source only by declared publication i
     }
 });
 
-test("Mainnet DEEP reconstruction preserves its source provenance and Testnet source", () => {
-    const root = new URL("../../../vendor/deep_mainnet/", import.meta.url);
+test("DEEP reconstruction preserves its provenance and the development token source", () => {
+    const root = new URL("../../../vendor/deep/", import.meta.url);
     const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
     assert.equal(provenance.kind, "bytecode-backed-reconstruction");
     assert.equal(
@@ -162,7 +173,21 @@ test("Mainnet DEEP reconstruction preserves its source provenance and Testnet so
     assert.deepEqual(readdirSync(new URL("sources/", root)), ["deep.move"]);
     const publication = readFileSync(new URL("Published.toml", root), "utf8");
     assert.match(publication, /\[published.mainnet\]/);
-    assert.doesNotMatch(publication, /\[published.testnet\]/);
+    assert.match(publication, /\[published.testnet\]/);
+    assert.equal(
+        provenance.publications.mainnet.originalId,
+        "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270",
+    );
+    assert.equal(
+        provenance.publications.testnet.originalId,
+        "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
+    );
+    for (const network of ["mainnet", "testnet"]) {
+        const record = provenance.publications[network];
+        assert.equal(record.publishedAt, record.originalId);
+        assert.equal(record.version, 1);
+        assert.equal(record.modules.deep.bytes, 1308);
+    }
 });
 
 test("fresh publication staging preserves the vendored dependency outside packages", () => {
@@ -192,11 +217,11 @@ test("fresh publication staging preserves the vendored dependency outside packag
             readFileSync(join(mainnetPyth, "Published.toml"), "utf8"),
             /\[published.mainnet\]/,
         );
-        const deep = join(stagedRoot, "vendor", "deep_mainnet");
+        const deep = join(stagedRoot, "vendor", "deep");
         assert.equal(
             readFileSync(join(deep, "sources", "deep.move"), "utf8"),
             readFileSync(
-                new URL("../../../vendor/deep_mainnet/sources/deep.move", import.meta.url),
+                new URL("../../../vendor/deep/sources/deep.move", import.meta.url),
                 "utf8",
             ),
         );

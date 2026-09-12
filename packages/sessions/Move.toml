@@ -21,11 +21,11 @@ bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", sub
 
 [dep-replacements.mainnet]
 deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "2f83e49f21c3aaf96b779f24be0fd6951bc75b29" }
-token = { local = "../../vendor/deep_mainnet", override = true }
+token = { local = "../../vendor/deep", override = true }
 usdc = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/usdc", rev = "23fff2ed82a7fdc26e408a56553b1e1d0ba7b06f" }
 pyth_lazer = { local = "../../vendor/pyth_lazer_mainnet" }
 bs_oracle = { git = "https://github.com/blockscholes/sui-signed-oracle.git", subdir = "move/bs_oracle", rev = "3836e65711bd61e8ee5625a45fb4364f3ec70193" }
 
 [dep-replacements.testnet]
 deepbook = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/deepbook", rev = "ce0e5cd052d7d1eb195bb486396730c550f8f92a" }
-token = { local = "../token", override = true }
+token = { local = "../../vendor/deep", override = true }

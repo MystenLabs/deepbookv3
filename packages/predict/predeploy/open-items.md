@@ -8,7 +8,7 @@ Updated 2026-08-17. This is the live work register governed by the [predeploy li
 
 **Severity:** Deploy gate.
 
-Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. DeepBook v8 and its consumers select the [Mainnet DEEP reconstruction](../../../vendor/deep_mainnet/README.md); the Testnet token source is unchanged. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
+Mainnet manifests select Circle's native USDC source, Pyth Lazer v2 (retaining its original type identity), Wormhole, and the published Block Scholes verifier/SID revision. Mainnet DeepBook v8 and Testnet DeepBook v20 consumers select the [shared DEEP reconstruction](../../../vendor/deep/README.md) with their separate existing token identities. The package pins are owned by `packages/{predict,propbook,deepbook_core_account,sessions}/Move.toml`.
 
 The remaining gates are:
 

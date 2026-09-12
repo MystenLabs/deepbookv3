@@ -2,7 +2,8 @@
 """Verify Predict's published dependency sources without signing or broadcasting.
 
 Run after building sessions. Modern packages use Sui's source verifier; historical
-Mainnet packages use a verified reproduction compiler and exact serialized module bytes.
+packages use a reproduction compiler or lossless serialization of compiled modules.
+Every path requires exact equality with the published module bytes.
 Compiler input roots are disposable copies. Client configuration is only passed
 to the selected CLI; this script never opens configuration or keystore files.
 """
@@ -187,7 +188,7 @@ def stage_local(repo, destination):
     for name in ("packages", "vendor"):
         if (repo / name).exists():
             shutil.copytree(repo / name, destination / name,
-                            ignore=shutil.ignore_patterns("build", "node_modules", ".git"))
+                            ignore=shutil.ignore_patterns("build", "target", "node_modules", ".git"))
 
 
 def modules(directory):
@@ -328,8 +329,8 @@ def closure(lock, key):
     return found
 
 
-def bind_circle_addresses(packages, records):
-    for key in ("usdc", "stablecoin", "sui_extensions"):
+def bind_legacy_addresses(packages, records):
+    for key in packages:
         manifest = packages[key] / "Move.toml"
         lines = manifest.read_text().splitlines(keepends=True)
         section, replacements = "", 0
@@ -352,8 +353,8 @@ def verify_modern(sui, config, network, directory, record):
         raise VerificationError(f"{directory.name}: source verifier publication mismatch")
 
 
-def stage_deepbook_token(directory, lock, packages, names):
-    """Carry the resolved Mainnet token override into the disposable DeepBook root."""
+def stage_deepbook_token(directory, lock, packages, names, network="mainnet"):
+    """Carry the resolved token override into the disposable DeepBook root."""
     candidates = {
         packages[key].resolve() for key in packages
         if names[key] == "token" and "local" in lock[key]["source"]
@@ -364,40 +365,43 @@ def stage_deepbook_token(directory, lock, packages, names):
     manifest = directory / "Move.toml"
     text = manifest.read_text()
     parsed = tomllib.loads(text)
-    if "mainnet" in parsed.get("dep-replacements", {}):
-        raise VerificationError("staged DeepBook already has Mainnet replacements; reconcile the locked token source")
+    if network in parsed.get("dep-replacements", {}):
+        raise VerificationError(f"staged DeepBook already has {network} replacements; reconcile the locked token source")
     manifest.write_text(
-        text.rstrip() + "\n\n[dep-replacements.mainnet]\n"
+        text.rstrip() + f"\n\n[dep-replacements.{network}]\n"
         + f"token = {{ local = {json.dumps(str(token))}, override = true }}\n"
     )
 
 
-def resolve_mainnet_token(lock, packages, names, records, staged_repo):
+def resolve_token_override(lock, packages, names, records, staged_repo, network="mainnet"):
     """Resolve the explicit source override, checking identities before shadowing."""
     sessions = staged_repo / "packages/sessions"
-    override = read_toml(sessions / "Move.toml").get("dep-replacements", {}).get("mainnet", {}).get("token", {})
+    override = read_toml(sessions / "Move.toml").get("dep-replacements", {}).get(network, {}).get("token", {})
     relative = override.get("local")
     if override.get("override") is not True or not isinstance(relative, str) or Path(relative).is_absolute():
-        raise VerificationError("Mainnet token requires an explicit local Sessions override")
+        raise VerificationError(f"{network} token requires an explicit local Sessions override")
     selected_path = (sessions / relative).resolve()
     if not selected_path.is_relative_to(staged_repo.resolve()):
-        raise VerificationError("Mainnet token override escapes staged repository")
+        raise VerificationError("token override escapes staged repository")
     token_keys = {key for key in packages if names[key] == "token"}
     selected = [key for key in token_keys if "local" in lock[key]["source"]
                 and (sessions / lock[key]["source"]["local"]).resolve() == selected_path
                 and packages[key].resolve() == selected_path]
     if len(selected) != 1:
-        raise VerificationError("Mainnet token override must select exactly one resolved local token")
+        raise VerificationError("token override must select exactly one resolved local token")
     key = selected[0]
     manifest = read_toml(selected_path / "Move.toml")
     if manifest["package"]["name"] != "token":
-        raise VerificationError("Mainnet token override package name mismatch")
-    if key not in records or address(manifest.get("addresses", {}).get("token")) != records[key].original:
-        raise VerificationError("Mainnet token override original identity mismatch")
+        raise VerificationError("token override package name mismatch")
+    if key not in records or publication(selected_path, network) != records[key]:
+        raise VerificationError("token override publication identity mismatch")
+    named_address = manifest.get("addresses", {}).get("token")
+    if named_address != "0x0" and address(named_address) != records[key].original:
+        raise VerificationError("token override original identity mismatch")
     shadowed = token_keys - {key}
     for other in shadowed:
         if "git" not in lock[other]["source"]:
-            raise VerificationError("ambiguous local Mainnet token sources")
+            raise VerificationError("ambiguous local token sources")
         if other not in records or records[other] != records[key]:
             raise VerificationError(f"shadowed token publication identity mismatch: {other}")
     # A shadowed source is excluded only after matching the explicitly selected
@@ -410,16 +414,35 @@ def resolve_mainnet_token(lock, packages, names, records, staged_repo):
     return resolved, shadowed, key
 
 
-def build_legacy_token(legacy, directory):
+def build_legacy_token(legacy, directory, network="mainnet"):
+    bind_legacy_addresses({"token": directory}, {"token": publication(directory, network)})
     run([str(legacy), "move", "build", "--path", str(directory), "--skip-fetch-latest-git-deps"])
     return modules(directory / "build/token/bytecode_modules")
+
+
+def build_bytecode_verifier(repo):
+    manifest = repo / "packages/predict/deployment/bytecode/Cargo.toml"
+    run(["cargo", "build", "--locked", "--manifest-path", str(manifest),
+         "--target-dir", str(manifest.parent / "target")])
+    return manifest.parent / "target/debug/predict-dependency-bytecode"
+
+
+def verify_historical_serialization(binary, compiled, published):
+    payload = json.dumps({"compiled": {name: list(value) for name, value in compiled.items()},
+                          "published": {name: list(value) for name, value in published.items()}})
+    try:
+        result = subprocess.run([str(binary)], input=payload, text=True, capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired as error:
+        raise VerificationError("historical bytecode verification timed out after 30s") from error
+    if result.returncode:
+        raise VerificationError(f"historical bytecode verification failed: {result.stderr}")
 
 
 def verify(repo, network, sui, config, legacy=None, reuse_testnet_usdc=False):
     if reuse_testnet_usdc and network != "testnet":
         raise VerificationError("--reuse-testnet-usdc requires Testnet")
-    if network == "mainnet" and legacy is None:
-        raise VerificationError("Mainnet verification requires --legacy-sui or SUI_LEGACY_BINARY")
+    if legacy is None:
+        raise VerificationError("verification requires --legacy-sui or SUI_LEGACY_BINARY")
     validate_target(sui, config, network, legacy)
     lock = read_toml(repo / "packages/sessions/Move.lock").get("pinned", {}).get(network)
     if not lock or "deepbook_sessions" not in lock:
@@ -460,11 +483,9 @@ def verify(repo, network, sui, config, legacy=None, reuse_testnet_usdc=False):
             if name not in SYSTEM:
                 records[key] = publication(package, network)
 
-        token_key = None
-        if network == "mainnet":
-            lock, shadowed, token_key = resolve_mainnet_token(lock, packages, names, records, local)
-            for key in shadowed:
-                del records[key]
+        lock, shadowed, token_key = resolve_token_override(lock, packages, names, records, local, network)
+        for key in shadowed:
+            del records[key]
 
         # These framework bytes come from the canonical, just-built closure.
         artifacts = repo / "packages/sessions/build/deepbook_sessions/bytecode_modules/dependencies"
@@ -476,12 +497,12 @@ def verify(repo, network, sui, config, legacy=None, reuse_testnet_usdc=False):
             compare_modules(name, modules(artifacts / name), live)
             print(f"verified {name}: {len(live)} modules at {package_id}", flush=True)
 
-        legacy_modules = {}
+        legacy_modules = {token_key: build_legacy_token(legacy, packages[token_key], network)}
+        bytecode_verifier = build_bytecode_verifier(repo) if network == "testnet" else None
         if network == "mainnet":
-            legacy_modules[token_key] = build_legacy_token(legacy, packages[token_key])
             circle = {name: next(key for key in records if names[key] == name)
                       for name in ("usdc", "stablecoin", "sui_extensions")}
-            bind_circle_addresses({name: packages[key] for name, key in circle.items()},
+            bind_legacy_addresses({name: packages[key] for name, key in circle.items()},
                                   {name: records[key] for name, key in circle.items()})
             usdc = packages[circle["usdc"]]
             run([str(legacy), "move", "build", "--path", str(usdc), "--skip-fetch-latest-git-deps"])
@@ -505,9 +526,14 @@ def verify(repo, network, sui, config, legacy=None, reuse_testnet_usdc=False):
             compare_linkage(name, linkage, expected)
             if key in legacy_modules:
                 compare_modules(name, legacy_modules[key], live)
+            elif network == "testnet" and name in {"pyth_lazer", "wormhole"}:
+                run([str(sui), "move", "--client.config", str(config), "build", "--path", str(packages[key]),
+                     "--build-env", network, "--force"])
+                compiled = modules(packages[key] / "build" / name / "bytecode_modules")
+                verify_historical_serialization(bytecode_verifier, compiled, live)
             else:
-                if network == "mainnet" and name == "deepbook" and "git" in lock[key]["source"]:
-                    stage_deepbook_token(packages[key], lock, packages, names)
+                if name == "deepbook" and "git" in lock[key]["source"]:
+                    stage_deepbook_token(packages[key], lock, packages, names, network)
                 verify_modern(sui, config, network, packages[key], record)
             seen[record.latest] = record
             print(f"verified {name}: {len(live)} modules, version {record.version}, {record.latest}", flush=True)

@@ -5,8 +5,8 @@
  * Publish and configure an independent Predict deployment on an explicit Sui network.
  *
  * Mainnet publishes six packages, uses native Circle USDC, and locks 10 USDC without
- * an LP supply. Testnet additionally publishes and mints its own collateral and
- * supplies initial LP capital. Both authorize apps, wire BTC oracle state, configure
+ * an LP supply. Testnet publishes and mints collateral unless existing USDC is selected,
+ * and supplies initial LP capital. Both authorize apps, wire BTC oracle state, configure
  * cadences, and create initial unfunded market objects without price observations.
  * Operational capabilities are issued separately to an explicit recipient. Recovery
  * is written to the network-specific private journal. The public integration manifest is
@@ -1814,11 +1814,11 @@ export function withFreshPackageStage<T>(pkg: PackageName, operation: (directory
     try {
         cpSync(resolve(REPO_ROOT, "packages"), stagedPackages, {
             recursive: true,
-            filter: (source) => !["build", "node_modules"].includes(basename(source)),
+            filter: (source) => !["build", "target", "node_modules"].includes(basename(source)),
         });
         cpSync(resolve(REPO_ROOT, "vendor"), resolve(directory, "vendor"), {
             recursive: true,
-            filter: (source) => !["build", "node_modules"].includes(basename(source)),
+            filter: (source) => !["build", "target", "node_modules"].includes(basename(source)),
         });
         const stagedPackage = resolve(stagedPackages, pkg);
         rmSync(resolve(stagedPackage, "Published.toml"), { force: true });
@@ -3259,6 +3259,18 @@ async function moveObjectFields(runtime: Runtime, id: string): Promise<Record<st
     return object.json;
 }
 
+export function assertPythStateVersion(
+    state: Record<string, unknown>,
+    packageVersion: string,
+): void {
+    const version = asRecord(state.upgrade_cap).version;
+    if (!/^[1-9][0-9]*$/.test(packageVersion) || String(version) !== packageVersion) {
+        throw new Error(
+            `Pyth Lazer State version ${String(version)} does not match selected package version ${packageVersion}`,
+        );
+    }
+}
+
 async function verifyExternalDependencies(runtime: Runtime): Promise<{
     packages: Record<string, ObjectEvidence>;
     objects: Record<string, ObjectEvidence>;
@@ -3325,6 +3337,7 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
         throw new Error("Block Scholes signer registry is paused or has no valid signer");
     }
     const pythState = await moveObjectFields(runtime, LINKED_OBJECTS.pythLazerState);
+    assertPythStateVersion(pythState, packages.pyth_lazer.version);
     const trustedSigners = pythState.trusted_signers;
     const now = (await currentClockMs(runtime)) / 1_000n;
     if (
