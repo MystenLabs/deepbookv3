@@ -37,6 +37,8 @@ jobs:
       - name: Install Predict development dependencies
         working-directory: packages/predict
         run: npm install
+      - name: Test historical dependency bytecode verification
+        run: cargo test --locked --manifest-path packages/predict/deployment/bytecode/Cargo.toml
       - name: Run Predict harness checks
         working-directory: packages/predict
         run: |

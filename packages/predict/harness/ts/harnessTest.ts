@@ -13,6 +13,9 @@ import {
   blockScholesSubscribeRequest,
   providerPublicKeyFromRegistryObject,
   projectLandedSnapshot,
+  landedSnapshotFrom,
+  serializableLandedSnapshot,
+  type LandedMarketSnapshot,
   serializableSnapshot,
   subscriptionItemMatches,
 } from "./marketSource.js";
@@ -90,6 +93,7 @@ test("landed snapshot advances each source independently and ignores retransmit 
     pythSourceTimestampMs: 90n,
     bsSpot1e9: 20n,
     bsSpotSourceTimestampMs: 100,
+    bsSpotHistory: [{ value1e9: 20n, sourceTimestampMs: 100 }],
     expiries: new Map([[expiry, {
       forward: 30,
       forward1e9: 30n,
@@ -200,10 +204,55 @@ test("oracle receipt events identify exactly which source lanes advanced", () =>
   assert.equal(applied.sviSourceTimestampMsByExpiry.size, 0);
 });
 
+test("confirmed spot history stays bounded across no-ops and snapshot restarts", () => {
+  let landed: LandedMarketSnapshot | null = null;
+  const noAdvances = {
+    pythSourceTimestampMs: null,
+    bsSpotSourceTimestampMs: null,
+    forwardSourceTimestampMsByExpiry: new Map<number, number>(),
+    sviSourceTimestampMsByExpiry: new Map<number, number>(),
+  };
+  for (let timestamp = 1; timestamp <= 24; timestamp++) {
+    const candidate = {
+      spot1e9: 0n, pythSourceTimestampMs: 0n,
+      bsSpot1e9: BigInt(timestamp), bsSpotSourceTimestampMs: timestamp,
+      expiries: new Map(),
+    };
+    landed = projectLandedSnapshot(landed, candidate, {
+      ...noAdvances, bsSpotSourceTimestampMs: timestamp,
+    });
+    const expected = Array.from({ length: Math.min(timestamp, 10) }, (_, i) => {
+      const sourceTimestampMs = Math.max(1, timestamp - 9) + i;
+      return { sourceTimestampMs, value1e9: BigInt(sourceTimestampMs) };
+    });
+    assert.deepEqual(landed.bsSpotHistory, expected);
+    const persisted = JSON.parse(JSON.stringify(serializableLandedSnapshot(landed)));
+    assert.deepEqual(landedSnapshotFrom(persisted, []), landed);
+    for (const sourceTimestampMs of [0, timestamp - 1, timestamp, timestamp + 100]) {
+      const noOp = projectLandedSnapshot(landed, {
+        ...candidate, bsSpot1e9: 999n, bsSpotSourceTimestampMs: sourceTimestampMs,
+      }, noAdvances);
+      assert.deepEqual(noOp, landed);
+    }
+    landed = landedSnapshotFrom(persisted, []);
+  }
+  const encoded = serializableLandedSnapshot(landed!);
+  assert.throws(() => landedSnapshotFrom(serializableSnapshot(landed!), []), /schema mismatch/);
+  assert.throws(() => landedSnapshotFrom({ ...encoded, schemaVersion: 2 }, []), /schemaVersion/);
+  assert.throws(() => landedSnapshotFrom({ ...encoded, bsSpotHistory: [] }, []), /match latest/);
+  assert.throws(() => landedSnapshotFrom({ ...encoded, bsSpotHistory: Array(11).fill({}) }, []), /history/);
+  assert.throws(() => landedSnapshotFrom({ ...encoded, bsSpotHistory: [
+    { value1e9: "24", sourceTimestampMs: 24 },
+    { value1e9: "24", sourceTimestampMs: 24 },
+  ] }, []), /invalid landed spot read/);
+});
+
 test("strategy pricing mirror enforces source freshness and stale-Pyth fallback", () => {
   const now = 100_000;
   const expiry = 200_000;
   const snap: Snap = {
+    schemaVersion: 3,
+    bsSpotHistory: [{ value1e9: "100000000000", sourceTimestampMs: now - 1 }],
     spot1e9: "110000000000",
     pythSourceTimestampMs: String(now - 1),
     bsSpot1e9: "100000000000",
@@ -225,12 +274,46 @@ test("strategy pricing mirror enforces source freshness and stale-Pyth fallback"
   assert.equal(fallback?.bsSpot, 100);
 
   snap.bsSpotSourceTimestampMs = now - 10_001;
+  snap.bsSpotHistory[0].sourceTimestampMs = now - 10_001;
+  snap.expiries[String(expiry)].forwardSourceTimestampMs = now - 10_001;
   assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
   snap.bsSpotSourceTimestampMs = now - 1;
+  snap.bsSpotHistory[0].sourceTimestampMs = now - 1;
   snap.expiries[String(expiry)].forwardSourceTimestampMs = now - 10_001;
   assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
   snap.expiries[String(expiry)].forwardSourceTimestampMs = now - 1;
   snap.expiries[String(expiry)].sviSourceTimestampMs = now - 60_001;
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
+});
+
+test("strategy pricing uses the retained matching spot instead of the latest spot", () => {
+  const now = 100_000;
+  const expiry = 200_000;
+  const snap = {
+    schemaVersion: 3,
+    spot1e9: "110000000000",
+    pythSourceTimestampMs: "99999",
+    bsSpot1e9: "200000000000",
+    bsSpotSourceTimestampMs: 99_999,
+    bsSpotHistory: [
+      { value1e9: "100000000000", sourceTimestampMs: 99_998 },
+      { value1e9: "200000000000", sourceTimestampMs: 99_999 },
+    ],
+    expiries: {
+      [String(expiry)]: {
+        forward: 105,
+        forwardSourceTimestampMs: 99_998,
+        sviSourceTimestampMs: 99_998,
+        svi: { alpha: 0.1, beta: 0.2, rho: -0.3, m: 0.4, sigma: 0.5 },
+      },
+    },
+  };
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now)?.bsSpot, 100);
+  snap.bsSpotHistory.shift();
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
+  snap.expiries[String(expiry)].forwardSourceTimestampMs = 99_999;
+  assert.equal(pricingEnvFromSnapshot(snap, expiry, now)?.bsSpot, 200);
+  snap.schemaVersion = 2;
   assert.equal(pricingEnvFromSnapshot(snap, expiry, now), null);
 });
 

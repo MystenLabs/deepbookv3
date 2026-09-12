@@ -182,6 +182,11 @@ fun live_quote_with_prices_but_no_svi_aborts() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun block_scholes_price_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_live_price(),
+    );
     fx.set_bs_spot_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
@@ -201,6 +206,11 @@ fun block_scholes_price_above_u64_aborts_with_named_width_error() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
     let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_live_price(),
+    );
     fx.set_bs_forward_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
@@ -219,6 +229,11 @@ fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun block_scholes_forward_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_live_price(),
+    );
     fx.set_bs_forward_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
@@ -418,11 +433,6 @@ fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
     fx.retransmit_bs_spot_for_testing(
         &mut oracle,
         source_ms,
@@ -773,10 +783,12 @@ fun negative_svi_a_with_positive_min_variance_prices() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let up = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
+    let up = pricer
+        .range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
     // Independent Python true-math reference:
     // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
     // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
@@ -1341,5 +1353,5 @@ fun setup_live(): (OracleFixture, OracleBundle) {
 /// Worker: one live quote over `(lower, higher]` against the fixture market.
 fun live_quote(fx: &mut OracleFixture, oracle: &OracleBundle, lower: u64, higher: u64): u64 {
     let pricer = fx.load_pricer_bundle(oracle);
-    pricer.range_price(strike(lower), strike(higher))
+    pricer.range_price(strike(lower), strike(higher)).probability()
 }

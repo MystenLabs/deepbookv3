@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import csv
 import json
 from functools import lru_cache
@@ -107,6 +108,7 @@ SCENARIO_COLUMNS = (
     "risk_free_rate",
     "strike",
     "is_up",
+    "higher_strike",
     "quantity",
     "order_ref",
     "close_quantity",
@@ -414,6 +416,22 @@ def binary_range_ticks(strike: int, is_up: bool) -> tuple[int, int]:
     return 0, tick
 
 
+def mint_range_ticks(row: dict[str, Any]) -> tuple[int, int]:
+    lower, higher = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+    if row.get("higherStrike") is not None:
+        if not row["isUp"]:
+            raise ValueError("higher_strike requires is_up=true")
+        higher_strike = row["higherStrike"]
+        if higher_strike % ORACLE_TICK_SIZE != 0:
+            raise ValueError("higher_strike must be a whole tick multiple")
+        higher = higher_strike // ORACLE_TICK_SIZE
+        if higher >= POS_INF_TICK:
+            raise ValueError("higher_strike must be finite")
+        if lower >= higher:
+            raise ValueError("higher_strike must exceed strike")
+    return lower, higher
+
+
 def strikes_from_ticks(lower_tick: int, higher_tick: int) -> tuple[int, int]:
     # Tick -> raw strike with open-ended sentinels (mirrors range_codec::strike_from_tick per boundary):
     # lower_tick 0 -> NEG_INF_STRIKE; higher_tick POS_INF_TICK -> POS_INF_STRIKE.
@@ -543,6 +561,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     **_oracle_values(row, index),
                     "strike": _uint(row, "strike", index),
                     "isUp": _bool(row, "is_up", index),
+                    "higherStrike": _uint(row, "higher_strike", index) if row.get("higher_strike") else None,
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
                     "orderRef": _ref(row, "order_ref", index),
                 }
@@ -1158,7 +1177,7 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
         else {}
     )
     if action == "mint":
-        lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+        lower_tick, higher_tick = mint_range_ticks(row)
         return {
             **oracle_input,
             "order_ref": row["orderRef"],
@@ -1355,21 +1374,40 @@ def pricing_svi(oracle: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def price_range(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> int:
-    if "lower_tick" in row_or_order:
-        lower, higher = strikes_from_ticks(
-            row_or_order["lower_tick"],
-            row_or_order["higher_tick"],
-        )
-    else:
-        strike = align_strike_to_tick(row_or_order["strike"])
-        lower, higher = binary_range_bounds(strike, row_or_order["isUp"])
-    return compute_range_price(
-        pricing_svi(oracle),
-        live_forward(oracle["spot"], oracle["forward"]),
-        lower,
-        higher,
+def range_prices(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> tuple[int | None, int | None]:
+    ticks = (
+        (row_or_order["lower_tick"], row_or_order["higher_tick"])
+        if "lower_tick" in row_or_order else mint_range_ticks(row_or_order)
     )
+    lower, higher = strikes_from_ticks(*ticks)
+    svi = pricing_svi(oracle)
+    forward = live_forward(oracle["spot"], oracle["forward"])
+    return (
+        None if lower == NEG_INF_STRIKE else compute_up_price(svi, forward, lower),
+        None if higher == POS_INF_STRIKE else compute_up_price(svi, forward, higher),
+    )
+
+
+def range_probability(prices: tuple[int | None, int | None]) -> int:
+    lower, higher = prices
+    return max(0, (FLOAT_SCALING if lower is None else lower) - (0 if higher is None else higher))
+
+
+def range_trading_fee(prices: tuple[int | None, int | None], quantity: int, time_to_expiry_ms: int | None) -> int:
+    return sum(deepbook_mul(fee_rate(p, time_to_expiry_ms), quantity) for p in prices if p is not None)
+
+
+def assert_range_entry_bounds(prices: tuple[int | None, int | None]) -> None:
+    lower, higher = prices
+    if lower is not None:
+        assert_entry_probability_bounds(lower)
+    if higher is not None:
+        assert_entry_probability_bounds(FLOAT_SCALING - higher)
+    assert_entry_probability_bounds(range_probability(prices))
+
+
+def price_range(row_or_order: dict[str, Any], oracle: dict[str, Any]) -> int:
+    return range_probability(range_prices(row_or_order, oracle))
 
 
 def mint_order(
@@ -1381,25 +1419,27 @@ def mint_order(
     oracle = model["last_oracle"]
     if oracle is None:
         raise ValueError("mint requires an oracle snapshot")
-    probability = price_range(row, oracle)
-    assert_entry_probability_bounds(probability)
+    prices = range_prices(row, oracle)
+    assert_range_entry_bounds(prices)
+    probability = range_probability(prices)
     quantity = row["quantity"]
     premium = deepbook_mul(probability, quantity)
     if premium < MIN_PREMIUM:
         raise ValueError("premium below minimum")
-    fee = deepbook_mul(
-        fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
-        quantity,
-    )
-    lower_tick, higher_tick = binary_range_ticks(align_strike_to_tick(row["strike"]), row["isUp"])
+    fee = range_trading_fee(prices, quantity, model_fee_time_to_expiry_ms(model, timestamp_ms))
+    lower_tick, higher_tick = mint_range_ticks(row)
     before = live_payout_liability(model)
-    model["tree"].insert_range(lower_tick, higher_tick, quantity)
-    after = live_payout_liability(model)
+    quoted_model = {**model, "tree": deepcopy(model["tree"])}
+    quoted_model["tree"].insert_range(lower_tick, higher_tick, quantity)
+    after = live_payout_liability(quoted_model)
     impact_charge = inventory_impact_potential(after) - inventory_impact_potential(before)
     total_cost = premium + fee + impact_charge
+    if total_cost > quantity:
+        raise ValueError("mint cost above maximum payout")
     if total_cost > state["account_usdc_balance"]:
         raise ValueError("insufficient account balance for mint")
 
+    model["tree"] = quoted_model["tree"]
     sequence = model["next_order_sequence"]
     model["next_order_sequence"] += 1
     model["orders"][row["orderRef"]] = {
@@ -1453,14 +1493,12 @@ def redeem_live(
     oracle = model["last_oracle"]
     if oracle is None:
         raise ValueError("live redeem requires an oracle snapshot")
-    probability = price_range(order, oracle)
+    prices = range_prices(order, oracle)
+    probability = range_probability(prices)
     redeem_amount = deepbook_mul(probability, close_quantity)
     fee = min(
         redeem_amount,
-        deepbook_mul(
-            fee_rate(probability, model_fee_time_to_expiry_ms(model, timestamp_ms)),
-            close_quantity,
-        ),
+        range_trading_fee(prices, close_quantity, model_fee_time_to_expiry_ms(model, timestamp_ms)),
     )
     before = live_payout_liability(model)
     model["tree"].remove_range(order["lower_tick"], order["higher_tick"], close_quantity)

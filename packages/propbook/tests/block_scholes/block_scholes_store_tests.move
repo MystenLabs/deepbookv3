@@ -55,6 +55,8 @@ const NON_MINUTE_MS: u64 = EXACT_MINUTE_EARLY_MS + 1;
 const EXACT_HISTORY_CHAIN_TIME_MS: u64 = 180_000;
 const NO_EVENTS: u64 = 0;
 const ONE_EVENT: u64 = 1;
+const SPOT_BUFFER_SIZE: u64 = 10;
+const SPOT_WRITES: u64 = 24;
 
 const SVI_A_MAG: u128 = 40_000_000;
 const SVI_A_NEG: bool = true;
@@ -66,6 +68,116 @@ const SVI_M_MAG: u128 = 25_000_000;
 const SVI_M_NEG: bool = false;
 
 // === Accepting ===
+
+#[test]
+fun recent_spot_ring_wraps_without_touching_forwards_or_settlement_history() {
+    let (mut scenario, value_id, _svi_id) = setup_stores();
+    let mut value_store = scenario.take_shared_by_id<BlockScholesValueStore>(value_id);
+    let mut chain_clock = new_clock(&mut scenario);
+    chain_clock.set_for_testing(EXACT_HISTORY_CHAIN_TIME_MS);
+    assert!(value_store.spot().is_none());
+    assert!(value_store.recent_spot_at(EXACT_MINUTE_EARLY_MS).is_none());
+
+    let forward_sid = value_store.forward_sid(EXPIRY_A);
+    value_store.apply_forward_batch(
+        verify::new_value_batch_for_testing(
+            BATCH_EARLY,
+            vector[
+                verify::new_value_update_for_testing(
+                    forward_sid,
+                    SOURCE_EARLY,
+                    FORWARD_A,
+                ),
+            ],
+        ),
+        vector[EXPIRY_A],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    let mut i = 0;
+    while (i < SPOT_WRITES) {
+        let source_ms = EXACT_MINUTE_EARLY_MS + i;
+        apply_values(
+            &mut value_store,
+            source_ms,
+            vector[spot_update(&btc(), source_ms, SPOT + (i as u128))],
+            &chain_clock,
+            scenario.ctx(),
+        );
+        assert_eq!(value_store.spot().destroy_some().read_source_timestamp_ms(), source_ms);
+        // Check every inserted key after every write, including both wrap boundaries.
+        let mut j = 0;
+        while (j <= i) {
+            let read = value_store.recent_spot_at(EXACT_MINUTE_EARLY_MS + j);
+            if (i - j < SPOT_BUFFER_SIZE) {
+                let read = read.destroy_some();
+                assert_eq!(read.read_value(), SPOT + (j as u128));
+                assert_eq!(read.read_source_timestamp_ms(), EXACT_MINUTE_EARLY_MS + j);
+                assert_eq!(read.read_onchain_timestamp_ms(), EXACT_HISTORY_CHAIN_TIME_MS);
+                assert_eq!(read.read_writer_digest(), *scenario.ctx().digest());
+            } else {
+                assert!(read.is_none());
+            };
+            j = j + 1;
+        };
+        i = i + 1;
+    };
+    let latest = value_store.spot().destroy_some();
+    // Invalid, old, and equal-time observations cannot replace a slot or its provenance.
+    vector[
+        0,
+        SOURCE_EARLY,
+        EXACT_MINUTE_EARLY_MS,
+        latest.read_source_timestamp_ms(),
+        EXACT_HISTORY_CHAIN_TIME_MS + 1,
+    ].do!(|source_ms| {
+        apply_values(
+            &mut value_store,
+            BATCH_LATER,
+            vector[spot_update(&btc(), source_ms, SPOT_LATER)],
+            &chain_clock,
+            scenario.ctx(),
+        );
+        assert_eq!(value_store.spot().destroy_some(), latest);
+    });
+    assert_eq!(
+        value_store
+            .recent_spot_at(EXACT_MINUTE_EARLY_MS + SPOT_WRITES - SPOT_BUFFER_SIZE)
+            .destroy_some()
+            .read_value(),
+        SPOT + ((SPOT_WRITES - SPOT_BUFFER_SIZE) as u128),
+    );
+    assert_eq!(value_store.forward(EXPIRY_A).destroy_some().read_value(), FORWARD_A);
+    assert_eq!(value_store.spot_at(EXACT_MINUTE_EARLY_MS).destroy_some().read_value(), SPOT);
+    assert!(value_store.recent_spot_at(EXACT_MINUTE_EARLY_MS).is_none());
+
+    // The next accepted write evicts exactly the oldest retained slot: rejected writes did
+    // not consume ring positions.
+    apply_values(
+        &mut value_store,
+        BATCH_LATER,
+        vector[spot_update(&btc(), EXACT_MINUTE_EARLY_MS + SPOT_WRITES, SPOT_LATER)],
+        &chain_clock,
+        scenario.ctx(),
+    );
+    assert!(
+        value_store
+            .recent_spot_at(EXACT_MINUTE_EARLY_MS + SPOT_WRITES - SPOT_BUFFER_SIZE)
+            .is_none(),
+    );
+    assert_eq!(
+        value_store
+            .recent_spot_at(EXACT_MINUTE_EARLY_MS + SPOT_WRITES - SPOT_BUFFER_SIZE + 1)
+            .destroy_some()
+            .read_value(),
+        SPOT + ((SPOT_WRITES - SPOT_BUFFER_SIZE + 1) as u128),
+    );
+    assert_eq!(value_store.spot().destroy_some().read_value(), SPOT_LATER);
+
+    clock::destroy_for_testing(chain_clock);
+    return_shared(value_store);
+    scenario.end();
+}
 
 #[test]
 fun a_spot_observation_lands_with_source_and_onchain_clocks() {

@@ -573,6 +573,14 @@ public fun set_expiry_mint_paused_bundle(self: &Fixture, market: &mut MarketBund
     self.set_expiry_mint_paused(&mut market.market, &market.config, paused);
 }
 
+public fun set_template_base_fee(self: &mut Fixture, value: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_base_fee(&self.admin_cap, value, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 public fun set_template_min_fee(self: &mut Fixture, value: u64) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();

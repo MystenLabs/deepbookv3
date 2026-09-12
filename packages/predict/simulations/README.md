@@ -62,6 +62,8 @@ The Block Scholes local fixture derives series identities through the published 
 
 The generator writes fixed-point integers as decimal text and emits explicit mint, live redeem, LP request, flush, rebalance, settlement, owner-settled-redeem, and permissionless-settled-redeem actions. The TypeScript executor records emitted transitions plus direct chain-state snapshots after every action; the Python replay independently models the same economics.
 
+Mint rows use `strike` and `is_up` for above/below. An `is_up=true` row may also supply `higher_strike` to bound its upper side; both finite strikes must align to the configured tick grid and the upper strike must exceed the lower. The generated round trip at steps 8–9 mints and closes a finite range, exercising separate boundary fees. The replay applies individual-leg and combined-probability admission only to mint, and caps summed live-close fees at redemption value.
+
 ## Verification
 
 ```bash

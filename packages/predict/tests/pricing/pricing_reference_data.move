@@ -30,7 +30,7 @@ use deepbook_predict::constants;
 
 const ENoSuchScenario: u64 = 0;
 
-/// One independent reference point: Pricer.range_price(lower, higher)
+/// One independent reference point: Pricer.range_price(lower, higher).probability()
 /// must be within `tolerance` units of the true-math `reference`.
 public struct RefPoint has copy, drop {
     lower: u64,
