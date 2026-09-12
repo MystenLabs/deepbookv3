@@ -2,31 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Publish and fully configure an independent Predict deployment on Sui Testnet.
+ * Publish and configure an independent Predict deployment on an explicit Sui network.
  *
- * A run publishes fixed_math, USDC, Account, Propbook, Predict, the DeepBook core
- * Account wrapper, and Sessions; finalizes both currency registrations; mints the
- * Testnet collateral; authorizes the apps; wires BTC oracle state; stores the
- * cadence policy; capitalizes the pool; and creates initial market objects.
+ * Mainnet publishes six packages, uses native Circle USDC, and locks 10 USDC without
+ * an LP supply. Testnet additionally publishes and mints its own collateral and
+ * supplies initial LP capital. Both authorize apps, wire BTC oracle state, configure
+ * cadences, and create initial unfunded market objects without price observations.
  * Operational capabilities are issued separately to an explicit recipient. Recovery
- * is written to deployment.testnet.state.json. The public integration manifest is
+ * is written to the network-specific private journal. The public integration manifest is
  * derived after the contract deployment audit; external authorization is reported separately.
  *
  * The default invocation is non-broadcasting:
- *   SUI_BINARY=/path/to/sui node --import tsx packages/predict/deployment/deploy.ts
+ *   node --import tsx deployment/deploy.ts --network mainnet --deployer <address>
  *
  * Broadcast only from a committed deployment branch:
- *   SUI_BINARY=/path/to/sui node --import tsx packages/predict/deployment/deploy.ts --execute
+ *   node --import tsx deployment/deploy.ts --network mainnet --deployer <address> --execute
  *
- * Package publication keeps Sui dependency verification enabled. Preflight
- * compiles with warnings denied and proves that every resolved dependency ID is
- * the expected Testnet package.
+ * Preflight compiles with warnings denied and verifies resolved package identities.
+ * Source verification is explicit; CLI publication success is not bytecode proof.
  */
 import { execFileSync } from "node:child_process";
 import {
     chmodSync,
     closeSync,
-    copyFileSync,
     cpSync,
     existsSync,
     mkdtempSync,
@@ -56,29 +54,32 @@ import { fromBase58, fromBase64, toHex } from "@mysten/sui/utils";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..", "..");
-export const STATE_RELATIVE = "packages/predict/deployment/deployment.testnet.state.json";
-export const MANIFEST_RELATIVE = "packages/predict/deployment/deployment.testnet.json";
-const STATE = resolve(REPO_ROOT, STATE_RELATIVE);
-const STATE_TEMP = `${STATE}.tmp`;
-const MANIFEST = resolve(REPO_ROOT, MANIFEST_RELATIVE);
-const MANIFEST_TEMP = `${MANIFEST}.tmp`;
+export let STATE_RELATIVE = "packages/predict/deployment/deployment.testnet.state.json";
+export let MANIFEST_RELATIVE = "packages/predict/deployment/deployment.testnet.json";
+let STATE = resolve(REPO_ROOT, STATE_RELATIVE);
+let STATE_TEMP = `${STATE}.tmp`;
+let MANIFEST = resolve(REPO_ROOT, MANIFEST_RELATIVE);
+let MANIFEST_TEMP = `${MANIFEST}.tmp`;
 const SUI = process.env.SUI_BINARY ?? "sui";
 const PACKAGE_GAS_BUDGET = process.env.PACKAGE_GAS_BUDGET ?? "5000000000";
 const TRANSACTION_GAS_BUDGET = BigInt(process.env.TRANSACTION_GAS_BUDGET ?? "1000000000");
-const NETWORK = "testnet";
-const CHAIN_ID = "4c78adac";
-const DEPLOYMENT = "deepbook-predict-testnet";
-const DEPLOYER = "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef";
-const SUI_VERSION = "sui 1.77.1-4e476c5c8184";
+type Network = "testnet" | "mainnet";
+let NETWORK: Network = "testnet";
+let CHAIN_ID = "4c78adac";
+let DEPLOYMENT = "deepbook-predict-testnet";
+// Never infer a deployer from a wallet or ship an operator's address in source.
+let DEPLOYER = "";
+const SUI_VERSION = "sui 1.78.1-722ac4fcf484";
 const OBJECT_ID = /^0x[0-9a-f]{64}$/;
 const CLOCK_ID = "0x0000000000000000000000000000000000000000000000000000000000000006";
 const ACCUMULATOR_ROOT_ID = "0x0000000000000000000000000000000000000000000000000000000000000acc";
-const DEEPBOOK_REGISTRY = "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1";
-const DEEPBOOK_ADMIN_CAP = "0x29a62a5385c549dd8e9565312265d2bda0b8700c1560b3e34941671325daae77";
-const DEEPBOOK_ADMIN_OWNER = "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e";
-const DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
+let DEEPBOOK_REGISTRY = "0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1";
+let DEEPBOOK_ORIGINAL = "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
+let PYTH_ORIGINAL = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21";
+export const MAINNET_USDC = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7";
+const MAINNET_USDC_CURRENCY = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
 
-const PACKAGES = [
+const TESTNET_PACKAGES = [
     "fixed_math",
     "usdc",
     "account",
@@ -87,13 +88,14 @@ const PACKAGES = [
     "deepbook_core_account",
     "sessions",
 ] as const;
-type PackageName = (typeof PACKAGES)[number];
+type PackageName = (typeof TESTNET_PACKAGES)[number];
+let PACKAGES: readonly PackageName[] = TESTNET_PACKAGES;
 
 export type DeploymentMode =
     | { command: "deploy"; execute: boolean; resumeScriptFrom?: string }
     | { command: "issue-caps"; execute: boolean; recipient: string };
 
-const LINKED = {
+const TESTNET_LINKED = {
     deepbook: "0xd874d2417a55bfa6479bffa06ad950fea144ef93a94cc6c49f32b03e386bbb24",
     deep: "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8",
     pyth_lazer: "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
@@ -102,7 +104,8 @@ const LINKED = {
     bs_sid: "0x6a54299d593fca24edf6b17bf8c3aff0b7ba8bc8f4276e9c1065689c50223bba",
 } as const;
 
-const LINKED_OBJECTS = {
+let LINKED: Record<keyof typeof TESTNET_LINKED, string> = { ...TESTNET_LINKED };
+const TESTNET_LINKED_OBJECTS = {
     clock: CLOCK_ID,
     accumulatorRoot: ACCUMULATOR_ROOT_ID,
     pythLazerState: "0xe2b9096a5ea341a9f1eef126b2203727e29e73fdb0641ade2e1e32942f97e4d8",
@@ -111,6 +114,9 @@ const LINKED_OBJECTS = {
         "0x94d0198a6fa973bb457603ed39b39b76c98468114808ad5b518745b7b957c414",
     deepbookRegistry: DEEPBOOK_REGISTRY,
 } as const;
+let LINKED_OBJECTS: Record<keyof typeof TESTNET_LINKED_OBJECTS, string> = {
+    ...TESTNET_LINKED_OBJECTS,
+};
 
 const EXPECTED_SHARED: Record<PackageName, readonly string[]> = {
     fixed_math: [],
@@ -123,9 +129,67 @@ const EXPECTED_SHARED: Record<PackageName, readonly string[]> = {
 };
 
 const USDC_SCALING = 1_000_000n;
-const USDC_MINT_AMOUNT = 100_000_000n * USDC_SCALING;
+let USDC_MINT_AMOUNT = 100_000_000n * USDC_SCALING;
 const LOCK_CAPITAL_AMOUNT = 10n * USDC_SCALING;
-const BOOTSTRAP_SUPPLY_AMOUNT = 250_000n * USDC_SCALING;
+let BOOTSTRAP_SUPPLY_AMOUNT = 250_000n * USDC_SCALING;
+
+export function configureDeployment(network: string, deployer: string): void {
+    if (network !== "mainnet" && network !== "testnet")
+        throw new Error("--network must be mainnet or testnet");
+    const signer = requiredObjectId(deployer, "expected deployer (--deployer)");
+    if (BigInt(signer) === 0n) throw new Error("expected deployer must be nonzero");
+    NETWORK = network;
+    DEPLOYER = signer;
+    CHAIN_ID = network === "mainnet" ? "35834a8a" : "4c78adac";
+    DEPLOYMENT = `deepbook-predict-${network}`;
+    STATE_RELATIVE = `packages/predict/deployment/deployment.${network}.state.json`;
+    MANIFEST_RELATIVE = `packages/predict/deployment/deployment.${network}.json`;
+    STATE = resolve(REPO_ROOT, STATE_RELATIVE);
+    STATE_TEMP = `${STATE}.tmp`;
+    MANIFEST = resolve(REPO_ROOT, MANIFEST_RELATIVE);
+    MANIFEST_TEMP = `${MANIFEST}.tmp`;
+    PACKAGES =
+        network === "mainnet" ? TESTNET_PACKAGES.filter((pkg) => pkg !== "usdc") : TESTNET_PACKAGES;
+    USDC_MINT_AMOUNT = network === "mainnet" ? 0n : 100_000_000n * USDC_SCALING;
+    BOOTSTRAP_SUPPLY_AMOUNT = network === "mainnet" ? 0n : 250_000n * USDC_SCALING;
+    DEEPBOOK_REGISTRY =
+        network === "mainnet"
+            ? "0xaf16199a2dff736e9f07a845f23c5da6df6f756eddb631aed9d24a93efc4549d"
+            : TESTNET_LINKED_OBJECTS.deepbookRegistry;
+    DEEPBOOK_ORIGINAL =
+        network === "mainnet"
+            ? "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809"
+            : "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982";
+    PYTH_ORIGINAL =
+        network === "mainnet"
+            ? "0x7b502c8a7bcb3915892347f11086745570e759fe9708d03c03accf4c90bbf580"
+            : TESTNET_LINKED.pyth_lazer;
+    LINKED =
+        network === "mainnet"
+            ? {
+                  deepbook: "0x0e735f8c93a95722efd73521aca7a7652c0bb71ed1daf41b26dfd7d1ff71f748",
+                  deep: "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270",
+                  pyth_lazer: "0xefbfd064480777699fd9c557a5804d72ace7bc82661fdc8d1f1a44ea6d92ee10",
+                  wormhole: "0x5306f64e312b581766351c07af79c72fcb1cd25147157fdc2f8ad76de9a3fb6a",
+                  bs_oracle: "0xa408bcdeb8e7607b1cbb92c088147d61664a6255a3ea5696a8fef44711e113d8",
+                  bs_sid: "0xdacaf624c4802c9ff7b8c72447207f5078b78be246f78e143d63e6cd89b4f63d",
+              }
+            : { ...TESTNET_LINKED };
+    LINKED_OBJECTS =
+        network === "mainnet"
+            ? {
+                  clock: CLOCK_ID,
+                  accumulatorRoot: ACCUMULATOR_ROOT_ID,
+                  pythLazerState:
+                      "0xd0db9c1e9212a98120384bf78d8b8c985d87b9ee6921dffcf9d1394062911573",
+                  wormholeState:
+                      "0xaeab97f96cf9877fee2883315d459552b2b921edc16d7ceac6eab944dd88919c",
+                  blockScholesSignerRegistry:
+                      "0xc578b6058b0ba9cf2254962168cd779593805c4f10f80aef8749df75ef7fc0e5",
+                  deepbookRegistry: DEEPBOOK_REGISTRY,
+              }
+            : { ...TESTNET_LINKED_OBJECTS };
+}
 const ASSET = {
     name: "BTC_USD",
     propbookUnderlyingId: 1,
@@ -459,7 +523,7 @@ interface Verification {
         deepbookCoreAppAuthorized: boolean;
         sessionsAppAuthorized: boolean;
         deepbookCoreAuthorized: boolean;
-        accountWrapper: ObjectEvidence;
+        accountWrapper: ObjectEvidence | null;
     };
     currencies: {
         usdc: ObjectEvidence;
@@ -547,7 +611,15 @@ const FIXED_TRANSACTION_STEPS = [
 
 export function plannedTransactionSteps(): string[] {
     return [
-        ...FIXED_TRANSACTION_STEPS,
+        ...FIXED_TRANSACTION_STEPS.filter(
+            (step) =>
+                NETWORK !== "mainnet" ||
+                ![
+                    "finalize_usdc_currency_registration",
+                    "mint_deployer_usdc",
+                    "create_deployer_account",
+                ].includes(step),
+        ),
         ...CADENCES.flatMap((cadence) =>
             Array.from(
                 { length: cadence.marketsToCreate },
@@ -570,7 +642,7 @@ export function irreversibleDeploymentSteps(): string[] {
 }
 
 export interface IntegrationManifest {
-    schemaVersion: 8;
+    schemaVersion: 8 | 9;
     deployment: string;
     network: string;
     chainId: string;
@@ -811,7 +883,13 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
     const verifiedLinkedObject = (name: keyof typeof LINKED_OBJECTS): string =>
         requiredObjectId(verification.linkedObjects[name]?.objectId, `verified ${name} object`);
     const fixedMath = verifiedPackage("fixed_math");
-    const usdc = verifiedPackage("usdc");
+    const usdc =
+        NETWORK === "mainnet"
+            ? requiredObjectId(
+                  verification.linkedPackages.usdc?.objectId,
+                  "verified native USDC package",
+              )
+            : verifiedPackage("usdc");
     const account = verifiedPackage("account");
     const propbook = verifiedPackage("propbook");
     const predict = verifiedPackage("predict");
@@ -851,7 +929,7 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
         };
     });
     const manifest: IntegrationManifest = {
-        schemaVersion: 8,
+        schemaVersion: NETWORK === "mainnet" ? 9 : 8,
         deployment: DEPLOYMENT,
         network: NETWORK,
         chainId: CHAIN_ID,
@@ -1023,7 +1101,7 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         "integration manifest",
     );
     if (
-        manifest.schemaVersion !== 8 ||
+        manifest.schemaVersion !== (NETWORK === "mainnet" ? 9 : 8) ||
         manifest.deployment !== DEPLOYMENT ||
         manifest.network !== NETWORK ||
         manifest.chainId !== CHAIN_ID ||
@@ -1068,7 +1146,15 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
         ],
         "objects",
     );
-    for (const [name, id] of Object.entries(objects)) requiredObjectId(id, `objects.${name}`);
+    for (const [name, id] of Object.entries(objects)) {
+        requiredObjectId(id, `objects.${name}`);
+    }
+    if (
+        NETWORK === "mainnet" &&
+        (packages.usdc !== MAINNET_USDC || objects.usdcCurrency !== MAINNET_USDC_CURRENCY)
+    ) {
+        throw new Error("Mainnet collateral identity is not native USDC");
+    }
 
     const underlyings = asRecord(manifest.underlyings);
     exactKeys(underlyings, ["BTC"], "underlyings");
@@ -1511,15 +1597,35 @@ export function publishedMetadataText(packageId: string, upgradeCapability: stri
 # This file contains metadata about published versions of this package in different environments
 # This file SHOULD be committed to source control
 
-[published.testnet]
+[published.${NETWORK}]
 chain-id = "${CHAIN_ID}"
 published-at = "${normalizedPackage}"
 original-id = "${normalizedPackage}"
 version = 1
-toolchain-version = "1.77.1"
+toolchain-version = "1.78.1"
 build-config = { flavor = "sui", edition = "2024" }
 upgrade-capability = "${normalizedUpgradeCapability}"
 `;
+}
+
+export function mergePublishedMetadata(existing: string, generated: string): string {
+    const section = new RegExp(`\\[published\\.${NETWORK}\\]([\\s\\S]*?)(?=\\n\\[|$)`);
+    const replacement = generated.match(section)?.[0];
+    if (!replacement) throw new Error(`generated metadata is missing ${NETWORK}`);
+    if (section.test(existing))
+        return `${existing.replace(section, replacement.trimEnd()).trimEnd()}\n`;
+    return `${existing.trimEnd()}\n\n${replacement.trimEnd()}\n`.trimStart();
+}
+
+function storePublishedMetadata(path: string, generated: string): void {
+    const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
+    const temporaryPath = `${path}.recovery.tmp`;
+    try {
+        writeFileSync(temporaryPath, mergePublishedMetadata(existing, generated), { mode: 0o644 });
+        renameSync(temporaryPath, path);
+    } finally {
+        rmSync(temporaryPath, { force: true });
+    }
 }
 
 function normalizeId(id: string): string {
@@ -1602,15 +1708,7 @@ function reconstructPublishedMetadata(result: DeploymentResult, pkg: PackageName
         `${pkg} upgrade capability`,
     );
     const path = publishedPath(pkg);
-    const temporaryPath = `${path}.recovery.tmp`;
-    try {
-        writeFileSync(temporaryPath, publishedMetadataText(packageId, upgradeCapability), {
-            mode: 0o644,
-        });
-        renameSync(temporaryPath, path);
-    } finally {
-        rmSync(temporaryPath, { force: true });
-    }
+    storePublishedMetadata(path, publishedMetadataText(packageId, upgradeCapability));
     assertPublishedIdentity(path, packageId, pkg);
 }
 
@@ -1628,8 +1726,10 @@ function assertPublishedIdentity(
 ): void {
     if (!existsSync(path)) throw new Error(`${label} is missing ${path}`);
     const text = readFileSync(path, "utf8");
-    const section = text.match(/\[published\.testnet\]([\s\S]*?)(?=\n\[|$)/)?.[1];
-    if (!section) throw new Error(`${label} is missing [published.testnet]`);
+    const section = text.match(
+        new RegExp(`\\[published\\.${NETWORK}\\]([\\s\\S]*?)(?=\\n\\[|$)`),
+    )?.[1];
+    if (!section) throw new Error(`${label} is missing [published.${NETWORK}]`);
     const chainId = publishedField(section, "chain-id", label);
     const publishedAt = normalizeId(publishedField(section, "published-at", label));
     const originalId = normalizeId(publishedField(section, "original-id", label));
@@ -1679,11 +1779,15 @@ function assertPackageCheckpoints(result: DeploymentResult): void {
     }
 }
 
-function withFreshPackageStage<T>(pkg: PackageName, operation: (directory: string) => T): T {
+export function withFreshPackageStage<T>(pkg: PackageName, operation: (directory: string) => T): T {
     const directory = mkdtempSync(join(tmpdir(), `${DEPLOYMENT}-${pkg}-`));
     const stagedPackages = resolve(directory, "packages");
     try {
         cpSync(resolve(REPO_ROOT, "packages"), stagedPackages, {
+            recursive: true,
+            filter: (source) => !["build", "node_modules"].includes(basename(source)),
+        });
+        cpSync(resolve(REPO_ROOT, "vendor"), resolve(directory, "vendor"), {
             recursive: true,
             filter: (source) => !["build", "node_modules"].includes(basename(source)),
         });
@@ -1786,7 +1890,7 @@ function assertStateFile(result: DeploymentResult): void {
         result.buildEnvironment !== NETWORK ||
         normalizeId(result.deployer) !== DEPLOYER
     ) {
-        throw new Error(`${STATE_RELATIVE} is not the expected schema-5 Testnet deployment`);
+        throw new Error(`${STATE_RELATIVE} is not the expected schema-5 ${NETWORK} deployment`);
     }
     if (JSON.stringify(result.linked) !== JSON.stringify(LINKED)) {
         throw new Error(`linked package IDs in ${STATE_RELATIVE} do not match deploy.ts`);
@@ -1812,7 +1916,7 @@ function assertStateFile(result: DeploymentResult): void {
 function acquireLock(): LockHandle {
     const commonDirRaw = git(["rev-parse", "--git-common-dir"]);
     const commonDir = isAbsolute(commonDirRaw) ? commonDirRaw : resolve(REPO_ROOT, commonDirRaw);
-    const path = resolve(commonDir, "predict-testnet-deployment.lock");
+    const path = resolve(commonDir, `predict-${CHAIN_ID}-deployment.lock`);
     const token = randomUUID();
     const payload = {
         token,
@@ -1829,7 +1933,7 @@ function acquireLock(): LockHandle {
         if (existsSync(path)) {
             const detail = readFileSync(path, "utf8").trim();
             throw new Error(
-                `deployment lock already exists at ${path}. Fail closed: inspect ${STATE_RELATIVE} and Testnet before removing it. lock=${detail}`,
+                `deployment lock already exists at ${path}. Fail closed: inspect ${STATE_RELATIVE} and ${NETWORK} before removing it. lock=${detail}`,
             );
         }
         throw new Error(`unable to acquire deployment lock at ${path}: ${String(error)}`);
@@ -1866,13 +1970,8 @@ function snapshotClientConfig(): ClientSnapshot {
     const yaml = readFileSync(source, "utf8");
     const activeEnv = yaml.match(/^active_env:\s*(.+)$/m)?.[1];
     const activeAddress = yaml.match(/^active_address:\s*(.+)$/m)?.[1];
-    if (
-        !activeEnv ||
-        stripYamlScalar(activeEnv) !== NETWORK ||
-        !activeAddress ||
-        normalizeId(stripYamlScalar(activeAddress)) !== DEPLOYER
-    ) {
-        throw new Error(`Sui client config must be active on ${NETWORK} as ${DEPLOYER}`);
+    if (!activeEnv || !activeAddress || normalizeId(stripYamlScalar(activeAddress)) !== DEPLOYER) {
+        throw new Error(`Sui client config must have the expected active signer ${DEPLOYER}`);
     }
 
     const environmentBlock = yaml.match(
@@ -1896,16 +1995,18 @@ function snapshotClientConfig(): ClientSnapshot {
         : resolve(homedir(), ".sui", "sui_config", "sui.keystore");
     if (!existsSync(keystorePath)) throw new Error(`Sui keystore does not exist: ${keystorePath}`);
 
-    const directory = mkdtempSync(join(tmpdir(), "predict-testnet-deploy-"));
+    const directory = mkdtempSync(join(tmpdir(), `predict-${NETWORK}-deploy-`));
     const configPath = resolve(directory, "client.yaml");
-    copyFileSync(source, configPath);
+    // Select only in the private snapshot; leave the operator's active environment untouched.
+    const snapshotYaml = yaml.replace(/^active_env:.*$/m, `active_env: ${NETWORK}`);
+    writeFileSync(configPath, snapshotYaml, { mode: 0o600 });
     chmodSync(configPath, 0o600);
     return {
         directory,
         configPath,
         rpcUrl: stripYamlScalar(rpc),
         keystorePath,
-        configDigest: sha256(yaml),
+        configDigest: sha256(snapshotYaml),
     };
 }
 
@@ -1935,6 +2036,17 @@ function debugPackageId(path: string): string {
     const id = debug.module_name?.[0];
     if (typeof id !== "string") throw new Error(`missing module package ID in ${path}`);
     return normalizeId(id);
+}
+
+export function resolvedModuleAddress(directory: string, moduleFile: string): string {
+    const matches = readdirSync(directory, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => resolve(directory, entry.name, moduleFile))
+        .filter(existsSync);
+    const addresses = [...new Set(matches.map(debugPackageId))];
+    if (addresses.length !== 1)
+        throw new Error(`${moduleFile} must resolve to exactly one package identity`);
+    return addresses[0];
 }
 
 function bytecodeBase64(value: unknown, label: string): string {
@@ -2086,6 +2198,17 @@ function expectedDependency(
         originalId = upgraded;
     } else if (upgraded === LINKED.deepbook) {
         originalId = DEEPBOOK_ORIGINAL;
+    } else if (upgraded === LINKED.pyth_lazer) {
+        originalId = PYTH_ORIGINAL;
+    } else if (
+        NETWORK === "mainnet" &&
+        [
+            MAINNET_USDC,
+            "0xe0917b74a5912e4ad186ac634e29c922ab83903f71af7500969f9411706f9b9a",
+            "0xecf47609d7da919ea98e7fd04f6e0648a0a79b337aaad373fa37aac8febf19c8",
+        ].includes(upgraded)
+    ) {
+        originalId = upgraded;
     } else if ((Object.values(LINKED) as string[]).includes(upgraded)) {
         originalId = upgraded;
     }
@@ -2154,9 +2277,27 @@ function verifyPublishedSource(runtime: Runtime, pkg: PackageName): void {
         "--warnings-are-errors",
         "--force",
         "--toolchain",
-        requiredString(runtime.result.suiBinaryPath, "recorded Sui binary path"),
+        suiBinaryIdentity().path,
         "--json",
     ]);
+}
+
+function verifyDependencySources(runtime: Runtime): void {
+    // The current CLI verifies one published root, not its entire dependency
+    // closure. Check every existing package explicitly before publication.
+    const report = command("python3", [
+        resolve(REPO_ROOT, "packages/predict/deployment/verify_dependencies.py"),
+        "--repo",
+        REPO_ROOT,
+        "--network",
+        NETWORK,
+        "--sui",
+        suiBinaryIdentity().path,
+        "--client-config",
+        runtime.snapshot.configPath,
+        ...(process.env.SUI_LEGACY_BINARY ? ["--legacy-sui", process.env.SUI_LEGACY_BINARY] : []),
+    ]);
+    console.log(report);
 }
 
 function assertPublishedPackageGraph(runtime: Runtime, pkg: PackageName, id: string): void {
@@ -2235,19 +2376,27 @@ function assertResolvedLinkedPackages(): void {
     );
     const resolved: Record<keyof typeof LINKED, string> = {
         deepbook: debugPackageId(resolve(debug, "deepbook", "registry.json")),
-        deep: debugPackageId(resolve(debug, "token_2", "deep.json")),
+        deep: resolvedModuleAddress(debug, "deep.json"),
         pyth_lazer: debugPackageId(resolve(debug, "pyth_lazer", "channel.json")),
-        wormhole: debugPackageId(resolve(debug, "wormhole", "external_address.json")),
+        wormhole: resolvedModuleAddress(debug, "external_address.json"),
         bs_oracle: debugPackageId(resolve(debug, "bs_oracle", "verify.json")),
         bs_sid: debugPackageId(resolve(debug, "bs_sid", "sid.json")),
     };
     for (const [name, linkedId] of Object.entries(LINKED)) {
-        const expectedId = name === "deepbook" ? DEEPBOOK_ORIGINAL : linkedId;
+        const expectedId =
+            name === "deepbook"
+                ? DEEPBOOK_ORIGINAL
+                : name === "pyth_lazer"
+                  ? PYTH_ORIGINAL
+                  : linkedId;
         if (resolved[name as keyof typeof LINKED] !== expectedId) {
             throw new Error(
                 `${name} resolves to ${resolved[name as keyof typeof LINKED]}, expected ${expectedId}`,
             );
         }
+    }
+    if (NETWORK === "mainnet" && resolvedModuleAddress(debug, "usdc.json") !== MAINNET_USDC) {
+        throw new Error("compiled collateral is not native Mainnet USDC");
     }
     assertPublishedIdentity(
         resolve(REPO_ROOT, "packages", "token", "Published.toml"),
@@ -2258,7 +2407,7 @@ function assertResolvedLinkedPackages(): void {
         resolve(REPO_ROOT, "packages", "deepbook", "Published.toml"),
         LINKED.deepbook,
         "DeepBook",
-        "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
+        DEEPBOOK_ORIGINAL,
     );
 }
 
@@ -2483,6 +2632,7 @@ async function executeTransaction(
     await assertSdkTarget(runtime);
     tx.setSender(DEPLOYER);
     tx.setGasBudget(TRANSACTION_GAS_BUDGET);
+    if (NETWORK === "mainnet") tx.setGasPayment([]);
     const bytes = await tx.build({ client: runtime.client });
     await dryRun(runtime, label, bytes);
     const digest = TransactionDataBuilder.getDigestFromBytes(bytes);
@@ -2577,6 +2727,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
     assertExpectedWorktree(runtime.result);
     assertSourceCommit(runtime.sourceCommit);
     assertCliTarget(runtime.snapshot);
+    verifyDependencySources(runtime);
     runtime.result.inFlight = {
         kind: "publish",
         label: `publish_${pkg}`,
@@ -2610,7 +2761,7 @@ async function publishPackage(runtime: Runtime, pkg: PackageName): Promise<void>
         );
         const stagedPublished = resolve(directory, "Published.toml");
         assertPublishedIdentity(stagedPublished, publishedId, pkg);
-        copyFileSync(stagedPublished, publishedPath(pkg));
+        storePublishedMetadata(publishedPath(pkg), readFileSync(stagedPublished, "utf8"));
         return receipt;
     });
     runtime.result.inFlight!.digest = requiredString(receipt.digest, `${pkg} publish digest`);
@@ -2704,7 +2855,7 @@ export async function reconcileJournaledInFlight(
     } catch {
         assertRecoverableInFlight(inFlight, false);
         throw new Error(
-            `${inFlight.label}/${inFlight.digest} is not visible on Testnet. Fail closed; do not retry with new transaction bytes`,
+            `${inFlight.label}/${inFlight.digest} is not visible on ${NETWORK}. Fail closed; do not retry with new transaction bytes`,
         );
     }
     if (receipt.digest !== inFlight.digest) {
@@ -2768,7 +2919,7 @@ function target(result: DeploymentResult, pkg: PackageName, module: string, fn: 
 }
 
 function usdcType(result: DeploymentResult): string {
-    return `${packageId(result, "usdc")}::usdc::USDC`;
+    return `${NETWORK === "mainnet" ? MAINNET_USDC : packageId(result, "usdc")}::usdc::USDC`;
 }
 
 function plpType(result: DeploymentResult): string {
@@ -3085,7 +3236,7 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
         pythLazerState: await objectEvidence(
             runtime,
             LINKED_OBJECTS.pythLazerState,
-            `${LINKED.pyth_lazer}::state::State`,
+            `${PYTH_ORIGINAL}::state::State`,
             "shared",
         ),
         wormholeState: await objectEvidence(
@@ -3107,12 +3258,15 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
             "shared",
         ),
     };
-    await objectEvidence(
-        runtime,
-        DEEPBOOK_ADMIN_CAP,
-        `${DEEPBOOK_ORIGINAL}::registry::DeepbookAdminCap`,
-        partyOwnerLabel(DEEPBOOK_ADMIN_OWNER),
-    );
+    if (NETWORK === "mainnet") {
+        packages.usdc = await objectEvidence(runtime, MAINNET_USDC, "package", null);
+        for (const id of [
+            "0xe0917b74a5912e4ad186ac634e29c922ab83903f71af7500969f9411706f9b9a",
+            "0xecf47609d7da919ea98e7fd04f6e0648a0a79b337aaad373fa37aac8febf19c8",
+        ])
+            await objectEvidence(runtime, id, "package", null);
+        await verifyNativeUsdc(runtime);
+    }
     const signerRegistry = await moveObjectFields(
         runtime,
         LINKED_OBJECTS.blockScholesSignerRegistry,
@@ -3142,6 +3296,20 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
         throw new Error("Pyth Lazer state has no unexpired trusted signer");
     }
     return { packages, objects };
+}
+
+export async function verifyNativeUsdc(runtime: Runtime): Promise<ObjectEvidence> {
+    const evidence = await objectEvidence(
+        runtime,
+        MAINNET_USDC_CURRENCY,
+        `${normalizeId("0x2")}::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`,
+        "shared",
+    );
+    const fields = await moveObjectFields(runtime, MAINNET_USDC_CURRENCY);
+    if (String(fields.decimals) !== "6" || fields.symbol !== "USDC") {
+        throw new Error("native USDC currency must have six decimals and symbol USDC");
+    }
+    return evidence;
 }
 
 async function accountAppAuthorized(
@@ -3259,6 +3427,12 @@ function deploymentCurrencyPackage(name: CurrencyName): PackageName {
 }
 
 async function ensureCurrencyRegistration(runtime: Runtime, name: CurrencyName): Promise<string> {
+    if (NETWORK === "mainnet" && name === "usdc") {
+        await verifyNativeUsdc(runtime);
+        runtime.result.wiring.currencies.usdc.id = MAINNET_USDC_CURRENCY;
+        writeState(runtime.result);
+        return MAINNET_USDC_CURRENCY;
+    }
     const result = runtime.result;
     const state = result.wiring.currencies[name];
     const type = deploymentCurrencyType(result, name);
@@ -3314,6 +3488,8 @@ async function ensureCurrencyRegistration(runtime: Runtime, name: CurrencyName):
 }
 
 async function usdcTotalSupply(runtime: Runtime): Promise<bigint> {
+    if (NETWORK === "mainnet")
+        throw new Error("Circle USDC treasury is not controlled by this deployment");
     return inspectU64(
         runtime,
         "usdc_total_supply",
@@ -3328,6 +3504,7 @@ async function usdcTotalSupply(runtime: Runtime): Promise<bigint> {
 }
 
 async function ensureDeployerUsdcMint(runtime: Runtime): Promise<void> {
+    if (NETWORK === "mainnet") throw new Error("Mainnet deployment cannot mint USDC");
     const result = runtime.result;
     let totalSupply = await usdcTotalSupply(runtime);
     if (totalSupply === 0n) {
@@ -3788,11 +3965,128 @@ export function validateBootstrapReceipt(
     return { requestIndex, sharesMinted };
 }
 
+export function validateLockedCapitalReceipt(
+    receipt: Receipt,
+    vaultId: string,
+    predictId: string,
+): void {
+    const events = receipt.events ?? [];
+    const capital = events.filter(
+        (event) => event.type === `${predictId}::vault_events::CapitalLocked`,
+    );
+    if (capital.length !== 1)
+        throw new Error("lock-only bootstrap requires exactly one CapitalLocked event");
+    const fields = asRecord(capital[0].parsedJson);
+    if (
+        normalizeOptionalId(fields.pool_vault_id) !== vaultId ||
+        integerEventField(fields, "amount") !== LOCK_CAPITAL_AMOUNT.toString()
+    ) {
+        throw new Error("CapitalLocked event has unexpected vault or amount");
+    }
+    if (
+        events.some(
+            (event) =>
+                event.type?.endsWith("::SupplyRequested") || event.type?.endsWith("::SupplyFilled"),
+        )
+    ) {
+        throw new Error("lock-only bootstrap must not supply LP capital");
+    }
+}
+
+export function lockedCapitalTransaction(result: DeploymentResult): Transaction {
+    if (NETWORK !== "mainnet")
+        throw new Error("lock-only bootstrap is a Mainnet deployment operation");
+    const tx = new Transaction();
+    const payment = coinWithBalance({
+        type: usdcType(result),
+        balance: LOCK_CAPITAL_AMOUNT,
+        useGasCoin: false,
+    })(tx);
+    call(tx, target(result, "predict", "plp", "lock_capital"), [
+        tx.object(sharedId(result, "predict", "plp::PoolVault")),
+        tx.object(sharedId(result, "predict", "protocol_config::ProtocolConfig")),
+        tx.object(capId(result, "predict", "admin::AdminCap")),
+        payment,
+    ]);
+    return tx;
+}
+
+export async function ensureLockedCapital(
+    runtime: Runtime,
+    auditOnly = false,
+    ops = {
+        poolU64,
+        executeTransaction,
+        settledReceipt,
+        writeState,
+    },
+): Promise<void> {
+    if (NETWORK !== "mainnet") throw new Error("lock-only bootstrap requires Mainnet");
+    const { result } = runtime;
+    const read = async () => ({
+        supply: await ops.poolU64(runtime, "plp_total_supply"),
+        idle: await ops.poolU64(runtime, "idle_balance"),
+        pendingSupply: await ops.poolU64(runtime, "supply_requests_pending"),
+        pendingWithdraw: await ops.poolU64(runtime, "withdraw_requests_pending"),
+    });
+    let pool = await read();
+    let digest = result.transactions.bootstrap_pool;
+    if (pool.supply === 0n && !digest && !auditOnly) {
+        if (pool.idle !== 0n || pool.pendingSupply !== 0n || pool.pendingWithdraw !== 0n)
+            throw new Error("nonempty lock-only bootstrap state");
+        const receipt = await ops.executeTransaction(
+            runtime,
+            "bootstrap_pool",
+            lockedCapitalTransaction(result),
+        );
+        digest = requiredString(receipt.digest, "locked capital transaction");
+        validateLockedCapitalReceipt(
+            receipt,
+            sharedId(result, "predict", "plp::PoolVault"),
+            packageId(result, "predict"),
+        );
+        pool = await read();
+    }
+    if (
+        !digest ||
+        pool.supply !== LOCK_CAPITAL_AMOUNT ||
+        pool.idle !== LOCK_CAPITAL_AMOUNT ||
+        pool.pendingSupply !== 0n ||
+        pool.pendingWithdraw !== 0n
+    ) {
+        throw new Error(
+            "lock-only bootstrap requires its recorded receipt, 10 USDC locked supply and idle balance, and empty queues",
+        );
+    }
+    validateLockedCapitalReceipt(
+        await ops.settledReceipt(runtime.client, digest),
+        sharedId(result, "predict", "plp::PoolVault"),
+        packageId(result, "predict"),
+    );
+    const bootstrap = result.wiring.bootstrap;
+    if (
+        result.wiring.account.accountWrapperId ||
+        bootstrap.accountId ||
+        bootstrap.requestIndex ||
+        bootstrap.supplyRequestTx ||
+        bootstrap.flushTx
+    ) {
+        throw new Error(
+            "lock-only deployment cannot own an LP bootstrap account or supply request",
+        );
+    }
+    bootstrap.lockCapitalTx = digest;
+    bootstrap.sharesMinted = "0";
+    bootstrap.accountPlpBalance = "0";
+    ops.writeState(result);
+}
+
 async function ensureBootstrap(
     runtime: Runtime,
     valuationCapId: string,
     accountWrapperId: string,
 ): Promise<void> {
+    if (NETWORK === "mainnet") return ensureLockedCapital(runtime);
     const result = runtime.result;
     const vault = sharedId(result, "predict", "plp::PoolVault");
     const config = sharedId(result, "predict", "protocol_config::ProtocolConfig");
@@ -4272,7 +4566,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         !predictAppAuthorized ||
         !deepbookCoreAccountAppAuthorized ||
         !sessionsAppAuthorized ||
-        !result.wiring.account.accountWrapperId
+        (NETWORK === "testnet" && !result.wiring.account.accountWrapperId)
     ) {
         throw new Error("application authorization or deployment account is missing");
     }
@@ -4292,31 +4586,39 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     if (stringField(sessionsConfigFields, "version_watermark") !== "1") {
         throw new Error("SessionsConfig version watermark is not 1");
     }
-    const accountWrapper = await objectEvidence(
-        runtime,
-        result.wiring.account.accountWrapperId,
-        `${packageId(result, "account")}::account::AccountWrapper`,
-        "shared",
-    );
-    const accountId = await deploymentAccountId(runtime, result.wiring.account.accountWrapperId);
-    const accountPlpBalance = await deploymentAccountPlpBalance(
-        runtime,
-        result.wiring.account.accountWrapperId,
-    );
+    const accountWrapper =
+        NETWORK === "mainnet"
+            ? null
+            : await objectEvidence(
+                  runtime,
+                  result.wiring.account.accountWrapperId!,
+                  `${packageId(result, "account")}::account::AccountWrapper`,
+                  "shared",
+              );
+    const accountId =
+        NETWORK === "mainnet"
+            ? null
+            : await deploymentAccountId(runtime, result.wiring.account.accountWrapperId!);
+    const accountPlpBalance =
+        NETWORK === "mainnet"
+            ? 0n
+            : await deploymentAccountPlpBalance(runtime, result.wiring.account.accountWrapperId!);
     const bootstrapDigest = result.transactions.bootstrap_pool;
     if (
-        result.wiring.bootstrap.accountId !== accountId ||
-        !result.wiring.bootstrap.requestIndex ||
-        result.wiring.bootstrap.sharesMinted !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
-        result.wiring.bootstrap.accountPlpBalance !== accountPlpBalance.toString() ||
-        accountPlpBalance !== BOOTSTRAP_SUPPLY_AMOUNT ||
-        !bootstrapDigest ||
-        result.wiring.bootstrap.lockCapitalTx !== bootstrapDigest ||
-        result.wiring.bootstrap.supplyRequestTx !== bootstrapDigest ||
-        result.wiring.bootstrap.flushTx !== bootstrapDigest
+        NETWORK === "testnet" &&
+        (result.wiring.bootstrap.accountId !== accountId ||
+            !result.wiring.bootstrap.requestIndex ||
+            result.wiring.bootstrap.sharesMinted !== BOOTSTRAP_SUPPLY_AMOUNT.toString() ||
+            result.wiring.bootstrap.accountPlpBalance !== accountPlpBalance.toString() ||
+            accountPlpBalance !== BOOTSTRAP_SUPPLY_AMOUNT ||
+            !bootstrapDigest ||
+            result.wiring.bootstrap.lockCapitalTx !== bootstrapDigest ||
+            result.wiring.bootstrap.supplyRequestTx !== bootstrapDigest ||
+            result.wiring.bootstrap.flushTx !== bootstrapDigest)
     ) {
         throw new Error("bootstrap supply is not attributed to the deployment account");
     }
+    if (NETWORK === "mainnet") await ensureLockedCapital(runtime, true);
     const lifecycleCap = await objectEvidence(
         runtime,
         result.wiring.lifecycleCap.id,
@@ -4330,12 +4632,15 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         DEPLOYER,
     );
     const currencies = {
-        usdc: await objectEvidence(
-            runtime,
-            requiredObjectId(result.wiring.currencies.usdc.id, "USDC currency"),
-            `coin_registry::Currency<${usdcType(result)}>`,
-            "shared",
-        ),
+        usdc:
+            NETWORK === "mainnet"
+                ? await verifyNativeUsdc(runtime)
+                : await objectEvidence(
+                      runtime,
+                      requiredObjectId(result.wiring.currencies.usdc.id, "USDC currency"),
+                      `coin_registry::Currency<${usdcType(result)}>`,
+                      "shared",
+                  ),
         plp: await objectEvidence(
             runtime,
             requiredObjectId(result.wiring.currencies.plp.id, "PLP currency"),
@@ -4398,13 +4703,14 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         totalSupply !== LOCK_CAPITAL_AMOUNT + BOOTSTRAP_SUPPLY_AMOUNT ||
         pendingSupply !== 0n ||
         pendingWithdraw !== 0n ||
-        idleBalance + activeMarketCash !== totalSupply
+        idleBalance + activeMarketCash !== totalSupply ||
+        (NETWORK === "mainnet" && activeMarketCash !== 0n)
     ) {
         throw new Error(
             `pool accounting mismatch supply=${totalSupply} idle=${idleBalance} activeCash=${activeMarketCash} pending=${pendingSupply}/${pendingWithdraw}`,
         );
     }
-    const mintedAmount = await usdcTotalSupply(runtime);
+    const mintedAmount = NETWORK === "mainnet" ? 0n : await usdcTotalSupply(runtime);
     const deployerUsdcBalance = BigInt(
         (
             await runtime.client.getBalance({
@@ -4414,8 +4720,9 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         ).balance.balance,
     );
     if (
-        mintedAmount !== USDC_MINT_AMOUNT ||
-        deployerUsdcBalance + totalSupply !== USDC_MINT_AMOUNT
+        NETWORK === "testnet" &&
+        (mintedAmount !== USDC_MINT_AMOUNT ||
+            deployerUsdcBalance + totalSupply !== USDC_MINT_AMOUNT)
     ) {
         throw new Error(
             `USDC accounting mismatch minted=${mintedAmount} deployer=${deployerUsdcBalance} pool=${totalSupply}`,
@@ -4502,7 +4809,11 @@ async function assertFunding(runtime: Runtime): Promise<void> {
     if (totalSupply !== 0n) {
         throw new Error(`unexpected partial PLP bootstrap supply: ${totalSupply}`);
     }
-    if (!runtime.result.packages.usdc || !runtime.result.transactions.mint_deployer_usdc) return;
+    if (
+        NETWORK === "testnet" &&
+        (!runtime.result.packages.usdc || !runtime.result.transactions.mint_deployer_usdc)
+    )
+        return;
     const balance = await runtime.client.getBalance({
         owner: DEPLOYER,
         coinType: usdcType(runtime.result),
@@ -4516,15 +4827,21 @@ async function assertFunding(runtime: Runtime): Promise<void> {
     }
 }
 
-async function assertGasFunding(runtime: Runtime): Promise<void> {
+export function availableGasBalance(balance: { balance: string; addressBalance: string }): bigint {
+    return BigInt(NETWORK === "mainnet" ? balance.addressBalance : balance.balance);
+}
+
+export async function assertGasFunding(runtime: Runtime): Promise<void> {
     const balance = await runtime.client.getBalance({ owner: DEPLOYER });
-    const available = BigInt(balance.balance.balance);
+    const available = availableGasBalance(balance.balance);
     const remainingPackages = PACKAGES.filter((pkg) => !runtime.result.packages[pkg]).length;
-    const remainingFixedTransactions = FIXED_TRANSACTION_STEPS.filter(
+    const fixedSteps = plannedTransactionSteps().filter(
+        (label) => !label.startsWith("create_market_"),
+    );
+    const remainingFixedTransactions = fixedSteps.filter(
         (label) => !runtime.result.transactions[label],
     ).length;
-    const remainingMarketTransactions =
-        maximumTransactionCountPerRun() - FIXED_TRANSACTION_STEPS.length;
+    const remainingMarketTransactions = maximumTransactionCountPerRun() - fixedSteps.length;
     const required =
         BigInt(PACKAGE_GAS_BUDGET) * BigInt(remainingPackages) +
         TRANSACTION_GAS_BUDGET * BigInt(remainingFixedTransactions + remainingMarketTransactions);
@@ -4680,7 +4997,7 @@ export async function executeDeployment(
         ops.writeState(result);
         await ops.ensureCurrencyRegistration(runtime, "usdc");
         await ops.ensureCurrencyRegistration(runtime, "plp");
-        await ops.ensureDeployerUsdcMint(runtime);
+        if (NETWORK === "testnet") await ops.ensureDeployerUsdcMint(runtime);
         await ops.ensureAccountAppsAuthorized(runtime);
         await ops.ensureDeepbookCoreAppAuthorized(runtime);
         const lifecycleCap = await ops.ensureLifecycleCap(runtime);
@@ -4688,7 +5005,7 @@ export async function executeDeployment(
         await ops.ensureOracleObjects(runtime);
         await ops.ensureUnderlyingRegistered(runtime);
         await ops.ensureCadences(runtime);
-        const wrapper = await ops.ensureAccountWrapper(runtime);
+        const wrapper = NETWORK === "testnet" ? await ops.ensureAccountWrapper(runtime) : "";
         await ops.ensureBootstrap(runtime, valuationCap, wrapper);
         await ops.ensureMarkets(runtime, lifecycleCap);
         result.status = "verifying";
@@ -4801,10 +5118,11 @@ async function run(mode: DeploymentMode): Promise<void> {
         }
         if (result.inFlight) await reconcileInFlight(runtime);
 
-        console.log("[deploy] compiling Predict and proving resolved Testnet package IDs");
+        console.log(`[deploy] compiling the suite and proving resolved ${NETWORK} package IDs`);
         assertResolvedLinkedPackages();
         assertExpectedWorktree(result);
         await verifyExternalDependencies(runtime);
+        verifyDependencySources(runtime);
         if (mode.command === "deploy") {
             await assertGasFunding(runtime);
             await assertFunding(runtime);
@@ -4812,7 +5130,7 @@ async function run(mode: DeploymentMode): Promise<void> {
             assertCapsIssuanceReady(result, mode.recipient);
             for (const pkg of PACKAGES) await verifyPublishedPackageCheckpoint(runtime, pkg);
             const balance = await runtime.client.getBalance({ owner: DEPLOYER });
-            if (BigInt(balance.balance.balance) < TRANSACTION_GAS_BUDGET)
+            if (availableGasBalance(balance.balance) < TRANSACTION_GAS_BUDGET)
                 throw new Error("insufficient SUI for cap issuance");
             console.log(`[deploy] mint consensus-owned operational caps to: ${mode.recipient}`);
         }
@@ -4823,7 +5141,7 @@ async function run(mode: DeploymentMode): Promise<void> {
         console.log(`[deploy] Sui CLI: ${suiVersion}`);
         console.log(`[deploy] package plan: ${PACKAGES.join(" -> ")}`);
         console.log(
-            `[deploy] USDC mint=${USDC_MINT_AMOUNT} (display DUSDC); PLP lock=${LOCK_CAPITAL_AMOUNT} supply=${BOOTSTRAP_SUPPLY_AMOUNT}`,
+            `[deploy] USDC mint=${USDC_MINT_AMOUNT}; locked capital=${LOCK_CAPITAL_AMOUNT}; initial LP supply=${BOOTSTRAP_SUPPLY_AMOUNT}`,
         );
         if (!mode.execute) {
             console.log("[deploy] preflight complete; no transactions submitted (pass --execute)");
@@ -4875,13 +5193,35 @@ export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
 }
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
-    const mode = parseDeploymentArgs(args);
+    const options = parseTargetArgs(args);
+    configureDeployment(options.network, options.deployer);
+    const mode = parseDeploymentArgs(options.remaining);
     const lock = acquireLock();
     try {
         await run(mode);
     } finally {
         releaseLock(lock);
     }
+}
+
+export function parseTargetArgs(args: readonly string[]): {
+    network: Network;
+    deployer: string;
+    remaining: string[];
+} {
+    let network: string | undefined;
+    let deployer: string | undefined;
+    const remaining: string[] = [];
+    for (let index = 0; index < args.length; index++) {
+        if (args[index] === "--network" && network === undefined) network = args[++index];
+        else if (args[index] === "--deployer" && deployer === undefined) deployer = args[++index];
+        else remaining.push(args[index]);
+    }
+    if (network !== "mainnet" && network !== "testnet")
+        throw new Error("explicit --network mainnet|testnet is required");
+    const expected = requiredObjectId(deployer, "explicit --deployer address");
+    if (BigInt(expected) === 0n) throw new Error("--deployer must be nonzero");
+    return { network, deployer: expected, remaining };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

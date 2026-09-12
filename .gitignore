@@ -32,6 +32,9 @@ package-lock.json
 __pycache__/
 
 # Predict simulation local artifacts
+# Private deployment journals and atomic-write temporaries
+packages/predict/deployment/deployment.*.state.json
+packages/predict/deployment/deployment.*.json.tmp
 packages/predict/simulations/runs/
 packages/predict/parallel_pool_implementation_plan.md
 

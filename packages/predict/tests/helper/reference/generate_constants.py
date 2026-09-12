@@ -6,12 +6,13 @@ significant digits — far more than the 1e9 / 9-digit fixed-point needs). NOTHI
 here reads or depends on the Move contract, so the values are an independent
 oracle, not a snapshot of contract output (unit-tests rule 1).
 
-Each reference is `round(f_true(x) * 1e9)` — the correctly-rounded fixed-point
+Each math reference is `round(f_true(x) * 1e9)` — the correctly-rounded fixed-point
 representation of the true mathematical value. The Move tests assert the contract
 is within its documented per-primitive precision budget of this (math.move
 "Precision contract": exp/ln <= 1e-7 relative, normal_cdf <= 2e-8 absolute, sqrt
 <= 1 ULP). A deviation beyond budget is a genuine finding (unit-tests rule 15).
 
+Fee references are floored raw USDC amounts at production-valid pricing inputs.
 Run: python3 generate_constants.py   (no third-party deps)
 """
 import math
@@ -92,6 +93,22 @@ POINTS = [
     ("SQRT_U64MAX", math.isqrt((2**64 - 1) * F)),  # widest input; high-bit Newton path
 ]
 
+# Flat total variance 0.04, forward 100, one USDC of payout, shipped fees.
+# These amounts are far from a raw-unit boundary, so the pricing approximation
+# and fixed-point intermediate rounding do not change their integer floors.
+def range_fee_references():
+    def up(strike):
+        return phi(-(math.log(strike / 100) + 0.04 / 2) / math.sqrt(0.04))
+
+    def fee(probability):
+        return math.floor(max(0.1 * math.sqrt(probability * (1 - probability)), 0.022) * 1_000_000)
+
+    return [
+        ("DEFAULT_FORWARD_FEE_USDC_RAW", fee(up(100))),
+        ("COMBINED_PROBABILITY_FEE", fee(up(100) - up(110))),
+        ("FINITE_RANGE_FEE", fee(up(100)) + fee(up(110))),
+    ]
+
 if __name__ == "__main__":
-    for name, val in POINTS:
+    for name, val in POINTS + range_fee_references():
         print(f"{name},{val}")

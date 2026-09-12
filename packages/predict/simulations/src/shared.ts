@@ -83,6 +83,7 @@ export type ScenarioRow =
               action: "mint";
               strike: bigint;
               isUp: boolean;
+              higherStrike?: bigint;
               quantity: bigint;
               orderRef: string;
           })
@@ -192,6 +193,7 @@ export const SCENARIO_COLUMNS = [
     "risk_free_rate",
     "strike",
     "is_up",
+    "higher_strike",
     "quantity",
     "order_ref",
     "close_quantity",
@@ -320,6 +322,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
             ...parseOracleRefresh(row, lineNumber),
             strike: parseUnsignedInteger(row, "strike", lineNumber),
             isUp: parseBoolean(row, "is_up", lineNumber),
+            higherStrike: row.higher_strike ? parseUnsignedInteger(row, "higher_strike", lineNumber) : undefined,
             quantity: parseQuantity(row, "quantity", lineNumber),
             orderRef: parseRef(row, "order_ref", lineNumber),
         };

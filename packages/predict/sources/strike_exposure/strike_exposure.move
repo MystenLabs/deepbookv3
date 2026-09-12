@@ -14,7 +14,7 @@ module deepbook_predict::strike_exposure;
 use deepbook_predict::{
     constants,
     order::{Self, Order},
-    pricing::Pricer,
+    pricing::{Pricer, RangePrice},
     range_codec,
     strike_exposure_config::StrikeExposureConfig,
     strike_payout_tree::{Self, StrikePayoutTree}
@@ -68,7 +68,7 @@ public struct MintTerms has drop {
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    entry_probability: u64,
+    price: RangePrice,
     premium: u64,
     /// Separate inventory-impact charge, sampled against the pre-mint book.
     inventory_impact_charge: u64,
@@ -83,13 +83,13 @@ public struct LiveCloseTerms has drop {
     order: Order,
     close_quantity: u64,
     redeem_amount: u64,
-    range_probability: u64,
+    price: RangePrice,
     /// Separate inventory-impact rebate, sampled against the pre-close book.
     inventory_impact_rebate: u64,
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
-    terms.entry_probability
+    terms.price.probability()
 }
 
 public(package) fun premium(terms: &MintTerms): u64 {
@@ -104,16 +104,24 @@ public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
     terms.inventory_impact_charge
 }
 
+public(package) fun mint_price(terms: &MintTerms): &RangePrice {
+    &terms.price
+}
+
 public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
     terms.redeem_amount
 }
 
 public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
-    terms.range_probability
+    terms.price.probability()
 }
 
 public(package) fun inventory_impact_rebate(terms: &LiveCloseTerms): u64 {
     terms.inventory_impact_rebate
+}
+
+public(package) fun close_price(terms: &LiveCloseTerms): &RangePrice {
+    &terms.price
 }
 
 /// Return the recorded settlement price. Aborts while the exposure is live.
@@ -186,7 +194,7 @@ public(package) fun live_order_value(
     pricer: &Pricer,
     order: &Order,
 ): u64 {
-    math::mul_down(exposure.order_range_price(pricer, order), order.quantity())
+    math::mul_down(exposure.order_range_price(pricer, order).probability(), order.quantity())
 }
 
 /// Return one settled order's full terminal payout.
@@ -243,14 +251,14 @@ public(package) fun reference_tick(exposure: &StrikeExposure): Option<u64> {
     exposure.reference_tick
 }
 
-/// Return the raw per-trade fee for a live price and quantity.
+/// Return the sum of finite-boundary fees for a live range and quantity.
 ///
 /// Fee collection is expiry-market payment accounting; exposure only owns the
 /// snapshotted config needed to price it.
 public(package) fun trading_fee(
     exposure: &StrikeExposure,
     expiry_ms: u64,
-    probability: u64,
+    price: &RangePrice,
     quantity: u64,
     clock: &Clock,
 ): u64 {
@@ -258,7 +266,7 @@ public(package) fun trading_fee(
         .config
         .trading_fee(
             expiry_ms,
-            probability,
+            price,
             quantity,
             clock.timestamp_ms(),
         )
@@ -324,12 +332,13 @@ public(package) fun quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
 ): MintTerms {
-    let entry_probability = exposure.admitted_entry_probability(pricer, lower_tick, higher_tick);
+    let price = exposure.admitted_range_price(pricer, lower_tick, higher_tick);
+    exposure.config.assert_range_mint_probability_policy(&price);
+    let entry_probability = price.probability();
 
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        exposure.config.assert_mint_probability_policy(entry_probability);
         let lot = constants::position_lot_size!();
         let mut lo = 0;
         let mut hi = order::max_quantity_lots();
@@ -353,7 +362,7 @@ public(package) fun quote_mint_terms(
         lower_tick,
         higher_tick,
         quantity,
-        entry_probability,
+        price,
         premium,
         inventory_impact_charge: exposure.inventory_impact(
             lower_tick,
@@ -383,8 +392,8 @@ public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: Mi
 }
 
 /// Quote one prospective live close as pure terms, touching neither the book nor
-/// the oracle after the supplied `Pricer` snapshot. The trade fee is recovered
-/// from the returned range probability.
+/// the oracle after the supplied `Pricer` snapshot. Boundary prices feed fees;
+/// mint probability eligibility is deliberately not applied to exits.
 public(package) fun quote_live_close(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -394,13 +403,14 @@ public(package) fun quote_live_close(
     order::assert_valid_quantity(close_quantity);
     assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
 
-    let range_probability = exposure.order_range_price(pricer, order);
+    let price = exposure.order_range_price(pricer, order);
+    let range_probability = price.probability();
     LiveCloseTerms {
         expiry_market_id: exposure.expiry_market_id,
         order: *order,
         close_quantity,
         redeem_amount: math::mul_down(range_probability, close_quantity),
-        range_probability,
+        price,
         inventory_impact_rebate: exposure.inventory_impact(
             order.lower_tick(),
             order.higher_tick(),
@@ -496,12 +506,12 @@ public(package) fun new(
 /// Price the mint tick range `(lower_tick, higher_tick]` after admission-grid
 /// validation. The single pricing-prefix orchestration shared by every mint
 /// quote/terms path.
-fun admitted_entry_probability(
+fun admitted_range_price(
     exposure: &StrikeExposure,
     pricer: &Pricer,
     lower_tick: u64,
     higher_tick: u64,
-): u64 {
+): RangePrice {
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
     let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
     let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
@@ -583,7 +593,7 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
     );
 }
 
-fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): u64 {
+fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): RangePrice {
     pricer.range_price(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),

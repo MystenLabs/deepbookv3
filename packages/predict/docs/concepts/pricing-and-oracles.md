@@ -9,7 +9,7 @@ Predict separates the *spot* of the underlying asset, the forward surface, and t
 | Input | propbook feed | What it carries | How Predict reads it |
 | --- | --- | --- | --- |
 | Spot price | `propbook::pyth_feed::PythFeed` | One global source-native Pyth payload per Pyth Lazer feed id, plus exact timestamp inserts | `normalized_spot()` and its `OracleRead` timestamp |
-| Block Scholes spot + forward | `propbook::block_scholes_store::BlockScholesValueStore` | One per-underlying store of the latest spot and per-expiry forward observations, plus exact minute-boundary spot history | `spot()` / `forward(expiry_ms)` and each read's `source_timestamp_ms` for live pricing; `spot_at(timestamp_ms)` for exact history |
+| Block Scholes spot + forward | `propbook::block_scholes_store::BlockScholesValueStore` | Ten recent spots and the latest per-expiry forwards, plus separate exact minute-boundary spot history | `forward(expiry_ms)` then `recent_spot_at(forward_source_timestamp_ms)` for live pricing; `spot_at(timestamp_ms)` for settlement history |
 | SVI params | `propbook::block_scholes_store::BlockScholesSVIStore` | One per-underlying store of the latest per-expiry SVI parameter sets, keyed by signed series id | `svi(expiry_ms)` and its `source_timestamp_ms` |
 
 The `pricing` module is a stateless read layer over these objects. It resolves them on demand, checks BS price and SVI freshness, computes prices, and never mutates oracle, pool, expiry, or position state.
@@ -33,7 +33,7 @@ Because that window is measured against generation time, a Pyth stall longer tha
 
 Block Scholes data lives in two per-underlying stores. A `BlockScholesValueStore` holds the latest spot and per-expiry forward observations plus insert-only exact spot history at whole-minute `source_timestamp_ms` boundaries; a `BlockScholesSVIStore` holds the latest per-expiry SVI parameter sets. The Propbook registry creates the pair once, admin-gated, binds both stores to the exact provider base-asset spelling, and records their object ids as canonical for the underlying. Spot, forwards, and SVI enter through separate typed batch functions. Each function derives the canonical ids through the provider-owned `bs_sid` package from the oracle package and complete subscription descriptor; forward and SVI writes also prove their caller-supplied expiry witnesses through those derived ids. Predict checks the supplied objects against the registry binding and selects spot or an exact expiry through typed reads, which derive the same ids internally rather than trusting a caller-supplied series id.
 
-Predict uses the latest fresh BS spot and the latest fresh expiry forward to compute the **basis** = `forward / spot`. That basis lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)). Spot and forward are independent series with independent clocks, but both must be fresh under the BS price freshness window before Predict uses either one.
+Predict takes the latest expiry forward and selects the spot with exactly the same `source_timestamp_ms` from Propbook's ten-observation ring buffer to compute the **basis** = `forward / spot`. That basis lets Predict combine the high-frequency Pyth spot with the Block Scholes forward shape (see [Resolving the live forward](#resolving-the-live-forward)). Both selected observations must pass the existing BS price freshness and same-transaction provenance checks; a newer unpaired spot is not used. An absent or evicted match aborts live pricing with `EBlockScholesPriceUnavailable`, including when Block Scholes supplies the forward directly. There is no older-forward, nearest-spot, or settlement-history fallback. Ten observations bound storage, not a guaranteed duration; pricing resumes when the latest forward has a retained fresh match. Trade events report the selected pair's equal source timestamps, while each observation retains its own writer digest and landing time.
 
 The SVI curve is described by five stochastic-volatility-inspired parameters, stored source-native (`u128` magnitude-plus-sign) and narrowed to Predict's pricing widths where the `Pricer` is built:
 
@@ -57,6 +57,8 @@ Terminal settlement reads exact Pyth history first and can read Block Scholes ex
 
 A Predict range contract pays a fixed notional if the asset's settlement price lands inside a strike interval. Its fair value is therefore the probability of that event read off the distribution the SVI curve encodes — the defining identity of an undiscounted digital, whose price per unit notional equals the risk-neutral probability of its payout event.
 
+`Pricer.range_price(lower, higher)` returns a `RangePrice` containing both finite boundary UP probabilities. Its `probability()` getter returns the combined range probability; `lower_up()` and `higher_up()` return `None` only for infinite boundaries. Mint and live-close terms retain this pricing result for per-boundary fees.
+
 The derivation, conceptually:
 
 1. **Forward and SVI.** Take the resolved live forward `F` and roll the current raw SVI tuple from its parameter timestamp to the current remaining time-to-expiry (see below).
@@ -64,7 +66,7 @@ The derivation, conceptually:
 3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))`, then apply the SVI strike-skew adjustment to the digital price: `up_price(K) = clamp01(N(d2) − phi(d2)·w'(k)/(2·sqrt(w)))`, where `w'(k) = b·(rho + (k − m)/sqrt((k − m)² + sigma²))`. This is the smile-aware probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`, i.e. a cash-or-nothing digital call.
 4. **Range probability by differencing.** The probability of landing in the half-open interval `(lower, higher]` is the difference between the two one-sided digital prices, floored at zero so fixed-point dust or a clamped/non-monotone segment of the adjusted digital cannot abort a live quote. Block Scholes guarantees its published SVI surfaces are monotone and butterfly-arbitrage-free; Predict retains the active-book NAV guard as defense in depth (response policy RP-15):
 
-       range_price = max(up_price(lower) − up_price(higher), 0)
+       range_probability = max(up_price(lower) − up_price(higher), 0)
 
    the value of a contract that pays out only inside the range — a digital call spread — expressed as a 1e9-scaled probability.
 
@@ -149,7 +151,7 @@ A timestamp is fresh only if it is positive, not in the future, and within its m
 
 **No writes during pool valuation.** The full-pool flush computes NAV against a frozen snapshot, so Predict's valuation lock blocks Predict trading and admin changes mid-valuation; see [liquidity and NAV](./liquidity-and-nav.md). The propbook feeds are independent objects and are not part of that lock — but the flush is privileged and the flush operator is trusted not to push the oracle mid-flush, which is the model that makes the single frozen mark sound (see the audit-L8 note in [liquidity and NAV](./liquidity-and-nav.md)).
 
-**Min/max entry probability bounds.** A raw probability near `0` or `1` must not become an admitted mint just because the fee moves the all-in cash outlay away from the edge. These bounds live in `StrikeExposureConfig` (snapshotted per expiry from a global template), not in the pricing config: pricing produces the probability, and the mint-admission flow enforces the raw-probability envelope. At mint, `entry_probability` must lie within `[min_entry_probability, max_entry_probability]`. See [configuration](../design/configuration.md) for the bound values.
+**Min/max entry probability bounds.** Mint admission requires the range probability and each finite leg's probability to lie within `[min_entry_probability, max_entry_probability]`. The lower leg uses ABOVE probability and the upper leg uses BELOW probability; infinite sentinels are exempt. `StrikeExposureConfig` owns these snapshotted bounds. Pricing still produces probabilities for valuation and live closes outside the entry band. Fees do not move a probability into eligibility. See [configuration](../design/configuration.md) for the bound values.
 
 ## Settlement
 

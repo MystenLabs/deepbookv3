@@ -45,7 +45,7 @@ SLOT_COUNT = 32  # generous slot/port ceiling; real parallelism = --concurrency
 # Local packages (under packages/) staged by mirroring the subtree, so their
 # relative `local = "../foo"` deps resolve inside the workspace unchanged.
 # Verified against predict/Move.lock: predict's closure is these locals plus the
-# git deps below. deepbook is intentionally NOT here (the old runner published it to
+# external deps below. deepbook is intentionally NOT here (the old runner published it to
 # drag `token` in transitively; `token` is a no-dep leaf we publish directly).
 LOCAL_CLOSURE = [
     "fixed_math",
@@ -56,10 +56,10 @@ LOCAL_CLOSURE = [
     "predict",
 ]
 
-# Upstream packages that localnet must publish independently. Their repository,
-# subdirectory, and exact revision are read from the canonical Predict/Propbook
-# manifests by staging.py; the harness keeps no duplicate dependency pins.
-GIT_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle", "bs_sid")
+# Upstream packages that localnet must publish independently. Git pins and
+# vendored paths come from the canonical manifests; the harness keeps no
+# duplicate dependency pins.
+EXTERNAL_DEP_NAMES = ("wormhole", "pyth_lazer", "bs_oracle", "bs_sid")
 
 # Directory names never worth copying into the scratch workspace.
 STAGE_IGNORE = (

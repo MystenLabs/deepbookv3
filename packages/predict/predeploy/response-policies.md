@@ -176,7 +176,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Controller:** external (oracle operator).
 - **Blast radius:** every live price — entry prices and NAV marks.
   The same load sits inside mandatory `plp::value_expiry`, so one over-wide
-  observation for any active market also aborts the pool-wide flush and blocks
+  selected observation for any active market also aborts the pool-wide flush and blocks
   queued LP fills until the observation is replaced.
 - **Response:** accept provider quality inside the static pricing-safe envelope
   and disclose it (commit `057f9565`); select Pyth by its own freshness rather
@@ -1535,5 +1535,17 @@ worth-fixing.
 - **Risk profile:** smaller targets and allocation caps allow less prefunded trading capacity and a smaller inventory-impact scale; they do not authorize underbacked trades or force capital out of existing markets. This is a configuration-envelope decision, not a throughput or liquidity measurement.
 - **Pinning tests:** `registry_create_tests.move` — `set_cadence_config_accepts_1000_and_2000_usdc_targets`, `set_cadence_config_initial_cash_below_floor_aborts`, `set_cadence_config_initial_cash_above_allocation_aborts`, `cadence_configs_disable_round_trip`; `pool_valuation_flow_tests.move` — `minimum_cash_target_rebalances_without_changing_pool_capital`, `above_minimum_cash_target_rebalances_without_changing_pool_capital`.
 - **Reopen when:** the floor gains a runtime consumer, allocation-cap scaling changes, or existing market targets become mutable.
+
+## RP-35: Live pricing requires a retained source-time-matched Block Scholes pair
+
+- **Trigger state:** the latest expiry forward has no exact source-timestamp spot among the ten most recent accepted spot observations, either because that spot has not landed or because newer spots evicted it.
+- **Controller:** oracle source and permissionless relayer timing; only authenticated observations enter the store.
+- **Blast radius:** live quotes, mints, live closes, and the atomic pool snapshot. One missing pair prevents that snapshot and delays queued LP fills; terminal settlement retains its independent exact-history path.
+- **Response:** abort with `EBlockScholesPriceUnavailable` without selecting an older forward, a nearest-time spot, or a permanent settlement-history row. Recovery requires a latest forward with a retained matching spot, or arrival of its matching spot while it can still advance the spot series. Apply the existing freshness, width, pricing-envelope, and writer-digest guards to the selected observations, including when the forward-source setting uses Block Scholes directly.
+- **Reasoning:** fail closed rather than constructing basis from different provider ticks. The bounded history tolerates spot-first arrival while keeping the latest forward authoritative. Equal or older timestamps cannot evict entries or replace provenance; `insert_at` remains settlement-only.
+- **Risk profile:** `BEST-GUESS` — ten observations bound storage and lookup work, not a guaranteed retention duration. An authenticated spot-only stream can evict a forward's match and interrupt the mandatory snapshot. Source-time equality is not a guarantee of provider economic accuracy.
+- **Pinning tests:** `pricing_tests.move` — `newer_spot_does_not_change_the_basis_of_an_older_forward`, `forward_first_prices_when_its_matching_spot_arrives`, `latest_forward_without_matching_spot_aborts`, `evicted_matching_spot_aborts_even_while_pair_is_fresh`; `block_scholes_store_tests.move` — `recent_spot_ring_wraps_without_touching_forwards_or_settlement_history`.
+- **Reopen when:** observed arrival skew routinely exhausts ten spots, missing pairs cause unacceptable snapshot interruption, or forward retention or settlement-history semantics change.
+- **Mandatory-path tests:** `pool_valuation_flow_tests.move` — `evicted_spot_pair_blocks_pool_snapshot`, `newer_matched_pair_restores_pool_snapshot_after_eviction`.
 
 ---

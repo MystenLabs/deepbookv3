@@ -2,12 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    readdirSync,
+    rmSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import {
     CADENCES,
+    configureDeployment,
+    assertGasFunding,
+    availableGasBalance,
+    parseTargetArgs,
+    MAINNET_USDC,
+    verifyNativeUsdc,
+    lockedCapitalTransaction,
+    ensureLockedCapital,
+    validateLockedCapitalReceipt,
+    resolvedModuleAddress,
+    mergePublishedMetadata,
     EXPECTED_PROTOCOL_CONFIG,
     MANIFEST_RELATIVE,
     STATE_RELATIVE,
@@ -49,11 +69,138 @@ import {
     sameObjectReference,
     unexpectedDeploymentPaths,
     validateBootstrapReceipt,
+    withFreshPackageStage,
     type IntegrationManifest,
     type Receipt,
 } from "./deploy.ts";
 
 const id = (digit: string) => `0x${digit.repeat(64)}`;
+configureDeployment("testnet", id("a"));
+
+test("vendored Pyth sources match the pinned upstream inventory and hashes", () => {
+    const root = new URL("../../../vendor/pyth_lazer/", import.meta.url);
+    const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
+    const inventory = [
+        "LICENSE",
+        "Move.toml",
+        ...["sources", "tests"].flatMap((dir) =>
+            readdirSync(new URL(`${dir}/`, root)).map((file) => `${dir}/${file}`),
+        ),
+    ];
+    assert.deepEqual(inventory.sort(), Object.keys(provenance.files).sort());
+    for (const file of inventory) {
+        let content = readFileSync(new URL(file, root));
+        if (file === "Move.toml") {
+            const text = content.toString();
+            assert.equal(text.split(provenance.manifestReplacement.to).length, 2);
+            content = Buffer.from(
+                text.replace(
+                    provenance.manifestReplacement.to,
+                    provenance.manifestReplacement.from,
+                ),
+            );
+        }
+        assert.equal(
+            createHash("sha256").update(content).digest("hex"),
+            provenance.files[file],
+            file,
+        );
+    }
+});
+
+test("Mainnet Pyth differs from its pinned source only by declared publication inputs", () => {
+    const root = new URL("../../../vendor/pyth_lazer_mainnet/", import.meta.url);
+    const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
+    const inventory = [
+        "LICENSE",
+        "Move.toml",
+        "Published.toml",
+        ...readdirSync(new URL("sources/", root)).map((file) => `sources/${file}`),
+    ];
+    assert.deepEqual(inventory.sort(), Object.keys(provenance.files).sort());
+    assert.deepEqual(provenance.replacements.map((r: { path: string }) => r.path).sort(), [
+        "Move.toml",
+        "sources/meta.move",
+    ]);
+    for (const file of inventory) {
+        let content = readFileSync(new URL(file, root));
+        for (const replacement of provenance.replacements.filter(
+            (r: { path: string }) => r.path === file,
+        )) {
+            const text = content.toString();
+            assert.equal(text.split(replacement.to).length, 2, file);
+            content = Buffer.from(text.replace(replacement.to, replacement.from));
+        }
+        assert.equal(
+            createHash("sha256").update(content).digest("hex"),
+            provenance.files[file],
+            file,
+        );
+    }
+});
+
+test("Mainnet DEEP reconstruction preserves its source provenance and Testnet source", () => {
+    const root = new URL("../../../vendor/deep_mainnet/", import.meta.url);
+    const provenance = JSON.parse(readFileSync(new URL("provenance.json", root), "utf8"));
+    assert.equal(provenance.kind, "bytecode-backed-reconstruction");
+    assert.equal(
+        createHash("sha256")
+            .update(readFileSync(new URL(provenance.source.path, root)))
+            .digest("hex"),
+        provenance.source.sha256,
+    );
+    assert.equal(
+        createHash("sha256")
+            .update(
+                readFileSync(new URL("../../../packages/token/sources/deep.move", import.meta.url)),
+            )
+            .digest("hex"),
+        provenance.baseline.sha256,
+    );
+    assert.deepEqual(readdirSync(new URL("sources/", root)), ["deep.move"]);
+    const publication = readFileSync(new URL("Published.toml", root), "utf8");
+    assert.match(publication, /\[published.mainnet\]/);
+    assert.doesNotMatch(publication, /\[published.testnet\]/);
+});
+
+test("fresh publication staging preserves the vendored dependency outside packages", () => {
+    let stagedRoot = "";
+    withFreshPackageStage("predict", (directory) => {
+        stagedRoot = resolve(directory, "../..");
+        const manifest = readFileSync(join(directory, "Move.toml"), "utf8");
+        const local = manifest.match(/^pyth_lazer = \{ local = "([^"]+)" \}/m)?.[1];
+        assert.ok(local);
+        const pyth = resolve(directory, local);
+        assert.equal(pyth, join(stagedRoot, "vendor", "pyth_lazer"));
+        assert.equal(
+            readFileSync(join(pyth, "sources", "update.move"), "utf8"),
+            readFileSync(
+                new URL("../../../vendor/pyth_lazer/sources/update.move", import.meta.url),
+                "utf8",
+            ),
+        );
+        assert.match(readFileSync(join(pyth, "Published.toml"), "utf8"), /\[published.testnet\]/);
+        assert.equal(existsSync(join(directory, "Published.toml")), false);
+        const mainnetPyth = join(stagedRoot, "vendor", "pyth_lazer_mainnet");
+        assert.match(
+            readFileSync(join(mainnetPyth, "sources", "meta.move"), "utf8"),
+            /fun version\(\): u64 \{\s+2\s+\}/,
+        );
+        assert.match(
+            readFileSync(join(mainnetPyth, "Published.toml"), "utf8"),
+            /\[published.mainnet\]/,
+        );
+        const deep = join(stagedRoot, "vendor", "deep_mainnet");
+        assert.equal(
+            readFileSync(join(deep, "sources", "deep.move"), "utf8"),
+            readFileSync(
+                new URL("../../../vendor/deep_mainnet/sources/deep.move", import.meta.url),
+                "utf8",
+            ),
+        );
+    });
+    assert.equal(existsSync(stagedRoot), false);
+});
 
 test("bootstrap receipt validation uses the deployed USDC supply event schema", () => {
     const vault = id("1");
@@ -449,7 +596,7 @@ function completeStateFixture() {
             accountWrapper: objectEvidence(id("a")),
         },
         currencies: {
-            usdc: objectEvidence(manifest.objects.usdcCurrency),
+            usdc: objectEvidence(manifest.objects.usdcCurrency!),
             plp: objectEvidence(manifest.objects.plpCurrency),
             mintedAmount: "100000000000000",
             deployerBalance: "99749990000000",
@@ -504,9 +651,8 @@ test("operator state and integration manifest are separate artifacts", () => {
     assert.match(STATE_RELATIVE, /\.state\.json$/);
     assert.equal(MANIFEST_RELATIVE.endsWith(".state.json"), false);
     const gitignore = readFileSync(new URL("../../../.gitignore", import.meta.url), "utf8");
-    assert.match(gitignore, new RegExp(`^${STATE_RELATIVE}$`, "m"));
-    assert.match(gitignore, new RegExp(`^${STATE_RELATIVE}\\.tmp$`, "m"));
-    assert.match(gitignore, new RegExp(`^${MANIFEST_RELATIVE}\\.tmp$`, "m"));
+    assert.ok(gitignore.includes("packages/predict/deployment/deployment.*.state.json\n"));
+    assert.ok(gitignore.includes("packages/predict/deployment/deployment.*.json.tmp\n"));
 });
 
 test("the deployment policy pins approved defaults and cadence windows", () => {
@@ -619,24 +765,13 @@ test("gas funding derives the complete fresh transaction plan", () => {
 });
 
 test("target, toolchain, source, and worktree bindings fail closed", () => {
-    assert.doesNotThrow(() =>
-        assertDeploymentTarget(
-            "testnet",
-            "4c78adac",
-            "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
-        ),
-    );
+    assert.doesNotThrow(() => assertDeploymentTarget("testnet", "4c78adac", id("a")));
     assert.throws(
-        () =>
-            assertDeploymentTarget(
-                "mainnet",
-                "4c78adac",
-                "0x364c09b14bc64320dd8ced0848e7e4efe75510bd7ee05a88253a5330b6f22bef",
-            ),
+        () => assertDeploymentTarget("mainnet", "4c78adac", id("a")),
         /deployment target/,
     );
     assert.throws(() => assertDeploymentTarget("testnet", "bad", id("a")), /deployment target/);
-    assert.doesNotThrow(() => assertSuiCliVersion("sui 1.77.1-4e476c5c8184"));
+    assert.doesNotThrow(() => assertSuiCliVersion("sui 1.78.1-722ac4fcf484"));
     assert.throws(() => assertSuiCliVersion("sui 1.78.0"), /Sui CLI must be/);
     assert.doesNotThrow(() => assertNoKeystoreOverride(undefined));
     assert.throws(() => assertNoKeystoreOverride("/tmp/alternate.keystore"), /unsupported/);
@@ -655,7 +790,7 @@ test("target, toolchain, source, and worktree bindings fail closed", () => {
     assert.deepEqual(unexpectedDeploymentPaths([MANIFEST_RELATIVE], [], true), []);
     const state = createDeploymentState();
     const bindings = {
-        suiVersion: "sui 1.77.1-4e476c5c8184",
+        suiVersion: "sui 1.78.1-722ac4fcf484",
         suiBinaryPath: "/opt/sui",
         suiBinaryDigest: "binary",
         rpcUrl: "https://example.testnet.invalid",
@@ -691,7 +826,7 @@ chain-id = "4c78adac"
 published-at = "${packageId}"
 original-id = "${packageId}"
 version = 1
-toolchain-version = "1.77.1"
+toolchain-version = "1.78.1"
 build-config = { flavor = "sui", edition = "2024" }
 upgrade-capability = "${upgradeCapability}"
 `,
@@ -847,7 +982,7 @@ function testRuntime(result = createDeploymentState()) {
 }
 
 const testBindings = {
-    suiVersion: "sui 1.77.1-4e476c5c8184",
+    suiVersion: "sui 1.78.1-722ac4fcf484",
     suiBinaryPath: "/test/sui",
     suiBinaryDigest: "binary",
     rpcUrl: "http://test.invalid",
@@ -1314,4 +1449,383 @@ test("published package metadata decoding preserves exact bytecode, lineage, and
         ),
         true,
     );
+});
+
+test("network and deployer are explicit and invalid targets fail before wallet access", () => {
+    for (const args of [
+        [],
+        ["--network", "mainnet"],
+        ["--network", "devnet", "--deployer", id("a")],
+        ["--network", "mainnet", "--deployer", id("0")],
+    ]) {
+        assert.throws(() => parseTargetArgs(args));
+    }
+    assert.deepEqual(
+        parseTargetArgs(["--network", "mainnet", "--deployer", id("a"), "--execute"]),
+        {
+            network: "mainnet",
+            deployer: id("a"),
+            remaining: ["--execute"],
+        },
+    );
+    assert.throws(() => configureDeployment("mainnet", ""));
+    assert.throws(() => configureDeployment("mainnet", id("0")));
+});
+
+test("Mainnet publishes six packages, retains Testnet identities, and cannot mint USDC or supply LP capital", () => {
+    try {
+        configureDeployment("mainnet", id("a"));
+        const state = createDeploymentState();
+        assert.equal(state.chainId, "35834a8a");
+        assert.equal(state.deployer, id("a"));
+        assert.equal(state.wiring.currencies.usdc.mintedAmount, "0");
+        assert.equal(state.wiring.bootstrap.supplyAmount, "0");
+        assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
+        assert.deepEqual(
+            irreversibleDeploymentSteps().filter((step) => step.startsWith("publish_")),
+            [
+                "publish_fixed_math",
+                "publish_account",
+                "publish_propbook",
+                "publish_predict",
+                "publish_deepbook_core_account",
+                "publish_sessions",
+            ],
+        );
+        const steps = plannedTransactionSteps();
+        for (const forbidden of [
+            "mint_deployer_usdc",
+            "finalize_usdc_currency_registration",
+            "create_deployer_account",
+        ])
+            assert.equal(steps.includes(forbidden), false);
+        assertPackagePlan();
+        assertDeploymentTarget("mainnet", "35834a8a", id("a"));
+        assert.throws(() => assertDeploymentTarget("testnet", "4c78adac", id("a")));
+        const existing = '[published.testnet]\nchain-id = "4c78adac"\npublished-at = "0x1"\n';
+        const merged = mergePublishedMetadata(existing, publishedMetadataText(id("1"), id("2")));
+        assert.ok(merged.startsWith(existing.trimEnd()));
+        assert.equal(merged.split("[published.mainnet]").length, 2);
+        assert.equal(
+            mergePublishedMetadata(merged, publishedMetadataText(id("1"), id("2"))).split(
+                "[published.mainnet]",
+            ).length,
+            2,
+        );
+        assert.equal(MANIFEST_RELATIVE, "packages/predict/deployment/deployment.mainnet.json");
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+    assert.equal(
+        createDeploymentState().linked.pyth_lazer,
+        "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21",
+    );
+});
+
+function lockRuntime() {
+    const runtime = testRuntime();
+    runtime.result.packages.predict = id("4");
+    runtime.result.sharedObjects.predict = {
+        "plp::PoolVault": id("5"),
+        "protocol_config::ProtocolConfig": id("6"),
+    };
+    runtime.result.ownedCaps.predict = { "admin::AdminCap": id("7") };
+    return runtime;
+}
+
+test("Mainnet lock transaction consumes native USDC and only calls lock_capital", () => {
+    try {
+        configureDeployment("mainnet", id("a"));
+        const runtime = lockRuntime();
+        const tx = lockedCapitalTransaction(runtime.result);
+        const data = tx.getData();
+        assert.deepEqual(
+            data.commands
+                .filter((command) => command.MoveCall)
+                .map((command) => command.MoveCall?.function),
+            ["lock_capital"],
+        );
+        const intent = data.commands.find((command) => command.$Intent)?.$Intent;
+        assert.equal(intent?.data.type, `${MAINNET_USDC}::usdc::USDC`);
+        assert.equal(String(intent?.data.balance), "10000000");
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("Mainnet lock-only audit validates the exact event and rejects LP supply events", () => {
+    const receipt: Receipt = {
+        digest: "lock",
+        events: [
+            {
+                type: `${id("4")}::vault_events::CapitalLocked`,
+                parsedJson: { pool_vault_id: id("5"), amount: "10000000" },
+            },
+        ],
+    };
+    validateLockedCapitalReceipt(receipt, id("5"), id("4"));
+    for (const invalid of [
+        { ...receipt, events: [] },
+        { ...receipt, events: [...receipt.events!, ...receipt.events!] },
+        {
+            ...receipt,
+            events: [
+                {
+                    type: `${id("4")}::vault_events::CapitalLocked`,
+                    parsedJson: { pool_vault_id: id("5"), amount: "10000001" },
+                },
+            ],
+        },
+        {
+            ...receipt,
+            events: [...receipt.events!, { type: `${id("4")}::vault_events::SupplyRequested` }],
+        },
+    ])
+        assert.throws(() => validateLockedCapitalReceipt(invalid, id("5"), id("4")));
+    assert.throws(() => validateLockedCapitalReceipt(receipt, id("6"), id("4")));
+    assert.throws(() => validateLockedCapitalReceipt(receipt, id("5"), id("9")));
+});
+
+test("lock-only bootstrap recovers a lost response and read failures without a second lock", async () => {
+    try {
+        configureDeployment("mainnet", id("a"));
+        for (const failure of ["after-submit", "pool-read", "receipt-read", "checkpoint"]) {
+            const runtime = lockRuntime();
+            let supply = 0n;
+            let broadcasts = 0;
+            let failed = false;
+            const fail = (stage: string) => {
+                if (failure === stage && !failed) {
+                    failed = true;
+                    throw new Error(`interrupted ${stage}`);
+                }
+            };
+            const receipt: Receipt = {
+                digest: "lock",
+                events: [
+                    {
+                        type: `${id("4")}::vault_events::CapitalLocked`,
+                        parsedJson: { pool_vault_id: id("5"), amount: "10000000" },
+                    },
+                ],
+            };
+            const ops: NonNullable<Parameters<typeof ensureLockedCapital>[2]> = {
+                poolU64: async (_runtime, fn) => {
+                    if (supply > 0n) fail("pool-read");
+                    return fn === "plp_total_supply" || fn === "idle_balance" ? supply : 0n;
+                },
+                executeTransaction: async (_runtime, label) => {
+                    broadcasts++;
+                    supply = 10000000n;
+                    runtime.result.transactions[label] = "lock";
+                    fail("after-submit");
+                    return receipt;
+                },
+                settledReceipt: async () => {
+                    fail("receipt-read");
+                    return receipt;
+                },
+                writeState: () => fail("checkpoint"),
+            };
+            await assert.rejects(ensureLockedCapital(runtime, false, ops), /interrupted/);
+            await ensureLockedCapital(runtime, false, ops);
+            await ensureLockedCapital(runtime, true, ops);
+            assert.equal(broadcasts, 1, failure);
+            assert.equal(runtime.result.wiring.bootstrap.accountId, null);
+            assert.equal(runtime.result.wiring.bootstrap.sharesMinted, "0");
+            assert.equal(runtime.result.wiring.bootstrap.lockCapitalTx, "lock");
+        }
+        const runtime = lockRuntime();
+        let broadcast = false;
+        const ops: NonNullable<Parameters<typeof ensureLockedCapital>[2]> = {
+            poolU64: async () => 0n,
+            executeTransaction: async () => {
+                broadcast = true;
+                throw new Error("unexpected");
+            },
+            settledReceipt: async () => ({ digest: "none" }),
+            writeState() {},
+        };
+        await assert.rejects(
+            ensureLockedCapital(runtime, true, ops),
+            /requires its recorded receipt/,
+        );
+        assert.equal(broadcast, false);
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+function mainnetVerificationFixture() {
+    const verification = completeStateFixture().verification!;
+    verification.chainId = "35834a8a";
+    delete verification.packages.usdc;
+    verification.linkedPackages = {
+        deepbook: objectEvidence(
+            "0x0e735f8c93a95722efd73521aca7a7652c0bb71ed1daf41b26dfd7d1ff71f748",
+        ),
+        deep: objectEvidence("0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270"),
+        pyth_lazer: objectEvidence(
+            "0xefbfd064480777699fd9c557a5804d72ace7bc82661fdc8d1f1a44ea6d92ee10",
+        ),
+        wormhole: objectEvidence(
+            "0x5306f64e312b581766351c07af79c72fcb1cd25147157fdc2f8ad76de9a3fb6a",
+        ),
+        bs_oracle: objectEvidence(
+            "0xa408bcdeb8e7607b1cbb92c088147d61664a6255a3ea5696a8fef44711e113d8",
+        ),
+        bs_sid: objectEvidence(
+            "0xdacaf624c4802c9ff7b8c72447207f5078b78be246f78e143d63e6cd89b4f63d",
+        ),
+        usdc: objectEvidence("0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7"),
+    };
+    verification.linkedObjects.pythLazerState.objectId =
+        "0xd0db9c1e9212a98120384bf78d8b8c985d87b9ee6921dffcf9d1394062911573";
+    verification.linkedObjects.wormholeState.objectId =
+        "0xaeab97f96cf9877fee2883315d459552b2b921edc16d7ceac6eab944dd88919c";
+    verification.linkedObjects.blockScholesSignerRegistry.objectId =
+        "0xc578b6058b0ba9cf2254962168cd779593805c4f10f80aef8749df75ef7fc0e5";
+    verification.linkedObjects.deepbookRegistry.objectId =
+        "0xaf16199a2dff736e9f07a845f23c5da6df6f756eddb631aed9d24a93efc4549d";
+    verification.currencies.usdc = objectEvidence(
+        "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a",
+    );
+    verification.currencies.mintedAmount = "0";
+    verification.currencies.deployerBalance = "0";
+    verification.account.accountWrapper = null;
+    verification.pool.totalSupply = "10000000";
+    verification.pool.idleBalance = "10000000";
+    verification.pool.deployerAccountPlpBalance = "0";
+    return verification;
+}
+
+test("Mainnet orchestration resumes each stage and never calls mint, LP-account creation, or root-cap handoff", async () => {
+    try {
+        configureDeployment("mainnet", id("a"));
+        for (const boundary of [
+            "publish_fixed_math",
+            "publish_account",
+            "publish_propbook",
+            "publish_predict",
+            "publish_deepbook_core_account",
+            "publish_sessions",
+            "currency_plp",
+            "authorize_apps",
+            "lifecycle_cap",
+            "valuation_cap",
+            "wire_empty_oracle_objects",
+            "underlying",
+            "cadences",
+            "capitalization",
+            "markets",
+        ]) {
+            const fixture = orchestrationFixture(boundary);
+            fixture.ops.ensureDeployerUsdcMint = async () => {
+                throw new Error("forbidden USDC mint");
+            };
+            fixture.ops.ensureAccountWrapper = async () => {
+                throw new Error("forbidden LP bootstrap account");
+            };
+            const currency = fixture.ops.ensureCurrencyRegistration;
+            fixture.ops.ensureCurrencyRegistration = async (runtime, name) =>
+                name === "usdc"
+                    ? "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a"
+                    : currency(runtime, name);
+            fixture.ops.verifyDeployment = async () => mainnetVerificationFixture();
+            await assert.rejects(
+                executeDeployment(fixture.runtime, testBindings, fixture.ops),
+                /interrupted/,
+                boundary,
+            );
+            assert.equal(fixture.manifests.length, 0);
+            await executeDeployment(fixture.runtime, testBindings, fixture.ops);
+            assert.equal(fixture.runtime.result.status, "complete", boundary);
+            assert.equal(fixture.mutations.length, new Set(fixture.mutations).size, boundary);
+            assert.deepEqual(fixture.runtime.result.issuedCaps, {});
+            assert.equal(fixture.manifests[0].schemaVersion, 9);
+            assert.equal(
+                fixture.manifests[0].objects.usdcCurrency,
+                "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a",
+            );
+            assert.equal("usdcCoinMetadata" in fixture.manifests[0].objects, false);
+        }
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("native USDC verification accepts its registered Currency and rejects wrong type, custody, or metadata", async () => {
+    const objectId = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
+    const type = `0x${"0".repeat(63)}2::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`;
+    const object = {
+        objectId,
+        type,
+        version: "877862839",
+        digest: "recorded-currency-digest",
+        owner: { $kind: "Shared", Shared: { initialSharedVersion: "648066630" } },
+        json: { decimals: 6, symbol: "USDC" },
+    };
+    const runtime = (value: unknown) =>
+        ({
+            client: {
+                getObject: async (request: { objectId: string }) => {
+                    assert.equal(request.objectId, objectId);
+                    return { object: value };
+                },
+            },
+        }) as unknown as Parameters<typeof verifyNativeUsdc>[0];
+    const evidence = await verifyNativeUsdc(runtime(object));
+    assert.equal(evidence.objectId, objectId);
+    assert.equal(evidence.type, type);
+    assert.equal(evidence.owner, "shared");
+    for (const invalid of [
+        { ...object, type: type.replace("coin_registry::Currency", "coin::CoinMetadata") },
+        { ...object, type: type.replace(MAINNET_USDC, id("a")) },
+        { ...object, type: type.replace(`0x${"0".repeat(63)}2::`, `${id("b")}::`) },
+        { ...object, owner: { $kind: "Immutable", Immutable: true } },
+        { ...object, owner: { $kind: "AddressOwner", AddressOwner: id("a") } },
+        { ...object, json: { decimals: 9, symbol: "USDC" } },
+        { ...object, json: { decimals: 6, symbol: "DUSDC" } },
+    ]) {
+        await assert.rejects(verifyNativeUsdc(runtime(invalid)));
+    }
+});
+
+test("Mainnet gas funding rejects coin-only SUI because transactions use address-balance gas", async () => {
+    try {
+        configureDeployment("mainnet", id("a"));
+        assert.equal(availableGasBalance({ balance: "10000000000", addressBalance: "0" }), 0n);
+        const runtime = testRuntime();
+        runtime.client = {
+            getBalance: async () => ({ balance: { balance: "999999999999", addressBalance: "0" } }),
+        } as unknown as typeof runtime.client;
+        await assert.rejects(assertGasFunding(runtime), /insufficient deployer SUI gas: have 0/);
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+    assert.equal(
+        availableGasBalance({ balance: "10000000000", addressBalance: "0" }),
+        10000000000n,
+    );
+});
+
+test("DEEP resolution uses the module identity instead of an incidental token directory suffix", () => {
+    const directory = mkdtempSync(join(tmpdir(), "predict-deep-resolution-"));
+    try {
+        mkdirSync(join(directory, "token"));
+        writeFileSync(
+            join(directory, "token", "deep.json"),
+            JSON.stringify({ module_name: [id("1"), "deep"] }),
+        );
+        assert.equal(resolvedModuleAddress(directory, "deep.json"), id("1"));
+        mkdirSync(join(directory, "token_2"));
+        writeFileSync(
+            join(directory, "token_2", "deep.json"),
+            JSON.stringify({ module_name: [id("2"), "deep"] }),
+        );
+        assert.throws(() => resolvedModuleAddress(directory, "deep.json"), /exactly one/);
+        assert.throws(() => resolvedModuleAddress(directory, "missing.json"), /exactly one/);
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
 });

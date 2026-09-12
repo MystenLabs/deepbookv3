@@ -36,6 +36,14 @@ class GitDependency:
         return Path.home() / ".move" / "git" / f"{safe_repo}_{self.rev}"
 
 
+@dataclass(frozen=True)
+class LocalDependency:
+    """An external package vendored in the canonical repository."""
+
+    name: str
+    path: Path
+
+
 def _manifest(path: Path) -> dict:
     with path.open("rb") as f:
         return tomllib.load(f)
@@ -56,17 +64,38 @@ def _git_source(manifest: dict, name: str) -> dict:
 
 def external_dependency_specs(
     packages_dir: Path = config.PACKAGES_DIR,
-) -> dict[str, GitDependency]:
+) -> dict[str, GitDependency | LocalDependency]:
     """Read exact upstream sources from both canonical consumers and reject drift."""
     manifests = {
         "predict": _manifest(packages_dir / "predict" / "Move.toml"),
         "propbook": _manifest(packages_dir / "propbook" / "Move.toml"),
     }
-    specs: dict[str, GitDependency] = {}
-    for name in config.GIT_DEP_NAMES:
+    local_pyth: dict[str, Path] = {}
+    for consumer, manifest in manifests.items():
+        source = manifest.get("dependencies", {}).get("pyth_lazer", {})
+        if "local" in source:
+            path = (packages_dir / consumer / source["local"]).resolve()
+            if not path.is_relative_to(packages_dir.parent.resolve()):
+                raise ValueError("vendored Pyth dependency escapes the canonical repository")
+            local_pyth[consumer] = path
+    if local_pyth and (
+        set(local_pyth) != set(manifests) or len(set(local_pyth.values())) != 1
+    ):
+        raise ValueError("pyth_lazer dependency drift between canonical consumers")
+
+    specs: dict[str, GitDependency | LocalDependency] = {}
+    for name in config.EXTERNAL_DEP_NAMES:
+        if name == "pyth_lazer" and local_pyth:
+            specs[name] = LocalDependency(name, next(iter(local_pyth.values())))
+            continue
         consumers = ("propbook",) if name == "bs_sid" else tuple(manifests)
         sources = {
-            consumer: _git_source(manifest, name)
+            consumer: _git_source(
+                _manifest(local_pyth[consumer] / "Move.toml")
+                if name == "wormhole" and local_pyth
+                else manifest,
+                name,
+            )
             for consumer, manifest in manifests.items()
             if consumer in consumers
         }
@@ -106,12 +135,17 @@ def checkout_fingerprint(
         for path in sorted(artifacts, key=lambda artifact: artifact.name):
             h.update(f"{name}/{path.name}\0".encode())
             h.update(path.read_bytes())
+    vendor = packages_dir.parent / "vendor"
+    for path in sorted(vendor.rglob("*")):
+        if path.is_file():
+            h.update(f"vendor/{path.relative_to(vendor)}\0".encode())
+            h.update(path.read_bytes())
     return h.hexdigest()
 
 
 def staged_package_paths(workspace: Path) -> dict[str, Path]:
     paths = {name: workspace / "packages" / name for name in config.LOCAL_CLOSURE}
-    paths.update({name: workspace / "deps" / name for name in config.GIT_DEP_NAMES})
+    paths.update({name: workspace / "deps" / name for name in config.EXTERNAL_DEP_NAMES})
     return paths
 
 
@@ -170,6 +204,8 @@ def stage_closure(
     dependency_dir = workspace / "deps"
     package_dir.mkdir(parents=True, exist_ok=True)
     dependency_dir.mkdir(parents=True, exist_ok=True)
+    # Preserve network-specific local replacements even though the harness uses Testnet.
+    shutil.copytree(config.REPO_DIR / "vendor", workspace / "vendor", ignore=_IGNORE)
 
     for name in config.LOCAL_CLOSURE:
         cancellation.check(cancel_event)
@@ -180,7 +216,24 @@ def stage_closure(
 
     for name, spec in external_dependency_specs().items():
         cancellation.check(cancel_event)
-        _stage_git_dep(spec, dependency_dir / name, cancel_event)
+        if isinstance(spec, GitDependency):
+            _stage_git_dep(spec, dependency_dir / name, cancel_event)
+        else:
+            shutil.copytree(spec.path, dependency_dir / name, ignore=_IGNORE)
+            for package in config.LOCAL_CLOSURE:
+                manifest_path = package_dir / package / "Move.toml"
+                text = manifest_path.read_text()
+                source = _manifest(manifest_path).get("dependencies", {}).get(name, {})
+                if "local" not in source:
+                    continue
+                text, count = re.subn(
+                    rf'(?m)^{re.escape(name)}\s*=\s*\{{\s*local\s*=\s*"{re.escape(source["local"])}"\s*\}}',
+                    f'{name} = {{ local = "../../deps/{name}" }}',
+                    text,
+                )
+                if count != 1:
+                    raise ValueError(f"cannot relocate staged {package}.{name}")
+                manifest_path.write_text(text)
 
     cancellation.check(cancel_event)
     return validate_workspace(workspace)

@@ -2,6 +2,8 @@ import { rollDownSvi } from "./pricer.js";
 import { PRICING_DEFAULTS } from "./predictConfig.js";
 
 export interface Snap {
+  schemaVersion: number;
+  bsSpotHistory: { value1e9: string; sourceTimestampMs: number }[];
   spot1e9: string;
   bsSpot1e9: string;
   pythSourceTimestampMs: string;
@@ -27,11 +29,16 @@ export function pricingEnvFromSnapshot(
   nowMs: number,
 ): { pythSpot: number; bsSpot: number; bsForward: number; svi: any } | null {
   const exp = snap.expiries?.[String(expiryMs)];
+  if (snap.schemaVersion !== 3 || !Array.isArray(snap.bsSpotHistory)) return null;
+  const matchedSpot = snap.bsSpotHistory.find(
+    (read) => read.sourceTimestampMs === exp?.forwardSourceTimestampMs,
+  );
   const pythSourceTimestampMs = Number(snap.pythSourceTimestampMs);
   if (
     !exp ||
+    !matchedSpot ||
     !sourceIsFresh(
-      snap.bsSpotSourceTimestampMs,
+      matchedSpot.sourceTimestampMs,
       nowMs,
       PRICING_DEFAULTS.blockScholesPriceFreshnessMs,
     ) ||
@@ -46,7 +53,7 @@ export function pricingEnvFromSnapshot(
       PRICING_DEFAULTS.blockScholesSviFreshnessMs,
     )
   ) return null;
-  const bsSpot = Number(snap.bsSpot1e9) / 1e9;
+  const bsSpot = Number(matchedSpot.value1e9) / 1e9;
   const rawSvi = {
     a: exp.svi.alpha,
     b: exp.svi.beta,

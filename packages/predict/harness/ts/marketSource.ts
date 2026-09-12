@@ -113,6 +113,49 @@ export interface MarketSource {
   stop(): void;
 }
 
+// Confirmed localnet writes only; raw provider snapshots do not carry on-chain history.
+export interface LandedMarketSnapshot extends MarketSnapshot {
+  bsSpotHistory: { value1e9: bigint; sourceTimestampMs: number }[];
+}
+
+export function serializableLandedSnapshot(snapshot: LandedMarketSnapshot): Record<string, unknown> {
+  return {
+    ...serializableSnapshot(snapshot),
+    schemaVersion: 3,
+    bsSpotHistory: snapshot.bsSpotHistory.map((read) => ({
+      value1e9: read.value1e9.toString(),
+      sourceTimestampMs: read.sourceTimestampMs,
+    })),
+  };
+}
+
+export function landedSnapshotFrom(raw: unknown, wanted: number[]): LandedMarketSnapshot {
+  const encoded = strictObject(raw,
+    ["schemaVersion", "spot1e9", "pythSourceTimestampMs", "bsSpot1e9", "bsSpotSourceTimestampMs", "expiries", "bsSpotHistory"],
+    "landed snapshot");
+  if (encoded.schemaVersion !== 3) throw new Error("unsupported landed snapshot schemaVersion");
+  const { bsSpotHistory: history, ...market } = encoded;
+  const snapshot = snapshotFrom({ ...market, schemaVersion: 2 }, wanted);
+  if (!Array.isArray(history) || history.length > 10) throw new Error("invalid landed spot history");
+  let previousTimestamp = 0;
+  const bsSpotHistory = history.map((rawRead) => {
+    const read = strictObject(rawRead, ["value1e9", "sourceTimestampMs"], "landed spot read");
+    const value1e9 = integerString(read.value1e9, "landed spot value");
+    const sourceTimestampMs = eventSafeNumber(read.sourceTimestampMs, "landed spot timestamp");
+    if (value1e9 < 0n || value1e9 >= 1n << 128n || sourceTimestampMs <= previousTimestamp) {
+      throw new Error("invalid landed spot read");
+    }
+    previousTimestamp = sourceTimestampMs;
+    return { value1e9, sourceTimestampMs };
+  });
+  const latest = bsSpotHistory.at(-1);
+  if ((latest?.value1e9 ?? 0n) !== snapshot.bsSpot1e9 ||
+      (latest?.sourceTimestampMs ?? 0) !== snapshot.bsSpotSourceTimestampMs) {
+    throw new Error("landed spot history does not match latest spot");
+  }
+  return { ...snapshot, bsSpotHistory };
+}
+
 export function serializableSnapshot(snapshot: MarketSnapshot): Record<string, unknown> {
   return {
     schemaVersion: 2,
@@ -237,10 +280,10 @@ function eventAdvances(
 /// Project only values whose successful receipt contains the corresponding on-chain advance event.
 /// Equal-source retransmissions retain the previously landed value, including rolled SVI parameters.
 export function projectLandedSnapshot(
-  previous: MarketSnapshot | null,
+  previous: LandedMarketSnapshot | null,
   candidate: MarketSnapshot,
   applied: AppliedOracleSources,
-): MarketSnapshot {
+): LandedMarketSnapshot {
   const appliedPythSourceTimestampMs = applied.pythSourceTimestampMs;
   const pythAdvances = appliedPythSourceTimestampMs !== null &&
     appliedPythSourceTimestampMs > (previous?.pythSourceTimestampMs ?? 0n);
@@ -297,6 +340,12 @@ export function projectLandedSnapshot(
     bsSpotSourceTimestampMs: bsSpotAdvances
       ? candidate.bsSpotSourceTimestampMs
       : (previous?.bsSpotSourceTimestampMs ?? 0),
+    bsSpotHistory: bsSpotAdvances
+      ? [...(previous?.bsSpotHistory ?? []), {
+        value1e9: candidate.bsSpot1e9,
+        sourceTimestampMs: candidate.bsSpotSourceTimestampMs,
+      }].slice(-10)
+      : [...(previous?.bsSpotHistory ?? [])],
     expiries,
   };
 }

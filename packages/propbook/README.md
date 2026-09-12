@@ -46,7 +46,7 @@ exact-history normalized spot reads derive a positive 1e9-scaled Propbook spot
 from those fields. Missing data, negative source prices, zero normalized spots,
 overflow, or unsupported exponent shapes return `none`.
 
-For Block Scholes, typed reads expose the latest source spot plus per-expiry forward and SVI payloads from permanent stores, while `spot_at(timestamp_ms)` exposes exact minute-boundary spot history. Reads return `none` when the requested observation is absent; SVI reads expose the stored provider parameters directly.
+For Block Scholes, typed reads expose the latest source spot plus per-expiry forward and SVI payloads from permanent stores. `recent_spot_at(timestamp_ms)` finds an exact source-time match among the ten most recent accepted spots, while `spot_at(timestamp_ms)` exposes separate permanent minute-boundary settlement history. Reads return `none` when the requested observation is absent; SVI reads expose the stored provider parameters directly.
 
 ## Exact Timestamp Inserts
 
@@ -121,7 +121,7 @@ A generation time later than its envelope is rejected (`EFeedTimestampAfterEnvel
 
 Block Scholes data lives in two per-underlying shared objects:
 
-- `block_scholes_store::BlockScholesValueStore`: latest spot and forward observations for one immutable provider base asset, keyed by signed series id, plus exact minute-boundary spot history keyed by `source_timestamp_ms`.
+- `block_scholes_store::BlockScholesValueStore`: ten recent spot observations in an inline vector with a next-write index, latest forwards keyed by signed series id, and separate exact minute-boundary spot history keyed by `source_timestamp_ms`, all for one immutable provider base asset.
 - `block_scholes_store::BlockScholesSVIStore`: latest SVI parameter sets, bound to the same base asset and keyed by signed series id.
 
 Writes are permissionless and enter only through `apply_spot_batch`, `insert_at`, `apply_forward_batch`, and `apply_svi_batch`, which take a batch type that only the Block Scholes verifier (`bs_oracle::verify`) can mint — holding one is proof of a valid provider signature, so the relayer that lands it is untrusted. The registry binds each store pair to the exact provider base-asset spelling at creation. `block_scholes_sid` delegates to the provider-owned `bs_sid` package to derive the canonical spot, forward, and SVI ids from the oracle package, complete subscription descriptor, value scale, timestamp precision, and expiry. Each typed write derives the ids admitted by that store and requires the signed updates to match in order; forward and SVI callers supply expiry witnesses, which are checked through the derived ids before storage. Reads derive the same ids internally rather than accepting one from a caller.
@@ -132,6 +132,8 @@ Values are stored exactly as the verifier produced them (`u128`, provider
 scale). Propbook intentionally does not enforce Predict's pricing-safe numeric
 envelope on ingestion: consumers such as Predict must validate spot, forward,
 basis, SVI bounds, and liveness before pricing from the values.
+
+`apply_spot_batch` appends until the vector contains ten observations, then overwrites the oldest slot and advances the index modulo ten. Only strictly newer valid source timestamps advance the ring, including new timestamps whose price is unchanged. Equal, older, zero, and future timestamps cannot evict observations or change their recorded provenance. `spot()` returns the most recent slot, and `recent_spot_at` scans at most ten slots without imposing reader-specific freshness. Neither forward updates nor `insert_at` advance this buffer; exact settlement history survives ring eviction. The inline vector changes the shared-object layout and requires fresh publication rather than an upgrade of existing stores.
 
 ## Registry And Identifiers
 

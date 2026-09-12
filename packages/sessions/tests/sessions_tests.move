@@ -15,6 +15,7 @@ use deepbook_predict::{
     predict_account,
     pricing::Pricer,
     protocol_config::ProtocolConfig,
+    range_test_helpers,
     test_constants
 };
 use deepbook_sessions::{
@@ -931,6 +932,12 @@ fun session_redeems_settled_order() {
     let mut fixture = setup_flow_fixture(expiry_ms);
     authorize_flow_session(&mut fixture, SETTLEMENT_SESSION_DURATION_MS);
     let market_id = fixture.market_id;
+    // Keep both finite boundaries quotable before exercising session settlement.
+    let mut market_bundle = fixture.predict.take_market_bundle(market_id);
+    range_test_helpers::prepare_range(&mut fixture.predict, &mut market_bundle);
+    let timestamp_ms = fixture.predict.clock().timestamp_ms();
+    fixture.clock.set_for_testing(timestamp_ms);
+    predict_helpers::return_market_bundle(market_bundle);
     let lower_tick = predict_helpers::strike_tick();
     let higher_tick = lower_tick + SETTLEMENT_HIGHER_TICK_OFFSET;
     let LiveInputs {

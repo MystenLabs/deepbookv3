@@ -40,6 +40,7 @@ use sui::{event, test_scenario::return_shared};
 const STANDARD_QUANTITY: u64 = 2_000_000_000;
 /// Idle seed large enough to fund several markets to the cash floor.
 const IDLE_SEED: u64 = 1_200_000_000_000;
+const SPOT_BUFFER_SIZE: u64 = 10;
 /// Expiry inside the finish window: the clock starts at 120_000 and the window ships
 /// at 5 minutes, so a member with this expiry can cross it, settle, and be swept while
 /// the flush is still open.
@@ -359,6 +360,11 @@ fun overwide_block_scholes_spot_aborts_pool_valuation_flush() {
         test_constants::live_source_timestamp_ms() + 1,
         FIRST_UNREPRESENTABLE_U64,
     );
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::live_source_timestamp_ms() + 1,
+    );
 
     fx.start_flush_bundle(&mut market);
     abort 999
@@ -383,6 +389,11 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
     fx.prepare_live_oracle_bundle_at(
         &mut market,
         test_constants::default_live_price(),
+        overwide_timestamp_ms,
+    );
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
         overwide_timestamp_ms + 1,
     );
 
@@ -396,6 +407,54 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
 }
 
 // === Completeness proof ===
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
+fun evicted_spot_pair_blocks_pool_snapshot() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut i = 1;
+    while (i <= SPOT_BUFFER_SIZE) {
+        fx.set_bs_spot_raw_for_testing_bundle(
+            &mut market,
+            test_constants::live_source_timestamp_ms() + i,
+            (test_constants::default_live_price() as u128),
+        );
+        i = i + 1;
+    };
+    fx.start_flush_bundle(&mut market);
+    abort 999
+}
+
+#[test]
+fun newer_matched_pair_restores_pool_snapshot_after_eviction() {
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    let mut i = 1;
+    while (i <= SPOT_BUFFER_SIZE) {
+        fx.set_bs_spot_raw_for_testing_bundle(
+            &mut market,
+            test_constants::live_source_timestamp_ms() + i,
+            (test_constants::default_live_price() as u128),
+        );
+        i = i + 1;
+    };
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::live_source_timestamp_ms() + SPOT_BUFFER_SIZE,
+    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    assert_eq!(fx.finish_flush_bundle(&mut market), IDLE_SEED);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
 
 #[test, expected_failure(abort_code = plp::EMissingExpiryValuation)]
 fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
