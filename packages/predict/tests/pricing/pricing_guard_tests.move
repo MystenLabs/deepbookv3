@@ -182,6 +182,11 @@ fun live_quote_with_prices_but_no_svi_aborts() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun block_scholes_price_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_forward_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_live_price(),
+    );
     fx.set_bs_spot_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
@@ -201,6 +206,11 @@ fun block_scholes_price_above_u64_aborts_with_named_width_error() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
 fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
     let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_live_price(),
+    );
     fx.set_bs_forward_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
@@ -219,6 +229,11 @@ fun block_scholes_forward_at_u64_max_reaches_semantic_validation() {
 #[test, expected_failure(abort_code = pricing::EBlockScholesInputTooWide)]
 fun block_scholes_forward_above_u64_aborts_with_named_width_error() {
     let (mut fx, mut oracle) = setup_live();
+    fx.set_bs_spot_for_testing_bundle(
+        &mut oracle,
+        test_constants::now_ms(),
+        test_constants::default_live_price(),
+    );
     fx.set_bs_forward_raw_for_testing_bundle(
         &mut oracle,
         test_constants::now_ms(),
@@ -418,11 +433,6 @@ fun live_quote_with_a_retransmitted_aged_spot_source_aborts() {
         + oracle_fixture::config(&oracle).pricing_config().block_scholes_price_freshness_ms()
         + 1;
     fx.set_clock_for_testing(retransmitted_now);
-    fx.set_bs_forward_for_testing_bundle(
-        &mut oracle,
-        retransmitted_now,
-        test_constants::default_live_price(),
-    );
     fx.retransmit_bs_spot_for_testing(
         &mut oracle,
         source_ms,

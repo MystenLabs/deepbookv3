@@ -12,13 +12,13 @@ import { getSignerForAddress } from "../../devtools/ts/env.js";
 import { atomicWriteFile } from "./io.js";
 import {
   type MarketSource,
-  type MarketSnapshot,
+  type LandedMarketSnapshot,
   DirectWsSource,
   HubSource,
   appliedOracleSourcesFromEvents,
   projectLandedSnapshot,
-  serializableSnapshot,
-  snapshotFrom,
+  serializableLandedSnapshot,
+  landedSnapshotFrom,
 } from "./marketSource.js";
 import { type Feeds } from "./predictSetup.js";
 import { gridExpiries, requiredEnv, requiredNonnegativeInt } from "./runnerConfig.js";
@@ -107,10 +107,10 @@ async function main() {
   let pinnedSvi = 0;
   let missingTs = 0;
   const snapshotPath = `${INSTANCE_DIR}/snapshot.json`;
-  let landedSnapshot: MarketSnapshot | null = null;
+  let landedSnapshot: LandedMarketSnapshot | null = null;
   if (existsSync(snapshotPath)) {
     try {
-      landedSnapshot = snapshotFrom(JSON.parse(readFileSync(snapshotPath, "utf8")), gridNow());
+      landedSnapshot = landedSnapshotFrom(JSON.parse(readFileSync(snapshotPath, "utf8")), gridNow());
     } catch (e) {
       console.warn(`[updater] ignoring unreadable prior snapshot: ${String(e).slice(0, 120)}`);
     }
@@ -190,7 +190,7 @@ async function main() {
         snap,
         appliedOracleSourcesFromEvents(receipt.events),
       );
-      atomicWriteFile(snapshotPath, JSON.stringify(serializableSnapshot(landedSnapshot)));
+      atomicWriteFile(snapshotPath, JSON.stringify(serializableLandedSnapshot(landedSnapshot)));
       pushes++;
       if (pushes <= 3 || pushes % 5 === 0)
         console.log(`[updater] push #${pushes} spot=$${(Number(snap.spot1e9) / SCALE_1E9).toFixed(2)} expiries=${grid.length} batch_timestamp_ms=${batchTimestampMs} digest=${receipt.digest.slice(0, 8)}`);
