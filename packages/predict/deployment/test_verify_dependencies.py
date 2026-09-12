@@ -28,6 +28,22 @@ def object_fixture():
 
 
 class DependencyVerificationTests(unittest.TestCase):
+    def test_testnet_deepbook_pin_preserves_mainnet_selection(self):
+        root = Path(__file__).resolve().parents[3]
+        for package in ("deepbook_core_account", "sessions"):
+            manifest = verifier.read_toml(root / "packages" / package / "Move.toml")
+            replacements = manifest["dep-replacements"]
+            for network, revision in (
+                ("testnet", "ce0e5cd052d7d1eb195bb486396730c550f8f92a"),
+                ("mainnet", "2f83e49f21c3aaf96b779f24be0fd6951bc75b29"),
+            ):
+                self.assertEqual(replacements[network]["deepbook"], {
+                    "git": "https://github.com/MystenLabs/deepbookv3.git",
+                    "subdir": "packages/deepbook", "rev": revision,
+                })
+            self.assertEqual(replacements["testnet"]["token"], {"local": "../token", "override": True})
+            self.assertEqual(replacements["mainnet"]["token"], {"local": "../../vendor/deep_mainnet", "override": True})
+
     def test_reused_testnet_usdc_is_verified_instead_of_skipped(self):
         lock = {"deepbook_sessions": {"source": {"local": "."}, "deps": {"usdc": "usdc"}},
                 "usdc": {"source": {"local": "../usdc"}, "deps": {}}}
