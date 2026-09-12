@@ -5,7 +5,8 @@
 ///
 /// This module reads canonical Propbook Pyth and Block Scholes feeds and computes
 /// SVI-adjusted digital probabilities. Live reads require fresh, pricing-safe Block
-/// Scholes spot, forward, and SVI observations. The live forward comes from one of
+/// Scholes spot, forward, and SVI observations. The latest forward is paired with an exact
+/// source-timestamp spot from Propbook's bounded recent history. The live forward comes from one of
 /// two admin-selected sources (`PricingConfig.use_pyth_spot_for_forward`): a fresh
 /// positive Pyth spot carrying the Block Scholes basis, or the Block Scholes forward
 /// directly. Exact-history reads do not apply live freshness policy.
@@ -412,7 +413,10 @@ fun resolve_live_pricer(
     clock: &Clock,
     ctx: &TxContext,
 ): Pricer {
-    let bs_spot_read = bs_values.spot();
+    let bs_forward_read = bs_values.forward(expiry);
+    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
+    let bs_forward_read = bs_forward_read.destroy_some();
+    let bs_spot_read = bs_values.recent_spot_at(bs_forward_read.read_source_timestamp_ms());
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
     assert_oracle_not_written_this_tx(&bs_spot_read.read_writer_digest(), ctx);
@@ -431,9 +435,6 @@ fun resolve_live_pricer(
     );
     let bs_spot = narrow_price(bs_spot_read.read_value());
 
-    let bs_forward_read = bs_values.forward(expiry);
-    assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
-    let bs_forward_read = bs_forward_read.destroy_some();
     assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
