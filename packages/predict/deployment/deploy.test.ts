@@ -45,6 +45,8 @@ import {
     assertCapsIssuanceReady,
     capIssuanceTransaction,
     issueOperationalCaps,
+    operationalCapOwner,
+    assertOperationalCapAllowlists,
     executeDeployment,
     ensureMarkets,
     assertPackagePlan,
@@ -1247,7 +1249,7 @@ test("cap issuance requires an explicit recipient and is non-broadcasting by def
     assert.throws(() => assertCapsIssuanceReady(state, id("a")), /change recipient/);
 });
 
-test("cap issuance mints and party-transfers both capabilities atomically and recovers the receipt", async () => {
+test("cap handoff transfers the setup pair without minting and recovers the receipt", async () => {
     const state = completeStateFixture();
     state.packages.predict = id("4");
     state.sharedObjects.predict = {
@@ -1255,20 +1257,21 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
         "protocol_config::ProtocolConfig": id("6"),
     };
     state.ownedCaps.predict = { "admin::AdminCap": id("7") };
+    state.wiring.lifecycleCap.id = id("b");
+    state.wiring.valuationCap.id = id("c");
     const recipient = id("a");
     const tx = capIssuanceTransaction(state, recipient);
     assert.deepEqual(
         tx.getData().commands.map((command) => command.MoveCall?.function),
-        [
-            "mint_lifecycle_cap",
-            "mint_pool_valuation_cap",
-            "single_owner",
-            "public_party_transfer",
-            "single_owner",
-            "public_party_transfer",
-        ],
+        ["single_owner", "public_party_transfer", "single_owner", "public_party_transfer"],
     );
     const inputs = tx.getData().inputs;
+    assert.deepEqual(
+        inputs
+            .filter((input) => input.UnresolvedObject)
+            .map((input) => input.UnresolvedObject!.objectId),
+        [id("b"), id("c")],
+    );
     const parties = tx
         .getData()
         .commands.filter((command) => command.MoveCall?.function === "single_owner");
@@ -1286,7 +1289,11 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
     let broadcasts = 0;
     let failOwnerRead = true;
     const owners: string[] = [];
+    let allowlistReads = 0;
     const ops: NonNullable<Parameters<typeof issueOperationalCaps>[2]> = {
+        verifyOperationalCapAllowlists: async () => {
+            allowlistReads++;
+        },
         executeTransaction: async (_runtime, label) => {
             if (!state.transactions[label]) {
                 broadcasts++;
@@ -1294,18 +1301,7 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
             }
             return {
                 digest: "issued",
-                objectChanges: [
-                    {
-                        type: "created",
-                        objectType: `${id("4")}::market_lifecycle_cap::MarketLifecycleCap`,
-                        objectId: id("b"),
-                    },
-                    {
-                        type: "created",
-                        objectType: `${id("4")}::pool_valuation_cap::PoolValuationCap`,
-                        objectId: id("c"),
-                    },
-                ],
+                objectChanges: [],
             };
         },
         objectEvidence: async (_runtime, object, _type, owner) => {
@@ -1314,12 +1310,13 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
                 throw new Error("owner read unavailable");
             }
             owners.push(owner!);
-            return objectEvidence(object);
+            return { ...objectEvidence(object), owner: owner! };
         },
         writeState() {},
     };
     await assert.rejects(issueOperationalCaps(runtime, recipient, ops), /owner read/);
     assert.deepEqual(state.issuedCaps, {});
+    await assert.rejects(issueOperationalCaps(runtime, id("d"), ops), /change recipient/);
     const issued = await issueOperationalCaps(runtime, recipient, ops);
     assert.equal(broadcasts, 1);
     assert.deepEqual(issued, {
@@ -1329,7 +1326,50 @@ test("cap issuance mints and party-transfers both capabilities atomically and re
         transaction: "issued",
     });
     assert.deepEqual(owners, [`party:${recipient}`, `party:${recipient}`]);
+    await issueOperationalCaps(runtime, recipient, ops);
+    assert.equal(broadcasts, 1);
+    assert.equal(allowlistReads, 5);
+    assert.equal(operationalCapOwner(state), `party:${recipient}`);
+    assert.equal(state.wiring.lifecycleCap.owner, "keeper");
+    assert.equal(state.wiring.valuationCap.owner, "keeper");
+    assert.equal(state.verification!.lifecycleCap.owner, `party:${recipient}`);
+    assert.equal(state.verification!.valuationCap.owner, `party:${recipient}`);
     assert.equal(state.status, "complete");
+});
+
+test("cap handoff rejects missing setup caps, additional pairs and legacy duplicate issuance", () => {
+    const state = completeStateFixture();
+    assert.throws(() => capIssuanceTransaction(state, id("a")), /setup lifecycle cap/);
+    state.wiring.lifecycleCap.id = id("b");
+    state.wiring.valuationCap.id = id("c");
+    const fields = {
+        allowed_lifecycle_caps: { contents: [id("b")] },
+        allowed_pool_valuation_caps: { contents: [id("c")] },
+    };
+    assertOperationalCapAllowlists(state, fields);
+    for (const field of Object.keys(fields)) {
+        for (const contents of [[], [id("d")], [id("b"), id("c")]]) {
+            assert.throws(
+                () => assertOperationalCapAllowlists(state, { ...fields, [field]: { contents } }),
+                /only the original/,
+            );
+        }
+    }
+    state.transactions[`issue_operational_caps_${id("a")}`] = "handoff";
+    state.issuedCaps[id("a")] = {
+        lifecycleCap: id("d"),
+        poolValuationCap: id("e"),
+        transaction: "handoff",
+    };
+    assert.throws(() => assertCapsIssuanceReady(state, id("a")), /original setup pair/);
+    state.issuedCaps[id("a")] = {
+        lifecycleCap: id("b"),
+        poolValuationCap: id("c"),
+        transaction: "handoff",
+    };
+    assert.throws(() => assertCapsIssuanceReady(state, id("f")), /change recipient/);
+    state.issuedCaps[id("f")] = state.issuedCaps[id("a")];
+    assert.throws(() => operationalCapOwner(state), /only one/);
 });
 
 test("Block Scholes store-pair inspection decodes both IDs and the base asset", () => {

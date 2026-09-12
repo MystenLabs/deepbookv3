@@ -1,6 +1,6 @@
 # Predict contract deployment
 
-This workflow publishes, wires, capitalizes, and verifies a Predict contract suite on an explicit Sui network. It does not deploy keepers or indexers. Operational capability issuance is a separate command with an explicit recipient.
+This workflow publishes, wires, capitalizes, and verifies a Predict contract suite on an explicit Sui network. It does not deploy keepers or indexers. It creates one operational capability pair for setup; handoff of that same pair is a separate command with an explicit recipient.
 
 ## Execution gates
 
@@ -49,7 +49,7 @@ To redeploy the protocol while retaining an existing Testnet currency, provide b
 
 Both existing-USDC IDs are journal bindings and must be repeated on preflight, execution, resume, and `issue-caps`. A missing or changed selection fails closed. Mainnet rejects these flags and retains its fixed Circle identity. For a fresh redeployment, preserve the previous journal and manifest in their original worktree and use a clean new worktree with no operator journal; do not resume or overwrite the old run. The audited new manifest replaces the prior integration manifest only at completion. Other-network publication records and the reused USDC publication record remain unchanged.
 
-## Issue operational capabilities
+## Hand off operational capabilities
 
 After a complete audited deployment, provide a full nonzero recipient address:
 
@@ -58,9 +58,9 @@ corepack npm exec -- tsx deployment/deploy.ts issue-caps --network mainnet --dep
 corepack npm exec -- tsx deployment/deploy.ts issue-caps --network mainnet --deployer <address> --recipient <keeper-address> --execute
 ```
 
-Execution mints a `MarketLifecycleCap` and `PoolValuationCap` and transfers both with `sui::transfer::public_party_transfer` in one transaction. It verifies `ConsensusAddressOwner` and records IDs and transaction in the private journal. Existing setup, admin/root, upgrade, publisher, and metadata capabilities remain with the deployer. Root/upgrade handoff is a separate explicitly authorized operation after verification.
+The `issue-caps` command transfers the original setup `MarketLifecycleCap` and `PoolValuationCap` with `sui::transfer::public_party_transfer` in one transaction; it never mints another pair. It requires each registry allowlist to contain exactly its original setup cap, verifies `ConsensusAddressOwner`, updates the custody audit, and records the same two IDs and transaction in the private journal. Admin/root, upgrade, publisher, and metadata capabilities remain with the deployer. Root/upgrade handoff is a separate explicitly authorized operation after verification.
 
-Each recipient has one recorded issuance. Repeating the command verifies its original receipt and ownership without minting again. Another recipient is a new explicit issuance. Reconcile an in-flight issuance with its original recipient before proceeding. Issuance does not regenerate the configuration snapshot.
+Each deployment has one recorded handoff recipient. Repeating the command verifies its original receipt, ownership and allowlists without submitting another transfer. Changing recipient after an in-flight or completed transfer fails closed, including when the transaction succeeded but the ownership read failed. Journals from the former duplicate-pair workflow are rejected rather than treated as single-pair deployments. Handoff does not regenerate the configuration snapshot.
 
 ## Recovery and artifacts
 
@@ -81,4 +81,4 @@ python3 -m unittest discover -s deployment -p 'test_*.py'
 cargo test --locked --manifest-path deployment/bytecode/Cargo.toml
 ```
 
-Tests cover explicit targets, non-broadcasting defaults, source/package binding, identity validation, network publication history, recovery, both orchestration paths, interruption boundaries, native-USDC lock transaction and event validation, market resume, explicit recipient parsing, atomic cap issuance, and manifest validation. These deterministic tests do not prove live dependency verification or the funded gas budget passes.
+Tests cover explicit targets, non-broadcasting defaults, source/package binding, identity validation, network publication history, recovery, both orchestration paths, interruption boundaries, native-USDC lock transaction and event validation, market resume, explicit recipient parsing, atomic cap handoff without minting, single-pair allowlists, recipient binding across recovery, and manifest validation. These deterministic tests do not prove live dependency verification or the funded gas budget passes.
