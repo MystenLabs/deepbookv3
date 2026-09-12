@@ -416,6 +416,7 @@ fun resolve_live_pricer(
     let bs_forward_read = bs_values.forward(expiry);
     assert!(bs_forward_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_forward_read = bs_forward_read.destroy_some();
+    assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
     let bs_spot_read = bs_values.recent_spot_at(bs_forward_read.read_source_timestamp_ms());
     assert!(bs_spot_read.is_some(), EBlockScholesPriceUnavailable);
     let bs_spot_read = bs_spot_read.destroy_some();
@@ -435,7 +436,6 @@ fun resolve_live_pricer(
     );
     let bs_spot = narrow_price(bs_spot_read.read_value());
 
-    assert_oracle_not_written_this_tx(&bs_forward_read.read_writer_digest(), ctx);
     let block_scholes_forward_source_timestamp_ms = bs_forward_read.read_source_timestamp_ms();
     assert!(
         timestamp_is_fresh(

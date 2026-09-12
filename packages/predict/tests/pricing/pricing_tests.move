@@ -66,7 +66,9 @@ const TIGHT_PYTH_FRESHNESS_MS: u64 = 1_000;
 const DIVERGED_PYTH_SOURCE_MS: u64 = 119_500;
 const PYTH_SOURCE_MS: u64 = 119_001;
 const BLOCK_SCHOLES_SPOT_SOURCE_MS: u64 = 119_002;
-const BLOCK_SCHOLES_FORWARD_SOURCE_MS: u64 = 119_003;
+const BLOCK_SCHOLES_FORWARD_SOURCE_MS: u64 = BLOCK_SCHOLES_SPOT_SOURCE_MS;
+const SPOT_BUFFER_SIZE: u64 = 10;
+const EUnexpectedSuccess: u64 = 999;
 /// A strictly newer Pyth row whose zero price cannot produce a normalized spot.
 const UNUSABLE_PYTH_SOURCE_MS: u64 = 119_001;
 const UNUSABLE_PYTH_SPOT: u64 = 0;
@@ -274,6 +276,91 @@ fun pricer_snapshots_all_oracle_source_timestamps() {
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();
+}
+
+#[test]
+fun newer_spot_does_not_change_the_basis_of_an_older_forward() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let price = test_constants::default_live_price();
+    fx.prepare_live_oracle_bundle(&mut oracle, price);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_SPOT_SOURCE_MS, 2 * price);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(
+        pricer.block_scholes_spot_source_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
+    assert_eq!(
+        pricer.block_scholes_forward_source_timestamp_ms(),
+        test_constants::live_source_timestamp_ms(),
+    );
+    // Matched basis remains one, rather than halving when only spot doubles.
+    test_helpers::assert_within(
+        pricer.up_price(strike(price)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_FORWARD_SOURCE_MS, 2 * price);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
+    assert_eq!(pricer.block_scholes_forward_source_timestamp_ms(), BLOCK_SCHOLES_FORWARD_SOURCE_MS);
+    test_helpers::assert_within(
+        pricer.up_price(strike(price)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test]
+fun forward_first_prices_when_its_matching_spot_arrives() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let price = test_constants::default_live_price();
+    fx.prepare_live_oracle_bundle(&mut oracle, price);
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_FORWARD_SOURCE_MS, 2 * price);
+    fx.set_bs_spot_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_SPOT_SOURCE_MS, 2 * price);
+    let pricer = fx.load_pricer_bundle(&oracle);
+    assert_eq!(pricer.block_scholes_spot_source_timestamp_ms(), BLOCK_SCHOLES_SPOT_SOURCE_MS);
+    test_helpers::assert_within(
+        pricer.up_price(strike(price)),
+        AT_THE_FORWARD_UP,
+        AT_THE_FORWARD_UP_BUDGET,
+    );
+    oracle_fixture::return_oracle_bundle(oracle);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
+fun latest_forward_without_matching_spot_aborts() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let price = test_constants::default_live_price();
+    fx.prepare_live_oracle_bundle(&mut oracle, price);
+    fx.set_bs_forward_for_testing_bundle(&mut oracle, BLOCK_SCHOLES_FORWARD_SOURCE_MS, price);
+    let _ = fx.load_pricer_bundle(&oracle);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = pricing::EBlockScholesPriceUnavailable)]
+fun evicted_matching_spot_aborts_even_while_pair_is_fresh() {
+    let mut fx = oracle_fixture::setup_oracle_default();
+    let mut oracle = fx.take_oracle_bundle();
+    let price = test_constants::default_live_price();
+    fx.prepare_live_oracle_bundle(&mut oracle, price);
+    let mut i = 1;
+    while (i <= SPOT_BUFFER_SIZE) {
+        fx.set_bs_spot_for_testing_bundle(
+            &mut oracle,
+            test_constants::live_source_timestamp_ms() + i,
+            price,
+        );
+        i = i + 1;
+    };
+    let _ = fx.load_pricer_bundle(&oracle);
+    abort EUnexpectedSuccess
 }
 
 #[test]
