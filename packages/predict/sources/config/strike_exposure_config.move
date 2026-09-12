@@ -74,24 +74,9 @@ public(package) fun inventory_impact_max_rate(config: &StrikeExposureConfig): u6
     config.inventory_impact_max_rate
 }
 
-/// Returns the raw trade fee for a live probability and quantity, rounded down so the trader keeps sub-unit dust.
-///
-/// Precondition: `timestamp_ms < expiry_ms`. Live-pricing callers enforce this
-/// before passing timestamps because the fee-rate helper derives time-to-expiry
-/// with exact subtraction.
-public(package) fun trading_fee(
-    config: &StrikeExposureConfig,
-    expiry_ms: u64,
-    probability: u64,
-    quantity: u64,
-    timestamp_ms: u64,
-): u64 {
-    math::mul_down(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
-}
-
 /// Charge each finite boundary independently, including its floor and rounding.
 /// Infinite boundaries contribute no fee; a finite tail still pays the floor.
-public(package) fun range_trading_fee(
+public(package) fun trading_fee(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
     price: &RangePrice,
@@ -100,11 +85,11 @@ public(package) fun range_trading_fee(
 ): u64 {
     let lower_fee = price
         .lower_up()
-        .map!(|p| config.trading_fee(expiry_ms, p, quantity, timestamp_ms))
+        .map!(|p| config.leg_trading_fee(expiry_ms, p, quantity, timestamp_ms))
         .get_with_default(0);
     let higher_fee = price
         .higher_up()
-        .map!(|p| config.trading_fee(expiry_ms, p, quantity, timestamp_ms))
+        .map!(|p| config.leg_trading_fee(expiry_ms, p, quantity, timestamp_ms))
         .get_with_default(0);
     lower_fee + higher_fee
 }
@@ -218,23 +203,25 @@ public(package) fun set_inventory_impact_max_rate(config: &mut StrikeExposureCon
     config.inventory_impact_max_rate = value;
 }
 
-/// Return the 1e9-scaled per-unit trade fee.
+/// Return one finite boundary's fee, rounding down so the trader keeps sub-unit dust.
 ///
 /// Precondition: `timestamp_ms < expiry_ms`; callers must enforce pre-expiry
 /// liveness before this helper derives `expiry_ms - timestamp_ms`.
-fun fee_rate(
+fun leg_trading_fee(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
     probability: u64,
+    quantity: u64,
     timestamp_ms: u64,
 ): u64 {
     let raw_fee = config.raw_bernoulli_fee_rate(probability);
     let base = raw_fee.max(config.min_fee);
     let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
-    math::mul_down(base, multiplier)
+    math::mul_down(math::mul_down(base, multiplier), quantity)
 }
 
 fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {
+    // RangePrice fields are private to pricing; its digital probabilities are clamped to [0, 1].
     assert!(probability <= math::float_scaling!(), EInvalidFeeProbability);
     if (probability == 0 || probability == math::float_scaling!()) return 0;
 

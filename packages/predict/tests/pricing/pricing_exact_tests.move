@@ -78,7 +78,7 @@ fun run_scenario(s: u64) {
     let mut i = 0;
     while (i < n) {
         let p = &points[i];
-        let actual = pricer.range_price(strike(p.lower()), strike(p.higher()));
+        let actual = pricer.range_price(strike(p.lower()), strike(p.higher())).probability();
         test_helpers::assert_within(actual, p.reference(), p.tolerance());
         i = i + 1;
     };
@@ -133,10 +133,12 @@ fun flat_surface_at_the_forward_matches_true_math() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let up = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
+    let up = pricer
+        .range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
     // Phi(-sqrt(1e-9)/2) at 1e9, from Python's stdlib erf (independent of the
     // contract's Cody rational approximation). Budget: `normal_cdf` is documented
     // to 20 raw units, and the d2 path adds under 1 more (the 1e18 variance and
@@ -174,10 +176,12 @@ fun skew_clamp_up_price(rho_is_negative: bool): u64 {
         false,
     );
     let pricer = fx.load_pricer_bundle(&oracle);
-    let up = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
+    let up = pricer
+        .range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
 
     oracle_fixture::return_oracle_bundle(oracle);
     fx.finish();

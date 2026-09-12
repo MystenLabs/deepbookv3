@@ -68,7 +68,7 @@ public struct MintTerms has drop {
     lower_tick: u64,
     higher_tick: u64,
     quantity: u64,
-    entry_probability: u64,
+    price: RangePrice,
     premium: u64,
     /// Separate inventory-impact charge, sampled against the pre-mint book.
     inventory_impact_charge: u64,
@@ -83,56 +83,44 @@ public struct LiveCloseTerms has drop {
     order: Order,
     close_quantity: u64,
     redeem_amount: u64,
-    range_probability: u64,
+    price: RangePrice,
     /// Separate inventory-impact rebate, sampled against the pre-close book.
     inventory_impact_rebate: u64,
 }
 
-/// Carries boundary prices without changing the deployed MintTerms layout.
-public struct PricedMintTerms has drop {
-    terms: MintTerms,
-    price: RangePrice,
+public(package) fun entry_probability(terms: &MintTerms): u64 {
+    terms.price.probability()
 }
 
-/// Carries boundary prices without changing the deployed LiveCloseTerms layout.
-public struct PricedLiveCloseTerms has drop {
-    terms: LiveCloseTerms,
-    price: RangePrice,
+public(package) fun premium(terms: &MintTerms): u64 {
+    terms.premium
 }
 
-public(package) fun entry_probability(terms: &PricedMintTerms): u64 {
-    terms.terms.entry_probability
+public(package) fun quantity(terms: &MintTerms): u64 {
+    terms.quantity
 }
 
-public(package) fun premium(terms: &PricedMintTerms): u64 {
-    terms.terms.premium
+public(package) fun inventory_impact_charge(terms: &MintTerms): u64 {
+    terms.inventory_impact_charge
 }
 
-public(package) fun quantity(terms: &PricedMintTerms): u64 {
-    terms.terms.quantity
-}
-
-public(package) fun inventory_impact_charge(terms: &PricedMintTerms): u64 {
-    terms.terms.inventory_impact_charge
-}
-
-public(package) fun mint_price(terms: &PricedMintTerms): &RangePrice {
+public(package) fun mint_price(terms: &MintTerms): &RangePrice {
     &terms.price
 }
 
-public(package) fun redeem_amount(terms: &PricedLiveCloseTerms): u64 {
-    terms.terms.redeem_amount
+public(package) fun redeem_amount(terms: &LiveCloseTerms): u64 {
+    terms.redeem_amount
 }
 
-public(package) fun range_probability(terms: &PricedLiveCloseTerms): u64 {
-    terms.terms.range_probability
+public(package) fun range_probability(terms: &LiveCloseTerms): u64 {
+    terms.price.probability()
 }
 
-public(package) fun inventory_impact_rebate(terms: &PricedLiveCloseTerms): u64 {
-    terms.terms.inventory_impact_rebate
+public(package) fun inventory_impact_rebate(terms: &LiveCloseTerms): u64 {
+    terms.inventory_impact_rebate
 }
 
-public(package) fun close_price(terms: &PricedLiveCloseTerms): &RangePrice {
+public(package) fun close_price(terms: &LiveCloseTerms): &RangePrice {
     &terms.price
 }
 
@@ -276,7 +264,7 @@ public(package) fun trading_fee(
 ): u64 {
     exposure
         .config
-        .range_trading_fee(
+        .trading_fee(
             expiry_ms,
             price,
             quantity,
@@ -343,7 +331,7 @@ public(package) fun quote_mint_terms(
     max_premium: u64,
     min_quantity: u64,
     exact_quantity: bool,
-): PricedMintTerms {
+): MintTerms {
     let price = exposure.admitted_range_price(pricer, lower_tick, higher_tick);
     exposure.config.assert_range_mint_probability_policy(&price);
     let entry_probability = price.probability();
@@ -369,12 +357,12 @@ public(package) fun quote_mint_terms(
     let premium = exposure.config.assert_mint_admission(entry_probability, quantity);
     // Preserve the mutation path's validation order.
     order::assert_valid_quantity(quantity);
-    let terms = MintTerms {
+    MintTerms {
         expiry_market_id: exposure.expiry_market_id,
         lower_tick,
         higher_tick,
         quantity,
-        entry_probability,
+        price,
         premium,
         inventory_impact_charge: exposure.inventory_impact(
             lower_tick,
@@ -382,8 +370,7 @@ public(package) fun quote_mint_terms(
             quantity,
             true,
         ),
-    };
-    PricedMintTerms { terms, price }
+    }
 }
 
 /// Allocate a live mint order from priced terms: consume the expiry-local
@@ -391,11 +378,7 @@ public(package) fun quote_mint_terms(
 /// ties each allocation to exactly one admission result, so the order's contract
 /// fields are always the ones that were priced, and the market-identity assert
 /// rejects terms priced on another exposure.
-public(package) fun allocate_mint_order(
-    exposure: &mut StrikeExposure,
-    priced: PricedMintTerms,
-): Order {
-    let PricedMintTerms { terms, price: _ } = priced;
+public(package) fun allocate_mint_order(exposure: &mut StrikeExposure, terms: MintTerms): Order {
     let MintTerms { expiry_market_id, lower_tick, higher_tick, quantity, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
@@ -416,35 +399,33 @@ public(package) fun quote_live_close(
     pricer: &Pricer,
     order: &Order,
     close_quantity: u64,
-): PricedLiveCloseTerms {
+): LiveCloseTerms {
     order::assert_valid_quantity(close_quantity);
     assert!(close_quantity <= order.quantity(), EInvalidCloseQuantity);
 
     let price = exposure.order_range_price(pricer, order);
     let range_probability = price.probability();
-    let terms = LiveCloseTerms {
+    LiveCloseTerms {
         expiry_market_id: exposure.expiry_market_id,
         order: *order,
         close_quantity,
         redeem_amount: math::mul_down(range_probability, close_quantity),
-        range_probability,
+        price,
         inventory_impact_rebate: exposure.inventory_impact(
             order.lower_tick(),
             order.higher_tick(),
             close_quantity,
             false,
         ),
-    };
-    PricedLiveCloseTerms { terms, price }
+    }
 }
 
 /// Apply one quoted live close to the book and return the replacement order a
 /// partial close leaves behind.
 public(package) fun process_live_close(
     exposure: &mut StrikeExposure,
-    priced: PricedLiveCloseTerms,
+    terms: LiveCloseTerms,
 ): Option<Order> {
-    let PricedLiveCloseTerms { terms, price: _ } = priced;
     let LiveCloseTerms { expiry_market_id, order, close_quantity, .. } = terms;
     assert!(expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
 
@@ -534,7 +515,7 @@ fun admitted_range_price(
     exposure.assert_admitted_mint_ticks(lower_tick, higher_tick);
     let lower = range_codec::strike_from_tick(lower_tick, exposure.tick_size);
     let higher = range_codec::strike_from_tick(higher_tick, exposure.tick_size);
-    pricer.range_prices(lower, higher)
+    pricer.range_price(lower, higher)
 }
 
 fun inventory_impact_potential_for_liability(exposure: &StrikeExposure, liability: u64): u64 {
@@ -613,7 +594,7 @@ fun assert_admitted_mint_ticks(exposure: &StrikeExposure, lower_tick: u64, highe
 }
 
 fun order_range_price(exposure: &StrikeExposure, pricer: &Pricer, order: &Order): RangePrice {
-    pricer.range_prices(
+    pricer.range_price(
         range_codec::strike_from_tick(order.lower_tick(), exposure.tick_size),
         range_codec::strike_from_tick(order.higher_tick(), exposure.tick_size),
     )

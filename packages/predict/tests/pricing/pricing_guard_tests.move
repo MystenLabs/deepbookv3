@@ -773,10 +773,12 @@ fun negative_svi_a_with_positive_min_variance_prices() {
     );
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let up = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
+    let up = pricer
+        .range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
     // Independent Python true-math reference:
     // w = -0.001 + 0.01 * sqrt(0^2 + 0.5^2) = 0.004, w' = 0,
     // d2 = -(w / 2) / sqrt(w), Phi(d2) = 0.4873864396849802.
@@ -1341,5 +1343,5 @@ fun setup_live(): (OracleFixture, OracleBundle) {
 /// Worker: one live quote over `(lower, higher]` against the fixture market.
 fun live_quote(fx: &mut OracleFixture, oracle: &OracleBundle, lower: u64, higher: u64): u64 {
     let pricer = fx.load_pricer_bundle(oracle);
-    pricer.range_price(strike(lower), strike(higher))
+    pricer.range_price(strike(lower), strike(higher)).probability()
 }

@@ -11,7 +11,7 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     pricing::RangePrice,
     range_codec::strike_for_testing as strike,
-    range_test_helpers,
+    range_test_helpers::{Self, range},
     strike_exposure_config::{Self, StrikeExposureConfig},
     test_constants
 };
@@ -23,6 +23,9 @@ const HIGHER_TICK: u64 = 110;
 const FAR_LOWER_TICK: u64 = 1;
 const FAR_HIGHER_TICK: u64 = 1000;
 const DUST_QUANTITY: u64 = 75;
+// Independent references: tests/helper/reference/generate_constants.py.
+const COMBINED_PROBABILITY_FEE: u64 = 38_255;
+const FINITE_RANGE_FEE: u64 = 94_844;
 const TWO_DEFAULT_FLOORS: u64 = 44_000;
 const ONE_DEFAULT_FLOOR: u64 = 22_000;
 const TWO_FLOW_FLOORS: u64 = 10_000_000;
@@ -119,7 +122,7 @@ fun eligible_wide_range_aborts_above_the_two_floor_cost_limit() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let mut account = fx.take_account_bundle(&trader);
     let pricer = fx.load_pricer_bundle(&market);
-    let price = pricer.range_prices(
+    let price = pricer.range_price(
         strike(WIDE_LOWER_TICK * test_constants::default_tick_size()),
         strike(TOO_WIDE_HIGHER_TICK * test_constants::default_tick_size()),
     );
@@ -142,19 +145,6 @@ fun eligible_wide_range_aborts_above_the_two_floor_cost_limit() {
     abort 999
 }
 
-fun range(lower: u64, higher: u64): RangePrice {
-    let mut fx = helpers::setup_market_default();
-    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
-    let mut market = fx.take_market_bundle(expiry_id);
-    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
-    range_test_helpers::prepare_range(&mut fx, &mut market);
-    let pricer = fx.load_pricer_bundle(&market);
-    let price = pricer.range_prices(strike(lower), strike(higher));
-    helpers::return_market_bundle(market);
-    fx.finish();
-    price
-}
-
 fun bounded_range(): RangePrice {
     range(
         LOWER_TICK * test_constants::default_tick_size(),
@@ -174,7 +164,7 @@ fun finite_boundaries_each_pay_the_floor() {
     config.set_base_fee(1);
     let price = bounded_range();
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::default_expiry_ms(),
             &price,
             test_constants::usdc_unit(),
@@ -195,22 +185,22 @@ fun above_and_below_pay_one_floor_and_whole_line_pays_none() {
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
     range_test_helpers::prepare_range(&mut fx, &mut market);
     let pricer = fx.load_pricer_bundle(&market);
-    let above = pricer.range_prices(
+    let above = pricer.range_price(
         strike(LOWER_TICK * test_constants::default_tick_size()),
         strike(constants::pos_inf!()),
     );
-    let below = pricer.range_prices(
+    let below = pricer.range_price(
         strike(constants::neg_inf!()),
         strike(HIGHER_TICK * test_constants::default_tick_size()),
     );
-    let whole = pricer.range_prices(strike(constants::neg_inf!()), strike(constants::pos_inf!()));
+    let whole = pricer.range_price(strike(constants::neg_inf!()), strike(constants::pos_inf!()));
     assert_eq!(above.higher_up(), option::none());
     assert_eq!(below.lower_up(), option::none());
     assert_eq!(whole.probability(), 1_000_000_000);
     config.assert_range_mint_probability_policy(&above);
     config.assert_range_mint_probability_policy(&below);
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::default_expiry_ms(),
             &above,
             test_constants::usdc_unit(),
@@ -219,7 +209,7 @@ fun above_and_below_pay_one_floor_and_whole_line_pays_none() {
         ONE_DEFAULT_FLOOR,
     );
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::default_expiry_ms(),
             &below,
             test_constants::usdc_unit(),
@@ -228,7 +218,7 @@ fun above_and_below_pay_one_floor_and_whole_line_pays_none() {
         ONE_DEFAULT_FLOOR,
     );
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::default_expiry_ms(),
             &whole,
             test_constants::usdc_unit(),
@@ -251,7 +241,7 @@ fun finite_zero_and_one_probabilities_still_pay_two_floors() {
     assert_eq!(price.lower_up(), option::some(1_000_000_000));
     assert_eq!(price.higher_up(), option::some(0));
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::default_expiry_ms(),
             &price,
             test_constants::usdc_unit(),
@@ -269,7 +259,7 @@ fun leg_amounts_round_separately_before_summing() {
     let price = bounded_range();
     // Each 0.022 * 75 = 1.65 rounds to 1, giving 2 rather than floor(3.3).
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::default_expiry_ms(),
             &price,
             DUST_QUANTITY,
@@ -281,7 +271,7 @@ fun leg_amounts_round_separately_before_summing() {
     config.set_expiry_fee_max_multiplier(DOUBLE_MULTIPLIER);
     // Halfway through a 1x -> 2x ramp: each 0.033 * 75 floors to 2.
     assert_eq!(
-        config.range_trading_fee(
+        config.trading_fee(
             test_constants::now_ms() + HALF_WINDOW_MS,
             &price,
             DUST_QUANTITY,
@@ -295,19 +285,29 @@ fun leg_amounts_round_separately_before_summing() {
 #[test]
 fun bernoulli_range_fee_equals_two_standalone_boundary_fees() {
     let config = strike_exposure_config::new();
-    let price = bounded_range();
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    range_test_helpers::prepare_range(&mut fx, &mut market);
+    let pricer = fx.load_pricer_bundle(&market);
+    let lower = strike(LOWER_TICK * test_constants::default_tick_size());
+    let higher = strike(HIGHER_TICK * test_constants::default_tick_size());
+    let price = pricer.range_price(lower, higher);
     let expiry = test_constants::default_expiry_ms();
     let now = test_constants::now_ms();
     let quantity = test_constants::usdc_unit();
-    // Metamorphic contract: composing a range charges exactly the two existing
-    // standalone fees, including rounding. Absolute fee math is tested in config tests.
-    let lower_fee = config.trading_fee(expiry, price.lower_up().destroy_some(), quantity, now);
-    let upper_fee = config.trading_fee(expiry, price.higher_up().destroy_some(), quantity, now);
-    assert_eq!(config.range_trading_fee(expiry, &price, quantity, now), lower_fee + upper_fee);
-    assert!(
-        config.range_trading_fee(expiry, &price, quantity, now) > 2 * config.trading_fee(expiry, price.probability(), quantity, now),
-    );
+    let lower_leg = pricer.range_price(lower, strike(constants::pos_inf!()));
+    let upper_leg = pricer.range_price(strike(constants::neg_inf!()), higher);
+    let lower_fee = config.trading_fee(expiry, &lower_leg, quantity, now);
+    let upper_fee = config.trading_fee(expiry, &upper_leg, quantity, now);
+    let range_fee = config.trading_fee(expiry, &price, quantity, now);
+    assert_eq!(range_fee, lower_fee + upper_fee);
+    assert_eq!(range_fee, FINITE_RANGE_FEE);
+    assert!(range_fee > 2 * COMBINED_PROBABILITY_FEE);
     destroy(config);
+    helpers::return_market_bundle(market);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
@@ -453,7 +453,7 @@ fun existing_range_closes_after_a_finite_leg_moves_outside_entry_bounds() {
     );
     fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&market);
-    let price = pricer.range_prices(
+    let price = pricer.range_price(
         strike(LOWER_TICK * test_constants::default_tick_size()),
         strike(HIGHER_TICK * test_constants::default_tick_size()),
     );

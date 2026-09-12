@@ -1,16 +1,9 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Abort-path coverage for every `strike_exposure_config` error code.
-///
-/// Setter-side: `EInvalidEntryProbabilityBound` (the relational min < max entry
-/// probability guard on the template setters). Leaf math guard:
-/// `EInvalidFeeProbability` — unreachable
-/// from the public mint surface because `pricing` quotes come from
-/// `compute_nd2`'s explicitly clamped digital, so it is exercised by a direct
-/// package-internal `trading_fee` call (rule 4). Mint-admission policy is
-/// exercised through `assert_mint_admission`, which is the package boundary the
-/// real trade flow calls after it has loaded the live price.
+/// Config defaults and reachable admission/config abort paths. Fee tests use
+/// production RangePrice values: probabilities above one cannot reach the
+/// private leg-fee helper because pricing clamps its digital probabilities.
 #[test_only]
 module deepbook_predict::strike_exposure_config_tests;
 
@@ -19,6 +12,7 @@ use deepbook_predict::{
     config_constants,
     constants,
     protocol_config::{Self, ProtocolConfig},
+    range_test_helpers,
     strike_exposure_config,
     test_constants
 };
@@ -31,7 +25,10 @@ const ENTRY_PROBABILITY_HALF: u64 = 500_000_000;
 const DEFAULT_BACKING_BUFFER_LAMBDA: u64 = 310_000_000;
 const DEFAULT_BASE_FEE: u64 = 100_000_000;
 const DEFAULT_MIN_FEE: u64 = 22_000_000;
-const DEFAULT_ATM_FEE_USDC_RAW: u64 = 50_000;
+// Independent reference: tests/helper/reference/generate_constants.py.
+const DEFAULT_FORWARD_FEE_USDC_RAW: u64 = 49_841;
+const FORWARD_STRIKE: u64 = 100_000_000_000;
+const DEEP_ITM_STRIKE: u64 = 1_000_000_000;
 const DEFAULT_MIN_FEE_USDC_RAW: u64 = 22_000;
 
 /// Create a real shared `ProtocolConfig` (template values at defaults) and an
@@ -53,16 +50,15 @@ fun new_config_seeds_default_market_economics() {
     assert_eq!(config.backing_buffer_lambda(), DEFAULT_BACKING_BUFFER_LAMBDA);
     assert_eq!(config.base_fee(), DEFAULT_BASE_FEE);
     assert_eq!(config.min_fee(), DEFAULT_MIN_FEE);
-    // At p = 0.5, sqrt(p * (1 - p)) = 0.5, so the default base fee
-    // charges 0.05 USDC on one 1-USDC-payout contract.
+    let price = range_test_helpers::range(FORWARD_STRIKE, constants::pos_inf!());
     assert_eq!(
         config.trading_fee(
             test_constants::default_expiry_ms(),
-            ENTRY_PROBABILITY_HALF,
+            &price,
             test_constants::usdc_unit(),
             test_constants::now_ms(),
         ),
-        DEFAULT_ATM_FEE_USDC_RAW,
+        DEFAULT_FORWARD_FEE_USDC_RAW,
     );
     destroy(config);
 }
@@ -135,23 +131,11 @@ fun template_entry_probability_bounds_accept_adjacent_values() {
 // The default seeds a 1h block, and the template setter reaches the snapshot that
 // future expiry markets take.
 
-// === EInvalidFeeProbability (leaf math guard, direct call) ===
-
-#[test, expected_failure(abort_code = strike_exposure_config::EInvalidFeeProbability)]
-fun trading_fee_probability_above_one_aborts() {
-    let config = strike_exposure_config::new();
-    config.trading_fee(
-        test_constants::default_expiry_ms(),
-        float!() + 1,
-        test_constants::mint_quantity(),
-        test_constants::now_ms(),
-    );
-    abort 999
-}
-
 #[test]
 fun trading_fee_at_probability_one_floors_at_min_fee() {
     let config = strike_exposure_config::new();
+    let price = range_test_helpers::range(DEEP_ITM_STRIKE, constants::pos_inf!());
+    assert_eq!(price.lower_up(), option::some(float!()));
     // Just-inside boundary: p = 1.0 is accepted. Bernoulli variance at p = 1
     // is 0, so the raw fee is 0 and the per-unit rate floors at the default
     // min fee; far from expiry the ramp multiplier is 1x, so one contract pays
@@ -159,7 +143,7 @@ fun trading_fee_at_probability_one_floors_at_min_fee() {
     assert_eq!(
         config.trading_fee(
             test_constants::default_expiry_ms(),
-            float!(),
+            &price,
             test_constants::usdc_unit(),
             test_constants::now_ms(),
         ),

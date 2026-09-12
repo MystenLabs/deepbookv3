@@ -152,31 +152,9 @@ public fun up_price(pricer: &Pricer, strike: Strike): u64 {
     compute_up_price(&pricer.svi, pricer.forward, strike)
 }
 
-/// Return the current probability for `(lower, higher]`, floored at zero if the
-/// two approximated boundary probabilities invert.
-public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): u64 {
-    pricer.range_prices(lower, higher).probability()
-}
-
-// === Public-Package Functions ===
-
-public(package) fun lower_up(price: &RangePrice): Option<u64> {
-    price.lower_up
-}
-
-public(package) fun higher_up(price: &RangePrice): Option<u64> {
-    price.higher_up
-}
-
-/// Preserve the existing zero floor if approximated boundary prices invert.
-public(package) fun probability(price: &RangePrice): u64 {
-    let lower = price.lower_up.get_with_default(math::float_scaling!());
-    let higher = price.higher_up.get_with_default(0);
-    lower.saturating_sub(higher)
-}
-
-/// Retain both finite boundary prices for trade fees and mint admission.
-public(package) fun range_prices(pricer: &Pricer, lower: Strike, higher: Strike): RangePrice {
+/// Return both boundary probabilities for `(lower, higher]`. Use `probability()`
+/// for the combined range probability; absent boundaries are infinite sentinels.
+public fun range_price(pricer: &Pricer, lower: Strike, higher: Strike): RangePrice {
     assert!(lower.value() < higher.value(), EInvalidRange);
     RangePrice {
         lower_up: if (lower.is_neg_inf()) option::none() else option::some(pricer.up_price(lower)),
@@ -184,6 +162,25 @@ public(package) fun range_prices(pricer: &Pricer, lower: Strike, higher: Strike)
         else option::some(pricer.up_price(higher)),
     }
 }
+
+// === Getters ===
+
+public fun lower_up(price: &RangePrice): Option<u64> {
+    price.lower_up
+}
+
+public fun higher_up(price: &RangePrice): Option<u64> {
+    price.higher_up
+}
+
+/// Return the combined probability, floored at zero if approximated boundary prices invert.
+public fun probability(price: &RangePrice): u64 {
+    let lower = price.lower_up.get_with_default(math::float_scaling!());
+    let higher = price.higher_up.get_with_default(0);
+    lower.saturating_sub(higher)
+}
+
+// === Public-Package Functions ===
 
 /// Return the expiry market this pricer was loaded for.
 public(package) fun expiry_market_id(pricer: &Pricer): ID {

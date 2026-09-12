@@ -211,7 +211,7 @@ fun reference_nav(market: &ExpiryMarket, pricer: &Pricer, order_ids: &vector<u25
         let lower = range_codec::strike_from_tick(decoded.lower_tick(), market.tick_size());
         let higher = range_codec::strike_from_tick(decoded.higher_tick(), market.tick_size());
         liability =
-            liability + math::mul_down(pricer.range_price(lower, higher), decoded.quantity());
+            liability + math::mul_down(pricer.range_price(lower, higher).probability(), decoded.quantity());
     });
     let free_cash = market.cash_balance();
     free_cash.saturating_sub(liability)

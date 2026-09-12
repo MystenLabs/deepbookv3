@@ -232,10 +232,12 @@ fun svi_retransmit_does_not_reanchor_roll_down_or_the_snapshotted_timestamp() {
     // d2=-sqrt(0.5e-9)/2, checked against the generated first-principles reference. Using the
     // retransmit batch timestamp instead would double the effective variance.
     test_helpers::assert_within(
-        pricer.range_price(
-            strike(test_constants::default_live_price()),
-            strike(constants::pos_inf!()),
-        ),
+        pricer
+            .range_price(
+                strike(test_constants::default_live_price()),
+                strike(constants::pos_inf!()),
+            )
+            .probability(),
         ref_data::quarter_rolled_flat_surface_atm_up(),
         ref_data::flat_surface_atm_budget(),
     );
@@ -286,11 +288,11 @@ fun freeze_then_thaw_preserves_the_mark() {
     // frozen market would price at a different NAV than it was snapshotted at.
     let atm = strike(test_constants::default_live_price());
     let up_before = pricer.up_price(atm);
-    let range_before = pricer.range_price(atm, strike(constants::pos_inf!()));
+    let range_before = pricer.range_price(atm, strike(constants::pos_inf!())).probability();
 
     let thawed = pricer.into_frozen().thaw();
     assert_eq!(thawed.up_price(atm), up_before);
-    assert_eq!(thawed.range_price(atm, strike(constants::pos_inf!())), range_before);
+    assert_eq!(thawed.range_price(atm, strike(constants::pos_inf!())).probability(), range_before);
     assert_eq!(thawed.expiry_market_id(), pricer.expiry_market_id());
     assert_eq!(
         thawed.block_scholes_svi_source_timestamp_ms(),
@@ -336,14 +338,18 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let below = pricer.range_price(
-        strike(constants::neg_inf!()),
-        strike(test_constants::default_live_price()),
-    );
-    let above = pricer.range_price(
-        strike(test_constants::default_live_price()),
-        strike(constants::pos_inf!()),
-    );
+    let below = pricer
+        .range_price(
+            strike(constants::neg_inf!()),
+            strike(test_constants::default_live_price()),
+        )
+        .probability();
+    let above = pricer
+        .range_price(
+            strike(test_constants::default_live_price()),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
 
     // Exact: the partition of the real line sums to probability 1.
     assert_eq!(below + above, float!());
@@ -362,10 +368,12 @@ fun whole_line_range_is_certain() {
     fx.prepare_live_oracle_bundle(&mut oracle, test_constants::default_live_price());
     let pricer = fx.load_pricer_bundle(&oracle);
 
-    let whole = pricer.range_price(
-        strike(constants::neg_inf!()),
-        strike(constants::pos_inf!()),
-    );
+    let whole = pricer
+        .range_price(
+            strike(constants::neg_inf!()),
+            strike(constants::pos_inf!()),
+        )
+        .probability();
     assert_eq!(whole, float!());
 
     oracle_fixture::return_oracle_bundle(oracle);
@@ -381,8 +389,12 @@ fun digital_above_probability_is_non_increasing_in_strike() {
 
     // P(price > X) must be non-increasing as X rises: a higher strike is less
     // likely to be exceeded.
-    let above_low = pricer.range_price(strike(STRIKE_BELOW), strike(constants::pos_inf!()));
-    let above_high = pricer.range_price(strike(STRIKE_ABOVE), strike(constants::pos_inf!()));
+    let above_low = pricer
+        .range_price(strike(STRIKE_BELOW), strike(constants::pos_inf!()))
+        .probability();
+    let above_high = pricer
+        .range_price(strike(STRIKE_ABOVE), strike(constants::pos_inf!()))
+        .probability();
     assert!(above_low >= above_high);
     // And strictly so straddling the forward with this curve.
     assert!(above_low > above_high);

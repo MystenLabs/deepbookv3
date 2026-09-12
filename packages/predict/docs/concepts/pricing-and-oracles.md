@@ -57,6 +57,8 @@ Terminal settlement reads exact Pyth history first and can read Block Scholes ex
 
 A Predict range contract pays a fixed notional if the asset's settlement price lands inside a strike interval. Its fair value is therefore the probability of that event read off the distribution the SVI curve encodes — the defining identity of an undiscounted digital, whose price per unit notional equals the risk-neutral probability of its payout event.
 
+`Pricer.range_price(lower, higher)` returns a `RangePrice` containing both finite boundary UP probabilities. Its `probability()` getter returns the combined range probability; `lower_up()` and `higher_up()` return `None` only for infinite boundaries. Mint and live-close terms retain this pricing result for per-boundary fees.
+
 The derivation, conceptually:
 
 1. **Forward and SVI.** Take the resolved live forward `F` and roll the current raw SVI tuple from its parameter timestamp to the current remaining time-to-expiry (see below).
@@ -64,7 +66,7 @@ The derivation, conceptually:
 3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))`, then apply the SVI strike-skew adjustment to the digital price: `up_price(K) = clamp01(N(d2) − phi(d2)·w'(k)/(2·sqrt(w)))`, where `w'(k) = b·(rho + (k − m)/sqrt((k − m)² + sigma²))`. This is the smile-aware probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`, i.e. a cash-or-nothing digital call.
 4. **Range probability by differencing.** The probability of landing in the half-open interval `(lower, higher]` is the difference between the two one-sided digital prices, floored at zero so fixed-point dust or a clamped/non-monotone segment of the adjusted digital cannot abort a live quote. Block Scholes guarantees its published SVI surfaces are monotone and butterfly-arbitrage-free; Predict retains the active-book NAV guard as defense in depth (response policy RP-15):
 
-       range_price = max(up_price(lower) − up_price(higher), 0)
+       range_probability = max(up_price(lower) − up_price(higher), 0)
 
    the value of a contract that pays out only inside the range — a digital call spread — expressed as a 1e9-scaled probability.
 

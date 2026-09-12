@@ -25,7 +25,7 @@ use deepbook_predict::{
     pricing::{Self, Pricer, FrozenPricer},
     protocol_config::ProtocolConfig,
     range_codec,
-    strike_exposure::{Self, PricedMintTerms, StrikeExposure},
+    strike_exposure::{Self, MintTerms, StrikeExposure},
     strike_exposure_config
 };
 use fixed_math::math;
@@ -995,7 +995,7 @@ fun mint_prepared(
 /// Assemble the cost decomposition shared by mint quotes and execution.
 fun compute_mint_quote(
     market: &ExpiryMarket,
-    terms: &PricedMintTerms,
+    terms: &MintTerms,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
     clock: &Clock,
