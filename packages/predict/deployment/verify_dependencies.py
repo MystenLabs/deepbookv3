@@ -415,7 +415,9 @@ def build_legacy_token(legacy, directory):
     return modules(directory / "build/token/bytecode_modules")
 
 
-def verify(repo, network, sui, config, legacy=None):
+def verify(repo, network, sui, config, legacy=None, reuse_testnet_usdc=False):
+    if reuse_testnet_usdc and network != "testnet":
+        raise VerificationError("--reuse-testnet-usdc requires Testnet")
     if network == "mainnet" and legacy is None:
         raise VerificationError("Mainnet verification requires --legacy-sui or SUI_LEGACY_BINARY")
     validate_target(sui, config, network, legacy)
@@ -453,7 +455,7 @@ def verify(repo, network, sui, config, legacy=None):
                 if "local" not in source or package != local / NEW_PATHS[name]:
                     raise VerificationError(f"unexpected source for publication root: {name}")
                 continue
-            if network == "testnet" and name == "usdc" and package == local / "packages/usdc":
+            if network == "testnet" and not reuse_testnet_usdc and name == "usdc" and package == local / "packages/usdc":
                 continue
             if name not in SYSTEM:
                 records[key] = publication(package, network)
@@ -519,12 +521,13 @@ def main():
     parser.add_argument("--sui", required=True, type=Path)
     parser.add_argument("--client-config", required=True, type=Path)
     parser.add_argument("--legacy-sui", type=Path, default=os.environ.get("SUI_LEGACY_BINARY"))
+    parser.add_argument("--reuse-testnet-usdc", action="store_true")
     args = parser.parse_args()
     for binary in (args.sui, args.legacy_sui):
         if binary and (not binary.is_absolute() or not binary.is_file()):
             parser.error(f"Sui binary must be an existing absolute path: {binary}")
     try:
-        verify(args.repo.resolve(), args.network, args.sui, args.client_config, args.legacy_sui)
+        verify(args.repo.resolve(), args.network, args.sui, args.client_config, args.legacy_sui, args.reuse_testnet_usdc)
     except (VerificationError, OSError, ValueError, KeyError, StopIteration) as error:
         print(f"dependency verification failed: {error}", file=sys.stderr)
         return 1

@@ -19,10 +19,12 @@ import {
     CADENCES,
     configureDeployment,
     assertGasFunding,
+    assertFunding,
+    assertStateFile,
     availableGasBalance,
     parseTargetArgs,
     MAINNET_USDC,
-    verifyNativeUsdc,
+    verifyExistingUsdc,
     lockedCapitalTransaction,
     ensureLockedCapital,
     validateLockedCapitalReceipt,
@@ -1755,39 +1757,170 @@ test("Mainnet orchestration resumes each stage and never calls mint, LP-account 
 });
 
 test("native USDC verification accepts its registered Currency and rejects wrong type, custody, or metadata", async () => {
-    const objectId = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
-    const type = `0x${"0".repeat(63)}2::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`;
-    const object = {
-        objectId,
-        type,
-        version: "877862839",
-        digest: "recorded-currency-digest",
-        owner: { $kind: "Shared", Shared: { initialSharedVersion: "648066630" } },
-        json: { decimals: 6, symbol: "USDC" },
-    };
-    const runtime = (value: unknown) =>
-        ({
-            client: {
-                getObject: async (request: { objectId: string }) => {
-                    assert.equal(request.objectId, objectId);
-                    return { object: value };
+    configureDeployment("mainnet", id("a"));
+    try {
+        const objectId = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
+        const type = `0x${"0".repeat(63)}2::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`;
+        const object = {
+            objectId,
+            type,
+            version: "877862839",
+            digest: "recorded-currency-digest",
+            owner: { $kind: "Shared", Shared: { initialSharedVersion: "648066630" } },
+            json: { decimals: 6, symbol: "USDC" },
+        };
+        const runtime = (value: unknown) =>
+            ({
+                client: {
+                    getObject: async (request: { objectId: string }) => {
+                        assert.equal(request.objectId, objectId);
+                        return { object: value };
+                    },
                 },
-            },
-        }) as unknown as Parameters<typeof verifyNativeUsdc>[0];
-    const evidence = await verifyNativeUsdc(runtime(object));
-    assert.equal(evidence.objectId, objectId);
-    assert.equal(evidence.type, type);
-    assert.equal(evidence.owner, "shared");
+            }) as unknown as Parameters<typeof verifyExistingUsdc>[0];
+        const evidence = await verifyExistingUsdc(runtime(object));
+        assert.equal(evidence.objectId, objectId);
+        assert.equal(evidence.type, type);
+        assert.equal(evidence.owner, "shared");
+        for (const invalid of [
+            { ...object, type: type.replace("coin_registry::Currency", "coin::CoinMetadata") },
+            { ...object, type: type.replace(MAINNET_USDC, id("a")) },
+            { ...object, type: type.replace(`0x${"0".repeat(63)}2::`, `${id("b")}::`) },
+            { ...object, owner: { $kind: "Immutable", Immutable: true } },
+            { ...object, owner: { $kind: "AddressOwner", AddressOwner: id("a") } },
+            { ...object, json: { decimals: 9, symbol: "USDC" } },
+            { ...object, json: { decimals: 6, symbol: "DUSDC" } },
+        ]) {
+            await assert.rejects(verifyExistingUsdc(runtime(invalid)));
+        }
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("Testnet USDC reuse requires explicit identities and binds the journal", () => {
+    const args = ["--network", "testnet", "--deployer", id("a")];
+    const reused = { packageId: id("2"), currencyId: id("d") };
+    assert.deepEqual(
+        parseTargetArgs([
+            ...args,
+            "--existing-usdc-package",
+            reused.packageId,
+            "--existing-usdc-currency",
+            reused.currencyId,
+        ]).reusedUsdc,
+        reused,
+    );
     for (const invalid of [
-        { ...object, type: type.replace("coin_registry::Currency", "coin::CoinMetadata") },
-        { ...object, type: type.replace(MAINNET_USDC, id("a")) },
-        { ...object, type: type.replace(`0x${"0".repeat(63)}2::`, `${id("b")}::`) },
-        { ...object, owner: { $kind: "Immutable", Immutable: true } },
-        { ...object, owner: { $kind: "AddressOwner", AddressOwner: id("a") } },
-        { ...object, json: { decimals: 9, symbol: "USDC" } },
-        { ...object, json: { decimals: 6, symbol: "DUSDC" } },
-    ]) {
-        await assert.rejects(verifyNativeUsdc(runtime(invalid)));
+        [...args, "--existing-usdc-package", id("2")],
+        [...args, "--existing-usdc-currency", id("d")],
+        [...args, "--existing-usdc-package", id("0"), "--existing-usdc-currency", id("d")],
+        [
+            "--network",
+            "mainnet",
+            "--deployer",
+            id("a"),
+            "--existing-usdc-package",
+            id("2"),
+            "--existing-usdc-currency",
+            id("d"),
+        ],
+    ])
+        assert.throws(() => parseTargetArgs(invalid));
+    try {
+        configureDeployment("testnet", id("a"), reused);
+        const state = createDeploymentState();
+        assertStateFile(state);
+        assert.deepEqual(state.reusedTestnetUsdc, reused);
+        assert.equal(state.wiring.currencies.usdc.mintedAmount, "0");
+        assert.equal(state.wiring.bootstrap.lockCapitalAmount, "10000000");
+        assert.equal(state.wiring.bootstrap.supplyAmount, "250000000000");
+        assert.equal(irreversibleDeploymentSteps().length, 23);
+        assert.ok(!irreversibleDeploymentSteps().includes("publish_usdc"));
+        assert.ok(!plannedTransactionSteps().includes("mint_deployer_usdc"));
+        assert.ok(!plannedTransactionSteps().includes("finalize_usdc_currency_registration"));
+        assert.ok(plannedTransactionSteps().includes("create_deployer_account"));
+        configureDeployment("testnet", id("a"), { ...reused, currencyId: id("c") });
+        assert.throws(() => assertStateFile(state), /binding changed/);
+        configureDeployment("testnet", id("a"));
+        assert.throws(() => assertStateFile(state), /binding changed/);
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("reused Testnet USDC funding is checked before any publication", async () => {
+    try {
+        configureDeployment("testnet", id("a"), { packageId: id("2"), currencyId: id("d") });
+        const runtime = testRuntime();
+        let balance = "250009999999";
+        runtime.client = {
+            getBalance: async (request: { coinType: string }) => {
+                assert.equal(request.coinType, `${id("2")}::usdc::USDC`);
+                return { balance: { balance } };
+            },
+        } as unknown as typeof runtime.client;
+        await assert.rejects(assertFunding(runtime), /insufficient deployer USDC/);
+        balance = "250010000000";
+        await assertFunding(runtime);
+        assert.deepEqual(runtime.result.publishTx, {});
+    } finally {
+        configureDeployment("testnet", id("a"));
+    }
+});
+
+test("reused USDC orchestration resumes without minting or republication and records the existing currency", async () => {
+    try {
+        configureDeployment("testnet", id("a"), { packageId: id("2"), currencyId: id("d") });
+        for (const boundary of [
+            "publish_fixed_math",
+            "publish_account",
+            "publish_propbook",
+            "publish_predict",
+            "publish_deepbook_core_account",
+            "publish_sessions",
+            "authorize_apps",
+            "lifecycle_cap",
+            "valuation_cap",
+            "wire_empty_oracle_objects",
+            "underlying",
+            "cadences",
+            "account",
+            "capitalization",
+            "markets",
+        ]) {
+            const fixture = orchestrationFixture(boundary);
+            fixture.ops.ensureDeployerUsdcMint = async () => {
+                throw new Error("must not mint");
+            };
+            const audit = fixture.ops.verifyDeployment;
+            fixture.ops.verifyDeployment = async () => {
+                const verified = await audit(fixture.runtime);
+                verified.linkedPackages.usdc = { ...verified.packages.usdc!, objectId: id("2") };
+                delete verified.packages.usdc;
+                verified.currencies.usdc.objectId = id("d");
+                return verified;
+            };
+            await assert.rejects(
+                executeDeployment(fixture.runtime, testBindings, fixture.ops),
+                /interrupted/,
+            );
+            assert.equal(fixture.manifests.length, 0);
+            await executeDeployment(fixture.runtime, testBindings, fixture.ops);
+            assert.equal(fixture.runtime.result.status, "complete");
+            assert.ok(!fixture.calls.includes("publish_usdc"));
+            assert.ok(fixture.calls.includes("account"));
+            assert.equal(fixture.mutations.length, new Set(fixture.mutations).size);
+            const manifest = fixture.manifests[0];
+            assert.equal(manifest.packages.usdc, id("2"));
+            assert.equal(manifest.objects.usdcCurrency, id("d"));
+            assertIntegrationManifest(manifest);
+            const invalid = structuredClone(manifest);
+            invalid.objects.usdcCurrency = id("c");
+            assert.throws(() => assertIntegrationManifest(invalid), /collateral identity/);
+        }
+    } finally {
+        configureDeployment("testnet", id("a"));
     }
 });
 

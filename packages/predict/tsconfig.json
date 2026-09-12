@@ -13,7 +13,6 @@
   "include": [
     "deployment/**/*.ts",
     "devtools/ts/**/*.ts",
-    "deployment/**/*.ts",
     "harness/ts/**/*.ts",
     "simulations/src/**/*.ts"
   ]

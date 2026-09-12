@@ -43,6 +43,10 @@ Authorization of `DeepbookCoreAccountApp` in the existing DeepBook registry belo
 
 Use `--network testnet`. Testnet preserves its external identities, additionally publishes `usdc`, finalizes USDC and PLP registrations, and mints 100,000,000 test USDC with display symbol `DUSDC`. It locks 10 USDC and supplies 250,000 USDC through a deployer Account, completing allocation through an empty-pool valuation before markets. Its audit checks mint accounting and LP account attribution. Explicit dependency source verification is required on both networks.
 
+To redeploy the protocol while retaining an existing Testnet currency, provide both `--existing-usdc-package <package-id>` and `--existing-usdc-currency <currency-id>`. The package must match `packages/usdc/Published.toml` and the resolved Move collateral address; its source is verified against Testnet, and the existing shared Currency must have that exact type, six decimals, and symbol `DUSDC`. This mode publishes the six protocol packages but neither publishes USDC, finalizes its registration, nor accesses its TreasuryCap. It requires 250,010 existing USDC before publication, locks 10, and supplies 250,000 with the same receipt/account-attribution checks. USDC mint accounting is zero for this run; global pre-existing supply and other holders' balances are not deployment-owned accounting.
+
+Both existing-USDC IDs are journal bindings and must be repeated on preflight, execution, resume, and `issue-caps`. A missing or changed selection fails closed. Mainnet rejects these flags and retains its fixed Circle identity. For a fresh redeployment, preserve the previous journal and manifest in their original worktree and use a clean new worktree with no operator journal; do not resume or overwrite the old run. The audited new manifest replaces the prior integration manifest only at completion. Other-network publication records and the reused USDC publication record remain unchanged.
+
 ## Issue operational capabilities
 
 After a complete audited deployment, provide a full nonzero recipient address:
@@ -58,7 +62,7 @@ Each recipient has one recorded issuance. Repeating the command verifies its ori
 
 ## Recovery and artifacts
 
-`deployment.<network>.state.json` is the mode-`0600`, gitignored schema-5 operator journal. It contains execution/source bindings, transaction intents and receipts, package identities, bootstrap attribution, setup caps, and issuance records, but no keys. A repository-shared network lock prevents concurrent runs.
+`deployment.<network>.state.json` is the mode-`0600`, gitignored schema-6 operator journal. It contains execution/source bindings, transaction intents and receipts, package identities, bootstrap attribution, setup caps, and issuance records, but no keys. A repository-shared network lock prevents concurrent runs.
 
 Preserve the journal, exact source commit, binary, configuration, gas caps, and publication metadata after interruption. Reconcile known digests on-chain; never replace ambiguous submissions. Every completion runs a fresh audit. After success, commit generated `Published.toml` records and the manifest without changing source. Publication records preserve other-network history. Cap issuance permits artifact-only commits; ordinary resumes require the original source commit.
 

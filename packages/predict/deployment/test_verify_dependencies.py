@@ -28,6 +28,23 @@ def object_fixture():
 
 
 class DependencyVerificationTests(unittest.TestCase):
+    def test_reused_testnet_usdc_is_verified_instead_of_skipped(self):
+        lock = {"deepbook_sessions": {"source": {"local": "."}, "deps": {"usdc": "usdc"}},
+                "usdc": {"source": {"local": "../usdc"}, "deps": {}}}
+        def read(path):
+            if path.name == "Move.lock":
+                return {"pinned": {"testnet": lock}}
+            return {"package": {"name": "deepbook_sessions" if path.parent.name == "sessions" else "usdc"}}
+        with patch.object(verifier, "validate_target"), patch.object(verifier, "read_toml", side_effect=read), \
+                patch.object(verifier, "stage_local"), \
+                patch.object(verifier, "publication", side_effect=verifier.VerificationError("USDC publication checked")) as check:
+            with self.assertRaisesRegex(verifier.VerificationError, "USDC publication checked"):
+                verifier.verify(Path("/unused"), "testnet", "sui", "config", reuse_testnet_usdc=True)
+            self.assertEqual(check.call_args.args[0].name, "usdc")
+            self.assertEqual(check.call_args.args[1], "testnet")
+        with self.assertRaisesRegex(verifier.VerificationError, "requires Testnet"):
+            verifier.verify(Path("/unused"), "mainnet", "sui", "config", reuse_testnet_usdc=True)
+
     def test_exact_modules_and_reject_all_mismatch_classes(self):
         self.assertIsNone(verifier.compare_modules("sample", {"a": b"123"}, {"a": b"123"}))
         for candidate in ({}, {"a": b"124"}, {"b": b"123"}, {"a": b"123", "b": b"x"}):

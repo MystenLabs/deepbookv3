@@ -79,6 +79,18 @@ let PYTH_ORIGINAL = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc2743
 export const MAINNET_USDC = "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7";
 const MAINNET_USDC_CURRENCY = "0x75cfbbf8c962d542e99a1d15731e6069f60a00db895407785b15d14f606f2b4a";
 
+export interface ExistingUsdc {
+    packageId: string;
+    currencyId: string;
+}
+let REUSED_TESTNET_USDC: ExistingUsdc | null = null;
+
+function existingUsdc(): ExistingUsdc | null {
+    return NETWORK === "mainnet"
+        ? { packageId: MAINNET_USDC, currencyId: MAINNET_USDC_CURRENCY }
+        : REUSED_TESTNET_USDC;
+}
+
 const TESTNET_PACKAGES = [
     "fixed_math",
     "usdc",
@@ -133,11 +145,23 @@ let USDC_MINT_AMOUNT = 100_000_000n * USDC_SCALING;
 const LOCK_CAPITAL_AMOUNT = 10n * USDC_SCALING;
 let BOOTSTRAP_SUPPLY_AMOUNT = 250_000n * USDC_SCALING;
 
-export function configureDeployment(network: string, deployer: string): void {
+export function configureDeployment(
+    network: string,
+    deployer: string,
+    reusedUsdc: ExistingUsdc | null = null,
+): void {
     if (network !== "mainnet" && network !== "testnet")
         throw new Error("--network must be mainnet or testnet");
     const signer = requiredObjectId(deployer, "expected deployer (--deployer)");
     if (BigInt(signer) === 0n) throw new Error("expected deployer must be nonzero");
+    if (reusedUsdc) {
+        if (network !== "testnet") throw new Error("USDC reuse inputs are Testnet-only");
+        for (const [name, id] of Object.entries(reusedUsdc)) {
+            if (BigInt(requiredObjectId(id, `existing USDC ${name}`)) === 0n)
+                throw new Error(`existing USDC ${name} must be nonzero`);
+        }
+    }
+    REUSED_TESTNET_USDC = reusedUsdc ? { ...reusedUsdc } : null;
     NETWORK = network;
     DEPLOYER = signer;
     CHAIN_ID = network === "mainnet" ? "35834a8a" : "4c78adac";
@@ -148,9 +172,8 @@ export function configureDeployment(network: string, deployer: string): void {
     STATE_TEMP = `${STATE}.tmp`;
     MANIFEST = resolve(REPO_ROOT, MANIFEST_RELATIVE);
     MANIFEST_TEMP = `${MANIFEST}.tmp`;
-    PACKAGES =
-        network === "mainnet" ? TESTNET_PACKAGES.filter((pkg) => pkg !== "usdc") : TESTNET_PACKAGES;
-    USDC_MINT_AMOUNT = network === "mainnet" ? 0n : 100_000_000n * USDC_SCALING;
+    PACKAGES = existingUsdc() ? TESTNET_PACKAGES.filter((pkg) => pkg !== "usdc") : TESTNET_PACKAGES;
+    USDC_MINT_AMOUNT = existingUsdc() ? 0n : 100_000_000n * USDC_SCALING;
     BOOTSTRAP_SUPPLY_AMOUNT = network === "mainnet" ? 0n : 250_000n * USDC_SCALING;
     DEEPBOOK_REGISTRY =
         network === "mainnet"
@@ -549,6 +572,7 @@ interface Verification {
 
 export interface DeploymentResult {
     schemaVersion: number;
+    reusedTestnetUsdc: ExistingUsdc | null;
     status:
         | "pending"
         | "publishing"
@@ -611,15 +635,14 @@ const FIXED_TRANSACTION_STEPS = [
 
 export function plannedTransactionSteps(): string[] {
     return [
-        ...FIXED_TRANSACTION_STEPS.filter(
-            (step) =>
-                NETWORK !== "mainnet" ||
-                ![
-                    "finalize_usdc_currency_registration",
-                    "mint_deployer_usdc",
-                    "create_deployer_account",
-                ].includes(step),
-        ),
+        ...FIXED_TRANSACTION_STEPS.filter((step) => {
+            if (
+                existingUsdc() &&
+                ["finalize_usdc_currency_registration", "mint_deployer_usdc"].includes(step)
+            )
+                return false;
+            return NETWORK !== "mainnet" || step !== "create_deployer_account";
+        }),
         ...CADENCES.flatMap((cadence) =>
             Array.from(
                 { length: cadence.marketsToCreate },
@@ -883,13 +906,12 @@ export function buildIntegrationManifest(result: DeploymentResult): IntegrationM
     const verifiedLinkedObject = (name: keyof typeof LINKED_OBJECTS): string =>
         requiredObjectId(verification.linkedObjects[name]?.objectId, `verified ${name} object`);
     const fixedMath = verifiedPackage("fixed_math");
-    const usdc =
-        NETWORK === "mainnet"
-            ? requiredObjectId(
-                  verification.linkedPackages.usdc?.objectId,
-                  "verified native USDC package",
-              )
-            : verifiedPackage("usdc");
+    const usdc = existingUsdc()
+        ? requiredObjectId(
+              verification.linkedPackages.usdc?.objectId,
+              "verified existing USDC package",
+          )
+        : verifiedPackage("usdc");
     const account = verifiedPackage("account");
     const propbook = verifiedPackage("propbook");
     const predict = verifiedPackage("predict");
@@ -1155,6 +1177,12 @@ export function assertIntegrationManifest(value: unknown): asserts value is Inte
     ) {
         throw new Error("Mainnet collateral identity is not native USDC");
     }
+    if (
+        REUSED_TESTNET_USDC &&
+        (packages.usdc !== REUSED_TESTNET_USDC.packageId ||
+            objects.usdcCurrency !== REUSED_TESTNET_USDC.currencyId)
+    )
+        throw new Error("Testnet collateral identity does not match reused USDC");
 
     const underlyings = asRecord(manifest.underlyings);
     exactKeys(underlyings, ["BTC"], "underlyings");
@@ -1460,7 +1488,8 @@ function transactionCheckpoint(snapshot: ClientSnapshot, digest: string): string
 
 export function createDeploymentState(): DeploymentResult {
     return {
-        schemaVersion: 5,
+        schemaVersion: 6,
+        reusedTestnetUsdc: REUSED_TESTNET_USDC ? { ...REUSED_TESTNET_USDC } : null,
         status: "pending",
         network: NETWORK,
         chainId: CHAIN_ID,
@@ -1882,16 +1911,18 @@ function cadenceMatches(actual: CadenceRecord, expected: CadenceSpec): boolean {
     );
 }
 
-function assertStateFile(result: DeploymentResult): void {
+export function assertStateFile(result: DeploymentResult): void {
     if (
-        result.schemaVersion !== 5 ||
+        result.schemaVersion !== 6 ||
         result.network !== NETWORK ||
         result.chainId !== CHAIN_ID ||
         result.buildEnvironment !== NETWORK ||
         normalizeId(result.deployer) !== DEPLOYER
     ) {
-        throw new Error(`${STATE_RELATIVE} is not the expected schema-5 ${NETWORK} deployment`);
+        throw new Error(`${STATE_RELATIVE} is not the expected schema-6 ${NETWORK} deployment`);
     }
+    if (JSON.stringify(result.reusedTestnetUsdc) !== JSON.stringify(REUSED_TESTNET_USDC))
+        throw new Error("existing Testnet USDC binding changed");
     if (JSON.stringify(result.linked) !== JSON.stringify(LINKED)) {
         throw new Error(`linked package IDs in ${STATE_RELATIVE} do not match deploy.ts`);
     }
@@ -2194,7 +2225,10 @@ function expectedDependency(
     let originalId: string | null = null;
     if (upgraded === normalizeId("0x1") || upgraded === normalizeId("0x2")) {
         originalId = upgraded;
-    } else if (Object.values(runtime.result.packages).includes(upgraded)) {
+    } else if (
+        Object.values(runtime.result.packages).includes(upgraded) ||
+        upgraded === existingUsdc()?.packageId
+    ) {
         originalId = upgraded;
     } else if (upgraded === LINKED.deepbook) {
         originalId = DEEPBOOK_ORIGINAL;
@@ -2296,6 +2330,7 @@ function verifyDependencySources(runtime: Runtime): void {
         "--client-config",
         runtime.snapshot.configPath,
         ...(process.env.SUI_LEGACY_BINARY ? ["--legacy-sui", process.env.SUI_LEGACY_BINARY] : []),
+        ...(REUSED_TESTNET_USDC ? ["--reuse-testnet-usdc"] : []),
     ]);
     console.log(report);
 }
@@ -2395,9 +2430,16 @@ function assertResolvedLinkedPackages(): void {
             );
         }
     }
-    if (NETWORK === "mainnet" && resolvedModuleAddress(debug, "usdc.json") !== MAINNET_USDC) {
-        throw new Error("compiled collateral is not native Mainnet USDC");
+    const collateral = existingUsdc();
+    if (collateral && resolvedModuleAddress(debug, "usdc.json") !== collateral.packageId) {
+        throw new Error("compiled collateral does not match existing USDC");
     }
+    if (REUSED_TESTNET_USDC)
+        assertPublishedIdentity(
+            publishedPath("usdc"),
+            REUSED_TESTNET_USDC.packageId,
+            "existing Testnet USDC",
+        );
     assertPublishedIdentity(
         resolve(REPO_ROOT, "packages", "token", "Published.toml"),
         LINKED.deep,
@@ -2919,7 +2961,7 @@ function target(result: DeploymentResult, pkg: PackageName, module: string, fn: 
 }
 
 function usdcType(result: DeploymentResult): string {
-    return `${NETWORK === "mainnet" ? MAINNET_USDC : packageId(result, "usdc")}::usdc::USDC`;
+    return `${existingUsdc()?.packageId ?? packageId(result, "usdc")}::usdc::USDC`;
 }
 
 function plpType(result: DeploymentResult): string {
@@ -3258,14 +3300,17 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
             "shared",
         ),
     };
+    const collateral = existingUsdc();
+    if (collateral) {
+        packages.usdc = await objectEvidence(runtime, collateral.packageId, "package", null);
+        await verifyExistingUsdc(runtime);
+    }
     if (NETWORK === "mainnet") {
-        packages.usdc = await objectEvidence(runtime, MAINNET_USDC, "package", null);
         for (const id of [
             "0xe0917b74a5912e4ad186ac634e29c922ab83903f71af7500969f9411706f9b9a",
             "0xecf47609d7da919ea98e7fd04f6e0648a0a79b337aaad373fa37aac8febf19c8",
         ])
             await objectEvidence(runtime, id, "package", null);
-        await verifyNativeUsdc(runtime);
     }
     const signerRegistry = await moveObjectFields(
         runtime,
@@ -3298,16 +3343,19 @@ async function verifyExternalDependencies(runtime: Runtime): Promise<{
     return { packages, objects };
 }
 
-export async function verifyNativeUsdc(runtime: Runtime): Promise<ObjectEvidence> {
+export async function verifyExistingUsdc(runtime: Runtime): Promise<ObjectEvidence> {
+    const collateral = existingUsdc();
+    if (!collateral) throw new Error("no existing USDC configured");
     const evidence = await objectEvidence(
         runtime,
-        MAINNET_USDC_CURRENCY,
-        `${normalizeId("0x2")}::coin_registry::Currency<${MAINNET_USDC}::usdc::USDC>`,
+        collateral.currencyId,
+        `${normalizeId("0x2")}::coin_registry::Currency<${collateral.packageId}::usdc::USDC>`,
         "shared",
     );
-    const fields = await moveObjectFields(runtime, MAINNET_USDC_CURRENCY);
-    if (String(fields.decimals) !== "6" || fields.symbol !== "USDC") {
-        throw new Error("native USDC currency must have six decimals and symbol USDC");
+    const fields = await moveObjectFields(runtime, collateral.currencyId);
+    const symbol = NETWORK === "mainnet" ? "USDC" : "DUSDC";
+    if (String(fields.decimals) !== "6" || fields.symbol !== symbol) {
+        throw new Error(`existing USDC currency must have six decimals and symbol ${symbol}`);
     }
     return evidence;
 }
@@ -3427,11 +3475,12 @@ function deploymentCurrencyPackage(name: CurrencyName): PackageName {
 }
 
 async function ensureCurrencyRegistration(runtime: Runtime, name: CurrencyName): Promise<string> {
-    if (NETWORK === "mainnet" && name === "usdc") {
-        await verifyNativeUsdc(runtime);
-        runtime.result.wiring.currencies.usdc.id = MAINNET_USDC_CURRENCY;
+    const collateral = existingUsdc();
+    if (collateral && name === "usdc") {
+        await verifyExistingUsdc(runtime);
+        runtime.result.wiring.currencies.usdc.id = collateral.currencyId;
         writeState(runtime.result);
-        return MAINNET_USDC_CURRENCY;
+        return collateral.currencyId;
     }
     const result = runtime.result;
     const state = result.wiring.currencies[name];
@@ -3488,8 +3537,8 @@ async function ensureCurrencyRegistration(runtime: Runtime, name: CurrencyName):
 }
 
 async function usdcTotalSupply(runtime: Runtime): Promise<bigint> {
-    if (NETWORK === "mainnet")
-        throw new Error("Circle USDC treasury is not controlled by this deployment");
+    if (existingUsdc())
+        throw new Error("existing USDC treasury is not controlled by this deployment");
     return inspectU64(
         runtime,
         "usdc_total_supply",
@@ -3504,7 +3553,7 @@ async function usdcTotalSupply(runtime: Runtime): Promise<bigint> {
 }
 
 async function ensureDeployerUsdcMint(runtime: Runtime): Promise<void> {
-    if (NETWORK === "mainnet") throw new Error("Mainnet deployment cannot mint USDC");
+    if (existingUsdc()) throw new Error("existing USDC deployment cannot mint USDC");
     const result = runtime.result;
     let totalSupply = await usdcTotalSupply(runtime);
     if (totalSupply === 0n) {
@@ -4632,15 +4681,14 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         DEPLOYER,
     );
     const currencies = {
-        usdc:
-            NETWORK === "mainnet"
-                ? await verifyNativeUsdc(runtime)
-                : await objectEvidence(
-                      runtime,
-                      requiredObjectId(result.wiring.currencies.usdc.id, "USDC currency"),
-                      `coin_registry::Currency<${usdcType(result)}>`,
-                      "shared",
-                  ),
+        usdc: existingUsdc()
+            ? await verifyExistingUsdc(runtime)
+            : await objectEvidence(
+                  runtime,
+                  requiredObjectId(result.wiring.currencies.usdc.id, "USDC currency"),
+                  `coin_registry::Currency<${usdcType(result)}>`,
+                  "shared",
+              ),
         plp: await objectEvidence(
             runtime,
             requiredObjectId(result.wiring.currencies.plp.id, "PLP currency"),
@@ -4710,7 +4758,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
             `pool accounting mismatch supply=${totalSupply} idle=${idleBalance} activeCash=${activeMarketCash} pending=${pendingSupply}/${pendingWithdraw}`,
         );
     }
-    const mintedAmount = NETWORK === "mainnet" ? 0n : await usdcTotalSupply(runtime);
+    const mintedAmount = existingUsdc() ? 0n : await usdcTotalSupply(runtime);
     const deployerUsdcBalance = BigInt(
         (
             await runtime.client.getBalance({
@@ -4720,7 +4768,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
         ).balance.balance,
     );
     if (
-        NETWORK === "testnet" &&
+        !existingUsdc() &&
         (mintedAmount !== USDC_MINT_AMOUNT ||
             deployerUsdcBalance + totalSupply !== USDC_MINT_AMOUNT)
     ) {
@@ -4800,7 +4848,7 @@ async function verifyDeployment(runtime: Runtime): Promise<Verification> {
     return verification;
 }
 
-async function assertFunding(runtime: Runtime): Promise<void> {
+export async function assertFunding(runtime: Runtime): Promise<void> {
     const totalSupply =
         runtime.result.packages.predict && runtime.result.sharedObjects.predict
             ? await poolU64(runtime, "plp_total_supply")
@@ -4810,7 +4858,7 @@ async function assertFunding(runtime: Runtime): Promise<void> {
         throw new Error(`unexpected partial PLP bootstrap supply: ${totalSupply}`);
     }
     if (
-        NETWORK === "testnet" &&
+        !existingUsdc() &&
         (!runtime.result.packages.usdc || !runtime.result.transactions.mint_deployer_usdc)
     )
         return;
@@ -4997,7 +5045,7 @@ export async function executeDeployment(
         ops.writeState(result);
         await ops.ensureCurrencyRegistration(runtime, "usdc");
         await ops.ensureCurrencyRegistration(runtime, "plp");
-        if (NETWORK === "testnet") await ops.ensureDeployerUsdcMint(runtime);
+        if (!existingUsdc()) await ops.ensureDeployerUsdcMint(runtime);
         await ops.ensureAccountAppsAuthorized(runtime);
         await ops.ensureDeepbookCoreAppAuthorized(runtime);
         const lifecycleCap = await ops.ensureLifecycleCap(runtime);
@@ -5194,7 +5242,7 @@ export function parseDeploymentArgs(args: readonly string[]): DeploymentMode {
 
 export async function main(args = process.argv.slice(2)): Promise<void> {
     const options = parseTargetArgs(args);
-    configureDeployment(options.network, options.deployer);
+    configureDeployment(options.network, options.deployer, options.reusedUsdc);
     const mode = parseDeploymentArgs(options.remaining);
     const lock = acquireLock();
     try {
@@ -5208,19 +5256,44 @@ export function parseTargetArgs(args: readonly string[]): {
     network: Network;
     deployer: string;
     remaining: string[];
+    reusedUsdc?: ExistingUsdc;
 } {
     let network: string | undefined;
     let deployer: string | undefined;
+    let usdcPackage: string | undefined;
+    let usdcCurrency: string | undefined;
     const remaining: string[] = [];
     for (let index = 0; index < args.length; index++) {
         if (args[index] === "--network" && network === undefined) network = args[++index];
         else if (args[index] === "--deployer" && deployer === undefined) deployer = args[++index];
+        else if (args[index] === "--existing-usdc-package" && usdcPackage === undefined)
+            usdcPackage = requiredObjectId(args[++index], "existing USDC package");
+        else if (args[index] === "--existing-usdc-currency" && usdcCurrency === undefined)
+            usdcCurrency = requiredObjectId(args[++index], "existing USDC currency");
         else remaining.push(args[index]);
     }
     if (network !== "mainnet" && network !== "testnet")
         throw new Error("explicit --network mainnet|testnet is required");
     const expected = requiredObjectId(deployer, "explicit --deployer address");
     if (BigInt(expected) === 0n) throw new Error("--deployer must be nonzero");
+    if (usdcPackage !== undefined || usdcCurrency !== undefined) {
+        if (
+            network !== "testnet" ||
+            !usdcPackage ||
+            !usdcCurrency ||
+            BigInt(usdcPackage) === 0n ||
+            BigInt(usdcCurrency) === 0n
+        )
+            throw new Error(
+                "existing USDC requires both nonzero package and currency IDs on Testnet",
+            );
+        return {
+            network,
+            deployer: expected,
+            remaining,
+            reusedUsdc: { packageId: usdcPackage, currencyId: usdcCurrency },
+        };
+    }
     return { network, deployer: expected, remaining };
 }
 
