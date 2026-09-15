@@ -12,9 +12,9 @@ build-config = { flavor = "sui", edition = "2024" }
 upgrade-capability = "0xb7756a2d6c319930b59685085cc462b8b3295863fa4b1abfbc29b1f9b9d14a54"
 [published.mainnet]
 chain-id = "35834a8a"
-published-at = "0xa6f1b22aaeb429f6fd8f01c13f605256e00876457fd122da8a0e2c1045c75929"
-original-id = "0xa6f1b22aaeb429f6fd8f01c13f605256e00876457fd122da8a0e2c1045c75929"
+published-at = "0x4e1dd01465713c9d832313fed5f45c222a4d5c62a533d6da96764c8b2a245d58"
+original-id = "0x4e1dd01465713c9d832313fed5f45c222a4d5c62a533d6da96764c8b2a245d58"
 version = 1
 toolchain-version = "1.78.1"
 build-config = { flavor = "sui", edition = "2024" }
-upgrade-capability = "0xa1055e6ec8a455be735d61fbe2aee4a04e2eb2aa18685a1b58b4850fbee72bae"
+upgrade-capability = "0xdb89470ee37bc04d379377c662451ca4b903cd02e2b2d874a1c657ee487928e1"
