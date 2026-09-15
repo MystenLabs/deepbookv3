@@ -15,6 +15,7 @@ on:
           - Upgrade Protocol
           - Upgrade Margin Protocol
           - Upgrade Vault Protocol
+          - Upgrade Predict Protocol
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -27,7 +28,7 @@ on:
         description: "object id to get gas from for multisig transaction"
         required: true
         type: string
-        default: "0x4850650e3566b000ea159a4ae7d13c93803ceabf1f483a7f796c7cc0b2f5ce4b"
+        default: "0x538138ff747639efd0c3b0776f802b7a7b111b3a1ccf750bacbfd8c29b6b4110"
 
 jobs:
   deepbook:
@@ -112,6 +113,17 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgrade.ts
+
+      - name: Upgrade Predict Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Predict Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/predictPackageUpgrade.ts
 
       - name: Show Transaction Data (To sign)
         run: |
