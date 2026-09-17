@@ -553,7 +553,7 @@ public fun mint_exact_amount(
     )
 }
 
-/// Mint the largest lot-rounded position whose all-in cost fits `max_cost`.
+/// Mint a lot-rounded position within an all-in `max_cost` budget.
 ///
 /// Unlike `mint_exact_amount`, fees are sized inside the budget: the quantity
 /// search evaluates the all-in withdrawal the mint charges (`premium +
@@ -563,13 +563,15 @@ public fun mint_exact_amount(
 /// available USDC after settlement, so `std::u64::max_value!()` sizes against the
 /// whole balance.
 ///
-/// When the budget is what limits the fill, the unspent remainder is less than
-/// the all-in cost of one more `position_lot_size` lot. A fill limited by
-/// something else leaves more: sizing steps down from a fill that would cost more
-/// than its own maximum payout, saturates at the order lot cap, and is subject to
-/// the same expiry cash backing every mint needs.
+/// The budget search finds the largest fitting quantity. If that quantity costs
+/// more than its maximum payout, a conservative search tries a smaller fill;
+/// rounding can make that fallback miss a larger admissible fill. Only when the
+/// budget is the limiting constraint is the remainder less than the incremental
+/// all-in cost of one more lot. Payout-limited fills and lot-cap saturation can
+/// leave more. Insufficient expiry cash backing aborts the mint; sizing does not
+/// shrink the fill to available backing, and the quote does not preflight it.
 ///
-/// `min_quantity` is this entrypoint's slippage guard. The spend is fixed, so
+/// `min_quantity` is this entrypoint's slippage guard. The budget is fixed, so
 /// every adverse move between building the transaction and executing it — the
 /// price, the congestion surcharge, the sponsor subsidy, the inventory-impact
 /// charge — shows up as fewer contracts, and a fill below `min_quantity` aborts
@@ -1072,11 +1074,11 @@ fun mint_prepared(
 /// consulted only after the budget fill is known, and only if that fill breaches
 /// it — which a rising marginal impact rate or an exhausted sponsor subsidy can
 /// cause on a budget the account can afford. The step-down search runs strictly
-/// below the budget fill, so every candidate already fits `max_cost`. Its result
-/// is always admissible; it is the true maximum wherever unit cost climbs past
-/// one by more than rounding per lot, which is the only regime in which stepping
-/// down can help, and may be below it where unit cost merely grazes one. When no
-/// smaller fill clears the bound, the budget fill is admitted so the caller sees
+/// below the budget fill, so every candidate already fits `max_cost`. A positive
+/// result clears the payout bound, but maximality is not guaranteed because that
+/// predicate is not monotone. It can miss a larger admissible fill, including one
+/// meeting `min_quantity`, so the final admission can still abort. When the
+/// search finds no smaller fill, the budget fill is admitted so the caller sees
 /// `EMintCostAboveMaxPayout` rather than an empty fill's admission error.
 /// `compute_mint_quote` still enforces the bound on whatever is admitted.
 fun quote_exact_cost_terms(

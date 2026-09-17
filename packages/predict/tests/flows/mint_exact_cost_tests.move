@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Sizing coverage for the all-in-budget mint request (`mint_exact_cost` and
-/// `quote_mint_exact_cost_for_account`): the flow mints the largest lot-rounded
-/// quantity whose ALL-IN cost — premium plus trader-paid trading fee, builder fee,
-/// congestion surcharge and inventory-impact charge — fits the budget, never
-/// debits past it, and leaves less than one more lot's all-in cost unspent.
+/// `quote_mint_exact_cost_for_account`): the budget search fits premium and every
+/// trader-paid charge inside the budget. A payout-limited fill may be smaller;
+/// otherwise, below the lot cap, the remainder is less than the incremental cost
+/// of one more lot. Execution never debits past the budget.
 ///
 /// Budgets and expected debits are read from a quantity quote at the size in
 /// question rather than hardcoded: a budget threshold IS the next lot's all-in
