@@ -1603,6 +1603,45 @@ public fun quote_mint_for_account_amount_bundle(
         )
 }
 
+/// Account-aware read-only all-in-budget mint quote: the largest lot-rounded
+/// quantity whose all-in cost fits `max_cost`, capped to the account's balance
+/// exactly as `mint_exact_cost` caps it.
+public fun quote_mint_exact_cost_for_account_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    let pricer = market
+        .market
+        .load_live_pricer(
+            &market.config,
+            &market.oracle_registry,
+            &market.pyth,
+            market.bs.values(),
+            market.bs.svi(),
+            &self.clock,
+            self.scenario.ctx(),
+        );
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            &pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
 /// Mint one exact-quantity order with explicit total-cost and probability caps.
 public fun mint_exact_quantity(
     self: &mut Fixture,
@@ -1709,6 +1748,72 @@ public fun mint_exact_amount(
         amount,
         min_quantity,
         max_cost,
+        root,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// Mint the largest lot-rounded order whose all-in cost fits `max_cost` through
+/// bundles.
+public fun mint_exact_cost_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): u256 {
+    self.mint_exact_cost(
+        &market.config,
+        &market.oracle_registry,
+        &mut account.wrapper,
+        &account.root,
+        &mut market.market,
+        &market.pyth,
+        &market.bs,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
+    )
+}
+
+/// Mint the largest lot-rounded order that fits inside a fixed all-in budget.
+public fun mint_exact_cost(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    oracle_registry: &OracleRegistry,
+    wrapper: &mut AccountWrapper,
+    root: &AccumulatorRoot,
+    market: &mut ExpiryMarket,
+    pyth: &PythFeed,
+    bs: &BlockScholesFeed,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    let pricer = market.load_live_pricer(
+        config,
+        oracle_registry,
+        pyth,
+        bs.values(),
+        bs.svi(),
+        &self.clock,
+        self.scenario.ctx(),
+    );
+    market.mint_exact_cost(
+        wrapper,
+        auth,
+        config,
+        &pricer,
+        lower_tick,
+        higher_tick,
+        max_cost,
+        min_quantity,
         root,
         &self.clock,
         self.scenario.ctx(),
