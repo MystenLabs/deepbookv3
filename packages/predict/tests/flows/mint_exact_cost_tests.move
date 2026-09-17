@@ -68,6 +68,15 @@ const BACKING_BUFFER_LAMBDA: u64 = 500_000_000; // 50%
 /// Pre-existing position on the complementary range, so the candidate range's
 /// own payout peak is zero while the book's point max is not.
 const DISJOINT_BOOK_QUANTITY: u64 = 10_000_000_000;
+/// Pre-existing position on the SAME range as the candidate, sized at the impact
+/// scale so the liability starts at the curve's kink.
+const SAME_RANGE_BOOK_QUANTITY: u64 = 10_000_000_000;
+/// Impact charge for a `TEN_THOUSAND_LOTS` mint on an empty book, from the
+/// quadratic arm `r_max * L^2 / (2B)` at L = 1e8, B = 1e10, r_max = 0.2.
+const BELOW_KINK_IMPACT_CHARGE: u64 = 100_000;
+/// Constant term of the capped-rate arm, `2 * phi(B) - phi(B) = r_max * B / 2`:
+/// past the kink the charge is `quantity / 5 - 1e9`.
+const CAPPED_RATE_INTERCEPT: u64 = 1_000_000_000;
 
 /// Maximum-payout boundary fixture, mirroring `quote_mint_tests`: at quantity
 /// 4e6 these fee rates put all-in cost exactly at quantity, and one raw unit
@@ -566,7 +575,10 @@ fun inventory_impact_is_sized_inside_the_budget() {
 
     let fill = impact_quote(&mut fx, &market, TEN_THOUSAND_LOTS);
     let next_lot = impact_quote(&mut fx, &market, NEXT_LOT_QUANTITY);
-    assert!(fill.inventory_impact_charge() > 0);
+    // On an empty book the mint's own payout is the whole liability, which sits
+    // below the scale B = 1e10, so the quadratic arm applies:
+    // phi(L) = r_max * L^2 / (2B) = 0.2 * 1e8^2 / 2e10 = 100_000.
+    assert_eq!(fill.inventory_impact_charge(), BELOW_KINK_IMPACT_CHARGE);
     let budget = next_lot.all_in_cost() - 1;
     let balance_before = fx.account_balance_bundle<USDC>(&account);
 
@@ -628,7 +640,14 @@ fun impact_above_the_curve_kink_still_sizes_exactly() {
         0,
     );
 
+    // Past the kink the liability is the mint's own payout and the marginal rate
+    // is capped, so the charge is the linear arm:
+    // phi(q) - phi(0) = phi(B) + r_max * (q - B) = 1e9 + 0.2q - 2e9 = q/5 - 1e9.
     assert!(quote.quantity() > IMPACT_SCALE);
+    assert_eq!(
+        quote.inventory_impact_charge(),
+        quote.quantity() / 5 - CAPPED_RATE_INTERCEPT,
+    );
     assert!(quote.all_in_cost() <= balance_before);
     assert!(one_more_lot.all_in_cost() > balance_before);
     assert_eq!(
@@ -685,7 +704,76 @@ fun impact_over_a_disjoint_book_sizes_exactly() {
         0,
     );
 
+    // The complementary position makes the book's point max 1e10 and its total
+    // 1e10, so before the mint the gap is zero and phi(1e10) = phi(B) = 1e9.
+    // Once the candidate passes that point max it drives the max itself, leaving
+    // a constant 1e10 gap: L = q + 0.5 * 1e10, and the linear arm gives
+    // phi(L) - phi(B) = 0.2 * (q + 5e9 - 1e10) = q/5 - 1e9. Same closed form as
+    // the empty-book case, reached through the max-driven branch instead.
     assert!(quote.quantity() > DISJOINT_BOOK_QUANTITY);
+    assert_eq!(
+        quote.inventory_impact_charge(),
+        quote.quantity() / 5 - CAPPED_RATE_INTERCEPT,
+    );
+    assert!(one_more_lot.all_in_cost() > balance_before);
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        balance_before - quote.all_in_cost(),
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun impact_on_a_range_that_already_holds_exposure_sizes_exactly() {
+    let (mut fx, expiry_id, trader) = impact_market(test_constants::default_manager_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // Adding to a range that already holds payout: the candidate stacks onto
+    // that range's own peak, so the prospective point max carries it and the
+    // book's gap stays closed. Sizing against a stale peak would misprice every
+    // probe.
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        SAME_RANGE_BOOK_QUANTITY,
+        std::u64::max_value!(),
+        std::u64::max_value!(),
+    );
+
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        0,
+    );
+    let one_more_lot = impact_quote(
+        &mut fx,
+        &market,
+        quote.quantity() + constants::position_lot_size!(),
+    );
+    let balance_before = fx.account_balance_bundle<USDC>(&account);
+
+    fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        0,
+    );
+
+    // Liability runs from B = 1e10 to 1e10 + q with no gap on either side, so
+    // the capped arm charges r_max * q = q/5 with no intercept.
+    assert_eq!(quote.inventory_impact_charge(), quote.quantity() / 5);
     assert!(one_more_lot.all_in_cost() > balance_before);
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
