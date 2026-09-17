@@ -96,7 +96,7 @@ const ZERO_MIN_QUANTITY: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
-const FUTURE_VERSION: u64 = 2;
+const FUTURE_VERSION: u64 = 3;
 
 public struct ExpectedSessionAuthorized has copy, drop {
     account_id: ID,
