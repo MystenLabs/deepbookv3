@@ -165,10 +165,7 @@ fun budget_at_the_next_lot_all_in_cost_spends_it_exactly() {
     );
 
     assert_eq!(order::from_order_id(order_id).quantity(), NEXT_LOT_QUANTITY);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        test_constants::mint_deposit() - budget,
-    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), test_constants::mint_deposit() - budget);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -415,10 +412,7 @@ fun sponsor_subsidy_is_sized_inside_the_budget() {
     let next_lot = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY);
     let trading_fee = TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR;
     assert_eq!(fill.fee_incentive_subsidy(), trading_fee / SUBSIDY_DIVISOR);
-    assert_eq!(
-        fill.all_in_cost(),
-        fill.premium() + trading_fee - fill.fee_incentive_subsidy(),
-    );
+    assert_eq!(fill.all_in_cost(), fill.premium() + trading_fee - fill.fee_incentive_subsidy());
     let budget = next_lot.all_in_cost() - 1;
 
     let order_id = fx.mint_exact_cost_bundle(
@@ -526,10 +520,7 @@ fun congestion_surcharge_after_the_quote_resizes_instead_of_aborting() {
     assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
     assert!(quote.all_in_cost() <= budget);
     assert!(one_more_lot.all_in_cost() > budget);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        balance_before - quote.all_in_cost(),
-    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
@@ -592,14 +583,8 @@ fun inventory_impact_is_sized_inside_the_budget() {
     );
 
     assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        balance_before - fill.all_in_cost(),
-    );
-    assert_eq!(
-        helpers::market(&market).inventory_impact_reserve(),
-        fill.inventory_impact_charge(),
-    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - fill.all_in_cost());
+    assert_eq!(helpers::market(&market).inventory_impact_reserve(), fill.inventory_impact_charge());
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -644,16 +629,10 @@ fun impact_above_the_curve_kink_still_sizes_exactly() {
     // is capped, so the charge is the linear arm:
     // phi(q) - phi(0) = phi(B) + r_max * (q - B) = 1e9 + 0.2q - 2e9 = q/5 - 1e9.
     assert!(quote.quantity() > IMPACT_SCALE);
-    assert_eq!(
-        quote.inventory_impact_charge(),
-        quote.quantity() / 5 - CAPPED_RATE_INTERCEPT,
-    );
+    assert_eq!(quote.inventory_impact_charge(), quote.quantity() / 5 - CAPPED_RATE_INTERCEPT);
     assert!(quote.all_in_cost() <= balance_before);
     assert!(one_more_lot.all_in_cost() > balance_before);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        balance_before - quote.all_in_cost(),
-    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -711,15 +690,9 @@ fun impact_over_a_disjoint_book_sizes_exactly() {
     // phi(L) - phi(B) = 0.2 * (q + 5e9 - 1e10) = q/5 - 1e9. Same closed form as
     // the empty-book case, reached through the max-driven branch instead.
     assert!(quote.quantity() > DISJOINT_BOOK_QUANTITY);
-    assert_eq!(
-        quote.inventory_impact_charge(),
-        quote.quantity() / 5 - CAPPED_RATE_INTERCEPT,
-    );
+    assert_eq!(quote.inventory_impact_charge(), quote.quantity() / 5 - CAPPED_RATE_INTERCEPT);
     assert!(one_more_lot.all_in_cost() > balance_before);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        balance_before - quote.all_in_cost(),
-    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
@@ -775,10 +748,7 @@ fun impact_on_a_range_that_already_holds_exposure_sizes_exactly() {
     // the capped arm charges r_max * q = q/5 with no intercept.
     assert_eq!(quote.inventory_impact_charge(), quote.quantity() / 5);
     assert!(one_more_lot.all_in_cost() > balance_before);
-    assert_eq!(
-        fx.account_balance_bundle<USDC>(&account),
-        balance_before - quote.all_in_cost(),
-    );
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);

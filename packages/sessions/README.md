@@ -66,6 +66,7 @@ An active session may call these wrappers:
 
 - `mint_exact_quantity`
 - `mint_exact_amount`
+- `mint_exact_cost`
 - `redeem_live`
 - `redeem_settled`
 
