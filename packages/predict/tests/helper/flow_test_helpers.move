@@ -1820,6 +1820,86 @@ public fun mint_exact_cost(
     )
 }
 
+/// Load a live pricer deliberately bound to `expiry_market_id` instead of the
+/// bundle's own market, for pricer-binding tests. Everything else about it is the
+/// bundle's real oracle state.
+public fun load_pricer_bound_to_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    expiry_market_id: ID,
+): pricing::Pricer {
+    pricing::load_live_pricer(
+        market.config.pricing_config(),
+        &market.oracle_registry,
+        &market.pyth,
+        market.bs.values(),
+        market.bs.svi(),
+        expiry_market_id,
+        test_constants::propbook_underlying_id(),
+        market.market.expiry(),
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// `mint_exact_cost_bundle` with a caller-supplied pricer, for pricer-binding
+/// tests.
+public fun mint_exact_cost_with_pricer_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    account: &mut AccountBundle,
+    pricer: &pricing::Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): u256 {
+    let auth = account::generate_auth(self.scenario.ctx());
+    market
+        .market
+        .mint_exact_cost(
+            &mut account.wrapper,
+            auth,
+            &market.config,
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
+/// `quote_mint_exact_cost_for_account_bundle` with a caller-supplied pricer, for
+/// pricer-binding tests.
+public fun quote_mint_exact_cost_for_account_with_pricer_bundle(
+    self: &mut Fixture,
+    market: &MarketBundle,
+    account: &AccountBundle,
+    pricer: &pricing::Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+    max_cost: u64,
+    min_quantity: u64,
+): MintQuote {
+    market
+        .market
+        .quote_mint_exact_cost_for_account(
+            &account.wrapper,
+            &market.config,
+            pricer,
+            lower_tick,
+            higher_tick,
+            max_cost,
+            min_quantity,
+            &account.root,
+            &self.clock,
+            self.scenario.ctx(),
+        )
+}
+
 /// Close (or partially close) a live order with owner auth. Returns a
 /// replacement ID only when quantity remains open.
 public fun redeem_live(

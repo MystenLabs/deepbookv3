@@ -16,6 +16,7 @@
 #[test_only]
 module deepbook_predict::mint_exact_cost_tests;
 
+use account::account;
 use deepbook_predict::{
     config_constants,
     constants,
@@ -90,6 +91,27 @@ const MAX_PAYOUT_BOUNDARY_MIN_FEE_RATE: u64 = 500_006_500;
 /// payout. Only a rate whose total clears 1.0 with room makes the bound
 /// unavoidable for whatever the search picks.
 const LOSS_MAKING_MIN_FEE_RATE: u64 = 600_000_000;
+
+/// Razor-edge payout fixture: `quote_mint_tests`' above-payout fee rate, where
+/// unit cost sits within rounding of one. See the table above the tests that use
+/// these; every figure is hand arithmetic and stable across the reference band.
+const RAZOR_MIN_FEE_RATE: u64 = 500_006_750;
+const RAZOR_BUDGET: u64 = 4_000_000;
+/// Largest lot whose all-in cost fits both the budget and its own payout:
+/// premium floor(p * 3_990_000) + fee floor(0.50000675 * 3_990_000) = 3_990_000.
+const RAZOR_LARGEST_ADMISSIBLE: u64 = 3_990_000;
+const RAZOR_LARGEST_PREMIUM: u64 = 1_994_974;
+const RAZOR_LARGEST_FEE: u64 = 1_995_026;
+/// A smaller lot that breaches the payout bound: 1_484_981 + 1_485_020 =
+/// 2_970_001 > 2_970_000.
+const RAZOR_INADMISSIBLE_BELOW: u64 = 2_970_000;
+/// The admissible lot directly beneath it: 1_479_981 + 1_480_019 = 2_960_000.
+const RAZOR_STEPPED_DOWN: u64 = 2_960_000;
+
+/// Settlement lifecycle fixture: a 50 USDC budget, settled one tick-size above the
+/// 100e9 strike so the up-range wins.
+const SETTLEMENT_BUDGET: u64 = 50_000_000;
+const SETTLEMENT_ABOVE_STRIKE: u64 = 101_000_000_000;
 
 /// A budget far below the 1 USDC minimum mint premium.
 const DUST_BUDGET: u64 = 1_000;
@@ -405,6 +427,18 @@ fun builder_fee_is_sized_inside_the_budget() {
     assert_eq!(fill.builder_fee(), trading_fee / BUILDER_FEE_DIVISOR);
     assert_eq!(fill.all_in_cost(), fill.premium() + trading_fee + fill.builder_fee());
     let budget = next_lot.all_in_cost() - 1;
+    // The cost quote reads the same attribution the mint does.
+    let cost_quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+    assert_eq!(cost_quote.quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(cost_quote.builder_fee(), trading_fee / BUILDER_FEE_DIVISOR);
+    assert_eq!(cost_quote.all_in_cost(), fill.all_in_cost());
 
     let order_id = fx.mint_exact_cost_bundle(
         &mut market,
@@ -981,8 +1015,10 @@ fun overshoot_past_the_maximum_payout_steps_down_instead_of_aborting() {
     );
 
     assert!(quote.all_in_cost() <= quote.quantity());
-    assert!(quote.all_in_cost() < balance_before);
     assert!(quote.inventory_impact_charge() > 0);
+    // A payout-limited fill is NOT within one lot of the budget: most of the
+    // balance stays unspent, because the bound stopped sizing, not the money.
+    assert!(quote.all_in_cost() < balance_before / 2);
     assert_eq!(capped_budget.quantity(), quote.quantity());
     assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
@@ -993,8 +1029,8 @@ fun overshoot_past_the_maximum_payout_steps_down_instead_of_aborting() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = strike_exposure_config::EPremiumBelowMinimum)]
-fun market_where_every_fill_is_loss_making_sizes_to_nothing() {
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun market_where_every_fill_is_loss_making_aborts_on_the_payout_bound() {
     let mut fx = helpers::setup_market_default();
     fx.set_template_min_fee(LOSS_MAKING_MIN_FEE_RATE);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
@@ -1010,9 +1046,10 @@ fun market_where_every_fill_is_loss_making_sizes_to_nothing() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    // At a rate this high EVERY lot costs more than it can ever pay out, so no
-    // fill satisfies the payout bound and sizing has nothing to step down to:
-    // the budget buys nothing and admission rejects the empty fill.
+    // At a rate this high EVERY lot costs more than it can ever pay out, so
+    // sizing has nothing to step down to. It admits the budget fill rather than
+    // an empty one, so the caller is told what is actually wrong — the same
+    // abort an exact-quantity mint of that size reports.
     fx.mint_exact_cost_bundle(
         &mut market,
         &mut account,
@@ -1025,7 +1062,440 @@ fun market_where_every_fill_is_loss_making_sizes_to_nothing() {
     abort 999
 }
 
+// === The payout bound is not monotone in quantity ===
+//
+// `all_in_cost <= quantity` can be false at one lot and true at a larger one:
+// cost and quantity both rise, and the independent floors in the premium and the
+// fee let their sum land a unit either side of quantity wherever unit cost sits
+// within rounding of one. The fixture is a fee rate that puts unit cost a hair
+// above one (`quote_mint_tests`' above-payout rate), with every quantity below
+// chosen so its floors are the same across the whole +/-21 band of the
+// independent at-the-money reference — the numbers are hand arithmetic, not
+// contract output:
+//
+//   quantity    premium (p*q)   fee (0.50000675*q)   cost        cost <= quantity
+//   2_960_000   1_479_981       1_480_019            2_960_000   yes
+//   2_970_000   1_484_981       1_485_020            2_970_001   NO
+//   3_990_000   1_994_974       1_995_026            3_990_000   yes
+//   4_000_000   1_999_974       2_000_027            4_000_001   NO
+//
+// A search that treated the payout bound as monotone would see 2_970_000 fail,
+// discard everything above it, and return 2_960_000 for a 4_000_000 budget.
+
+#[test]
+fun payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill() {
+    let (mut fx, expiry_id, trader) = razor_edge_market();
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        RAZOR_BUDGET,
+        0,
+    );
+
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    assert_eq!(quote.quantity(), RAZOR_LARGEST_ADMISSIBLE);
+    assert_eq!(quote.premium(), RAZOR_LARGEST_PREMIUM);
+    assert_eq!(quote.trading_fee(), RAZOR_LARGEST_FEE);
+    assert_eq!(quote.all_in_cost(), RAZOR_LARGEST_ADMISSIBLE);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun lot_below_the_sized_fill_is_inadmissible() {
+    // The "false" half of false-then-true: this lot sits well below the fill the
+    // previous test sizes, and an exact-quantity quote for it breaches the bound.
+    let (mut fx, expiry_id, _trader) = razor_edge_market();
+    let market = fx.take_market_bundle(expiry_id);
+
+    fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        RAZOR_INADMISSIBLE_BELOW,
+    );
+
+    abort 999
+}
+
+#[test]
+fun fill_at_the_largest_admissible_quantity_clears_its_own_floor() {
+    let (mut fx, expiry_id, trader) = razor_edge_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // A floor equal to the largest admissible fill must pass: undersizing here
+    // would surface as a spurious `EMintQuantityBelowMin` on a mint that an
+    // exact-quantity request of the same size and budget performs.
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        RAZOR_BUDGET,
+        RAZOR_LARGEST_ADMISSIBLE,
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), RAZOR_LARGEST_ADMISSIBLE);
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - RAZOR_LARGEST_ADMISSIBLE,
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot() {
+    let (mut fx, expiry_id, trader) = razor_edge_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // This budget pays for exactly the inadmissible 2_970_000 lot (cost
+    // 2_970_001) and not the next one, so the budget fill itself breaches the
+    // bound and sizing has to come down — to 2_960_000, one lot lower.
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        RAZOR_INADMISSIBLE_BELOW + 1,
+        0,
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), RAZOR_STEPPED_DOWN);
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - RAZOR_STEPPED_DOWN,
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
+fun lot_above_a_payout_limited_fill_is_inadmissible() {
+    // Maximality of the step-down where it matters — a rising impact rate: the
+    // lot directly above the fill sizing lands on must itself breach the payout
+    // bound, or sizing stopped early.
+    let (mut fx, expiry_id, trader) = max_impact_market();
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        0,
+    );
+    fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        quote.quantity() + constants::position_lot_size!(),
+    );
+
+    abort 999
+}
+
+// === `min_quantity` is the slippage guard ===
+//
+// The spend is fixed, so every adverse move between quote and execution shows up
+// as fewer contracts. A floor taken from the quote is what turns that into an
+// abort instead of a silently smaller position.
+
+#[test, expected_failure(abort_code = strike_exposure::EMintQuantityBelowMin)]
+fun quantity_floor_aborts_when_the_price_moves_after_the_quote() {
+    let (mut fx, expiry_id, trader) = wide_surface_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let budget = atm_quote(&mut fx, &market, TEN_THOUSAND_LOTS).all_in_cost();
+    let quoted = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+
+    seed_wide_surface(&mut fx, &mut market, WIDE_RANGE_SPOT, WIDE_RANGE_RAISED_FORWARD);
+    fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        quoted.quantity(),
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_exposure::EMintQuantityBelowMin)]
+fun quantity_floor_aborts_when_a_surcharge_lands_after_the_quote() {
+    let (mut fx, expiry_id, trader) = congested_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.prepare_live_oracle_bundle_at(
+        &mut market,
+        test_constants::default_live_price(),
+        SPIKE_SOURCE_TS,
+    );
+
+    // The caller saw this fill for this budget before the gas spike. With the
+    // surcharge live the same budget buys fewer lots, and the floor catches it.
+    let unsurcharged = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS);
+    fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        unsurcharged.all_in_cost() - unsurcharged.penalty_fee(),
+        TEN_THOUSAND_LOTS,
+    );
+
+    abort 999
+}
+
+#[test]
+fun quantity_floor_at_the_repriced_fill_mints() {
+    let (mut fx, expiry_id, trader) = wide_surface_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // The passing side of the boundary the two tests above pin from the other:
+    // a floor equal to what the moved market actually delivers is met exactly.
+    let budget = atm_quote(&mut fx, &market, TEN_THOUSAND_LOTS).all_in_cost();
+    seed_wide_surface(&mut fx, &mut market, WIDE_RANGE_SPOT, WIDE_RANGE_RAISED_FORWARD);
+    let repriced = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        repriced.quantity(),
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), repriced.quantity());
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = strike_exposure::EMintQuantityBelowMin)]
+fun payout_limited_fill_below_the_quantity_floor_aborts() {
+    // The floor guards against a short fill whatever shortened it: here the
+    // payout bound, not the price, stops sizing a lot below what was asked for.
+    let (mut fx, expiry_id, trader) = max_impact_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        0,
+    );
+    fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        quote.quantity() + constants::position_lot_size!(),
+    );
+
+    abort 999
+}
+
+// === A cost-sized position is an ordinary position ===
+
+#[test]
+fun cost_sized_position_closes_live() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let budget = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY).all_in_cost() - 1;
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        TEN_THOUSAND_LOTS,
+    );
+    let balance_after_mint = fx.account_balance_bundle<USDC>(&account);
+
+    // Reprice one millisecond later and close the whole position: the gross
+    // value comes back less the ordinary close fee, and nothing is left open.
+    fx.advance_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    let gross = fx.live_order_value_bundle(&market, order_id);
+    let replacement = fx.redeem_live_bundle(&mut market, &mut account, order_id, TEN_THOUSAND_LOTS);
+
+    assert!(replacement.is_none());
+    assert!(!helpers::has_position_bundle(&account, expiry_id, order_id));
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        balance_after_mint + gross - TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR,
+    );
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun cost_sized_winner_redeems_its_full_quantity_at_settlement() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        SETTLEMENT_BUDGET,
+        0,
+    );
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        SETTLEMENT_BUDGET,
+        0,
+    );
+    let balance_after_mint = fx.account_balance_bundle<USDC>(&account);
+
+    // Settle above the strike: the up-range wins and pays its full quantity.
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, SETTLEMENT_ABOVE_STRIKE);
+    assert!(fx.try_settle_bundle(&mut market));
+    assert_eq!(helpers::settled_order_payout_bundle(&market, order_id), quote.quantity());
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_after_mint + quote.quantity());
+    assert!(!helpers::has_position_bundle(&account, expiry_id, order_id));
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 // === Flow gates ===
+
+#[test, expected_failure(abort_code = expiry_market::EWrongPricer)]
+fun mint_exact_cost_with_a_pricer_bound_to_another_market_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    // A real pricer over this market's real feeds, bound to a different id.
+    let foreign_id = helpers::account_id_bundle(&account);
+    let wrong_pricer = fx.load_pricer_bound_to_bundle(&market, foreign_id);
+    fx.mint_exact_cost_with_pricer_bundle(
+        &mut market,
+        &mut account,
+        &wrong_pricer,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        0,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = expiry_market::EWrongPricer)]
+fun cost_quote_with_a_pricer_bound_to_another_market_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+
+    let foreign_id = helpers::account_id_bundle(&account);
+    let wrong_pricer = fx.load_pricer_bound_to_bundle(&market, foreign_id);
+    fx.quote_mint_exact_cost_for_account_with_pricer_bundle(
+        &market,
+        &account,
+        &wrong_pricer,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        0,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = account::EInvalidOwner)]
+fun mint_exact_cost_with_another_owners_auth_aborts() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    // Bob signs; the wrapper is alice's.
+    fx.scenario_mut().next_tx(test_constants::bob());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        0,
+    );
+
+    abort 999
+}
 
 #[test, expected_failure(abort_code = expiry_market::EMintPaused)]
 fun mint_exact_cost_on_a_paused_market_aborts() {
@@ -1407,6 +1877,24 @@ fun impact_quote(
     let quote = atm_quote(fx, market, quantity);
     helpers::assert_atm_entry_probability_short_expiry(quote.entry_probability());
     quote
+}
+
+/// A live default-surface market whose fee floor puts unit cost a hair above one,
+/// so the maximum-payout bound flips with each lot's rounding.
+fun razor_edge_market(): (helpers::Fixture, ID, helpers::Trader) {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(RAZOR_MIN_FEE_RATE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    helpers::return_market_bundle(market);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    (fx, expiry_id, trader)
 }
 
 /// A live market priced on a wide, flat total-variance surface, where the

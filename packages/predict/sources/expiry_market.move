@@ -25,7 +25,7 @@ use deepbook_predict::{
     pricing::{Self, Pricer, FrozenPricer, RangePrice},
     protocol_config::ProtocolConfig,
     range_codec,
-    strike_exposure::{Self, MintTerms, StrikeExposure},
+    strike_exposure::{Self, MintRange, MintTerms, StrikeExposure},
     strike_exposure_config
 };
 use fixed_math::math;
@@ -367,12 +367,13 @@ public fun quote_mint_for_account(
     market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
 }
 
-/// Quote `mint_exact_cost` for one account: the largest lot-rounded quantity
-/// whose all-in cost fits `max_cost` and the fill's own maximum payout, capped by
-/// total account balance including unsettled accumulator funds, with that fill's
-/// cost decomposition. Applies the mint's live-mint gates, sizing, `min_quantity`
-/// floor, and admission, but does not preflight exposure-index capacity or cash
-/// backing. Public for SDK and devInspect pre-trade pricing.
+/// Quote `mint_exact_cost` for one account: the fill that mint would size for
+/// `max_cost`, capped by total account balance including unsettled accumulator
+/// funds, with that fill's cost decomposition. Applies the mint's live-mint gates,
+/// sizing, `min_quantity` floor, and admission, but does not preflight
+/// exposure-index capacity or cash backing. `quantity` is the figure to derive a
+/// `min_quantity` slippage floor from. Public for SDK and devInspect pre-trade
+/// pricing.
 public fun quote_mint_exact_cost_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -558,20 +559,28 @@ public fun mint_exact_amount(
 /// search evaluates the all-in withdrawal the mint charges (`premium +
 /// trader-paid fee + builder_fee + EWMA penalty + inventory_impact_charge`)
 /// against the fee-incentive, congestion, and book state at execution, so the
-/// debit never exceeds `max_cost`, and unless sizing saturates at the lot cap the
-/// unspent remainder is less than the all-in cost of one more `position_lot_size`
-/// lot. `max_cost` is first capped to the account's available USDC after
-/// settlement, so `std::u64::max_value!()` sizes against the whole balance —
-/// subject to the same expiry cash backing every mint needs, which bounds a very
-/// large fill independently of the budget.
+/// debit never exceeds `max_cost`. `max_cost` is first capped to the account's
+/// available USDC after settlement, so `std::u64::max_value!()` sizes against the
+/// whole balance.
 ///
-/// The fill must meet `min_quantity`, which also bounds the all-in price per
-/// contract at `max_cost / min_quantity`, so the shape carries no separate
-/// probability cap. A budget too small to admit `constants::min_premium` aborts
-/// `EPremiumBelowMinimum` rather than minting nothing, and zero is such a budget:
-/// unlike `mint_exact_amount` there is no `max_cost` cap to require, because here
-/// the budget IS the sizing input. Other requirements match
-/// `mint_exact_quantity`. Returns the minted order ID.
+/// When the budget is what limits the fill, the unspent remainder is less than
+/// the all-in cost of one more `position_lot_size` lot. A fill limited by
+/// something else leaves more: sizing steps down from a fill that would cost more
+/// than its own maximum payout, saturates at the order lot cap, and is subject to
+/// the same expiry cash backing every mint needs.
+///
+/// `min_quantity` is this entrypoint's slippage guard. The spend is fixed, so
+/// every adverse move between building the transaction and executing it — the
+/// price, the congestion surcharge, the sponsor subsidy, the inventory-impact
+/// charge — shows up as fewer contracts, and a fill below `min_quantity` aborts
+/// `EMintQuantityBelowMin`. It bounds the all-in price per contract at
+/// `max_cost / min_quantity`, which is why the shape carries no separate
+/// probability cap; passing `0` accepts any fill the budget buys. A budget too
+/// small to admit `constants::min_premium` aborts `EPremiumBelowMinimum` rather
+/// than minting nothing, and zero is such a budget: unlike `mint_exact_amount`
+/// there is no `max_cost` cap to require, because here the budget IS the sizing
+/// input. Other requirements match `mint_exact_quantity`. Returns the minted
+/// order ID.
 public fun mint_exact_cost(
     market: &mut ExpiryMarket,
     wrapper: &mut AccountWrapper,
@@ -1041,29 +1050,35 @@ fun mint_prepared(
     market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
 }
 
-/// Size the largest lot-rounded quantity whose all-in cost fits both `max_cost`
-/// and the fill's own maximum payout, then admit it.
+/// Size the largest lot-rounded quantity whose all-in cost fits `max_cost`, step
+/// down if that fill would cost more than it could ever pay out, then admit it.
 ///
-/// Every all-in term is nondecreasing in quantity while the pre-trade price, fee
-/// incentives, EWMA state, and book are fixed: premium and each fee leg are
-/// `mul_down` of a quantity-independent rate; the trader-paid fee is
+/// The budget search is exact. Every all-in term is nondecreasing in quantity
+/// while the pre-trade price, fee incentives, EWMA state, and book are fixed:
+/// premium and each fee leg are `mul_down` of a quantity-independent rate; the
+/// trader-paid fee is
 /// `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose
 /// subsidy grows at most one unit per fee unit; the builder fee is a `min` of
 /// nondecreasing terms; the penalty's firing condition is quantity-independent;
 /// and the impact charge is monotone (`mint_range_inventory_impact`). The probe
-/// computes that total with the helper the charge uses, so the lot search is
-/// exact. The premium-only fit bounds it from above because every other term is
-/// nonnegative.
+/// is the helper the charge uses, and the premium-only fit bounds the domain from
+/// above because every other term is nonnegative.
 ///
-/// The probe also applies the maximum-payout bound (`quantity`), because the
-/// marginal impact rate rises with liability: the largest budget-fitting fill can
-/// be one that costs more than it could ever pay out, and on a high-impact market
-/// that is reachable with a budget the account can afford. Sizing steps down to
-/// the largest fill that satisfies both bounds instead, and `compute_mint_quote`
-/// still enforces the payout bound on whatever is admitted. `lo` only ever
-/// advances to a candidate verified against both, so a returned fill is never
-/// inadmissible on either; if the payout bound's feasible set were not
-/// downward-closed the result could be non-maximal, never over-budget.
+/// The maximum-payout bound (`all_in_cost <= quantity`) is deliberately NOT part
+/// of that search. It is not monotone in quantity: cost and quantity both rise,
+/// and the independent floors in each cost term let `cost(q) <= q` flip from
+/// false back to true at a larger lot wherever unit cost sits within rounding of
+/// one. A binary search over it would discard admissible fills. So the bound is
+/// consulted only after the budget fill is known, and only if that fill breaches
+/// it — which a rising marginal impact rate or an exhausted sponsor subsidy can
+/// cause on a budget the account can afford. The step-down search runs strictly
+/// below the budget fill, so every candidate already fits `max_cost`. Its result
+/// is always admissible; it is the true maximum wherever unit cost climbs past
+/// one by more than rounding per lot, which is the only regime in which stepping
+/// down can help, and may be below it where unit cost merely grazes one. When no
+/// smaller fill clears the bound, the budget fill is admitted so the caller sees
+/// `EMintCostAboveMaxPayout` rather than an empty fill's admission error.
+/// `compute_mint_quote` still enforces the bound on whatever is admitted.
 fun quote_exact_cost_terms(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -1078,27 +1093,67 @@ fun quote_exact_cost_terms(
 ): MintTerms {
     let range = market.strike_exposure.quote_mint_range(pricer, lower_tick, higher_tick);
     let lot = constants::position_lot_size!();
+
     let mut lo = 0;
     let mut hi = range.max_quantity_for_premium(max_cost) / lot;
     while (lo < hi) {
         let mid = (lo + hi + 1) / 2;
-        let quantity = mid * lot;
-        let quote = market.mint_quote_at(
-            range.mint_range_price(),
-            quantity,
-            range.mint_range_premium(quantity),
-            market.strike_exposure.mint_range_inventory_impact(&range, quantity),
-            builder_code_id,
-            market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
-            clock,
-        );
-        if (quote.all_in_cost <= max_cost.min(quantity)) {
+        let cost = market.all_in_cost_at(config, &range, builder_code_id, mid * lot, clock, ctx);
+        if (cost <= max_cost) {
             lo = mid
         } else {
             hi = mid - 1
         }
     };
-    market.strike_exposure.mint_terms(range, lo * lot, min_quantity)
+    let budget_lots = lo;
+
+    let budget_quantity = budget_lots * lot;
+    let lots = if (
+        budget_lots == 0
+            || market.all_in_cost_at(config, &range, builder_code_id, budget_quantity, clock, ctx)
+                <= budget_quantity
+    ) {
+        budget_lots
+    } else {
+        let mut lo = 0;
+        let mut hi = budget_lots - 1;
+        while (lo < hi) {
+            let mid = (lo + hi + 1) / 2;
+            let quantity = mid * lot;
+            let cost = market.all_in_cost_at(config, &range, builder_code_id, quantity, clock, ctx);
+            if (cost <= quantity) {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        };
+        if (lo == 0) budget_lots else lo
+    };
+    market.strike_exposure.mint_terms(range, lots * lot, min_quantity)
+}
+
+/// All-in cost of minting `quantity` over `range`, computed by the helper the mint
+/// charges with (`mint_quote_at`) against pre-trade state, without admission.
+fun all_in_cost_at(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    range: &MintRange,
+    builder_code_id: &Option<ID>,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): u64 {
+    market
+        .mint_quote_at(
+            range.mint_range_price(),
+            quantity,
+            range.mint_range_premium(quantity),
+            market.strike_exposure.mint_range_inventory_impact(range, quantity),
+            builder_code_id,
+            market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
+            clock,
+        )
+        .all_in_cost
 }
 
 /// Charge and record one admitted mint: price its fees and congestion penalty
