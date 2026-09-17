@@ -324,10 +324,13 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
 /// (`live_close_inventory_impact`); using one state function for every range makes
 /// all closed inventory cycles sum to zero before ordinary trading fees.
 ///
-/// Nondecreasing in `quantity`: the prospective liability's point max and total
-/// both grow with it, `backing_buffer_lambda <= 1` keeps a max-driven step from
-/// shrinking the buffered gap by more than it adds, and the potential is
-/// nondecreasing in liability.
+/// Nondecreasing in `quantity`, which is what lets a budget search binary-search
+/// over it. The prospective liability is `max(M, R + q) + lambda * (T + q - that)`:
+/// while `R + q <= M` it rises at `lambda`, past that point the candidate carries
+/// the max itself and the gap `T - R` is constant so it rises at 1, and at the
+/// switch `q = M - R` both arms evaluate to `M + lambda * (T - R)` exactly. The
+/// two arms therefore agree where they meet and neither falls, independently of
+/// `backing_buffer_lambda`, and the potential is nondecreasing in liability.
 public(package) fun mint_range_inventory_impact(
     exposure: &StrikeExposure,
     range: &MintRange,
@@ -428,6 +431,10 @@ public(package) fun mint_terms(
     quantity: u64,
     min_quantity: u64,
 ): MintTerms {
+    // The range carries the book reads its impact charge is priced against, so a
+    // range from another exposure would misprice silently — and in the quote path
+    // no allocation follows to catch it.
+    assert!(range.expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
     assert!(quantity >= min_quantity, EMintQuantityBelowMin);
     let premium = exposure.config.assert_mint_admission(range.price.probability(), quantity);
     // Preserve the mutation path's validation order.

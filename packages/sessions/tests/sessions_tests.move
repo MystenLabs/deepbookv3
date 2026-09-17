@@ -92,6 +92,7 @@ const SETTLEMENT_PRICE_TICK_OFFSET: u64 = 1;
 const ONE_RAW_UNIT: u64 = 1;
 const ZERO_COST: u64 = 0;
 const ZERO_PREMIUM: u64 = 0;
+const ZERO_MIN_QUANTITY: u64 = 0;
 const ZERO_PROBABILITY: u64 = 0;
 const MISSING_ORDER_ID: u256 = 1;
 const CLOSE_QUANTITY: u64 = 1;
@@ -1006,8 +1007,21 @@ fun session_mints_exact_cost() {
     );
     predict_helpers::assert_atm_entry_probability(expected_quote.entry_probability());
     // One raw unit below the next lot's ALL-IN cost must size exactly ten
-    // thousand lots and debit that fill's own all-in cost.
+    // thousand lots and debit that fill's own all-in cost. The session path must
+    // size the same fill Predict's own cost quote does.
     let budget = next_lot_quote.all_in_cost() - ONE_RAW_UNIT;
+    let cost_quote = market.quote_mint_exact_cost_for_account(
+        &wrapper,
+        &config,
+        &pricer,
+        predict_helpers::strike_tick(),
+        predict_helpers::pos_inf_tick(),
+        budget,
+        ZERO_MIN_QUANTITY,
+        &root,
+        clock,
+        scenario.ctx(),
+    );
     let order_id = sessions::mint_exact_cost(
         &mut market,
         &account_registry,
@@ -1023,7 +1037,8 @@ fun session_mints_exact_cost() {
         clock,
         scenario.ctx(),
     );
-    assert_eq!(expected_quote.quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(cost_quote.quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(cost_quote.all_in_cost(), expected_quote.all_in_cost());
     assert!(expected_quote.all_in_cost() <= budget);
     assert_eq!(
         wrapper.load_account().balance<USDC>(&root, clock),

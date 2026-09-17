@@ -368,11 +368,11 @@ public fun quote_mint_for_account(
 }
 
 /// Quote `mint_exact_cost` for one account: the largest lot-rounded quantity
-/// whose all-in cost fits `max_cost`, capped by total account balance including
-/// unsettled accumulator funds, with that fill's cost decomposition. Applies the
-/// mint's live-mint gates, sizing, `min_quantity` floor, and admission, but does
-/// not preflight exposure-index capacity or cash backing. Public for SDK and
-/// devInspect pre-trade pricing.
+/// whose all-in cost fits `max_cost` and the fill's own maximum payout, capped by
+/// total account balance including unsettled accumulator funds, with that fill's
+/// cost decomposition. Applies the mint's live-mint gates, sizing, `min_quantity`
+/// floor, and admission, but does not preflight exposure-index capacity or cash
+/// backing. Public for SDK and devInspect pre-trade pricing.
 public fun quote_mint_exact_cost_for_account(
     market: &ExpiryMarket,
     wrapper: &AccountWrapper,
@@ -558,12 +558,19 @@ public fun mint_exact_amount(
 /// search evaluates the all-in withdrawal the mint charges (`premium +
 /// trader-paid fee + builder_fee + EWMA penalty + inventory_impact_charge`)
 /// against the fee-incentive, congestion, and book state at execution, so the
-/// debit never exceeds `max_cost` and the unspent remainder is less than the
-/// all-in cost of one more `position_lot_size` lot. `max_cost` is first capped to
-/// the account's available USDC after settlement, so `std::u64::max_value!()`
-/// sizes against the whole balance. The fill must meet `min_quantity`, which also
-/// bounds the all-in price per contract at `max_cost / min_quantity`, so the shape
-/// carries no separate probability cap. Other requirements match
+/// debit never exceeds `max_cost`, and unless sizing saturates at the lot cap the
+/// unspent remainder is less than the all-in cost of one more `position_lot_size`
+/// lot. `max_cost` is first capped to the account's available USDC after
+/// settlement, so `std::u64::max_value!()` sizes against the whole balance —
+/// subject to the same expiry cash backing every mint needs, which bounds a very
+/// large fill independently of the budget.
+///
+/// The fill must meet `min_quantity`, which also bounds the all-in price per
+/// contract at `max_cost / min_quantity`, so the shape carries no separate
+/// probability cap. A budget too small to admit `constants::min_premium` aborts
+/// `EPremiumBelowMinimum` rather than minting nothing, and zero is such a budget:
+/// unlike `mint_exact_amount` there is no `max_cost` cap to require, because here
+/// the budget IS the sizing input. Other requirements match
 /// `mint_exact_quantity`. Returns the minted order ID.
 public fun mint_exact_cost(
     market: &mut ExpiryMarket,
@@ -1034,18 +1041,29 @@ fun mint_prepared(
     market.mint_with_terms(account, config, pricer, terms, builder_code_id, max_cost, clock, ctx)
 }
 
-/// Size the largest lot-rounded quantity whose all-in cost fits `max_cost` over
-/// one priced range, then admit it.
+/// Size the largest lot-rounded quantity whose all-in cost fits both `max_cost`
+/// and the fill's own maximum payout, then admit it.
 ///
 /// Every all-in term is nondecreasing in quantity while the pre-trade price, fee
 /// incentives, EWMA state, and book are fixed: premium and each fee leg are
 /// `mul_down` of a quantity-independent rate; the trader-paid fee is
-/// `fee - min(mul_down(fee, 0.2), incentives)`, whose subsidy grows at most one
-/// unit per fee unit; the builder fee is a `min` of nondecreasing terms; the
-/// penalty's firing condition is quantity-independent; and the impact charge is
-/// monotone (`mint_range_inventory_impact`). The probe computes that total with
-/// the helper the charge uses, so the lot search is exact. The premium-only fit
-/// bounds it from above because every other term is nonnegative.
+/// `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose
+/// subsidy grows at most one unit per fee unit; the builder fee is a `min` of
+/// nondecreasing terms; the penalty's firing condition is quantity-independent;
+/// and the impact charge is monotone (`mint_range_inventory_impact`). The probe
+/// computes that total with the helper the charge uses, so the lot search is
+/// exact. The premium-only fit bounds it from above because every other term is
+/// nonnegative.
+///
+/// The probe also applies the maximum-payout bound (`quantity`), because the
+/// marginal impact rate rises with liability: the largest budget-fitting fill can
+/// be one that costs more than it could ever pay out, and on a high-impact market
+/// that is reachable with a budget the account can afford. Sizing steps down to
+/// the largest fill that satisfies both bounds instead, and `compute_mint_quote`
+/// still enforces the payout bound on whatever is admitted. `lo` only ever
+/// advances to a candidate verified against both, so a returned fill is never
+/// inadmissible on either; if the payout bound's feasible set were not
+/// downward-closed the result could be non-maximal, never over-budget.
 fun quote_exact_cost_terms(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -1074,7 +1092,7 @@ fun quote_exact_cost_terms(
             market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
             clock,
         );
-        if (quote.all_in_cost <= max_cost) {
+        if (quote.all_in_cost <= max_cost.min(quantity)) {
             lo = mid
         } else {
             hi = mid - 1

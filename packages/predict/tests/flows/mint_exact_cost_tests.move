@@ -94,6 +94,33 @@ const LOSS_MAKING_MIN_FEE_RATE: u64 = 600_000_000;
 /// A budget far below the 1 USDC minimum mint premium.
 const DUST_BUDGET: u64 = 1_000;
 
+/// Two-finite-leg fixture, mirroring `range_leg_fee_tests`: at forward 90 and
+/// total variance 0.04 the range `(60, 130]` is quotable and both legs bind at
+/// the 2.2% floor.
+const SHIPPED_BASE_FEE: u64 = 100_000_000;
+const SHIPPED_MIN_FEE: u64 = 22_000_000;
+/// One floored leg on `TEN_THOUSAND_LOTS`: 0.022 * 1e8.
+const SHIPPED_LEG_FEE: u64 = 2_200_000;
+const WIDE_LOWER_TICK: u64 = 60;
+const WIDE_HIGHER_TICK: u64 = 130;
+const WIDE_RANGE_SPOT: u64 = 90_000_000_000;
+const WIDE_RANGE_VARIANCE: u64 = 40_000_000;
+/// Forward moved up under the same wide surface, so the out-of-the-money
+/// up-range reprices higher per contract while staying inside the
+/// entry-probability band.
+const WIDE_RANGE_RAISED_FORWARD: u64 = 95_000_000_000;
+
+/// A 6% fee floor, high enough that a tenth of the fee exceeds
+/// `max_builder_fee_rate` (0.005) * quantity, so the builder fee binds at its own
+/// rate cap instead of at the fee multiplier.
+const BUILDER_CAP_MIN_FEE_RATE: u64 = 60_000_000;
+/// The fee that rate produces on `TEN_THOUSAND_LOTS`: 0.06 * 1e8.
+const BUILDER_CAP_TRADING_FEE: u64 = 6_000_000;
+
+/// Consecutive lots walked by the monotonicity tests, centred on the shape change
+/// each one targets.
+const WALK_STEPS: u64 = 240;
+
 const BUILDER_CODE_INDEX: u64 = 0;
 
 // === Sizing: the fill is the largest whose all-in cost fits ===
@@ -114,6 +141,9 @@ fun budget_below_the_next_lot_mints_the_largest_fitting_fill() {
     let fill = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS);
     let next_lot = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY);
     assert_eq!(fill.trading_fee(), TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR);
+    // This quantity is a tenth of the fixed-point scale, so the premium is the
+    // pinned probability divided by ten with nothing else in it.
+    assert_eq!(fill.premium(), fill.entry_probability() / 10);
     assert_eq!(fill.all_in_cost(), fill.premium() + fill.trading_fee());
     let budget = next_lot.all_in_cost() - 1;
 
@@ -910,8 +940,61 @@ fun fill_whose_cost_equals_its_maximum_payout_mints() {
     fx.finish();
 }
 
-#[test, expected_failure(abort_code = expiry_market::EMintCostAboveMaxPayout)]
-fun sized_fill_above_its_maximum_payout_aborts() {
+#[test]
+fun overshoot_past_the_maximum_payout_steps_down_instead_of_aborting() {
+    // At the maximum admissible impact rate the marginal charge climbs fast
+    // enough that the largest budget-fitting fill would cost more than it could
+    // ever pay out, while a smaller fill is fine. Sizing must land on the
+    // largest fill that satisfies BOTH bounds rather than aborting — including
+    // in the read-only quote, which is how an SDK discovers the fill at all.
+    let (mut fx, expiry_id, trader) = max_impact_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let balance_before = fx.account_balance_bundle<USDC>(&account);
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        0,
+    );
+    // The payout bound binds, not the budget: the fill leaves balance unspent,
+    // and a budget cut to exactly its cost buys the same fill.
+    let capped_budget = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        quote.all_in_cost(),
+        0,
+    );
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        std::u64::max_value!(),
+        0,
+    );
+
+    assert!(quote.all_in_cost() <= quote.quantity());
+    assert!(quote.all_in_cost() < balance_before);
+    assert!(quote.inventory_impact_charge() > 0);
+    assert_eq!(capped_budget.quantity(), quote.quantity());
+    assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = strike_exposure_config::EPremiumBelowMinimum)]
+fun market_where_every_fill_is_loss_making_sizes_to_nothing() {
     let mut fx = helpers::setup_market_default();
     fx.set_template_min_fee(LOSS_MAKING_MIN_FEE_RATE);
     let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
@@ -927,8 +1010,9 @@ fun sized_fill_above_its_maximum_payout_aborts() {
     let mut market = fx.take_market_bundle(expiry_id);
     let mut account = fx.take_account_bundle(&trader);
 
-    // At a rate this high every fill costs more than it can ever pay out:
-    // fitting the budget does not exempt the sized fill from that bound.
+    // At a rate this high EVERY lot costs more than it can ever pay out, so no
+    // fill satisfies the payout bound and sizing has nothing to step down to:
+    // the budget buys nothing and admission rejects the empty fill.
     fx.mint_exact_cost_bundle(
         &mut market,
         &mut account,
@@ -1012,6 +1096,263 @@ fun cost_quote_on_a_paused_market_aborts() {
     abort 999
 }
 
+// === Fee-term shapes the single-leg at-the-money fixture never reaches ===
+
+#[test]
+fun two_finite_legs_size_exactly() {
+    // Every other test here prices `(strike, +inf]` — one finite boundary, one
+    // floored leg fee. A range with two finite boundaries pays two independently
+    // floored legs, so the sum the search probes is two `mul_down`s rather than
+    // one.
+    let (mut fx, expiry_id, trader) = wide_surface_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let fill = fx.quote_mint_bundle(&market, WIDE_LOWER_TICK, WIDE_HIGHER_TICK, TEN_THOUSAND_LOTS);
+    let next_lot = fx.quote_mint_bundle(
+        &market,
+        WIDE_LOWER_TICK,
+        WIDE_HIGHER_TICK,
+        NEXT_LOT_QUANTITY,
+    );
+    // Both legs sit inside the band where the 2.2% floor binds, so the fee is
+    // exactly two floors on this quantity.
+    assert_eq!(fill.trading_fee(), 2 * SHIPPED_LEG_FEE);
+    let budget = next_lot.all_in_cost() - 1;
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        WIDE_LOWER_TICK,
+        WIDE_HIGHER_TICK,
+        budget,
+        TEN_THOUSAND_LOTS,
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - fill.all_in_cost(),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun builder_fee_at_its_own_rate_cap_sizes_exactly() {
+    // The builder fee is `min(0.1 * fee, 0.005 * quantity)`. Everywhere else the
+    // first arm binds; a 6% fee floor flips it to the second, which is the other
+    // side of a `min` the monotonicity argument depends on.
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_min_fee(BUILDER_CAP_MIN_FEE_RATE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    fx.create_and_link_builder_code(BUILDER_CODE_INDEX, &trader);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    helpers::return_market_bundle(market);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let fill = account_quote_checked(&mut fx, &market, &account, TEN_THOUSAND_LOTS);
+    let next_lot = account_quote_checked(&mut fx, &market, &account, NEXT_LOT_QUANTITY);
+    assert_eq!(fill.trading_fee(), BUILDER_CAP_TRADING_FEE);
+    // The rate cap binds: 0.005 * quantity, strictly below a tenth of the fee.
+    assert_eq!(fill.builder_fee(), TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR);
+    assert!(fill.builder_fee() < BUILDER_CAP_TRADING_FEE / BUILDER_FEE_DIVISOR);
+    let budget = next_lot.all_in_cost() - 1;
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        TEN_THOUSAND_LOTS,
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - fill.all_in_cost(),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun price_move_after_the_quote_resizes_instead_of_aborting() {
+    // The other half of "state moved after the quote": here the oracle moves, so
+    // the premium per contract rises. A premium-budget caller would have to pad
+    // against this; all-in sizing just buys fewer lots at the new price. Priced
+    // on a wide surface, where a spot move shifts the digital by percentage
+    // points instead of saturating it.
+    let (mut fx, expiry_id, trader) = wide_surface_market();
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    let quoted_before = atm_quote(&mut fx, &market, TEN_THOUSAND_LOTS);
+    let budget = quoted_before.all_in_cost();
+
+    // The expiry forward moves toward the strike, so the up-range costs more
+    // per contract than the caller was quoted.
+    seed_wide_surface(&mut fx, &mut market, WIDE_RANGE_SPOT, WIDE_RANGE_RAISED_FORWARD);
+    let repriced = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+    let balance_before = fx.account_balance_bundle<USDC>(&account);
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+
+    assert!(repriced.entry_probability() > quoted_before.entry_probability());
+    assert!(repriced.quantity() < TEN_THOUSAND_LOTS);
+    assert!(repriced.all_in_cost() <= budget);
+    assert_eq!(order::from_order_id(order_id).quantity(), repriced.quantity());
+    assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - repriced.all_in_cost());
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+// === The property the search rests on ===
+
+#[test]
+fun all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch() {
+    // Monotonicity in quantity is what makes a binary search exact. Walk
+    // consecutive lots across both places the impact charge changes shape: the
+    // scale kink where the marginal rate caps, and the point where the candidate
+    // overtakes the book's payout peak and starts carrying the max itself.
+    let (mut fx, expiry_id, trader) = impact_market(test_constants::default_manager_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        DISJOINT_BOOK_QUANTITY,
+        std::u64::max_value!(),
+        std::u64::max_value!(),
+    );
+
+    let lot = constants::position_lot_size!();
+    let mut quantity = DISJOINT_BOOK_QUANTITY - WALK_STEPS / 2 * lot;
+    let mut previous = 0;
+    let mut steps = 0;
+    while (steps < WALK_STEPS) {
+        let quote = impact_quote(&mut fx, &market, quantity);
+        assert!(quote.all_in_cost() >= previous);
+        previous = quote.all_in_cost();
+        quantity = quantity + lot;
+        steps = steps + 1;
+    };
+    assert!(previous > 0);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun all_in_cost_never_falls_across_the_subsidy_cap() {
+    // The same walk over the one fee term that is a `min` against a constant:
+    // the sponsor subsidy, capped by the sponsored balance partway through.
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    let lot = constants::position_lot_size!();
+    let mut quantity = SUBSIDY_CAP_QUANTITY / 2 - WALK_STEPS / 2 * lot;
+    let mut previous = 0;
+    let mut steps = 0;
+    while (steps < WALK_STEPS) {
+        let quote = atm_quote(&mut fx, &market, quantity);
+        assert!(quote.all_in_cost() >= previous);
+        previous = quote.all_in_cost();
+        quantity = quantity + lot;
+        steps = steps + 1;
+    };
+    assert!(previous > 0);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun all_in_cost_never_falls_at_the_maximum_backing_buffer() {
+    // The impact charge's two arms meet exactly at the branch switch for ANY
+    // `backing_buffer_lambda`, so monotonicity does not rest on that bound. Walk
+    // the switch at the envelope's maximum lambda to keep that claim honest.
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_backing_buffer_lambda(config_constants::max_backing_buffer_lambda!());
+    fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
+    fx.set_default_cadence_allocation(IMPACT_SCALE, test_constants::default_initial_expiry_cash());
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    helpers::return_market_bundle(market);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        0,
+        helpers::strike_tick(),
+        DISJOINT_BOOK_QUANTITY,
+        std::u64::max_value!(),
+        std::u64::max_value!(),
+    );
+
+    let lot = constants::position_lot_size!();
+    let mut quantity = DISJOINT_BOOK_QUANTITY - WALK_STEPS / 2 * lot;
+    let mut previous = 0;
+    let mut steps = 0;
+    while (steps < WALK_STEPS) {
+        let quote = impact_quote(&mut fx, &market, quantity);
+        assert!(quote.all_in_cost() >= previous);
+        previous = quote.all_in_cost();
+        quantity = quantity + lot;
+        steps = steps + 1;
+    };
+    assert!(previous > 0);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 // === Fixtures ===
 
 /// The anonymous quantity quote at the fixture's at-the-money strike, the
@@ -1068,12 +1409,78 @@ fun impact_quote(
     quote
 }
 
+/// A live market priced on a wide, flat total-variance surface, where the
+/// digital responds smoothly to a spot move and a two-finite-leg range is
+/// quotable. Mirrors `range_leg_fee_tests`' wide-range bring-up.
+fun wide_surface_market(): (helpers::Fixture, ID, helpers::Trader) {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_base_fee(SHIPPED_BASE_FEE);
+    fx.set_template_min_fee(SHIPPED_MIN_FEE);
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, WIDE_RANGE_SPOT);
+    seed_wide_surface(&mut fx, &mut market, WIDE_RANGE_SPOT, WIDE_RANGE_SPOT);
+    fx.seed_market_cash(
+        helpers::market_mut(&mut market),
+        test_constants::default_seeded_expiry_cash(),
+    );
+    helpers::return_market_bundle(market);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    (fx, expiry_id, trader)
+}
+
+/// Write the flat wide-variance surface, one millisecond forward, so a later
+/// call reprices the same market. Live pricing takes its spot from Pyth and
+/// applies the Block Scholes `forward / spot` basis to it, so raising `forward`
+/// above `spot` is how a repricing moves the expiry forward without rewriting the
+/// Pyth feed.
+fun seed_wide_surface(
+    fx: &mut helpers::Fixture,
+    market: &mut helpers::MarketBundle,
+    spot: u64,
+    forward: u64,
+) {
+    let timestamp_ms = fx.clock().timestamp_ms() + 1;
+    fx.set_clock_for_testing(timestamp_ms);
+    fx.seed_bs_surface_with_svi_bundle(
+        market,
+        spot,
+        forward,
+        WIDE_RANGE_VARIANCE,
+        false,
+        0,
+        test_constants::default_svi_sigma(),
+        0,
+        false,
+        0,
+        false,
+        timestamp_ms,
+    );
+}
+
+/// `impact_market` at the maximum admissible marginal impact rate, where the
+/// charge can outrun what a fill could pay out.
+fun max_impact_market(): (helpers::Fixture, ID, helpers::Trader) {
+    impact_market_at(
+        config_constants::max_inventory_impact_max_rate!(),
+        test_constants::default_manager_deposit(),
+    )
+}
+
 /// A live market with the inventory-impact curve enabled, mirroring
 /// `inventory_impact_flow_tests`, with the trader positioned to mint.
 fun impact_market(deposit: u64): (helpers::Fixture, ID, helpers::Trader) {
+    impact_market_at(IMPACT_MAX_RATE, deposit)
+}
+
+fun impact_market_at(
+    inventory_impact_max_rate: u64,
+    deposit: u64,
+): (helpers::Fixture, ID, helpers::Trader) {
     let mut fx = helpers::setup_market_default();
     fx.set_template_backing_buffer_lambda(BACKING_BUFFER_LAMBDA);
-    fx.set_template_inventory_impact_max_rate(IMPACT_MAX_RATE);
+    fx.set_template_inventory_impact_max_rate(inventory_impact_max_rate);
     fx.set_default_cadence_allocation(IMPACT_SCALE, test_constants::default_initial_expiry_cash());
     let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
     let trader = fx.create_funded_manager(deposit);
