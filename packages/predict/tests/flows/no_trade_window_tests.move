@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Flow coverage for the pre-expiry no-trade window. Inside it every live flow
-/// aborts — both quote entrypoints, both mint entrypoints, and `redeem_live` —
+/// aborts — all three quote entrypoints, all three mint entrypoints, and
+/// `redeem_live` —
 /// while settlement and settled redemption stay open, so a blocked close is
 /// delayed rather than stranded. Pins the boundary in both directions, that a
 /// zero window disables the block, and that the guard reads the configured
@@ -94,6 +95,62 @@ fun quote_mint_inside_the_window_aborts() {
         expiry - 1_000,
     );
     fx.quote_mint_bundle(&market, helpers::strike_tick(), constants::pos_inf_tick!(), QUANTITY);
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::ETradeWindowClosed)]
+fun mint_exact_cost_inside_the_window_aborts() {
+    let expiry = test_constants::short_expiry_ms();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        expiry,
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+
+    fx.advance_live_oracle_bundle_to(
+        &mut market,
+        test_constants::default_live_price(),
+        expiry - 1_000,
+    );
+    fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        0,
+    );
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::ETradeWindowClosed)]
+fun quote_mint_exact_cost_for_account_inside_the_window_aborts() {
+    let expiry = test_constants::short_expiry_ms();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        expiry,
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+
+    fx.advance_live_oracle_bundle_to(
+        &mut market,
+        test_constants::default_live_price(),
+        expiry - 1_000,
+    );
+    fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_deposit(),
+        0,
+    );
 
     abort 999
 }

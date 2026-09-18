@@ -145,6 +145,99 @@ fun default_rate_routes_protocol_fee_without_changing_trader_cost() {
 }
 
 #[test]
+fun cost_sized_mint_routes_the_referral_and_emits_the_sized_fill() {
+    // The all-in-budget mint shares the quantity mint's charge-and-record tail, so
+    // a fill it sizes must route the referral split and report itself exactly as
+    // an exact-quantity mint of that fill would: the event carries the SIZED
+    // quantity and that fill's own decomposition, not the budget.
+    let (mut fx, expiry_id, trader, referrer) = helpers::setup_referred_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    let referrer_account_id = trader_account_id(&mut fx, &referrer);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    let account_id = helpers::account_id_bundle(&account);
+
+    // One raw unit below the next lot's all-in cost sizes exactly this fill.
+    let next_lot = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        VARIANCE_SEED_QUANTITY + constants::position_lot_size!(),
+    );
+    let fill = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        VARIANCE_SEED_QUANTITY,
+    );
+    helpers::assert_atm_entry_probability(fill.entry_probability());
+    assert_eq!(fill.trading_fee(), VARIANCE_SEED_TRADING_FEE);
+
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
+    let market_cash_before = helpers::market(&market).cash_balance();
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        next_lot.all_in_cost() - 1,
+        VARIANCE_SEED_QUANTITY,
+    );
+
+    // The trader pays the fill's all-in cost; the referral comes out of protocol
+    // proceeds, so expiry cash keeps premium + fee less the referrer's share.
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        trader_balance_before - fill.all_in_cost(),
+    );
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        market_cash_before
+            + fill.premium()
+            + VARIANCE_SEED_TRADING_FEE
+            - VARIANCE_SEED_REFERRAL_FEE,
+    );
+    let events = event::events_by_type<order_events::OrderMinted>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedOrderMinted {
+        expiry_market_id: expiry_id,
+        account_id,
+        order_id,
+        position_root_id: order_id,
+        owner: helpers::owner(&trader),
+        lower_tick: helpers::strike_tick(),
+        higher_tick: constants::pos_inf_tick!(),
+        entry_probability: fill.entry_probability(),
+        quantity: VARIANCE_SEED_QUANTITY,
+        premium: fill.premium(),
+        trading_fee: VARIANCE_SEED_TRADING_FEE,
+        fee_incentive_subsidy: 0,
+        builder_fee: 0,
+        penalty_fee: 0,
+        referral_fee: VARIANCE_SEED_REFERRAL_FEE,
+        inventory_impact_charge: 0,
+        builder_code_id: option::none(),
+        referrer_account_id: option::some(referrer_account_id),
+        onchain_timestamp_ms: test_constants::now_ms(),
+        pyth_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_spot_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_forward_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+        block_scholes_svi_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
 fun rounded_zero_fee_keeps_referrer_event_attribution() {
     let (mut fx, expiry_id, trader, referrer) = helpers::setup_referred_live_market(
         test_constants::default_expiry_ms(),

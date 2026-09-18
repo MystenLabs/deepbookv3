@@ -132,6 +132,8 @@ Predict's monetary math rounds down by convention, and the rounding direction is
 
 The practical takeaway: dust accrues to the protocol, never against solvency. Users should expect occasional one-unit shortfalls in their favour-rounded amounts, never one-unit shortfalls in backing.
 
+For `mint_exact_cost`, only the budget search guarantees the largest fitting lot count. If its result would cost more than its maximum payout, a conservative fallback searches for a smaller fill. Integer rounding makes that payout predicate non-monotone: the fallback can miss a larger admissible fill and can abort on minimum premium or `min_quantity` even when another size would succeed. Set `min_quantity` to reject an unwanted smaller fill; a successful quote still does not preflight cash backing or exposure-index capacity. Payout-limited fills and lot-cap saturation may leave substantial budget unspent. These are the accepted sizing limits in [RP-36](../predeploy/response-policies.md#rp-36-all-in-budget-sizing-searches-the-charged-total-the-budget-fit-is-exact-to-one-lot-dbu-834).
+
 ## Cash-backing invariant
 
 Predict enforces solvency in two layers — one per expiry, one across the pool.

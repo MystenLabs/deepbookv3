@@ -57,9 +57,27 @@ public struct StrikeExposure has store {
     payout: StrikePayoutTree,
 }
 
+/// One prospective mint range, priced and policy-checked once, with the pre-mint
+/// payout-tree reads its inventory-impact charge is evaluated against. Built only
+/// by `quote_mint_range` and consumed by value in `mint_terms`, so a quantity
+/// search evaluates every candidate against one price and one tree read, and the
+/// terms it admits carry exactly that range and price. The book reads are taken
+/// only when inventory impact is enabled; a disabled market leaves them zero.
+public struct MintRange has drop {
+    expiry_market_id: ID,
+    lower_tick: u64,
+    higher_tick: u64,
+    price: RangePrice,
+    /// Pre-mint point-max and total live payout.
+    max_payout: u64,
+    total_payout: u64,
+    /// Pre-mint payout peak inside `(lower_tick, higher_tick]`.
+    range_max_payout: u64,
+}
+
 /// Pure mint terms for one prospective live mint: the priced tick range and
 /// quantity, plus the admission results they produced. Built only by
-/// `quote_mint_terms` and consumed by value in `allocate_mint_order`, so one
+/// `mint_terms` and consumed by value in `allocate_mint_order`, so one
 /// terms value backs at most one allocation and allocation can never see inputs
 /// that differ from the priced ones. Terms carry the pricing exposure's market
 /// identity; allocation asserts it, so terms cannot cross exposure books.
@@ -86,6 +104,16 @@ public struct LiveCloseTerms has drop {
     price: RangePrice,
     /// Separate inventory-impact rebate, sampled against the pre-close book.
     inventory_impact_rebate: u64,
+}
+
+public(package) fun mint_range_price(range: &MintRange): &RangePrice {
+    &range.price
+}
+
+/// Premium for minting `quantity` over `range`: the expression mint admission
+/// charges, without admission's policy asserts, for quantity searches.
+public(package) fun mint_range_premium(range: &MintRange, quantity: u64): u64 {
+    math::mul_down(range.price.probability(), quantity)
 }
 
 public(package) fun entry_probability(terms: &MintTerms): u64 {
@@ -290,39 +318,143 @@ public(package) fun inventory_impact_potential(exposure: &StrikeExposure): u64 {
     exposure.inventory_impact_potential_for_liability(exposure.payout_liability())
 }
 
-/// Price one mint (`adding`) or live close (`!adding`) as the exact change of a
-/// single book-level potential. Using one state function for every range makes
+/// Price one mint of `quantity` over `range` as the exact increase of the
+/// book-level potential, evaluated against the pre-mint book terms `range`
+/// sampled. Live closes are rebated the exact decrease of the same potential
+/// (`live_close_inventory_impact`); using one state function for every range makes
 /// all closed inventory cycles sum to zero before ordinary trading fees.
-public(package) fun inventory_impact(
+///
+/// Nondecreasing in `quantity`, which is what lets a budget search binary-search
+/// over it. The prospective liability is `max(M, R + q) + lambda * (T + q - that)`:
+/// while `R + q <= M` it rises at `lambda`, past that point the candidate carries
+/// the max itself and the gap `T - R` is constant so it rises at 1, and at the
+/// switch `q = M - R` both arms evaluate to `M + lambda * (T - R)` exactly. The
+/// two arms therefore agree where they meet and neither falls, independently of
+/// `backing_buffer_lambda`, and the potential is nondecreasing in liability.
+public(package) fun mint_range_inventory_impact(
+    exposure: &StrikeExposure,
+    range: &MintRange,
+    quantity: u64,
+): u64 {
+    if (exposure.config.inventory_impact_max_rate() == 0 || quantity == 0) return 0;
+
+    let before = exposure.live_payout_liability_from_terms(range.max_payout, range.total_payout);
+    let after = exposure.live_payout_liability_from_terms(
+        range.max_payout.max(range.range_max_payout + quantity),
+        range.total_payout + quantity,
+    );
+    exposure.inventory_impact_potential_for_liability(after)
+        - exposure.inventory_impact_potential_for_liability(before)
+}
+
+/// Price one live close of `payout` over `(lower_tick, higher_tick]` as the exact
+/// decrease of the book-level potential mints are charged against
+/// (`mint_range_inventory_impact`).
+public(package) fun live_close_inventory_impact(
     exposure: &StrikeExposure,
     lower_tick: u64,
     higher_tick: u64,
     payout: u64,
-    adding: bool,
 ): u64 {
     // Kill switch before the O(log n) range and complement reads.
     if (exposure.config.inventory_impact_max_rate() == 0 || payout == 0) return 0;
 
-    let (before, after) = exposure.payout_liabilities_after_change(
+    let (max_payout, total_payout) = exposure.payout.payout_reserve_terms();
+    // Every live order contributes its complete payout at every point in its
+    // range, so the pre-close range maximum is at least `payout`.
+    let range_max = exposure.payout.range_max_payout(lower_tick, higher_tick);
+    let complement_max = exposure.payout.complement_max_payout(lower_tick, higher_tick);
+    let before = exposure.live_payout_liability_from_terms(max_payout, total_payout);
+    let after = exposure.live_payout_liability_from_terms(
+        (range_max - payout).max(complement_max),
+        total_payout - payout,
+    );
+    exposure.inventory_impact_potential_for_liability(before)
+        - exposure.inventory_impact_potential_for_liability(after)
+}
+
+/// Price a mint range, apply the entry-probability policy, and sample the pre-mint
+/// book terms its inventory-impact charge depends on. Returns a range token for a
+/// quantity search followed by `mint_terms`.
+public(package) fun quote_mint_range(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+): MintRange {
+    let price = exposure.admitted_range_price(pricer, lower_tick, higher_tick);
+    exposure.config.assert_range_mint_probability_policy(&price);
+    // Kill switch before the O(log n) range read.
+    let (max_payout, total_payout, range_max_payout) = if (
+        exposure.config.inventory_impact_max_rate() == 0
+    ) {
+        (0, 0, 0)
+    } else {
+        let (max_payout, total_payout) = exposure.payout.payout_reserve_terms();
+        (max_payout, total_payout, exposure.payout.range_max_payout(lower_tick, higher_tick))
+    };
+    MintRange {
+        expiry_market_id: exposure.expiry_market_id,
         lower_tick,
         higher_tick,
-        payout,
-        adding,
-    );
-    let before_potential = exposure.inventory_impact_potential_for_liability(before);
-    let after_potential = exposure.inventory_impact_potential_for_liability(after);
-    if (adding) {
-        after_potential - before_potential
-    } else {
-        before_potential - after_potential
+        price,
+        max_payout,
+        total_payout,
+        range_max_payout,
+    }
+}
+
+/// Return the largest lot-rounded quantity whose premium over `range` fits
+/// `max_premium`. The probe is the expression admission charges, so the result is
+/// exact; the search domain is the lot cap, so an oversized budget saturates
+/// instead of aborting.
+public(package) fun max_quantity_for_premium(range: &MintRange, max_premium: u64): u64 {
+    let lot = constants::position_lot_size!();
+    let mut lo = 0;
+    let mut hi = order::max_quantity_lots();
+    while (lo < hi) {
+        let mid = (lo + hi + 1) / 2;
+        if (range.mint_range_premium(mid * lot) <= max_premium) {
+            lo = mid
+        } else {
+            hi = mid - 1
+        }
+    };
+    lo * lot
+}
+
+/// Admit a quantity over a quoted range: require it to meet `min_quantity`, run
+/// mint admission, and build the terms with the range's inventory-impact charge.
+public(package) fun mint_terms(
+    exposure: &StrikeExposure,
+    range: MintRange,
+    quantity: u64,
+    min_quantity: u64,
+): MintTerms {
+    // The range carries the book reads its impact charge is priced against, so a
+    // range from another exposure would misprice silently — and in the quote path
+    // no allocation follows to catch it.
+    assert!(range.expiry_market_id == exposure.expiry_market_id, ETermsExposureMismatch);
+    assert!(quantity >= min_quantity, EMintQuantityBelowMin);
+    let premium = exposure.config.assert_mint_admission(range.price.probability(), quantity);
+    // Preserve the mutation path's validation order.
+    order::assert_valid_quantity(quantity);
+    let inventory_impact_charge = exposure.mint_range_inventory_impact(&range, quantity);
+    let MintRange { expiry_market_id, lower_tick, higher_tick, price, .. } = range;
+    MintTerms {
+        expiry_market_id,
+        lower_tick,
+        higher_tick,
+        quantity,
+        price,
+        premium,
+        inventory_impact_charge,
     }
 }
 
 /// Price a range, choose quantity under the requested bias, and run mint
-/// admission. Exact-quantity mode uses `min_quantity`. Budget mode lot-rounds a
-/// premium search whose predicate is the same expression admission charges, so the
-/// largest admitted quantity is exact, then requires the result to meet
-/// `min_quantity`.
+/// admission. Exact-quantity mode uses `min_quantity`. Budget mode sizes with
+/// `max_quantity_for_premium`, then requires the result to meet `min_quantity`.
 public(package) fun quote_mint_terms(
     exposure: &StrikeExposure,
     pricer: &Pricer,
@@ -332,45 +464,13 @@ public(package) fun quote_mint_terms(
     min_quantity: u64,
     exact_quantity: bool,
 ): MintTerms {
-    let price = exposure.admitted_range_price(pricer, lower_tick, higher_tick);
-    exposure.config.assert_range_mint_probability_policy(&price);
-    let entry_probability = price.probability();
-
+    let range = exposure.quote_mint_range(pricer, lower_tick, higher_tick);
     let quantity = if (exact_quantity) {
         min_quantity
     } else {
-        let lot = constants::position_lot_size!();
-        let mut lo = 0;
-        let mut hi = order::max_quantity_lots();
-        while (lo < hi) {
-            let mid = (lo + hi + 1) / 2;
-            if (math::mul_down(entry_probability, mid * lot) <= max_premium) {
-                lo = mid
-            } else {
-                hi = mid - 1
-            }
-        };
-        lo * lot
+        range.max_quantity_for_premium(max_premium)
     };
-    assert!(quantity >= min_quantity, EMintQuantityBelowMin);
-
-    let premium = exposure.config.assert_mint_admission(entry_probability, quantity);
-    // Preserve the mutation path's validation order.
-    order::assert_valid_quantity(quantity);
-    MintTerms {
-        expiry_market_id: exposure.expiry_market_id,
-        lower_tick,
-        higher_tick,
-        quantity,
-        price,
-        premium,
-        inventory_impact_charge: exposure.inventory_impact(
-            lower_tick,
-            higher_tick,
-            quantity,
-            true,
-        ),
-    }
+    exposure.mint_terms(range, quantity, min_quantity)
 }
 
 /// Allocate a live mint order from priced terms: consume the expiry-local
@@ -411,11 +511,10 @@ public(package) fun quote_live_close(
         close_quantity,
         redeem_amount: math::mul_down(range_probability, close_quantity),
         price,
-        inventory_impact_rebate: exposure.inventory_impact(
+        inventory_impact_rebate: exposure.live_close_inventory_impact(
             order.lower_tick(),
             order.higher_tick(),
             close_quantity,
-            false,
         ),
     }
 }
@@ -540,33 +639,10 @@ fun inventory_impact_potential_for_liability(exposure: &StrikeExposure, liabilit
     potential_at_capped_liability + math::mul_down(max_rate, liability - scale)
 }
 
-/// Return the exact current and prospective live liabilities for one range
-/// change. Evaluating the full terms on both sides is necessary: independently
-/// rounding `lambda * delta(T-M)` can miss a one-atom carry already accumulated
-/// in the book's buffered gap.
-fun payout_liabilities_after_change(
-    exposure: &StrikeExposure,
-    lower_tick: u64,
-    higher_tick: u64,
-    payout: u64,
-    adding: bool,
-): (u64, u64) {
-    let (max_payout, total_payout) = exposure.payout.payout_reserve_terms();
-    let range_max = exposure.payout.range_max_payout(lower_tick, higher_tick);
-    let (after_max, after_total) = if (adding) {
-        (max_payout.max(range_max + payout), total_payout + payout)
-    } else {
-        // Every live order contributes its complete payout at every point in its
-        // range, so the pre-close range maximum is at least `payout`.
-        let complement_max = exposure.payout.complement_max_payout(lower_tick, higher_tick);
-        ((range_max - payout).max(complement_max), total_payout - payout)
-    };
-    (
-        exposure.live_payout_liability_from_terms(max_payout, total_payout),
-        exposure.live_payout_liability_from_terms(after_max, after_total),
-    )
-}
-
+/// Return the live liability for full point-max and total payout terms. Trade
+/// impact evaluates this on both the current and prospective terms: independently
+/// rounding `lambda * delta(T-M)` can miss a one-atom carry already accumulated in
+/// the book's buffered gap.
 fun live_payout_liability_from_terms(
     exposure: &StrikeExposure,
     max_payout: u64,
