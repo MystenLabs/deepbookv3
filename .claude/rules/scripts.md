@@ -11,7 +11,7 @@ paths:
 
 `scripts/` holds only the **protocol package-upgrade** transactions and a couple of SDK examples:
 
-- `scripts/transactions/mainPackageUpgrade.ts`, `marginPackageUpgrade.ts`, `vaultPackageUpgrade.ts` — run `sui client upgrade` and serialize an unsigned upgrade tx to `tx/tx-data.txt` for the multisig.
+- `scripts/transactions/mainPackageUpgrade.ts`, `marginPackageUpgrade.ts`, `vaultPackageUpgrade.ts`, `predictPackageUpgrade.ts`, `sessionsPackageUpgrade.ts` — run `sui client upgrade` and serialize an unsigned upgrade tx to `tx/tx-data.txt` for the multisig. One script per package; each has a matching `transaction_type` option in `.github/workflows/deepbookv3-build-tx.yml`.
 - `scripts/transactions/serializeUnsignedUpgrade.ts` — shared `GAS_OBJECT` check and `execFileSync` argv invocation for those upgrade scripts.
 - `scripts/transactions/createPermissionlessPool.ts`, `deepbookMarketMaker.ts` — SDK usage examples.
 - `scripts/config/constants.ts` — the DeepBook core `upgradeCapID`.
