@@ -192,18 +192,6 @@ public(package) fun cancel_withdraw_request<LP>(
     (request.account_id, request.amount, refund)
 }
 
-/// The executable band's UPPER test alone:
-///   price <= band  <=>  pool_value <= band·supply  <=>  ceil(pool_value/band) <= supply
-///
-/// Package-visible because `plp::add_usdc_without_shares` must refuse a contribution
-/// that would push the pool above this ceiling. Above it every supply and withdraw
-/// head is refunded (RP-2) and `total_supply` can only grow through a supply fill, so
-/// nothing can bring the price back down — the state is terminal. Single-homed here so
-/// the guard and the mark it protects cannot drift apart.
-public(package) fun within_price_ceiling(pool_value: u64, total_supply: u64): bool {
-    pool_value.div_ceil(constants::executable_price_band_factor!()) <= total_supply
-}
-
 public(package) fun new_flush_mark(pool_value: u64, total_supply: u64): FlushMark {
     FlushMark {
         pool_value,
@@ -881,9 +869,9 @@ fun is_executable_mark(pool_value: u64, total_supply: u64): bool {
     if (total_supply == 0) return false;
     // Executable iff the mark price is within band× of unit parity in both
     // directions (USDC and PLP share 6 decimals, so unit price is raw-unit
-    // parity and no price unit enters the test). The upper half is
-    // `within_price_ceiling`; the lower half is
+    // parity and no price unit enters the test):
+    //   price <= band    <=>  pool_value <= band·supply  <=>  ceil(pv/band) <= supply
     //   price >= 1/band  <=>  supply <= band·pool_value  <=>  ceil(supply/band) <= pv
-    within_price_ceiling(pool_value, total_supply) &&
-        total_supply.div_ceil(constants::executable_price_band_factor!()) <= pool_value
+    let band = constants::executable_price_band_factor!();
+    pool_value.div_ceil(band) <= total_supply && total_supply.div_ceil(band) <= pool_value
 }

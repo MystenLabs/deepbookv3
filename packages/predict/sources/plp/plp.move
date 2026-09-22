@@ -672,15 +672,15 @@ public fun sponsor_fee_incentives(
 /// - **Bootstrapped pool.** At `total_supply == 0` there is no share base to credit;
 ///   the USDC would only inflate the genesis lock's non-withdrawable stake.
 /// - **Executable price ceiling.** Idle after the contribution must still price
-///   within the band `lp_book::drain` requires (`within_price_ceiling`). Above that
-///   ceiling every supply and withdraw head is refunded (RP-2) and `total_supply`
-///   grows only through a supply fill, so nothing brings the price back down — a
-///   terminal state that an unbounded contribution against a small share base would
-///   otherwise reach for the price of the contribution. The test is one-sided
-///   because a contribution can only move the price up. It reads idle rather than
-///   pool NAV — NAV needs a flush — which is exactly the protocol-controlled share:
-///   the guard forbids this entrypoint from *manufacturing* the degenerate ratio and
-///   leaves market-driven NAV moves to RP-1/RP-2, which own them.
+///   inside the band a flush mark needs to be fillable. Above that ceiling every
+///   supply and withdraw head is refunded (RP-2) and `total_supply` grows only
+///   through a supply fill, so nothing brings the price back down — a terminal state
+///   that an unbounded contribution against a small share base would otherwise reach
+///   for the price of the contribution. The test is one-sided because a contribution
+///   can only move the price up. It reads idle rather than pool NAV — NAV needs a
+///   flush — which is exactly the protocol-controlled share: the guard forbids this
+///   entrypoint from *manufacturing* the degenerate ratio and leaves market-driven
+///   NAV moves to RP-1/RP-2, which own them.
 /// - **No flush in flight.** The seal freezes idle mid-flush, so an ungated
 ///   contribution would land on one side or the other of that capture depending only
 ///   on when the contributor's transaction executed — either paying that flush's
@@ -699,9 +699,16 @@ public fun add_usdc_without_shares(
     assert!(total_supply > 0, ENotBootstrapped);
     let amount = payment.value();
     assert!(amount >= constants::min_usdc_contribution!(), EBelowMinUsdcContribution);
+    // The upper half of the band `lp_book`'s mark applies, restated here rather than
+    // shared so this change leaves `lp_book` untouched:
+    //   price <= band  <=>  idle <= band·supply  <=>  ceil(idle/band) <= supply
+    // The two are held together behaviourally, not by a shared symbol:
+    // `a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills`
+    // requires a flush to actually fill at the exact ceiling this admits, so a band
+    // that moved on either side would fail it.
     let idle_after = vault.expiry_accounting.idle_balance() + amount;
     assert!(
-        lp_book::within_price_ceiling(idle_after, total_supply),
+        idle_after.div_ceil(constants::executable_price_band_factor!()) <= total_supply,
         EContributionExceedsPriceCeiling,
     );
     vault.expiry_accounting.receive_idle(payment.into_balance());

@@ -115,10 +115,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   ratchet cheaply forcible — about 1,000 USDC against the 10 PLP genesis-lock
   share base, after which every supply and withdraw head refunds and
   `total_supply` can never grow to bring the price back down. It is therefore
-  admission-gated at the source: the contribution must leave idle within
-  `lp_book::within_price_ceiling`, the same band formula this policy's mark
-  uses. The "cannot be cheaply forced" claim above holds only while that guard
-  stands. Aborting there is on-ladder — a single-user, user-recoverable action,
+  admission-gated at the source: the contribution must leave idle inside this
+  policy's own band ceiling (`ceil(idle/band) <= supply`, the comparison
+  `lp_book::is_executable_mark` makes, restated in `plp` and pinned to it by the
+  tests below rather than shared as a symbol). The "cannot be cheaply forced"
+  claim above holds only while that guard stands. Aborting there is on-ladder — a single-user, user-recoverable action,
   not a shared or mandatory path — and it keeps the protocol from
   *manufacturing* the degenerate ratio, which is the maintainable direction
   this policy already names. Market-driven NAV moves into the band are
