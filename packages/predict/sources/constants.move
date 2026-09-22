@@ -8,7 +8,7 @@ module deepbook_predict::constants;
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 2 }
+public macro fun current_version(): u64 { 3 }
 
 // === Scaling ===
 
@@ -55,6 +55,12 @@ public(package) macro fun request_cancel_reason_limit_missed(): u8 { 2 }
 /// 10 USDC (6-decimal units). The locked PLP keeps `total_supply > 0` for the
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
+
+/// Minimum USDC a single no-shares contribution may add (`plp::add_usdc_to_plp`):
+/// 10 USDC (6-decimal units), matching the supply-request floor. Its own knob rather
+/// than a reuse of `min_supply_request` because queue admission and contribution
+/// admission are separate policies that may diverge.
+public(package) macro fun min_usdc_contribution(): u64 { 10_000_000 }
 
 /// Executable frozen-mark band: the PLP price must be within this factor of unit
 /// parity (1 USDC per whole PLP) in both directions — [0.01, 100] USDC. USDC

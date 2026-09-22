@@ -214,6 +214,17 @@ public struct CapitalLocked has copy, drop, store {
     amount: u64,
 }
 
+/// Emitted when a contributor adds USDC to pool idle liquidity without minting PLP
+/// (`plp::add_usdc_to_plp`). The contribution raises every holder's share
+/// of pool NAV; it carries no `idle_balance_after` because idle has no canonical
+/// post-state event stream — `ExpiryCashRebalanced` also moves idle without reporting
+/// it, so a balance-after here would be a second, drifting source for that fact.
+public struct UsdcAddedToPlp has copy, drop, store {
+    pool_vault_id: ID,
+    contributor: address,
+    amount: u64,
+}
+
 /// Emitted when a sponsor contributes USDC to the pool-level fee incentive reserve.
 public struct FeeIncentivesSponsored has copy, drop, store {
     pool_vault_id: ID,
@@ -490,6 +501,10 @@ public(package) fun emit_capital_locked(pool_vault_id: ID, amount: u64) {
     event::emit(CapitalLocked { pool_vault_id, amount });
 }
 
+public(package) fun emit_usdc_added_to_plp(pool_vault_id: ID, contributor: address, amount: u64) {
+    event::emit(UsdcAddedToPlp { pool_vault_id, contributor, amount });
+}
+
 public(package) fun emit_fee_incentives_sponsored(
     pool_vault_id: ID,
     sponsor: address,
@@ -547,6 +562,14 @@ public(package) fun emit_fee_incentives_returned(
 #[test_only]
 public fun flush_executed_fee_rates(event: &FlushExecuted): (u64, u64) {
     (event.supply_fee_rate, event.withdraw_fee_rate)
+}
+
+/// `(contributor, amount)` — exists so a test can assert the credited contributor is
+/// the transaction sender. No balance assertion can see that field, and crediting the
+/// wrong address would misattribute the whole incentive stream off-chain.
+#[test_only]
+public fun usdc_added_to_plp_fields(event: &UsdcAddedToPlp): (address, u64) {
+    (event.contributor, event.amount)
 }
 
 /// `(live pre-drain idle, frozen mark idle)` — exists so a test can assert the
