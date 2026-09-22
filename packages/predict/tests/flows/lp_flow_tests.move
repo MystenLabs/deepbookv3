@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Vault-level flow coverage for the async LP layer: the genesis `lock_capital` mint,
-/// the bootstrap precondition on the flush, and the request-attempt count that
-/// `finish_flush` reads from `ProtocolConfig`.
+/// the bootstrap precondition on the flush, the request-attempt count that
+/// `finish_flush` reads from `ProtocolConfig`, and the no-shares USDC addition that
+/// raises the mark without touching the share base.
 ///
 /// The fixture shares an empty `sui::accumulator::AccumulatorRoot` through
 /// `accumulator_support` (the framework exposes `create_for_testing`, callable as
@@ -21,10 +22,14 @@
 module deepbook_predict::lp_flow_tests;
 
 use deepbook_predict::{
-    constants::{min_bootstrap_liquidity as min_bootstrap, min_supply_request as min_supply},
+    constants::{
+        min_bootstrap_liquidity as min_bootstrap,
+        min_supply_request as min_supply,
+        min_usdc_addition as min_addition,
+    },
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
-    protocol_config::ProtocolConfig,
+    protocol_config::{Self, ProtocolConfig},
     test_constants,
     vault_events
 };
@@ -43,6 +48,9 @@ const SUPPLY_AFTER_MAX_FEE: u64 = 19_500_000;
 const LP_DEPOSIT: u64 = 1_000_000_000;
 /// No fill limit, so only pool capacity can stop the request.
 const NO_MIN_OUT: u64 = 0;
+/// A no-shares addition comfortably above `min_usdc_addition`, distinct from every
+/// other figure here so an assertion cannot pass on the wrong quantity.
+const ADDITION: u64 = 25_000_000;
 
 // === Genesis lock + bootstrapped gates ===
 
@@ -285,7 +293,174 @@ fun flush_freezes_both_configured_fee_rates() {
     fx.finish();
 }
 
+// === No-shares USDC additions ===
+
+/// The whole contract of the entrypoint: the USDC lands in idle and the share base
+/// does not move, so the value sits under an unchanged `total_supply`. Also pins where
+/// it does NOT land — the fee-incentive reserve is a separate pool excluded from NAV,
+/// and the profit basis is reserved for cash the pool sent to and got back from
+/// expiries, so an outright gift is neither a debit nor a credit.
+#[test]
+fun add_usdc_without_shares_lands_in_idle_and_mints_nothing() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+
+    add_usdc(&mut fx, ADDITION);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    // 10 USDC genesis lock + 25 USDC added.
+    assert_eq!(vault.idle_balance(), 35_000_000);
+    assert_eq!(vault.plp_total_supply(), min_supply!());
+    assert_eq!(vault.fee_incentive_reserve(), 0);
+    assert_eq!(vault.protocol_reserve_balance(), 0);
+    assert_eq!(vault.profit_basis_debits(), 0);
+    assert_eq!(vault.profit_basis_credits(), 0);
+    return_shared(vault);
+
+    fx.finish();
+}
+
+/// The added value reaches existing holders, and only them. A 10 USDC addition on top
+/// of the 10 USDC genesis lock doubles the mark to 2 USDC per PLP with no new shares,
+/// so the next 10 USDC deposit buys 5 PLP where it would have bought 10. The protocol
+/// reserve takes 10% of expiry profit by default and none of this, because the profit
+/// basis never saw it.
+#[test]
+fun add_usdc_without_shares_raises_the_mark_for_existing_holders() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    // Isolate the mark: a non-zero supply fee would shave the fill as well.
+    set_supply_fee(&mut fx, 0);
+    add_usdc(&mut fx, min_supply!());
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
+
+    // 20 USDC of idle priced against the 10 PLP the lock minted: no cut was withheld.
+    assert_eq!(pool_nav, 20_000_000);
+    // floor(10 USDC x 10 PLP / 20 USDC) = 5 PLP minted on top of the 10 PLP lock.
+    assert_pending_and_supply(&mut fx, 0, 15_000_000);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    // 10 locked + 10 added + the 10 the fill joined.
+    assert_eq!(vault.idle_balance(), 30_000_000);
+    assert_eq!(vault.protocol_reserve_balance(), 0);
+    return_shared(vault);
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// The control for the test above: without the addition the identical deposit mints
+/// 1:1, so that test is measuring the addition rather than some other fill path.
+#[test]
+fun the_same_deposit_mints_at_parity_without_an_addition() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, 0);
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
+
+    assert_eq!(pool_nav, min_supply!());
+    assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// A supply queued before the addition is priced at the raised mark, not the mark that
+/// stood when it was queued. The request carries a price floor, so an LP who needs the
+/// pre-addition price says so with `min_plp_out` — here 10 PLP for 10 USDC, which the
+/// doubled mark cannot meet, and the request is refunded instead of filled at 5.
+#[test]
+fun an_addition_between_queueing_and_the_flush_can_miss_a_supply_limit() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, 0);
+    queue_supply(&mut fx, &mut account, min_supply!());
+    add_usdc(&mut fx, min_supply!());
+
+    flush(&mut fx);
+
+    // Refunded on its first miss: only the genesis lock exists, and the addition stays.
+    assert_pending_and_supply(&mut fx, 0, min_supply!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.idle_balance(), 20_000_000);
+    return_shared(vault);
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// The entrypoint is permissionless, so the event is the only record of who funded an
+/// addition. Alice adds here while the admin holds every cap; crediting the wrong
+/// address would misattribute the whole incentive stream and no balance can see it.
+#[test]
+fun add_usdc_without_shares_credits_the_sender_in_its_event() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+
+    add_usdc(&mut fx, ADDITION);
+
+    let events = event::events_by_type<vault_events::UsdcAddedWithoutShares>();
+    assert_eq!(events.length(), 1);
+    let (contributor, amount) = vault_events::usdc_added_without_shares_fields(&events[0]);
+    assert_eq!(contributor, test_constants::alice());
+    assert_eq!(amount, ADDITION);
+
+    fx.finish();
+}
+
+#[test, expected_failure(abort_code = plp::ENotBootstrapped)]
+fun add_usdc_without_shares_before_bootstrap_aborts() {
+    let mut fx = helpers::setup_market_default();
+    // No share base to credit: the USDC would only enrich the genesis lock, which is
+    // never withdrawable.
+    add_usdc(&mut fx, ADDITION);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = plp::EBelowMinUsdcAddition)]
+fun add_usdc_without_shares_below_the_floor_aborts() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+    add_usdc(&mut fx, min_addition!() - 1);
+    abort 999
+}
+
+/// Refused for the whole flush, not just the snapshot stage. The seal has already
+/// frozen idle here, so an addition landing now would raise the pool without raising
+/// the mark this flush pays its queued withdrawals at — the contributor's transaction
+/// timing, not their intent, would decide who received the value.
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun add_usdc_without_shares_is_refused_after_the_seal() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let stage = fx.start_flush(&mut config, &mut vault);
+    helpers::seal_snapshot(stage, &mut vault, &mut config);
+
+    fx.add_usdc_without_shares_direct(&mut vault, &config, ADDITION);
+    abort 999
+}
+
 // === Helpers ===
+
+/// Add USDC to idle with no shares minted, as a non-admin, through the production
+/// entrypoint.
+fun add_usdc(fx: &mut helpers::Fixture, amount: u64) {
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    fx.add_usdc_without_shares_direct(&mut vault, &config, amount);
+    return_shared(vault);
+    return_shared(config);
+}
 
 /// A bootstrapped pool (no live markets) plus a funded LP account.
 fun setup_pool_with_lp(): (helpers::Fixture, helpers::AccountBundle) {
@@ -360,16 +535,17 @@ fun unattainable_min_out(): u64 { std::u64::max_value!() }
 /// Run one flush over the empty market set (pool NAV == idle), draining both queues
 /// fully, and discard the result.
 fun flush(fx: &mut helpers::Fixture) {
-    flush_with_budgets(fx, option::none(), option::none());
+    let _ = flush_with_budgets(fx, option::none(), option::none());
 }
 
-/// Run one flush bounding how many supply / withdraw requests each queue may fill.
-/// Started through the sole flush authority, the `PoolValuationCap`.
+/// Run one flush bounding how many supply / withdraw requests each queue may fill,
+/// returning the pool NAV it priced the drain at. Started through the sole flush
+/// authority, the `PoolValuationCap`.
 fun flush_with_budgets(
     fx: &mut helpers::Fixture,
     supply_budget: Option<u64>,
     withdraw_budget: Option<u64>,
-) {
+): u64 {
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
@@ -380,7 +556,8 @@ fun flush_with_budgets(
         withdraw_budget,
     );
     helpers::seal_snapshot(stage, &mut vault, &mut config);
-    let _ = fx.finish_flush(&mut vault, &mut config);
+    let pool_nav = fx.finish_flush(&mut vault, &mut config);
     return_shared(config);
     return_shared(vault);
+    pool_nav
 }

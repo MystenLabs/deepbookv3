@@ -55,6 +55,7 @@ const EIncompleteValuationSnapshot: u64 = 8;
 const EExpiredMarketNotSettled: u64 = 9;
 const EValuationWindowExpired: u64 = 10;
 const ESnapshotStageOpen: u64 = 11;
+const EBelowMinUsdcAddition: u64 = 12;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -649,6 +650,41 @@ public fun sponsor_fee_incentives(
         amount,
         vault.fee_incentive_reserve.value(),
     );
+}
+
+/// Add USDC straight to pool idle liquidity without minting any PLP. Anyone may
+/// call it; the payment is an outright gift to the existing share base, so the
+/// caller receives nothing back and no share of it is recoverable.
+///
+/// This is the incentive/top-up path: because no shares are issued, the whole
+/// `payment` lands inside the value the next flush's mark divides by an unchanged
+/// `total_supply`, which raises NAV per PLP for every current holder. It deliberately
+/// does not touch the profit basis — the basis tracks cash sent to and returned from
+/// expiries, so an external gift is neither a debit nor a credit, and the protocol
+/// reserve therefore takes no cut of it (`lp_pool_value` leaves `exclusion` unchanged
+/// while `gross_pool_value` grows). Sending the same USDC through `request_supply`
+/// instead would mint offsetting shares and leave the mark where it was.
+///
+/// Requires a bootstrapped pool: with `total_supply == 0` there is no share base to
+/// credit and the USDC would only inflate the genesis lock's non-withdrawable stake.
+/// Gated for the whole flush, like `sponsor_fee_incentives`: the seal freezes idle
+/// mid-flush, so an ungated addition would land on one side or the other of that
+/// capture depending only on when the contributor's transaction executed — either
+/// paying the queued withdrawals of that flush or not. Refusing it outright makes
+/// every addition fully captured by the next snapshot instead.
+public fun add_usdc_without_shares(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    payment: Coin<USDC>,
+    ctx: &TxContext,
+) {
+    config.assert_version();
+    config.assert_not_valuation_in_progress();
+    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    let amount = payment.value();
+    assert!(amount >= constants::min_usdc_addition!(), EBelowMinUsdcAddition);
+    vault.expiry_accounting.receive_idle(payment.into_balance());
+    vault_events::emit_usdc_added_without_shares(vault.id(), ctx.sender(), amount);
 }
 
 /// Bootstrap the pool exactly once: permanently lock `payment` USDC of minimum

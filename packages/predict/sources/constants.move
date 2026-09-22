@@ -56,6 +56,12 @@ public(package) macro fun request_cancel_reason_limit_missed(): u8 { 2 }
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
 
+/// Minimum USDC a single no-shares addition may contribute (`plp::add_usdc_without_shares`):
+/// 10 USDC (6-decimal units), the same floor as a supply request. A dust addition
+/// would move the mark by less than a rounding unit while still costing an event,
+/// so the floor keeps the no-shares path from becoming a spam surface.
+public(package) macro fun min_usdc_addition(): u64 { 10_000_000 }
+
 /// Executable frozen-mark band: the PLP price must be within this factor of unit
 /// parity (1 USDC per whole PLP) in both directions — [0.01, 100] USDC. USDC
 /// and PLP both use 6 decimals, so unit parity is raw-unit parity and the band
