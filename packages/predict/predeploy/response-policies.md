@@ -124,6 +124,29 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   *manufacturing* the degenerate ratio, which is the maintainable direction
   this policy already names. Market-driven NAV moves into the band are
   unaffected and stay owned here.
+- **Accepted residual of that gate (2026-09-22):** it bounds idle, not the
+  mark. `gross_pool_value` is `idle + active_expiry_value`, so a pool whose
+  ACTIVE NAV has already carried it near the ceiling can still be pushed over
+  by a contribution that passes the idle test — 10 PLP of supply against 990
+  USDC of active NAV prices at 99 USDC/PLP, and a 100 USDC contribution
+  (idle-side test: `ceil(100e6/100) = 1e6 <= 10e6`, admitted) takes gross to
+  1,090 USDC and the mark to 109, outside the band. This is not a new
+  capability: deliberately losing trades to the pool raises NAV the same way,
+  the fee component immediately and the premium in full at settlement, so the
+  near-ceiling crossing was already reachable without an entrypoint. It also
+  needs ~100x appreciation over the share base before any contribution
+  matters, and it costs the attacker the whole contribution with nothing
+  returned — griefing that destroys value rather than extracting it. Closing
+  it exactly would need the mark, which needs a flush; RP-1 already rejected
+  mark-level guards because they brick the legitimate appreciation and
+  recapitalization states. A stored last-flush NAV would only move the
+  approximation (stale between flushes, over- and under-rejecting as active
+  NAV moves) at the cost of new vault state written on the flush path. What
+  the admission gate does remove is the cheap universal case — an unaged pool
+  at its genesis share base, where no appreciation is needed at all and the
+  cost is ~1,000 USDC. UNPINNED: reaching the near-ceiling state needs a
+  funded market with oracle-priced NAV, which the no-market LP fixture cannot
+  build; the gate's own boundaries are pinned below.
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
