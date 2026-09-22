@@ -110,7 +110,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   candidate: drive NAV collapse and measure the window width and ratchet
   onset.
 - **Reachability of the UPPER band, re-checked 2026-09-22 for
-  `plp::add_usdc_without_shares`:** that entrypoint moves pool value up by an
+  `plp::add_usdc_to_plp`:** that entrypoint moves pool value up by an
   arbitrary amount with no bet to win, so it would have made the above-ceiling
   ratchet cheaply forcible — about 1,000 USDC against the 10 PLP genesis-lock
   share base, after which every supply and withdraw head refunds and

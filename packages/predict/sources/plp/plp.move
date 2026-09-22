@@ -687,7 +687,7 @@ public fun sponsor_fee_incentives(
 ///   queued withdrawals or not. `sponsor_fee_incentives` takes the same gate.
 ///   `rebalance_expiry_cash` may run mid-window because it only moves cash between
 ///   two figures the seal already froze; new value is different.
-public fun add_usdc_without_shares(
+public fun add_usdc_to_plp(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     payment: Coin<USDC>,
@@ -712,7 +712,7 @@ public fun add_usdc_without_shares(
         EContributionExceedsPriceCeiling,
     );
     vault.expiry_accounting.receive_idle(payment.into_balance());
-    vault_events::emit_usdc_added_without_shares(vault.id(), ctx.sender(), amount);
+    vault_events::emit_usdc_added_to_plp(vault.id(), ctx.sender(), amount);
 }
 
 /// Bootstrap the pool exactly once: permanently lock `payment` USDC of minimum

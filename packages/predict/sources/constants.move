@@ -56,7 +56,7 @@ public(package) macro fun request_cancel_reason_limit_missed(): u8 { 2 }
 /// life of the pool, so async LP pricing never needs a supply==0 bootstrap branch.
 public(package) macro fun min_bootstrap_liquidity(): u64 { 10_000_000 }
 
-/// Minimum USDC a single no-shares contribution may add (`plp::add_usdc_without_shares`):
+/// Minimum USDC a single no-shares contribution may add (`plp::add_usdc_to_plp`):
 /// 10 USDC (6-decimal units), matching the supply-request floor. Its own knob rather
 /// than a reuse of `min_supply_request` because queue admission and contribution
 /// admission are separate policies that may diverge.

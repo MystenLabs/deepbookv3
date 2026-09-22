@@ -305,7 +305,7 @@ fun flush_freezes_both_configured_fee_rates() {
 /// and the profit basis is reserved for cash the pool sent to and got back from
 /// expiries, so an outright gift is neither a debit nor a credit.
 #[test]
-fun add_usdc_without_shares_lands_in_idle_and_mints_nothing() {
+fun add_usdc_to_plp_lands_in_idle_and_mints_nothing() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_supply!());
 
@@ -331,7 +331,7 @@ fun add_usdc_without_shares_lands_in_idle_and_mints_nothing() {
 /// reserve takes 10% of expiry profit by default and none of this, because the profit
 /// basis never saw it.
 #[test]
-fun add_usdc_without_shares_raises_the_mark_for_existing_holders() {
+fun add_usdc_to_plp_raises_the_mark_for_existing_holders() {
     let (mut fx, mut account) = setup_pool_with_lp();
     // Isolate the mark: a non-zero supply fee would shave the fill as well.
     set_supply_fee(&mut fx, 0);
@@ -402,15 +402,15 @@ fun a_contribution_between_queueing_and_the_flush_can_miss_a_supply_limit() {
 /// contribution. Alice contributes here while the admin holds every cap; crediting the wrong
 /// address would misattribute the whole incentive stream and no balance can see it.
 #[test]
-fun add_usdc_without_shares_credits_the_sender_in_its_event() {
+fun add_usdc_to_plp_credits_the_sender_in_its_event() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_supply!());
 
     contribute(&mut fx, CONTRIBUTION);
 
-    let events = event::events_by_type<vault_events::UsdcAddedWithoutShares>();
+    let events = event::events_by_type<vault_events::UsdcAddedToPlp>();
     assert_eq!(events.length(), 1);
-    let (contributor, amount) = vault_events::usdc_added_without_shares_fields(&events[0]);
+    let (contributor, amount) = vault_events::usdc_added_to_plp_fields(&events[0]);
     assert_eq!(contributor, test_constants::alice());
     assert_eq!(amount, CONTRIBUTION);
 
@@ -539,7 +539,7 @@ fun a_contribution_at_the_minimum_is_accepted() {
 }
 
 #[test, expected_failure(abort_code = plp::ENotBootstrapped)]
-fun add_usdc_without_shares_before_bootstrap_aborts() {
+fun add_usdc_to_plp_before_bootstrap_aborts() {
     let mut fx = helpers::setup_market_default();
     // No share base to credit: the USDC would only enrich the genesis lock, which is
     // never withdrawable.
@@ -548,7 +548,7 @@ fun add_usdc_without_shares_before_bootstrap_aborts() {
 }
 
 #[test, expected_failure(abort_code = plp::EBelowMinUsdcContribution)]
-fun add_usdc_without_shares_below_the_floor_aborts() {
+fun add_usdc_to_plp_below_the_floor_aborts() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_supply!());
     contribute(&mut fx, min_contribution!() - 1);
@@ -558,7 +558,7 @@ fun add_usdc_without_shares_below_the_floor_aborts() {
 /// Refused inside the still-open snapshot stage too, so the gate covers the flush from
 /// its first transaction rather than only after the seal.
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun add_usdc_without_shares_is_refused_inside_the_open_snapshot_stage() {
+fun add_usdc_to_plp_is_refused_inside_the_open_snapshot_stage() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_supply!());
 
@@ -567,7 +567,7 @@ fun add_usdc_without_shares_is_refused_inside_the_open_snapshot_stage() {
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     let stage = fx.start_flush(&mut config, &mut vault);
 
-    fx.add_usdc_without_shares_direct(&mut vault, &config, CONTRIBUTION);
+    fx.add_usdc_to_plp_direct(&mut vault, &config, CONTRIBUTION);
     helpers::seal_snapshot(stage, &mut vault, &mut config);
     abort 999
 }
@@ -577,7 +577,7 @@ fun add_usdc_without_shares_is_refused_inside_the_open_snapshot_stage() {
 /// the mark this flush pays its queued withdrawals at — the contributor's transaction
 /// timing, not their intent, would decide who received the value.
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
-fun add_usdc_without_shares_is_refused_after_the_seal() {
+fun add_usdc_to_plp_is_refused_after_the_seal() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_supply!());
 
@@ -587,7 +587,7 @@ fun add_usdc_without_shares_is_refused_after_the_seal() {
     let stage = fx.start_flush(&mut config, &mut vault);
     helpers::seal_snapshot(stage, &mut vault, &mut config);
 
-    fx.add_usdc_without_shares_direct(&mut vault, &config, CONTRIBUTION);
+    fx.add_usdc_to_plp_direct(&mut vault, &config, CONTRIBUTION);
     abort 999
 }
 
@@ -599,7 +599,7 @@ fun contribute(fx: &mut helpers::Fixture, amount: u64) {
     fx.scenario_mut().next_tx(test_constants::alice());
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
-    fx.add_usdc_without_shares_direct(&mut vault, &config, amount);
+    fx.add_usdc_to_plp_direct(&mut vault, &config, amount);
     return_shared(vault);
     return_shared(config);
 }
