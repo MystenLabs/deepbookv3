@@ -431,10 +431,10 @@ public fun request_supply_direct(
     )
 }
 
-/// Add freshly-minted USDC to pool idle liquidity without minting PLP, through the
-/// production entrypoint. Takes the vault and config directly, so it works on a pool
-/// with no live markets — where the mark is just idle over supply and the effect of
-/// the addition on the mark is unambiguous.
+/// Contribute freshly-minted USDC to pool idle liquidity without minting PLP, through
+/// the production entrypoint. Takes the vault and config directly, so it works on a
+/// pool with no live markets — where the mark is just idle over supply and the effect
+/// of the contribution on the mark is unambiguous.
 public fun add_usdc_without_shares_direct(
     self: &mut Fixture,
     vault: &mut PoolVault,

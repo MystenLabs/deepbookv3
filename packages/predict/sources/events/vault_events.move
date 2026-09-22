@@ -215,7 +215,7 @@ public struct CapitalLocked has copy, drop, store {
 }
 
 /// Emitted when a contributor adds USDC to pool idle liquidity without minting PLP
-/// (`plp::add_usdc_without_shares`). The addition raises every existing holder's share
+/// (`plp::add_usdc_without_shares`). The contribution raises every holder's share
 /// of pool NAV; it carries no `idle_balance_after` because idle has no canonical
 /// post-state event stream — `ExpiryCashRebalanced` also moves idle without reporting
 /// it, so a balance-after here would be a second, drifting source for that fact.

@@ -109,6 +109,20 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   the ratchet: improbable per flush, irreversible once. Harness campaign
   candidate: drive NAV collapse and measure the window width and ratchet
   onset.
+- **Reachability of the UPPER band, re-checked 2026-09-22 for
+  `plp::add_usdc_without_shares`:** that entrypoint moves pool value up by an
+  arbitrary amount with no bet to win, so it would have made the above-ceiling
+  ratchet cheaply forcible — about 1,000 USDC against the 10 PLP genesis-lock
+  share base, after which every supply and withdraw head refunds and
+  `total_supply` can never grow to bring the price back down. It is therefore
+  admission-gated at the source: the contribution must leave idle within
+  `lp_book::within_price_ceiling`, the same band formula this policy's mark
+  uses. The "cannot be cheaply forced" claim above holds only while that guard
+  stands. Aborting there is on-ladder — a single-user, user-recoverable action,
+  not a shared or mandatory path — and it keeps the protocol from
+  *manufacturing* the degenerate ratio, which is the maintainable direction
+  this policy already names. Market-driven NAV moves into the band are
+  unaffected and stay owned here.
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
@@ -122,9 +136,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `non_executable_withdraw_refunds_spend_withdraw_budget`, and
   `withdrawals_partially_fill_when_idle_runs_dry_and_carry_the_rest`. The fixed_math package
   separately pins the checked mul-div helpers that classify u64-fit.
+  `lp_flow_tests.move` pins the upper-band admission gate from both sides —
+  `a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills`,
+  `a_contribution_past_the_price_ceiling_aborts`, and
+  `the_ceiling_rises_with_the_share_base`.
 - **Reopen when:** request-limit semantics change in a way that interacts with
-  protocol-triggered refunds, or a new LP request type adds another
-  non-executable fill mode.
+  protocol-triggered refunds, a new LP request type adds another
+  non-executable fill mode, or a new entrypoint moves pool value without
+  moving `total_supply` (each one needs its own upper-band admission gate).
 
 ## RP-3: `lp_pool_value` floors at zero
 

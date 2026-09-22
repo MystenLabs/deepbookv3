@@ -55,7 +55,8 @@ const EIncompleteValuationSnapshot: u64 = 8;
 const EExpiredMarketNotSettled: u64 = 9;
 const EValuationWindowExpired: u64 = 10;
 const ESnapshotStageOpen: u64 = 11;
-const EBelowMinUsdcAddition: u64 = 12;
+const EBelowMinUsdcContribution: u64 = 12;
+const EContributionExceedsPriceCeiling: u64 = 13;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -660,18 +661,32 @@ public fun sponsor_fee_incentives(
 /// `payment` lands inside the value the next flush's mark divides by an unchanged
 /// `total_supply`, which raises NAV per PLP for every current holder. It deliberately
 /// does not touch the profit basis — the basis tracks cash sent to and returned from
-/// expiries, so an external gift is neither a debit nor a credit, and the protocol
-/// reserve therefore takes no cut of it (`lp_pool_value` leaves `exclusion` unchanged
-/// while `gross_pool_value` grows). Sending the same USDC through `request_supply`
-/// instead would mint offsetting shares and leave the mark where it was.
+/// expiries, so an outside contribution is neither a debit nor a credit, and the
+/// protocol reserve therefore takes no cut of it (`lp_pool_value` leaves `exclusion`
+/// unchanged while `gross_pool_value` grows). Sending the same USDC through
+/// `request_supply` instead would mint offsetting shares and leave the mark where it
+/// was.
 ///
-/// Requires a bootstrapped pool: with `total_supply == 0` there is no share base to
-/// credit and the USDC would only inflate the genesis lock's non-withdrawable stake.
-/// Gated for the whole flush, like `sponsor_fee_incentives`: the seal freezes idle
-/// mid-flush, so an ungated addition would land on one side or the other of that
-/// capture depending only on when the contributor's transaction executed — either
-/// paying the queued withdrawals of that flush or not. Refusing it outright makes
-/// every addition fully captured by the next snapshot instead.
+/// Three gates, each closing a state this entrypoint would otherwise manufacture:
+///
+/// - **Bootstrapped pool.** At `total_supply == 0` there is no share base to credit;
+///   the USDC would only inflate the genesis lock's non-withdrawable stake.
+/// - **Executable price ceiling.** Idle after the contribution must still price
+///   within the band `lp_book::drain` requires (`within_price_ceiling`). Above that
+///   ceiling every supply and withdraw head is refunded (RP-2) and `total_supply`
+///   grows only through a supply fill, so nothing brings the price back down — a
+///   terminal state that an unbounded contribution against a small share base would
+///   otherwise reach for the price of the contribution. The test is one-sided
+///   because a contribution can only move the price up. It reads idle rather than
+///   pool NAV — NAV needs a flush — which is exactly the protocol-controlled share:
+///   the guard forbids this entrypoint from *manufacturing* the degenerate ratio and
+///   leaves market-driven NAV moves to RP-1/RP-2, which own them.
+/// - **No flush in flight.** The seal freezes idle mid-flush, so an ungated
+///   contribution would land on one side or the other of that capture depending only
+///   on when the contributor's transaction executed — either paying that flush's
+///   queued withdrawals or not. `sponsor_fee_incentives` takes the same gate.
+///   `rebalance_expiry_cash` may run mid-window because it only moves cash between
+///   two figures the seal already froze; new value is different.
 public fun add_usdc_without_shares(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -680,9 +695,15 @@ public fun add_usdc_without_shares(
 ) {
     config.assert_version();
     config.assert_not_valuation_in_progress();
-    assert!(vault.lp.total_supply() > 0, ENotBootstrapped);
+    let total_supply = vault.lp.total_supply();
+    assert!(total_supply > 0, ENotBootstrapped);
     let amount = payment.value();
-    assert!(amount >= constants::min_usdc_addition!(), EBelowMinUsdcAddition);
+    assert!(amount >= constants::min_usdc_contribution!(), EBelowMinUsdcContribution);
+    let idle_after = vault.expiry_accounting.idle_balance() + amount;
+    assert!(
+        lp_book::within_price_ceiling(idle_after, total_supply),
+        EContributionExceedsPriceCeiling,
+    );
     vault.expiry_accounting.receive_idle(payment.into_balance());
     vault_events::emit_usdc_added_without_shares(vault.id(), ctx.sender(), amount);
 }
