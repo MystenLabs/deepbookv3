@@ -664,8 +664,8 @@ public fun sponsor_fee_incentives(
 /// expiries, so an outside contribution is neither a debit nor a credit, and the
 /// protocol reserve therefore takes no cut of it (`lp_pool_value` leaves `exclusion`
 /// unchanged while `gross_pool_value` grows). Sending the same USDC through
-/// `request_supply` instead would mint offsetting shares and leave the mark where it
-/// was.
+/// `request_supply` instead mints shares against it, so only the supply fee would
+/// reach existing holders — zero as shipped.
 ///
 /// Three gates, each closing a state this entrypoint would otherwise manufacture:
 ///
