@@ -117,10 +117,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `total_supply` can never grow to bring the price back down. It is therefore
   admission-gated at the source: the contribution must leave pool cash — idle
   plus the net cash deployed into active expiries
-  (`pool_accounting::deployed_expiry_cash`) — inside this policy's own band
-  ceiling (`ceil(cash/band) <= supply`, the comparison
-  `lp_book::is_executable_mark` makes, restated in `plp` and pinned to it by the
-  tests below rather than shared as a symbol). Deployed cash is counted because
+  (`pool_accounting::deployed_expiry_cash`) — at or below 10 USDC per PLP
+  (`constants::contribution_price_ceiling_factor`, `ceil(cash/10) <= supply`),
+  a tenth of this policy's band ceiling. The ceiling sits inside the band
+  because LP fills after a contribution only push the price up: shares round
+  down and retained supply and withdraw fees stay in the pool. The first
+  version admitted contributions up to the band itself, and a pool contributed
+  to exactly 100 USDC/PLP left the band on the next uneven deposit (found in
+  the second external review, fixed 2026-09-23). Deployed cash is counted because
   the mark counts it: the first version of the gate read idle alone, and since
   `rebalance_expiry_cash` is permissionless, anyone could move idle into a
   market and contribute again against the emptied idle, pushing gross pool value
@@ -132,18 +136,24 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   this policy already names. Market-driven NAV moves into the band are
   unaffected and stay owned here.
 - **Accepted residual of that gate (revised 2026-09-23):** it bounds pool
-  cash, not the mark. The mark also carries market-driven NAV: trader premiums
-  and fees held in market cash beyond what the pool sent, net of marked
-  liabilities. Contributions alone can take pool cash to the ceiling and no
-  further, for about `band·supply` less current pool cash (~1,000 USDC on the
-  10 PLP genesis share base); a pool sitting there then crosses on any net
-  trader loss to the pool, including a deliberate one. The depth of that
-  crossing is only what traders have lost to the pool, so a contribution cannot
-  deepen it, and it reverses once market P&L moves back; holding the pool far
-  past the ceiling costs the attacker that depth again in losing trades, the
-  pre-existing route this policy already owns. Every path costs the attacker
-  the whole amount with nothing returned — griefing that destroys value rather
-  than extracting it. Counting trader inflows too would need the mark, which
+  cash, not the mark, and it bounds it at a tenth of the band, so after a
+  contribution the price must still rise tenfold by other means to leave the
+  band. Derived, not measured — each fill's effect follows from the drain's
+  rounding and fee formulas, and a simulation of them agrees: rounding leaves
+  at most one share's worth of dust per fill; a supply fee at the 5% cap raises
+  the price at most `1/(1 − 5%)`, about 1.05x, per flush; and a withdraw fee
+  at rate `r` raises it by `1 + r·f/(1 − f)` when one flush burns a fraction
+  `f` of shares, which reaches 10x only when one flush burns at least
+  `9/(9 + r)` of them — 99.98% at the shipped 0.2%, 99.45% at the 5% cap. That
+  near-total single-flush exit is the same mechanism that already crosses the
+  band from parity, at 99.998%, so it stays owned here. The mark also carries
+  market-driven NAV: trader premiums and fees held in market cash beyond what
+  the pool sent, net of marked liabilities. Crossing from the contribution
+  ceiling that way needs trader losses to the pool of nine times its cash, the
+  pre-existing losing-trades route this policy already owns, and it reverses
+  once market P&L moves back. Every path costs the attacker the whole amount
+  with nothing returned — griefing that destroys value rather than extracting
+  it. Counting trader inflows too would need the mark, which
   needs a flush; RP-1 already rejected mark-level guards because they brick the
   legitimate appreciation and recapitalization states. A stored last-flush NAV
   would only move the approximation (stale between flushes, over- and
@@ -168,6 +178,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   separately pins the checked mul-div helpers that classify u64-fit.
   `lp_flow_tests.move` pins the upper-band admission gate from both sides —
   `a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills`,
+  `a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee`,
   `a_contribution_past_the_price_ceiling_aborts`,
   `the_ceiling_rises_with_the_share_base`,
   `deployed_market_cash_counts_toward_the_price_ceiling`,

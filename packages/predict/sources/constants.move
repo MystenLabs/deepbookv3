@@ -68,6 +68,14 @@ public(package) macro fun min_usdc_contribution(): u64 { 10_000_000 }
 /// test needs no price unit.
 public(package) macro fun executable_price_band_factor(): u64 { 100 }
 
+/// Ceiling a no-shares contribution (`plp::add_usdc_to_plp`) may raise pool cash to:
+/// 10 USDC per whole PLP, a tenth of the executable band's ceiling. The gap is not
+/// slack. LP fills after a contribution only move the price up — fill rounding and
+/// retained supply and withdraw fees all stay in the pool — so a contribution that
+/// filled the pool to the band itself would be pushed out of it by the next fill.
+/// A tenth leaves room for all of that short of a near-total one-flush exit.
+public(package) macro fun contribution_price_ceiling_factor(): u64 { 10 }
+
 /// Maximum active pre-expiry markets that can require live NAV valuation in one
 /// full-pool flush.
 public(package) macro fun max_live_expiry_markets(): u64 { 24 }

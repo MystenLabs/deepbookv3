@@ -53,8 +53,15 @@ const NO_MIN_OUT: u64 = 0;
 /// the wrong quantity.
 const CONTRIBUTION: u64 = 25_000_000;
 /// The largest contribution the genesis-lock pool accepts: 10 USDC of idle over 10 PLP
-/// of supply, and the band ceiling is 100 USDC/PLP, so idle may reach 1,000 USDC.
-const CONTRIBUTION_AT_CEILING: u64 = 990_000_000;
+/// of supply, and a contribution may price the pool at most 10 USDC/PLP, so pool cash
+/// may reach 100 USDC.
+const CONTRIBUTION_AT_CEILING: u64 = 90_000_000;
+/// A deposit the ceiling mark does not divide: at 10 USDC/PLP it buys 1.0000001 PLP,
+/// which floors to 1 PLP, so the pool keeps the micro-USDC of dust.
+const UNEVEN_DEPOSIT: u64 = 10_000_001;
+/// A deposit five times the pool it enters, so a supply fee charged on it moves the
+/// mark as far as one flush can.
+const LARGE_DEPOSIT: u64 = 500_000_000;
 
 // === Genesis lock + bootstrapped gates ===
 
@@ -461,32 +468,74 @@ fun a_contribution_consumes_supply_headroom_under_the_pool_cap() {
     fx.finish();
 }
 
-// === The executable price ceiling ===
+// === The contribution price ceiling ===
 
-/// Upper boundary, accepted side. 990 USDC on top of the 10 USDC lock puts idle at
-/// exactly 1,000 USDC against 10 PLP — 100 USDC/PLP, the band's inclusive ceiling — and
-/// the pool still works: the flush prices there and a deposit still fills.
+/// Upper boundary, accepted side, and why the ceiling sits inside the band. 90 USDC on
+/// top of the 10 USDC lock puts pool cash at exactly 100 USDC against 10 PLP, the
+/// 10 USDC/PLP contribution ceiling. Fills after that only push the price up: an uneven
+/// deposit leaves its rounding dust in the pool. Had contributions been allowed to the
+/// band's own 100 USDC/PLP, that dust alone would have carried the next mark out of the
+/// band and refunded every later request. Here the next flush still prices and fills.
 #[test]
 fun a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, 0);
     contribute(&mut fx, CONTRIBUTION_AT_CEILING);
-    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+    queue_supply_amount(&mut fx, &mut account, UNEVEN_DEPOSIT);
 
     let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
 
-    assert_eq!(pool_nav, 1_000_000_000);
-    // floor(10 USDC x 10 PLP / 1000 USDC) = 0.1 PLP on top of the 10 PLP lock.
-    assert_pending_and_supply(&mut fx, 0, 10_100_000);
+    assert_eq!(pool_nav, 100_000_000);
+    // floor(10.000001 USDC x 10 PLP / 100 USDC) = floor(1.0000001 PLP) = 1 PLP.
+    assert_pending_and_supply(&mut fx, 0, 11_000_000);
+
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+    let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
+
+    // 100 + 10.000001 USDC over 11 PLP, about 10.0000001 USDC/PLP: still inside the band.
+    assert_eq!(pool_nav, 110_000_001);
+    // 10 USDC x 11 PLP / 110.000001 USDC = 0.99999999 PLP, floored to 0.999999 PLP.
+    assert_pending_and_supply(&mut fx, 0, 11_999_999);
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// A retained supply fee is the largest upward push one fill can give the price. At
+/// the 5% maximum, a deposit five times the pool that a contribution just filled to its
+/// ceiling moves the mark from 10 to about 10.43 USDC/PLP, nowhere near the band, and
+/// the next deposit still fills.
+#[test]
+fun a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, MAX_PLP_FEE_RATE);
+    contribute(&mut fx, CONTRIBUTION_AT_CEILING);
+    queue_supply_amount(&mut fx, &mut account, LARGE_DEPOSIT);
+
+    let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
+
+    assert_eq!(pool_nav, 100_000_000);
+    // Fee 5% x 500 = 25 USDC stays in the pool. Shares on the 475 USDC net:
+    // 475 USDC x 10 PLP / 100 USDC = 47.5 PLP, so supply is 57.5 PLP.
+    assert_pending_and_supply(&mut fx, 0, 57_500_000);
+
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+    let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
+
+    // 100 + 500 USDC over 57.5 PLP, about 10.43 USDC/PLP.
+    assert_eq!(pool_nav, 600_000_000);
+    // Fee 5% x 10 = 0.5 USDC. 9.5 USDC x 57.5 PLP / 600 USDC = 0.91041666 PLP,
+    // floored to 0.910416 PLP.
+    assert_pending_and_supply(&mut fx, 0, 58_410_416);
 
     helpers::return_account_bundle(account);
     fx.finish();
 }
 
 /// Upper boundary, rejected side — one micro-USDC past the ceiling. Without this guard
-/// the contribution succeeds and the pool is finished: the mark prices above the band,
-/// so `drain` refunds every supply and withdraw head, `total_supply` can never grow,
-/// and nothing brings the price back down. Anyone could reach that state on the
+/// a contribution could fill the pool past the band: the mark prices out of it, so
+/// `drain` refunds every supply and withdraw head, `total_supply` can never grow, and
+/// nothing brings the price back down. Anyone could reach that state on the
 /// genesis-lock share base for about 1,000 USDC, which is why the guard is here and not
 /// left to RP-2 at the fill site.
 #[test, expected_failure(abort_code = plp::EContributionExceedsPriceCeiling)]
@@ -503,7 +552,7 @@ fun a_contribution_past_the_price_ceiling_aborts() {
 fun the_ceiling_rises_with_the_share_base() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, 0);
-    // A 10 USDC fill doubles supply to 20 PLP, lifting the idle ceiling to 2,000 USDC.
+    // A 10 USDC fill doubles supply to 20 PLP, lifting the ceiling to 200 USDC of cash.
     queue_supply(&mut fx, &mut account, NO_MIN_OUT);
     flush(&mut fx);
     assert_pending_and_supply(&mut fx, 0, 2 * min_supply!());
@@ -521,8 +570,8 @@ fun the_ceiling_rises_with_the_share_base() {
 
 /// Cash the pool has moved into a market still counts toward the ceiling, because the
 /// mark counts it. With the genesis 10 USDC deployed and idle at 0, the ceiling is the
-/// same 1,000 USDC of pool cash as on the no-market pool, so the contribution that
-/// fills it exactly is accepted and the flush still fills there.
+/// same 100 USDC of pool cash as on the no-market pool, so the contribution that fills
+/// it exactly is accepted and the flush still fills there.
 #[test]
 fun deployed_market_cash_counts_toward_the_price_ceiling() {
     let (mut fx, mut account) = setup_pool_with_lp();
@@ -534,21 +583,19 @@ fun deployed_market_cash_counts_toward_the_price_ceiling() {
 
     let pool_nav = flush_with_market(&mut fx, expiry_id);
 
-    // 990 USDC idle + 10 USDC in the order-free market. Credits (0) plus active value
+    // 90 USDC idle + 10 USDC in the order-free market. Credits (0) plus active value
     // (10) less debits (10 sent) is 0, so the protocol excludes nothing.
-    assert_eq!(pool_nav, 1_000_000_000);
-    // floor(10 USDC x 10 PLP / 1000 USDC) = 0.1 PLP on top of the 10 PLP lock.
-    assert_pending_and_supply(&mut fx, 0, 10_100_000);
+    assert_eq!(pool_nav, 100_000_000);
+    // 10 USDC x 10 PLP / 100 USDC = 1 PLP on top of the 10 PLP lock.
+    assert_pending_and_supply(&mut fx, 0, 11_000_000);
 
     helpers::return_account_bundle(account);
     fx.finish();
 }
 
 /// Rejected side of the boundary above. An idle-only test admits this: idle is 0, so
-/// ceil(990.000001 / 100) = 9.900001 PLP of required supply against 10. Counting the
-/// 10 USDC in the market makes pool cash 1,000.000001 USDC, one micro-USDC past the
-/// ceiling. Without the deployed-cash term the flush would mark above the band and
-/// refund every LP request from then on.
+/// it sees 90.000001 USDC against a 100 USDC ceiling. Counting the 10 USDC in the
+/// market makes pool cash 100.000001 USDC, one micro-USDC past the ceiling.
 #[test, expected_failure(abort_code = plp::EContributionExceedsPriceCeiling)]
 fun a_contribution_past_the_ceiling_through_deployed_cash_aborts() {
     let mut fx = helpers::setup_market_default();
@@ -567,7 +614,7 @@ fun parking_idle_in_a_market_does_not_reopen_the_ceiling() {
     let mut fx = helpers::setup_market_default();
     fx.bootstrap_lock(min_supply!());
     contribute(&mut fx, CONTRIBUTION_AT_CEILING);
-    // The default 10,000 USDC cash target takes all 1,000 USDC of idle.
+    // The default 10,000 USDC cash target takes all 100 USDC of idle.
     fund_market_from_idle(&mut fx);
     assert_idle(&mut fx, 0);
     contribute(&mut fx, min_contribution!());
@@ -684,6 +731,20 @@ fun queue_supply(
     let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
     fx.request_supply_direct(&mut vault, &config, account, min_supply!(), min_plp_out);
+    return_shared(vault);
+    return_shared(config);
+}
+
+/// Queue a supply of `amount` with no fill limit through the production entrypoint.
+fun queue_supply_amount(
+    fx: &mut helpers::Fixture,
+    account: &mut helpers::AccountBundle,
+    amount: u64,
+) {
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    fx.request_supply_direct(&mut vault, &config, account, amount, NO_MIN_OUT);
     return_shared(vault);
     return_shared(config);
 }
