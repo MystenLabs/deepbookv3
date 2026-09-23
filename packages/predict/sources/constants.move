@@ -8,7 +8,7 @@ module deepbook_predict::constants;
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 4 }
+public macro fun current_version(): u64 { 3 }
 
 // === Scaling ===
 
