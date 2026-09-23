@@ -23,6 +23,7 @@ module deepbook_predict::lp_flow_tests;
 
 use deepbook_predict::{
     constants::{
+        Self,
         min_bootstrap_liquidity as min_bootstrap,
         min_supply_request as min_supply,
         min_usdc_contribution as min_contribution,
@@ -62,6 +63,10 @@ const UNEVEN_DEPOSIT: u64 = 10_000_001;
 /// A deposit five times the pool it enters, so a supply fee charged on it moves the
 /// mark most of the way to the per-flush maximum of `1/(1 - rate)`.
 const LARGE_DEPOSIT: u64 = 500_000_000;
+/// 50 USDC of UP contracts: backed by the 100 USDC a ceiling-parked genesis pool has
+/// deployed into its one market, and charged the flow fixture's 0.5% minimum trading
+/// fee, 0.25 USDC, which the mark counts and the contribution guard cannot see.
+const FEE_PROBE_QUANTITY: u64 = 50_000_000;
 
 // === Genesis lock + bootstrapped gates ===
 
@@ -619,6 +624,54 @@ fun parking_idle_in_a_market_does_not_reopen_the_ceiling() {
     assert_idle(&mut fx, 0);
     contribute(&mut fx, min_contribution!());
     abort 999
+}
+
+/// Income the guard cannot see does not carry a ceiling-parked pool out of the band,
+/// because the ceiling is a tenth of it. Pool cash sits at exactly 100 USDC over 10
+/// PLP, all of it deployed into one live market, and one 50-contract ATM mint leaves
+/// its 0.25 USDC fee in market cash: the premium equals the marked liability, so only
+/// the fee reaches NAV, and the protocol's 10% share of that gain is excluded. The mark
+/// is 100.225 USDC over 10 PLP, about 10.02 USDC/PLP, and the next deposit fills. The
+/// contribution is sized from the ceiling constant rather than the fixed
+/// `CONTRIBUTION_AT_CEILING`, so moving the ceiling back to the band fails this test:
+/// the same trade then prices the pool at 1,000.225 USDC over 10 PLP, above the band,
+/// and the deposit is refunded.
+#[test]
+fun fee_income_at_the_contribution_ceiling_stays_inside_the_band() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, 0);
+    // Fill the pool to the ceiling: ceiling x 10 PLP of pool cash, less the 10 USDC lock.
+    contribute(
+        &mut fx,
+        constants::contribution_price_ceiling_factor!() * min_supply!() - min_supply!(),
+    );
+    let expiry_id = fund_market_from_idle(&mut fx);
+    assert_idle(&mut fx, 0);
+
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        FEE_PROBE_QUANTITY,
+    );
+    helpers::return_market_bundle(market);
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    let pool_nav = flush_with_market(&mut fx, expiry_id);
+
+    // 100 USDC of pool cash + 0.25 USDC fee, less 10% of that 0.25 USDC gain.
+    assert_eq!(pool_nav, 100_225_000);
+    // floor(10 USDC x 10 PLP / 100.225 USDC) = floor(0.99775505 PLP) = 0.997755 PLP.
+    assert_pending_and_supply(&mut fx, 0, 10_997_755);
+    // The fill's 10 USDC is the only idle; everything else is still in the market.
+    assert_idle(&mut fx, min_supply!());
+
+    helpers::return_account_bundle(account);
+    fx.finish();
 }
 
 // === Admission gates ===

@@ -154,11 +154,21 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   USDC from the contribution ceiling there, plus the round-trip capital and two
   flushes per trip. The mark also carries market-driven NAV: trader premiums
   and fees held in market cash beyond what the pool sent, net of marked
-  liabilities. Crossing from the contribution ceiling that way needs trader
-  losses to the pool of `9/(1 − share)` times its cash once the protocol profit
-  share is held out — ten times at the default 10%. An unrealized mark reverses
-  when market P&L moves back; losses realized at settlement are swept into idle
-  and stay. Every route costs the attacker the full value it adds to the pool,
+  liabilities. Crossing from the contribution ceiling that way needs the pool
+  to gain `9/(1 − share)` times its cash from trading once the protocol profit
+  share is held out — ten times at the default 10%. Trader losses can do that,
+  but against a fair oracle they are a coin flip bounded by market backing: an
+  unrealized mark reverses when P&L moves back, and only losses realized at
+  settlement stay. Trading fees do it deterministically and do not reverse: a
+  hedged UP and DOWN pair of equal quantity pays `quantity + fees` in and takes
+  `quantity` back whichever side wins, so the pool keeps exactly the fees for
+  the trader's cost of the fees alone. With the contribution ceiling at the
+  band itself that route needed one trade — a 50-contract ATM mint left a
+  ceiling-parked genesis pool at 1,000.225 USDC over 10 PLP, 100.0225
+  USDC/PLP, and refunded the next supply (reproduced 2026-09-23 by setting the
+  contribution ceiling back to the band under the pinning test below). At a tenth of the band it needs about ten times pool cash in
+  fees, volume-bound like the withdraw-fee round trips above. Every route costs
+  the attacker at least the full value it adds to the pool,
   which accrues to existing holders — griefing that destroys the attacker's
   value rather than extracting any. The gate's job is therefore narrower than
   making the state unforceable: a contribution never itself takes the pool out
@@ -171,11 +181,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   on the flush path. Pool cash errs toward refusing: a market that has lost
   cash to traders still counts what the pool sent it, so while such a market is
   active a contribution can be refused even at or below parity. The refusal
-  clears once that market is settled and swept, both permissionless. UNPINNED:
-  the market-driven crossing needs oracle-priced trader P&L, and the fee route
-  needs withdrawals to fill, which the LP flow fixture cannot do (its module doc
-  explains why); the gate's own boundaries, with and without deployed cash, are
-  pinned below.
+  clears once that market is settled and swept, both permissionless. Pinned
+  below: the gate's own boundaries, with and without deployed cash, and one
+  trade's fee income at the ceiling staying inside the band. UNPINNED: the
+  trader-loss crossing needs oracle-priced P&L moves, and the withdraw-fee
+  route needs withdrawals to fill, which the LP flow fixture cannot do (its
+  module doc explains why).
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
@@ -195,8 +206,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `a_contribution_past_the_price_ceiling_aborts`,
   `the_ceiling_rises_with_the_share_base`,
   `a_contribution_to_the_ceiling_with_deployed_cash_is_accepted_and_fills`,
-  `a_contribution_past_the_ceiling_through_deployed_cash_aborts`, and
-  `parking_idle_in_a_market_does_not_reopen_the_ceiling`.
+  `a_contribution_past_the_ceiling_through_deployed_cash_aborts`,
+  `parking_idle_in_a_market_does_not_reopen_the_ceiling`, and
+  `fee_income_at_the_contribution_ceiling_stays_inside_the_band`.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, a new LP request type adds another
   non-executable fill mode, or a new entrypoint moves pool value without
