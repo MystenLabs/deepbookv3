@@ -3,8 +3,9 @@
 
 /// Unit coverage for the pool accounting ledger: the profit basis (debits =
 /// cash sent + materialized profit, credits = cash received), the terminal
-/// loss-carryforward in `materialize_expiry_profit`, active-set deactivation, and
-/// the terminal-accounting funding guard. Expected values are hand-derived from
+/// loss-carryforward in `materialize_expiry_profit`, active-set deactivation, the
+/// deployed-cash sum the contribution guard reads, and the terminal-accounting
+/// funding guard. Expected values are hand-derived from
 /// the documented accounting, independent of the implementation (unit-tests rule
 /// 1): each cash flow is tracked by hand and the materialized profit asserted
 /// exactly.
@@ -135,6 +136,70 @@ fun materialize_recognizes_immediate_profit_with_no_funding() {
     // A second materialize with no new cash is a no-op.
     assert_eq!(ledger.materialize_expiry_profit(id), 0);
     assert_eq!(ledger.profit_basis_debits(), 500);
+
+    destroy(ledger);
+}
+
+/// Deployed cash is the per-expiry net funding (sent minus received, floored at zero)
+/// summed over the active set only. A market that has returned more than it was sent
+/// contributes zero rather than offsetting another market, and a deactivated market
+/// drops out entirely.
+#[test]
+fun deployed_expiry_cash_sums_active_net_funding() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id_a = object::id_from_address(EXPIRY_A);
+    let id_b = object::id_from_address(EXPIRY_B);
+    ledger.register_expiry(id_a, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(id_b, EXPIRY_B_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
+    assert_eq!(ledger.deployed_expiry_cash(), 0);
+
+    // Send 700 to A and 200 to B: 700 + 200 = 900 deployed, idle 1000 -> 100.
+    destroy(ledger.send_expiry_cash(id_a, 700));
+    destroy(ledger.send_expiry_cash(id_b, 200));
+    assert_eq!(ledger.deployed_expiry_cash(), 900);
+    assert_eq!(ledger.idle_balance(), 100);
+
+    // A returns 250: A nets 700 - 250 = 450, so 450 + 200 = 650.
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(250), id_a);
+    assert_eq!(ledger.deployed_expiry_cash(), 650);
+
+    // A returns 500 more, 750 against 700 sent: A floors at 0 and does not offset
+    // B's 200.
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(500), id_a);
+    assert_eq!(ledger.deployed_expiry_cash(), 200);
+
+    // B leaves the active set: its 200 is no longer counted.
+    assert!(ledger.deactivate_expiry_if_present(id_b));
+    assert_eq!(ledger.deployed_expiry_cash(), 0);
+
+    destroy(ledger);
+}
+
+/// Accepted residual of the contribution guard (RP-2). Net funding floors at zero per
+/// expiry, so once an expiry has returned more than it was sent, idle sent back into it
+/// is not counted until it makes up that difference: the guard's pool-cash figure falls
+/// by the parked amount while pool value does not. The gap is bounded by the returned
+/// profit.
+#[test]
+fun parking_into_a_market_that_returned_profit_lowers_guard_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
+
+    // The pool sends 100; traders lose 300 there and a surplus sweep returns 400.
+    // Idle 1000 - 100 + 400 = 1300, deployed max(0, 100 - 400) = 0.
+    destroy(ledger.send_expiry_cash(id, 100));
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(400), id);
+    assert_eq!(ledger.idle_balance() + ledger.deployed_expiry_cash(), 1300);
+
+    // A top-up parks 300 back in the market. Pool value is unchanged, but idle is 1000
+    // and deployed is max(0, 400 - 400) = 0, so the guard now sees 1000.
+    destroy(ledger.send_expiry_cash(id, 300));
+    assert_eq!(ledger.idle_balance() + ledger.deployed_expiry_cash(), 1000);
 
     destroy(ledger);
 }

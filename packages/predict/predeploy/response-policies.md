@@ -115,38 +115,84 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   ratchet cheaply forcible — about 1,000 USDC against the 10 PLP genesis-lock
   share base, after which every supply and withdraw head refunds and
   `total_supply` can never grow to bring the price back down. It is therefore
-  admission-gated at the source: the contribution must leave idle inside this
-  policy's own band ceiling (`ceil(idle/band) <= supply`, the comparison
-  `lp_book::is_executable_mark` makes, restated in `plp` and pinned to it by the
-  tests below rather than shared as a symbol). The "cannot be cheaply forced"
-  claim above holds only while that guard stands. Aborting there is on-ladder — a single-user, user-recoverable action,
+  admission-gated at the source: the contribution must leave pool cash — idle
+  plus the net cash deployed into active expiries
+  (`pool_accounting::deployed_expiry_cash`) — at or below 10 USDC per PLP
+  (`constants::contribution_price_ceiling_factor`, `ceil(cash/10) <= supply`),
+  a tenth of this policy's band ceiling. The ceiling sits inside the band
+  because LP fills after a contribution only push the price up: shares round
+  down and retained supply and withdraw fees stay in the pool. The first
+  version admitted contributions up to the band itself, and a pool contributed
+  to exactly 100 USDC/PLP left the band on the next uneven deposit (found in
+  the second external review, fixed 2026-09-23). Deployed cash is counted because
+  the mark counts it: the first version of the gate read idle alone, and since
+  `rebalance_expiry_cash` is permissionless, anyone could move idle into a
+  market and contribute again against the emptied idle, pushing gross pool value
+  past the ceiling with contributions alone (found in the external review of #1315, fixed
+  2026-09-23). Parking stays neutral only while a market has received back no
+  more than it was sent: net funding floors at zero per market, so idle moved
+  into a market that has already returned profit is not counted until it makes
+  up that profit. A contribution can therefore land above the ceiling by up to
+  `Σ max(0, received − sent)` over active markets. Accepted: leaving the band
+  that way still needs about nine times the pool's cash of such returned profit
+  on top of a full contribution. That guard keeps contributions from being the route, but it
+  does not make the upper band unforceable: retained withdraw fees also add
+  value without minting shares, and the residual below records what that
+  route costs. Aborting there is on-ladder — a single-user, user-recoverable action,
   not a shared or mandatory path — and it keeps the protocol from
   *manufacturing* the degenerate ratio, which is the maintainable direction
   this policy already names. Market-driven NAV moves into the band are
   unaffected and stay owned here.
-- **Accepted residual of that gate (2026-09-22):** it bounds idle, not the
-  mark. `gross_pool_value` is `idle + active_expiry_value`, so a pool whose
-  ACTIVE NAV has already carried it near the ceiling can still be pushed over
-  by a contribution that passes the idle test — 10 PLP of supply against 990
-  USDC of active NAV prices at 99 USDC/PLP, and a 100 USDC contribution
-  (idle-side test: `ceil(100e6/100) = 1e6 <= 10e6`, admitted) takes gross to
-  1,090 USDC and the mark to 109, outside the band. This is not a new
-  capability: deliberately losing trades to the pool raises NAV the same way,
-  the fee component immediately and the premium in full at settlement, so the
-  near-ceiling crossing was already reachable without an entrypoint. It also
-  needs ~100x appreciation over the share base before any contribution
-  matters, and it costs the attacker the whole contribution with nothing
-  returned — griefing that destroys value rather than extracting it. Closing
-  it exactly would need the mark, which needs a flush; RP-1 already rejected
-  mark-level guards because they brick the legitimate appreciation and
-  recapitalization states. A stored last-flush NAV would only move the
-  approximation (stale between flushes, over- and under-rejecting as active
-  NAV moves) at the cost of new vault state written on the flush path. What
-  the admission gate does remove is the cheap universal case — an unaged pool
-  at its genesis share base, where no appreciation is needed at all and the
-  cost is ~1,000 USDC. UNPINNED: reaching the near-ceiling state needs a
-  funded market with oracle-priced NAV, which the no-market LP fixture cannot
-  build; the gate's own boundaries are pinned below.
+- **Accepted residual of that gate (revised 2026-09-23):** it bounds pool
+  cash, not the mark, and it bounds it at a tenth of the band, so after a
+  contribution the price must still rise tenfold by other means to leave the
+  band. Derived, not measured — each fill's effect follows from the drain's
+  rounding and fee formulas, and a simulation of them agrees. Rounding leaves
+  under one PLP base unit's worth of USDC per fill, so crossing on dust alone
+  would take about nine fills per base unit of supply. A supply fee at the 5%
+  cap raises the price at most `1/(1 − 5%)`, about 1.05x, per flush. A
+  withdraw fee at rate `r` raises it by `1 + r·f/(1 − f)` when one flush burns
+  a fraction `f` of shares, and it accumulates across flushes: fees retained
+  over any number of supply-and-withdraw round trips cross the band once they
+  add up to `(band − p)·supply` USDC, whatever each trip's size. That is a
+  pre-existing route to the upper band that needs no contribution — about 990
+  USDC of retained fees from parity on the 10 PLP genesis share base, or 900
+  USDC from the contribution ceiling there, plus the round-trip capital and two
+  flushes per trip. The mark also carries market-driven NAV: trader premiums
+  and fees held in market cash beyond what the pool sent, net of marked
+  liabilities. Crossing from the contribution ceiling that way needs the pool
+  to gain `9/(1 − share)` times its cash from trading once the protocol profit
+  share is held out — ten times at the default 10%. Trader losses can do that,
+  but against a fair oracle they are a coin flip bounded by market backing: an
+  unrealized mark reverses when P&L moves back, and only losses realized at
+  settlement stay. Trading fees do it deterministically and do not reverse: a
+  hedged UP and DOWN pair of equal quantity pays `quantity + fees` in and takes
+  `quantity` back whichever side wins, so the pool keeps exactly the fees for
+  the trader's cost of the fees alone. With the contribution ceiling at the
+  band itself that route needed one trade — a 50-contract ATM mint left a
+  ceiling-parked genesis pool at 1,000.225 USDC over 10 PLP, 100.0225
+  USDC/PLP, and refunded the next supply (reproduced 2026-09-23 by setting the
+  contribution ceiling back to the band under the pinning test below). At a tenth of the band it needs about ten times pool cash in
+  fees, volume-bound like the withdraw-fee round trips above. Every route costs
+  the attacker at least the full value it adds to the pool,
+  which accrues to existing holders — griefing that destroys the attacker's
+  value rather than extracting any. The gate's job is therefore narrower than
+  making the state unforceable: a contribution never itself takes the pool out
+  of the band, and ordinary LP activity after one has nine times the pool's
+  cash of room. Counting trader inflows too would need the mark, which needs a
+  flush; RP-1 already rejected mark-level guards because they brick the
+  legitimate appreciation and recapitalization states. A stored last-flush NAV
+  would only move the approximation (stale between flushes, over- and
+  under-rejecting as active NAV moves) at the cost of new vault state written
+  on the flush path. Pool cash errs toward refusing: a market that has lost
+  cash to traders still counts what the pool sent it, so while such a market is
+  active a contribution can be refused even at or below parity. The refusal
+  clears once that market is settled and swept, both permissionless. Pinned
+  below: the gate's own boundaries, with and without deployed cash, and one
+  trade's fee income at the ceiling staying inside the band. UNPINNED: the
+  trader-loss crossing needs oracle-priced P&L moves, and the withdraw-fee
+  route needs withdrawals to fill, which the LP flow fixture cannot do (its
+  module doc explains why).
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
@@ -162,8 +208,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   separately pins the checked mul-div helpers that classify u64-fit.
   `lp_flow_tests.move` pins the upper-band admission gate from both sides —
   `a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills`,
-  `a_contribution_past_the_price_ceiling_aborts`, and
-  `the_ceiling_rises_with_the_share_base`.
+  `a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee`,
+  `a_contribution_past_the_price_ceiling_aborts`,
+  `the_ceiling_rises_with_the_share_base`,
+  `a_contribution_to_the_ceiling_with_deployed_cash_is_accepted_and_fills`,
+  `a_contribution_past_the_ceiling_through_deployed_cash_aborts`,
+  `parking_idle_in_a_market_does_not_reopen_the_ceiling`, and
+  `fee_income_at_the_contribution_ceiling_stays_inside_the_band`.
+  `pool_accounting_tests.move` pins the parking residual —
+  `parking_into_a_market_that_returned_profit_lowers_guard_cash`.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, a new LP request type adds another
   non-executable fill mode, or a new entrypoint moves pool value without
