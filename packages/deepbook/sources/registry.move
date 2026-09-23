@@ -15,7 +15,7 @@ use sui::{
 };
 
 use fun df::add as UID.add;
-use fun df::exists_ as UID.exists_;
+ use fun df::exists as UID.exists;
 use fun df::remove as UID.remove;
 
 // === Errors ===
@@ -90,7 +90,7 @@ public fun deauthorize_app<App: drop>(self: &mut Registry, _admin_cap: &Deepbook
 
 /// Assert that an application is authorized to access protected features of DeepBook.
 public fun assert_app_is_authorized<App: drop>(self: &Registry) {
-    assert!(self.id.exists_(AppKeyV2<App> {}), EAppNotAuthorized);
+    assert!(self.id.exists(AppKeyV2<App> {}), EAppNotAuthorized);
 }
 
 fun init(_: REGISTRY, ctx: &mut TxContext) {
@@ -151,7 +151,7 @@ public fun mint_pause_cap(
     ctx: &mut TxContext,
 ): DeepbookCorePauseCap {
     let id = object::new(ctx);
-    if (!self.id.exists_(AllowedPauseCapsKey())) {
+    if (!self.id.exists(AllowedPauseCapsKey())) {
         self.id.add(AllowedPauseCapsKey(), vec_set::empty<ID>());
     };
     let allowed_pause_caps: &mut VecSet<ID> = df::borrow_mut(
@@ -166,7 +166,7 @@ public fun mint_pause_cap(
 /// Revoke a previously minted pause cap by ID. Only Admin can revoke.
 /// This function does not have version restrictions.
 public fun revoke_pause_cap(self: &mut Registry, _cap: &DeepbookAdminCap, pause_cap_id: ID) {
-    assert!(self.id.exists_(AllowedPauseCapsKey()), EPauseCapNotValid);
+    assert!(self.id.exists(AllowedPauseCapsKey()), EPauseCapNotValid);
     let allowed_pause_caps: &mut VecSet<ID> = df::borrow_mut(
         &mut self.id,
         AllowedPauseCapsKey(),
@@ -185,7 +185,7 @@ public fun disable_version_pause_cap(
     version: u64,
     pause_cap: &DeepbookCorePauseCap,
 ) {
-    assert!(self.id.exists_(AllowedPauseCapsKey()), EPauseCapNotValid);
+    assert!(self.id.exists(AllowedPauseCapsKey()), EPauseCapNotValid);
     let allowed_pause_caps: &VecSet<ID> = df::borrow(
         &self.id,
         AllowedPauseCapsKey(),
@@ -203,7 +203,7 @@ public fun add_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdminC
     let _: &mut RegistryInner = self.load_inner_mut();
     let stable_type = type_name::with_defining_ids<StableCoin>();
     if (
-        !dynamic_field::exists_(
+        !dynamic_field::exists(
             &self.id,
             StableCoinKey {},
         )
@@ -229,7 +229,7 @@ public fun remove_stablecoin<StableCoin>(self: &mut Registry, _cap: &DeepbookAdm
     let _: &mut RegistryInner = self.load_inner_mut();
     let stable_type = type_name::with_defining_ids<StableCoin>();
     assert!(
-        dynamic_field::exists_(
+        dynamic_field::exists(
             &self.id,
             StableCoinKey {},
         ),
@@ -251,7 +251,7 @@ public fun init_balance_manager_map(
 ) {
     let _: &mut RegistryInner = self.load_inner_mut();
     if (
-        !dynamic_field::exists_(
+        !dynamic_field::exists(
             &self.id,
             BalanceManagerKey {},
         )
@@ -280,7 +280,7 @@ public fun get_balance_manager_ids(self: &Registry, owner: address): VecSet<ID> 
 /// Get the set of pause cap IDs allowed to disable package versions.
 /// Returns an empty set if no pause caps have been minted yet.
 public fun allowed_pause_caps(self: &Registry): VecSet<ID> {
-    if (self.id.exists_(AllowedPauseCapsKey())) {
+    if (self.id.exists(AllowedPauseCapsKey())) {
         *df::borrow<AllowedPauseCapsKey, VecSet<ID>>(&self.id, AllowedPauseCapsKey())
     } else {
         vec_set::empty()
@@ -291,7 +291,7 @@ public fun allowed_pause_caps(self: &Registry): VecSet<ID> {
 public fun is_stablecoin(self: &Registry, stable_type: TypeName): bool {
     let _: &RegistryInner = self.load_inner();
     if (
-        !dynamic_field::exists_(
+        !dynamic_field::exists(
             &self.id,
             StableCoinKey {},
         )
