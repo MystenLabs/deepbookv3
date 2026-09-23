@@ -3,8 +3,9 @@
 
 /// Unit coverage for the pool accounting ledger: the profit basis (debits =
 /// cash sent + materialized profit, credits = cash received), the terminal
-/// loss-carryforward in `materialize_expiry_profit`, active-set deactivation, and
-/// the terminal-accounting funding guard. Expected values are hand-derived from
+/// loss-carryforward in `materialize_expiry_profit`, active-set deactivation, the
+/// deployed-cash sum the contribution guard reads, and the terminal-accounting
+/// funding guard. Expected values are hand-derived from
 /// the documented accounting, independent of the implementation (unit-tests rule
 /// 1): each cash flow is tracked by hand and the materialized profit asserted
 /// exactly.

@@ -129,8 +129,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `rebalance_expiry_cash` is permissionless, anyone could move idle into a
   market and contribute again against the emptied idle, pushing gross pool value
   past the ceiling with contributions alone (found in the external review of #1315, fixed
-  2026-09-23). The "cannot be cheaply forced" claim above holds only while that
-  guard stands. Aborting there is on-ladder — a single-user, user-recoverable action,
+  2026-09-23). That guard keeps contributions from being the route, but it
+  does not make the upper band unforceable: retained withdraw fees also add
+  value without minting shares, and the residual below records what that
+  route costs. Aborting there is on-ladder — a single-user, user-recoverable action,
   not a shared or mandatory path — and it keeps the protocol from
   *manufacturing* the degenerate ratio, which is the maintainable direction
   this policy already names. Market-driven NAV moves into the band are
@@ -139,30 +141,41 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   cash, not the mark, and it bounds it at a tenth of the band, so after a
   contribution the price must still rise tenfold by other means to leave the
   band. Derived, not measured — each fill's effect follows from the drain's
-  rounding and fee formulas, and a simulation of them agrees: rounding leaves
-  at most one share's worth of dust per fill; a supply fee at the 5% cap raises
-  the price at most `1/(1 − 5%)`, about 1.05x, per flush; and a withdraw fee
-  at rate `r` raises it by `1 + r·f/(1 − f)` when one flush burns a fraction
-  `f` of shares, which reaches 10x only when one flush burns at least
-  `9/(9 + r)` of them — 99.98% at the shipped 0.2%, 99.45% at the 5% cap. That
-  near-total single-flush exit is the same mechanism that already crosses the
-  band from parity, at 99.998%, so it stays owned here. The mark also carries
-  market-driven NAV: trader premiums and fees held in market cash beyond what
-  the pool sent, net of marked liabilities. Crossing from the contribution
-  ceiling that way needs trader losses to the pool of nine times its cash, the
-  pre-existing losing-trades route this policy already owns, and it reverses
-  once market P&L moves back. Every path costs the attacker the whole amount
-  with nothing returned — griefing that destroys value rather than extracting
-  it. Counting trader inflows too would need the mark, which
-  needs a flush; RP-1 already rejected mark-level guards because they brick the
+  rounding and fee formulas, and a simulation of them agrees. Rounding leaves
+  under one PLP base unit's worth of USDC per fill, so crossing on dust alone
+  would take about nine fills per base unit of supply. A supply fee at the 5%
+  cap raises the price at most `1/(1 − 5%)`, about 1.05x, per flush. A
+  withdraw fee at rate `r` raises it by `1 + r·f/(1 − f)` when one flush burns
+  a fraction `f` of shares, and it accumulates across flushes: fees retained
+  over any number of supply-and-withdraw round trips cross the band once they
+  add up to `(band − p)·supply` USDC, whatever each trip's size. That is a
+  pre-existing route to the upper band that needs no contribution — about 990
+  USDC of retained fees from parity on the 10 PLP genesis share base, or 900
+  USDC from the contribution ceiling there, plus the round-trip capital and two
+  flushes per trip. The mark also carries market-driven NAV: trader premiums
+  and fees held in market cash beyond what the pool sent, net of marked
+  liabilities. Crossing from the contribution ceiling that way needs trader
+  losses to the pool of `9/(1 − share)` times its cash once the protocol profit
+  share is held out — ten times at the default 10%. An unrealized mark reverses
+  when market P&L moves back; losses realized at settlement are swept into idle
+  and stay. Every route costs the attacker the full value it adds to the pool,
+  which accrues to existing holders — griefing that destroys the attacker's
+  value rather than extracting any. The gate's job is therefore narrower than
+  making the state unforceable: a contribution never itself takes the pool out
+  of the band, and ordinary LP activity after one has nine times the pool's
+  cash of room. Counting trader inflows too would need the mark, which needs a
+  flush; RP-1 already rejected mark-level guards because they brick the
   legitimate appreciation and recapitalization states. A stored last-flush NAV
   would only move the approximation (stale between flushes, over- and
   under-rejecting as active NAV moves) at the cost of new vault state written
-  on the flush path. Pool cash errs in the safe direction: a market that has
-  lost cash to traders still counts what the pool sent it, which only tightens
-  the gate. UNPINNED: the market-driven crossing needs oracle-priced trader
-  P&L, which the LP flow fixture does not build; the gate's own boundaries,
-  with and without deployed cash, are pinned below.
+  on the flush path. Pool cash errs toward refusing: a market that has lost
+  cash to traders still counts what the pool sent it, so while such a market is
+  active a contribution can be refused even at or below parity. The refusal
+  clears once that market is settled and swept, both permissionless. UNPINNED:
+  the market-driven crossing needs oracle-priced trader P&L, and the fee route
+  needs withdrawals to fill, which the LP flow fixture cannot do (its module doc
+  explains why); the gate's own boundaries, with and without deployed cash, are
+  pinned below.
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
@@ -181,7 +194,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee`,
   `a_contribution_past_the_price_ceiling_aborts`,
   `the_ceiling_rises_with_the_share_base`,
-  `deployed_market_cash_counts_toward_the_price_ceiling`,
+  `a_contribution_to_the_ceiling_with_deployed_cash_is_accepted_and_fills`,
   `a_contribution_past_the_ceiling_through_deployed_cash_aborts`, and
   `parking_idle_in_a_market_does_not_reopen_the_ceiling`.
 - **Reopen when:** request-limit semantics change in a way that interacts with

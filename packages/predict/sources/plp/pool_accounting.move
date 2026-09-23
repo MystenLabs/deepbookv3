@@ -100,7 +100,8 @@ public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 
 /// received, per expiry, floored at zero). Cash that `send_expiry_cash` moved out of
 /// idle is still pool value — each market's NAV counts its cash — so a bound on pool
 /// value that reads idle alone can be sidestepped by moving idle into a market.
-/// Walks at most the active set, which the flush already visits market by market.
+/// Walks the active set, which the flush's snapshot stage already walks in a single
+/// transaction; expired markets stay in it until they are settled and swept.
 public(package) fun deployed_expiry_cash(ledger: &Ledger): u64 {
     let mut deployed = 0;
     ledger.active_expiry_markets.do_ref!(|m| {

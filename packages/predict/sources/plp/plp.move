@@ -680,7 +680,8 @@ public fun sponsor_fee_incentives(
 ///   against a small share base would otherwise reach for the price of the
 ///   contribution. The ceiling sits well inside the band because later fills only
 ///   push the price up (rounding and retained fees stay in the pool), so a pool left
-///   exactly at the band would leave it on the next fill. The test is one-sided
+///   exactly at the band would leave it on the next uneven or fee-charged fill. The
+///   test is one-sided
 ///   because a contribution can only move the price up. It reads pool cash rather
 ///   than pool NAV — NAV needs a flush — and
 ///   counts deployed cash because the mark does: `rebalance_expiry_cash` is
@@ -708,7 +709,8 @@ public fun add_usdc_to_plp(
     assert!(amount >= constants::min_usdc_contribution!(), EBelowMinUsdcContribution);
     //   price <= ceiling  <=>  cash <= ceiling·supply  <=>  ceil(cash/ceiling) <= supply
     // `ceiling` is a tenth of `lp_book::is_executable_mark`'s band, so the fill
-    // rounding and retained fees that follow a contribution cannot carry the mark out.
+    // rounding and retained fees that follow a contribution have nine times the pool's
+    // cash of room before they could carry the mark out of it.
     let cash_after =
         vault.expiry_accounting.idle_balance()
         + vault.expiry_accounting.deployed_expiry_cash()

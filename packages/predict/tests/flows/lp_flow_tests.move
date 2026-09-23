@@ -60,7 +60,7 @@ const CONTRIBUTION_AT_CEILING: u64 = 90_000_000;
 /// which floors to 1 PLP, so the pool keeps the micro-USDC of dust.
 const UNEVEN_DEPOSIT: u64 = 10_000_001;
 /// A deposit five times the pool it enters, so a supply fee charged on it moves the
-/// mark as far as one flush can.
+/// mark most of the way to the per-flush maximum of `1/(1 - rate)`.
 const LARGE_DEPOSIT: u64 = 500_000_000;
 
 // === Genesis lock + bootstrapped gates ===
@@ -425,7 +425,7 @@ fun add_usdc_to_plp_credits_the_sender_in_its_event() {
 }
 
 /// Contributions accumulate rather than replacing one another, and each is measured
-/// against the idle the previous one left behind.
+/// against the pool cash the previous one left behind.
 #[test]
 fun contributions_accumulate_in_idle() {
     let mut fx = helpers::setup_market_default();
@@ -501,10 +501,10 @@ fun a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills() {
     fx.finish();
 }
 
-/// A retained supply fee is the largest upward push one fill can give the price. At
-/// the 5% maximum, a deposit five times the pool that a contribution just filled to its
-/// ceiling moves the mark from 10 to about 10.43 USDC/PLP, nowhere near the band, and
-/// the next deposit still fills.
+/// A retained supply fee is the largest upward push one supply fill can give the
+/// price. At the 5% maximum, a deposit five times the pool that a contribution just
+/// filled to its ceiling moves the mark from 10 to about 10.43 USDC/PLP, nowhere near
+/// the band, and the next deposit still fills.
 #[test]
 fun a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee() {
     let (mut fx, mut account) = setup_pool_with_lp();
@@ -568,12 +568,12 @@ fun the_ceiling_rises_with_the_share_base() {
     fx.finish();
 }
 
-/// Cash the pool has moved into a market still counts toward the ceiling, because the
-/// mark counts it. With the genesis 10 USDC deployed and idle at 0, the ceiling is the
-/// same 100 USDC of pool cash as on the no-market pool, so the contribution that fills
-/// it exactly is accepted and the flush still fills there.
+/// Accepted side of the deployed-cash boundary. With the genesis 10 USDC moved into a
+/// market and idle at 0, a contribution that brings pool cash to exactly the 100 USDC
+/// ceiling is accepted, and the flush prices the market's cash at par and fills. The
+/// next two tests show the market's cash is counted.
 #[test]
-fun deployed_market_cash_counts_toward_the_price_ceiling() {
+fun a_contribution_to_the_ceiling_with_deployed_cash_is_accepted_and_fills() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, 0);
     let expiry_id = fund_market_from_idle(&mut fx);
