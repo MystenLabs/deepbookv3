@@ -99,7 +99,9 @@ public(package) fun active_live_expiry_count(ledger: &Ledger, now_ms: u64): u64 
 /// Sum the net USDC the pool has funded into its active expiries (sent minus
 /// received, per expiry, floored at zero). Cash that `send_expiry_cash` moved out of
 /// idle is still pool value — each market's NAV counts its cash — so a bound on pool
-/// value that reads idle alone can be sidestepped by moving idle into a market.
+/// value that reads idle alone can be sidestepped by moving idle into a market. The
+/// per-expiry floor means idle sent into an expiry that has already returned more than
+/// it was sent is not counted until it makes up that difference.
 /// Walks the active set, which the flush's snapshot stage already walks in a single
 /// transaction; expired markets stay in it until they are settled and swept.
 public(package) fun deployed_expiry_cash(ledger: &Ledger): u64 {

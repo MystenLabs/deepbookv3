@@ -177,6 +177,33 @@ fun deployed_expiry_cash_sums_active_net_funding() {
     destroy(ledger);
 }
 
+/// Accepted residual of the contribution guard (RP-2). Net funding floors at zero per
+/// expiry, so once an expiry has returned more than it was sent, idle sent back into it
+/// is not counted until it makes up that difference: the guard's pool-cash figure falls
+/// by the parked amount while pool value does not. The gap is bounded by the returned
+/// profit.
+#[test]
+fun parking_into_a_market_that_returned_profit_lowers_guard_cash() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
+
+    // The pool sends 100; traders lose 300 there and a surplus sweep returns 400.
+    // Idle 1000 - 100 + 400 = 1300, deployed max(0, 100 - 400) = 0.
+    destroy(ledger.send_expiry_cash(id, 100));
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(400), id);
+    assert_eq!(ledger.idle_balance() + ledger.deployed_expiry_cash(), 1300);
+
+    // A top-up parks 300 back in the market. Pool value is unchanged, but idle is 1000
+    // and deployed is max(0, 400 - 400) = 0, so the guard now sees 1000.
+    destroy(ledger.send_expiry_cash(id, 300));
+    assert_eq!(ledger.idle_balance() + ledger.deployed_expiry_cash(), 1000);
+
+    destroy(ledger);
+}
+
 #[test]
 fun deactivate_removes_from_active_set_and_reports_presence() {
     let ctx = &mut tx_context::dummy();

@@ -129,7 +129,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `rebalance_expiry_cash` is permissionless, anyone could move idle into a
   market and contribute again against the emptied idle, pushing gross pool value
   past the ceiling with contributions alone (found in the external review of #1315, fixed
-  2026-09-23). That guard keeps contributions from being the route, but it
+  2026-09-23). Parking stays neutral only while a market has received back no
+  more than it was sent: net funding floors at zero per market, so idle moved
+  into a market that has already returned profit is not counted until it makes
+  up that profit. A contribution can therefore land above the ceiling by up to
+  `Σ max(0, received − sent)` over active markets. Accepted: leaving the band
+  that way still needs about nine times the pool's cash of such returned profit
+  on top of a full contribution. That guard keeps contributions from being the route, but it
   does not make the upper band unforceable: retained withdraw fees also add
   value without minting shares, and the residual below records what that
   route costs. Aborting there is on-ladder — a single-user, user-recoverable action,
@@ -209,6 +215,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `a_contribution_past_the_ceiling_through_deployed_cash_aborts`,
   `parking_idle_in_a_market_does_not_reopen_the_ceiling`, and
   `fee_income_at_the_contribution_ceiling_stays_inside_the_band`.
+  `pool_accounting_tests.move` pins the parking residual —
+  `parking_into_a_market_that_returned_profit_lowers_guard_cash`.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, a new LP request type adds another
   non-executable fill mode, or a new entrypoint moves pool value without

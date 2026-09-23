@@ -481,11 +481,13 @@ fun a_contribution_consumes_supply_headroom_under_the_pool_cap() {
 /// deposit leaves its rounding dust in the pool. Had contributions been allowed to the
 /// band's own 100 USDC/PLP, that dust alone would have carried the next mark out of the
 /// band and refunded every later request. Here the next flush still prices and fills.
+/// The contribution is sized from the ceiling constant, so restoring the ceiling to the
+/// band fails this test.
 #[test]
 fun a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, 0);
-    contribute(&mut fx, CONTRIBUTION_AT_CEILING);
+    contribute_to_ceiling(&mut fx);
     queue_supply_amount(&mut fx, &mut account, UNEVEN_DEPOSIT);
 
     let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
@@ -509,12 +511,13 @@ fun a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills() {
 /// A retained supply fee is the largest upward push one supply fill can give the
 /// price. At the 5% maximum, a deposit five times the pool that a contribution just
 /// filled to its ceiling moves the mark from 10 to about 10.43 USDC/PLP, nowhere near
-/// the band, and the next deposit still fills.
+/// the band, and the next deposit still fills. The contribution is sized from the
+/// ceiling constant, so restoring the ceiling to the band fails this test.
 #[test]
 fun a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, MAX_PLP_FEE_RATE);
-    contribute(&mut fx, CONTRIBUTION_AT_CEILING);
+    contribute_to_ceiling(&mut fx);
     queue_supply_amount(&mut fx, &mut account, LARGE_DEPOSIT);
 
     let pool_nav = flush_with_budgets(&mut fx, option::none(), option::none());
@@ -613,7 +616,8 @@ fun a_contribution_past_the_ceiling_through_deployed_cash_aborts() {
 /// `rebalance_expiry_cash` is permissionless, so a contributor can fill the ceiling,
 /// park the idle in a market, and try again against the emptied idle. Parking moves
 /// cash between two figures the guard sums, so the ceiling is still full and the
-/// minimum contribution is refused.
+/// minimum contribution is refused. That holds for a market that has not returned more
+/// than it was sent, as here; `pool_accounting_tests` pins the bounded exception.
 #[test, expected_failure(abort_code = plp::EContributionExceedsPriceCeiling)]
 fun parking_idle_in_a_market_does_not_reopen_the_ceiling() {
     let mut fx = helpers::setup_market_default();
@@ -640,11 +644,7 @@ fun parking_idle_in_a_market_does_not_reopen_the_ceiling() {
 fun fee_income_at_the_contribution_ceiling_stays_inside_the_band() {
     let (mut fx, mut account) = setup_pool_with_lp();
     set_supply_fee(&mut fx, 0);
-    // Fill the pool to the ceiling: ceiling x 10 PLP of pool cash, less the 10 USDC lock.
-    contribute(
-        &mut fx,
-        constants::contribution_price_ceiling_factor!() * min_supply!() - min_supply!(),
-    );
+    contribute_to_ceiling(&mut fx);
     let expiry_id = fund_market_from_idle(&mut fx);
     assert_idle(&mut fx, 0);
 
@@ -757,6 +757,13 @@ fun contribute(fx: &mut helpers::Fixture, amount: u64) {
     fx.add_usdc_to_plp_direct(&mut vault, &config, amount);
     return_shared(vault);
     return_shared(config);
+}
+
+/// Fill the genesis-lock pool to the contribution ceiling: the ceiling times its 10 PLP
+/// of pool cash, less the 10 USDC lock already there. Sized from the ceiling constant,
+/// so a test that relies on sitting exactly at the ceiling fails if the ceiling moves.
+fun contribute_to_ceiling(fx: &mut helpers::Fixture) {
+    contribute(fx, constants::contribution_price_ceiling_factor!() * min_supply!() - min_supply!());
 }
 
 /// A bootstrapped pool (no live markets) plus a funded LP account.
