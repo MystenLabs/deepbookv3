@@ -519,6 +519,61 @@ fun the_ceiling_rises_with_the_share_base() {
     fx.finish();
 }
 
+/// Cash the pool has moved into a market still counts toward the ceiling, because the
+/// mark counts it. With the genesis 10 USDC deployed and idle at 0, the ceiling is the
+/// same 1,000 USDC of pool cash as on the no-market pool, so the contribution that
+/// fills it exactly is accepted and the flush still fills there.
+#[test]
+fun deployed_market_cash_counts_toward_the_price_ceiling() {
+    let (mut fx, mut account) = setup_pool_with_lp();
+    set_supply_fee(&mut fx, 0);
+    let expiry_id = fund_market_from_idle(&mut fx);
+    assert_idle(&mut fx, 0);
+    contribute(&mut fx, CONTRIBUTION_AT_CEILING);
+    queue_supply(&mut fx, &mut account, NO_MIN_OUT);
+
+    let pool_nav = flush_with_market(&mut fx, expiry_id);
+
+    // 990 USDC idle + 10 USDC in the order-free market. Credits (0) plus active value
+    // (10) less debits (10 sent) is 0, so the protocol excludes nothing.
+    assert_eq!(pool_nav, 1_000_000_000);
+    // floor(10 USDC x 10 PLP / 1000 USDC) = 0.1 PLP on top of the 10 PLP lock.
+    assert_pending_and_supply(&mut fx, 0, 10_100_000);
+
+    helpers::return_account_bundle(account);
+    fx.finish();
+}
+
+/// Rejected side of the boundary above. An idle-only test admits this: idle is 0, so
+/// ceil(990.000001 / 100) = 9.900001 PLP of required supply against 10. Counting the
+/// 10 USDC in the market makes pool cash 1,000.000001 USDC, one micro-USDC past the
+/// ceiling. Without the deployed-cash term the flush would mark above the band and
+/// refund every LP request from then on.
+#[test, expected_failure(abort_code = plp::EContributionExceedsPriceCeiling)]
+fun a_contribution_past_the_ceiling_through_deployed_cash_aborts() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+    fund_market_from_idle(&mut fx);
+    contribute(&mut fx, CONTRIBUTION_AT_CEILING + 1);
+    abort 999
+}
+
+/// `rebalance_expiry_cash` is permissionless, so a contributor can fill the ceiling,
+/// park the idle in a market, and try again against the emptied idle. Parking moves
+/// cash between two figures the guard sums, so the ceiling is still full and the
+/// minimum contribution is refused.
+#[test, expected_failure(abort_code = plp::EContributionExceedsPriceCeiling)]
+fun parking_idle_in_a_market_does_not_reopen_the_ceiling() {
+    let mut fx = helpers::setup_market_default();
+    fx.bootstrap_lock(min_supply!());
+    contribute(&mut fx, CONTRIBUTION_AT_CEILING);
+    // The default 10,000 USDC cash target takes all 1,000 USDC of idle.
+    fund_market_from_idle(&mut fx);
+    assert_idle(&mut fx, 0);
+    contribute(&mut fx, min_contribution!());
+    abort 999
+}
+
 // === Admission gates ===
 
 /// Lower boundary, accepted side. Pairs with the below-floor abort so the floor is
@@ -661,6 +716,36 @@ fun set_max_pool_value(fx: &mut helpers::Fixture, max_pool_value: u64) {
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
     fx.set_max_lp_pool_value(&mut config, max_pool_value);
     return_shared(config);
+}
+
+fun assert_idle(fx: &mut helpers::Fixture, idle: u64) {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    assert_eq!(vault.idle_balance(), idle);
+    return_shared(vault);
+}
+
+/// Create a live market and fund it from idle through the permissionless
+/// `rebalance_expiry_cash`, so pool cash moves out of idle into market cash.
+fun fund_market_from_idle(fx: &mut helpers::Fixture): ID {
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    helpers::return_market_bundle(market);
+    expiry_id
+}
+
+/// Run one full flush over a single live market, returning the pool NAV it priced at.
+fun flush_with_market(fx: &mut helpers::Fixture, expiry_id: ID): u64 {
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    helpers::return_market_bundle(market);
+    pool_nav
 }
 
 fun assert_pending_and_supply(fx: &mut helpers::Fixture, pending: u64, total_supply: u64) {

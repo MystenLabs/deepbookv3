@@ -139,6 +139,43 @@ fun materialize_recognizes_immediate_profit_with_no_funding() {
     destroy(ledger);
 }
 
+/// Deployed cash is the per-expiry net funding (sent minus received, floored at zero)
+/// summed over the active set only. A market that has returned more than it was sent
+/// contributes zero rather than offsetting another market, and a deactivated market
+/// drops out entirely.
+#[test]
+fun deployed_expiry_cash_sums_active_net_funding() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id_a = object::id_from_address(EXPIRY_A);
+    let id_b = object::id_from_address(EXPIRY_B);
+    ledger.register_expiry(id_a, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(id_b, EXPIRY_B_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.receive_idle(balance::create_for_testing<USDC>(1000));
+    assert_eq!(ledger.deployed_expiry_cash(), 0);
+
+    // Send 700 to A and 200 to B: 700 + 200 = 900 deployed, idle 1000 -> 100.
+    destroy(ledger.send_expiry_cash(id_a, 700));
+    destroy(ledger.send_expiry_cash(id_b, 200));
+    assert_eq!(ledger.deployed_expiry_cash(), 900);
+    assert_eq!(ledger.idle_balance(), 100);
+
+    // A returns 250: A nets 700 - 250 = 450, so 450 + 200 = 650.
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(250), id_a);
+    assert_eq!(ledger.deployed_expiry_cash(), 650);
+
+    // A returns 500 more, 750 against 700 sent: A floors at 0 and does not offset
+    // B's 200.
+    ledger.receive_expiry_cash(balance::create_for_testing<USDC>(500), id_a);
+    assert_eq!(ledger.deployed_expiry_cash(), 200);
+
+    // B leaves the active set: its 200 is no longer counted.
+    assert!(ledger.deactivate_expiry_if_present(id_b));
+    assert_eq!(ledger.deployed_expiry_cash(), 0);
+
+    destroy(ledger);
+}
+
 #[test]
 fun deactivate_removes_from_active_set_and_reports_presence() {
     let ctx = &mut tx_context::dummy();
