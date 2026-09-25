@@ -57,6 +57,7 @@ const EValuationWindowExpired: u64 = 10;
 const ESnapshotStageOpen: u64 = 11;
 const EBelowMinUsdcContribution: u64 = 12;
 const EContributionExceedsPriceCeiling: u64 = 13;
+const EInsufficientFeeIncentiveReserve: u64 = 14;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -92,6 +93,7 @@ public struct PoolVault has key {
     /// withdraws this balance.
     protocol_reserve_balance: Balance<USDC>,
     /// Sponsor-funded USDC reserved for taker fee sponsorship, excluded from PLP NAV.
+    /// Admin may reclaim it through `withdraw_fee_incentives`.
     fee_incentive_reserve: Balance<USDC>,
     /// PLP share issuance plus queued supply/withdraw escrow.
     lp: LpBook<PLP>,
@@ -630,7 +632,9 @@ public fun rebalance_expiry_cash(
 
 /// Sponsor taker fee incentives with USDC. Anyone may contribute; the payment
 /// joins a pool-level reserve that is excluded from PLP NAV and later allocated to
-/// expiry markets by the normal rebalance flow.
+/// expiry markets by the normal rebalance flow. A contribution is not
+/// earmarked to its sponsor: admin can withdraw any of the reserve through
+/// `withdraw_fee_incentives`.
 public fun sponsor_fee_incentives(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -651,6 +655,38 @@ public fun sponsor_fee_incentives(
         amount,
         vault.fee_incentive_reserve.value(),
     );
+}
+
+/// Withdraw `amount` USDC of sponsor-funded fee incentives from the pool-level
+/// reserve, for sponsorship the protocol no longer wants to spend. Admin-only.
+///
+/// Reaches the reserve only. Incentives already allocated to a live market stay in
+/// that market's `fee_incentive_balance` and return to the reserve when its
+/// settled-market sweep runs, after which they can be withdrawn here; setting
+/// `protocol_config::set_fee_incentive_subsidy_rate` to zero stops them being spent
+/// in the meantime. The per-expiry lifetime allocation counters are not credited
+/// back: they bound what a market may ever receive, and a withdrawal does not
+/// change what a market already received.
+///
+/// Not gated on the valuation flag, in either stage of a flush: the reserve is
+/// excluded from PLP NAV and no flush figure, frozen or live, reads it, so a
+/// withdrawal cannot reach the mark.
+public fun withdraw_fee_incentives(
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<USDC> {
+    config.assert_version();
+    assert!(amount <= vault.fee_incentive_reserve.value(), EInsufficientFeeIncentiveReserve);
+    let withdrawn = vault.fee_incentive_reserve.split(amount);
+    vault_events::emit_fee_incentives_withdrawn(
+        vault.id(),
+        amount,
+        vault.fee_incentive_reserve.value(),
+    );
+    withdrawn.into_coin(ctx)
 }
 
 /// Add USDC straight to pool idle liquidity without minting any PLP. Anyone may

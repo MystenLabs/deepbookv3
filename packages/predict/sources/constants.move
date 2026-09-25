@@ -143,9 +143,6 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
 
-/// Fraction of the trading fee paid by sponsor-funded incentives.
-public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
-
 /// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.
 public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
 

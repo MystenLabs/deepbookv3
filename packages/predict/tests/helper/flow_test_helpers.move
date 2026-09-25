@@ -54,7 +54,7 @@ use std::unit_test::{assert_eq, destroy};
 use sui::{
     accumulator::AccumulatorRoot,
     clock::{Self, Clock},
-    coin,
+    coin::{Self, Coin},
     test_scenario::{Self as test, Scenario, return_shared},
     tx_context::{Self, TxContext}
 };
@@ -395,6 +395,15 @@ public fun set_referral_fee_rate_bundle(self: &Fixture, market: &mut MarketBundl
     market.config.set_referral_fee_rate(&self.admin_cap, rate);
 }
 
+/// Set the live fee-incentive subsidy rate through the real admin path.
+public fun set_fee_incentive_subsidy_rate_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    rate: u64,
+) {
+    market.config.set_fee_incentive_subsidy_rate(&self.admin_cap, rate, &self.clock);
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(
@@ -521,6 +530,11 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 /// Pause / unpause global trading through a market bundle.
 public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
     self.set_trading_paused(&mut market.config, paused);
+}
+
+/// Engage or lift the protocol-wide emergency freeze through the real admin path.
+public fun set_frozen_bundle(self: &Fixture, market: &mut MarketBundle, frozen: bool) {
+    market.config.set_frozen(&self.admin_cap, frozen);
 }
 
 /// Toggle whether live pricing re-anchors the forward onto a fresh Pyth spot.
@@ -691,14 +705,44 @@ public fun deauthorize_predict_app(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Sponsor fee incentives with freshly-minted USDC against loose objects, so a test
+/// can fund the reserve of a pool with no markets.
+public fun sponsor_fee_incentives(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+) {
+    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
+    vault.sponsor_fee_incentives(config, payment, self.scenario.ctx());
+}
+
 /// Sponsor fee incentives for a market bundle with freshly-minted USDC.
 public fun sponsor_fee_incentives_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
     amount: u64,
 ) {
-    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
-    market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
+    self.sponsor_fee_incentives(&mut market.vault, &market.config, amount);
+}
+
+/// Withdraw fee incentives from the pool reserve through the real admin path.
+public fun withdraw_fee_incentives(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+): Coin<USDC> {
+    vault.withdraw_fee_incentives(&self.admin_cap, config, amount, self.scenario.ctx())
+}
+
+/// Withdraw fee incentives from the pool reserve through a market bundle.
+public fun withdraw_fee_incentives_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    amount: u64,
+): Coin<USDC> {
+    self.withdraw_fee_incentives(&mut market.vault, &market.config, amount)
 }
 
 /// Take the market transaction objects as a named bundle to avoid wide positional

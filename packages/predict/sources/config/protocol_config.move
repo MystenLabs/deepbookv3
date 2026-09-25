@@ -3,13 +3,13 @@
 
 /// Protocol-wide configuration and flow gates for Predict.
 ///
-/// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, the protocol-wide emergency freeze, the allowlist of keepers that may
-/// redeem settled orders without owner auth, and the full-pool valuation
-/// in-flight state (flag + flush ordinal, held across the transactions a flush
-/// spans; keeper/config flows gate on it, trading flows read it only to discard
-/// stale stamps lazily). Flow modules decide which gates apply before they mutate expiry,
-/// oracle, pool, or account state.
+/// This shared object owns the admin-tunable config structs, the live fee-incentive
+/// subsidy rate, the trading pause gate, the protocol-wide emergency freeze, the
+/// allowlist of keepers that may redeem settled orders without owner auth, and the
+/// full-pool valuation in-flight state (flag + flush ordinal, held across the
+/// transactions a flush spans; keeper/config flows gate on it, trading flows read it
+/// only to discard stale stamps lazily). Flow modules decide which gates apply before
+/// they mutate expiry, oracle, pool, or account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -124,6 +124,13 @@ public struct ProtocolConfig has key {
 /// empty set, which closes the keeper path.
 public struct SettledRedeemKeepersKey() has copy, drop, store;
 
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
+/// subsidy rate. The rate became admin-tunable after deploy, so it lives off the
+/// struct layout; an absent field reads as
+/// `config_constants::default_fee_incentive_subsidy_rate`, the fixed rate earlier
+/// package versions charged, so no migration step is needed.
+public struct FeeIncentiveSubsidyRateKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -153,6 +160,16 @@ public fun valuation_in_progress(config: &ProtocolConfig): bool {
 /// Return the live referral fee rate for SDK and devInspect reads.
 public fun referral_fee_rate(config: &ProtocolConfig): u64 {
     config.referral_fee_rate
+}
+
+/// Return the live fee-incentive subsidy rate: the fraction of each mint's trading
+/// fee paid from the market's sponsor-funded fee-incentive balance, in
+/// FLOAT_SCALING. `public` for SDK and devInspect reads: the quote already reports
+/// the subsidy it applied, but a client needs the rate to explain it.
+public fun fee_incentive_subsidy_rate(config: &ProtocolConfig): u64 {
+    let key = FeeIncentiveSubsidyRateKey();
+    if (!config.id.exists_(key)) return config_constants::default_fee_incentive_subsidy_rate!();
+    *config.id.borrow(key)
 }
 
 /// Window before expiry in which live quotes, mints, and live redeems abort.
@@ -514,6 +531,40 @@ public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &Admin
     config.assert_version();
     config_constants::assert_referral_fee_rate(rate);
     config.referral_fee_rate = rate;
+}
+
+/// Set the fraction of each mint's trading fee paid from the market's sponsor-funded
+/// fee-incentive balance. Read live at mint time, so the new rate applies to the next
+/// mint on every market, including markets already trading; `0` stops incentives
+/// from being spent without moving them. The subsidy never changes the trading fee
+/// charged, only how much of it the trader pays; on a referred mint the referral is
+/// computed on the trader-paid part, so a higher rate also shrinks the referral.
+///
+/// Binds every mint only once the version watermark has retired package versions
+/// older than 4: those compiled in a fixed 20% and never read this rate, so until
+/// then a mint routed through one still draws 20% from the market's balance. A
+/// zero rate does not stop `rebalance_expiry_cash` allocating the pool reserve into
+/// markets; to wind incentives down, also withdraw the reserve
+/// (`plp::withdraw_fee_incentives`).
+///
+/// Not gated on the valuation flag, matching `set_referral_fee_rate`: nothing in the
+/// flush reads this rate, and a mint that consumes a subsidy mid-flush lands after
+/// the snapshot captured that market's cash, so it cannot reach the frozen mark.
+public fun set_fee_incentive_subsidy_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_fee_incentive_subsidy_rate(rate);
+    let key = FeeIncentiveSubsidyRateKey();
+    if (config.id.exists_(key)) {
+        *config.id.borrow_mut(key) = rate;
+    } else {
+        config.id.add(key, rate);
+    };
+    config_events::emit_fee_incentive_subsidy_rate_updated(rate, clock.timestamp_ms());
 }
 
 /// Set the fee charged on executed PLP supply fills. Admin-gated and validated

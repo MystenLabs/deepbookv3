@@ -3,8 +3,10 @@
 
 /// Constants and validation helpers for admin-tunable policy.
 ///
-/// Default values seed stored policy state at creation. Bounds define the hard
-/// envelope admin setters can tune within. Changing a bound requires a package upgrade.
+/// Default values seed stored policy state at creation; a value made tunable after
+/// deploy and stored in a dynamic field reads its default until first set. Bounds
+/// define the hard envelope admin setters can tune within. Changing a bound requires
+/// a package upgrade.
 module deepbook_predict::config_constants;
 
 const EInvalidBaseFee: u64 = 0;
@@ -32,6 +34,7 @@ const EInvalidInventoryImpactMaxRate: u64 = 21;
 const EInvalidReferralFeeRate: u64 = 22;
 const EInvalidMaxValuationWindowMs: u64 = 23;
 const EInvalidNoTradeWindowMs: u64 = 24;
+const EInvalidFeeIncentiveSubsidyRate: u64 = 25;
 
 // === Fees ===
 
@@ -65,6 +68,28 @@ public(package) fun assert_referral_fee_rate(value: u64) {
     assert!(
         value >= min_referral_fee_rate!() && value <= max_referral_fee_rate!(),
         EInvalidReferralFeeRate,
+    );
+}
+
+/// Fraction of each mint's trading fee paid from the market's sponsor-funded
+/// fee-incentive balance, in FLOAT_SCALING. `0` stops incentives from being spent.
+public(package) macro fun default_fee_incentive_subsidy_rate(): u64 { 200_000_000 }
+
+public(package) macro fun min_fee_incentive_subsidy_rate(): u64 { 0 }
+
+/// 50%: a trader always pays at least half of every trading fee, so no promotion
+/// makes volume free. At 100% a trader with a self-owned builder code could mint
+/// both sides of a market paying no trading fee, farming the sponsor's balance.
+/// Any ceiling must also stay at or below one: above it the subsidy could exceed
+/// the fee it pays toward, underflowing the trader-paid fee, and at or below it the
+/// subsidy grows at most one unit per fee unit, which keeps the trader-paid fee
+/// nondecreasing in quantity and `mint_exact_cost`'s budget search exact (RP-36).
+public(package) macro fun max_fee_incentive_subsidy_rate(): u64 { 500_000_000 }
+
+public(package) fun assert_fee_incentive_subsidy_rate(value: u64) {
+    assert!(
+        value >= min_fee_incentive_subsidy_rate!() && value <= max_fee_incentive_subsidy_rate!(),
+        EInvalidFeeIncentiveSubsidyRate,
     );
 }
 

@@ -4,8 +4,8 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate) and the
-/// live protocol-wide referral fee rate.
+/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate), the
+/// live protocol-wide referral fee rate, and the live fee-incentive subsidy rate.
 /// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
@@ -273,6 +273,53 @@ fun referral_fee_rate_ships_at_ten_percent_and_accepts_boundaries() {
 
     config.set_referral_fee_rate(&admin_cap, config_constants::max_referral_fee_rate!());
     assert_eq!(config.referral_fee_rate(), 250_000_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+// === Fee-incentive subsidy rate ===
+//
+// The floor is 0, so there is no reachable below-min case for a `u64`. The rate
+// lives in a dynamic field added after deploy, so the first read comes from a
+// config that has never stored it.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeIncentiveSubsidyRate)]
+fun fee_incentive_subsidy_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_subsidy_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test]
+fun fee_incentive_subsidy_rate_ships_at_twenty_percent_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Never set: reads the rate every earlier package version charged.
+    assert_eq!(config.fee_incentive_subsidy_rate(), 200_000_000);
+
+    // The first set creates the field, later sets overwrite it.
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 0);
+
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 500_000_000);
 
     return_shared(config);
     clock.destroy_for_testing();

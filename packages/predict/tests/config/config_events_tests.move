@@ -37,6 +37,9 @@ const DEFAULT_PLP_WITHDRAW_FEE_RATE: u64 = 2_000_000;
 const PLP_SUPPLY_FEE_RATE: u64 = 1_000_000;
 const PLP_WITHDRAW_FEE_RATE: u64 = 3_000_000;
 
+const FEE_INCENTIVE_SUBSIDY_RATE: u64 = 500_000_000;
+const DISABLED_FEE_INCENTIVE_SUBSIDY_RATE: u64 = 0;
+
 public struct ExpectedStrikeExposureTemplateConfigUpdated has copy, drop {
     backing_buffer_lambda: u64,
     base_fee: u64,
@@ -74,6 +77,11 @@ public struct ExpectedPlpFeeRatesUpdated has copy, drop {
 public struct ExpectedSettledRedeemKeeperUpdated has copy, drop {
     keeper: address,
     allowed: bool,
+}
+
+public struct ExpectedFeeIncentiveSubsidyRateUpdated has copy, drop {
+    fee_incentive_subsidy_rate: u64,
+    onchain_timestamp_ms: u64,
 }
 
 #[test]
@@ -244,6 +252,37 @@ fun settled_redeem_keeper_changes_emit_keeper_and_membership() {
     };
     assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&removed));
 
+    destroy(admin_cap);
+    return_shared(registry);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Both the first set (which creates the dynamic field) and a later overwrite emit
+/// the post-state rate.
+#[test]
+fun fee_incentive_subsidy_rate_setter_emits_post_state() {
+    let (mut scenario, registry, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(EVENT_TIMESTAMP_MS);
+
+    config.set_fee_incentive_subsidy_rate(&admin_cap, FEE_INCENTIVE_SUBSIDY_RATE, &clock);
+    config.set_fee_incentive_subsidy_rate(&admin_cap, DISABLED_FEE_INCENTIVE_SUBSIDY_RATE, &clock);
+
+    let events = event::events_by_type<config_events::FeeIncentiveSubsidyRateUpdated>();
+    assert_eq!(events.length(), TWO_EVENTS);
+    let created = ExpectedFeeIncentiveSubsidyRateUpdated {
+        fee_incentive_subsidy_rate: FEE_INCENTIVE_SUBSIDY_RATE,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[FIRST_EVENT_INDEX]), bcs::to_bytes(&created));
+    let overwritten = ExpectedFeeIncentiveSubsidyRateUpdated {
+        fee_incentive_subsidy_rate: DISABLED_FEE_INCENTIVE_SUBSIDY_RATE,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&overwritten));
+
+    clock.destroy_for_testing();
     destroy(admin_cap);
     return_shared(registry);
     return_shared(config);

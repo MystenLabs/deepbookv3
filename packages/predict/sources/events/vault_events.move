@@ -233,6 +233,14 @@ public struct FeeIncentivesSponsored has copy, drop, store {
     reserve_after: u64,
 }
 
+/// Emitted when admin withdraws USDC from the pool-level fee incentive reserve
+/// (`plp::withdraw_fee_incentives`).
+public struct FeeIncentivesWithdrawn has copy, drop, store {
+    pool_vault_id: ID,
+    amount: u64,
+    reserve_after: u64,
+}
+
 /// Emitted when pool-level sponsor funds are allocated into an expiry's local
 /// fee-incentive balance.
 public struct FeeIncentivesAllocated has copy, drop, store {
@@ -517,6 +525,14 @@ public(package) fun emit_fee_incentives_sponsored(
         amount,
         reserve_after,
     });
+}
+
+public(package) fun emit_fee_incentives_withdrawn(
+    pool_vault_id: ID,
+    amount: u64,
+    reserve_after: u64,
+) {
+    event::emit(FeeIncentivesWithdrawn { pool_vault_id, amount, reserve_after });
 }
 
 public(package) fun emit_fee_incentives_allocated(
