@@ -163,3 +163,28 @@ fun margin_state_with_supply_and_borrow_accrues_interest() {
     destroy(clock);
     test.end();
 }
+
+#[test]
+fun decrease_supply_absolute_stops_at_zero() {
+    let mut test = begin(test_constants::admin());
+    let clock = clock::create_for_testing(test.ctx());
+    let mut state = margin_state::default(&clock);
+    let config = protocol_config_tests::create_test_protocol_config();
+
+    let supplied = 1000 * constants::float_scaling();
+    state.increase_supply(&config, supplied, &clock);
+
+    // A write-off one unit larger than the whole supply leaves suppliers at zero and
+    // keeps their shares.
+    state.decrease_supply_absolute(supplied + 1);
+    assert_eq!(state.total_supply(), 0);
+    assert_eq!(state.supply_shares(), supplied);
+
+    // Writing off against an already-empty supply stays at zero.
+    state.decrease_supply_absolute(supplied);
+    assert_eq!(state.total_supply(), 0);
+    assert_eq!(state.supply_shares(), supplied);
+
+    destroy(clock);
+    test.end();
+}
