@@ -14,14 +14,15 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     predict_account,
     pricing,
-    test_constants
+    test_constants,
+    vault_events
 };
 use propbook::{
     block_scholes_store::BlockScholesValueStore,
     pyth_feed::PythFeed,
     registry::{Self as propbook_registry, OracleRegistry}
 };
-use std::unit_test::assert_eq;
+use std::{bcs, unit_test::assert_eq};
 use sui::{event, test_scenario::return_shared};
 
 const SECOND_SOURCE_ID: u32 = 2;
@@ -35,6 +36,25 @@ const ONE_U128: u128 = 1;
 const MINT_MIN_FEE: u64 = 10_000_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
+const EXPIRY_PNL_EVENT_COUNT: u64 = 1;
+/// Sponsor subsidy on `MINT_MIN_FEE`: the default 20% subsidy rate (the fixture never
+/// changes it) of 10 USDC, well inside the incentives one minimum sponsorship allocates.
+const MIN_FEE_SUBSIDY: u64 = 2_000_000;
+
+/// BCS mirror used to assert the public `vault_events::ExpiryPnl` schema without
+/// adding production getters solely for tests.
+public struct ExpectedExpiryPnl has copy, drop {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    period_start_ms: u64,
+    expiry: u64,
+    settlement_price: u64,
+    sent_to_expiry: u64,
+    received_from_expiry: u64,
+    in_profit: bool,
+    amount: u64,
+}
 
 /// Even with the exact Propbook spot recorded, permissionless `redeem_settled`
 /// requires the explicit settlement transition instead of settling implicitly.
@@ -890,6 +910,199 @@ fun expired_unsettled_standalone_rebalance_moves_no_cash() {
     fx.finish();
 }
 
+/// A winning order leaves the pool down on the expiry. The pool funded the market to
+/// its initial cash `F` and the trader paid `premium + fee` in; the settled sweep holds
+/// back the full-quantity payout and returns the rest, so the pool received
+/// `F + premium + fee - quantity` against `F` sent: a loss of `quantity - premium - fee`.
+#[test]
+fun settled_sweep_reports_expiry_loss() {
+    let (mut fx, expiry_id, trader) = setup_pool_funded_live_market();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+    let premium = finite_range_premium(&mut fx, &market);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    let settlement_price = settlement_inside_default_finite_range();
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    let sent = test_constants::default_initial_expiry_cash();
+    assert_single_expiry_pnl(
+        &fx,
+        expiry_id,
+        test_constants::short_expiry_ms(),
+        settlement_price,
+        sent,
+        sent + premium + MINT_MIN_FEE - test_constants::mint_quantity(),
+        false,
+        test_constants::mint_quantity() - premium - MINT_MIN_FEE,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A losing order leaves the pool up by everything the trader paid: the settled sweep
+/// holds back nothing and returns `F + premium + fee` against `F` sent. A repeat sweep
+/// returns no cash, so it reports nothing new.
+#[test]
+fun settled_sweep_reports_expiry_profit_once() {
+    let (mut fx, expiry_id, trader) = setup_pool_funded_live_market();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+    let premium = finite_range_premium(&mut fx, &market);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    let settlement_price = settlement_below_default_finite_range();
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    let sent = test_constants::default_initial_expiry_cash();
+    assert_single_expiry_pnl(
+        &fx,
+        expiry_id,
+        test_constants::short_expiry_ms(),
+        settlement_price,
+        sent,
+        sent + premium + MINT_MIN_FEE,
+        true,
+        premium + MINT_MIN_FEE,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The flush sweeps a settled market through the same path as the standalone
+/// rebalance. With no trades the market returns exactly the `F` it was sent, which
+/// reports as a zero profit.
+#[test]
+fun flush_sweep_reports_break_even_expiry() {
+    let mut fx = helpers::setup_market_default();
+    let _trader = fx.create_funded_manager(0);
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let expiry = test_constants::default_expiry_ms();
+    let expiry_id = fx.create_expiry(expiry);
+    fund_empty_market(&mut fx, expiry_id);
+    fx.set_clock_for_testing(expiry);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let settlement_price = settlement_inside_default_finite_range();
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    fx.finish_flush_bundle(&mut market);
+
+    let sent = test_constants::default_initial_expiry_cash();
+    assert_single_expiry_pnl(&fx, expiry_id, expiry, settlement_price, sent, sent, true, 0);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A market the pool never funded and nobody traded still reports on its first
+/// settled sweep, although that sweep returns no cash: nothing was sent and nothing
+/// came back, a break-even.
+#[test]
+fun first_settled_sweep_reports_unfunded_expiry() {
+    let mut fx = helpers::setup_market_default();
+    let expiry = test_constants::short_expiry_ms();
+    let expiry_id = fx.create_expiry(expiry);
+    fx.set_clock_for_testing(expiry);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let settlement_price = settlement_inside_default_finite_range();
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    assert_single_expiry_pnl(&fx, expiry_id, expiry, settlement_price, 0, 0, true, 0);
+    assert_eq!(helpers::vault(&market).active_expiry_markets().length(), 0);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A sponsor subsidy counts as cash the expiry returned. The trader pays the mint
+/// fee net of `MIN_FEE_SUBSIDY` and the market's sponsor allocation covers the rest,
+/// so expiry cash still gains the full `premium + fee`. A losing order therefore
+/// reports `premium + fee` as profit, `MIN_FEE_SUBSIDY` more than the trader paid in.
+#[test]
+fun settled_sweep_counts_sponsor_subsidy_as_received() {
+    let (mut fx, expiry_id, trader) = setup_pool_funded_live_market();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    // The market already holds its cash target, so this only allocates incentives;
+    // the pool's sent total stays at the initial expiry cash.
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+    let quote = fx.quote_mint_bundle(
+        &market,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(quote.trading_fee(), MINT_MIN_FEE);
+    assert_eq!(quote.fee_incentive_subsidy(), MIN_FEE_SUBSIDY);
+    fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+
+    let settlement_price = settlement_below_default_finite_range();
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    let sent = test_constants::default_initial_expiry_cash();
+    assert_single_expiry_pnl(
+        &fx,
+        expiry_id,
+        test_constants::short_expiry_ms(),
+        settlement_price,
+        sent,
+        sent + quote.premium() + MINT_MIN_FEE,
+        true,
+        quote.premium() + MINT_MIN_FEE,
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 /// Balances and market cash below are stated relative to the mint's premium,
 /// read from the quote the mint pays. `quote_mint_tests` owns whether that cost
 /// composes correctly and `pricing_exact_tests` owns the price behind it; this
@@ -944,6 +1157,47 @@ fun fund_empty_market(fx: &mut helpers::Fixture, expiry_id: ID) {
     fx.prepare_live_oracle_bundle(&mut market, test_constants::default_live_price());
     fx.rebalance_expiry_cash_bundle(&mut market);
     helpers::return_market_bundle(market);
+}
+
+/// `setup_live_market`, but the market's cash comes from the pool through the
+/// production top-up (so the pool's sent total is the initial expiry cash) rather than
+/// the test-only cash seam, which the pool never records as sent.
+fun setup_pool_funded_live_market(): (helpers::Fixture, ID, helpers::Trader) {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::short_expiry_ms());
+    let trader = fx.create_funded_manager(test_constants::mint_deposit());
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    fund_empty_market(&mut fx, expiry_id);
+    (fx, expiry_id, trader)
+}
+
+/// Assert this transaction emitted exactly one `ExpiryPnl` and that it equals the
+/// complete expected event for the default-cadence market at `expiry`.
+fun assert_single_expiry_pnl(
+    fx: &helpers::Fixture,
+    expiry_id: ID,
+    expiry: u64,
+    settlement_price: u64,
+    sent_to_expiry: u64,
+    received_from_expiry: u64,
+    in_profit: bool,
+    amount: u64,
+) {
+    let events = event::events_by_type<vault_events::ExpiryPnl>();
+    assert_eq!(events.length(), EXPIRY_PNL_EVENT_COUNT);
+    let expected = ExpectedExpiryPnl {
+        pool_vault_id: fx.vault_id(),
+        expiry_market_id: expiry_id,
+        propbook_underlying_id: test_constants::propbook_underlying_id(),
+        period_start_ms: expiry - test_constants::default_cadence_period_ms(),
+        expiry,
+        settlement_price,
+        sent_to_expiry,
+        received_from_expiry,
+        in_profit,
+        amount,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
 }
 
 /// A settled winner's payout reader returns the full quantity that redemption
