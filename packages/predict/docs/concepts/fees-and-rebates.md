@@ -164,7 +164,7 @@ This design adapts established ideas rather than claiming a new optimal market-m
 
 ## Sponsor-funded fee incentives
 
-A sponsor can pay part of traders' mint fees. `plp::sponsor_fee_incentives` accepts USDC from anyone into a pool-level fee-incentive reserve that is excluded from PLP NAV, and `rebalance_expiry_cash` moves it into live markets, each holding a bounded slice of its cadence's `max_expiry_allocation` at a time and over its lifetime. On each mint the market pays part of the trading fee from its own incentive balance:
+A sponsor can pay part of traders' mint fees. `plp::sponsor_fee_incentives` accepts USDC from anyone into a pool-level fee-incentive reserve that is excluded from PLP NAV, and `rebalance_expiry_cash` moves it into live markets. Each rebalance tops a market's incentive balance up to its live target, a share of its cadence's `max_expiry_allocation` (`fee_incentive_live_target_rate`, 2% by default), and a market can receive at most its lifetime cap over its whole life (`fee_incentive_lifetime_cap_rate`, 10% by default, fixed for each market when it is created). Both are admin settings from 0% to 100%, and the live target may not exceed the lifetime cap. A live target large enough to cover a market's fees between rebalances, with a lifetime cap that never binds, keeps the discount at the configured rate on every mint until the reserve itself runs out. On each mint the market pays part of the trading fee from its own incentive balance:
 
 ```text
 sponsor_subsidy = min( floor(trading_fee * fee_incentive_subsidy_rate) , market_incentive_balance )
@@ -175,7 +175,7 @@ The trading fee charged never changes; the subsidy changes only who pays it. Liv
 
 `fee_incentive_subsidy_rate` is an admin setting on `ProtocolConfig`, read at mint time rather than snapshotted, so a change applies to the next mint on every market, including markets already trading. It ships at 20% and can be set anywhere from 0% to 50%. At 0% nothing is spent and allocated balances stay where they are. The 50% ceiling means a trader always pays at least half of every trading fee, so no promotion makes volume free: at 100%, a trader with a self-owned builder code could mint both sides of a market paying no trading fee and farm the sponsor's balance, making volume and points metrics free to inflate. Package versions before 4 charge a fixed 20% and ignore the setting, so it binds every mint only once the version watermark has retired them.
 
-Sponsorship is not earmarked to its sponsor. The admin can withdraw any amount of the pool reserve with `plp::withdraw_fee_incentives`. The withdrawal reaches only the reserve: a live market's allocated balance returns to the reserve when the market settles and is swept, and can be withdrawn from there. Winding incentives down therefore takes both steps — a zero rate stops spending, and withdrawing the reserve stops rebalances allocating it into new markets.
+Sponsorship is not earmarked to its sponsor. The admin can withdraw any amount of the pool reserve with `plp::withdraw_fee_incentives`. The withdrawal reaches only the reserve: a live market's allocated balance returns to the reserve when the market settles and is swept, and can be withdrawn from there. Winding incentives down therefore takes two steps: a zero rate stops spending, and either a zero live target or withdrawing the reserve stops rebalances allocating it into new markets. A zero live target leaves the reserve in the pool, where it can later be withdrawn or allocated again.
 
 ## How the components combine
 
