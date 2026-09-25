@@ -37,7 +37,7 @@ Rules the split must keep:
 ## Open the pull requests
 
 - Code pull request: base `main`, the full repository template, and the usual title (`<scope>: <summary> (DBU-NNN)`).
-- Docs pull request: base `<name>`, title `<scope>: document <summary> (DBU-NNN)`, and the same template. Its Summary lists the documentation changes, its Test plan lists the doc checks, and its Risk section says what goes stale if it does not merge right after the code pull request.
+- Docs pull request: base `<name>`, title `<scope>-docs: <summary> (DBU-NNN)` reusing the code pull request's summary so the pair reads as one change (e.g. `predict-docs: ...` above `predict: ...`), and the same template. Its Summary lists the documentation changes, its Test plan lists the doc checks, and its Risk section says what goes stale if it does not merge right after the code pull request.
 - Both bodies start with a `## Stack` section listing the two pull requests in merge order, marking the current one: `1. #<code> code ← this`, `2. #<docs> docs`.
 - When splitting an existing pull request, keep its number for the code layer, update its body to the code-only scope, and open the docs pull request new.
 - The auto-approve workflow only reviews pull requests that target `main` (`.github/AUTO_APPROVE.md`), so the docs pull request can only be auto-approved after it is retargeted.
