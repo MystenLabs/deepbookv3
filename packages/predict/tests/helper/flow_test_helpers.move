@@ -404,6 +404,26 @@ public fun set_fee_incentive_subsidy_rate_bundle(
     market.config.set_fee_incentive_subsidy_rate(&self.admin_cap, rate, &self.clock);
 }
 
+/// Set the live fee-incentive target rate through the real admin path, in its own
+/// transaction so no market bundle needs to be held.
+public fun set_fee_incentive_live_target_rate(self: &mut Fixture, rate: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_fee_incentive_live_target_rate(&self.admin_cap, rate, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the fee-incentive lifetime cap rate that later markets snapshot, through the
+/// real admin path.
+public fun set_template_fee_incentive_lifetime_cap_rate(self: &mut Fixture, rate: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_fee_incentive_lifetime_cap_rate(&self.admin_cap, rate, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(

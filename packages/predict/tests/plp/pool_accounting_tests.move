@@ -28,7 +28,13 @@ const AT_EXPIRY_B_MS: u64 = EXPIRY_B_MS;
 const MAX_EXPIRY_ALLOCATION: u64 = 1000;
 const INITIAL_EXPIRY_CASH: u64 = 100;
 const POST_TERMINAL_FUNDING_AMOUNT: u64 = 100;
+/// The shipped 10% lifetime cap rate: 0.1 * MAX_EXPIRY_ALLOCATION = FEE_INCENTIVE_CAP.
+const LIFETIME_CAP_RATE: u64 = 100_000_000;
 const FEE_INCENTIVE_CAP: u64 = 100;
+/// 25% of MAX_EXPIRY_ALLOCATION (1000) = 250.
+const QUARTER_LIFETIME_CAP_RATE: u64 = 250_000_000;
+const QUARTER_FEE_INCENTIVE_CAP: u64 = 250;
+const ZERO_LIFETIME_CAP_RATE: u64 = 0;
 const FIRST_FEE_INCENTIVE_ALLOCATION: u64 = 40;
 const OVER_CAP_FEE_INCENTIVE_REQUEST: u64 = 80;
 const FIRST_EXPIRY_FUNDING: u64 = 700;
@@ -39,7 +45,13 @@ fun send_and_receive_track_profit_basis() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
     assert_eq!(ledger.initial_expiry_cash(id), INITIAL_EXPIRY_CASH);
 
     // Fund 700 into the expiry: debits += 700, idle 1000 -> 300.
@@ -60,12 +72,59 @@ fun send_and_receive_track_profit_basis() {
     destroy(ledger);
 }
 
+/// The absolute lifetime cap is derived from the rate passed at registration, not a
+/// fixed share: a 25% rate caps the expiry at 250 of its 1000 allocation, and a zero
+/// rate admits nothing.
+#[test]
+fun fee_incentive_lifetime_cap_follows_the_rate_passed_at_registration() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let quarter = object::id_from_address(EXPIRY_A);
+    let zero = object::id_from_address(EXPIRY_B);
+    ledger.register_expiry(
+        quarter,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        QUARTER_LIFETIME_CAP_RATE,
+    );
+    ledger.register_expiry(
+        zero,
+        EXPIRY_B_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        ZERO_LIFETIME_CAP_RATE,
+    );
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        quarter,
+        MAX_EXPIRY_ALLOCATION,
+    );
+    assert_eq!(allocated, QUARTER_FEE_INCENTIVE_CAP);
+    assert_eq!(allocated_after, QUARTER_FEE_INCENTIVE_CAP);
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        zero,
+        FIRST_FEE_INCENTIVE_ALLOCATION,
+    );
+    assert_eq!(allocated, 0);
+    assert_eq!(allocated_after, 0);
+
+    destroy(ledger);
+}
+
 #[test]
 fun fee_incentives_allocate_up_to_lifetime_cap() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         id,
@@ -96,7 +155,13 @@ fun materialize_carries_loss_forward_before_recognizing_profit() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
 
     // Sent 1000, then the expiry returns only 600 (a 400 terminal loss).
     ledger.receive_idle(balance::create_for_testing<USDC>(1000));
@@ -126,7 +191,13 @@ fun materialize_recognizes_immediate_profit_with_no_funding() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
 
     // No cash sent (sent 0); the expiry returns 500 of pure profit.
     ledger.receive_expiry_cash(balance::create_for_testing<USDC>(500), id);
@@ -150,8 +221,20 @@ fun deployed_expiry_cash_sums_active_net_funding() {
     let mut ledger = pool_accounting::new(ctx);
     let id_a = object::id_from_address(EXPIRY_A);
     let id_b = object::id_from_address(EXPIRY_B);
-    ledger.register_expiry(id_a, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
-    ledger.register_expiry(id_b, EXPIRY_B_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id_a,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
+    ledger.register_expiry(
+        id_b,
+        EXPIRY_B_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
     ledger.receive_idle(balance::create_for_testing<USDC>(1000));
     assert_eq!(ledger.deployed_expiry_cash(), 0);
 
@@ -187,7 +270,13 @@ fun parking_into_a_market_that_returned_profit_lowers_guard_cash() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
     ledger.receive_idle(balance::create_for_testing<USDC>(1000));
 
     // The pool sends 100; traders lose 300 there and a surplus sweep returns 400.
@@ -210,8 +299,20 @@ fun deactivate_removes_from_active_set_and_reports_presence() {
     let mut ledger = pool_accounting::new(ctx);
     let id_a = object::id_from_address(EXPIRY_A);
     let id_b = object::id_from_address(EXPIRY_B);
-    ledger.register_expiry(id_a, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
-    ledger.register_expiry(id_b, EXPIRY_B_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id_a,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
+    ledger.register_expiry(
+        id_b,
+        EXPIRY_B_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
     assert_eq!(ledger.active_expiry_markets().length(), 2);
     assert_eq!(ledger.active_live_expiry_count(BEFORE_EXPIRY_A_MS), 2);
 
@@ -236,12 +337,14 @@ fun active_live_expiry_count_ignores_expired_unswept_markets() {
         EXPIRY_A_MS,
         MAX_EXPIRY_ALLOCATION,
         INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
     );
     ledger.register_expiry(
         object::id_from_address(EXPIRY_B),
         EXPIRY_B_MS,
         MAX_EXPIRY_ALLOCATION,
         INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
     );
 
     assert_eq!(ledger.active_live_expiry_count(BEFORE_EXPIRY_A_MS), 2);
@@ -258,8 +361,20 @@ fun registering_same_expiry_twice_aborts() {
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
 
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
 
     abort 999
 }
@@ -280,7 +395,13 @@ fun funding_past_expiry_allocation_cap_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
     ledger.receive_idle(
         balance::create_for_testing<USDC>(
             FIRST_EXPIRY_FUNDING + OVER_CAP_EXPIRY_FUNDING,
@@ -299,7 +420,13 @@ fun funding_after_terminal_accounting_started_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
     ledger.receive_idle(balance::create_for_testing<USDC>(1000));
 
     // Latch terminal accounting, then attempt to fund the expiry again.
@@ -314,7 +441,13 @@ fun fee_incentive_allocation_after_terminal_accounting_started_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
     let id = object::id_from_address(EXPIRY_A);
-    ledger.register_expiry(id, EXPIRY_A_MS, MAX_EXPIRY_ALLOCATION, INITIAL_EXPIRY_CASH);
+    ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        LIFETIME_CAP_RATE,
+    );
 
     ledger.materialize_expiry_profit(id);
     ledger.record_fee_incentives_allocated_up_to(

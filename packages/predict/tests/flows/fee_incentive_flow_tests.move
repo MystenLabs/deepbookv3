@@ -38,6 +38,20 @@ const LIVE_TARGET: u64 = 5_000_000_000;
 /// Sponsored on top of a full live target, so it stays in the pool reserve.
 const RESERVE_ABOVE_LIVE_TARGET: u64 = 30_000_000;
 
+/// Allocation-rate fixture, as shares of the same 250,000 USDC allocation cap.
+/// 5%: 0.05 * 250e9 = 12.5e9.
+const RAISED_LIVE_TARGET_RATE: u64 = 50_000_000;
+const RAISED_LIVE_TARGET: u64 = 12_500_000_000;
+/// 1%: 0.01 * 250e9 = 2.5e9.
+const ONE_PERCENT_RATE: u64 = 10_000_000;
+const ONE_PERCENT_OF_ALLOCATION: u64 = 2_500_000_000;
+/// The shipped 2% live target and 10% lifetime cap, restored after a test lowers them.
+const DEFAULT_LIVE_TARGET_RATE: u64 = 20_000_000;
+const DEFAULT_LIFETIME_CAP_RATE: u64 = 100_000_000;
+const ZERO_LIVE_TARGET_RATE: u64 = 0;
+/// More than any allocation below, so the reserve never limits it.
+const LARGE_SPONSORSHIP: u64 = 20_000_000_000;
+
 /// The minimum sponsorship, 10 USDC. Fully allocated by one rebalance.
 const ALLOCATED_BALANCE: u64 = 10_000_000;
 
@@ -431,6 +445,119 @@ fun withdraw_while_frozen_aborts() {
     let _withdrawn = fx.withdraw_fee_incentives_bundle(&mut market, SPONSOR_AMOUNT);
 
     abort 999
+}
+
+// === Admin-set allocation rates ===
+
+/// The live target is read at every rebalance, so raising it tops a market already
+/// allocated at the shipped 2% up to the new share.
+#[test]
+fun raised_live_target_tops_an_existing_market_up_to_the_new_share() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.sponsor_fee_incentives_bundle(&mut market, LARGE_SPONSORSHIP);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), LIVE_TARGET);
+    helpers::return_market_bundle(market);
+
+    fx.set_fee_incentive_live_target_rate(RAISED_LIVE_TARGET_RATE);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), RAISED_LIVE_TARGET);
+    assert_eq!(
+        helpers::vault(&market).fee_incentive_reserve(),
+        LARGE_SPONSORSHIP - RAISED_LIVE_TARGET,
+    );
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// Lowering the live target never takes an allocated balance back: the market keeps
+/// what it holds and simply receives nothing more.
+#[test]
+fun lowered_live_target_leaves_an_allocated_balance_in_place() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.sponsor_fee_incentives_bundle(&mut market, LARGE_SPONSORSHIP);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    helpers::return_market_bundle(market);
+
+    fx.set_fee_incentive_live_target_rate(ONE_PERCENT_RATE);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), LIVE_TARGET);
+    assert_eq!(helpers::vault(&market).fee_incentive_reserve(), LARGE_SPONSORSHIP - LIVE_TARGET);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A zero live target stops allocation without touching the reserve, so the whole
+/// sponsorship stays in the pool and withdrawable.
+#[test]
+fun zero_live_target_stops_allocation_and_keeps_the_reserve_withdrawable() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.set_fee_incentive_live_target_rate(ZERO_LIVE_TARGET_RATE);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.sponsor_fee_incentives_bundle(&mut market, SPONSOR_AMOUNT);
+
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), 0);
+    assert_eq!(helpers::vault(&market).fee_incentive_reserve(), SPONSOR_AMOUNT);
+    let withdrawn = fx.withdraw_fee_incentives_bundle(&mut market, SPONSOR_AMOUNT);
+    assert_eq!(withdrawn.value(), SPONSOR_AMOUNT);
+
+    destroy(withdrawn);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The lifetime cap is snapshotted when a market is created. A market created under
+/// a 1% cap stays capped there after the template is raised back to 10%, while a
+/// market created afterwards gets the raised cap.
+#[test]
+fun lifetime_cap_rate_is_snapshotted_when_the_market_is_created() {
+    let mut fx = helpers::setup_market_default();
+    // Lower the target first so the cap can follow it down.
+    fx.set_fee_incentive_live_target_rate(ONE_PERCENT_RATE);
+    fx.set_template_fee_incentive_lifetime_cap_rate(ONE_PERCENT_RATE);
+    let capped_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut capped = fx.take_market_bundle(capped_id);
+    fx.sponsor_fee_incentives_bundle(&mut capped, LARGE_SPONSORSHIP);
+    fx.rebalance_expiry_cash_bundle(&mut capped);
+    // The 1% target and the 1% cap coincide.
+    assert_eq!(helpers::market(&capped).fee_incentive_balance(), ONE_PERCENT_OF_ALLOCATION);
+    helpers::return_market_bundle(capped);
+
+    // Raise the cap first, then the target, back to the shipped shares.
+    fx.set_template_fee_incentive_lifetime_cap_rate(DEFAULT_LIFETIME_CAP_RATE);
+    fx.set_fee_incentive_live_target_rate(DEFAULT_LIVE_TARGET_RATE);
+    let later_id = fx.create_expiry(test_constants::default_expiry_ms() + constants::one_day_ms!());
+
+    // The 2% target asks for another 2.5e9, but this market's 1% cap is spent.
+    let mut capped = fx.take_market_bundle(capped_id);
+    fx.rebalance_expiry_cash_bundle(&mut capped);
+    assert_eq!(helpers::market(&capped).fee_incentive_balance(), ONE_PERCENT_OF_ALLOCATION);
+    helpers::return_market_bundle(capped);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut later = fx.take_market_bundle(later_id);
+    fx.rebalance_expiry_cash_bundle(&mut later);
+    assert_eq!(helpers::market(&later).fee_incentive_balance(), LIVE_TARGET);
+    assert_eq!(
+        helpers::vault(&later).fee_incentive_reserve(),
+        LARGE_SPONSORSHIP - ONE_PERCENT_OF_ALLOCATION - LIVE_TARGET,
+    );
+    helpers::return_market_bundle(later);
+    fx.finish();
 }
 
 // === Helpers ===
