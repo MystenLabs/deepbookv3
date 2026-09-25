@@ -42,6 +42,33 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     pending_protocol_profit_after: u64,
 }
 
+/// Emitted by the settled-expiry sweep: always on an expiry's first settled sweep, even
+/// one that returns no cash, and again on any later sweep that returns more. Reports the
+/// pool's lifetime net cash result on the expiry, `received_from_expiry - sent_to_expiry`,
+/// as a sign flag and magnitude; each emission carries lifetime totals, so the latest per
+/// `expiry_market_id` supersedes earlier ones. The figure is gross: before the protocol/LP
+/// split, before netting against other expiries' carried losses (which
+/// `ExpiryProfitMaterialized` reports), and including the sponsor fee subsidies mints
+/// moved into expiry cash. Subtract the expiry's `OrderMinted.fee_incentive_subsidy` total
+/// to isolate the trading result. Cash still held for unredeemed winning payouts counts
+/// as paid out.
+public struct ExpiryPnl has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    /// Start of the market's cadence period (`expiry` minus the cadence period), in
+    /// milliseconds. The market's creation transaction may land before it.
+    period_start_ms: u64,
+    expiry: u64,
+    settlement_price: u64,
+    sent_to_expiry: u64,
+    received_from_expiry: u64,
+    /// True when `received_from_expiry >= sent_to_expiry`; break-even reports a zero profit.
+    in_profit: bool,
+    /// Absolute difference between `received_from_expiry` and `sent_to_expiry`.
+    amount: u64,
+}
+
 /// Emitted when an LP queues a supply request: `amount` USDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
 /// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
@@ -312,6 +339,36 @@ public(package) fun emit_expiry_profit_materialized(
         protocol_reserve_balance_after,
         profit_basis_after,
         pending_protocol_profit_after,
+    });
+}
+
+public(package) fun emit_expiry_pnl(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    period_start_ms: u64,
+    expiry: u64,
+    settlement_price: u64,
+    sent_to_expiry: u64,
+    received_from_expiry: u64,
+) {
+    let in_profit = received_from_expiry >= sent_to_expiry;
+    let amount = if (in_profit) {
+        received_from_expiry - sent_to_expiry
+    } else {
+        sent_to_expiry - received_from_expiry
+    };
+    event::emit(ExpiryPnl {
+        pool_vault_id,
+        expiry_market_id,
+        propbook_underlying_id,
+        period_start_ms,
+        expiry,
+        settlement_price,
+        sent_to_expiry,
+        received_from_expiry,
+        in_profit,
+        amount,
     });
 }
 
