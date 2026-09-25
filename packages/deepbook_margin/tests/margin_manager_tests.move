@@ -4799,6 +4799,28 @@ fun liquidate_default_exceeding_total_supply_writes_supply_to_zero() {
     assert_eq!(usdc_pool.total_supply(), 0);
     assert_eq!(usdc_pool.supply_shares(), pool_supply);
 
+    // The wiped pool can be recapitalized. Injecting 1,000 USDC prices the original
+    // shares at 1/1000 of their 1:1 value, so a new 1,000 USDC supply mints as many
+    // shares as the original 1M USDC did and is worth exactly what was paid.
+    let recapitalization = 1_000 * test_constants::usdc_multiplier();
+    usdc_pool.admin_inject_capital(
+        &admin_cap,
+        mint_coin<USDC>(recapitalization, scenario.ctx()),
+        &clock,
+    );
+    assert_eq!(usdc_pool.total_supply(), recapitalization);
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+    let new_shares = usdc_pool.supply(
+        &registry,
+        &supplier_cap,
+        mint_coin<USDC>(recapitalization, scenario.ctx()),
+        option::none(),
+        &clock,
+    );
+    assert_eq!(new_shares, pool_supply);
+    assert_eq!(usdc_pool.user_supply_amount(object::id(&supplier_cap), &clock), recapitalization);
+    destroy(supplier_cap);
+
     destroy_3!(base_coin, quote_coin, remaining_repay);
     return_shared_2!(usdc_pool, pool);
     return_shared_2!(btc_pool, mm);
