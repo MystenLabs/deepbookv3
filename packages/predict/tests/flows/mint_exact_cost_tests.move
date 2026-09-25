@@ -47,8 +47,15 @@ const MIN_FEE_DIVISOR: u64 = 200;
 /// Builder cut of the trading fee: builder_fee_multiplier (0.1), which binds
 /// below max_builder_fee_rate (0.005) * quantity at these sizes.
 const BUILDER_FEE_DIVISOR: u64 = 10;
-/// Sponsor share of the trading fee: fee_incentive_subsidy_rate (0.2).
+/// Sponsor share of the trading fee at the shipped fee_incentive_subsidy_rate (0.2).
 const SUBSIDY_DIVISOR: u64 = 5;
+/// The subsidy-rate ceiling, 50%: the sponsor pays half the fee while its balance
+/// covers it.
+const MAX_SUBSIDY_RATE: u64 = 500_000_000;
+const MAX_RATE_SUBSIDY_DIVISOR: u64 = 2;
+/// At the ceiling the subsidy reaches the 10e6 sponsored balance where half the
+/// fee does: quantity / 200 / 2 = 10e6 at quantity 4e9.
+const MAX_RATE_SUBSIDY_CAP_QUANTITY: u64 = 4_000_000_000;
 
 /// Quantity whose trading fee is large enough that the 0.2 subsidy rate exceeds
 /// the sponsored balance, so the subsidy binds at the cap mid-search.
@@ -492,6 +499,100 @@ fun sponsor_subsidy_is_sized_inside_the_budget() {
     assert_eq!(
         fx.account_balance_bundle<USDC>(&account),
         test_constants::mint_deposit() - fill.all_in_cost(),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The budget search prices each probe at the admin-set rate, not the shipped one:
+/// at the 50% ceiling the sponsor pays half the fee.
+#[test]
+fun configured_subsidy_rate_is_sized_inside_the_budget() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.set_fee_incentive_subsidy_rate_bundle(&mut market, MAX_SUBSIDY_RATE);
+
+    let fill = atm_quote_checked(&mut fx, &market, TEN_THOUSAND_LOTS);
+    let next_lot = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY);
+    let trading_fee = TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR;
+    assert_eq!(fill.fee_incentive_subsidy(), trading_fee / MAX_RATE_SUBSIDY_DIVISOR);
+    assert_eq!(fill.all_in_cost(), fill.premium() + trading_fee - fill.fee_incentive_subsidy());
+    let budget = next_lot.all_in_cost() - 1;
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        TEN_THOUSAND_LOTS,
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), TEN_THOUSAND_LOTS);
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - fill.all_in_cost(),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The account quote reads the rate twice — once for its search, once for the
+/// decomposition it returns — and both must be the admin-set one: at the 50%
+/// ceiling its subsidy is half the fee, and it is the exact debit of the mint it
+/// sizes.
+#[test]
+fun account_quote_at_a_configured_subsidy_rate_is_the_exact_debit_of_the_mint_it_sizes() {
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.set_fee_incentive_subsidy_rate_bundle(&mut market, MAX_SUBSIDY_RATE);
+
+    let budget = atm_quote_checked(&mut fx, &market, NEXT_LOT_QUANTITY).all_in_cost() - 1;
+    let quote = fx.quote_mint_exact_cost_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+    helpers::assert_atm_entry_probability(quote.entry_probability());
+    assert_eq!(quote.quantity(), TEN_THOUSAND_LOTS);
+    let trading_fee = TEN_THOUSAND_LOTS / MIN_FEE_DIVISOR;
+    assert_eq!(quote.fee_incentive_subsidy(), trading_fee / MAX_RATE_SUBSIDY_DIVISOR);
+    assert_eq!(quote.all_in_cost(), quote.premium() + trading_fee - quote.fee_incentive_subsidy());
+
+    let order_id = fx.mint_exact_cost_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        budget,
+        0,
+    );
+
+    assert_eq!(order::from_order_id(order_id).quantity(), quote.quantity());
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        test_constants::mint_deposit() - quote.all_in_cost(),
     );
 
     helpers::return_account_bundle(account);
@@ -1768,6 +1869,47 @@ fun all_in_cost_never_falls_across_the_subsidy_cap() {
         steps = steps + 1;
     };
     assert!(previous > 0);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+#[test]
+fun all_in_cost_never_falls_across_the_subsidy_cap_at_the_maximum_rate() {
+    // A ceiling at or below one is what keeps this walk monotone: at the 50%
+    // ceiling the subsidy gains half a unit per fee unit, so the trader-paid fee
+    // rises at half the fee's rate until the sponsored balance caps the subsidy,
+    // then at the full rate. Walk across that cap at the ceiling itself.
+    let (mut fx, expiry_id, trader) = helpers::setup_everything();
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.set_fee_incentive_subsidy_rate_bundle(&mut market, MAX_SUBSIDY_RATE);
+
+    let lot = constants::position_lot_size!();
+    let mut quantity = MAX_RATE_SUBSIDY_CAP_QUANTITY - WALK_STEPS / 2 * lot;
+    // The walk starts where half the fee is sponsored...
+    let first = atm_quote(&mut fx, &market, quantity);
+    assert_eq!(
+        first.fee_incentive_subsidy(),
+        quantity / MIN_FEE_DIVISOR / MAX_RATE_SUBSIDY_DIVISOR,
+    );
+    let mut previous = 0;
+    let mut last_subsidy = 0;
+    let mut steps = 0;
+    while (steps < WALK_STEPS) {
+        let quote = atm_quote(&mut fx, &market, quantity);
+        assert!(quote.all_in_cost() >= previous);
+        previous = quote.all_in_cost();
+        last_subsidy = quote.fee_incentive_subsidy();
+        quantity = quantity + lot;
+        steps = steps + 1;
+    };
+    // ...and ends where the sponsored balance caps it.
+    assert_eq!(last_subsidy, constants::min_fee_incentive_sponsorship!());
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);

@@ -172,6 +172,19 @@ fun frozen_blocks_version_gated_flow() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_fee_incentive_subsidy_rate_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = protocol_config::EVersionWatermarkNotAdvanced)]
 fun bump_version_watermark_at_current_version_aborts() {
     // At genesis the watermark already equals the running `current_version!()`, so
@@ -204,6 +217,29 @@ fun set_no_trade_window_during_valuation_succeeds() {
     // remains in flight — recovery is not a one-shot.
     config.set_no_trade_window_ms(&admin_cap, config_constants::min_no_trade_window_ms!(), &clock);
     assert_eq!(config.no_trade_window_ms(), 0);
+    assert!(config.valuation_in_progress());
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Not gated on the valuation flag, like the referral rate: nothing in the flush
+/// reads it, so an admin can stop or resume subsidies mid-flush.
+#[test]
+fun set_fee_incentive_subsidy_rate_during_valuation_succeeds() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+
+    config.begin_valuation();
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 0);
     assert!(config.valuation_in_progress());
 
     clock.destroy_for_testing();

@@ -330,7 +330,13 @@ public fun quote_mint(
         );
     let builder_code_id: Option<ID> = option::none();
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
 }
 
 /// Quote the all-in cost of a mint request for one account, reading its builder
@@ -365,7 +371,13 @@ public fun quote_mint_for_account(
         );
     let builder_code_id = predict_account::builder_code_id(account);
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
 }
 
 /// Quote `mint_exact_cost` for one account: the fill that mint would size for
@@ -404,7 +416,13 @@ public fun quote_mint_exact_cost_for_account(
         ctx,
     );
     let penalty_fee = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
-    market.compute_mint_quote(&terms, &builder_code_id, penalty_fee, clock)
+    market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_fee,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    )
 }
 
 // === MintQuote Getters ===
@@ -1065,7 +1083,8 @@ fun mint_prepared(
 /// premium and each fee leg are `mul_down` of a quantity-independent rate; the
 /// trader-paid fee is
 /// `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose
-/// subsidy grows at most one unit per fee unit; the builder fee is a `min` of
+/// subsidy grows at most one unit per fee unit because the configured rate is
+/// capped below one; the builder fee is a `min` of
 /// nondecreasing terms; the penalty's firing condition is quantity-independent;
 /// and the impact charge is monotone (`mint_range_inventory_impact`). The probe
 /// is the helper the charge uses, and the premium-only fit bounds the domain from
@@ -1100,12 +1119,22 @@ fun quote_exact_cost_terms(
 ): MintTerms {
     let range = market.strike_exposure.quote_mint_range(pricer, lower_tick, higher_tick);
     let lot = constants::position_lot_size!();
+    // Sampled once: the rate is a dynamic-field read that no probe should repeat.
+    let subsidy_rate = config.fee_incentive_subsidy_rate();
 
     let mut lo = 0;
     let mut hi = range.max_quantity_for_premium(max_cost) / lot;
     while (lo < hi) {
         let mid = (lo + hi + 1) / 2;
-        let cost = market.all_in_cost_at(config, &range, builder_code_id, mid * lot, clock, ctx);
+        let cost = market.all_in_cost_at(
+            config,
+            &range,
+            builder_code_id,
+            mid * lot,
+            subsidy_rate,
+            clock,
+            ctx,
+        );
         if (cost <= max_cost) {
             lo = mid
         } else {
@@ -1117,8 +1146,15 @@ fun quote_exact_cost_terms(
     let budget_quantity = budget_lots * lot;
     let lots = if (
         budget_lots == 0
-            || market.all_in_cost_at(config, &range, builder_code_id, budget_quantity, clock, ctx)
-                <= budget_quantity
+            || market.all_in_cost_at(
+                config,
+                &range,
+                builder_code_id,
+                budget_quantity,
+                subsidy_rate,
+                clock,
+                ctx,
+            ) <= budget_quantity
     ) {
         budget_lots
     } else {
@@ -1127,7 +1163,15 @@ fun quote_exact_cost_terms(
         while (lo < hi) {
             let mid = (lo + hi + 1) / 2;
             let quantity = mid * lot;
-            let cost = market.all_in_cost_at(config, &range, builder_code_id, quantity, clock, ctx);
+            let cost = market.all_in_cost_at(
+                config,
+                &range,
+                builder_code_id,
+                quantity,
+                subsidy_rate,
+                clock,
+                ctx,
+            );
             if (cost <= quantity) {
                 lo = mid
             } else {
@@ -1147,6 +1191,7 @@ fun all_in_cost_at(
     range: &MintRange,
     builder_code_id: &Option<ID>,
     quantity: u64,
+    fee_incentive_subsidy_rate: u64,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
@@ -1158,6 +1203,7 @@ fun all_in_cost_at(
             market.strike_exposure.mint_range_inventory_impact(range, quantity),
             builder_code_id,
             market.ewma.penalty_fee(config.ewma_config(), quantity, ctx),
+            fee_incentive_subsidy_rate,
             clock,
         )
         .all_in_cost
@@ -1181,7 +1227,13 @@ fun mint_with_terms(
     let penalty_amount = market.ewma.penalty_fee(config.ewma_config(), terms.quantity(), ctx);
     let referrer_account_id = account.referrer_account_id();
     let referrer_receive_address = account.referrer_receive_address();
-    let quote = market.compute_mint_quote(&terms, &builder_code_id, penalty_amount, clock);
+    let quote = market.compute_mint_quote(
+        &terms,
+        &builder_code_id,
+        penalty_amount,
+        config.fee_incentive_subsidy_rate(),
+        clock,
+    );
     assert!(quote.all_in_cost <= max_cost, EMintCostAboveMax);
     market.ewma.update(config.ewma_config(), clock, ctx);
     let referral_fee = if (referrer_receive_address.is_some()) {
@@ -1230,6 +1282,7 @@ fun compute_mint_quote(
     terms: &MintTerms,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
+    fee_incentive_subsidy_rate: u64,
     clock: &Clock,
 ): MintQuote {
     let quote = market.mint_quote_at(
@@ -1239,6 +1292,7 @@ fun compute_mint_quote(
         terms.inventory_impact_charge(),
         builder_code_id,
         penalty_fee,
+        fee_incentive_subsidy_rate,
         clock,
     );
     assert!(quote.all_in_cost <= quote.quantity, EMintCostAboveMaxPayout);
@@ -1257,10 +1311,14 @@ fun mint_quote_at(
     inventory_impact_charge: u64,
     builder_code_id: &Option<ID>,
     penalty_fee: u64,
+    fee_incentive_subsidy_rate: u64,
     clock: &Clock,
 ): MintQuote {
     let trading_fee = market.strike_exposure.trading_fee(market.expiry, price, quantity, clock);
-    let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(trading_fee);
+    let fee_incentive_subsidy = market.fee_incentive_subsidy_amount(
+        trading_fee,
+        fee_incentive_subsidy_rate,
+    );
     let builder_fee = builder_fee_amount(builder_code_id, trading_fee, quantity);
     let all_in_cost =
         premium
@@ -1282,10 +1340,12 @@ fun mint_quote_at(
     }
 }
 
-fun fee_incentive_subsidy_amount(market: &ExpiryMarket, fee_amount: u64): u64 {
-    math::mul_down(fee_amount, constants::fee_incentive_subsidy_rate!()).min(market
-        .fee_incentive_balance
-        .value())
+fun fee_incentive_subsidy_amount(
+    market: &ExpiryMarket,
+    fee_amount: u64,
+    fee_incentive_subsidy_rate: u64,
+): u64 {
+    math::mul_down(fee_amount, fee_incentive_subsidy_rate).min(market.fee_incentive_balance.value())
 }
 
 /// Settle a mint payment per a computed quote: withdraw `all_in_cost` from the
