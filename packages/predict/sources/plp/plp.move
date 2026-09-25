@@ -952,7 +952,8 @@ public(package) fun new_pool_valuation_proof(): PoolValuationProof {
     PoolValuationProof {}
 }
 
-/// Register a freshly created expiry market with the pool as an accounting row.
+/// Register a freshly created expiry market with the pool as an accounting row,
+/// snapshotting its fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_and_share_expiry_market`.
 public(package) fun register_expiry(
@@ -961,6 +962,7 @@ public(package) fun register_expiry(
     expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
+    fee_incentive_lifetime_cap_rate: u64,
     clock: &Clock,
 ) {
     let now_ms = clock.timestamp_ms();
@@ -974,7 +976,13 @@ public(package) fun register_expiry(
     };
     vault
         .expiry_accounting
-        .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
+        .register_expiry(
+            expiry_market_id,
+            expiry_ms,
+            max_expiry_allocation,
+            initial_expiry_cash,
+            fee_incentive_lifetime_cap_rate,
+        );
 }
 
 // === Private Functions ===
@@ -1032,13 +1040,18 @@ fun sweep_or_rebalance_expiry(
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, expiry_market_id);
+        vault.rebalance_live_expiry(market, config, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
-    vault.sync_fee_incentives(market, expiry_market_id);
+fun rebalance_live_expiry(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
+    vault.sync_fee_incentives(market, config, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
     let (target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
@@ -1103,11 +1116,19 @@ fun sweep_live_expiry_surplus(
     );
 }
 
-fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
+/// Top a live market's fee-incentive balance up to the configured live target share
+/// of its allocation cap, from the pool reserve and within its lifetime cap. Never
+/// takes a balance back: a market already above the target receives nothing.
+fun sync_fee_incentives(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
     let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
     let requested_allocation = math::mul_down(
         max_expiry_allocation,
-        constants::fee_incentive_live_target_rate!(),
+        config.fee_incentive_live_target_rate(),
     )
         .saturating_sub(market.fee_incentive_balance())
         .min(vault.fee_incentive_reserve.value());

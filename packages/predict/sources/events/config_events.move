@@ -61,6 +61,15 @@ public struct FeeIncentiveSubsidyRateUpdated has copy, drop, store {
     onchain_timestamp_ms: u64,
 }
 
+/// Emitted when either fee-incentive allocation rate changes, with both post-state
+/// values in FLOAT_SCALING: the live target every rebalance tops a market up to, and
+/// the lifetime cap newly created markets snapshot.
+public struct FeeIncentiveAllocationRatesUpdated has copy, drop, store {
+    fee_incentive_live_target_rate: u64,
+    fee_incentive_lifetime_cap_rate: u64,
+    onchain_timestamp_ms: u64,
+}
+
 /// Emitted when global trading pause state changes.
 public struct TradingPausedUpdated has copy, drop, store {
     protocol_config_id: ID,
@@ -214,6 +223,18 @@ public(package) fun emit_fee_incentive_subsidy_rate_updated(
 ) {
     event::emit(FeeIncentiveSubsidyRateUpdated {
         fee_incentive_subsidy_rate,
+        onchain_timestamp_ms,
+    });
+}
+
+public(package) fun emit_fee_incentive_allocation_rates_updated(
+    fee_incentive_live_target_rate: u64,
+    fee_incentive_lifetime_cap_rate: u64,
+    onchain_timestamp_ms: u64,
+) {
+    event::emit(FeeIncentiveAllocationRatesUpdated {
+        fee_incentive_live_target_rate,
+        fee_incentive_lifetime_cap_rate,
         onchain_timestamp_ms,
     });
 }

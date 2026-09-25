@@ -35,6 +35,8 @@ const EInvalidReferralFeeRate: u64 = 22;
 const EInvalidMaxValuationWindowMs: u64 = 23;
 const EInvalidNoTradeWindowMs: u64 = 24;
 const EInvalidFeeIncentiveSubsidyRate: u64 = 25;
+const EInvalidFeeIncentiveLiveTargetRate: u64 = 26;
+const EInvalidFeeIncentiveLifetimeCapRate: u64 = 27;
 
 // === Fees ===
 
@@ -90,6 +92,44 @@ public(package) fun assert_fee_incentive_subsidy_rate(value: u64) {
     assert!(
         value >= min_fee_incentive_subsidy_rate!() && value <= max_fee_incentive_subsidy_rate!(),
         EInvalidFeeIncentiveSubsidyRate,
+    );
+}
+
+/// Fraction of an expiry's allocation cap it may hold in sponsor-funded fee
+/// incentives at a time, in FLOAT_SCALING. Each live rebalance tops the market's
+/// balance up to this share; `0` stops the pool reserve being allocated to markets.
+public(package) macro fun default_fee_incentive_live_target_rate(): u64 { 20_000_000 }
+
+public(package) macro fun min_fee_incentive_live_target_rate(): u64 { 0 }
+
+public(package) macro fun max_fee_incentive_live_target_rate(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_fee_incentive_live_target_rate(value: u64) {
+    assert!(
+        value >= min_fee_incentive_live_target_rate!()
+            && value <= max_fee_incentive_live_target_rate!(),
+        EInvalidFeeIncentiveLiveTargetRate,
+    );
+}
+
+/// Fraction of an expiry's allocation cap it may receive in sponsor-funded fee
+/// incentives over its whole life, in FLOAT_SCALING. Snapshotted into the expiry's
+/// pool accounting row when the market is created.
+public(package) macro fun default_fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
+
+public(package) macro fun min_fee_incentive_lifetime_cap_rate(): u64 { 0 }
+
+public(package) macro fun max_fee_incentive_lifetime_cap_rate(): u64 {
+    fixed_math::math::float_scaling!()
+}
+
+public(package) fun assert_fee_incentive_lifetime_cap_rate(value: u64) {
+    assert!(
+        value >= min_fee_incentive_lifetime_cap_rate!()
+            && value <= max_fee_incentive_lifetime_cap_rate!(),
+        EInvalidFeeIncentiveLifetimeCapRate,
     );
 }
 
