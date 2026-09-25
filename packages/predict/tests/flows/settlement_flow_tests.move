@@ -37,8 +37,8 @@ const MINT_MIN_FEE: u64 = 10_000_000;
 const MARKET_SETTLED_EVENT_COUNT: u64 = 1;
 const ACTIVE_MARKET_COUNT: u64 = 1;
 const EXPIRY_PNL_EVENT_COUNT: u64 = 1;
-/// Sponsor subsidy on `MINT_MIN_FEE`: the 20% subsidy rate of 10 USDC, well inside
-/// the incentives one minimum sponsorship allocates to the market.
+/// Sponsor subsidy on `MINT_MIN_FEE`: the default 20% subsidy rate (the fixture never
+/// changes it) of 10 USDC, well inside the incentives one minimum sponsorship allocates.
 const MIN_FEE_SUBSIDY: u64 = 2_000_000;
 
 /// BCS mirror used to assert the public `vault_events::ExpiryPnl` schema without
