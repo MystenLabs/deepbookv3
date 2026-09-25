@@ -49,6 +49,7 @@ const ERedeemProceedsBelowMin: u64 = 8;
 const EMintCostCapRequired: u64 = 9;
 const EMarketNotPendingValuation: u64 = 10;
 const EMintCostAboveMaxPayout: u64 = 11;
+const ENotSettledRedeemKeeper: u64 = 12;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -685,10 +686,13 @@ public fun redeem_settled(
     )
 }
 
-/// Permissionlessly redeem a settled order without account-owner authority.
+/// Redeem a settled order without account-owner authority, as an allowlisted keeper.
 ///
-/// This keeper path uses Predict app-auth from the account registry, so
-/// `deauthorize_app<PredictApp>` disables this automation. Owners can still use
+/// Despite the name, only a sender admin has added through
+/// `protocol_config::add_settled_redeem_keeper` may call this; the allowlist
+/// starts empty. The payout still goes to the order's account. This keeper path
+/// uses Predict app-auth from the account registry, so
+/// `deauthorize_app<PredictApp>` also disables it. Owners can still use
 /// `redeem_settled` with owner auth to redeem their own settled positions.
 public fun redeem_settled_permissionless(
     market: &mut ExpiryMarket,
@@ -701,6 +705,7 @@ public fun redeem_settled_permissionless(
     ctx: &mut TxContext,
 ) {
     market.assert_settled_flow_allowed(config);
+    assert!(config.is_settled_redeem_keeper(ctx.sender()), ENotSettledRedeemKeeper);
     let auth = predict_account::generate_auth_as_app(account_registry);
     market.redeem_settled_with_auth(
         wrapper,

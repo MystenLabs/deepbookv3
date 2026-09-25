@@ -574,6 +574,177 @@ fun owner_auth_settled_redeem_survives_predict_app_deauth() {
     fx.finish();
 }
 
+/// The keeper path is closed to senders admin has not allowlisted: bob holds no
+/// grant, so redeeming alice's settled winner aborts before any state moves.
+#[test, expected_failure(abort_code = expiry_market::ENotSettledRedeemKeeper)]
+fun unlisted_sender_cannot_redeem_settled_permissionless() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::bob());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+
+    abort 999
+}
+
+/// An allowlisted keeper redeems another account's settled winner: carol sends the
+/// transaction, and the full payout still lands in alice's account, exactly as the
+/// owner-auth path would credit it.
+#[test]
+fun listed_keeper_redeems_another_accounts_settled_order() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+
+    let premium = finite_range_premium(&mut fx, &market);
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+    fx.add_settled_redeem_keeper_bundle(&mut market, test_constants::carol());
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::carol());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+    fx.check_manager_bundle(
+        &account,
+        helpers::expected_manager_state(post_settled_redeem_balance(premium)),
+    );
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(cash_after_winning_redeem(premium), 0),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// Revocation takes effect on the next call: the fixture allowlists alice, admin
+/// removes her, and her keeper-path redeem then aborts.
+#[test, expected_failure(abort_code = expiry_market::ENotSettledRedeemKeeper)]
+fun removed_keeper_cannot_redeem_settled_permissionless() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+    fx.remove_settled_redeem_keeper_bundle(&mut market, test_constants::alice());
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    fx.redeem_settled_bundle(&mut market, &mut account, order_id);
+
+    abort 999
+}
+
+/// The allowlist gates only the keeper path. With alice removed from it, her
+/// owner-auth redeem still pays the full settled payout, so the allowlist can never
+/// strand a user's winnings.
+#[test]
+fun owner_auth_settled_redeem_ignores_keeper_allowlist() {
+    let settlement_price = settlement_inside_default_finite_range();
+    let (mut fx, expiry_id, trader) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    deepbook_predict::range_test_helpers::prepare_range(&mut fx, &mut market);
+
+    let premium = finite_range_premium(&mut fx, &market);
+    let order_id = fx.mint_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        helpers::strike_tick() + 10,
+        test_constants::mint_quantity(),
+    );
+    fx.remove_settled_redeem_keeper_bundle(&mut market, test_constants::alice());
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+
+    fx.set_clock_for_testing(test_constants::short_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.insert_exact_settlement_spot_bundle(&mut market, settlement_price);
+    assert_eq!(fx.try_settle_bundle(&mut market), true);
+
+    fx.redeem_settled_with_owner_auth_bundle(&mut market, &mut account, order_id);
+    fx.check_manager_bundle(
+        &account,
+        helpers::expected_manager_state(post_settled_redeem_balance(premium)),
+    );
+    helpers::check_market_cash(
+        helpers::market(&market),
+        helpers::expected_market_cash(cash_after_winning_redeem(premium), 0),
+    );
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
 #[test]
 fun try_settle_is_idempotent_and_keeps_settlement_price() {
     let settlement_price = settlement_inside_default_finite_range();
