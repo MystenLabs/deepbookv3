@@ -34,15 +34,17 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - **Builder** — earns attributed add-on fees via a `BuilderCode`.
 - **Oracle operator** — pushes Block-Scholes spot/forward/SVI updates into the `propbook` feeds; settlement
   is **passive** (no operator settle entrypoint).
-- **Admin** — holds `AdminCap`; tunes config, creates markets/sources, manages versions; can mint itself a
-  `PoolValuationCap` for break-glass.
+- **Admin** — holds `AdminCap`; tunes config (including the live fee-incentive subsidy rate), creates
+  markets/sources, manages versions; can mint itself a `PoolValuationCap` for break-glass; can withdraw the
+  sponsor-funded fee-incentive reserve (`plp::withdraw_fee_incentives`) — the one admin custody path on `PoolVault`.
 - **Market-lifecycle operator** — holds `MarketLifecycleCap` (revocable); creates expiry markets.
 - **Pool-valuation operator** — holds `PoolValuationCap` (revocable); starts the **privileged** cron flush.
 - **Pause operator** — holds `PauseCap`; pauses trading/minting, disables versions.
 - **Account admin** — holds `account::AccountAdminCap`; authorizes/deauthorizes apps (e.g. `PredictApp`) on the custody layer.
 
 ## Assets
-USDC (settlement/custody for all trading + payouts, and the sponsored fee-incentive donation), PLP (LP vault share token).
+USDC (settlement/custody for all trading + payouts, and sponsored fee incentives — pooled, admin-withdrawable
+from the pool reserve), PLP (LP vault share token).
 
 ## Module map (CURRENT)
 
