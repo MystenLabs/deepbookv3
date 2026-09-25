@@ -187,6 +187,7 @@ fun zero_rate_stops_spending_without_moving_incentives() {
     assert_eq!(fx.account_balance_bundle<USDC>(&account), balance_before - quote.all_in_cost());
     assert_eq!(helpers::market(&market).fee_incentive_balance(), ALLOCATED_BALANCE);
     assert_eq!(helpers::vault(&market).fee_incentive_reserve(), 0);
+    helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);
     helpers::return_market_bundle(market);
