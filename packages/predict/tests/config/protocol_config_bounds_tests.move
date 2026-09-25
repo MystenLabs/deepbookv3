@@ -5,7 +5,8 @@
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
 /// expiry-fee ramp, backing buffer lambda, inventory-impact max rate), the
-/// live protocol-wide referral fee rate, and the live fee-incentive subsidy rate.
+/// live protocol-wide referral fee rate, and the fee-incentive subsidy, live-target,
+/// and lifetime-cap rates.
 /// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
@@ -320,6 +321,111 @@ fun fee_incentive_subsidy_rate_ships_at_twenty_percent_and_accepts_boundaries() 
         &clock,
     );
     assert_eq!(config.fee_incentive_subsidy_rate(), 500_000_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+// === Fee-incentive allocation rates ===
+//
+// The floors are 0, so there is no reachable below-min case for a `u64`. Both live
+// in dynamic fields added after deploy, and the live target may never exceed the
+// lifetime cap template, so each boundary move below is ordered to keep that true.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeIncentiveLiveTargetRate)]
+fun fee_incentive_live_target_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_live_target_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeIncentiveLifetimeCapRate)]
+fun fee_incentive_lifetime_cap_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EFeeIncentiveLiveTargetExceedsLifetimeCap)]
+fun fee_incentive_live_target_above_the_lifetime_cap_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::default_fee_incentive_lifetime_cap_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EFeeIncentiveLiveTargetExceedsLifetimeCap)]
+fun fee_incentive_lifetime_cap_below_the_live_target_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::default_fee_incentive_live_target_rate!() - 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test]
+fun fee_incentive_allocation_rates_ship_at_two_and_ten_percent_and_accept_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Never set: read the shares every earlier package version used.
+    assert_eq!(config.fee_incentive_live_target_rate(), 20_000_000);
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), 100_000_000);
+
+    // The live target may equal the lifetime cap.
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::default_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_live_target_rate(), 100_000_000);
+
+    // Up to the 100% ceiling: the cap first, then the target.
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), 1_000_000_000);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_live_target_rate(), 1_000_000_000);
+
+    // Down to the 0 floor: the target first, then the cap.
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_live_target_rate(), 0);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), 0);
 
     return_shared(config);
     clock.destroy_for_testing();

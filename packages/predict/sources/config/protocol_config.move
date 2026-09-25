@@ -3,8 +3,8 @@
 
 /// Protocol-wide configuration and flow gates for Predict.
 ///
-/// This shared object owns the admin-tunable config structs, the live fee-incentive
-/// subsidy rate, the trading pause gate, the protocol-wide emergency freeze, the
+/// This shared object owns the admin-tunable config structs, the fee-incentive
+/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the protocol-wide emergency freeze, the
 /// allowlist of keepers that may redeem settled orders without owner auth, and the
 /// full-pool valuation in-flight state (flag + flush ordinal, held across the
 /// transactions a flush spans; keeper/config flows gate on it, trading flows read it
@@ -38,6 +38,7 @@ const ESnapshotInProgress: u64 = 6;
 const ETradeWindowClosed: u64 = 7;
 const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
 const ESettledRedeemKeeperNotFound: u64 = 9;
+const EFeeIncentiveLiveTargetExceedsLifetimeCap: u64 = 10;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -131,6 +132,18 @@ public struct SettledRedeemKeepersKey() has copy, drop, store;
 /// package versions charged, so no migration step is needed.
 public struct FeeIncentiveSubsidyRateKey() has copy, drop, store;
 
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive live
+/// target rate, stored off the struct layout for the same reason. An absent field
+/// reads as `config_constants::default_fee_incentive_live_target_rate`, the fixed
+/// share earlier package versions used.
+public struct FeeIncentiveLiveTargetRateKey() has copy, drop, store;
+
+/// Dynamic-field key on `ProtocolConfig` for the admin-set `u64` fee-incentive
+/// lifetime cap rate template, stored off the struct layout for the same reason. An
+/// absent field reads as `config_constants::default_fee_incentive_lifetime_cap_rate`,
+/// the fixed share earlier package versions used.
+public struct FeeIncentiveLifetimeCapRateKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID for external discovery and PTB construction.
@@ -167,9 +180,32 @@ public fun referral_fee_rate(config: &ProtocolConfig): u64 {
 /// FLOAT_SCALING. `public` for SDK and devInspect reads: the quote already reports
 /// the subsidy it applied, but a client needs the rate to explain it.
 public fun fee_incentive_subsidy_rate(config: &ProtocolConfig): u64 {
-    let key = FeeIncentiveSubsidyRateKey();
-    if (!config.id.exists_(key)) return config_constants::default_fee_incentive_subsidy_rate!();
-    *config.id.borrow(key)
+    config.u64_field_or(
+        FeeIncentiveSubsidyRateKey(),
+        config_constants::default_fee_incentive_subsidy_rate!(),
+    )
+}
+
+/// Return the live fee-incentive target rate: the share of an expiry's allocation
+/// cap each live rebalance tops its sponsor-funded balance up to, in FLOAT_SCALING.
+/// `public` for SDK and devInspect reads, so a client can tell how much a market
+/// can hold before reading its balance.
+public fun fee_incentive_live_target_rate(config: &ProtocolConfig): u64 {
+    config.u64_field_or(
+        FeeIncentiveLiveTargetRateKey(),
+        config_constants::default_fee_incentive_live_target_rate!(),
+    )
+}
+
+/// Return the fee-incentive lifetime cap rate that newly created expiry markets
+/// snapshot: the share of an expiry's allocation cap it may receive in
+/// sponsor-funded incentives over its life, in FLOAT_SCALING. `public` for SDK and
+/// devInspect reads.
+public fun fee_incentive_lifetime_cap_rate(config: &ProtocolConfig): u64 {
+    config.u64_field_or(
+        FeeIncentiveLifetimeCapRateKey(),
+        config_constants::default_fee_incentive_lifetime_cap_rate!(),
+    )
 }
 
 /// Window before expiry in which live quotes, mints, and live redeems abort.
@@ -544,7 +580,8 @@ public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &Admin
 /// older than 4: those compiled in a fixed 20% and never read this rate, so until
 /// then a mint routed through one still draws 20% from the market's balance. A
 /// zero rate does not stop `rebalance_expiry_cash` allocating the pool reserve into
-/// markets; to wind incentives down, also withdraw the reserve
+/// markets; to wind incentives down, also set the live target rate to zero, which
+/// keeps the reserve in the pool, or withdraw the reserve
 /// (`plp::withdraw_fee_incentives`).
 ///
 /// Not gated on the valuation flag, matching `set_referral_fee_rate`: nothing in the
@@ -558,13 +595,58 @@ public fun set_fee_incentive_subsidy_rate(
 ) {
     config.assert_version();
     config_constants::assert_fee_incentive_subsidy_rate(rate);
-    let key = FeeIncentiveSubsidyRateKey();
-    if (config.id.exists_(key)) {
-        *config.id.borrow_mut(key) = rate;
-    } else {
-        config.id.add(key, rate);
-    };
+    config.set_u64_field(FeeIncentiveSubsidyRateKey(), rate);
     config_events::emit_fee_incentive_subsidy_rate_updated(rate, clock.timestamp_ms());
+}
+
+/// Set the share of an expiry's allocation cap each live rebalance tops its
+/// sponsor-funded fee-incentive balance up to. Read at every rebalance, so it
+/// applies to markets already trading. Lowering it never claws back a balance
+/// already allocated: a market above the new target receives nothing more until it
+/// spends below it. `0` stops the pool reserve being allocated to markets, so it
+/// stays in the pool and withdrawable. May not exceed the lifetime cap rate new
+/// markets snapshot (`EFeeIncentiveLiveTargetExceedsLifetimeCap`).
+///
+/// Binds every rebalance only once the version watermark has retired package
+/// versions older than 4, which compiled in a fixed 2%. Not gated on the valuation
+/// flag: the flush never reads it, and the reserve and market incentive balances it
+/// moves between are outside PLP NAV.
+public fun set_fee_incentive_live_target_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_fee_incentive_live_target_rate(rate);
+    assert!(
+        rate <= config.fee_incentive_lifetime_cap_rate(),
+        EFeeIncentiveLiveTargetExceedsLifetimeCap,
+    );
+    config.set_u64_field(FeeIncentiveLiveTargetRateKey(), rate);
+    config.emit_fee_incentive_allocation_rates_updated(clock);
+}
+
+/// Set the share of an expiry's allocation cap it may receive in sponsor-funded fee
+/// incentives over its life. Snapshotted into each expiry's pool accounting row when
+/// the market is created, so markets already created keep the cap they were created
+/// with. May not fall below the live target rate
+/// (`EFeeIncentiveLiveTargetExceedsLifetimeCap`). Not gated on the valuation flag,
+/// for the same reason as the live target rate.
+public fun set_template_fee_incentive_lifetime_cap_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    rate: u64,
+    clock: &Clock,
+) {
+    config.assert_version();
+    config_constants::assert_fee_incentive_lifetime_cap_rate(rate);
+    assert!(
+        config.fee_incentive_live_target_rate() <= rate,
+        EFeeIncentiveLiveTargetExceedsLifetimeCap,
+    );
+    config.set_u64_field(FeeIncentiveLifetimeCapRateKey(), rate);
+    config.emit_fee_incentive_allocation_rates_updated(clock);
 }
 
 /// Set the fee charged on executed PLP supply fills. Admin-gated and validated
@@ -782,6 +864,30 @@ fun set_frozen_internal(config: &mut ProtocolConfig, frozen: bool) {
 /// Abort unless trading is not paused.
 fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
+}
+
+/// Emit both fee-incentive allocation rates, sampled after the setter's write.
+fun emit_fee_incentive_allocation_rates_updated(config: &ProtocolConfig, clock: &Clock) {
+    config_events::emit_fee_incentive_allocation_rates_updated(
+        config.fee_incentive_live_target_rate(),
+        config.fee_incentive_lifetime_cap_rate(),
+        clock.timestamp_ms(),
+    );
+}
+
+/// Read a `u64` knob made tunable after deploy and stored in a dynamic field, or
+/// `default` when it has never been set.
+fun u64_field_or<K: copy + drop + store>(config: &ProtocolConfig, key: K, default: u64): u64 {
+    if (!config.id.exists_(key)) return default;
+    *config.id.borrow(key)
+}
+
+fun set_u64_field<K: copy + drop + store>(config: &mut ProtocolConfig, key: K, value: u64) {
+    if (config.id.exists_(key)) {
+        *config.id.borrow_mut(key) = value;
+    } else {
+        config.id.add(key, value);
+    };
 }
 
 fun new(ctx: &mut TxContext): ProtocolConfig {

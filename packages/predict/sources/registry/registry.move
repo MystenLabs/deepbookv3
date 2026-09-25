@@ -310,6 +310,7 @@ public fun create_and_share_expiry_market(
         expiry,
         max_expiry_allocation,
         initial_expiry_cash,
+        config.fee_incentive_lifetime_cap_rate(),
         clock,
     );
     registry
