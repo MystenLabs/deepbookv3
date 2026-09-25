@@ -89,7 +89,7 @@ The `AdminCap` can:
 - mint and revoke `PauseCap`s, advance the package-version watermark (`bump_version_watermark` — monotonic, no disable or re-enable), and register Propbook underlyings Predict can build markets on;
 - engage or lift the trading pause and the protocol-wide emergency freeze; `set_frozen` is deliberately ungated, so an engaged freeze is always liftable without a package upgrade;
 - mint and revoke the `MarketLifecycleCap`s that gate market creation and the `PoolValuationCap`s that gate starting a flush;
-- set the live fee-incentive subsidy rate (0–50% of each mint's trading fee, read on every mint), and withdraw any amount of the sponsor-funded fee-incentive reserve (`plp::withdraw_fee_incentives`). The reserve is excluded from PLP NAV, so a withdrawal takes nothing from LPs or holders. Sponsors carry this trust: a sponsorship is not earmarked to its sponsor, and the admin can reclaim it and send it anywhere. Incentives already allocated to a live market are out of reach until that market settles and is swept back to the reserve;
+- set the live fee-incentive subsidy rate (0–50% of each mint's trading fee, read on every mint) and how the sponsor-funded reserve is allocated to markets (the live target and lifetime cap, each 0–100% of a market's allocation cap), and withdraw any amount of the sponsor-funded fee-incentive reserve (`plp::withdraw_fee_incentives`). The reserve is excluded from PLP NAV, so a withdrawal takes nothing from LPs or holders. Sponsors carry this trust: a sponsorship is not earmarked to its sponsor, and the admin can reclaim it and send it anywhere. Incentives already allocated to a live market are out of reach until that market settles and is swept back to the reserve;
 
 The `AdminCap` cannot:
 
