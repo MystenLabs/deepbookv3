@@ -4,7 +4,8 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the trading pause
-/// gate, the protocol-wide emergency freeze, and the full-pool valuation
+/// gate, the protocol-wide emergency freeze, the allowlist of keepers that may
+/// redeem settled orders without owner auth, and the full-pool valuation
 /// in-flight state (flag + flush ordinal, held across the transactions a flush
 /// spans; keeper/config flows gate on it, trading flows read it only to discard
 /// stale stamps lazily). Flow modules decide which gates apply before they mutate expiry,
@@ -20,7 +21,12 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
-use sui::clock::Clock;
+use sui::{clock::Clock, dynamic_field as df, vec_set::{Self, VecSet}};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists as UID.exists_;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -30,6 +36,8 @@ const EVersionWatermarkNotAdvanced: u64 = 4;
 const EProtocolFrozen: u64 = 5;
 const ESnapshotInProgress: u64 = 6;
 const ETradeWindowClosed: u64 = 7;
+const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
+const ESettledRedeemKeeperNotFound: u64 = 9;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -109,6 +117,12 @@ public struct ProtocolConfig has key {
     /// its stamped markets.
     flush_seq: u64,
 }
+
+/// Dynamic-field key on `ProtocolConfig` for the `VecSet<address>` of keepers
+/// allowed to call `expiry_market::redeem_settled_permissionless`. The set was
+/// added after deploy, so it lives off the struct layout; an absent field is an
+/// empty set, which closes the keeper path.
+public struct SettledRedeemKeepersKey() has copy, drop, store;
 
 // === Public Functions ===
 
@@ -438,6 +452,38 @@ public fun set_frozen(config: &mut ProtocolConfig, _admin_cap: &AdminCap, frozen
     config.set_frozen_internal(frozen);
 }
 
+/// Allow `keeper` to call `expiry_market::redeem_settled_permissionless`.
+/// Admin-only and version-gated. Aborts if `keeper` is already allowed.
+public fun add_settled_redeem_keeper(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    keeper: address,
+) {
+    config.assert_version();
+    if (!config.id.exists_(SettledRedeemKeepersKey())) {
+        config.id.add(SettledRedeemKeepersKey(), vec_set::empty<address>());
+    };
+    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
+    assert!(!keepers.contains(&keeper), ESettledRedeemKeeperAlreadyAdded);
+    keepers.insert(keeper);
+    config_events::emit_settled_redeem_keeper_updated(keeper, true);
+}
+
+/// Revoke `keeper`'s access to `expiry_market::redeem_settled_permissionless`.
+/// Admin-only. Bypasses the version gate, like the registry's cap revocations, so
+/// revocation stays available under the emergency freeze and from a package
+/// version below the runtime floor. Aborts if `keeper` is not allowed.
+public fun remove_settled_redeem_keeper(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    keeper: address,
+) {
+    assert!(config.is_settled_redeem_keeper(keeper), ESettledRedeemKeeperNotFound);
+    let keepers: &mut VecSet<address> = config.id.borrow_mut(SettledRedeemKeepersKey());
+    keepers.remove(&keeper);
+    config_events::emit_settled_redeem_keeper_updated(keeper, false);
+}
+
 /// Advance the version floor to this package's compiled-in `current_version!()`.
 ///
 /// The floor cannot be set above the executing package's version. This function
@@ -563,6 +609,14 @@ public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): St
 
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
+}
+
+/// Whether `keeper` may call `expiry_market::redeem_settled_permissionless`.
+public(package) fun is_settled_redeem_keeper(config: &ProtocolConfig, keeper: address): bool {
+    let key = SettledRedeemKeepersKey();
+    if (!config.id.exists_(key)) return false;
+    let keepers: &VecSet<address> = config.id.borrow(key);
+    keepers.contains(&keeper)
 }
 
 /// Abort unless the protocol is operational: not emergency-frozen, and the

@@ -67,6 +67,13 @@ public struct ProtocolFrozenUpdated has copy, drop, store {
     frozen: bool,
 }
 
+/// Emitted when admin adds (`allowed = true`) or removes (`allowed = false`) a
+/// keeper allowed to call `expiry_market::redeem_settled_permissionless`.
+public struct SettledRedeemKeeperUpdated has copy, drop, store {
+    keeper: address,
+    allowed: bool,
+}
+
 /// Emitted when a new expiry market is created, with its cadence terms and
 /// immutable expiry-policy snapshot. Fraction, fee, probability, and multiplier
 /// fields use FLOAT_SCALING; windows use milliseconds.
@@ -207,6 +214,10 @@ public(package) fun emit_protocol_frozen_updated(protocol_config_id: ID, frozen:
         protocol_config_id,
         frozen,
     });
+}
+
+public(package) fun emit_settled_redeem_keeper_updated(keeper: address, allowed: bool) {
+    event::emit(SettledRedeemKeeperUpdated { keeper, allowed });
 }
 
 public(package) fun emit_market_created(

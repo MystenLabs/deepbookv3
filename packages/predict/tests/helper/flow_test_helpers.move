@@ -193,6 +193,10 @@ public fun setup_market(tick: u64): Fixture {
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
     config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
+    // Allowlist the default trader as a settled-redeem keeper so flow tests can
+    // compose `redeem_settled_permissionless` inside the trader's own transaction.
+    // The allowlist's own gating is covered with unlisted senders elsewhere.
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -489,6 +493,24 @@ public fun cancel_supply_request_bundle(
             &self.clock,
             self.scenario.ctx(),
         );
+}
+
+/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
+public fun add_settled_redeem_keeper_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    keeper: address,
+) {
+    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
+}
+
+/// Revoke `keeper`'s access to `redeem_settled_permissionless`, through the real admin path.
+public fun remove_settled_redeem_keeper_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    keeper: address,
+) {
+    market.config.remove_settled_redeem_keeper(&self.admin_cap, keeper);
 }
 
 /// Pause / unpause global trading through the real admin path.
@@ -2029,9 +2051,10 @@ public fun redeem_live_bundle_with_limits(
     )
 }
 
-/// Permissionless settled redeem (no owner auth): clears a settled order using app
-/// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
-/// Block Scholes feed.
+/// Keeper-path settled redeem (no owner auth): clears a settled order using app
+/// auth generated through the whitelisted `PredictApp`. The current scenario sender
+/// must be an allowlisted settled-redeem keeper. Does not price, so takes no Block
+/// Scholes feed.
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,

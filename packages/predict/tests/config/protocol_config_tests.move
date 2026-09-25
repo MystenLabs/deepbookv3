@@ -325,3 +325,107 @@ fun set_max_valuation_window_during_valuation_aborts() {
     );
     abort 999
 }
+
+// === Settled-redeem keeper allowlist ===
+
+/// The allowlist ships empty: a fresh config has no dynamic field, and the query
+/// must read that as "nobody", including the deployer.
+#[test]
+fun settled_redeem_keeper_allowlist_starts_empty() {
+    let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_test();
+
+    assert!(!config.is_settled_redeem_keeper(test_constants::admin()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::bob()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun add_settled_redeem_keeper_allows_only_that_address() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::bob()));
+    assert!(!config.is_settled_redeem_keeper(test_constants::admin()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test]
+fun remove_settled_redeem_keeper_revokes_only_that_address() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::bob());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    assert!(config.is_settled_redeem_keeper(test_constants::bob()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+/// Removing the last keeper leaves the (now empty) set in place; adding again
+/// must reuse it rather than abort on a second `dynamic_field::add`.
+#[test]
+fun removed_settled_redeem_keeper_can_be_added_again() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(config.is_settled_redeem_keeper(test_constants::alice()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
+
+#[test, expected_failure(abort_code = protocol_config::ESettledRedeemKeeperAlreadyAdded)]
+fun add_settled_redeem_keeper_twice_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    abort 999
+}
+
+/// No keeper was ever added, so the allowlist's dynamic field does not exist yet.
+#[test, expected_failure(abort_code = protocol_config::ESettledRedeemKeeperNotFound)]
+fun remove_settled_redeem_keeper_before_any_add_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    abort 999
+}
+
+/// The allowlist exists but does not contain the address being removed.
+#[test, expected_failure(abort_code = protocol_config::ESettledRedeemKeeperNotFound)]
+fun remove_unlisted_settled_redeem_keeper_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::bob());
+    abort 999
+}
+
+/// Granting keeper access is version-gated, so the freeze blocks it.
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun add_settled_redeem_keeper_while_frozen_aborts() {
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    config.set_frozen(&admin_cap, true);
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    abort 999
+}
+
+/// The mirror of the frozen add: revocation is deliberately ungated so admin can
+/// drop a compromised keeper during an incident. A refactor that routed removal
+/// through `assert_version` would pass every negative test and fail only here.
+#[test]
+fun remove_settled_redeem_keeper_while_frozen_succeeds() {
+    let (scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.set_frozen(&admin_cap, true);
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    assert!(!config.is_settled_redeem_keeper(test_constants::alice()));
+
+    test_helpers::finish_registry_test(scenario, reg, config, admin_cap);
+}
