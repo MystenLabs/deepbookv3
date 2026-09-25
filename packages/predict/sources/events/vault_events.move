@@ -353,11 +353,7 @@ public(package) fun emit_expiry_pnl(
     received_from_expiry: u64,
 ) {
     let in_profit = received_from_expiry >= sent_to_expiry;
-    let amount = if (in_profit) {
-        received_from_expiry - sent_to_expiry
-    } else {
-        sent_to_expiry - received_from_expiry
-    };
+    let amount = received_from_expiry.diff(sent_to_expiry);
     event::emit(ExpiryPnl {
         pool_vault_id,
         expiry_market_id,
