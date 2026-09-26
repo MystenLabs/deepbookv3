@@ -44,7 +44,7 @@ use token::deep::{DEEP, ProtectedTreasury};
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
 use fun df::borrow_mut as UID.borrow_mut;
- use fun df::exists as UID.exists;
+use fun df::exists as UID.exists;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;

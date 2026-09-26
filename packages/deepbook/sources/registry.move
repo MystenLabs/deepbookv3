@@ -15,7 +15,7 @@ use sui::{
 };
 
 use fun df::add as UID.add;
- use fun df::exists as UID.exists;
+use fun df::exists as UID.exists;
 use fun df::remove as UID.remove;
 
 // === Errors ===
