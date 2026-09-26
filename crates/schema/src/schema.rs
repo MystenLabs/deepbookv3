@@ -73,7 +73,7 @@ diesel::table! {
         package -> Text,
         balance_manager_id -> Text,
         asset -> Text,
-        amount -> Int8,
+        amount -> Numeric,
         deposit -> Bool,
     }
 }
