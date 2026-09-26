@@ -21,8 +21,8 @@ use sui::{
 };
 
 use fun df::borrow as UID.borrow;
-use fun df::exists_ as UID.exists_;
-use fun df::remove_if_exists as UID.remove_if_exists;
+use fun df::exists as UID.exists;
+use fun df::remove_opt as UID.remove_opt;
 use fun df::add as UID.add;
 
 // === Errors ===
@@ -198,7 +198,7 @@ public fun set_balance_manager_referral(
     trade_cap: &TradeCap,
 ) {
     balance_manager.validate_trader(trade_cap);
-    let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(referral.pool_id));
+    let _: Option<ID> = balance_manager.id.remove_opt(ReferralKey(referral.pool_id));
     balance_manager.id.add(ReferralKey(referral.pool_id), referral.id.to_inner());
 
     event::emit(DeepBookReferralSetEvent {
@@ -219,7 +219,7 @@ public fun unset_balance_manager_referral(
     trade_cap: &TradeCap,
 ) {
     balance_manager.validate_trader(trade_cap);
-    let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(pool_id));
+    let _: Option<ID> = balance_manager.id.remove_opt(ReferralKey(pool_id));
 
     event::emit(DeepBookReferralSetEvent {
         referral_id: id_from_address(@0x0),
@@ -409,7 +409,7 @@ public fun get_balance_manager_referral_id(
     pool_id: ID,
 ): Option<ID> {
     let ref_key = ReferralKey(pool_id);
-    if (!balance_manager.id.exists_(ref_key)) {
+    if (!balance_manager.id.exists(ref_key)) {
         return option::none()
     };
     let referral_id: &ID = balance_manager.id.borrow(ref_key);

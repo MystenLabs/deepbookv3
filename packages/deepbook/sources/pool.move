@@ -44,7 +44,7 @@ use token::deep::{DEEP, ProtectedTreasury};
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
 use fun df::borrow_mut as UID.borrow_mut;
-use fun df::exists_ as UID.exists_;
+use fun df::exists as UID.exists;
 
 // === Errors ===
 const EInvalidFee: u64 = 1;
@@ -2108,7 +2108,7 @@ fun update_ewma_state<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): &mut EWMAState {
     let pool_id = self.id();
-    if (!self.id.exists_(constants::ewma_df_key())) {
+    if (!self.id.exists(constants::ewma_df_key())) {
         self.id.add(constants::ewma_df_key(), init_ewma_state(ctx));
     };
 
