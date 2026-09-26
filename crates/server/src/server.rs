@@ -69,6 +69,20 @@ diesel::define_sql_function! {
 /// Default lookback window for the /orders endpoint when no start_time is provided (7 days in ms).
 const DEFAULT_ORDERS_LOOKBACK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
+/// Default lookback window for the historical-volume endpoints when no start_time is provided.
+const DEFAULT_VOLUME_LOOKBACK_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// Default bucket length for the intervalized historical-volume endpoint (1 hour, in seconds).
+const DEFAULT_VOLUME_INTERVAL_SECONDS: i64 = 3600;
+
+/// Widest window the intervalized historical-volume endpoint will serve (365 days in ms). Wide
+/// enough for a year of daily buckets, which stays well inside the bucket budget below.
+const MAX_VOLUME_INTERVAL_RANGE_MS: i64 = 365 * 24 * 60 * 60 * 1000;
+
+/// Most buckets one intervalized historical-volume request may ask for. Each bucket costs one
+/// database query, so this is the per-request work budget.
+const MAX_VOLUME_INTERVAL_BUCKETS: i64 = 500;
+
 fn current_time_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -719,31 +733,19 @@ async fn get_historical_volume_by_balance_manager_id(
     Ok(Json(volume_by_pool))
 }
 
-async fn get_historical_volume_by_balance_manager_id_with_interval(
-    Path((pool_names, balance_manager_id)): Path<(String, String)>,
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<HashMap<String, HashMap<String, Vec<i64>>>>, DeepBookError> {
-    let pools = state.reader.get_pools().await?;
-    let pool_name_to_id: HashMap<String, String> = pools
-        .into_iter()
-        .map(|pool| (pool.pool_name, pool.pool_id))
-        .collect();
-
-    let pool_ids = pool_names
-        .split(',')
-        .filter_map(|name| pool_name_to_id.get(name).cloned())
-        .collect::<Vec<_>>();
-
-    if pool_ids.is_empty() {
-        return Err(DeepBookError::bad_request("No valid pool names provided"));
-    }
-
-    // Parse interval
-    let interval = params
-        .get("interval")
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(3600); // Default interval: 1 hour
+/// Bucket length in ms for the intervalized historical-volume endpoint, from the `interval` query
+/// parameter in seconds. Rejects anything that is not a positive number of seconds, and anything
+/// whose millisecond form does not fit in an `i64`.
+fn volume_interval_ms(params: &HashMap<String, String>) -> Result<i64, DeepBookError> {
+    let interval = match params.get("interval") {
+        Some(raw) => raw.parse::<i64>().map_err(|_| {
+            DeepBookError::bad_request(format!(
+                "Invalid interval '{}': expected a whole number of seconds",
+                raw
+            ))
+        })?,
+        None => DEFAULT_VOLUME_INTERVAL_SECONDS,
+    };
 
     if interval <= 0 {
         return Err(DeepBookError::bad_request(
@@ -751,21 +753,104 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
         ));
     }
 
-    let interval_ms = interval * 1000;
-    // Parse start_time and end_time
-    let end_time = params.end_time();
+    interval.checked_mul(1000).ok_or_else(|| {
+        DeepBookError::bad_request(format!("Interval of {}s is too large", interval))
+    })
+}
 
+/// Number of buckets the intervalized historical-volume endpoint will walk for this window — the
+/// value that drives the walk itself — or a 400 when the request exceeds the per-request work
+/// budget.
+///
+/// Every bucket costs one database query, so the window is bounded before any query runs: the
+/// timestamps must be non-negative and ordered, the window may not exceed
+/// [`MAX_VOLUME_INTERVAL_RANGE_MS`], and it may not need more than [`MAX_VOLUME_INTERVAL_BUCKETS`]
+/// buckets.
+fn volume_interval_buckets(
+    start_time: i64,
+    end_time: i64,
+    interval_ms: i64,
+) -> Result<i64, DeepBookError> {
+    if start_time < 0 {
+        return Err(DeepBookError::bad_request(
+            "start_time must not be negative",
+        ));
+    }
+
+    if end_time <= start_time {
+        return Err(DeepBookError::bad_request(
+            "end_time must be greater than start_time",
+        ));
+    }
+
+    // Ordered and non-negative, so the subtraction cannot overflow.
+    let range_ms = end_time - start_time;
+    if range_ms > MAX_VOLUME_INTERVAL_RANGE_MS {
+        return Err(DeepBookError::bad_request(format!(
+            "Time range of {}s exceeds the maximum of {}s",
+            range_ms / 1000,
+            MAX_VOLUME_INTERVAL_RANGE_MS / 1000
+        )));
+    }
+
+    let buckets = range_ms / interval_ms;
+    if buckets > MAX_VOLUME_INTERVAL_BUCKETS {
+        return Err(DeepBookError::bad_request(format!(
+            "An interval of {}s over a {}s range needs {} buckets, more than the maximum of {}; \
+             widen the interval or narrow the time range",
+            interval_ms / 1000,
+            range_ms / 1000,
+            buckets,
+            MAX_VOLUME_INTERVAL_BUCKETS
+        )));
+    }
+
+    Ok(buckets)
+}
+
+async fn get_historical_volume_by_balance_manager_id_with_interval(
+    Path((pool_names, balance_manager_id)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<HashMap<String, HashMap<String, Vec<i64>>>>, DeepBookError> {
+    // Bound the work this request may cost before touching the database: the loop below runs one
+    // query per bucket, and every input it walks on is caller-controlled.
+    let interval_ms = volume_interval_ms(&params)?;
+    let end_time = params.end_time();
     let start_time = params
         .start_time() // Convert to milliseconds
-        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+        .unwrap_or_else(|| end_time.saturating_sub(DEFAULT_VOLUME_LOOKBACK_MS));
+    let buckets = volume_interval_buckets(start_time, end_time, interval_ms)?;
 
-    let mut metrics_by_interval: HashMap<String, HashMap<String, Vec<i64>>> = HashMap::new();
+    let pools = state.reader.get_pools().await?;
+    let pool_name_to_id: HashMap<String, String> = pools
+        .into_iter()
+        .map(|pool| (pool.pool_name, pool.pool_id))
+        .collect();
 
-    let mut current_start = start_time;
-    while current_start + interval_ms <= end_time {
+    // Deduplicated: a repeated pool name would otherwise widen every per-bucket query's IN list.
+    let mut pool_ids = pool_names
+        .split(',')
+        .filter_map(|name| pool_name_to_id.get(name).cloned())
+        .collect::<Vec<_>>();
+    pool_ids.sort();
+    pool_ids.dedup();
+
+    if pool_ids.is_empty() {
+        return Err(DeepBookError::bad_request("No valid pool names provided"));
+    }
+
+    let mut metrics_by_interval: HashMap<String, HashMap<String, Vec<i64>>> =
+        HashMap::with_capacity(buckets as usize);
+
+    // The walk is driven by the budget's own bucket count, so the number the request was admitted
+    // on is the number of queries it can cost. Deriving the end of the walk separately — from a
+    // comparison against end_time — is what let a saturated end_time hold the loop open forever.
+    // Every bucket lands inside [start_time, end_time], so none of this arithmetic can overflow.
+    let volume_in_base = params.volume_in_base();
+    for bucket in 0..buckets {
+        let current_start = start_time + bucket * interval_ms;
         let current_end = current_start + interval_ms;
-
-        let volume_in_base = params.volume_in_base();
 
         let results = state
             .reader
@@ -801,8 +886,6 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
             format!("[{}, {}]", current_start / 1000, current_end / 1000),
             volume_by_pool,
         );
-
-        current_start = current_end;
     }
 
     Ok(Json(metrics_by_interval))
@@ -1934,13 +2017,18 @@ impl ParameterUtil for HashMap<String, String> {
     fn start_time(&self) -> Option<i64> {
         self.get("start_time")
             .and_then(|v| v.parse::<i64>().ok())
-            .map(|t| t * 1000) // Convert
+            // Saturating: seconds far outside the representable millisecond range clamp to the
+            // bounds instead of wrapping into a plausible-looking timestamp.
+            .map(|t| t.saturating_mul(1000))
     }
 
     fn end_time(&self) -> i64 {
         self.get("end_time")
             .and_then(|v| v.parse::<i64>().ok())
-            .map(|t| t * 1000) // Convert to milliseconds
+            // Saturating, then floored at the epoch: ~24 handlers subtract a lookback window
+            // from this value with plain arithmetic, and a clamp to i64::MIN would underflow all
+            // of them. A pre-epoch end_time selects nothing either way.
+            .map(|t| t.saturating_mul(1000).max(0))
             .unwrap_or_else(current_time_ms)
     }
 
