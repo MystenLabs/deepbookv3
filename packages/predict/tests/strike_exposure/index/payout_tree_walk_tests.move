@@ -282,7 +282,7 @@ fun live_pricer_at(forward: u64): (OracleFixture, OracleBundle, Pricer) {
     let mut fixture = oracle_fixture::setup_oracle_default();
     let mut oracle = fixture.take_oracle_bundle();
     // Inflated base variance, otherwise the default (positive) SVI shape; spot ==
-    // forward gives basis 1.0. sigma == the propbook floor (default_svi_sigma).
+    // forward gives basis 1.0. sigma == default_svi_sigma (1e-3).
     fixture.prepare_real_oracle_bundle(
         &mut oracle,
         forward,

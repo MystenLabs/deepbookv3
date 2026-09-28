@@ -27,6 +27,7 @@ use deepbook_predict::{
     flow_test_helpers as helpers,
     plp::{Self, PoolVault},
     pricing,
+    pricing_ssvi_reference_data as ssvi,
     protocol_config::{Self, ProtocolConfig},
     test_constants,
     vault_events
@@ -404,6 +405,64 @@ fun newer_representable_block_scholes_spot_restores_pool_valuation_flush() {
 
     helpers::return_market_bundle(market);
     fx.finish();
+}
+
+// === SVI sigma floor on the mandatory valuation path ===
+
+/// The flush freezes every active market's pricer in its atomic snapshot stage, so
+/// a surface the pricing-safe envelope rejects stops the pool-wide flush from
+/// starting. A `sigma` one raw unit under the 1e-5 floor still does.
+#[test, expected_failure(abort_code = pricing::EBlockScholesInputsInvalid)]
+fun svi_sigma_below_the_floor_aborts_pool_valuation_flush() {
+    let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
+        test_constants::pricing_min_svi_sigma() - 1,
+    );
+    fx.start_flush_bundle(&mut market);
+    abort 999
+}
+
+/// The backfill's smallest one-minute `sigma` (4.7e-5), which the former 1e-3 floor
+/// rejected, now values: the flush completes and, with no orders on the market,
+/// marks the pool at its idle seed.
+#[test]
+fun short_dated_ssvi_surface_completes_pool_valuation_flush() {
+    let (mut fx, mut market) = market_with_short_dated_ssvi_shape(
+        ssvi::svi_sigma(ssvi::smallest_sigma_slice()),
+    );
+    fx.start_flush_bundle(&mut market);
+    fx.value_expiry_bundle(&mut market);
+    let pool_nav = fx.finish_flush_bundle(&mut market);
+    assert_eq!(pool_nav, IDLE_SEED);
+
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// A funded empty market whose latest SVI tuple is the SSVI reference's
+/// smallest-sigma one-minute slice with `sigma` replaced.
+fun market_with_short_dated_ssvi_shape(svi_sigma: u64): (helpers::Fixture, helpers::MarketBundle) {
+    let s = ssvi::smallest_sigma_slice();
+    let mut fx = helpers::setup_market_default();
+    bootstrap_pool(&mut fx, IDLE_SEED);
+    let e = new_funded_empty_market(&mut fx, test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(e);
+    fx.seed_bs_surface_with_svi_bundle(
+        &mut market,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        ssvi::svi_a_magnitude(s),
+        ssvi::svi_a_is_negative(s),
+        ssvi::svi_b(s),
+        svi_sigma,
+        ssvi::svi_rho_magnitude(s),
+        ssvi::svi_rho_is_negative(s),
+        ssvi::svi_m_magnitude(s),
+        ssvi::svi_m_is_negative(s),
+        test_constants::live_source_timestamp_ms() + 1,
+    );
+    (fx, market)
 }
 
 // === Completeness proof ===

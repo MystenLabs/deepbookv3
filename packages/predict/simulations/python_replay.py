@@ -7,6 +7,7 @@ import argparse
 from copy import deepcopy
 import csv
 import json
+import math
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -369,9 +370,6 @@ class I64:
     def div_scaled(self, other: "I64") -> "I64":
         quotient = self.magnitude * FLOAT_SCALING // other.magnitude
         return I64(quotient, self.is_negative != other.is_negative)
-
-    def square_scaled(self) -> int:
-        return self.mul_scaled(self).magnitude
 
 
 def scenario_quantity_scale() -> int:
@@ -955,10 +953,10 @@ def compute_nd2(svi: dict[str, Any], forward: int, strike: int) -> int:
     k = ln_fixed(strike).sub(ln_fixed(forward))
     m = I64(svi["m"], svi["mNegative"])
     k_minus_m = k.sub(m)
-    k_minus_m_squared = k_minus_m.square_scaled()
+    # The smile root takes a 1e18 input of exact squares and returns at 1e9
+    # (fixed_math's `sqrt_u128_down`); isqrt is its exact floor.
     sigma = svi["sigma"]
-    sigma_squared = deepbook_mul(sigma, sigma)
-    sq = sqrt_down(k_minus_m_squared + sigma_squared)
+    sq = math.isqrt(k_minus_m.magnitude * k_minus_m.magnitude + sigma * sigma)
     rho = I64(svi["rho"], svi["rhoNegative"])
     rho_km = rho.mul_scaled(k_minus_m)
     inner = rho_km.add(I64(sq))

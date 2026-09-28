@@ -70,10 +70,10 @@ composition is, with F=1e9 and all quantities in real (un-scaled) units:
     k     = ln(strike) - ln(forward)                                (difference of logs)
       d_k = 1e-7*(|ln strike| + |ln forward|) + 2/F                 (ln rel, twice; two ULPs)
     km    = k - m                                                   (m exact)
-    km2   = km^2          ; e_km2 = 2|km|*d_k + 1/F                 (square floor)
-    sig2  = sigma^2       ; e_sig2 = 1/F                            (sigma exact; mul floor)
+    km2   = km^2          ; e_km2 = 2|km|*d_k                       (exact u128 square at 1e18)
+    sig2  = sigma^2       ; e_sig2 = 0                              (sigma exact; exact u128 square)
     si    = km2 + sig2    ; e_si  = e_km2 + e_sig2
-    sq    = sqrt(si)      ; e_sq  = e_si/(2*sqrt(si)) + 1/F         (sqrt floor)
+    sq    = sqrt(si)      ; e_sq  = e_si/(2*sqrt(si)) + 1/F         (sqrt_u128_down floor)
     rk    = rho*km        ; e_rk  = |rho|*d_k + 1/F                 (rho exact; mul floor)
     inner = rk + sq       ; e_in  = e_rk + e_sq
     w     = a + b*inner   ; e_w   = b*e_in                          (a exact; product exact, see below)
@@ -130,9 +130,9 @@ NORMAL_PDF_ABS = 50.0 / F
 ULP = 1.0 / F
 ULP18 = 1.0 / (F * F)              # the pricing variance path's 1e18 granularity
 
-# SVI production bounds (constants.move) the chosen rows must satisfy so the
-# fixture can seed them through the production cap path (assert_valid_svi).
-SVI_SIGMA_MIN, SVI_SIGMA_MAX = 1_000_000, 100_000_000_000
+# SVI sigma bounds from pricing.move's pricing-safe envelope (`min_svi_sigma`,
+# `max_svi_input`) the chosen rows must satisfy so the fixture can load them.
+SVI_SIGMA_MIN, SVI_SIGMA_MAX = 10_000, 100_000_000_000
 
 # Four diverse-variance rows from the single real market, selected by stable
 # svi_event_digest (large / medium / small total variance => different time to
@@ -141,7 +141,8 @@ SVI_SIGMA_MIN, SVI_SIGMA_MAX = 1_000_000, 100_000_000_000
 # regime where 1/sqrt(w) conditioning is tightest, ~200x below the next smallest.
 # It is the demonstration case, not full coverage of the deployed variance range:
 # the corpus bottoms out near w ~ 4e-7 while deployed 1m/5m cadences reach ~1e-8
-# (predeploy open item P-16).
+# and SSVI one-minute slices ~2e-9 (predeploy open item P-16). The SSVI slices are
+# pinned at their forward by generate_ssvi_reference.py.
 SELECTED_DIGESTS = [
     "5KbNiu2S7ULJcS1ryDtJ3DC2omTojjJoMFjmu7nYgTAF9",   # 2026-05-27 08:00:18  sqrt_w_atm ~0.0171
     "H4DNoM3eRw83KdZjASFabLJSgu7YNZYRNfCWErcKgnE59",   # 2026-05-27 20:04:03  sqrt_w_atm ~0.0109
@@ -174,6 +175,59 @@ def phi(x):  # standard normal CDF via stdlib erf (independent of Cody approx)
 
 def phi_pdf(x):  # standard normal density 1/sqrt(2pi) * exp(-x^2/2)
     return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+
+
+def up_error_budget(a, b, rho, m, sigma, k, d_k):
+    """Analytic absolute error budget for the contract's UP(K) at log-moneyness
+    `k`, whose own error is `d_k`, on the surface `(a, b, rho, m, sigma)` in
+    real units, with `a` and `b` as priced (already scaled by any roll-down
+    ratio). See the module header for the derivation; every term is evaluated at
+    the TRUE values."""
+    km = k - m
+    si = km * km + sigma * sigma
+    w = a + b * (rho * km + math.sqrt(si))
+    S = math.sqrt(w)
+    N = k + w / 2.0
+    d2 = -N / S
+    # error in the total-variance VALUE w (before the /2 and sqrt). The smile
+    # root's input is formed at 1e18 from exact u128 squares, so it carries only
+    # k's error; the root itself floors once.
+    e_si = 2.0 * abs(km) * d_k + d_k * d_k
+    e_sq = e_si / (2.0 * math.sqrt(si)) + 1.0 / F
+    e_rk = abs(rho) * d_k + 1.0 / F
+    e_in = e_rk + e_sq
+    # b * inner is formed in u128 and kept at 1e18, so the product itself
+    # contributes no floor: e_w is only the propagated error of `inner`. (A
+    # roll-down floors `a` and `b * inner` once each at 1e18, at most 2e-18 in w,
+    # which every other term dwarfs.)
+    e_w = b * e_in
+    # d2 sensitivity: dk through numerator; e_w correlated through num+den;
+    # independent half_var and sqrt_var floors; div floor.
+    dd2_dw = 0.5 * w ** (-1.5) * (k - w / 2.0)
+    d_d2 = (
+        d_k / S
+        + abs(dd2_dw) * e_w
+        + (0.5 * ULP18) / S
+        + abs(N / w) * (1.0 / F)
+        + 1.0 / F
+    )
+    pdf = phi_pdf(d2)
+    w_prime = b * (rho + km / math.sqrt(si))
+    # Skew-correction sensitivity:
+    #   correction = pdf(d2) * w_prime / (2*sqrt(w)).
+    # The reference keeps true-math w_prime; the contract floors both slope_ratio
+    # and mul_scaled(b, slope), so the tolerance absorbs that quantization.
+    e_slope = (sigma * sigma / (si ** 1.5)) * d_k + abs(km) / si * e_sq + ULP
+    e_w_prime = b * e_slope + ULP
+    e_pdf = NORMAL_PDF_ABS + abs(d2) * pdf * d_d2
+    e_s_total = e_w / (2.0 * S) + ULP
+    e_correction = (
+        abs(w_prime) / (2.0 * S) * e_pdf
+        + pdf / (2.0 * S) * e_w_prime
+        + pdf * abs(w_prime) / (2.0 * w) * e_s_total
+        + ULP
+    )
+    return NORMAL_CDF_ABS + pdf * d_d2 + e_correction
 
 
 class Scenario:
@@ -238,58 +292,19 @@ class Scenario:
 
     # --- analytic absolute error budget for UP(strike)=Phi(d2) at one strike ---
     def delta_up(self, strike):
-        k, w, d2 = self.d2_of_strike(strike)
-        ratio = strike / self.forward_live
-        S = math.sqrt(w)
-        N = k + w / 2.0
+        k = self.d2_of_strike(strike)[0]
         # error in k. The contract takes a DIFFERENCE OF LOGS (`ln(strike) -
         # ln(forward)`), so there is no ratio floor to propagate; the cost is one
         # `ln` relative error per operand plus one result ULP each. NOTE: the
         # committed `pricing_reference_data.move` predates this and was generated
-        # under the old ratio model, which understates this by ~6x near the money.
-        # Its tolerances still hold (worst-case budget usage is unchanged at 61%),
-        # so they are conservative rather than wrong — but they are no longer
-        # derived, and must be regenerated when the scenario dataset is available.
+        # under the old ratio model, which understates this term by far more than
+        # the smile root's move from 1e9 floors to exact u128 squares tightened it.
+        # Its tolerances are therefore TIGHTER than this model gives: they still
+        # pass only because the contract's `ln` is far more accurate than its
+        # documented bound, so they are not derived, and must be regenerated when
+        # the scenario dataset is available (predeploy open item P-28).
         d_k = 1e-7 * (abs(math.log(strike / F)) + abs(math.log(self.forward_live / F))) + 2.0 / F
-        km = k - self.mf
-        # error in the total-variance VALUE w (before the /2 and sqrt)
-        e_km2 = 2.0 * abs(km) * d_k + 1.0 / F
-        e_sig2 = 1.0 / F
-        e_si = e_km2 + e_sig2
-        si = km * km + self.sf * self.sf
-        e_sq = e_si / (2.0 * math.sqrt(si)) + 1.0 / F
-        e_rk = abs(self.rf) * d_k + 1.0 / F
-        e_in = e_rk + e_sq
-        # b * inner is formed in u128 and kept at 1e18, so the product itself
-        # contributes no floor: e_w is only the propagated error of `inner`.
-        e_w = self.bf * e_in
-        # d2 sensitivity: dk through numerator; e_w correlated through num+den;
-        # independent half_var and sqrt_var floors; div floor.
-        dd2_dw = 0.5 * w ** (-1.5) * (k - w / 2.0)
-        d_d2 = (
-            d_k / S
-            + abs(dd2_dw) * e_w
-            + (0.5 * ULP18) / S
-            + abs(N / w) * (1.0 / F)
-            + 1.0 / F
-        )
-        pdf = phi_pdf(d2)
-        w_prime = self.w_prime_of_k(k)
-        # Skew-correction sensitivity:
-        #   correction = pdf(d2) * w_prime / (2*sqrt(w)).
-        # The reference keeps true-math w_prime; the contract floors both slope_ratio
-        # and mul_scaled(b, slope), so the tolerance absorbs that quantization.
-        e_slope = (self.sf * self.sf / (si ** 1.5)) * d_k + abs(km) / si * e_sq + ULP
-        e_w_prime = self.bf * e_slope + ULP
-        e_pdf = NORMAL_PDF_ABS + abs(d2) * pdf * d_d2
-        e_s_total = e_w / (2.0 * S) + ULP
-        e_correction = (
-            abs(w_prime) / (2.0 * S) * e_pdf
-            + pdf / (2.0 * S) * e_w_prime
-            + pdf * abs(w_prime) / (2.0 * w) * e_s_total
-            + ULP
-        )
-        return NORMAL_CDF_ABS + pdf * d_d2 + e_correction
+        return up_error_budget(self.af, self.bf, self.rf, self.mf, self.sf, k, d_k)
 
     def snap(self, strike):
         rel = strike - self.min_strike
@@ -404,20 +419,6 @@ def roll_down_ratio(expiry_ms):
     """`remaining_ms / anchor_tte_ms` for a fixture priced at `NOW_MS`, anchored
     at the seed tuple's source timestamp."""
     return (expiry_ms - NOW_MS) / (expiry_ms - SEED_SOURCE_TIMESTAMP_MS)
-# A surface in the region the 1e18 variance path newly admits: its per-strike
-# total variance is positive but floors to ZERO at 1e9, so the pre-1e18 pricer
-# aborted `ENonPositiveVariance` here while the analytical minimum still passed the
-# load gate (min_increment 3 against a = -2). Mirrors the fixture in
-# `pricing_guard_tests::low_variance_surface_prices_where_the_1e9_path_aborted`.
-ADMITTED_LOW_VARIANCE = {
-    "a": -2 / F,
-    "b": 1_000 / F,
-    "rho": 800_000_000 / F,
-    "m": 6_666_634 / F,
-    "sigma": 5_000_000 / F,
-}
-
-
 # A surface that separates the two ways of forming `w'` in the skew correction.
 # `b` is carried at 1e18, so `w' = b * slope / 1e18`; narrowing `b` back to 1e9
 # first loses up to a raw unit of it, which at this surface's small `sqrt(w)`
@@ -442,20 +443,6 @@ def w_prime_precision_surface_up():
     a = W_PRIME_PRECISION_SURFACE["a"] * ratio
     b = W_PRIME_PRECISION_SURFACE["b"] * ratio
     rho, m, sigma = (W_PRIME_PRECISION_SURFACE[key] for key in ("rho", "m", "sigma"))
-    k = 0.0
-    x = k - m
-    sq = math.sqrt(x * x + sigma * sigma)
-    w = a + b * (rho * x + sq)
-    w_prime = b * (rho + x / sq)
-    S = math.sqrt(w)
-    d2 = -(k + w / 2.0) / S
-    return round((phi(d2) - phi_pdf(d2) * w_prime / (2.0 * S)) * F)
-
-
-def admitted_low_variance_up():
-    """True UP digital on the newly admitted low-variance surface, at the forward."""
-    a, b = ADMITTED_LOW_VARIANCE["a"], ADMITTED_LOW_VARIANCE["b"]
-    rho, m, sigma = (ADMITTED_LOW_VARIANCE[key] for key in ("rho", "m", "sigma"))
     k = 0.0
     x = k - m
     sq = math.sqrt(x * x + sigma * sigma)
@@ -695,11 +682,6 @@ def emit_move(scenarios, scen_points, budget_units):
     w("/// budget below; narrowing it to 1e9 first misses by ~890 units.")
     w("public fun w_prime_precision_surface_up(): u64 { "
       f"{fmt_u64(w_prime_precision_surface_up())} }}")
-    w("")
-    w("/// True UP digital on the surface whose per-strike total variance is positive")
-    w("/// but floors to zero at 1e9 — the region the u128/1e18 variance path newly")
-    w("/// admits, where the previous pricer aborted `ENonPositiveVariance`.")
-    w(f"public fun admitted_low_variance_up(): u64 {{ {fmt_u64(admitted_low_variance_up())} }}")
     return "\n".join(lines) + "\n"
 
 
