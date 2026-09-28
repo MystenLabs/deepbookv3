@@ -1147,9 +1147,10 @@ fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64)
 }
 
 /// Settled-market sweep: deactivate the expiry, return its free cash to idle,
-/// materialize its terminal profit, and return unused fee incentives to the pool
-/// reserve. Idempotent — a settled market already swept returns zero cash and
-/// recognizes no further profit, so a second pass is a no-op.
+/// report the expiry's lifetime PnL, materialize its terminal profit, and return
+/// unused fee incentives to the pool reserve. Idempotent — a settled market already
+/// swept returns zero cash, emits nothing, and recognizes no further profit, so a
+/// second pass is a no-op.
 fun sweep_settled_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -1167,6 +1168,16 @@ fun sweep_settled_expiry(
             expiry_market_id,
             market.settlement_price(),
             returned_cash_amount,
+        );
+        vault_events::emit_expiry_pnl(
+            vault.id(),
+            expiry_market_id,
+            market.propbook_underlying_id(),
+            market.reference_tick_source_timestamp_ms(),
+            market.expiry(),
+            market.settlement_price(),
+            vault.expiry_accounting.sent_to_expiry(expiry_market_id),
+            vault.expiry_accounting.received_from_expiry(expiry_market_id),
         );
     };
     vault.materialize_expiry_profit(config, expiry_market_id);

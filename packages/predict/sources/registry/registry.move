@@ -291,6 +291,8 @@ public fun create_and_share_expiry_market(
     let expiry = deployable.expiry();
     let tick_size = deployable.tick_size();
     let admission_tick_size = deployable.admission_tick_size();
+    // `ExpiryPnl` reports this stored time as the market's cadence-period start
+    // (`period_start_ms`), so changing the lookback changes that event field's meaning.
     let reference_tick_source_timestamp_ms = expiry - market_manager::cadence_period_ms(cadence_id);
     let max_expiry_allocation = deployable.max_expiry_allocation();
     let initial_expiry_cash = deployable.initial_expiry_cash();
