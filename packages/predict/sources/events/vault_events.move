@@ -268,6 +268,16 @@ public struct FeeIncentivesWithdrawn has copy, drop, store {
     reserve_after: u64,
 }
 
+/// Emitted when an expiry registers with the pool, reporting the absolute lifetime
+/// fee-incentive cap it snapshotted from the lifetime cap rate then in effect. The
+/// cap's creation-time owner event: the rate is admin-set, so the cap cannot be
+/// derived from the market's allocation cap alone.
+public struct FeeIncentiveLifetimeCapSnapshotted has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    fee_incentive_lifetime_cap: u64,
+}
+
 /// Emitted when pool-level sponsor funds are allocated into an expiry's local
 /// fee-incentive balance.
 public struct FeeIncentivesAllocated has copy, drop, store {
@@ -586,6 +596,18 @@ public(package) fun emit_fee_incentives_withdrawn(
     reserve_after: u64,
 ) {
     event::emit(FeeIncentivesWithdrawn { pool_vault_id, amount, reserve_after });
+}
+
+public(package) fun emit_fee_incentive_lifetime_cap_snapshotted(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    fee_incentive_lifetime_cap: u64,
+) {
+    event::emit(FeeIncentiveLifetimeCapSnapshotted {
+        pool_vault_id,
+        expiry_market_id,
+        fee_incentive_lifetime_cap,
+    });
 }
 
 public(package) fun emit_fee_incentives_allocated(

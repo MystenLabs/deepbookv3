@@ -974,7 +974,7 @@ public(package) fun register_expiry(
             EMaxLiveExpiryMarketsExceeded,
         );
     };
-    vault
+    let fee_incentive_lifetime_cap = vault
         .expiry_accounting
         .register_expiry(
             expiry_market_id,
@@ -983,6 +983,11 @@ public(package) fun register_expiry(
             initial_expiry_cash,
             fee_incentive_lifetime_cap_rate,
         );
+    vault_events::emit_fee_incentive_lifetime_cap_snapshotted(
+        vault.id(),
+        expiry_market_id,
+        fee_incentive_lifetime_cap,
+    );
 }
 
 // === Private Functions ===

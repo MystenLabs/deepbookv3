@@ -4,12 +4,13 @@
 /// Protocol-wide configuration and flow gates for Predict.
 ///
 /// This shared object owns the admin-tunable config structs, the fee-incentive
-/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the protocol-wide emergency freeze, the
-/// allowlist of keepers that may redeem settled orders without owner auth, and the
-/// full-pool valuation in-flight state (flag + flush ordinal, held across the
-/// transactions a flush spans; keeper/config flows gate on it, trading flows read it
-/// only to discard stale stamps lazily). Flow modules decide which gates apply before
-/// they mutate expiry, oracle, pool, or account state.
+/// subsidy, live-target, and lifetime-cap rates, the trading pause gate, the
+/// protocol-wide emergency freeze, the allowlist of keepers that may redeem settled
+/// orders without owner auth, and the full-pool valuation in-flight state (flag +
+/// flush ordinal, held across the transactions a flush spans; keeper/config flows
+/// gate on it, trading flows read it only to discard stale stamps lazily). Flow
+/// modules decide which gates apply before they mutate expiry, oracle, pool, or
+/// account state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -38,7 +39,6 @@ const ESnapshotInProgress: u64 = 6;
 const ETradeWindowClosed: u64 = 7;
 const ESettledRedeemKeeperAlreadyAdded: u64 = 8;
 const ESettledRedeemKeeperNotFound: u64 = 9;
-const EFeeIncentiveLiveTargetExceedsLifetimeCap: u64 = 10;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -580,9 +580,10 @@ public fun set_referral_fee_rate(config: &mut ProtocolConfig, _admin_cap: &Admin
 /// older than 4: those compiled in a fixed 20% and never read this rate, so until
 /// then a mint routed through one still draws 20% from the market's balance. A
 /// zero rate does not stop `rebalance_expiry_cash` allocating the pool reserve into
-/// markets; to wind incentives down, also set the live target rate to zero, which
-/// keeps the reserve in the pool, or withdraw the reserve
-/// (`plp::withdraw_fee_incentives`).
+/// markets; to wind incentives down, also withdraw the reserve
+/// (`plp::withdraw_fee_incentives`), or, once the watermark has retired versions
+/// older than 4, set the live target rate to zero, which keeps the reserve in the
+/// pool.
 ///
 /// Not gated on the valuation flag, matching `set_referral_fee_rate`: nothing in the
 /// flush reads this rate, and a mint that consumes a subsidy mid-flush lands after
@@ -604,13 +605,15 @@ public fun set_fee_incentive_subsidy_rate(
 /// applies to markets already trading. Lowering it never claws back a balance
 /// already allocated: a market above the new target receives nothing more until it
 /// spends below it. `0` stops the pool reserve being allocated to markets, so it
-/// stays in the pool and withdrawable. May not exceed the lifetime cap rate new
-/// markets snapshot (`EFeeIncentiveLiveTargetExceedsLifetimeCap`).
+/// stays in the pool and withdrawable. It may exceed a market's lifetime cap: the
+/// cap still bounds what the market receives, so the target is not checked against
+/// the lifetime cap rate.
 ///
 /// Binds every rebalance only once the version watermark has retired package
-/// versions older than 4, which compiled in a fixed 2%. Not gated on the valuation
-/// flag: the flush never reads it, and the reserve and market incentive balances it
-/// moves between are outside PLP NAV.
+/// versions older than 4: `rebalance_expiry_cash` is permissionless, and those
+/// versions top a market up to a fixed 2% whatever this is set to. Not gated on the
+/// valuation flag: the flush never reads it, and the reserve and market incentive
+/// balances it moves between are outside PLP NAV.
 public fun set_fee_incentive_live_target_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -619,10 +622,6 @@ public fun set_fee_incentive_live_target_rate(
 ) {
     config.assert_version();
     config_constants::assert_fee_incentive_live_target_rate(rate);
-    assert!(
-        rate <= config.fee_incentive_lifetime_cap_rate(),
-        EFeeIncentiveLiveTargetExceedsLifetimeCap,
-    );
     config.set_u64_field(FeeIncentiveLiveTargetRateKey(), rate);
     config.emit_fee_incentive_allocation_rates_updated(clock);
 }
@@ -630,9 +629,11 @@ public fun set_fee_incentive_live_target_rate(
 /// Set the share of an expiry's allocation cap it may receive in sponsor-funded fee
 /// incentives over its life. Snapshotted into each expiry's pool accounting row when
 /// the market is created, so markets already created keep the cap they were created
-/// with. May not fall below the live target rate
-/// (`EFeeIncentiveLiveTargetExceedsLifetimeCap`). Not gated on the valuation flag,
-/// for the same reason as the live target rate.
+/// with, and `vault_events::FeeIncentiveLifetimeCapSnapshotted` reports each market's cap.
+///
+/// Binds market creation only once the version watermark has retired package
+/// versions older than 4, which snapshot a fixed 10% whatever this is set to. Not
+/// gated on the valuation flag, for the same reason as the live target rate.
 public fun set_template_fee_incentive_lifetime_cap_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -641,10 +642,6 @@ public fun set_template_fee_incentive_lifetime_cap_rate(
 ) {
     config.assert_version();
     config_constants::assert_fee_incentive_lifetime_cap_rate(rate);
-    assert!(
-        config.fee_incentive_live_target_rate() <= rate,
-        EFeeIncentiveLiveTargetExceedsLifetimeCap,
-    );
     config.set_u64_field(FeeIncentiveLifetimeCapRateKey(), rate);
     config.emit_fee_incentive_allocation_rates_updated(clock);
 }

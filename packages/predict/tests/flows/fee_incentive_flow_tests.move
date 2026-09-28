@@ -12,6 +12,7 @@
 module deepbook_predict::fee_incentive_flow_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants,
     expiry_market::MintQuote,
     flow_test_helpers as helpers,
@@ -45,9 +46,26 @@ const RAISED_LIVE_TARGET: u64 = 12_500_000_000;
 /// 1%: 0.01 * 250e9 = 2.5e9.
 const ONE_PERCENT_RATE: u64 = 10_000_000;
 const ONE_PERCENT_OF_ALLOCATION: u64 = 2_500_000_000;
-/// The shipped 2% live target and 10% lifetime cap, restored after a test lowers them.
-const DEFAULT_LIVE_TARGET_RATE: u64 = 20_000_000;
-const DEFAULT_LIFETIME_CAP_RATE: u64 = 100_000_000;
+/// The shipped 10% lifetime cap on the 250e9 allocation cap: 0.1 * 250e9 = 25e9.
+const SHIPPED_LIFETIME_CAP: u64 = 25_000_000_000;
+/// 20%, twice the shipped cap: a target of 0.2 * 250e9 = 50e9.
+const TWENTY_PERCENT_RATE: u64 = 200_000_000;
+/// Sponsored for the cap-room test: after the first 5e9 top-up the reserve holds
+/// 35e9, more than the 20e9 of cap room left, so only the cap trims the top-up.
+const CAP_ROOM_SPONSORSHIP: u64 = 40_000_000_000;
+/// 25e9 cap - 5e9 already allocated.
+const CAP_ROOM_AFTER_FIRST_TOP_UP: u64 = 20_000_000_000;
+/// 0.00002 * 250e9 = 5e6: a live target, and a new market's cap, below the
+/// `sponsored_market` fixture's 10e6 balance.
+const TINY_RATE: u64 = 20_000;
+const TINY_RATE_TARGET: u64 = 5_000_000;
+/// 10e6 allocated by the fixture + 5e6 refill.
+const ALLOCATED_AFTER_REFILL: u64 = 15_000_000;
+/// 25% of the 250e9 allocation cap: 62.5e9.
+const QUARTER_RATE: u64 = 250_000_000;
+const QUARTER_OF_ALLOCATION: u64 = 62_500_000_000;
+/// An ID for a market registered with the pool directly, without a market object.
+const REGISTERED_MARKET: address = @0xCAFE;
 const ZERO_LIVE_TARGET_RATE: u64 = 0;
 /// More than any allocation below, so the reserve never limits it.
 const LARGE_SPONSORSHIP: u64 = 20_000_000_000;
@@ -88,6 +106,23 @@ public struct ExpectedFeeIncentivesWithdrawn has copy, drop {
     pool_vault_id: ID,
     amount: u64,
     reserve_after: u64,
+}
+
+/// BCS mirror of `vault_events::FeeIncentivesAllocated`.
+public struct ExpectedFeeIncentivesAllocated has copy, drop {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    pool_reserve_after: u64,
+    expiry_incentive_balance_after: u64,
+    expiry_incentives_allocated_after: u64,
+}
+
+/// BCS mirror of `vault_events::FeeIncentiveLifetimeCapSnapshotted`.
+public struct ExpectedFeeIncentiveLifetimeCapSnapshotted has copy, drop {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    fee_incentive_lifetime_cap: u64,
 }
 
 // === Sponsorship and allocation ===
@@ -525,7 +560,6 @@ fun zero_live_target_stops_allocation_and_keeps_the_reserve_withdrawable() {
 #[test]
 fun lifetime_cap_rate_is_snapshotted_when_the_market_is_created() {
     let mut fx = helpers::setup_market_default();
-    // Lower the target first so the cap can follow it down.
     fx.set_fee_incentive_live_target_rate(ONE_PERCENT_RATE);
     fx.set_template_fee_incentive_lifetime_cap_rate(ONE_PERCENT_RATE);
     let capped_id = fx.create_expiry(test_constants::default_expiry_ms());
@@ -537,9 +571,13 @@ fun lifetime_cap_rate_is_snapshotted_when_the_market_is_created() {
     assert_eq!(helpers::market(&capped).fee_incentive_balance(), ONE_PERCENT_OF_ALLOCATION);
     helpers::return_market_bundle(capped);
 
-    // Raise the cap first, then the target, back to the shipped shares.
-    fx.set_template_fee_incentive_lifetime_cap_rate(DEFAULT_LIFETIME_CAP_RATE);
-    fx.set_fee_incentive_live_target_rate(DEFAULT_LIVE_TARGET_RATE);
+    // Back to the shipped shares.
+    fx.set_template_fee_incentive_lifetime_cap_rate(
+        config_constants::default_fee_incentive_lifetime_cap_rate!(),
+    );
+    fx.set_fee_incentive_live_target_rate(
+        config_constants::default_fee_incentive_live_target_rate!(),
+    );
     let later_id = fx.create_expiry(test_constants::default_expiry_ms() + constants::one_day_ms!());
 
     // The 2% target asks for another 2.5e9, but this market's 1% cap is spent.
@@ -557,6 +595,142 @@ fun lifetime_cap_rate_is_snapshotted_when_the_market_is_created() {
         LARGE_SPONSORSHIP - ONE_PERCENT_OF_ALLOCATION - LIVE_TARGET,
     );
     helpers::return_market_bundle(later);
+    fx.finish();
+}
+
+/// A live target above a market's lifetime cap is allowed, and the cap trims the
+/// top-up to the room it has left. The market snapshotted the shipped 10% cap
+/// (25e9); a 20% target (50e9) asks for more than that, so the rebalance allocates
+/// exactly the remaining 20e9, and once the cap is spent a rebalance allocates and
+/// emits nothing.
+#[test]
+fun raised_live_target_past_the_lifetime_room_allocates_only_the_room() {
+    let mut fx = helpers::setup_market_default();
+    let expiry_id = fx.create_expiry(test_constants::default_expiry_ms());
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.sponsor_fee_incentives_bundle(&mut market, CAP_ROOM_SPONSORSHIP);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), LIVE_TARGET);
+    helpers::return_market_bundle(market);
+
+    fx.set_fee_incentive_live_target_rate(TWENTY_PERCENT_RATE);
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+
+    // The 50e9 target asks for min(45e9 short, 35e9 reserve) = 35e9; the cap has
+    // 20e9 of room, so 20e9 moves and 15e9 stays in the reserve.
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), SHIPPED_LIFETIME_CAP);
+    assert_eq!(
+        helpers::vault(&market).fee_incentive_reserve(),
+        CAP_ROOM_SPONSORSHIP - SHIPPED_LIFETIME_CAP,
+    );
+    let events = event::events_by_type<vault_events::FeeIncentivesAllocated>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedFeeIncentivesAllocated {
+        pool_vault_id: fx.vault_id(),
+        expiry_market_id: expiry_id,
+        amount: CAP_ROOM_AFTER_FIRST_TOP_UP,
+        pool_reserve_after: CAP_ROOM_SPONSORSHIP - SHIPPED_LIFETIME_CAP,
+        expiry_incentive_balance_after: SHIPPED_LIFETIME_CAP,
+        expiry_incentives_allocated_after: SHIPPED_LIFETIME_CAP,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+    helpers::return_market_bundle(market);
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut market = fx.take_market_bundle(expiry_id);
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), SHIPPED_LIFETIME_CAP);
+    assert_eq!(event::events_by_type<vault_events::FeeIncentivesAllocated>().length(), 0);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// Lowering the lifetime cap template leaves an existing market's snapshotted cap
+/// alone, and a market above a lowered live target receives nothing until it spends
+/// below it, then refills only to the lowered target.
+#[test]
+fun lowered_rates_keep_an_existing_cap_and_refill_to_the_lowered_target() {
+    // The fixture market holds 10e6, allocated under the shipped 25e9 cap.
+    let (mut fx, expiry_id, trader) = sponsored_market();
+    fx.set_fee_incentive_live_target_rate(TINY_RATE);
+    fx.set_template_fee_incentive_lifetime_cap_rate(TINY_RATE);
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, ALLOCATED_BALANCE);
+
+    // Above the lowered 5e6 target: nothing more moves, and nothing is clawed back.
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), ALLOCATED_BALANCE);
+    assert_eq!(helpers::vault(&market).fee_incentive_reserve(), ALLOCATED_BALANCE);
+
+    // Spend the whole balance: at the 50% ceiling half of the 20e6 fee is 10e6.
+    fx.set_fee_incentive_subsidy_rate_bundle(&mut market, MAX_RATE);
+    let quote = quote_atm(&mut fx, &market, QUADRUPLE_QUANTITY);
+    assert_eq!(quote.fee_incentive_subsidy(), ALLOCATED_BALANCE);
+    mint_atm(&mut fx, &mut market, &mut account, &quote);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), 0);
+
+    // Refills to the 5e6 target. The market has now received 15e6 in total, past
+    // the 5e6 a market created under the lowered template could ever receive, so
+    // its original 25e9 cap is the one in force.
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    assert_eq!(helpers::market(&market).fee_incentive_balance(), TINY_RATE_TARGET);
+    assert_eq!(
+        helpers::vault(&market).fee_incentive_reserve(),
+        ALLOCATED_BALANCE - TINY_RATE_TARGET,
+    );
+    let events = event::events_by_type<vault_events::FeeIncentivesAllocated>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedFeeIncentivesAllocated {
+        pool_vault_id: fx.vault_id(),
+        expiry_market_id: expiry_id,
+        amount: TINY_RATE_TARGET,
+        pool_reserve_after: ALLOCATED_BALANCE - TINY_RATE_TARGET,
+        expiry_incentive_balance_after: TINY_RATE_TARGET,
+        expiry_incentives_allocated_after: ALLOCATED_AFTER_REFILL,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// Registering a market with the pool reports the absolute lifetime cap it
+/// snapshotted from the template then in effect, so an indexer does not have to
+/// reconstruct it from the rate history: 25% of the 250e9 allocation cap is 62.5e9.
+#[test]
+fun registration_reports_the_snapshotted_lifetime_cap() {
+    let mut fx = helpers::setup_market_default();
+    fx.set_template_fee_incentive_lifetime_cap_rate(QUARTER_RATE);
+    let vault_id = fx.vault_id();
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(vault_id);
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let expiry_market_id = object::id_from_address(REGISTERED_MARKET);
+
+    vault.register_expiry(
+        expiry_market_id,
+        test_constants::default_expiry_ms(),
+        test_constants::default_max_expiry_allocation(),
+        test_constants::default_initial_expiry_cash(),
+        config.fee_incentive_lifetime_cap_rate(),
+        fx.clock(),
+    );
+
+    let events = event::events_by_type<vault_events::FeeIncentiveLifetimeCapSnapshotted>();
+    assert_eq!(events.length(), ONE_EVENT);
+    let expected = ExpectedFeeIncentiveLifetimeCapSnapshotted {
+        pool_vault_id: vault_id,
+        expiry_market_id,
+        fee_incentive_lifetime_cap: QUARTER_OF_ALLOCATION,
+    };
+    assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+
+    return_shared(vault);
+    return_shared(config);
     fx.finish();
 }
 

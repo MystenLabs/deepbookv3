@@ -35,6 +35,8 @@ const FEE_INCENTIVE_CAP: u64 = 100;
 const QUARTER_LIFETIME_CAP_RATE: u64 = 250_000_000;
 const QUARTER_FEE_INCENTIVE_CAP: u64 = 250;
 const ZERO_LIFETIME_CAP_RATE: u64 = 0;
+/// The smallest nonzero rate, one part in 1e9: floor(1000 * 1 / 1e9) = 0.
+const DUST_LIFETIME_CAP_RATE: u64 = 1;
 const FIRST_FEE_INCENTIVE_ALLOCATION: u64 = 40;
 const OVER_CAP_FEE_INCENTIVE_REQUEST: u64 = 80;
 const FIRST_EXPIRY_FUNDING: u64 = 700;
@@ -81,13 +83,14 @@ fun fee_incentive_lifetime_cap_follows_the_rate_passed_at_registration() {
     let mut ledger = pool_accounting::new(ctx);
     let quarter = object::id_from_address(EXPIRY_A);
     let zero = object::id_from_address(EXPIRY_B);
-    ledger.register_expiry(
+    let quarter_cap = ledger.register_expiry(
         quarter,
         EXPIRY_A_MS,
         MAX_EXPIRY_ALLOCATION,
         INITIAL_EXPIRY_CASH,
         QUARTER_LIFETIME_CAP_RATE,
     );
+    assert_eq!(quarter_cap, QUARTER_FEE_INCENTIVE_CAP);
     ledger.register_expiry(
         zero,
         EXPIRY_B_MS,
@@ -105,6 +108,33 @@ fun fee_incentive_lifetime_cap_follows_the_rate_passed_at_registration() {
 
     let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
         zero,
+        FIRST_FEE_INCENTIVE_ALLOCATION,
+    );
+    assert_eq!(allocated, 0);
+    assert_eq!(allocated_after, 0);
+
+    destroy(ledger);
+}
+
+/// The absolute cap rounds down: a rate too small to cover one raw unit of the
+/// allocation cap admits nothing, rather than rounding up to a unit the rate never
+/// granted.
+#[test]
+fun fee_incentive_lifetime_cap_rounds_down() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+    let id = object::id_from_address(EXPIRY_A);
+    let cap = ledger.register_expiry(
+        id,
+        EXPIRY_A_MS,
+        MAX_EXPIRY_ALLOCATION,
+        INITIAL_EXPIRY_CASH,
+        DUST_LIFETIME_CAP_RATE,
+    );
+    assert_eq!(cap, 0);
+
+    let (allocated, allocated_after) = ledger.record_fee_incentives_allocated_up_to(
+        id,
         FIRST_FEE_INCENTIVE_ALLOCATION,
     );
     assert_eq!(allocated, 0);
