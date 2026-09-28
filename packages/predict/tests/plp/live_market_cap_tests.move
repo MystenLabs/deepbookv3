@@ -6,7 +6,7 @@
 #[test_only]
 module deepbook_predict::live_market_cap_tests;
 
-use deepbook_predict::{constants, plp::{Self, PoolVault}, test_constants};
+use deepbook_predict::{config_constants, constants, plp::{Self, PoolVault}, test_constants};
 use std::unit_test::assert_eq;
 use sui::{clock::{Self as clock, Clock}, test_scenario::{Self as test, Scenario, return_shared}};
 
@@ -84,6 +84,7 @@ fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID, expiry_ms: u64,
         expiry_ms,
         MAX_EXPIRY_ALLOCATION,
         INITIAL_EXPIRY_CASH,
+        config_constants::default_fee_incentive_lifetime_cap_rate!(),
         clock,
     );
 }

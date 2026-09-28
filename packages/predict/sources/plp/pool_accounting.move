@@ -163,18 +163,22 @@ public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: 
 }
 
 /// Register an expiry as active pool risk. Records an accounting row only; no
-/// cash moves, so the expiry is not yet funded.
+/// cash moves, so the expiry is not yet funded. The row snapshots the expiry's
+/// absolute fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`, so a
+/// later change to that rate reaches only expiries registered after it. Returns the
+/// absolute cap it snapshotted, for the caller's registration event.
 public(package) fun register_expiry(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
-) {
+    fee_incentive_lifetime_cap_rate: u64,
+): u64 {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
     let fee_incentive_lifetime_cap = math::mul_down(
         max_expiry_allocation,
-        constants::fee_incentive_lifetime_cap_rate!(),
+        fee_incentive_lifetime_cap_rate,
     );
     ledger.active_expiry_markets.push_back(ActiveExpiry { expiry_market_id, expiry_ms });
     ledger
@@ -192,6 +196,7 @@ public(package) fun register_expiry(
                 terminal_received_watermark: 0,
             },
         );
+    fee_incentive_lifetime_cap
 }
 
 /// Remove an expiry from active valuation if present, returning whether it was active.

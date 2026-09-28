@@ -185,6 +185,32 @@ fun set_fee_incentive_subsidy_rate_while_frozen_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_fee_incentive_live_target_rate_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = protocol_config::EProtocolFrozen)]
+fun set_template_fee_incentive_lifetime_cap_rate_while_frozen_aborts() {
+    let (mut scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+    config.set_frozen(&admin_cap, true);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = protocol_config::EVersionWatermarkNotAdvanced)]
 fun bump_version_watermark_at_current_version_aborts() {
     // At genesis the watermark already equals the running `current_version!()`, so
@@ -240,6 +266,35 @@ fun set_fee_incentive_subsidy_rate_during_valuation_succeeds() {
         &clock,
     );
     assert_eq!(config.fee_incentive_subsidy_rate(), 0);
+    assert!(config.valuation_in_progress());
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(reg);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Neither allocation rate is gated on the valuation flag: the flush reads neither,
+/// and the balances they move between are outside PLP NAV.
+#[test]
+fun set_fee_incentive_allocation_rates_during_valuation_succeeds() {
+    let (mut scenario, reg, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let clock = new_clock(&mut scenario);
+
+    config.begin_valuation();
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), 1_000_000_000);
+    assert_eq!(config.fee_incentive_live_target_rate(), 0);
     assert!(config.valuation_in_progress());
 
     clock.destroy_for_testing();
