@@ -278,8 +278,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   and disclose it (commit `057f9565`); select Pyth by its own freshness rather
   than relative source time; fail closed on provider-width overflow. The
   cross-feed deviation guards are gone. Representable inputs still must satisfy
-  positive spot/forward, bounded basis, bounded SVI magnitudes, `|rho| ≤ 1`, the
-  sigma band, and positive minimum total variance. A correct-but-adversarial
+  positive spot/forward, bounded basis, bounded SVI `b` and `m`, `|rho| ≤ 1`, the
+  sigma band, and positive minimum total variance, which is the only constraint
+  on `a`. A correct-but-adversarial
   source can steer prices anywhere inside that envelope. While
   `use_pyth_spot_for_forward` is set, every independently fresh usable Pyth spot
   reanchors the Block Scholes basis even when the Block Scholes spot is newer;
@@ -288,6 +289,45 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `EBlockScholesInputTooWide` before the `u128`-to-`u64` cast and semantic
   envelope. Recovery is a newer signed, representable observation followed by
   retrying the affected action or flush.
+- **Sigma floor (lowered from 1e-3 to 1e-5):** Block Scholes SSVI surfaces
+  narrow `sigma` toward expiry. In their SSVI backfill (BTC, February–June 2026,
+  6.5M slices; `evidence/rp5-ssvi-backfill-2026-09-28.md`) 83% of slices at most
+  a minute from expiry, 55% of slices one to five minutes out, and 12% of slices
+  five minutes to an hour out sit below 1e-3, with a minimum of 4.7e-5. The 1e-3
+  floor rejected 1.6M of them, and every pricer load over such a slice aborted:
+  mints and live closes on that market, and the flush's atomic snapshot stage,
+  so the pool-wide flush could not start and queued LP fills waited. None is
+  below 1e-5, the floor the provider recommends. Duty inventory of the old
+  floor: (1) it kept `sigma²` representable in the 1e9 smile root — replaced by
+  taking the root from exact `u128` squares at 1e18, without which the lowered
+  floor misprices real one-minute slices by up to 49% relative off the forward;
+  (2) it kept the root, the skew slope's divisor, away from zero — any positive
+  floor does, so 1e-5 is the provider's number rather than an arithmetic need,
+  and for SSVI slices the gate's minimum-variance rounding binds first: with the
+  provider's `eta ≤ 2`, `sigma < 1e-5` means a minimum total variance under
+  4e-10, which rounds to zero at 1e9 (P-33);
+  (3) the root's `u128` input is bounded by `|k − m| ≤ 144.4` and `sigma ≤ 100`,
+  not by the floor; (4) it did not bound the skew correction: `w'` is at most
+  `2b` for any `sigma`, so the correction's headroom is set by `b` and the
+  variance. Positive total variance stays owned by the analytical-minimum check
+  and the per-strike `ENonPositiveVariance` backstop, neither of which reads the
+  floor.
+- **`a` magnitude cap removed (was `|a| ≤ 100`):** Block Scholes recommends no
+  bound on `a` beyond positive total variance. Negative `a` was already admitted
+  and still is: slices in the SSVI backfill carry it (0.27% of one-minute slices,
+  and slices further out too), none of them SSVI, since an SSVI slice has
+  `a = theta·(1 − rho²)/2 ≥ 0` (P-37), and every one passes the minimum-variance
+  check. `a` is now constrained only by that minimum and its `u64` provider
+  width. Duty inventory of the cap: (1) it bounded the roll-down's
+  `u128` result — `a < 2^64` already keeps `a × 1e9` under `u128`; (2) it bounded
+  the 1e18 total-variance sum, `sqrt(w)`, and `d2`'s numerator — all stay inside
+  `u128`/`u64` at `a = u64::MAX`; (3) it kept the minimum-variance check's `u64`
+  sum `a + b·sigma·sqrt(1 − rho²)` from overflowing — replaced by comparing the
+  two terms, so an extreme `a` is rejected or admitted by name, never by an
+  arithmetic abort. No price-quality duty: at `a = +100` the at-the-forward
+  digital is already about 3e-7, so the cap never separated sane surfaces from
+  degenerate ones; on the negative side it only limited how much of `b · sigma`
+  could be cancelled, which the minimum-variance check governs anyway.
 - **Reasoning:** the deviation guards were a state-triggered abort over an
   externally-controlled variable — a divergence event (or a legitimate fast
   market) bricked pricing with no recovery path, and staleness-vs-authenticity
@@ -318,16 +358,39 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `block_scholes_svi_a_above_u64_aborts_with_named_width_error`,
   `block_scholes_svi_b_above_u64_aborts_with_named_width_error`,
   `block_scholes_svi_rho_above_u64_aborts_with_named_width_error`,
-  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`, and
-  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`;
+  `block_scholes_svi_m_above_u64_aborts_with_named_width_error`,
+  `block_scholes_svi_sigma_above_u64_aborts_with_named_width_error`,
+  `surface_with_svi_sigma_below_min_aborts`,
+  `surface_with_zero_svi_sigma_aborts`,
+  `short_dated_negative_a_offsetting_the_minimum_increment_aborts`,
+  `zero_svi_a_with_unit_rho_aborts_at_load`,
+  `negative_svi_a_with_unit_rho_aborts_at_load`,
+  `smile_root_at_the_otm_envelope_corner_prices_the_tail_to_zero`,
+  `smile_root_at_the_itm_envelope_corner_prices_the_tail_to_one`,
+  `svi_a_at_the_provider_width_limit_prices_to_zero`,
+  `svi_a_at_the_provider_width_limit_with_shape_ceilings_and_positive_m_prices_to_zero`,
+  `svi_a_at_the_provider_width_limit_with_shape_ceilings_and_negative_m_prices_to_zero`,
+  `negative_svi_a_at_the_provider_width_limit_aborts_at_load`,
+  `negative_svi_a_past_the_former_cap_cancels_to_one_unit_of_variance`, and
+  `negative_svi_a_past_the_former_cap_offsetting_the_minimum_increment_aborts`;
+  `pricing_exact_tests.move` —
+  `surface_at_the_sigma_floor_prices_at_its_vertex`,
+  `short_dated_slice_with_negative_a_prices_to_true_math`,
+  `one_minute_slice_the_1e9_root_mispriced_prices_to_true_math`,
+  `negative_svi_a_past_the_former_cap_prices_to_true_math`,
+  `positive_svi_a_past_the_former_cap_prices_to_true_math`, and
+  `unit_rho_surface_with_one_unit_of_a_prices_to_true_math`;
   `pool_valuation_flow_tests.move` —
-  `overwide_block_scholes_spot_aborts_pool_valuation_flush` and
-  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`.
+  `overwide_block_scholes_spot_aborts_pool_valuation_flush`,
+  `newer_representable_block_scholes_spot_restores_pool_valuation_flush`,
+  `svi_sigma_below_the_floor_aborts_pool_valuation_flush`, and
+  `short_dated_ssvi_surface_completes_pool_valuation_flush`.
 - **Reopen when:** live signed-feed data shows provider excursions the envelope
   admits, relative source skew produces unacceptable marks, or width overflow
   becomes operationally ambiguous — revisit a cross-feed sanity band as a skip,
   a bounded-skew source rule, or explicit unavailable classification rather than
-  the named mandatory-path abort.
+  the named mandatory-path abort. Revisit the SVI bounds if the provider
+  publishes `sigma < 1e-5` or a live surface with `|a| > 100` reaches a NAV mark.
 
 ## RP-6: The flush is privileged, not permissionless
 
@@ -1026,19 +1089,25 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   1.4e14 against a `u64` ceiling of 1.8e19. That is headroom, not a proof — `b`
   ranges to 100e9, so the rounding slack in `inner` is large enough in principle
   to drive `w` lower — so the cap stays and is pinned at its own inputs.
-- **Pinning tests:** `pricing_guard_tests.move` —
-  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a loadable
-  surface whose per-strike variance is positive but floors to zero at 1e9 (the
-  region this policy admits) and asserts the independently generated digital;
+- **Pinning tests:** `pricing_exact_tests.move` —
+  `low_variance_surface_prices_where_the_1e9_path_aborted` drives a
+  loadable surface whose per-strike variance at the forward is positive but under
+  one raw unit at 1e9 (0.99993e-9, the region this policy admits) and asserts the
+  independently generated digital, and
+  `one_raw_unit_variance_surface_prices_to_true_math` pins a surface whose
+  forward variance is exactly one raw unit; `pricing_guard_tests.move` —
   `d2_saturates_at_the_normal_clamp_instead_of_overflowing` drives the cap at the
   helper's scalar inputs, where a `w` of one raw unit at 1e18 makes the quotient
   exceed `u64` (unit-tests rule 4 — the guard is exercised at its own inputs
   because no admissible surface has been shown to reach it);
   `boundary_loaded_surface_with_nonpositive_per_strike_variance_aborts` still
-  aborts (the surface it pins is negative on the true value, not only after
-  truncation), and `zero_total_variance_aborts_at_load` pins the unchanged
-  construction gate. Both new tests were mutation-checked: restoring the coarse
-  1e9 rejection fails the first two, and deleting the cap fails the second.
+  aborts: its rounded minimum clears the load gate by one raw unit, and at the
+  forward, the smile's minimum, the true variance is about 1e-9 while the floored
+  smile root takes that unit back, so the computed variance is 0. That is the
+  per-strike rounding boundary the backstop exists for, not a surface that is
+  negative in true math. `zero_total_variance_aborts_at_load` pins the unchanged
+  construction gate. Mutation checks: flooring the variance increment to 1e9 fails
+  the sub-unit test, and deleting the cap fails the `d2` test.
 - **Reopen when:** a surface is observed whose true total variance is positive
   but so small that `sqrt(w)` itself underflows the 1e9 result scale, or if the
   saturation cap is ever read by something other than `normal_cdf`/`normal_pdf`.

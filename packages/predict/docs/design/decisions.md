@@ -38,7 +38,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   consistent with settlement paying full quantity). *Rejected:* a symmetric
   redeem-side price band.
 - **Adjusted one-sided digital prices clamp to probability bounds.** The
-  pricing-safe envelope bounds each SVI parameter independently and enforces no
+  pricing-safe envelope bounds `b`, `rho`, `m`, and `sigma` independently, `a`
+  only through positive minimum total variance, and enforces no
   butterfly/no-arbitrage condition, so an admissible surface can push the raw
   skew-adjusted digital outside `[0, 1]` by an arbitrary margin at any
   moneyness. The one-sided UP price saturates to `[0, 1]` and range differencing
