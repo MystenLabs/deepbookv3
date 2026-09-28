@@ -34,7 +34,7 @@ provider-signed Block Scholes spot/forward/SVI surface data — both now served 
 - **Builder** — earns attributed add-on fees via a `BuilderCode`.
 - **Oracle operator** — pushes Block-Scholes spot/forward/SVI updates into the `propbook` feeds; settlement
   is **passive** (no operator settle entrypoint).
-- **Admin** — holds `AdminCap`; tunes config (including the live fee-incentive subsidy rate), creates
+- **Admin** — holds `AdminCap`; tunes config (including the fee-incentive subsidy, live-target, and lifetime-cap rates), creates
   markets/sources, manages versions; can mint itself a `PoolValuationCap` for break-glass; can withdraw the
   sponsor-funded fee-incentive reserve (`plp::withdraw_fee_incentives`) — the one admin custody path on `PoolVault`.
 - **Market-lifecycle operator** — holds `MarketLifecycleCap` (revocable); creates expiry markets.
