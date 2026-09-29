@@ -804,15 +804,16 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   a $10 grid between $50k and $60k (first $55,240 -> $55,250, 999,999,995 ->
   999,999,996) and at one pair on a $100 grid; scenarios 1 and 2 invert on the
   $10 grid too, and the OTM tail mirrors the deep-ITM plateau (scenario 0
-  inverts at 167 adjacent $1 pairs between $88,000 and $90,700). The same ripple
-  appears in every one of 160 sampled SSVI slices DBU-849 admits and in 8 of 20
-  current-style one-to-five-minute slices, always exactly one raw unit
+  inverts at 167 adjacent $1 pairs between $88,000 and $90,700). The same
+  one-unit ripple appears on the short-tenor SSVI slices DBU-849 admits
   (`evidence/rp5-ssvi-backfill-2026-09-28.md`, P-35). The entry band bounds each
   finite boundary at mint (since #1304, DBU-811), so no mint places a boundary
-  on a plateau directly; the market carries admitted boundaries there as spot
-  moves and the variance left to expiry shrinks, so the source is reachable
-  without an adversary, and a trader can aim a ladder of mints at it. Surface
-  shape itself stays with the provider.
+  on a plateau directly; the market can carry admitted boundaries there as spot
+  moves and the variance left to expiry shrinks, so the source needs no
+  adversary in principle. On Mainnet's short cadences, $1 admission grid and
+  narrowed entry band it takes a dense ladder of boundaries and a large move,
+  and no flush has been seen to abort on it. Surface shape itself stays with the
+  provider.
 - **Blast radius:** a hard abort here lands in the pool flush's mandatory leg
   (`plp::value_expiry` -> `expiry_market::snapshot_nav`) and in the public
   `current_nav` read. `finish_flush` proves completeness over the snapshotted
@@ -824,40 +825,48 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   inverting pair under the book, up to the market's remaining life. Per-order
   value is unaffected: `RangePrice::probability` floors an inverted pair to
   zero, so `redeem_live` and settlement stay open.
-- **Response:** `skip/carry` for a rise of at most
-  `pricing::price_monotonicity_tolerance` (two raw units at 1e9) over the walk's
-  running minimum — price the boundary at its quote and continue; `abort`
-  (`ENonMonotonePrice`) above it. Surface admission still rests on the provider
-  guarantee — no on-chain `g(k) >= 0` or tighter synthetic-parameter envelope.
+- **Response:** price through (the ladder's `skip/carry` rung, applied to the
+  one boundary: it keeps its quoted price and the walk continues — not the
+  per-market skip the reopen condition names) while the rise over the walk's
+  running minimum is at most `pricing::price_monotonicity_tolerance`, two raw
+  units at 1e9; `abort` (`ENonMonotonePrice`) above it. Surface admission still
+  rests on the provider guarantee — no on-chain `g(k) >= 0` or tighter
+  synthetic-parameter envelope.
 - **Reasoning:** keeping the quoted price leaves every book that valued before
   the bound valued identically. What the netted aggregate can lose is confined
   to orders whose own boundaries invert: the aggregate lets each such segment
   cancel where the per-order sum floors it at zero, so the walk understates
   liability, and NAV reads high, by at most the rise times that order's
-  quantity, summed over those orders. A rise that small carries no information
-  about the surface. Two independently floored terms of a monotone difference
-  cannot rise by more than one unit unless their own approximation errors drift
-  apart between adjacent strikes, and every rise measured on a valid surface is
-  exactly one unit, so aborting on it is a false positive in a mandatory path
-  over a market-moved variable, which the blast-radius ladder above puts at
-  skip/carry, not a hard assert. The tolerance is twice that measured dust, as
-  P-35 proposed: the NAV error is at most 2e-9 of the summed quantity of orders
-  whose own boundaries invert, $0.002 per $1M of such quantity, scaling with the
-  open interest that sits across an inverting pair. The bound is absolute, not
-  relative to the price, and two units stays small even on the OTM plateau,
-  where UP is tens of raw units. The margin is deliberately thin: a regime that
-  produced a three-unit rise against the running minimum would stall the flush
-  again, which is why the reopen condition below re-measures after any pricing
-  or envelope change. Above the bound the rise is treated as a surface defect
-  and fails closed, with "retry once the provider publishes a corrected surface"
-  as the recovery path. P-35 also proposed netting each boundary at `min(price,
-  previous)`; that is declined. Clamping is conservative in neither direction —
-  it lowers liability at a lower boundary and raises it at an upper one — and it
-  would move books whose inversions are only across orders off the per-order sum
-  they value at today, whereas keeping the quote confines the divergence to
-  orders whose own boundaries invert. The comparison is against the running
-  minimum rather than the previous boundary, so dust accumulated across many
-  boundaries trips the same bound instead of ratcheting underneath it.
+  quantity, summed over those orders. On real and healthy surfaces every rise is
+  exactly one unit, the signature of the two separately floored terms; the
+  pricer's other rounding (the floored `sqrt(w)`, smile root and `w'`) is larger
+  per strike, but the true slope outruns it there. A search over 20,865
+  butterfly-free surfaces found rises above one only on surfaces near the
+  butterfly-arbitrage boundary (Durrleman's `g` below 0.03), and there they
+  range from 2 to 2,808 with no gap (evidence). Aborting on the one-unit dust is
+  a false positive in a mandatory path over a market-moved variable, which the
+  blast-radius ladder above puts at skip/carry. The tolerance is that measured
+  unit plus one unit of headroom. One would have no margin at all. Three or more
+  buys nothing identifiable: moving from two to three admits 6 of the 281
+  near-boundary surfaces that exceed one, and only about 3,000 admits them all,
+  at which point the guard stops catching small provider inversions. Two costs
+  nothing material: the NAV error is at most 2e-9 of the summed quantity of
+  orders whose own boundaries invert, $0.002 per $1M of such quantity, and it
+  scales with the open interest that sits across an inverting pair. The bound is
+  absolute, not relative to the price, and two units stays small even on the OTM
+  plateau, where UP is tens of raw units. Accepted residual: a surface near the
+  butterfly boundary can rise by more and fails closed, stalling the flush until
+  a later snapshot or the market settles; real slices sit far from that
+  boundary. Above the bound the rise is treated as a surface defect, with "retry
+  once the provider publishes a corrected surface" as the recovery path. P-35
+  also proposed netting each boundary at `min(price, previous)`; that is
+  declined. Clamping is conservative in neither direction — it lowers liability
+  at a lower boundary and raises it at an upper one — and it would move books
+  whose inversions are only across orders off the per-order sum they value at
+  today, whereas keeping the quote confines the divergence to orders whose own
+  boundaries invert. The comparison is against the running minimum rather than
+  the previous boundary, so dust accumulated across many boundaries trips the
+  same bound instead of ratcheting underneath it.
 - **Duty inventory (guard weakening):** the strict check's only consumers are
   `live_marked_liability` -> `current_nav` and `frozen_marked_liability` ->
   `snapshot_nav`, and both clamp the walk with `saturating_sub`, so the check
@@ -868,9 +877,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   oracle-surface abort. Nothing else was incidentally bounded.
 - **Risk profile:** `MEASURED` — the internal source is counted over every
   committed reference surface, including #1335's short-tenor SSVI slices, and
-  reproduced end to end through the flush
-  (`evidence/rp15-price-inversion-2026-09-04.md`); P-35's 160 SSVI and 20
-  current-style slices show the same one-unit ripple
+  reproduced end to end through the flush; a search over 20,865 butterfly-free
+  surfaces, with two reproducers confirmed in Move, bounds where rises above one
+  unit occur (`evidence/rp15-price-inversion-2026-09-04.md`). P-35's sampled
+  SSVI and current-style slices show the same one-unit ripple
   (`evidence/rp5-ssvi-backfill-2026-09-28.md`). The external source remains
   unobserved, no sampled Block Scholes surface having violated butterfly
   freedom.
@@ -900,11 +910,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   it.
 - **Reopen when:** a re-measurement after `compute_up_price` changes its
   rounding or primitives, or after the SVI envelope widens, finds a rise of more
-  than one raw unit on a valid surface (the bound keeps one unit of margin);
-  P-16 or P-28 is resolved and the regenerated reference changes that picture;
-  Block Scholes changes or violates the surface guarantee; Predict accepts
-  another SVI publisher without the same guarantee; or NAV valuation gains a
-  safe per-market skip/carry design.
+  than one raw unit on a real or healthy surface (the bound keeps one unit of
+  margin); the provider publishes surfaces near the butterfly boundary often
+  enough that flushes stall on them; P-16 or P-28 is resolved and the
+  regenerated reference changes that picture; Block Scholes changes or violates
+  the surface guarantee; Predict accepts another SVI publisher without the same
+  guarantee; or NAV valuation gains a safe per-market skip/carry design.
 
 ---
 

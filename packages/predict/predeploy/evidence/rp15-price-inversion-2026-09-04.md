@@ -1,6 +1,6 @@
 # UP price inverts on valid surfaces — Move measurement, 2026-09-04
 
-**Item:** RP-15 · **Instrument:** Move unit probe (not committed) over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run, extended to #1335's SSVI slices, and reachability re-derived 2026-09-29
+**Item:** RP-15 · **Instrument:** Move unit probe (not committed) over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run, extended to #1335's SSVI slices, reachability re-derived, and tolerance audited 2026-09-29
 
 Status: reproduced, deterministic, no provider defect involved. The pricer's own
 fixed point makes `up_price` rise across ascending strikes on surfaces that are valid
@@ -65,10 +65,11 @@ UP(72,680) = 5, and the one-minute SSVI slice returns UP(66,811) = 9 and UP(66,8
 
 The strike whose UP price inverts sits on a tail plateau, about 10% to 27% below spot
 on the deep-ITM side of these surfaces and 7% to 20% above it in the OTM tail, where
-the boundary's own UP price lies outside the 1%-99% entry band. Mint admission applies
-that band to each finite boundary as well as to the range (#1304, DBU-811), so no mint
-can place a boundary there directly: on scenario 0 the range `($55,240, $76,000]`
-prices at 0.553, inside the band, and is still rejected on its 0.999999995 lower leg
+the boundary's own UP price lies outside the entry band (1%-99% by default; Mainnet
+has since narrowed it to 25%-75%). Mint admission applies that band to each finite
+boundary as well as to the range (#1304, DBU-811), so no mint can place a boundary
+there directly: on scenario 0 the range `($55,240, $76,000]` prices at 0.553, inside
+the band, and is still rejected on its 0.999999995 lower leg
 (`pool_valuation_flow_tests::the_entry_band_keeps_a_plateau_boundary_out_of_a_mint`).
 When this record was first taken the band bounded only the range price, and two mints
 at the plateau were enough; #1304 closed that path before this change merged.
@@ -86,8 +87,46 @@ boundaries price at 999,999,994 -> 999,999,995 on the deep-ITM plateau. On that 
 the strict guard aborts `current_nav` and `value_expiry` with `ENonMonotonePrice`.
 Under `price_monotonicity_tolerance` both proceed: the live NAV equals free cash less
 the independent per-order sum, and the flush's pool mark composes that same market
-value with the vault ledger exactly. No adversary is needed: any book whose boundaries
-end up on either tail plateau near expiry can reach an inverting pair.
+value with the vault ledger exactly. In principle no adversary is needed: any book
+whose boundaries end up on either tail plateau near expiry can reach an inverting
+pair. On Mainnet's configuration at the time of the audit below (1- and 5-minute
+cadences, a $1 admission grid, a 25%-75% band) it takes a dense ladder of boundaries
+and a large move.
+
+## Tolerance audit, 2026-09-29
+
+Instrument: a Python port of `compute_up_price`, checked bit-exact against the
+contract on the 16 contract outputs quoted in this record and on 60,000 random
+pricing-safe inputs, plus Move runs for the two reproducers below; not committed.
+
+Of 21,600 SVI surfaces sampled inside the pricing envelope — generic, short-dated,
+SSVI-shaped with Predict's roll-down, production-shaped BTC one- and five-minute
+slices, and families tuned toward the butterfly boundary, at forwards from $1,000 to
+$200,000 on $0.01, $1, $10 and $100 grids — the 20,865 that are butterfly-free by
+Durrleman's `g(k) >= 0` and were scanned have these largest rises against the running
+minimum:
+
+| Smallest `g` on the surface | Surfaces | At most 1 | 2 | 3 | 4-5 | 6-20 | 21-100 | 101-1,000 | Above 1,000 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0.03 or more | 19,564 | 19,564 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| below 0.03 | 1,301 | 1,020 | 8 | 6 | 13 | 56 | 71 | 111 | 16 |
+
+Every surface whose smallest `g` is 0.03 or more rises by at most one unit on every
+grid. Rises above one occur only on surfaces nearer the boundary, and there they run
+from 2 to 2,808 with no gap: a small tolerance admits only a handful of them, and none
+short of about 3,000 admits them all. Two are confirmed in Move (raw 1e9 SVI, spot
+equal to the forward, roll factor 1):
+
+- A rise of exactly 2 on a $0.01 grid: forward 131_066_329_593_242, `a` = 27_519_073,
+  `b` = 507_873_048, `rho` = +859_667_519, `m` = -178_490_722, `sigma` = 106_067_390;
+  UP($163,201.46) = 21,921,130 and UP($163,201.47) = 21,921,132; smallest `g` 0.027.
+- A rise of 502 on a $1 grid: forward 170_742_326_426_584, `a` = 4_003, `b` =
+  2_375_780, `rho` = -701_075_992, `m` = -7_234, `sigma` = 11_969; UP($170,691) =
+  902,738,257 and UP($170,692) = 902,738,759; smallest `g` 0.00026.
+
+The six real slices checked, the four committed scenarios and P-35's two, stay at one
+unit down to a $0.001 grid; they rise by 2 to 21 only on grids of $0.0001 and finer,
+well below Predict's $0.01 tick.
 
 ## What it does not measure
 
