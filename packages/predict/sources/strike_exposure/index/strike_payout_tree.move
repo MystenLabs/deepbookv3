@@ -196,7 +196,8 @@ public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tick_s
         &mut price_envelope,
     );
     // Boundary products are rounded per node and the signed aggregate is floored
-    // once. This can differ from pricing and flooring each order independently.
+    // once. This can differ from pricing and flooring each order independently, as
+    // can the rounded-up charge on a tolerated rise (RP-15).
     (tree.base + start_total).saturating_sub(end_total)
 }
 

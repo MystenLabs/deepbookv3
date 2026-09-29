@@ -145,6 +145,9 @@ const SELF_INVERTED_QUANTITY: u64 = 2_000_000_000_000;
 /// A deep-ITM strike on scenario 0, priced above the inverting pair, so an order
 /// from it to the pair's upper boundary does not itself invert.
 const DEEP_LOWER_TICK: u64 = 50_000;
+/// Half a unit of quantity per raw unit of rise, so the charge's rounding
+/// direction decides the last raw unit.
+const HALF_UNIT_QUANTITY: u64 = 500_000_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -540,10 +543,95 @@ fun the_frozen_walk_charges_a_self_inverted_order_it_still_holds() {
     cleanup(fixture, oracle);
 }
 
+/// The charge is the rise over the running minimum, not over the previous price.
+/// An order from the staircase's first strike to its third ends two units above
+/// the minimum, one unit above the open-topped order starting between them; only
+/// the two-unit charge keeps the walk at the per-order sum.
+#[test]
+fun a_rise_is_charged_against_the_running_minimum() {
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let first_price = stair_up_price(&pricer, STAIR_TICK_0);
+    let middle_price = stair_up_price(&pricer, STAIR_TICK_1);
+    let last_price = stair_up_price(&pricer, STAIR_TICK_2);
+    assert!(first_price < middle_price && middle_price < last_price);
+
+    tree.insert_range(STAIR_TICK_0, STAIR_TICK_2, SELF_INVERTED_QUANTITY);
+    insert_up(&mut tree, STAIR_TICK_1, SELF_INVERTED_QUANTITY);
+
+    // The finite order inverts, so it is worth nothing per order.
+    assert_eq!(
+        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        math::mul_down(middle_price, SELF_INVERTED_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The charge rounds up. Half a raw unit of rise times quantity is charged as one,
+/// which exactly offsets the two boundary products' floors over the inverted
+/// order; an open-topped deep order keeps the zero clamp from hiding a shortfall.
+#[test]
+fun a_rise_charge_rounds_up() {
+    let (mut fixture, oracle, pricer) = real_scenario_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(raw(DUST_INVERSION_LOWER_TICK));
+    let higher_price = pricer.up_price(raw(DUST_INVERSION_HIGHER_TICK));
+    assert_eq!(higher_price - lower_price, 1);
+
+    insert_up(&mut tree, DEEP_LOWER_TICK, SELF_INVERTED_QUANTITY);
+    tree.insert_range(DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK, HALF_UNIT_QUANTITY);
+
+    assert_eq!(
+        walk_linear(&tree, &pricer),
+        up_reference(&pricer, vector[DEEP_LOWER_TICK], vector[SELF_INVERTED_QUANTITY])
+            + range_reference(
+                &pricer,
+                vector[DUST_INVERSION_LOWER_TICK],
+                vector[DUST_INVERSION_HIGHER_TICK],
+                vector[HALF_UNIT_QUANTITY],
+            ),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// A cancelling boundary still lowers the running minimum. The staircase's first
+/// strike ends one order and starts another, so its products cancel, yet the rise
+/// to the third strike must be charged against it rather than against the higher
+/// price before it.
+#[test]
+fun a_cancelling_boundary_still_lowers_the_running_minimum() {
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let left_price = stair_up_price(&pricer, STAIR_LEFT_TICK);
+    let first_price = stair_up_price(&pricer, STAIR_TICK_0);
+    let last_price = stair_up_price(&pricer, STAIR_TICK_2);
+    assert!(left_price > last_price && last_price > first_price);
+
+    tree.insert_range(STAIR_LEFT_TICK, STAIR_TICK_0, SELF_INVERTED_QUANTITY);
+    tree.insert_range(STAIR_TICK_0, STAIR_TICK_2, SELF_INVERTED_QUANTITY);
+
+    // The first order is worth its spread; the second inverts and is worth nothing.
+    assert_eq!(
+        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        math::mul_down(left_price - first_price, SELF_INVERTED_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
 /// The charge is conservative for an order that does not itself invert: it ends
 /// at the risen boundary but starts deep in the money, so its per-order value needs
 /// no charge, and the walk exceeds the per-order sum by exactly the rise times its
-/// quantity. Liability reads high and NAV low, never the reverse.
+/// quantity. Liability reads high and NAV low, never the reverse beyond boundary
+/// rounding.
 #[test]
 fun a_rise_overcharges_an_order_that_does_not_invert() {
     let (mut fixture, oracle, pricer) = real_scenario_pricer();
