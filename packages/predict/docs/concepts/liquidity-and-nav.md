@@ -148,7 +148,7 @@ where:
 - **`free_cash = cash_balance − inventory_impact_reserve`** — the expiry's USDC net of the isolated impact escrow it still owes. Inventory-impact escrow is not LP value while live.
 - **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so the walk carries no per-order correction term. (The flush's snapshot capture is not such a term either: it runs the same walk over the book's captured shadows.)
 
-The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding; it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
+The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding, and by a conservative charge of at most two raw units per unit of quantity ending at a boundary whose price rose by fixed-point dust (response policy RP-15); it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 
 `current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
 

@@ -51,7 +51,8 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   `pricing::price_monotonicity_tolerance`, headroom over the one-raw-unit
   fixed-point dust measured on real and healthy surfaces, because the aggregate
   payout-tree walk nets signed boundary contributions across orders; a rise
-  within it is dust and prices through.
+  within it is dust and prices through, charged on the quantity ending at that
+  boundary so the mark never understates liability.
 - **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
   and utilization-based financing rates are excluded from v1 — exact strike-level
   liquidation indexing requires monotonic single-sided payoffs and history-independent

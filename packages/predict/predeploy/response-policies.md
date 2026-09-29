@@ -826,22 +826,27 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   value is unaffected: `RangePrice::probability` floors an inverted pair to
   zero, so `redeem_live` and settlement stay open.
 - **Response:** price through (the ladder's `skip/carry` rung, applied to the
-  one boundary: it keeps its quoted price and the walk continues — not the
-  per-market skip the reopen condition names) while the rise over the walk's
-  running minimum is at most `pricing::price_monotonicity_tolerance`, two raw
-  units at 1e9; `abort` (`ENonMonotonePrice`) above it. Surface admission still
-  rests on the provider guarantee — no on-chain `g(k) >= 0` or tighter
-  synthetic-parameter envelope.
+  one boundary: it keeps its quoted price, the rise over the running minimum is
+  charged, rounded up, on the quantity ending there, and the walk continues —
+  not the per-market skip the reopen condition names) while that rise is at most
+  `pricing::price_monotonicity_tolerance`, two raw units at 1e9; `abort`
+  (`ENonMonotonePrice`) above it. Surface admission still rests on the provider
+  guarantee — no on-chain `g(k) >= 0` or tighter synthetic-parameter envelope.
 - **Reasoning:** keeping the quoted price leaves every book that valued before
-  the bound valued identically. What the netted aggregate can lose is confined
-  to orders whose own boundaries invert: the aggregate carries each such
-  segment's small negative value where the per-order sum floors it at zero, so
-  the walk understates liability, and NAV reads high, by at most the rise times
-  that order's quantity, summed over those orders. On real and healthy surfaces
-  every rise is exactly one unit, the signature of the two separately floored
-  terms; the pricer's other rounding (the floored `sqrt(w)`, smile root and
-  `w'`) is larger per strike, but the true slope outruns it there. A search over
-  20,865 butterfly-free surfaces found rises above one only on surfaces near the
+  the bound valued identically. Netting alone would let an order whose own two
+  boundaries invert carry the pair's small negative value where its per-order
+  price floors at zero, understating liability. The walk therefore charges each
+  tolerated rise, rounded up, on the quantity ending at that boundary: the
+  running minimum is at most every earlier price, so the charge covers any
+  inverted order ending there, and the walk never falls below the per-order sum
+  beyond boundary rounding. That keeps this response inside R2 (liabilities
+  round toward the pool) rather than an exception to it. An order that does not
+  invert but ends at a risen boundary is over-charged by at most the rise, so
+  NAV can read low and never high. On real and healthy surfaces every rise is
+  exactly one unit, the signature of the two separately floored terms; the
+  pricer's other rounding (the floored `sqrt(w)`, smile root and `w'`) is larger
+  per strike, but the true slope outruns it there. A search over 20,865
+  butterfly-free surfaces found rises above one only on surfaces near the
   butterfly-arbitrage boundary (Durrleman's `g` below 0.03), and there they
   range from 2 to 2,808 with no gap (evidence). Aborting on the one-unit dust is
   a false positive in a mandatory path over a market-moved variable, which the
@@ -850,9 +855,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   buys nothing identifiable: moving from two to three admits 6 of the 281
   near-boundary surfaces that exceed one, and only about 3,000 admits them all,
   at which point the guard stops catching small provider inversions. Two costs
-  nothing material: the NAV error is at most 2e-9 of the summed quantity of
-  orders whose own boundaries invert, $0.002 per $1M of such quantity, and it
-  scales with the open interest that sits across an inverting pair. The bound is
+  nothing material: the over-charge is at most 2e-9 of the quantity ending at
+  risen boundaries, $0.002 per $1M of it, and it scales with the open interest
+  that ends across an inverting pair. Like R2's dust, a mark that low favours
+  incumbent LPs on a withdrawal and a supplier by the same amount. The bound is
   absolute, not relative to the price, and two units stays small even on the OTM
   plateau, where UP is tens of raw units. Accepted residual: a surface near the
   butterfly boundary can rise by more and fails closed, stalling the flush until
@@ -863,18 +869,19 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   declined. Clamping is conservative in neither direction — it lowers liability
   at a lower boundary and raises it at an upper one — and it would move books
   whose inversions are only across orders off the per-order sum they value at
-  today, whereas keeping the quote confines the divergence to orders whose own
-  boundaries invert. The comparison is against the running minimum rather than
-  the previous boundary, so dust accumulated across many boundaries trips the
-  same bound instead of ratcheting underneath it.
+  today, whereas keeping the quote and charging the rise on the ending quantity
+  leaves those books exact and moves liability only upward. The comparison is
+  against the running minimum rather than the previous boundary, so dust
+  accumulated across many boundaries trips the same bound instead of ratcheting
+  underneath it.
 - **Duty inventory (guard weakening):** the strict check's only consumers are
   `live_marked_liability` -> `current_nav` and `frozen_marked_liability` ->
   `snapshot_nav`, and both clamp the walk with `saturating_sub`, so the check
   bounded no arithmetic headroom; `envelope + tolerance` cannot overflow because
-  UP prices are at most 1e9. What the weakening admits is the NAV understatement
-  above and, silently, any provider inversion of at most two raw units.
-  `harness/verdict.py` still classifies `strike_payout_tree:2` as an expected
-  oracle-surface abort. Nothing else was incidentally bounded.
+  UP prices are at most 1e9. What the weakening admits is the bounded
+  over-charge above and, silently, any provider inversion of at most two raw
+  units. `harness/verdict.py` still classifies `strike_payout_tree:2` as an
+  expected oracle-surface abort. Nothing else was incidentally bounded.
 - **Risk profile:** `MEASURED` — the internal source is counted over every
   committed reference surface, including #1335's short-tenor SSVI slices, and
   reproduced end to end through the flush; a search over 20,865 butterfly-free
@@ -890,9 +897,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `a_ripple_on_a_one_minute_ssvi_slice_is_walked` (P-35's two real slices),
   `a_two_unit_rise_on_a_valid_surface_is_walked` (the headroom a tolerance of
   one would lack), `a_valid_surface_at_the_butterfly_edge_fails_closed` (the
-  accepted residual), `a_self_inverted_order_understates_liability_by_its_rise`
-  (the sign and size of the NAV error),
-  `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
+  accepted residual), `a_self_inverted_order_is_charged_its_rise`,
+  `a_rise_overcharges_an_order_that_does_not_invert` and
+  `the_frozen_walk_charges_a_self_inverted_order_it_still_holds` (the charge: an
+  inverted order values at its per-order price, one that does not invert is
+  over-charged by exactly the rise, and the frozen walk charges through snapshot
+  copies), `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
   `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
   `a_staircase_of_tolerable_rises_aborts_past_the_tolerance`,
   `the_running_minimum_follows_a_falling_price`,
