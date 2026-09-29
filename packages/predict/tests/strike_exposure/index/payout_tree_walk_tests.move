@@ -142,6 +142,9 @@ const BUTTERFLY_EDGE_HIGHER_TICK: u64 = 170_692;
 /// A whole multiple of 1e9, so every boundary product is exact and the walk's
 /// divergence from the per-order sum is exactly the rise times it.
 const SELF_INVERTED_QUANTITY: u64 = 2_000_000_000_000;
+/// A deep-ITM strike on scenario 0, priced above the inverting pair, so an order
+/// from it to the pair's upper boundary does not itself invert.
+const DEEP_LOWER_TICK: u64 = 50_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -448,12 +451,12 @@ fun a_valid_surface_at_the_butterfly_edge_fails_closed() {
     cleanup(fixture, oracle);
 }
 
-/// The sign and size of the walk's one divergence from the per-order sum: when an
-/// order's own two boundaries invert, its per-order value floors at zero while the
-/// netted walk lets the pair cancel, so the walk understates liability (NAV reads
-/// high) by exactly the rise times that order's quantity.
+/// An order whose own two boundaries invert floors at zero per order, while the
+/// netted walk alone would carry the pair's small negative value. The walk charges
+/// the rise on the quantity ending at the risen boundary, so this book values at
+/// exactly the per-order sum instead of below it.
 #[test]
-fun a_self_inverted_order_understates_liability_by_its_rise() {
+fun a_self_inverted_order_is_charged_its_rise() {
     let (mut fixture, oracle, pricer) = real_scenario_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
@@ -474,15 +477,100 @@ fun a_self_inverted_order_understates_liability_by_its_rise() {
         SELF_INVERTED_QUANTITY,
     );
 
-    let reference = range_reference(
-        &pricer,
-        vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
-        vector[DUST_INVERSION_HIGHER_TICK, DUST_INVERSION_SHARED_TICK],
-        vector[SELF_INVERTED_QUANTITY, SELF_INVERTED_QUANTITY],
+    assert_eq!(
+        walk_linear(&tree, &pricer),
+        range_reference(
+            &pricer,
+            vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
+            vector[DUST_INVERSION_HIGHER_TICK, DUST_INVERSION_SHARED_TICK],
+            vector[SELF_INVERTED_QUANTITY, SELF_INVERTED_QUANTITY],
+        ),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The frozen walk applies the same charge over its snapshot view. Closing the
+/// self-inverted order after the snapshot leaves its snapshot copies, so the
+/// frozen walk still values the snapshot-instant book at its per-order sum, while
+/// the live walk values only the surviving order.
+#[test]
+fun the_frozen_walk_charges_a_self_inverted_order_it_still_holds() {
+    let (mut fixture, oracle, pricer) = real_scenario_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    tree.insert_range(
+        DUST_INVERSION_LOWER_TICK,
+        DUST_INVERSION_HIGHER_TICK,
+        SELF_INVERTED_QUANTITY,
+    );
+    tree.insert_range(
+        DUST_INVERSION_HIGHER_TICK,
+        DUST_INVERSION_SHARED_TICK,
+        SELF_INVERTED_QUANTITY,
+    );
+    tree.activate_snapshot(SNAPSHOT_SEQ);
+    tree.remove_range(
+        DUST_INVERSION_LOWER_TICK,
+        DUST_INVERSION_HIGHER_TICK,
+        SELF_INVERTED_QUANTITY,
+    );
+
+    assert_eq!(
+        tree.walk_linear_frozen(&pricer, tick_size(), SNAPSHOT_SEQ),
+        range_reference(
+            &pricer,
+            vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
+            vector[DUST_INVERSION_HIGHER_TICK, DUST_INVERSION_SHARED_TICK],
+            vector[SELF_INVERTED_QUANTITY, SELF_INVERTED_QUANTITY],
+        ),
     );
     assert_eq!(
-        reference - walk_linear(&tree, &pricer),
-        math::mul_down(higher_price - lower_price, SELF_INVERTED_QUANTITY),
+        walk_linear(&tree, &pricer),
+        range_reference(
+            &pricer,
+            vector[DUST_INVERSION_HIGHER_TICK],
+            vector[DUST_INVERSION_SHARED_TICK],
+            vector[SELF_INVERTED_QUANTITY],
+        ),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The charge is conservative for an order that does not itself invert: it ends
+/// at the risen boundary but starts deep in the money, so its per-order value needs
+/// no charge, and the walk exceeds the per-order sum by exactly the rise times its
+/// quantity. Liability reads high and NAV low, never the reverse.
+#[test]
+fun a_rise_overcharges_an_order_that_does_not_invert() {
+    let (mut fixture, oracle, pricer) = real_scenario_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let deep_price = pricer.up_price(raw(DEEP_LOWER_TICK));
+    let low_price = pricer.up_price(raw(DUST_INVERSION_LOWER_TICK));
+    let risen_price = pricer.up_price(raw(DUST_INVERSION_HIGHER_TICK));
+    assert!(risen_price > low_price);
+    assert!(deep_price >= risen_price);
+
+    // An open-topped order starts at the lower dust boundary, which becomes the
+    // running minimum; the other order ends at the risen boundary.
+    insert_up(&mut tree, DUST_INVERSION_LOWER_TICK, SELF_INVERTED_QUANTITY);
+    tree.insert_range(DEEP_LOWER_TICK, DUST_INVERSION_HIGHER_TICK, SELF_INVERTED_QUANTITY);
+
+    let reference =
+        up_reference(&pricer, vector[DUST_INVERSION_LOWER_TICK], vector[SELF_INVERTED_QUANTITY])
+            + range_reference(
+                &pricer,
+                vector[DEEP_LOWER_TICK],
+                vector[DUST_INVERSION_HIGHER_TICK],
+                vector[SELF_INVERTED_QUANTITY],
+            );
+    assert_eq!(
+        walk_linear(&tree, &pricer) - reference,
+        math::mul_down(risen_price - low_price, SELF_INVERTED_QUANTITY),
     );
 
     destroy(tree);

@@ -158,9 +158,9 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 /// (the pricer's other rounding is larger per strike, but the true slope outruns
 /// it); rises above one appeared only on surfaces near the butterfly-arbitrage
 /// boundary, and there they range from 2 to thousands (RP-15's evidence). The bound
-/// is the measured unit plus one of headroom: an absorbed rise moves NAV by at most
-/// 2e-9 per unit of affected quantity, and a larger rise fails closed. Re-measure
-/// when pricing or the SVI envelope changes.
+/// is the measured unit plus one of headroom: an absorbed rise lowers NAV by at
+/// most 2e-9 per unit of the quantity ending at that boundary, and a larger rise
+/// fails closed. Re-measure when pricing or the SVI envelope changes.
 public(package) macro fun price_monotonicity_tolerance(): u64 { 2 }
 
 // === Public Functions ===

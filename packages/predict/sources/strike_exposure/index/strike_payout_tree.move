@@ -632,21 +632,26 @@ fun walk_linear_subtree(
         // UP price is non-increasing in strike, so a rise across these ascending
         // ticks is either the pricer's own fixed-point dust or an inverted surface.
         // A rise within `price_monotonicity_tolerance` of the running minimum walks
-        // at its quoted price; a larger one fails closed. RP-15 owns the response,
-        // its NAV bound, and why this mandatory path cannot hard-assert.
+        // at its quoted price, and the rise is charged, rounded up, on the quantity
+        // ending here so no order nets below its floored per-order value; a larger
+        // rise fails closed. RP-15 owns the response, its NAV bound, and why this
+        // mandatory path cannot hard-assert.
         if (price_envelope.is_some()) {
             let envelope = *price_envelope.borrow();
             assert!(
                 price <= envelope + pricing::price_monotonicity_tolerance!(),
                 ENonMonotonePrice,
             );
+            if (price > envelope) {
+                start_total = math::mul_div_up(price - envelope, local_end, math::float_scaling!());
+            };
             *price_envelope = option::some(envelope.min(price));
         } else {
             *price_envelope = option::some(price);
         };
 
         if (local_start != local_end) {
-            start_total = math::mul_down(price, local_start);
+            start_total = start_total + math::mul_down(price, local_start);
             end_total = math::mul_down(price, local_end);
         };
     };
