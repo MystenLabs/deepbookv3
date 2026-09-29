@@ -41,6 +41,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | --- | --- |
 | `packages/**/*.move`, `packages/**/Move.toml`, `packages/**/Published.toml` | [Sui Move instructions](.claude/rules/move.md) |
 | `packages/{predict,propbook,account}/**/*.move` | [Predict contract rules](.claude/rules/predict-contracts.md) and [Sui Move instructions](.claude/rules/move.md) |
+| `packages/venue/**` | [Venue rules](.claude/rules/venue.md) and [Sui Move instructions](.claude/rules/move.md) |
 | `packages/**/tests/**` | [Unit-test rules](.claude/rules/unit-tests.md) |
 | `packages/predict/{harness,devtools,simulations}/**` | [Predict harness rules](.claude/rules/predict-harness.md) |
 | `packages/predict/deployment/**` | [Predict deployment rules](.claude/rules/predict-deployment.md) |
@@ -54,6 +55,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | Code review or review of uncommitted changes | [Code-review rules](.claude/rules/code-review.md); for an explicitly approved deep Predict audit, use the [Predict audit skill](.claude/skills/predict-audit/SKILL.md) |
 | Add or build a Predict harness strategy | [Harness-strategy workflow](.claude/rules/harness-strategy.md) and [Predict harness rules](.claude/rules/predict-harness.md) |
 | Create, change, run, publish, deploy, migrate, resume, audit, or verify a Predict deployment | [Predict deployment rules](.claude/rules/predict-deployment.md), plus [Sui Move instructions](.claude/rules/move.md) when package manifests are involved |
+| Publish venue on devnet, or run a venue end-to-end trade | [Venue rules](.claude/rules/venue.md) |
 | Wrap up a session | [Wrap-up workflow](.claude/rules/wrap-up.md) |
 | Request Codex-gated pull-request approval | [Auto-approval contract](.github/AUTO_APPROVE.md) |
 
@@ -64,6 +66,10 @@ Before proposing or changing Predict protocol behavior, follow the [Predict deve
 The [Predict protocol documentation](packages/predict/docs/README.md) explains current public behavior; it does not outrank source, tests, or the development-system authority order. Treat design and research documents as leads to verify against current source, git history, and tests rather than executable truth.
 
 Treat `.claude/predict-design/`, `.claude/predict-review/`, and `.redesign/` as ignored personal scratch. Nothing another contributor needs to continue the work may live only there.
+
+## PredictSync
+
+The [PredictSync technical design](https://app.notion.com/p/3d06d9dcb4e981a79cfee3c51dfce82e) is the design source for `packages/venue`. An agreed behavior goes on a decision row in that document, and the package matches that row. A difference that is not yet agreed stays on [5.7 Assumptions and differences](https://app.notion.com/p/3e96d9dcb4e981a398ecd04fd5e4939e). This rule prevents an agreed venue choice from living only in source, tests, or chat while the design still describes the previous behavior. Source and tests still own what the package currently does. When they disagree with an accepted decision row, change the package. When the choice is not accepted yet, record the gap on 5.7 instead of treating the package as the design.
 
 ## Common verification commands
 
@@ -107,6 +113,8 @@ Route durable information to one owner instead of appending it wherever it was d
 | General or path-specific contributor directive | The matching file under `.claude/rules/` |
 | Component behavior or interface fact | Source, tests, or the owning package README |
 | Settled Predict mechanism decision or rejected direction | [Predict design decisions](packages/predict/docs/design/decisions.md) |
+| Settled PredictSync mechanism decision | A decision row in the [PredictSync technical design](https://app.notion.com/p/3d06d9dcb4e981a79cfee3c51dfce82e) |
+| Unresolved PredictSync difference between the package and that design | [5.7 Assumptions and differences](https://app.notion.com/p/3e96d9dcb4e981a398ecd04fd5e4939e) |
 | Settled Predict response to a degenerate or adversarial state | [Predict response-policy register](packages/predict/predeploy/response-policies.md) |
 | Unresolved Predict finding or experiment plan | [Predict open-items register](packages/predict/predeploy/open-items.md) |
 | Predict measurement | A dated record under `packages/predict/predeploy/evidence/`, following the [predeploy lifecycle](packages/predict/predeploy/README.md) |
