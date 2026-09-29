@@ -80,8 +80,9 @@ public struct FrozenPricer has copy, drop, store {
 /// The provider carries every parameter at 128 bits; Predict prices `rho`, `m`, and `sigma` at 64,
 /// so the narrowing happens once where the `Pricer` is built and every bound below reads these
 /// widths. A provider value too large for them aborts with `EBlockScholesInputTooWide` before the
-/// cast, and everything representable is then bounded semantically by `assert_inputs_pricing_safe`,
-/// whose limits are far tighter than the widths.
+/// cast, and everything representable is then checked by `assert_inputs_pricing_safe`: `b`, `rho`,
+/// `m`, and `sigma` against limits far tighter than the widths, and `a` only through the minimum
+/// total variance it leaves.
 public struct RawSVI has copy, drop {
     a: I64,
     b: u64,
@@ -141,7 +142,11 @@ macro fun max_pricing_basis_factor(): u64 { 100 }
 // bs_spot <= factor * spot can't overflow u64.
 macro fun max_pricing_spot(): u64 { std::u64::max_value!() / max_pricing_basis_factor!() }
 
-macro fun min_svi_sigma(): u64 { 1_000_000 }
+// 1e-5, the floor Block Scholes recommends: SSVI surfaces narrow `sigma` toward
+// expiry, so one-minute slices commonly sit below 1e-3. Any positive floor keeps
+// the smile root `sqrt((k - m)^2 + sigma^2)` nonzero, so the skew slope's
+// `(k - m) / root` division is safe at the smile vertex.
+macro fun min_svi_sigma(): u64 { 10_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
@@ -252,7 +257,7 @@ public(package) fun thaw(frozen: &FrozenPricer): Pricer {
 ///
 /// The `u256` intermediate keeps the product exact for any `expiry_ms` rather than
 /// relying on a bound on the anchored horizon. The result is at most
-/// `value * 1e9 <= max_svi_input * 1e9`, so narrowing to `u128` never truncates.
+/// `value * 1e9 < 2^64 * 1e9`, so narrowing to `u128` never truncates.
 public(package) fun roll_down_to_1e18(value: u64, remaining_ms: u64, anchor_tte_ms: u64): u128 {
     let scaled =
         (value as u256) * (math::float_scaling!() as u256) * (remaining_ms as u256)
@@ -590,7 +595,9 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
     // `ceil(forward / factor) <= spot` enforces `forward <= factor * spot`
     // without an overflowing multiplication.
     assert!(forward.div_ceil(max_pricing_basis_factor!()) <= spot, EBlockScholesInputsInvalid);
-    assert!(svi.a().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
+    // `a` carries no bound of its own: only total variance has to be positive,
+    // which the minimum-variance check below owns, and every downstream use of
+    // `a` fits its provider width (`roll_down_to_1e18`, `variance_sqrt_and_d2`).
     assert!(svi.b() <= max_svi_input!(), EBlockScholesInputsInvalid);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EBlockScholesInputsInvalid);
     assert!(svi.m().magnitude() <= max_svi_input!(), EBlockScholesInputsInvalid);
@@ -604,8 +611,14 @@ fun assert_inputs_pricing_safe(spot: u64, forward: u64, svi: &RawSVI) {
 fun assert_min_total_variance_positive(svi: &RawSVI) {
     let min_variance_increment = min_svi_variance_increment(svi);
     let a = svi.a();
-    let min_total_var = i64::from_u64(min_variance_increment).add(&a);
-    assert!(is_positive(&min_total_var), EBlockScholesMinVarianceInvalid);
+    // `a + min_variance_increment > 0`, compared rather than summed: `a` reaches
+    // `u64::MAX`, where the sum would leave `u64`.
+    let min_total_var_positive = if (a.is_negative()) {
+        min_variance_increment > a.magnitude()
+    } else {
+        a.magnitude() > 0 || min_variance_increment > 0
+    };
+    assert!(min_total_var_positive, EBlockScholesMinVarianceInvalid);
 }
 
 // SVI total variance is `a + b * (rho*x + sqrt(x^2 + sigma^2))`, where
@@ -659,18 +672,24 @@ fun compute_nd2(svi_params: &PricingSVI, forward: u64, strike: u64): u64 {
     let k = math::ln(strike).sub(&math::ln(forward));
     let m = svi_params.m;
     let k_minus_m = k.sub(&m);
-    let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = svi_params.sigma;
-    let sigma_squared = math::mul_down(sigma, sigma);
-    let sqrt_input = k_minus_m_squared + sigma_squared;
-    let sq = math::sqrt_down(sqrt_input);
+    // The smile root `sqrt((k - m)^2 + sigma^2)` is taken from a 1e18 input: both
+    // squares are exact `u128` products of 1e9 values, and `sqrt_u128_down` returns
+    // the 1e9-scaled root. Squaring at 1e9 instead floors each square to a whole raw
+    // unit, which erases `sigma^2` once `sigma` is below ~3.2e-5 and leaves a
+    // short-dated smile's vertex with percent-scale error in `w` and `w'`.
+    // `|k - m| <= 44.4 + 100` and `sigma <= 100`, so the input stays under 3.1e22
+    // and the root fits `u64`.
+    let k_minus_m_magnitude = k_minus_m.magnitude() as u128;
+    let sigma = svi_params.sigma as u128;
+    let sq = math::sqrt_u128_down(k_minus_m_magnitude * k_minus_m_magnitude + sigma * sigma) as u64;
     let sq_i64 = i64::from_u64(sq);
 
     let rho = svi_params.rho;
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
-    // This term is non-negative for |rho| <= 1; abort if fixed-point evaluation
-    // violates that invariant at the envelope boundary.
+    // Non-negative for |rho| <= 1, and exactly so in fixed point: the floored root
+    // is at least `|k - m|`, and the floored `rho * (k - m)` is at most that in
+    // magnitude. The assert is a backstop.
     assert!(!inner.is_negative(), ECannotBeNegative);
 
     let b = svi_params.b;
@@ -753,10 +772,6 @@ fun variance_sqrt_and_d2(
     let d2_magnitude = if (d2_magnitude > saturation) saturation else d2_magnitude;
 
     (sqrt_var, i64::from_parts(d2_magnitude as u64, !numerator_negative))
-}
-
-fun is_positive(value: &I64): bool {
-    !value.is_negative() && !value.is_zero()
 }
 
 /// Scalar-input view of `variance_sqrt_and_d2` for the unit tests. The d2
