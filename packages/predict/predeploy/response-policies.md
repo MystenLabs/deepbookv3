@@ -838,13 +838,20 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   derived error budget: a per-endpoint error budget does not bound
   adjacent-strike rises, because most of that error is a bias adjacent strikes
   share, and the committed budgets are stale (P-28) and stop short of the
-  deployed variance range (P-16). At 1e-5 in probability it keeps an absorbed
-  rise immaterial to the LP mark. Above the bound the rise is a real surface
-  defect, the overstatement it would put into the single LP mark is material,
-  and "retry once the provider publishes a corrected surface" is a recovery path
-  that actually exists in that regime. The comparison is against the running
-  minimum rather than the previous boundary, so dust accumulated across many
-  boundaries trips the same bound instead of ratcheting underneath it.
+  deployed variance range (P-16). In NAV terms the understatement is at most
+  1e-5 of the summed quantity of orders whose own boundaries invert, so it
+  scales with the open interest sitting across an inverting pair: $1M of such
+  quantity could mark the pool at most $10 high at the tolerance, and $0.001 at
+  the measured one-unit rise. The bound is absolute, not relative to the price.
+  On the OTM plateau, where UP is tens to hundreds of raw units, 10,000 is many
+  times the price, so a provider inversion there of up to that size also walks
+  silently; its NAV effect is still capped at 1e-5 per unit of affected
+  quantity. Above the bound the rise is a real surface defect, the overstatement
+  it would put into the single LP mark is material, and "retry once the provider
+  publishes a corrected surface" is a recovery path that actually exists in that
+  regime. The comparison is against the running minimum rather than the previous
+  boundary, so dust accumulated across many boundaries trips the same bound
+  instead of ratcheting underneath it.
 - **Duty inventory (guard weakening):** the strict check's only consumers are
   `live_marked_liability` -> `current_nav` and `frozen_marked_liability` ->
   `snapshot_nav`, and both clamp the walk with `saturating_sub`, so the check
@@ -861,9 +868,11 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   freedom.
 - **Pinning tests:** `payout_tree_walk_tests.move` —
   `a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted`,
-  `a_rise_inside_the_tolerance_is_walked_at_its_quoted_prices` and
-  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance` (together they
-  bracket the tolerance within one fine-grid step and pin the running minimum),
+  `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
+  `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
+  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance` and
+  `the_frozen_walk_keeps_one_running_minimum_across_husks` (the running minimum
+  in the live walk and across snapshot copies in the frozen walk),
   `inversion_on_a_cancelling_last_boundary_still_aborts`;
   `current_nav_flow_tests.move` —
   `current_nav_rejects_non_monotone_active_book_surface`;
