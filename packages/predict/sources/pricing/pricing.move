@@ -153,16 +153,14 @@ macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 /// Largest rise in UP price across ascending strikes that the NAV walk treats as
 /// fixed-point dust rather than an inverted surface. `compute_up_price` floors
 /// `N(d2)` and the skew correction independently, so where `N(d2)` sits on a tail
-/// plateau the difference steps up by raw units on a valid, butterfly-free
-/// surface. The bound is headroom over that measured dust, not a derived error
-/// budget: on every committed reference surface the largest rise between adjacent
-/// strikes is one raw unit (RP-15's evidence). A per-endpoint error budget does not
-/// bound the rise, because most of that error is a bias adjacent strikes share, and
-/// the committed budgets are stale and stop short of the deployed variance range
-/// (open items P-28 and P-16), so re-measure when pricing or the SVI envelope
-/// changes. At 1e-5 in probability, an absorbed rise stays immaterial to the LP
-/// mark.
-public(package) macro fun price_monotonicity_tolerance(): u64 { 10_000 }
+/// plateau the difference steps up by one raw unit on a valid, butterfly-free
+/// surface. Two floored terms of a monotone difference cannot rise by more than one
+/// unit unless their own approximation errors drift apart between adjacent strikes,
+/// and every rise measured on the committed reference surfaces and sampled SSVI
+/// slices is exactly one (RP-15's evidence). The bound is twice that: an absorbed
+/// rise moves NAV by at most 2e-9 per unit of affected quantity, and anything larger
+/// fails closed. Re-measure when pricing or the SVI envelope changes.
+public(package) macro fun price_monotonicity_tolerance(): u64 { 2 }
 
 // === Public Functions ===
 

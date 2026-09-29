@@ -71,23 +71,45 @@ const DUST_INVERSION_HIGHER_TICK: u64 = 55_250;
 /// Shared upper boundary near scenario 0's forward, so both ranges price near 0.5.
 const DUST_INVERSION_SHARED_TICK: u64 = 75_800;
 const DUST_INVERSION_QUANTITY: u64 = 2_000_000_000;
-/// A fine grid on the synthetic inverted surface, where each adjacent tick above
-/// $89 rises by roughly 1,560 raw units, so seven steps pass the tolerance while
-/// every step stays far inside it.
-const FINE_TICK_SIZE: u64 = 10_000;
-const STAIRCASE_FIRST_TICK: u64 = 8_900_000;
-const STEPS_PAST_TOLERANCE: u64 = 7;
-const STAIRCASE_QUANTITY: u64 = 1_000_000;
-/// Strike pairs on the same surface at a $0.0001 grid whose UP prices rise by
-/// exactly the tolerance and by one raw unit more. They are fixture inputs tuned
-/// to the integers the pricer lands on; each test asserts its rise before walking,
-/// so a pricer change fails loudly instead of silently moving the edge.
-const EDGE_TICK_SIZE: u64 = 100;
-const EDGE_AT_LOWER_TICK: u64 = 890_000_003;
-const EDGE_AT_HIGHER_TICK: u64 = 890_000_641;
-const EDGE_PAST_LOWER_TICK: u64 = 890_000_005;
-const EDGE_PAST_HIGHER_TICK: u64 = 890_000_643;
+/// SVI `b` of a shallow inverted surface (`rho = -1` at the default forward): its
+/// UP price falls to a minimum near $81.707 and rises gently past it, so adjacent
+/// $0.0001 strikes there differ by a raw unit or two.
+const SHALLOW_INVERSION_B: u64 = 100_000_000;
+const STAIR_TICK_SIZE: u64 = 100_000;
+/// Four strikes past that minimum whose UP prices are consecutive integers
+/// `p, p + 1, p + 2, p + 3`: the first and third rise by exactly the tolerance, the
+/// first and last by one unit more, and all four form a staircase of one-unit
+/// steps. They are fixture inputs tuned to the pricer. To re-derive them, walk
+/// ascending $0.0001 ticks past the minimum and take the first tick at each of four
+/// consecutive prices; every test asserts the differences it relies on before
+/// walking, so drift fails loudly.
+const STAIR_TICK_0: u64 = 817_236;
+const STAIR_TICK_1: u64 = 817_241;
+const STAIR_TICK_2: u64 = 817_243;
+const STAIR_TICK_3: u64 = 817_246;
+const STAIR_QUANTITY: u64 = 1_000_000;
 const SNAPSHOT_SEQ: u64 = 1;
+/// P-35's real short-dated slices (raw SVI, `rho` negative, spot set to the
+/// forward), each carrying a one-raw-unit ripple between adjacent strikes. The
+/// backfill slice was published 2026-03-19 07:06:40 for the 07:15 expiry.
+const BACKFILL_FORWARD: u64 = 70_464_040_000_000;
+const BACKFILL_SVI_A: u64 = 2_218;
+const BACKFILL_SVI_B: u64 = 926_157;
+const BACKFILL_SVI_SIGMA: u64 = 2_395_589;
+const BACKFILL_SVI_RHO_MAGNITUDE: u64 = 28_390_040;
+const BACKFILL_SVI_M: u64 = 68_038;
+const BACKFILL_RIPPLE_LOWER_TICK: u64 = 72_670;
+const BACKFILL_RIPPLE_HIGHER_TICK: u64 = 72_680;
+/// The one-minute SSVI slice published 20 s before expiry.
+const ONE_MINUTE_FORWARD: u64 = 66_415_250_000_000;
+const ONE_MINUTE_SVI_A: u64 = 63;
+const ONE_MINUTE_SVI_B: u64 = 185_973;
+const ONE_MINUTE_SVI_SIGMA: u64 = 337_252;
+const ONE_MINUTE_SVI_RHO_MAGNITUDE: u64 = 2_190_270;
+const ONE_MINUTE_SVI_M: u64 = 739;
+const ONE_MINUTE_RIPPLE_LOWER_TICK: u64 = 66_811;
+const ONE_MINUTE_RIPPLE_HIGHER_TICK: u64 = 66_812;
+const RIPPLE_QUANTITY: u64 = 2_000_000_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -282,27 +304,67 @@ fun a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted() {
     cleanup(fixture, oracle);
 }
 
+/// P-35's two real short-dated slices each carry a one-raw-unit ripple between
+/// adjacent strikes on a valid surface; a book straddling either walks at the
+/// independent per-order sum instead of aborting.
+#[test]
+fun a_ripple_on_a_short_dated_backfill_slice_is_walked() {
+    let (fixture, oracle, pricer) = slice_pricer(
+        BACKFILL_FORWARD,
+        BACKFILL_SVI_A,
+        BACKFILL_SVI_B,
+        BACKFILL_SVI_SIGMA,
+        BACKFILL_SVI_RHO_MAGNITUDE,
+        BACKFILL_SVI_M,
+    );
+    assert_ripple_is_walked(
+        fixture,
+        oracle,
+        &pricer,
+        BACKFILL_RIPPLE_LOWER_TICK,
+        BACKFILL_RIPPLE_HIGHER_TICK,
+    );
+}
+
+#[test]
+fun a_ripple_on_a_one_minute_ssvi_slice_is_walked() {
+    let (fixture, oracle, pricer) = slice_pricer(
+        ONE_MINUTE_FORWARD,
+        ONE_MINUTE_SVI_A,
+        ONE_MINUTE_SVI_B,
+        ONE_MINUTE_SVI_SIGMA,
+        ONE_MINUTE_SVI_RHO_MAGNITUDE,
+        ONE_MINUTE_SVI_M,
+    );
+    assert_ripple_is_walked(
+        fixture,
+        oracle,
+        &pricer,
+        ONE_MINUTE_RIPPLE_LOWER_TICK,
+        ONE_MINUTE_RIPPLE_HIGHER_TICK,
+    );
+}
+
 /// A rise of exactly the tolerance prices through at the quoted boundary prices:
 /// the netted walk equals the independent per-order sum. With the test below it
 /// pins the bound to the unit, including that the comparison is `<=`.
 #[test]
 fun a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices() {
-    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    let lower_price = grid_up_price(&pricer, EDGE_AT_LOWER_TICK, EDGE_TICK_SIZE);
-    let higher_price = grid_up_price(&pricer, EDGE_AT_HIGHER_TICK, EDGE_TICK_SIZE);
+    let lower_price = stair_up_price(&pricer, STAIR_TICK_0);
+    let higher_price = stair_up_price(&pricer, STAIR_TICK_2);
     assert_eq!(higher_price - lower_price, pricing::price_monotonicity_tolerance!());
 
     // Open-topped ranges store only their lower boundary, so the walk compares
     // exactly these two prices.
-    insert_up(&mut tree, EDGE_AT_LOWER_TICK, STAIRCASE_QUANTITY);
-    insert_up(&mut tree, EDGE_AT_HIGHER_TICK, STAIRCASE_QUANTITY);
+    insert_up(&mut tree, STAIR_TICK_0, STAIR_QUANTITY);
+    insert_up(&mut tree, STAIR_TICK_2, STAIR_QUANTITY);
 
     assert_eq!(
-        tree.walk_linear(&pricer, EDGE_TICK_SIZE),
-        math::mul_down(lower_price, STAIRCASE_QUANTITY)
-            + math::mul_down(higher_price, STAIRCASE_QUANTITY),
+        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        math::mul_down(lower_price, STAIR_QUANTITY) + math::mul_down(higher_price, STAIR_QUANTITY),
     );
 
     destroy(tree);
@@ -311,16 +373,16 @@ fun a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices() {
 
 #[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
 fun a_rise_one_unit_past_the_tolerance_aborts() {
-    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    let lower_price = grid_up_price(&pricer, EDGE_PAST_LOWER_TICK, EDGE_TICK_SIZE);
-    let higher_price = grid_up_price(&pricer, EDGE_PAST_HIGHER_TICK, EDGE_TICK_SIZE);
+    let lower_price = stair_up_price(&pricer, STAIR_TICK_0);
+    let higher_price = stair_up_price(&pricer, STAIR_TICK_3);
     assert_eq!(higher_price - lower_price, pricing::price_monotonicity_tolerance!() + 1);
 
-    insert_up(&mut tree, EDGE_PAST_LOWER_TICK, STAIRCASE_QUANTITY);
-    insert_up(&mut tree, EDGE_PAST_HIGHER_TICK, STAIRCASE_QUANTITY);
-    tree.walk_linear(&pricer, EDGE_TICK_SIZE);
+    insert_up(&mut tree, STAIR_TICK_0, STAIR_QUANTITY);
+    insert_up(&mut tree, STAIR_TICK_3, STAIR_QUANTITY);
+    tree.walk_linear(&pricer, STAIR_TICK_SIZE);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -331,23 +393,21 @@ fun a_rise_one_unit_past_the_tolerance_aborts() {
 /// once its total rise passes it, so dust cannot ratchet underneath the bound.
 #[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
 fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
-    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let ticks = vector[STAIR_TICK_0, STAIR_TICK_1, STAIR_TICK_2, STAIR_TICK_3];
 
-    let first_price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK, FINE_TICK_SIZE);
+    let first_price = stair_up_price(&pricer, STAIR_TICK_0);
     let mut previous_price = first_price;
-    STEPS_PAST_TOLERANCE.do!(|step| {
-        let price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK + step + 1, FINE_TICK_SIZE);
-        assert!(price > previous_price);
+    ticks.do_ref!(|tick| {
+        let price = stair_up_price(&pricer, *tick);
         assert!(price - previous_price <= pricing::price_monotonicity_tolerance!());
         previous_price = price;
     });
     assert!(previous_price - first_price > pricing::price_monotonicity_tolerance!());
 
-    (STEPS_PAST_TOLERANCE + 1).do!(|step| {
-        insert_up(&mut tree, STAIRCASE_FIRST_TICK + step, STAIRCASE_QUANTITY);
-    });
-    tree.walk_linear(&pricer, FINE_TICK_SIZE);
+    ticks.do_ref!(|tick| insert_up(&mut tree, *tick, STAIR_QUANTITY));
+    tree.walk_linear(&pricer, STAIR_TICK_SIZE);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -360,33 +420,33 @@ fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
 /// the frozen view still spans the full staircase and aborts.
 #[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
 fun the_frozen_walk_keeps_one_running_minimum_across_husks() {
-    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
-    let last_tick = STAIRCASE_FIRST_TICK + STEPS_PAST_TOLERANCE;
 
-    (STEPS_PAST_TOLERANCE + 1).do!(|step| {
-        insert_up(&mut tree, STAIRCASE_FIRST_TICK + step, STAIRCASE_QUANTITY);
+    vector[STAIR_TICK_0, STAIR_TICK_1, STAIR_TICK_2, STAIR_TICK_3].do!(|tick| {
+        insert_up(&mut tree, tick, STAIR_QUANTITY);
     });
     tree.activate_snapshot(SNAPSHOT_SEQ);
-    tree.remove_range(STAIRCASE_FIRST_TICK, constants::pos_inf_tick!(), STAIRCASE_QUANTITY);
-    tree.remove_range(last_tick, constants::pos_inf_tick!(), STAIRCASE_QUANTITY);
+    tree.remove_range(STAIR_TICK_0, constants::pos_inf_tick!(), STAIR_QUANTITY);
+    tree.remove_range(STAIR_TICK_3, constants::pos_inf_tick!(), STAIR_QUANTITY);
 
     // The live view is the interior, which walks at the independent per-order sum.
-    let interior_first_price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK + 1, FINE_TICK_SIZE);
-    let interior_last_price = grid_up_price(&pricer, last_tick - 1, FINE_TICK_SIZE);
-    assert!(interior_last_price - interior_first_price <= pricing::price_monotonicity_tolerance!());
-    let mut interior_reference = 0;
-    (STEPS_PAST_TOLERANCE - 1).do!(|step| {
-        let price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK + step + 1, FINE_TICK_SIZE);
-        interior_reference = interior_reference + math::mul_down(price, STAIRCASE_QUANTITY);
-    });
-    assert_eq!(tree.walk_linear(&pricer, FINE_TICK_SIZE), interior_reference);
+    let interior_lower_price = stair_up_price(&pricer, STAIR_TICK_1);
+    let interior_higher_price = stair_up_price(&pricer, STAIR_TICK_2);
+    assert!(
+        interior_higher_price - interior_lower_price <= pricing::price_monotonicity_tolerance!(),
+    );
+    assert_eq!(
+        tree.walk_linear(&pricer, STAIR_TICK_SIZE),
+        math::mul_down(interior_lower_price, STAIR_QUANTITY)
+            + math::mul_down(interior_higher_price, STAIR_QUANTITY),
+    );
 
     // The frozen view still holds both ends, whose rise is past the tolerance.
-    let first_price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK, FINE_TICK_SIZE);
-    let last_price = grid_up_price(&pricer, last_tick, FINE_TICK_SIZE);
+    let first_price = stair_up_price(&pricer, STAIR_TICK_0);
+    let last_price = stair_up_price(&pricer, STAIR_TICK_3);
     assert!(last_price - first_price > pricing::price_monotonicity_tolerance!());
-    tree.walk_linear_frozen(&pricer, FINE_TICK_SIZE, SNAPSHOT_SEQ);
+    tree.walk_linear_frozen(&pricer, STAIR_TICK_SIZE, SNAPSHOT_SEQ);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -402,9 +462,40 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 /// map to the open-ended sentinels).
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 
-/// UP price at `tick` on a grid of `tick_size` raw units.
-fun grid_up_price(pricer: &Pricer, tick: u64, tick_size: u64): u64 {
-    pricer.up_price(range_codec::strike_from_tick(tick, tick_size))
+/// UP price at `tick` on the staircase's $0.0001 grid.
+fun stair_up_price(pricer: &Pricer, tick: u64): u64 {
+    pricer.up_price(range_codec::strike_from_tick(tick, STAIR_TICK_SIZE))
+}
+
+/// Walk two open-topped ranges whose lower boundaries straddle a ripple, after
+/// asserting that the prices really rise, and require the per-order sum.
+fun assert_ripple_is_walked(
+    mut fixture: OracleFixture,
+    oracle: OracleBundle,
+    pricer: &Pricer,
+    lower_tick: u64,
+    higher_tick: u64,
+) {
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(raw(lower_tick));
+    let higher_price = pricer.up_price(raw(higher_tick));
+    assert!(higher_price > lower_price);
+    assert!(higher_price - lower_price <= pricing::price_monotonicity_tolerance!());
+
+    insert_up(&mut tree, lower_tick, RIPPLE_QUANTITY);
+    insert_up(&mut tree, higher_tick, RIPPLE_QUANTITY);
+    assert_eq!(
+        walk_linear(&tree, pricer),
+        up_reference(
+            pricer,
+            vector[lower_tick, higher_tick],
+            vector[RIPPLE_QUANTITY, RIPPLE_QUANTITY],
+        ),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
 }
 
 /// Run the exact linear walk.
@@ -503,6 +594,61 @@ fun non_monotone_pricer(): (OracleFixture, OracleBundle, Pricer) {
         test_constants::float(),
         true,
         0,
+        false,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+    (fixture, oracle, pricer)
+}
+
+/// The shallow inverted surface the tolerance-edge tests walk: the extreme
+/// parametrisation above with `b` reduced so the rise past its minimum is gentle.
+fun shallow_inversion_pricer(): (OracleFixture, OracleBundle, Pricer) {
+    let mut fixture = oracle_fixture::setup_oracle_default();
+    let mut oracle = fixture.take_oracle_bundle();
+    fixture.prepare_real_oracle_bundle(
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        1,
+        false,
+        SHALLOW_INVERSION_B,
+        test_constants::pricing_min_svi_sigma(),
+        test_constants::float(),
+        true,
+        0,
+        false,
+    );
+    let pricer = fixture.load_pricer_bundle(&oracle);
+    (fixture, oracle, pricer)
+}
+
+/// A real short-dated slice at `forward` (spot set to the forward) with negative
+/// `rho` and positive `a` and `m`, as P-35 records them.
+fun slice_pricer(
+    forward: u64,
+    svi_a: u64,
+    svi_b: u64,
+    svi_sigma: u64,
+    svi_rho_magnitude: u64,
+    svi_m: u64,
+): (OracleFixture, OracleBundle, Pricer) {
+    let mut fixture = oracle_fixture::setup_oracle(
+        forward,
+        test_constants::default_tick_size(),
+        test_constants::default_expiry_ms(),
+    );
+    let mut oracle = fixture.take_oracle_bundle();
+    fixture.prepare_real_oracle_bundle(
+        &mut oracle,
+        forward,
+        forward,
+        svi_a,
+        false,
+        svi_b,
+        svi_sigma,
+        svi_rho_magnitude,
+        true,
+        svi_m,
         false,
     );
     let pricer = fixture.load_pricer_bundle(&oracle);
