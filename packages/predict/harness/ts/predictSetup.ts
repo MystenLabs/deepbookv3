@@ -10,6 +10,7 @@ import { requiredEnv } from "./runnerConfig.js";
 import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  addSettledRedeemKeeperTx,
   address,
   bareFlushTx,
   bindFeedsToUnderlyingTx,
@@ -50,6 +51,7 @@ export type Feeds = OracleFeedIds;
 // pool-valuation cap that starts flushes.
 export async function setupFeedsAndConfig(
   cadenceIds: number[],
+  settledRedeemKeepers: string[],
 ): Promise<{ feeds: Feeds; lifecycleCapId: string; poolValuationCapId: string }> {
   const instanceDir = requiredEnv("INSTANCE_DIR");
   const feedsPath = `${instanceDir}/feeds.json`;
@@ -67,6 +69,10 @@ export async function setupFeedsAndConfig(
     const bsValueStoreId = found(feedsR, "block_scholes_store::BlockScholesValueStore");
     const bsSviStoreId = found(feedsR, "block_scholes_store::BlockScholesSVIStore");
     await executeAndWait(bindFeedsToUnderlyingTx({ pythFeedId }), "bind-spot");
+    // Re-adding a listed keeper aborts, so this runs only on first setup, not on re-attach.
+    for (const keeper of settledRedeemKeepers) {
+      await executeAndWait(addSettledRedeemKeeperTx(keeper), `settled-redeem-keeper-${keeper.slice(0, 8)}`);
+    }
     feeds = { pythFeedId, bsValueStoreId, bsSviStoreId };
     // Publish the feed ids so the updater (a separate process) can stream onto them.
     atomicWriteFile(feedsPath, JSON.stringify(feeds));

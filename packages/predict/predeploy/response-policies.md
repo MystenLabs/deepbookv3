@@ -115,38 +115,84 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   ratchet cheaply forcible — about 1,000 USDC against the 10 PLP genesis-lock
   share base, after which every supply and withdraw head refunds and
   `total_supply` can never grow to bring the price back down. It is therefore
-  admission-gated at the source: the contribution must leave idle inside this
-  policy's own band ceiling (`ceil(idle/band) <= supply`, the comparison
-  `lp_book::is_executable_mark` makes, restated in `plp` and pinned to it by the
-  tests below rather than shared as a symbol). The "cannot be cheaply forced"
-  claim above holds only while that guard stands. Aborting there is on-ladder — a single-user, user-recoverable action,
+  admission-gated at the source: the contribution must leave pool cash — idle
+  plus the net cash deployed into active expiries
+  (`pool_accounting::deployed_expiry_cash`) — at or below 10 USDC per PLP
+  (`constants::contribution_price_ceiling_factor`, `ceil(cash/10) <= supply`),
+  a tenth of this policy's band ceiling. The ceiling sits inside the band
+  because LP fills after a contribution only push the price up: shares round
+  down and retained supply and withdraw fees stay in the pool. The first
+  version admitted contributions up to the band itself, and a pool contributed
+  to exactly 100 USDC/PLP left the band on the next uneven deposit (found in
+  the second external review, fixed 2026-09-23). Deployed cash is counted because
+  the mark counts it: the first version of the gate read idle alone, and since
+  `rebalance_expiry_cash` is permissionless, anyone could move idle into a
+  market and contribute again against the emptied idle, pushing gross pool value
+  past the ceiling with contributions alone (found in the external review of #1315, fixed
+  2026-09-23). Parking stays neutral only while a market has received back no
+  more than it was sent: net funding floors at zero per market, so idle moved
+  into a market that has already returned profit is not counted until it makes
+  up that profit. A contribution can therefore land above the ceiling by up to
+  `Σ max(0, received − sent)` over active markets. Accepted: leaving the band
+  that way still needs about nine times the pool's cash of such returned profit
+  on top of a full contribution. That guard keeps contributions from being the route, but it
+  does not make the upper band unforceable: retained withdraw fees also add
+  value without minting shares, and the residual below records what that
+  route costs. Aborting there is on-ladder — a single-user, user-recoverable action,
   not a shared or mandatory path — and it keeps the protocol from
   *manufacturing* the degenerate ratio, which is the maintainable direction
   this policy already names. Market-driven NAV moves into the band are
   unaffected and stay owned here.
-- **Accepted residual of that gate (2026-09-22):** it bounds idle, not the
-  mark. `gross_pool_value` is `idle + active_expiry_value`, so a pool whose
-  ACTIVE NAV has already carried it near the ceiling can still be pushed over
-  by a contribution that passes the idle test — 10 PLP of supply against 990
-  USDC of active NAV prices at 99 USDC/PLP, and a 100 USDC contribution
-  (idle-side test: `ceil(100e6/100) = 1e6 <= 10e6`, admitted) takes gross to
-  1,090 USDC and the mark to 109, outside the band. This is not a new
-  capability: deliberately losing trades to the pool raises NAV the same way,
-  the fee component immediately and the premium in full at settlement, so the
-  near-ceiling crossing was already reachable without an entrypoint. It also
-  needs ~100x appreciation over the share base before any contribution
-  matters, and it costs the attacker the whole contribution with nothing
-  returned — griefing that destroys value rather than extracting it. Closing
-  it exactly would need the mark, which needs a flush; RP-1 already rejected
-  mark-level guards because they brick the legitimate appreciation and
-  recapitalization states. A stored last-flush NAV would only move the
-  approximation (stale between flushes, over- and under-rejecting as active
-  NAV moves) at the cost of new vault state written on the flush path. What
-  the admission gate does remove is the cheap universal case — an unaged pool
-  at its genesis share base, where no appreciation is needed at all and the
-  cost is ~1,000 USDC. UNPINNED: reaching the near-ceiling state needs a
-  funded market with oracle-priced NAV, which the no-market LP fixture cannot
-  build; the gate's own boundaries are pinned below.
+- **Accepted residual of that gate (revised 2026-09-23):** it bounds pool
+  cash, not the mark, and it bounds it at a tenth of the band, so after a
+  contribution the price must still rise tenfold by other means to leave the
+  band. Derived, not measured — each fill's effect follows from the drain's
+  rounding and fee formulas, and a simulation of them agrees. Rounding leaves
+  under one PLP base unit's worth of USDC per fill, so crossing on dust alone
+  would take about nine fills per base unit of supply. A supply fee at the 5%
+  cap raises the price at most `1/(1 − 5%)`, about 1.05x, per flush. A
+  withdraw fee at rate `r` raises it by `1 + r·f/(1 − f)` when one flush burns
+  a fraction `f` of shares, and it accumulates across flushes: fees retained
+  over any number of supply-and-withdraw round trips cross the band once they
+  add up to `(band − p)·supply` USDC, whatever each trip's size. That is a
+  pre-existing route to the upper band that needs no contribution — about 990
+  USDC of retained fees from parity on the 10 PLP genesis share base, or 900
+  USDC from the contribution ceiling there, plus the round-trip capital and two
+  flushes per trip. The mark also carries market-driven NAV: trader premiums
+  and fees held in market cash beyond what the pool sent, net of marked
+  liabilities. Crossing from the contribution ceiling that way needs the pool
+  to gain `9/(1 − share)` times its cash from trading once the protocol profit
+  share is held out — ten times at the default 10%. Trader losses can do that,
+  but against a fair oracle they are a coin flip bounded by market backing: an
+  unrealized mark reverses when P&L moves back, and only losses realized at
+  settlement stay. Trading fees do it deterministically and do not reverse: a
+  hedged UP and DOWN pair of equal quantity pays `quantity + fees` in and takes
+  `quantity` back whichever side wins, so the pool keeps exactly the fees for
+  the trader's cost of the fees alone. With the contribution ceiling at the
+  band itself that route needed one trade — a 50-contract ATM mint left a
+  ceiling-parked genesis pool at 1,000.225 USDC over 10 PLP, 100.0225
+  USDC/PLP, and refunded the next supply (reproduced 2026-09-23 by setting the
+  contribution ceiling back to the band under the pinning test below). At a tenth of the band it needs about ten times pool cash in
+  fees, volume-bound like the withdraw-fee round trips above. Every route costs
+  the attacker at least the full value it adds to the pool,
+  which accrues to existing holders — griefing that destroys the attacker's
+  value rather than extracting any. The gate's job is therefore narrower than
+  making the state unforceable: a contribution never itself takes the pool out
+  of the band, and ordinary LP activity after one has nine times the pool's
+  cash of room. Counting trader inflows too would need the mark, which needs a
+  flush; RP-1 already rejected mark-level guards because they brick the
+  legitimate appreciation and recapitalization states. A stored last-flush NAV
+  would only move the approximation (stale between flushes, over- and
+  under-rejecting as active NAV moves) at the cost of new vault state written
+  on the flush path. Pool cash errs toward refusing: a market that has lost
+  cash to traders still counts what the pool sent it, so while such a market is
+  active a contribution can be refused even at or below parity. The refusal
+  clears once that market is settled and swept, both permissionless. Pinned
+  below: the gate's own boundaries, with and without deployed cash, and one
+  trade's fee income at the ceiling staying inside the band. UNPINNED: the
+  trader-loss crossing needs oracle-priced P&L moves, and the withdraw-fee
+  route needs withdrawals to fill, which the LP flow fixture cannot do (its
+  module doc explains why).
 - **Pinning tests:** `lp_book_tests.move` —
   `priced_supply_with_zero_pool_value_refunds`,
   `priced_supply_that_rounds_to_zero_shares_refunds`,
@@ -162,8 +208,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   separately pins the checked mul-div helpers that classify u64-fit.
   `lp_flow_tests.move` pins the upper-band admission gate from both sides —
   `a_contribution_to_the_price_ceiling_is_accepted_and_the_pool_still_fills`,
-  `a_contribution_past_the_price_ceiling_aborts`, and
-  `the_ceiling_rises_with_the_share_base`.
+  `a_contribution_to_the_price_ceiling_survives_the_maximum_supply_fee`,
+  `a_contribution_past_the_price_ceiling_aborts`,
+  `the_ceiling_rises_with_the_share_base`,
+  `a_contribution_to_the_ceiling_with_deployed_cash_is_accepted_and_fills`,
+  `a_contribution_past_the_ceiling_through_deployed_cash_aborts`,
+  `parking_idle_in_a_market_does_not_reopen_the_ceiling`, and
+  `fee_income_at_the_contribution_ceiling_stays_inside_the_band`.
+  `pool_accounting_tests.move` pins the parking residual —
+  `parking_into_a_market_that_returned_profit_lowers_guard_cash`.
 - **Reopen when:** request-limit semantics change in a way that interacts with
   protocol-triggered refunds, a new LP request type adds another
   non-executable fill mode, or a new entrypoint moves pool value without
@@ -416,7 +469,7 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 
 ## RP-11: Trading-loss rebate — claim-time stake + self-incentivized permissionless cleanout (resolves P-9)
 
-> **RETIRED 2026-08-18 — the trading-loss rebate and DEEP staking were removed.** The trigger state (a settled market with unresolved rebates priced at claim-time `active_stake`) is unreachable: there is no rebate reserve, no `ExpiryTradingSummary`, and no claim. P-9 stays resolved — this entry remains its tombstone — and the settled-market cleanout survives as `redeem_settled_permissionless` alone, whose own gas incentive is the surviving half of the measurements below. The entry is kept verbatim for the decision record; nothing in it describes shipped behavior. Removal record: `docs/design/decisions.md` § "Staking and the trading-loss rebate removal".
+> **RETIRED 2026-08-18 — the trading-loss rebate and DEEP staking were removed.** The trigger state (a settled market with unresolved rebates priced at claim-time `active_stake`) is unreachable: there is no rebate reserve, no `ExpiryTradingSummary`, and no claim. P-9 stays resolved — this entry remains its tombstone — and the settled-market cleanout survives as `redeem_settled_permissionless` alone, whose own gas incentive is the surviving half of the measurements below. Since 2026-09-25 that entrypoint accepts only admin-allowlisted keepers (`docs/design/decisions.md` section "Settled-redeem keeper allowlist"), so the cleanout is no longer open to arbitrary self-incentivized callers. The entry is kept verbatim for the decision record; nothing in it describes shipped behavior. Removal record: `docs/design/decisions.md` § "Staking and the trading-loss rebate removal".
 
 - **Trigger state:** a settled market has accounts with unresolved trading-loss rebates (open
   settled positions + an unresolved `ExpiryTradingSummary`); the rebate is priced at the account's
@@ -1599,7 +1652,7 @@ worth-fixing.
 - **Controller:** user for the budget and the fill floor; market for the surface, the fee-incentive balance, the EWMA state, and the book the impact charge is read against.
 - **Blast radius:** the single mint transaction or quote; no shared or mandatory path.
 - **Response:** proceed — `mint_exact_cost` makes the total the sizing input. A binary search over lot counts evaluates `mint_quote_at`, the same sum the mint charges, against execution-time state, and first finds the largest lot-rounded quantity whose all-in cost fits `max_cost`. The payout check below may then reduce that quantity. When the budget is what limits the fill, the unspent remainder is below the incremental all-in cost of one more lot. A fill stepped down from the maximum-payout bound (below) or saturated at the lot cap can leave more (`order::max_quantity_lots`; RP-13 carries the same caveat for the premium shape). Insufficient expiry cash backing aborts the mint instead of resizing it. The read-only quote does not preflight cash backing or exposure-index capacity.
-- **Why the budget search is exact:** every all-in term is nondecreasing in quantity while pre-trade state is fixed. Premium and each fee leg are `mul_down` of a quantity-independent rate; the trader-paid fee is `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose subsidy gains at most one unit per fee unit because that rate is an upgrade-required 0.2; the builder fee is a `min` of nondecreasing terms; the surcharge's firing condition is quantity-independent; and the impact charge is monotone because the prospective liability `max(M, R + q) + lambda * (T + q - that)` rises at `lambda` while `R + q <= M`, rises at 1 once the candidate carries the max itself with the gap `T - R` frozen, and both arms evaluate to `M + lambda * (T - R)` exactly at the switch `q = M - R`. The arms meet where they join and neither falls, **independently of `backing_buffer_lambda`**. The premium-only fit bounds the search domain from above because every other term is nonnegative.
+- **Why the budget search is exact:** every all-in term is nondecreasing in quantity while pre-trade state is fixed. Premium and each fee leg are `mul_down` of a quantity-independent rate; the trader-paid fee is `fee - min(mul_down(fee, fee_incentive_subsidy_rate), incentives)`, whose subsidy gains at most one unit per fee unit because the admin-set rate is capped at one half, below one (`config_constants::max_fee_incentive_subsidy_rate`), and read once per search, so every probe prices against the same rate; the builder fee is a `min` of nondecreasing terms; the surcharge's firing condition is quantity-independent; and the impact charge is monotone because the prospective liability `max(M, R + q) + lambda * (T + q - that)` rises at `lambda` while `R + q <= M`, rises at 1 once the candidate carries the max itself with the gap `T - R` frozen, and both arms evaluate to `M + lambda * (T - R)` exactly at the switch `q = M - R`. The arms meet where they join and neither falls, **independently of `backing_buffer_lambda`**. The premium-only fit bounds the search domain from above because every other term is nonnegative.
 - **The maximum-payout bound is NOT monotone, so it is kept out of that search.** `all_in_cost <= quantity` compares two rising quantities, and the independent floors in each cost term let it flip from false back to true at a larger lot wherever unit cost sits within rounding of one. At the `quote_mint_tests` above-payout fee rate it flips 21 times across the first 400 lots: 2_970_000 costs 2_970_001 and fails while 3_990_000 costs exactly 3_990_000 and passes. A binary search that folded the bound into its predicate returned 2_960_000 for a 4_000_000 budget — undersized by a quarter, and a spurious `EMintQuantityBelowMin` for any caller whose floor sat in between, on a mint an exact-quantity request of the same size performs. Nondecreasing cost proves the budget half of such a predicate, not the payout half.
 - **So the bound is consulted second, and only when it binds:** sizing first finds the budget fill; if that fill clears its own maximum payout it is returned, which is every market where the bound is not what limits the fill. Only if it breaches — which a rising marginal impact rate or an exhausted sponsor subsidy can cause on a budget the account can afford — does a second search run strictly below it, where every candidate already fits `max_cost`. A positive result clears the payout bound, but this fallback is conservative: its non-monotone predicate means it may miss a larger admissible fill or one meeting the caller's `min_quantity`. The floor rejects an undersized result; it does not make the search complete. Minimum-premium admission can also reject a fallback even when an unvisited larger fill would pass. When the search finds no smaller fill the budget fill is admitted, so a market where every size is loss-making reports `EMintCostAboveMaxPayout` — what an exact-quantity mint reports — rather than an empty fill's admission error. `compute_mint_quote` still enforces RP-33 on whatever is admitted. Aborting outright instead of stepping down was rejected: it fires on the `std::u64::max_value!()` budget the entrypoint documents, and the read-only quote would abort identically, leaving an SDK no way to discover a workable budget.
 - **Accounting and backing coverage:** `mint_exact_cost_accounting_tests.move` — `cost_quote_does_not_size_to_cash_backing` proves a smaller exact-quantity mint is backed even when the budget quote sizes past available backing; `cost_mint_without_enough_backing_aborts_instead_of_resizing` pins the resulting mint abort. `repeated_cost_mints_route_combined_fees_and_return_impact_escrow` pins combined builder, sponsor, referral, and impact accounting across consecutive mints and live closes.
@@ -1607,7 +1660,7 @@ worth-fixing.
 - **Slippage guard:** `min_quantity`. The budget is fixed, so every adverse move between building and executing the transaction — price, congestion surcharge, sponsor subsidy, inventory impact, a payout-limited step-down — arrives as fewer contracts, and one floor on the fill catches all of them (`EMintQuantityBelowMin`). It is the exact-input counterpart of `mint_exact_quantity`'s `max_cost`, and bounds the all-in price per contract at `max_cost / min_quantity`, which is why the shape carries no `max_probability` (RP-19's reasoning: a second argument would restate the same constraint on a signature that cannot be narrowed after deploy). Zero accepts any fill; unlike `mint_exact_amount`'s `max_cost` it is not required, because a caller who omits it still cannot overspend.
 - **Unchanged:** `mint_exact_amount` still searches the premium relation, so RP-13 and RP-19 continue to describe it; RP-13's reopen condition ("a fee folded into the budget") is met by a sibling entrypoint, not by a change to the relation it governs.
 - **Risk profile:** n/a (sizing semantics, not a probabilistic risk). Cost, stated honestly: the budget search runs up to ~32 probes bounded by the lot cap, and the step-down search up to ~32 more in the rare case it runs. The range is priced once and both payout-tree reads are hoisted out of the loops, so no probe touches storage — but each probe does re-derive the quantity-independent fee rates, which costs a `sqrt_down` per finite leg (seven u128 divides each) plus one more inside the congestion penalty. Hoisting those would mean a probe that no longer routes through the function that charges, which is the invariant this entry exists to protect; the recompute is the price of that guarantee.
-- **Pinning tests:** `mint_exact_cost_tests.move` — `budget_below_the_next_lot_mints_the_largest_fitting_fill` and `budget_at_the_next_lot_all_in_cost_spends_it_exactly` (budget sizing pinned from both sides, the second at zero dust), `premium_budget_sizing_overspends_the_same_figure`; the non-monotone payout bound: `payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill` with `lot_below_the_sized_fill_is_inadmissible` (false at a smaller lot, true at the larger one sizing returns), `fill_at_the_largest_admissible_quantity_clears_its_own_floor`, `budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot`, `overshoot_past_the_maximum_payout_steps_down_instead_of_aborting` with `lot_above_a_payout_limited_fill_is_inadmissible`, `market_where_every_fill_is_loss_making_aborts_on_the_payout_bound`, `fill_whose_cost_equals_its_maximum_payout_mints`; slippage: `quantity_floor_aborts_when_the_price_moves_after_the_quote`, `quantity_floor_aborts_when_a_surcharge_lands_after_the_quote`, `quantity_floor_at_the_repriced_fill_mints`, `payout_limited_fill_below_the_quantity_floor_aborts`, against `congestion_surcharge_after_the_quote_resizes_instead_of_aborting`, `price_move_after_the_quote_resizes_instead_of_aborting` and `premium_budget_mint_aborts_when_the_surcharge_lands_after_the_quote`; each cost term inside the budget: `builder_fee_is_sized_inside_the_budget`, `builder_fee_at_its_own_rate_cap_sizes_exactly`, `sponsor_subsidy_is_sized_inside_the_budget`, `subsidy_capped_by_the_sponsored_balance_still_sizes_exactly`, `two_finite_legs_size_exactly`, `inventory_impact_is_sized_inside_the_budget`, `impact_above_the_curve_kink_still_sizes_exactly`, `impact_over_a_disjoint_book_sizes_exactly`, `impact_on_a_range_that_already_holds_exposure_sizes_exactly`; monotonicity of the total walked lot by lot: `all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch`, `all_in_cost_never_falls_across_the_subsidy_cap`, `all_in_cost_never_falls_at_the_maximum_backing_buffer`; budget edges: `zero_budget_aborts`, `dust_budget_below_the_minimum_premium_aborts`, `empty_balance_caps_the_budget_to_zero`, `oversized_budget_and_balance_saturate_at_the_lot_cap`, `account_quote_is_the_exact_debit_of_the_mint_it_sizes`, `account_quote_caps_the_budget_to_the_account_balance`, `whole_balance_budget_leaves_less_than_one_lot_unspent`; the sized position is an ordinary one: `cost_sized_position_closes_live`, `cost_sized_winner_redeems_its_full_quantity_at_settlement`; `referral_fee_flow_tests.move` — `cost_sized_mint_routes_the_referral_and_emits_the_sized_fill`; `mint_terms_binding_tests.move` — `admitting_a_range_quoted_on_another_exposure_aborts`.
-- **Reopen when:** a mint charge becomes non-monotone in quantity (a volume discount, a per-order flat component that shrinks with size, an impact curve that can fall as liability rises), the subsidy rate rises above one, a sizing mode arrives where `min_quantity` no longer bounds price per contract, the search's probe stops routing through the function that charges, or any bound other than the budget is folded into the budget search's predicate without a proof that it is monotone in quantity.
+- **Pinning tests:** `mint_exact_cost_tests.move` — `budget_below_the_next_lot_mints_the_largest_fitting_fill` and `budget_at_the_next_lot_all_in_cost_spends_it_exactly` (budget sizing pinned from both sides, the second at zero dust), `premium_budget_sizing_overspends_the_same_figure`; the non-monotone payout bound: `payout_bound_failing_at_a_smaller_lot_does_not_shrink_the_fill` with `lot_below_the_sized_fill_is_inadmissible` (false at a smaller lot, true at the larger one sizing returns), `fill_at_the_largest_admissible_quantity_clears_its_own_floor`, `budget_fill_breaching_its_payout_steps_down_to_the_next_admissible_lot`, `overshoot_past_the_maximum_payout_steps_down_instead_of_aborting` with `lot_above_a_payout_limited_fill_is_inadmissible`, `market_where_every_fill_is_loss_making_aborts_on_the_payout_bound`, `fill_whose_cost_equals_its_maximum_payout_mints`; slippage: `quantity_floor_aborts_when_the_price_moves_after_the_quote`, `quantity_floor_aborts_when_a_surcharge_lands_after_the_quote`, `quantity_floor_at_the_repriced_fill_mints`, `payout_limited_fill_below_the_quantity_floor_aborts`, against `congestion_surcharge_after_the_quote_resizes_instead_of_aborting`, `price_move_after_the_quote_resizes_instead_of_aborting` and `premium_budget_mint_aborts_when_the_surcharge_lands_after_the_quote`; each cost term inside the budget: `builder_fee_is_sized_inside_the_budget`, `builder_fee_at_its_own_rate_cap_sizes_exactly`, `sponsor_subsidy_is_sized_inside_the_budget`, `configured_subsidy_rate_is_sized_inside_the_budget`, `subsidy_capped_by_the_sponsored_balance_still_sizes_exactly`, `two_finite_legs_size_exactly`, `inventory_impact_is_sized_inside_the_budget`, `impact_above_the_curve_kink_still_sizes_exactly`, `impact_over_a_disjoint_book_sizes_exactly`, `impact_on_a_range_that_already_holds_exposure_sizes_exactly`; monotonicity of the total walked lot by lot: `all_in_cost_never_falls_across_the_impact_kink_or_the_branch_switch`, `all_in_cost_never_falls_across_the_subsidy_cap`, `all_in_cost_never_falls_across_the_subsidy_cap_at_the_maximum_rate`, `all_in_cost_never_falls_at_the_maximum_backing_buffer`; budget edges: `zero_budget_aborts`, `dust_budget_below_the_minimum_premium_aborts`, `empty_balance_caps_the_budget_to_zero`, `oversized_budget_and_balance_saturate_at_the_lot_cap`, `account_quote_is_the_exact_debit_of_the_mint_it_sizes`, `account_quote_caps_the_budget_to_the_account_balance`, `whole_balance_budget_leaves_less_than_one_lot_unspent`; the sized position is an ordinary one: `cost_sized_position_closes_live`, `cost_sized_winner_redeems_its_full_quantity_at_settlement`; `referral_fee_flow_tests.move` — `cost_sized_mint_routes_the_referral_and_emits_the_sized_fill`; `mint_terms_binding_tests.move` — `admitting_a_range_quoted_on_another_exposure_aborts`.
+- **Reopen when:** a mint charge becomes non-monotone in quantity (a volume discount, a per-order flat component that shrinks with size, an impact curve that can fall as liability rises), the subsidy-rate ceiling rises above one, a sizing mode arrives where `min_quantity` no longer bounds price per contract, the search's probe stops routing through the function that charges, or any bound other than the budget is folded into the budget search's predicate without a proof that it is monotone in quantity.
 
 ---

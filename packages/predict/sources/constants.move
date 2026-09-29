@@ -8,7 +8,7 @@ module deepbook_predict::constants;
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 3 }
+public macro fun current_version(): u64 { 4 }
 
 // === Scaling ===
 
@@ -67,6 +67,17 @@ public(package) macro fun min_usdc_contribution(): u64 { 10_000_000 }
 /// and PLP both use 6 decimals, so unit parity is raw-unit parity and the band
 /// test needs no price unit.
 public(package) macro fun executable_price_band_factor(): u64 { 100 }
+
+/// Ceiling a no-shares contribution (`plp::add_usdc_to_plp`) may raise pool cash to:
+/// 10 USDC per whole PLP, a tenth of the executable band's ceiling. The gap is not
+/// slack. LP fills after a contribution only move the price up — fill rounding and
+/// retained supply and withdraw fees all stay in the pool — so a contribution that
+/// filled the pool to the band itself would be pushed out of it by the next uneven
+/// or fee-charged fill. A tenth leaves LP activity nine times the pool's cash of
+/// room; retained fees cross it only once they add up to that much (RP-2).
+public(package) macro fun contribution_price_ceiling_factor(): u64 {
+    executable_price_band_factor!() / 10
+}
 
 /// Maximum active pre-expiry markets that can require live NAV valuation in one
 /// full-pool flush.
@@ -131,15 +142,6 @@ public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
 public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
-
-/// Fraction of the trading fee paid by sponsor-funded incentives.
-public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
-
-/// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.
-public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
-
-/// Fraction of the expiry allocation cap an expiry can receive over its lifetime.
-public(package) macro fun fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
 
 /// Minimum USDC a single fee-incentive sponsorship may contribute.
 public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }

@@ -162,6 +162,21 @@ Mint charges remain inside `ExpiryCash` but are earmarked in `inventory_impact_r
 
 This design adapts established ideas rather than claiming a new optimal market-making model: convex cost functions price trades by differences of a global state function ([Abernethy, Chen, and Vaughan](https://arxiv.org/abs/1011.1941); [Othman et al.](https://www.cs.cmu.edu/~sandholm/www/liquidity-sensitive%20AMMs%20via%20homogeneous%20risk%20measures.wine11.pdf)), Synthetix integrates a linear skew curve so execution is path invariant ([SIP-279](https://sips.synthetix.io/sips/sip-279/)), and GMX computes price impact from the change between pre- and post-trade imbalance powers ([GMX fees](https://docs.gmx.io/docs/trading/fees/)). Predict's exact choice of `L`, the cap at `B`, and its integer rounding are protocol-specific adaptations, not results those sources prove optimal for range digitals.
 
+## Sponsor-funded fee incentives
+
+A sponsor can pay part of traders' mint fees. `plp::sponsor_fee_incentives` accepts USDC from anyone into a pool-level fee-incentive reserve that is excluded from PLP NAV, and `rebalance_expiry_cash` moves it into live markets. Each rebalance tops a market's incentive balance up to its live target, a share of the allocation cap the market took from its cadence (`fee_incentive_live_target_rate`, 2% by default), and a market can receive at most its lifetime cap over its whole life (`fee_incentive_lifetime_cap_rate`, 10% by default, fixed for each market when it is created and reported in `FeeIncentiveLifetimeCapSnapshotted`). Both are admin settings from 0% to 100% and are independent: a live target above a market's lifetime cap is allowed, and the cap still bounds what that market receives. A live target large enough to cover a market's fees between rebalances, with a lifetime cap that never binds, keeps the discount at the configured rate on every mint until the reserve itself runs out. Package versions before 4 compiled in the fixed 2% and 10% and ignore both settings: until the version watermark retires them, anyone can rebalance through one at 2%, and a market created through one gets a 10% cap. On each mint the market pays part of the trading fee from its own incentive balance:
+
+```text
+sponsor_subsidy = min( floor(trading_fee * fee_incentive_subsidy_rate) , market_incentive_balance )
+trader_paid_fee = trading_fee - sponsor_subsidy
+```
+
+The trading fee charged never changes; the subsidy changes only who pays it. Live redeems are never subsidized. On a referred mint the referral basis above uses the trader-paid fee, so a higher rate also shrinks the referral share.
+
+`fee_incentive_subsidy_rate` is an admin setting on `ProtocolConfig`, read at mint time rather than snapshotted, so a change applies to the next mint on every market, including markets already trading. It ships at 20% and can be set anywhere from 0% to 50%. At 0% nothing is spent and allocated balances stay where they are. The 50% ceiling means a trader always pays at least half of every trading fee, so no promotion makes volume free: at 100%, a trader with a self-owned builder code could mint both sides of a market paying no trading fee and farm the sponsor's balance, making volume and points metrics free to inflate. Package versions before 4 charge a fixed 20% and ignore the setting, so it binds every mint only once the version watermark has retired them.
+
+Sponsorship is not earmarked to its sponsor. The admin can withdraw any amount of the pool reserve with `plp::withdraw_fee_incentives`. The withdrawal reaches only the reserve: a live market's allocated balance returns to the reserve when the market settles and is swept, and can be withdrawn from there. Winding incentives down therefore takes two steps: a zero rate stops spending, and withdrawing the reserve stops rebalances allocating it into new markets. Once the watermark has retired versions before 4, a zero live target does the second step instead and leaves the reserve in the pool, where it can later be withdrawn or allocated again; until then a rebalance through an older version still tops markets up to 2%.
+
 ## How the components combine
 
 The full flow for a single trade:

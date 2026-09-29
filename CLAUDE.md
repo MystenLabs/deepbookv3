@@ -28,7 +28,7 @@ Authority pointers flow from entrypoints, directives, workflows, and consumers t
 - `crates/` contains the DeepBook indexer, server, and schema crates.
 - `scripts/` contains protocol package-upgrade transactions and SDK examples.
 - `.claude/rules/` contains scoped contributor guidance.
-- `.claude/skills/` contains explicitly invoked specialist workflows.
+- `.claude/skills/` contains specialist workflows; the stacked pull-request workflow applies to every pull request, and the others run only when their trigger matches or the user invokes them.
 
 ## Context routing
 
@@ -56,6 +56,7 @@ Do not assume a scoped rule is already in context. Claude Code may inject a rule
 | Add or build a Predict harness strategy | [Harness-strategy workflow](.claude/rules/harness-strategy.md) and [Predict harness rules](.claude/rules/predict-harness.md) |
 | Create, change, run, publish, deploy, migrate, resume, audit, or verify a Predict deployment | [Predict deployment rules](.claude/rules/predict-deployment.md), plus [Sui Move instructions](.claude/rules/move.md) when package manifests are involved |
 | Wrap up a session | [Wrap-up workflow](.claude/rules/wrap-up.md) |
+| Open, split, or restack a pull request | [Stacked pull-request workflow](.claude/skills/stacked-prs/SKILL.md) |
 | Request Codex-gated pull-request approval | [Auto-approval contract](.github/AUTO_APPROVE.md) |
 
 ## Predict context
@@ -95,7 +96,7 @@ Run every `sui move build` and `sui move test` in the main session, not in a sub
 - Keep edits surgical, preserve established local style, and remove only imports, variables, functions, or files made obsolete by the requested change.
 - Define verifiable acceptance before coding and run the smallest relevant check first, expanding to the required package or integration suite as the affected behavior demands.
 - Protocol behavior changes require tests in the owning package; complex tests use short scenario comments and explain non-obvious expected-value arithmetic.
-- Update nearby comments and the owning public documentation when behavior changes; tests and documentation land with the code rather than as deferred follow-up work.
+- Update nearby comments and the owning public documentation when behavior changes; tests and documentation land with the code (tests in the same pull request, documentation in the same pull request or the docs pull request stacked directly on it) rather than as deferred follow-up work.
 - Expected values and generated fixtures must be independent of the implementation under test; follow the [unit-test rules](.claude/rules/unit-tests.md) for the full contract.
 - Predict source is organized by domain subsystem and Predict tests mirror those source folders except for shared helpers and broad flow tests; the [Predict contract rules](.claude/rules/predict-contracts.md) own the detailed layout.
 
@@ -122,4 +123,4 @@ Context prose uses one physical line per paragraph, list item, and blockquote. Y
 
 ## Pull requests
 
-Before creating a branch for a pull request, ask the user for the branch name. Use the repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md). Write the summary, motivation, decisions, scope, tests, and risk in plain engineering language that a contributor can understand without access to private repositories or internal context. Include a DBU identifier in the branch name or pull-request title when the work has a Linear ticket; mechanical documentation and configuration chores may be unticketed.
+Open every pull request as a two-layer stack, code first and then docs and setup, following the [stacked pull-request workflow](.claude/skills/stacked-prs/SKILL.md), unless the change touches only one layer or the user asks for a single pull request. Before creating a branch for a pull request or stack, ask the user for the branch name once; a stack's docs layer appends `-docs` to it. Use the repository's [pull-request template](.github/PULL_REQUEST_TEMPLATE.md). Write the summary, motivation, decisions, scope, tests, and risk in plain engineering language that a contributor can understand without access to private repositories or internal context. Include a DBU identifier in the branch name or pull-request title when the work has a Linear ticket; mechanical documentation and configuration chores may be unticketed.

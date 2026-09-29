@@ -54,7 +54,7 @@ use std::unit_test::{assert_eq, destroy};
 use sui::{
     accumulator::AccumulatorRoot,
     clock::{Self, Clock},
-    coin,
+    coin::{Self, Coin},
     test_scenario::{Self as test, Scenario, return_shared},
     tx_context::{Self, TxContext}
 };
@@ -193,6 +193,10 @@ public fun setup_market(tick: u64): Fixture {
     let config_id = config.id();
     config.set_template_base_fee(&admin_cap, 1, &clock);
     config.set_template_min_fee(&admin_cap, FLOW_FIXTURE_MIN_FEE, &clock);
+    // Allowlist the default trader as a settled-redeem keeper so flow tests can
+    // compose `redeem_settled_permissionless` inside the trader's own transaction.
+    // The allowlist's own gating is covered with unlisted senders elsewhere.
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
     let mut registry = scenario.take_shared<Registry>();
     registry.register_underlying(&config, &admin_cap, test_constants::propbook_underlying_id());
     registry.set_template_cadence_config(
@@ -391,6 +395,35 @@ public fun set_referral_fee_rate_bundle(self: &Fixture, market: &mut MarketBundl
     market.config.set_referral_fee_rate(&self.admin_cap, rate);
 }
 
+/// Set the live fee-incentive subsidy rate through the real admin path.
+public fun set_fee_incentive_subsidy_rate_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    rate: u64,
+) {
+    market.config.set_fee_incentive_subsidy_rate(&self.admin_cap, rate, &self.clock);
+}
+
+/// Set the live fee-incentive target rate through the real admin path, in its own
+/// transaction so no market bundle needs to be held.
+public fun set_fee_incentive_live_target_rate(self: &mut Fixture, rate: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_fee_incentive_live_target_rate(&self.admin_cap, rate, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
+/// Set the fee-incentive lifetime cap rate that later markets snapshot, through the
+/// real admin path.
+public fun set_template_fee_incentive_lifetime_cap_rate(self: &mut Fixture, rate: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_fee_incentive_lifetime_cap_rate(&self.admin_cap, rate, &self.clock);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Set how many frozen-mark attempts a queued LP request gets, through the real
 /// admin path, so a test can prove the flush reads the configured value.
 public fun set_lp_request_limit_flush_attempts(
@@ -491,6 +524,24 @@ public fun cancel_supply_request_bundle(
         );
 }
 
+/// Allow `keeper` to call `redeem_settled_permissionless`, through the real admin path.
+public fun add_settled_redeem_keeper_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    keeper: address,
+) {
+    market.config.add_settled_redeem_keeper(&self.admin_cap, keeper);
+}
+
+/// Revoke `keeper`'s access to `redeem_settled_permissionless`, through the real admin path.
+public fun remove_settled_redeem_keeper_bundle(
+    self: &Fixture,
+    market: &mut MarketBundle,
+    keeper: address,
+) {
+    market.config.remove_settled_redeem_keeper(&self.admin_cap, keeper);
+}
+
 /// Pause / unpause global trading through the real admin path.
 public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
     config.set_trading_paused(&self.admin_cap, paused);
@@ -499,6 +550,11 @@ public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, pause
 /// Pause / unpause global trading through a market bundle.
 public fun set_trading_paused_bundle(self: &Fixture, market: &mut MarketBundle, paused: bool) {
     self.set_trading_paused(&mut market.config, paused);
+}
+
+/// Engage or lift the protocol-wide emergency freeze through the real admin path.
+public fun set_frozen_bundle(self: &Fixture, market: &mut MarketBundle, frozen: bool) {
+    market.config.set_frozen(&self.admin_cap, frozen);
 }
 
 /// Toggle whether live pricing re-anchors the forward onto a fresh Pyth spot.
@@ -669,14 +725,44 @@ public fun deauthorize_predict_app(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
 }
 
+/// Sponsor fee incentives with freshly-minted USDC against loose objects, so a test
+/// can fund the reserve of a pool with no markets.
+public fun sponsor_fee_incentives(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+) {
+    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
+    vault.sponsor_fee_incentives(config, payment, self.scenario.ctx());
+}
+
 /// Sponsor fee incentives for a market bundle with freshly-minted USDC.
 public fun sponsor_fee_incentives_bundle(
     self: &mut Fixture,
     market: &mut MarketBundle,
     amount: u64,
 ) {
-    let payment = coin::mint_for_testing<USDC>(amount, self.scenario.ctx());
-    market.vault.sponsor_fee_incentives(&market.config, payment, self.scenario.ctx());
+    self.sponsor_fee_incentives(&mut market.vault, &market.config, amount);
+}
+
+/// Withdraw fee incentives from the pool reserve through the real admin path.
+public fun withdraw_fee_incentives(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    amount: u64,
+): Coin<USDC> {
+    vault.withdraw_fee_incentives(&self.admin_cap, config, amount, self.scenario.ctx())
+}
+
+/// Withdraw fee incentives from the pool reserve through a market bundle.
+public fun withdraw_fee_incentives_bundle(
+    self: &mut Fixture,
+    market: &mut MarketBundle,
+    amount: u64,
+): Coin<USDC> {
+    self.withdraw_fee_incentives(&mut market.vault, &market.config, amount)
 }
 
 /// Take the market transaction objects as a named bundle to avoid wide positional
@@ -2029,9 +2115,10 @@ public fun redeem_live_bundle_with_limits(
     )
 }
 
-/// Permissionless settled redeem (no owner auth): clears a settled order using app
-/// auth generated through the whitelisted `PredictApp`. Does not price, so takes no
-/// Block Scholes feed.
+/// Keeper-path settled redeem (no owner auth): clears a settled order using app
+/// auth generated through the whitelisted `PredictApp`. The current scenario sender
+/// must be an allowlisted settled-redeem keeper. Does not price, so takes no Block
+/// Scholes feed.
 public fun redeem_settled(
     self: &mut Fixture,
     config: &ProtocolConfig,

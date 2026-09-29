@@ -42,6 +42,33 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     pending_protocol_profit_after: u64,
 }
 
+/// Emitted by the settled-expiry sweep: always on an expiry's first settled sweep, even
+/// one that returns no cash, and again on any later sweep that returns more. Reports the
+/// pool's lifetime net cash result on the expiry, `received_from_expiry - sent_to_expiry`,
+/// as a sign flag and magnitude; each emission carries lifetime totals, so the latest per
+/// `expiry_market_id` supersedes earlier ones. The figure is gross: before the protocol/LP
+/// split, before netting against other expiries' carried losses (which
+/// `ExpiryProfitMaterialized` reports), and including the sponsor fee subsidies mints
+/// moved into expiry cash. Subtract the expiry's `OrderMinted.fee_incentive_subsidy` total
+/// to isolate the trading result. Cash still held for unredeemed winning payouts counts
+/// as paid out.
+public struct ExpiryPnl has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    /// Start of the market's cadence period (`expiry` minus the cadence period), in
+    /// milliseconds. The market's creation transaction may land before it.
+    period_start_ms: u64,
+    expiry: u64,
+    settlement_price: u64,
+    sent_to_expiry: u64,
+    received_from_expiry: u64,
+    /// True when `received_from_expiry >= sent_to_expiry`; break-even reports a zero profit.
+    in_profit: bool,
+    /// Absolute difference between `received_from_expiry` and `sent_to_expiry`.
+    amount: u64,
+}
+
 /// Emitted when an LP queues a supply request: `amount` USDC is escrowed and a fill
 /// will be delivered to `recipient` (the account's receive address) at a later flush.
 /// `min_plp_out` is a price floor: the frozen mark must mint at least this much for the
@@ -233,6 +260,24 @@ public struct FeeIncentivesSponsored has copy, drop, store {
     reserve_after: u64,
 }
 
+/// Emitted when admin withdraws USDC from the pool-level fee incentive reserve
+/// (`plp::withdraw_fee_incentives`).
+public struct FeeIncentivesWithdrawn has copy, drop, store {
+    pool_vault_id: ID,
+    amount: u64,
+    reserve_after: u64,
+}
+
+/// Emitted when an expiry registers with the pool, reporting the absolute lifetime
+/// fee-incentive cap it snapshotted from the lifetime cap rate then in effect. The
+/// cap's creation-time owner event: the rate is admin-set, so the cap cannot be
+/// derived from the market's allocation cap alone.
+public struct FeeIncentiveLifetimeCapSnapshotted has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    fee_incentive_lifetime_cap: u64,
+}
+
 /// Emitted when pool-level sponsor funds are allocated into an expiry's local
 /// fee-incentive balance.
 public struct FeeIncentivesAllocated has copy, drop, store {
@@ -304,6 +349,32 @@ public(package) fun emit_expiry_profit_materialized(
         protocol_reserve_balance_after,
         profit_basis_after,
         pending_protocol_profit_after,
+    });
+}
+
+public(package) fun emit_expiry_pnl(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    propbook_underlying_id: u32,
+    period_start_ms: u64,
+    expiry: u64,
+    settlement_price: u64,
+    sent_to_expiry: u64,
+    received_from_expiry: u64,
+) {
+    let in_profit = received_from_expiry >= sent_to_expiry;
+    let amount = received_from_expiry.diff(sent_to_expiry);
+    event::emit(ExpiryPnl {
+        pool_vault_id,
+        expiry_market_id,
+        propbook_underlying_id,
+        period_start_ms,
+        expiry,
+        settlement_price,
+        sent_to_expiry,
+        received_from_expiry,
+        in_profit,
+        amount,
     });
 }
 
@@ -516,6 +587,26 @@ public(package) fun emit_fee_incentives_sponsored(
         sponsor,
         amount,
         reserve_after,
+    });
+}
+
+public(package) fun emit_fee_incentives_withdrawn(
+    pool_vault_id: ID,
+    amount: u64,
+    reserve_after: u64,
+) {
+    event::emit(FeeIncentivesWithdrawn { pool_vault_id, amount, reserve_after });
+}
+
+public(package) fun emit_fee_incentive_lifetime_cap_snapshotted(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    fee_incentive_lifetime_cap: u64,
+) {
+    event::emit(FeeIncentiveLifetimeCapSnapshotted {
+        pool_vault_id,
+        expiry_market_id,
+        fee_incentive_lifetime_cap,
     });
 }
 
