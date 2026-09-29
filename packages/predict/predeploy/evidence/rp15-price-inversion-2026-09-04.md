@@ -114,8 +114,8 @@ minimum:
 Every surface whose smallest `g` is 0.03 or more rises by at most one unit on every
 grid. Rises above one occur only on surfaces nearer the boundary, and there they run
 from 2 to 2,808 with no gap: a small tolerance admits only a handful of them, and none
-short of about 3,000 admits them all. Two are confirmed in Move (raw 1e9 SVI, spot
-equal to the forward, roll factor 1):
+short of about 3,000 admits them all. Two are confirmed in Move and pinned as walk
+tests (raw 1e9 SVI, spot equal to the forward, roll factor 1):
 
 - A rise of exactly 2 on a $0.01 grid: forward 131_066_329_593_242, `a` = 27_519_073,
   `b` = 507_873_048, `rho` = +859_667_519, `m` = -178_490_722, `sigma` = 106_067_390;

@@ -888,6 +888,10 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted`,
   `a_ripple_on_a_short_dated_backfill_slice_is_walked` and
   `a_ripple_on_a_one_minute_ssvi_slice_is_walked` (P-35's two real slices),
+  `a_two_unit_rise_on_a_valid_surface_is_walked` (the headroom a tolerance of
+  one would lack), `a_valid_surface_at_the_butterfly_edge_fails_closed` (the
+  accepted residual), `a_self_inverted_order_understates_liability_by_its_rise`
+  (the sign and size of the NAV error),
   `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
   `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
   `a_staircase_of_tolerable_rises_aborts_past_the_tolerance` and
