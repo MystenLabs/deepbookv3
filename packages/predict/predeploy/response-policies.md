@@ -839,38 +839,43 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   tolerated rise, rounded up, on the quantity ending at that boundary: the
   running minimum is at most every earlier price, so the charge covers any
   inverted order ending there, and the walk never falls below the per-order sum
-  beyond boundary rounding. That keeps this response inside R2 (liabilities
-  round toward the pool) rather than an exception to it. An order that does not
-  invert but ends at a risen boundary is over-charged by at most the rise, so
-  NAV can read low and never high. On real and healthy surfaces every rise is
-  exactly one unit, the signature of the two separately floored terms; the
-  pricer's other rounding (the floored `sqrt(w)`, smile root and `w'`) is larger
-  per strike, but the true slope outruns it there. A search over 20,865
-  butterfly-free surfaces found rises above one only on surfaces near the
-  butterfly-arbitrage boundary (Durrleman's `g` below 0.03), and there they
-  range from 2 to 2,808 with no gap (evidence). Aborting on the one-unit dust is
-  a false positive in a mandatory path over a market-moved variable, which the
-  blast-radius ladder above puts at skip/carry. The tolerance is that measured
-  unit plus one unit of headroom. One would have no margin at all. Three or more
-  buys nothing identifiable: moving from two to three admits 6 of the 281
-  near-boundary surfaces that exceed one, and only about 3,000 admits them all,
-  at which point the guard stops catching small provider inversions. Two costs
-  nothing material: the over-charge is at most 2e-9 of the quantity ending at
-  risen boundaries, $0.002 per $1M of it, and it scales with the open interest
-  that ends across an inverting pair. Like R2's dust, a mark that low favours
-  incumbent LPs on a withdrawal and a supplier by the same amount. The bound is
-  absolute, not relative to the price, and two units stays small even on the OTM
-  plateau, where UP is tens of raw units. Accepted residual: a surface near the
-  butterfly boundary can rise by more and fails closed, stalling the flush until
-  a later snapshot or the market settles; real slices sit far from that
-  boundary. Above the bound the rise is treated as a surface defect, with "retry
-  once the provider publishes a corrected surface" as the recovery path. P-35
-  also proposed netting each boundary at `min(price, previous)`; that is
-  declined. Clamping is conservative in neither direction — it lowers liability
-  at a lower boundary and raises it at an upper one — and it would move books
-  whose inversions are only across orders off the per-order sum they value at
-  today, whereas keeping the quote and charging the rise on the ending quantity
-  leaves those books exact and moves liability only upward. The comparison is
+  beyond boundary rounding. That keeps this response inside R2's rule that NAV
+  never overstates recoverable value, so a withdrawal is never over-paid. An
+  order that does not invert but ends at a risen boundary is over-charged by at
+  most the rise, rounded up, so NAV can read low and never high beyond P-13's
+  boundary rounding. On real and healthy surfaces every rise is exactly one
+  unit, the signature of the two separately floored terms; the pricer's other
+  rounding (the floored `sqrt(w)`, smile root and `w'`) is larger per strike,
+  but the true slope outruns it there. A search over 20,865 butterfly-free
+  surfaces found rises above one only on surfaces near the butterfly-arbitrage
+  boundary (Durrleman's `g` below 0.03), and there they range from 2 to 2,808
+  with no gap (evidence). Aborting on the one-unit dust is a false positive in a
+  mandatory path over a market-moved variable, which the blast-radius ladder
+  above puts at skip/carry. The tolerance is that measured unit plus one unit of
+  headroom. One would have no margin at all. Three or more buys nothing
+  identifiable: moving from two to three admits 6 of the 281 near-boundary
+  surfaces that exceed one, and only about 3,000 admits them all, at which point
+  the guard stops catching small provider inversions. Two costs nothing
+  material: the over-charge is at most 2e-9 of the quantity ending at risen
+  boundaries plus one raw unit of rounding per such boundary, $0.002 per $1M of
+  that quantity, and it scales with the open interest that ends across an
+  inverting pair. A mark that low favours incumbent LPs on a withdrawal but a
+  supplier on a supply, by the same amount; on supply it is therefore an
+  accepted, bounded exception to the supply-mark invariant (a supplier can
+  over-mint by at most that dust), recorded here as R2's audit obligation
+  requires. Both directions sit far inside the ratified 1% NAV deviation bound.
+  The bound is absolute, not relative to the price, and two units stays small
+  even on the OTM plateau, where UP is tens of raw units. Accepted residual: a
+  surface near the butterfly boundary can rise by more and fails closed,
+  stalling the flush until a later snapshot or the market settles; real slices
+  sit far from that boundary. Above the bound the rise is treated as a surface
+  defect, with "retry once the provider publishes a corrected surface" as the
+  recovery path. P-35 also proposed netting each boundary at `min(price,
+  previous)`; that is declined. Clamping is conservative in neither direction —
+  it lowers liability at a lower boundary and raises it at an upper one — so it
+  could understate a book whose inversions are only across orders. Keeping the
+  quote leaves such a book at its per-order sum unless quantity ends at a risen
+  boundary, and the charge there moves liability only upward. The comparison is
   against the running minimum rather than the previous boundary, so dust
   accumulated across many boundaries trips the same bound instead of ratcheting
   underneath it.
@@ -898,11 +903,15 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `a_two_unit_rise_on_a_valid_surface_is_walked` (the headroom a tolerance of
   one would lack), `a_valid_surface_at_the_butterfly_edge_fails_closed` (the
   accepted residual), `a_self_inverted_order_is_charged_its_rise`,
-  `a_rise_overcharges_an_order_that_does_not_invert` and
-  `the_frozen_walk_charges_a_self_inverted_order_it_still_holds` (the charge: an
+  `a_rise_overcharges_an_order_that_does_not_invert`,
+  `the_frozen_walk_charges_a_self_inverted_order_it_still_holds`,
+  `a_rise_is_charged_against_the_running_minimum`, `a_rise_charge_rounds_up` and
+  `a_cancelling_boundary_still_lowers_the_running_minimum` (the charge: an
   inverted order values at its per-order price, one that does not invert is
-  over-charged by exactly the rise, and the frozen walk charges through snapshot
-  copies), `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
+  over-charged by exactly the rise, the frozen walk charges through snapshot
+  copies, and the charge is measured from the running minimum, rounds up, and
+  counts a cancelling boundary's price),
+  `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
   `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
   `a_staircase_of_tolerable_rises_aborts_past_the_tolerance`,
   `the_running_minimum_follows_a_falling_price`,
@@ -1699,8 +1708,10 @@ worth-fixing.
 - **Response:** all of the above are removals of guards whose duties are either
   deleted alongside them or re-homed strictly stronger. No replacement guard is
   required. The one guard that was *narrowed* rather than deleted — the
-  non-monotone surface check — is recorded separately in RP-15 and is now enforced
-  at every payout-tree boundary again, pinned by
+  non-monotone surface check — is recorded separately in RP-15 and is evaluated
+  at every payout-tree boundary again (since DBU-790 it aborts only on a rise of
+  more than `pricing::price_monotonicity_tolerance` over the running minimum),
+  pinned by
   `payout_tree_walk_tests::inversion_on_a_cancelling_last_boundary_still_aborts`.
 - **Risk profile:** `BEST-GUESS` — no runtime state is involved; the judgement is
   static reachability of the deleted expressions, verified by grep against HEAD.

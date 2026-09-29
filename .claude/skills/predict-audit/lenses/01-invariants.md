@@ -46,7 +46,7 @@ Produce:
   exact only while every boundary price is monotone in strike, up to the fixed-point tolerance RP-15 admits (`strike_payout_tree::ENonMonotonePrice` above it);
   see move.md NAV rules + the C3 note in `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)`.
 - PLP share-pricing symmetry: supply and withdraw priced at the SAME frozen `current_nav` in `finish_flush` /
-  `drain_lp_requests`; confirm `supply_NAV = TRUE = withdraw_NAV` at the valuation boundary (no over/under-count).
+  `drain_lp_requests`; confirm `supply_NAV = TRUE = withdraw_NAV` at the valuation boundary (no over/under-count beyond fixed-point dust; RP-15's rise charge is the recorded, bounded supply-side exception).
 - The inventory-impact escrow lifecycle (growth from mint charges, live-close rebates, settlement release) and `pool_accounting` profit
   basis / loss watermarks / funding caps / `pending_protocol_profit` deferred-carry.
 - Any accumulator using unchecked arithmetic; the partial-close → reinsert path keeping the

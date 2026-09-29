@@ -99,7 +99,7 @@ The two are disjoint: the moment a cut materializes it leaves `exclusion` (its p
 
 The fee is charged on the USDC leg *after* the mark, never inside it, and is retained by the pool — see [fees and rebates](./fees-and-rebates.md#the-lp-supplywithdraw-fee). The mark itself is unchanged by it.
 
-There is **no band, no separate supply/withdraw pricing, and no optimistic/conservative stance.** Because the same mark must be fair in both directions, it must equal the *true* recoverable value — which it does, because each per-expiry mark is exact: `current_nav`'s shape evaluated on the snapshot-instant book (see [An active expiry's exact NAV](#an-active-expirys-exact-nav)). This is the NAV-mark invariant: the supply mark must never undercount true value (or a supplier could over-mint and dilute incumbents), and a single exact mark satisfies it in both directions.
+There is **no band, no separate supply/withdraw pricing, and no optimistic/conservative stance.** Because the same mark must be fair in both directions, it must equal the *true* recoverable value — which it does, because each per-expiry mark is exact: `current_nav`'s shape evaluated on the snapshot-instant book (see [An active expiry's exact NAV](#an-active-expirys-exact-nav)). This is the NAV-mark invariant: the supply mark must never undercount true value (or a supplier could over-mint and dilute incumbents), and a single exact mark satisfies it in both directions. The one recorded exception is response policy RP-15's charge on a tolerated price rise, which can under-count by at most 2e-9 of the affected quantity plus a raw unit per risen boundary.
 
 ```mermaid
 flowchart TD
@@ -148,7 +148,7 @@ where:
 - **`free_cash = cash_balance − inventory_impact_reserve`** — the expiry's USDC net of the isolated impact escrow it still owes. Inventory-impact escrow is not LP value while live.
 - **`live_marked_liability = walk_linear`**, floored at zero, is the mark-to-model liability of every open order: `Σ_orders quantity × P(range)`, evaluated as the full payout-tree walk that prices each distinct boundary tick once through the resolved pricer. Every position is worth exactly its quantity times its range probability, so the walk carries no per-order correction term. (The flush's snapshot capture is not such a term either: it runs the same walk over the book's captured shadows.)
 
-The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding, and by a conservative charge of at most two raw units per unit of quantity ending at a boundary whose price rose by fixed-point dust (response policy RP-15); it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
+The aggregate is netted per boundary rather than summed per order, so it can differ from the per-order sum by boundary rounding, and by a conservative charge of at most 2e-9 of the quantity ending at a boundary whose price rose by fixed-point dust, plus a raw unit of rounding (response policy RP-15); it is clamped at zero once, inside the walk. `free_cash − liability` is exactly the cash the pool keeps once every open contract is marked.
 
 `current_nav` carries **no backing assert** — it is purely a valuation read. Backing is a separate, always-on invariant owned by the cash leaf (below) and proven on every trade; the `max(0, ·)` cash floor only marks a degenerate (underwater) market at zero, which is its correct limited-recourse value, never negative.
 

@@ -52,7 +52,7 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   fixed-point dust measured on real and healthy surfaces, because the aggregate
   payout-tree walk nets signed boundary contributions across orders; a rise
   within it is dust and prices through, charged on the quantity ending at that
-  boundary so the mark never understates liability.
+  boundary so the mark never understates liability beyond boundary rounding.
 - **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
   and utilization-based financing rates are excluded from v1 — exact strike-level
   liquidation indexing requires monotonic single-sided payoffs and history-independent
@@ -407,9 +407,10 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   the pending-protocol-profit exclusion). *Rationale (audit L10):* one mark used in
   both directions must equal true recoverable value, so it must be exact — a
   conservative band would over-mint on one side or over-pay on the other. The
-  supply-mark-≥-true directional invariant is satisfied with equality. *Superseded:*
-  the optimistic supply mark + uncertainty-band withdraw fee of the approximate-NAV
-  world.
+  supply-mark-≥-true directional invariant is satisfied with equality, up to
+  fixed-point dust; RP-15's rise charge is its one recorded, bounded exception.
+  *Superseded:* the optimistic supply mark + uncertainty-band withdraw fee of the
+  approximate-NAV world.
 - **The flush is privileged (cron-driven), not permissionless (audit L8).** Only a
   market-deployer `MarketLifecycleCap` (`start_pool_valuation`) may start a flush; the
   root-`AdminCap` flush path was removed (the flush is routine maintenance and should
