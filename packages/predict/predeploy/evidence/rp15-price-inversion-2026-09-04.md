@@ -56,6 +56,11 @@ one-to-five-minute slice inverts 4 times within $500 of the forward, all on the
 deep-ITM plateau, and the sub-hour slice 14 times within $1,000, in both tails. Every
 one of those rises is one raw unit, including against the running minimum.
 
+P-35's two real short-dated slices (`evidence/rp5-ssvi-backfill-2026-09-28.md`)
+reproduce on the same branch: the 2026-03-19 backfill slice returns UP(72,670) = 4 and
+UP(72,680) = 5, and the one-minute SSVI slice returns UP(66,811) = 9 and UP(66,812) =
+10. Both are pinned as walk tests at the two-unit tolerance.
+
 ## Reachability
 
 The strike whose UP price inverts sits on a tail plateau, about 10% to 27% below spot
