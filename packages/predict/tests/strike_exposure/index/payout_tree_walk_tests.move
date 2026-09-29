@@ -72,13 +72,22 @@ const DUST_INVERSION_HIGHER_TICK: u64 = 55_250;
 const DUST_INVERSION_SHARED_TICK: u64 = 75_800;
 const DUST_INVERSION_QUANTITY: u64 = 2_000_000_000;
 /// A fine grid on the synthetic inverted surface, where each adjacent tick above
-/// $89 rises by roughly 1,560 raw units: six steps stay inside the tolerance and
-/// seven exceed it, bracketing the bound from both sides.
+/// $89 rises by roughly 1,560 raw units, so seven steps pass the tolerance while
+/// every step stays far inside it.
 const FINE_TICK_SIZE: u64 = 10_000;
 const STAIRCASE_FIRST_TICK: u64 = 8_900_000;
-const STEPS_INSIDE_TOLERANCE: u64 = 6;
 const STEPS_PAST_TOLERANCE: u64 = 7;
 const STAIRCASE_QUANTITY: u64 = 1_000_000;
+/// Strike pairs on the same surface at a $0.0001 grid whose UP prices rise by
+/// exactly the tolerance and by one raw unit more. They are fixture inputs tuned
+/// to the integers the pricer lands on; each test asserts its rise before walking,
+/// so a pricer change fails loudly instead of silently moving the edge.
+const EDGE_TICK_SIZE: u64 = 100;
+const EDGE_AT_LOWER_TICK: u64 = 890_000_003;
+const EDGE_AT_HIGHER_TICK: u64 = 890_000_641;
+const EDGE_PAST_LOWER_TICK: u64 = 890_000_005;
+const EDGE_PAST_HIGHER_TICK: u64 = 890_000_643;
+const SNAPSHOT_SEQ: u64 = 1;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -273,30 +282,45 @@ fun a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted() {
     cleanup(fixture, oracle);
 }
 
-/// A single rise just inside the tolerance prices through at the quoted boundary
-/// prices: the netted walk equals the independent per-order sum. Paired with the
-/// staircase below, this pins the tolerance to within one fine-grid step.
+/// A rise of exactly the tolerance prices through at the quoted boundary prices:
+/// the netted walk equals the independent per-order sum. With the test below it
+/// pins the bound to the unit, including that the comparison is `<=`.
 #[test]
-fun a_rise_inside_the_tolerance_is_walked_at_its_quoted_prices() {
+fun a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices() {
     let (mut fixture, oracle, pricer) = non_monotone_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
-    let higher_tick = STAIRCASE_FIRST_TICK + STEPS_INSIDE_TOLERANCE;
 
-    let lower_price = fine_up_price(&pricer, STAIRCASE_FIRST_TICK);
-    let higher_price = fine_up_price(&pricer, higher_tick);
-    assert!(higher_price > lower_price);
-    assert!(higher_price - lower_price <= pricing::price_monotonicity_tolerance!());
+    let lower_price = grid_up_price(&pricer, EDGE_AT_LOWER_TICK, EDGE_TICK_SIZE);
+    let higher_price = grid_up_price(&pricer, EDGE_AT_HIGHER_TICK, EDGE_TICK_SIZE);
+    assert_eq!(higher_price - lower_price, pricing::price_monotonicity_tolerance!());
 
     // Open-topped ranges store only their lower boundary, so the walk compares
     // exactly these two prices.
-    insert_up(&mut tree, STAIRCASE_FIRST_TICK, STAIRCASE_QUANTITY);
-    insert_up(&mut tree, higher_tick, STAIRCASE_QUANTITY);
+    insert_up(&mut tree, EDGE_AT_LOWER_TICK, STAIRCASE_QUANTITY);
+    insert_up(&mut tree, EDGE_AT_HIGHER_TICK, STAIRCASE_QUANTITY);
 
     assert_eq!(
-        tree.walk_linear(&pricer, FINE_TICK_SIZE),
+        tree.walk_linear(&pricer, EDGE_TICK_SIZE),
         math::mul_down(lower_price, STAIRCASE_QUANTITY)
             + math::mul_down(higher_price, STAIRCASE_QUANTITY),
     );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun a_rise_one_unit_past_the_tolerance_aborts() {
+    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = grid_up_price(&pricer, EDGE_PAST_LOWER_TICK, EDGE_TICK_SIZE);
+    let higher_price = grid_up_price(&pricer, EDGE_PAST_HIGHER_TICK, EDGE_TICK_SIZE);
+    assert_eq!(higher_price - lower_price, pricing::price_monotonicity_tolerance!() + 1);
+
+    insert_up(&mut tree, EDGE_PAST_LOWER_TICK, STAIRCASE_QUANTITY);
+    insert_up(&mut tree, EDGE_PAST_HIGHER_TICK, STAIRCASE_QUANTITY);
+    tree.walk_linear(&pricer, EDGE_TICK_SIZE);
 
     destroy(tree);
     cleanup(fixture, oracle);
@@ -310,10 +334,10 @@ fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
     let (mut fixture, oracle, pricer) = non_monotone_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    let first_price = fine_up_price(&pricer, STAIRCASE_FIRST_TICK);
+    let first_price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK, FINE_TICK_SIZE);
     let mut previous_price = first_price;
     STEPS_PAST_TOLERANCE.do!(|step| {
-        let price = fine_up_price(&pricer, STAIRCASE_FIRST_TICK + step + 1);
+        let price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK + step + 1, FINE_TICK_SIZE);
         assert!(price > previous_price);
         assert!(price - previous_price <= pricing::price_monotonicity_tolerance!());
         previous_price = price;
@@ -329,6 +353,45 @@ fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
     cleanup(fixture, oracle);
 }
 
+/// The frozen walk keeps one running minimum across its whole snapshot view,
+/// whether it reads a node's snapshot copy (a husk emptied after the snapshot) or
+/// its untouched live terms. Closing the staircase's two end orders after the
+/// snapshot leaves a live view whose interior rise is inside the tolerance, while
+/// the frozen view still spans the full staircase and aborts.
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun the_frozen_walk_keeps_one_running_minimum_across_husks() {
+    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let last_tick = STAIRCASE_FIRST_TICK + STEPS_PAST_TOLERANCE;
+
+    (STEPS_PAST_TOLERANCE + 1).do!(|step| {
+        insert_up(&mut tree, STAIRCASE_FIRST_TICK + step, STAIRCASE_QUANTITY);
+    });
+    tree.activate_snapshot(SNAPSHOT_SEQ);
+    tree.remove_range(STAIRCASE_FIRST_TICK, constants::pos_inf_tick!(), STAIRCASE_QUANTITY);
+    tree.remove_range(last_tick, constants::pos_inf_tick!(), STAIRCASE_QUANTITY);
+
+    // The live view is the interior, which walks at the independent per-order sum.
+    let interior_first_price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK + 1, FINE_TICK_SIZE);
+    let interior_last_price = grid_up_price(&pricer, last_tick - 1, FINE_TICK_SIZE);
+    assert!(interior_last_price - interior_first_price <= pricing::price_monotonicity_tolerance!());
+    let mut interior_reference = 0;
+    (STEPS_PAST_TOLERANCE - 1).do!(|step| {
+        let price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK + step + 1, FINE_TICK_SIZE);
+        interior_reference = interior_reference + math::mul_down(price, STAIRCASE_QUANTITY);
+    });
+    assert_eq!(tree.walk_linear(&pricer, FINE_TICK_SIZE), interior_reference);
+
+    // The frozen view still holds both ends, whose rise is past the tolerance.
+    let first_price = grid_up_price(&pricer, STAIRCASE_FIRST_TICK, FINE_TICK_SIZE);
+    let last_price = grid_up_price(&pricer, last_tick, FINE_TICK_SIZE);
+    assert!(last_price - first_price > pricing::price_monotonicity_tolerance!());
+    tree.walk_linear_frozen(&pricer, FINE_TICK_SIZE, SNAPSHOT_SEQ);
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
 // === Helpers ===
 
 /// The walk's `tick_size`: the default (1e9), so tick `t` maps to raw strike
@@ -339,9 +402,9 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 /// map to the open-ended sentinels).
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
 
-/// UP price at `tick` on the fine staircase grid.
-fun fine_up_price(pricer: &Pricer, tick: u64): u64 {
-    pricer.up_price(range_codec::strike_from_tick(tick, FINE_TICK_SIZE))
+/// UP price at `tick` on a grid of `tick_size` raw units.
+fun grid_up_price(pricer: &Pricer, tick: u64, tick_size: u64): u64 {
+    pricer.up_price(range_codec::strike_from_tick(tick, tick_size))
 }
 
 /// Run the exact linear walk.

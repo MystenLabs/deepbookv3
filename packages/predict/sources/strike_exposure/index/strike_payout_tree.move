@@ -595,9 +595,9 @@ fun window_summary(
 /// of two live orders. An inversion sitting on it does not move this walk's
 /// total, but it does move what `redeem_live` pays per order (`range_price` is
 /// evaluated per order, not netted), so skipping the observation would let an
-/// inversion of any size there understate liability without aborting. A node whose selected terms are both
-/// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
-/// creation) — the view that owns the tick observes it.
+/// inversion of any size there understate liability without aborting. A node
+/// whose selected terms are both zero is NOT part of the view (live: a husk;
+/// frozen: a post-snapshot creation) — the view that owns the tick observes it.
 fun walk_linear_subtree(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
@@ -629,25 +629,11 @@ fun walk_linear_subtree(
     let mut end_total = 0;
     if (local_start != 0 || local_end != 0) {
         let price = pricer.up_price(range_codec::strike_from_tick(tick, tick_size));
-        // UP price is non-increasing in strike and the in-order walk visits
-        // ascending ticks, so a rise is either the pricer's own fixed-point dust
-        // or a genuinely inverted surface. The boundary keeps its quoted price
-        // either way, so every book that valued before this bound values
-        // identically. What the netted aggregate below can lose is confined to an
-        // order whose own boundaries invert: `RangePrice::probability` floors that
-        // order at zero while the aggregate lets the pair cancel, understating it
-        // by at most the rise times its quantity, so bounding the rise bounds the
-        // understatement. A rise within `price_monotonicity_tolerance` therefore
-        // proceeds: this walk is the pool-wide flush's mandatory leg, and the
-        // market carries boundaries admitted inside the entry band onto the tail
-        // plateau where the dust lives, so a price cannot carry a hard assert here
-        // (the response-policy register's blast-radius ladder). A rise past that
-        // bound is a real inversion and still fails closed for the provider to
-        // correct (RP-15).
-        //
-        // The comparison is against the running minimum rather than the last
-        // boundary, so dust accumulated over many boundaries trips the same bound
-        // instead of ratcheting underneath it.
+        // UP price is non-increasing in strike, so a rise across these ascending
+        // ticks is either the pricer's own fixed-point dust or an inverted surface.
+        // A rise within `price_monotonicity_tolerance` of the running minimum walks
+        // at its quoted price; a larger one fails closed. RP-15 owns the response,
+        // its NAV bound, and why this mandatory path cannot hard-assert.
         if (price_envelope.is_some()) {
             let envelope = *price_envelope.borrow();
             assert!(
