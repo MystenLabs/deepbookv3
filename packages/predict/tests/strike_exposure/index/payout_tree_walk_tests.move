@@ -88,6 +88,9 @@ const STAIR_TICK_1: u64 = 817_241;
 const STAIR_TICK_2: u64 = 817_243;
 const STAIR_TICK_3: u64 = 817_246;
 const STAIR_QUANTITY: u64 = 1_000_000;
+/// A strike left of the shallow surface's minimum, priced above the staircase:
+/// the walk sees a falling price before the staircase's rise.
+const STAIR_LEFT_TICK: u64 = 816_000;
 const SNAPSHOT_SEQ: u64 = 1;
 /// P-35's real short-dated slices (raw SVI, `rho` negative, spot set to the
 /// forward), each carrying a one-raw-unit ripple between adjacent strikes. The
@@ -554,24 +557,39 @@ fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
     cleanup(fixture, oracle);
 }
 
-/// The frozen walk keeps one running minimum across its whole snapshot view,
-/// whether it reads a node's snapshot copy (a husk emptied after the snapshot) or
-/// its untouched live terms. Closing the staircase's two end orders after the
-/// snapshot leaves a live view whose interior rise is inside the tolerance, while
-/// the frozen view still spans the full staircase and aborts.
+/// The running minimum follows the price down. A boundary priced above the
+/// staircase comes first, so a walk that kept comparing against the first price
+/// it saw would admit the later rise; the walk compares against the lowest price
+/// so far and aborts.
 #[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
-fun the_frozen_walk_keeps_one_running_minimum_across_husks() {
+fun the_running_minimum_follows_a_falling_price() {
     let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
     let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
 
-    vector[STAIR_TICK_0, STAIR_TICK_1, STAIR_TICK_2, STAIR_TICK_3].do!(|tick| {
+    let left_price = stair_up_price(&pricer, STAIR_LEFT_TICK);
+    let low_price = stair_up_price(&pricer, STAIR_TICK_0);
+    let risen_price = stair_up_price(&pricer, STAIR_TICK_3);
+    assert!(left_price > low_price);
+    assert!(risen_price <= left_price + pricing::price_monotonicity_tolerance!());
+    assert!(risen_price > low_price + pricing::price_monotonicity_tolerance!());
+
+    vector[STAIR_LEFT_TICK, STAIR_TICK_0, STAIR_TICK_3].do!(|tick| {
         insert_up(&mut tree, tick, STAIR_QUANTITY);
     });
-    tree.activate_snapshot(SNAPSHOT_SEQ);
-    tree.remove_range(STAIR_TICK_0, constants::pos_inf_tick!(), STAIR_QUANTITY);
-    tree.remove_range(STAIR_TICK_3, constants::pos_inf_tick!(), STAIR_QUANTITY);
+    tree.walk_linear(&pricer, STAIR_TICK_SIZE);
 
-    // The live view is the interior, which walks at the independent per-order sum.
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// Closing the staircase's two end orders after a snapshot leaves husks: the live
+/// view drops them and walks the interior, whose rise is inside the tolerance, at
+/// the independent per-order sum.
+#[test]
+fun the_live_walk_drops_the_staircase_husks() {
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
+    let tree = husked_staircase(&mut fixture);
+
     let interior_lower_price = stair_up_price(&pricer, STAIR_TICK_1);
     let interior_higher_price = stair_up_price(&pricer, STAIR_TICK_2);
     assert!(
@@ -583,7 +601,19 @@ fun the_frozen_walk_keeps_one_running_minimum_across_husks() {
             + math::mul_down(interior_higher_price, STAIR_QUANTITY),
     );
 
-    // The frozen view still holds both ends, whose rise is past the tolerance.
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The frozen walk keeps one running minimum across its whole snapshot view,
+/// whether it reads a node's snapshot copy (a husk emptied after the snapshot) or
+/// its untouched live terms: over the same husked staircase it still spans both
+/// ends, whose rise is past the tolerance, and aborts.
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun the_frozen_walk_keeps_one_running_minimum_across_husks() {
+    let (mut fixture, oracle, pricer) = shallow_inversion_pricer();
+    let tree = husked_staircase(&mut fixture);
+
     let first_price = stair_up_price(&pricer, STAIR_TICK_0);
     let last_price = stair_up_price(&pricer, STAIR_TICK_3);
     assert!(last_price - first_price > pricing::price_monotonicity_tolerance!());
@@ -602,6 +632,19 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 /// Strike for a tick under the default `tick_size` (tick 0 and `pos_inf_tick`
 /// map to the open-ended sentinels).
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
+
+/// The four-strike staircase, snapshotted, with its two end orders then closed so
+/// their nodes remain only as husks for the frozen view.
+fun husked_staircase(fixture: &mut OracleFixture): StrikePayoutTree {
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    vector[STAIR_TICK_0, STAIR_TICK_1, STAIR_TICK_2, STAIR_TICK_3].do!(|tick| {
+        insert_up(&mut tree, tick, STAIR_QUANTITY);
+    });
+    tree.activate_snapshot(SNAPSHOT_SEQ);
+    tree.remove_range(STAIR_TICK_0, constants::pos_inf_tick!(), STAIR_QUANTITY);
+    tree.remove_range(STAIR_TICK_3, constants::pos_inf_tick!(), STAIR_QUANTITY);
+    tree
+}
 
 /// UP price at `tick` on the staircase's $0.0001 grid.
 fun stair_up_price(pricer: &Pricer, tick: u64): u64 {
