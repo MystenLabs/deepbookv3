@@ -1,6 +1,6 @@
 # UP price inverts on valid surfaces — Move measurement, 2026-09-04
 
-**Item:** RP-15 · **Instrument:** Move unit probe (not committed) over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run and reachability re-derived 2026-09-29
+**Item:** RP-15 · **Instrument:** Move unit probe (not committed) over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run, extended to #1335's SSVI slices, and reachability re-derived 2026-09-29
 
 Status: reproduced, deterministic, no provider defect involved. The pricer's own
 fixed point makes `up_price` rise across ascending strikes on surfaces that are valid
@@ -36,16 +36,25 @@ Grid coarseness is the only attenuator measured: the same surface that gives 24 
 on a $10 grid gives one on a $100 grid and none on a $500 grid. Scenario 3 is the
 near-degenerate low-variance surface, whose plateau edge is only ~$200 wide.
 
-The 2026-09-29 re-run on `main` at `84cf16d3` reproduced every row exactly. It also
-recorded the largest rise: one raw unit in every window, and the same measured
-against the running minimum the walk compares with. Wider $10 sweeps found the mirror
-plateau in the OTM tail inverting the same way: scenario 1 inverts 15 times between
-$55,000 and $90,000 (10 in its table window; the first above the forward is $81,990,
-20 -> 21), and scenario 2 inverts 10 times between $60,000 and $90,000 (7 in its
-window; above the forward at $79,680, $79,720 and $79,960, UP 5 to 15 raw units).
-On the $1 grid scenario 0's OTM wing inverts 167 times between $88,000 and $90,700,
-where UP falls from 722 to 45 raw units, and scenario 2's 50 times between $78,600
-and $80,400; every one of those rises is also a single raw unit.
+The 2026-09-29 re-runs reproduced every row exactly, first on `main` at `84cf16d3` and
+again at `94c42370`, after #1335 moved the SVI square root to 1e18 precision and
+lowered the `sigma` floor to 1e-5. They also recorded the largest rise: one raw unit
+in every window, and the same measured against the running minimum the walk compares
+with. Wider $10 sweeps found the mirror plateau in the OTM tail inverting the same
+way: scenario 1 inverts 15 times between $55,000 and $90,000 (10 in its table window;
+the first above the forward is $81,990, 20 -> 21), and scenario 2 inverts 10 times
+between $60,000 and $90,000 (7 in its window; above the forward at $79,680, $79,720
+and $79,960, UP 5 to 15 raw units). On the $1 grid scenario 0's OTM wing inverts 167
+times between $88,000 and $90,700, where UP falls from 722 to 45 raw units, and
+scenario 2's 48 times between $78,600 and $80,400 (50 before #1335); every one of
+those rises is also a single raw unit.
+
+#1335's short-tenor Block Scholes SSVI slices (`pricing_ssvi_reference_data`, slices
+0-4, at their real forwards) stay inside the same bound. The three one-minute slices
+do not invert at all on a $0.10 grid within $60 of the forward. On a $1 grid the
+one-to-five-minute slice inverts 4 times within $500 of the forward, all on the
+deep-ITM plateau, and the sub-hour slice 14 times within $1,000, in both tails. Every
+one of those rises is one raw unit, including against the running minimum.
 
 ## Reachability
 

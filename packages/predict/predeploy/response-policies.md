@@ -854,7 +854,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   `harness/verdict.py` still classifies `strike_payout_tree:2` as an expected
   oracle-surface abort. Nothing else was incidentally bounded.
 - **Risk profile:** `MEASURED` — the internal source is counted over every
-  committed reference surface and reproduced end to end through the flush;
+  committed reference surface, including #1335's short-tenor SSVI slices, and
+  reproduced end to end through the flush;
   `evidence/rp15-price-inversion-2026-09-04.md`. The external source remains
   unobserved, no sampled Block Scholes surface having violated butterfly
   freedom.
