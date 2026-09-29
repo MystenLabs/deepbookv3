@@ -71,6 +71,14 @@ const DUST_INVERSION_HIGHER_TICK: u64 = 55_250;
 /// Shared upper boundary near scenario 0's forward, so both ranges price near 0.5.
 const DUST_INVERSION_SHARED_TICK: u64 = 75_800;
 const DUST_INVERSION_QUANTITY: u64 = 2_000_000_000;
+/// A fine grid on the synthetic inverted surface, where each adjacent tick above
+/// $89 rises by roughly 1,560 raw units: six steps stay inside the tolerance and
+/// seven exceed it, bracketing the bound from both sides.
+const FINE_TICK_SIZE: u64 = 10_000;
+const STAIRCASE_FIRST_TICK: u64 = 8_900_000;
+const STEPS_INSIDE_TOLERANCE: u64 = 6;
+const STEPS_PAST_TOLERANCE: u64 = 7;
+const STAIRCASE_QUANTITY: u64 = 1_000_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -265,17 +273,59 @@ fun a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted() {
     cleanup(fixture, oracle);
 }
 
-/// The synthetic surface the abort tests use inverts by far more than the
-/// tolerance, so their aborts are attributable to a real inversion rather than to
-/// any rise at all.
+/// A single rise just inside the tolerance prices through at the quoted boundary
+/// prices: the netted walk equals the independent per-order sum. Paired with the
+/// staircase below, this pins the tolerance to within one fine-grid step.
 #[test]
-fun the_synthetic_inversion_exceeds_the_monotonicity_tolerance() {
-    let (fixture, oracle, pricer) = non_monotone_pricer();
+fun a_rise_inside_the_tolerance_is_walked_at_its_quoted_prices() {
+    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+    let higher_tick = STAIRCASE_FIRST_TICK + STEPS_INSIDE_TOLERANCE;
 
-    let lower_price = pricer.up_price(raw(CANCEL_LOWER_TICK));
-    let higher_price = pricer.up_price(raw(CANCEL_SHARED_TICK));
-    assert!(higher_price - lower_price > pricing::price_monotonicity_tolerance!());
+    let lower_price = fine_up_price(&pricer, STAIRCASE_FIRST_TICK);
+    let higher_price = fine_up_price(&pricer, higher_tick);
+    assert!(higher_price > lower_price);
+    assert!(higher_price - lower_price <= pricing::price_monotonicity_tolerance!());
 
+    // Open-topped ranges store only their lower boundary, so the walk compares
+    // exactly these two prices.
+    insert_up(&mut tree, STAIRCASE_FIRST_TICK, STAIRCASE_QUANTITY);
+    insert_up(&mut tree, higher_tick, STAIRCASE_QUANTITY);
+
+    assert_eq!(
+        tree.walk_linear(&pricer, FINE_TICK_SIZE),
+        math::mul_down(lower_price, STAIRCASE_QUANTITY)
+            + math::mul_down(higher_price, STAIRCASE_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The walk compares each price with the running minimum, not the previous
+/// boundary: a staircase whose every step is inside the tolerance still aborts
+/// once its total rise passes it, so dust cannot ratchet underneath the bound.
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun a_staircase_of_tolerable_rises_aborts_past_the_tolerance() {
+    let (mut fixture, oracle, pricer) = non_monotone_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let first_price = fine_up_price(&pricer, STAIRCASE_FIRST_TICK);
+    let mut previous_price = first_price;
+    STEPS_PAST_TOLERANCE.do!(|step| {
+        let price = fine_up_price(&pricer, STAIRCASE_FIRST_TICK + step + 1);
+        assert!(price > previous_price);
+        assert!(price - previous_price <= pricing::price_monotonicity_tolerance!());
+        previous_price = price;
+    });
+    assert!(previous_price - first_price > pricing::price_monotonicity_tolerance!());
+
+    (STEPS_PAST_TOLERANCE + 1).do!(|step| {
+        insert_up(&mut tree, STAIRCASE_FIRST_TICK + step, STAIRCASE_QUANTITY);
+    });
+    tree.walk_linear(&pricer, FINE_TICK_SIZE);
+
+    destroy(tree);
     cleanup(fixture, oracle);
 }
 
@@ -288,6 +338,11 @@ fun tick_size(): u64 { test_constants::default_tick_size() }
 /// Strike for a tick under the default `tick_size` (tick 0 and `pos_inf_tick`
 /// map to the open-ended sentinels).
 fun raw(tick: u64): Strike { range_codec::strike_from_tick(tick, tick_size()) }
+
+/// UP price at `tick` on the fine staircase grid.
+fun fine_up_price(pricer: &Pricer, tick: u64): u64 {
+    pricer.up_price(range_codec::strike_from_tick(tick, FINE_TICK_SIZE))
+}
 
 /// Run the exact linear walk.
 fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer): u64 {

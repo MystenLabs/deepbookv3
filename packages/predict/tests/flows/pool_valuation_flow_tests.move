@@ -92,10 +92,17 @@ const DUST_HIGHER_TICK: u64 = 66_180;
 const DUST_SHARED_TICK: u64 = 76_000;
 const DUST_QUANTITY: u64 = 2_000_000_000;
 /// Scale on scenario 0's SVI `a` and `b` for the mint-time surface: the same smile
-/// carrying 16x its remaining variance, as it would about a week earlier.
+/// carrying 16x its remaining variance, as a market 16x as far from expiry would.
 const EARLIER_VARIANCE_SCALE: u64 = 16;
-/// Scenario 0's first inverting $10 boundary, a ~0.999999995 UP contract.
+/// Lower tick of scenario 0's first inverting $10 pair ($55,240 -> $55,250), a
+/// ~0.999999995 UP contract.
 const PLATEAU_LOWER_TICK: u64 = 55_240;
+/// Committed reference scenarios: 0 at mint, and 2 (the same market 18 hours
+/// later) for the aged book.
+const MINT_SCENARIO: u64 = 0;
+const AGED_SCENARIO: u64 = 2;
+/// `seed_scenario_surface` scale that installs a committed surface unchanged.
+const COMMITTED_VARIANCE: u64 = 1;
 /// The first provider-native magnitude that cannot be represented by Predict's u64 pricing domain.
 const FIRST_UNREPRESENTABLE_U64: u128 = 18_446_744_073_709_551_616;
 
@@ -444,7 +451,7 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
     seed_scenario_surface(
         &mut fx,
         &mut market,
-        0,
+        MINT_SCENARIO,
         EARLIER_VARIANCE_SCALE,
         test_constants::live_source_timestamp_ms() + 1,
     );
@@ -467,7 +474,13 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
     // The market ages to scenario 2, where the two lower boundaries invert, so this
     // book drives the guard.
     fx.set_clock_for_testing(REPRICE_MS);
-    seed_scenario_surface(&mut fx, &mut market, 2, 1, REPRICE_SOURCE_TS);
+    seed_scenario_surface(
+        &mut fx,
+        &mut market,
+        AGED_SCENARIO,
+        COMMITTED_VARIANCE,
+        REPRICE_SOURCE_TS,
+    );
     let pricer = fx.load_pricer_bundle(&market);
     assert!(
         pricer.up_price(range_codec::strike_from_tick(DUST_HIGHER_TICK, tick_size))
@@ -475,18 +488,32 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
     );
 
     // Live NAV is free cash less the independent per-order sum (`live_order_value`
-    // prices each order through `range_price`, not the walk's `up_price`).
+    // prices and floors each order on its own instead of netting boundaries).
     let per_order_liability =
         fx.live_order_value_bundle(&market, id_low) + fx.live_order_value_bundle(&market, id_high);
     let free_cash =
         helpers::market(&market).cash_balance() - helpers::market(&market).inventory_impact_reserve();
     assert_eq!(fx.current_nav_bundle(&market), free_cash - per_order_liability);
 
-    // ... and the flush runs to completion over that same book.
+    // ... and the flush runs to completion over that same book, marking the market
+    // at that same per-order figure. The pool mark composes it with the vault's
+    // ledger as `multi_market_pool_nav_is_idle_plus_sum_of_navs` pins: gross value
+    // less the protocol's share of realised profit.
     fx.start_flush_bundle(&mut market);
     fx.value_expiry_bundle(&mut market);
     let pool_nav = fx.finish_flush_bundle(&mut market);
-    assert!(pool_nav > 0);
+    let active =
+        helpers::market(&market).cash_balance() - helpers::market(&market).inventory_impact_reserve()
+            - per_order_liability;
+    let vault = helpers::vault(&market);
+    let expected_exclusion = math::mul_down(
+        (vault.profit_basis_credits() + active).saturating_sub(vault.profit_basis_debits()),
+        config_constants::default_protocol_reserve_profit_share!(),
+    );
+    assert_eq!(
+        pool_nav,
+        vault.idle_balance() + active - expected_exclusion - vault.pending_protocol_profit(),
+    );
 
     helpers::return_market_bundle(market);
     fx.finish();
@@ -500,13 +527,13 @@ fun a_fixed_point_dust_inversion_does_not_stall_the_flush() {
 #[test, expected_failure(abort_code = strike_exposure_config::EEntryProbabilityOutOfBounds)]
 fun the_entry_band_keeps_a_plateau_boundary_out_of_a_mint() {
     let mut fx = helpers::setup_market_default();
-    let (mut market, _account) = funded_market(&mut fx);
+    let (mut market, mut account) = funded_market(&mut fx);
     let tick_size = test_constants::default_tick_size();
     seed_scenario_surface(
         &mut fx,
         &mut market,
-        0,
-        1,
+        MINT_SCENARIO,
+        COMMITTED_VARIANCE,
         test_constants::live_source_timestamp_ms() + 1,
     );
 
@@ -519,7 +546,7 @@ fun the_entry_band_keeps_a_plateau_boundary_out_of_a_mint() {
     assert!(price.probability() <= config_constants::default_max_entry_probability!());
     assert!(*price.lower_up().borrow() > config_constants::default_max_entry_probability!());
 
-    fx.quote_mint_bundle(&market, PLATEAU_LOWER_TICK, DUST_SHARED_TICK, DUST_QUANTITY);
+    fx.mint_bundle(&mut market, &mut account, PLATEAU_LOWER_TICK, DUST_SHARED_TICK, DUST_QUANTITY);
     abort 999
 }
 

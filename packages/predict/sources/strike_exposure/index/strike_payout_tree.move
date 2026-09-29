@@ -594,8 +594,8 @@ fun window_summary(
 /// monotonicity is observed, and a cancelling boundary is still the shared edge
 /// of two live orders. An inversion sitting on it does not move this walk's
 /// total, but it does move what `redeem_live` pays per order (`range_price` is
-/// evaluated per order, not netted), so skipping the observation would let NAV
-/// understate liability without aborting. A node whose selected terms are both
+/// evaluated per order, not netted), so skipping the observation would let an
+/// inversion of any size there understate liability without aborting. A node whose selected terms are both
 /// zero is NOT part of the view (live: a husk; frozen: a post-snapshot
 /// creation) — the view that owns the tick observes it.
 fun walk_linear_subtree(
@@ -641,8 +641,9 @@ fun walk_linear_subtree(
         // proceeds: this walk is the pool-wide flush's mandatory leg, and the
         // market carries boundaries admitted inside the entry band onto the tail
         // plateau where the dust lives, so a price cannot carry a hard assert here
-        // (move.md's blast-radius ladder). A rise past that bound is a real
-        // inversion and still fails closed for the provider to correct (RP-15).
+        // (the response-policy register's blast-radius ladder). A rise past that
+        // bound is a real inversion and still fails closed for the provider to
+        // correct (RP-15).
         //
         // The comparison is against the running minimum rather than the last
         // boundary, so dust accumulated over many boundaries trips the same bound

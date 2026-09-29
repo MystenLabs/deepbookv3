@@ -150,17 +150,18 @@ macro fun min_svi_sigma(): u64 { 10_000 }
 
 macro fun max_svi_input(): u64 { 100 * math::float_scaling!() }
 
-/// Largest rise in UP price across ascending strikes that says nothing about the
-/// surface. `compute_up_price` floors `N(d2)` and the skew correction
-/// independently, so where `N(d2)` sits on a tail plateau the difference steps up
-/// by raw units on a valid, butterfly-free surface. The bound is the pricer's own
-/// absolute precision, not a risk appetite: `pricing_reference_data` derives a
-/// worst case of 3,304 units per endpoint across its committed surfaces from
-/// `math.move`'s per-primitive budgets, two endpoints can disagree by twice that,
-/// and this rounds it up. It stays two orders of magnitude inside the 0.1%
-/// relative accuracy the reference tolerances hold pricing to. The per-endpoint
-/// budget grows as total variance shrinks, so widening the SVI envelope toward
-/// smaller variance requires re-deriving this bound.
+/// Largest rise in UP price across ascending strikes that the NAV walk treats as
+/// fixed-point dust rather than an inverted surface. `compute_up_price` floors
+/// `N(d2)` and the skew correction independently, so where `N(d2)` sits on a tail
+/// plateau the difference steps up by raw units on a valid, butterfly-free
+/// surface. The bound is headroom over that measured dust, not a derived error
+/// budget: on every committed reference surface the largest rise between adjacent
+/// strikes is one raw unit (RP-15's evidence). A per-endpoint error budget does not
+/// bound the rise, because most of that error is a bias adjacent strikes share, and
+/// the committed budgets are stale and stop short of the deployed variance range
+/// (open items P-28 and P-16), so re-measure when pricing or the SVI envelope
+/// changes. At 1e-5 in probability, an absorbed rise stays immaterial to the LP
+/// mark.
 public(package) macro fun price_monotonicity_tolerance(): u64 { 10_000 }
 
 // === Public Functions ===
