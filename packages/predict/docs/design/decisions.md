@@ -46,9 +46,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   floors at zero rather than aborting live mint, redeem, or liquidation reads;
   Block Scholes guarantees its published SVI surfaces are monotone and
   butterfly-arbitrage-free (response policy RP-15).
-  NAV valuation additionally rejects an active-book surface whose cached finite
-  boundary UP prices are non-monotone, because the aggregate payout-tree walk
-  nets signed boundary contributions across orders.
+  NAV valuation additionally rejects an active-book surface whose finite
+  boundary UP prices rise by more than the pricer's fixed-point precision
+  (`pricing::price_monotonicity_tolerance`), because the aggregate payout-tree
+  walk nets signed boundary contributions across orders; a rise within it is
+  dust and prices through.
 - **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
   and utilization-based financing rates are excluded from v1 — exact strike-level
   liquidation indexing requires monotonic single-sided payoffs and history-independent

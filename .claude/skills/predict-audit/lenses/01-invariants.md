@@ -43,7 +43,7 @@ Produce:
   settled liability — what guarantees the former bounds the latter for every order.
 - The exact `current_nav` mark (payout-tree `walk_linear`, floored) and the
   preconditions it rests on: the boundary-linear walk carries no per-order correction, so the mark is
-  exact only while every boundary price is monotone in strike (`strike_payout_tree::ENonMonotonePrice`);
+  exact only while every boundary price is monotone in strike, up to the fixed-point tolerance RP-15 admits (`strike_payout_tree::ENonMonotonePrice` above it);
   see move.md NAV rules + the C3 note in `packages/predict/predeploy/response-policies.md (Rounding policy R1-R3)`.
 - PLP share-pricing symmetry: supply and withdraw priced at the SAME frozen `current_nav` in `finish_flush` /
   `drain_lp_requests`; confirm `supply_NAV = TRUE = withdraw_NAV` at the valuation boundary (no over/under-count).
