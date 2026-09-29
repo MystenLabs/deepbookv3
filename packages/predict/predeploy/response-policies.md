@@ -1,6 +1,6 @@
 # Predict Response-Policy Register
 
-Updated 2026-09-04. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
+Updated 2026-09-29. This is the tracked register of **settled response-policy decisions**: for each degenerate or adversarial state the protocol can reach, the behavior someone deliberately chose, why, and the tests that pin it.
 
 `open-items.md` tracks work that is still open; when an item closes, the
 *decision* it produced graduates into an entry here instead of surviving only
@@ -803,7 +803,8 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   — the committed real scenario 0 inverts at 24 adjacent pairs on a $10 grid
   between $50k and $60k (first $55,240 -> $55,250, 999,999,995 -> 999,999,996)
   and at one pair on a $100 grid; scenarios 1 and 2 invert on the $10 grid too,
-  and the OTM tail mirrors the deep-ITM plateau. The entry band bounds each
+  and the OTM tail mirrors the deep-ITM plateau (scenario 0 inverts at 167
+  adjacent $1 pairs between $88,000 and $90,700). The entry band bounds each
   finite boundary at mint (since #1304, DBU-811), so no mint places a boundary
   on a plateau directly; the market carries admitted boundaries there as spot
   moves and the variance left to expiry shrinks, so the source is reachable
@@ -819,25 +820,39 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   up to the market's remaining life. Per-order value is unaffected:
   `RangePrice::probability` floors an inverted pair to zero, so `redeem_live` and
   settlement stay open.
-- **Response:** price the boundary at its quote and continue while the rise is
-  within `pricing::price_monotonicity_tolerance`; abort `ENonMonotonePrice`
-  above it. Surface admission still rests on the provider guarantee — no on-chain
-  `g(k) >= 0` or tighter synthetic-parameter envelope.
+- **Response:** `skip/carry` for a rise within
+  `pricing::price_monotonicity_tolerance` — price the boundary at its quote and
+  continue; `abort` (`ENonMonotonePrice`) above it. Surface admission still rests
+  on the provider guarantee — no on-chain `g(k) >= 0` or tighter
+  synthetic-parameter envelope.
 - **Reasoning:** keeping the quoted price leaves every book that valued before
-  the bound valued identically. What the netted aggregate can lose is confined to
-  an order whose own boundaries invert: the aggregate lets that segment cancel
-  where the per-order sum floors it at zero, understating by at most the rise
-  times the order's quantity, so bounding the rise bounds the understatement.
-  Below the pricer's own absolute precision a rise carries no
-  information about the surface, so aborting on it is a false positive in a
-  mandatory path over a variable the book positions — the blast-radius ladder in
-  `.claude/rules/move.md` puts that at skip/carry, not a hard assert. Above the
-  bound the rise is a real surface defect, the overstatement it would put into
-  the single LP mark is material, and "retry once the provider publishes a
-  corrected surface" is a recovery path that actually exists in that regime.
-  The comparison is against the running minimum rather than the previous
-  boundary, so dust accumulated across many boundaries trips the same bound
-  instead of ratcheting underneath it.
+  the bound valued identically. What the netted aggregate can lose is confined
+  to orders whose own boundaries invert: the aggregate lets each such segment
+  cancel where the per-order sum floors it at zero, understating by at most the
+  rise times that order's quantity, summed over those orders, so bounding the
+  rise bounds the understatement. A rise within the tolerance carries no
+  information about the surface — every rise measured on a valid surface is one
+  raw unit — so aborting on it is a false positive in a mandatory path over a
+  market-moved variable, which the blast-radius ladder above puts at skip/carry,
+  not a hard assert. The tolerance is headroom over that measured dust, not a
+  derived error budget: a per-endpoint error budget does not bound
+  adjacent-strike rises, because most of that error is a bias adjacent strikes
+  share, and the committed budgets are stale (P-28) and stop short of the
+  deployed variance range (P-16). At 1e-5 in probability it keeps an absorbed
+  rise immaterial to the LP mark. Above the bound the rise is a real surface
+  defect, the overstatement it would put into the single LP mark is material,
+  and "retry once the provider publishes a corrected surface" is a recovery path
+  that actually exists in that regime. The comparison is against the running
+  minimum rather than the previous boundary, so dust accumulated across many
+  boundaries trips the same bound instead of ratcheting underneath it.
+- **Duty inventory (guard weakening):** the strict check's only consumers are
+  `live_marked_liability` -> `current_nav` and `frozen_marked_liability` ->
+  `snapshot_nav`, and both clamp the walk with `saturating_sub`, so the check
+  bounded no arithmetic headroom; `envelope + tolerance` cannot overflow because
+  UP prices are at most 1e9. What the weakening admits is the NAV understatement
+  above and, silently, any provider inversion no larger than the tolerance.
+  `harness/verdict.py` still classifies `strike_payout_tree:2` as an expected
+  oracle-surface abort. Nothing else was incidentally bounded.
 - **Risk profile:** `MEASURED` — the internal source is counted over every
   committed reference surface and reproduced end to end through the flush;
   `evidence/rp15-price-inversion-2026-09-04.md`. The external source remains
@@ -845,7 +860,9 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   freedom.
 - **Pinning tests:** `payout_tree_walk_tests.move` —
   `a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted`,
-  `the_synthetic_inversion_exceeds_the_monotonicity_tolerance`,
+  `a_rise_inside_the_tolerance_is_walked_at_its_quoted_prices` and
+  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance` (together they
+  bracket the tolerance within one fine-grid step and pin the running minimum),
   `inversion_on_a_cancelling_last_boundary_still_aborts`;
   `current_nav_flow_tests.move` —
   `current_nav_rejects_non_monotone_active_book_surface`;
@@ -858,12 +875,13 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   boundaries whose start and end quantities do not cancel; that was wrong — the
   netted aggregate is unaffected by a cancelling boundary, but live redeem prices
   each order individually, so an inversion sitting on a cancelling tick let NAV
-  understate liability while the flush succeeded. The third test above is the
-  regression for it.
-- **Reopen when:** `compute_up_price` changes its rounding or its primitives'
-  error budgets, or the SVI envelope widens toward smaller total variance (the
-  tolerance is derived from the per-endpoint budget over the committed surfaces,
-  and that budget grows as variance shrinks); Block Scholes changes or violates
+  understate liability while the flush succeeded.
+  `inversion_on_a_cancelling_last_boundary_still_aborts` is the regression for
+  it.
+- **Reopen when:** `compute_up_price` changes its rounding or primitives, or the
+  SVI envelope widens, and a re-measurement finds dust rises approaching the
+  tolerance; P-16 or P-28 is resolved and the regenerated reference changes that
+  picture; Block Scholes changes or violates
   the surface guarantee; Predict accepts another SVI publisher without the same
   guarantee; or NAV valuation gains a safe per-market skip/carry design.
 

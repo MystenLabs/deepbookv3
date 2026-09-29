@@ -1,6 +1,6 @@
 # UP price inverts on valid surfaces — Move measurement, 2026-09-04
 
-**Item:** RP-15 · **Instrument:** Move unit probe over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run and reachability re-derived 2026-09-29
+**Item:** RP-15 · **Instrument:** Move unit probe (not committed) over the committed reference surfaces (`pricing_reference_data`) · **Date:** 2026-09-04; re-run and reachability re-derived 2026-09-29
 
 Status: reproduced, deterministic, no provider defect involved. The pricer's own
 fixed point makes `up_price` rise across ascending strikes on surfaces that are valid
@@ -19,7 +19,7 @@ evaluation is.
 
 A probe walked ascending strike grids on each committed scenario and counted adjacent
 pairs whose UP price rises. Inside these windows every inversion sits at the upper
-edge of the deep-ITM plateau, where the price is about `1 - 5e-9`.
+edge of the deep-ITM plateau, within `5e-8` of 1.
 
 | Scenario | Grid | Window | Inverting pairs |
 | --- | --- | --- | --- |
@@ -43,32 +43,37 @@ plateau in the OTM tail inverting the same way: scenario 1 inverts 15 times betw
 $55,000 and $90,000 (10 in its table window; the first above the forward is $81,990,
 20 -> 21), and scenario 2 inverts 10 times between $60,000 and $90,000 (7 in its
 window; above the forward at $79,680, $79,720 and $79,960, UP 5 to 15 raw units).
+On the $1 grid scenario 0's OTM wing inverts 167 times between $88,000 and $90,700,
+where UP falls from 722 to 45 raw units, and scenario 2's 50 times between $78,600
+and $80,400; every one of those rises is also a single raw unit.
 
 ## Reachability
 
-The strike whose UP price inverts sits on a tail plateau, 11% to 27% below spot on the
-deep-ITM side of these surfaces, where the boundary's own UP price lies outside the
-1%-99% entry band. Mint admission applies that band to each finite boundary as well as
-to the range (#1304, DBU-811), so no mint can place a boundary there directly: on
-scenario 0 the range `($55,240, $76,000]` prices at 0.553, inside the band, and is
-still rejected on its 0.999999995 lower leg
+The strike whose UP price inverts sits on a tail plateau, about 10% to 27% below spot
+on the deep-ITM side of these surfaces and 7% to 20% above it in the OTM tail, where
+the boundary's own UP price lies outside the 1%-99% entry band. Mint admission applies
+that band to each finite boundary as well as to the range (#1304, DBU-811), so no mint
+can place a boundary there directly: on scenario 0 the range `($55,240, $76,000]`
+prices at 0.553, inside the band, and is still rejected on its 0.999999995 lower leg
 (`pool_valuation_flow_tests::the_entry_band_keeps_a_plateau_boundary_out_of_a_mint`).
 When this record was first taken the band bounded only the range price, and two mints
 at the plateau were enough; #1304 closed that path before this change merged.
 
 The market carries admitted boundaries onto the plateau instead. A boundary's UP price
-moves with spot and with the variance left to expiry, so a boundary admitted inside the
-band sweeps through the plateau as the market ages.
+moves with spot and with the variance left to expiry, so a boundary admitted inside
+the band sweeps through the plateau as the market ages.
 `pool_valuation_flow_tests::a_fixed_point_dust_inversion_does_not_stall_the_flush`
 carries the end-to-end path. Two ranges `($66,170, $76,000]` and `($66,180, $76,000]`
 are admitted on the $10 grid against scenario 0's smile at 16x its remaining variance,
-with lower legs at 0.931, the upper leg at 0.523, and both ranges at 0.409. The market
-then reprices to committed scenario 2, the same market 18 hours after scenario 0 with
-spot 2% lower, where the two lower boundaries price at 999,999,994 -> 999,999,995. On
-that book the strict guard aborts `current_nav` and `value_expiry` with
-`ENonMonotonePrice`. Under `price_monotonicity_tolerance` both proceed, and the live NAV
-equals free cash less the independent per-order sum. No adversary is needed: any book
-whose boundaries end up deep in the money near expiry can reach an inverting pair.
+as a market 16x as far from expiry would carry it, with lower legs at 0.931, the upper
+leg at 0.523, and both ranges at 0.409. The market then reprices to committed scenario
+2, the same market 18 hours after scenario 0 with spot 2% lower, where the two lower
+boundaries price at 999,999,994 -> 999,999,995 on the deep-ITM plateau. On that book
+the strict guard aborts `current_nav` and `value_expiry` with `ENonMonotonePrice`.
+Under `price_monotonicity_tolerance` both proceed: the live NAV equals free cash less
+the independent per-order sum, and the flush's pool mark composes that same market
+value with the vault ledger exactly. No adversary is needed: any book whose boundaries
+end up on either tail plateau near expiry can reach an inverting pair.
 
 ## What it does not measure
 
