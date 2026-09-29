@@ -47,10 +47,11 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   Block Scholes guarantees its published SVI surfaces are monotone and
   butterfly-arbitrage-free (response policy RP-15).
   NAV valuation additionally rejects an active-book surface whose finite
-  boundary UP prices rise by more than `pricing::price_monotonicity_tolerance`,
-  headroom over the one-raw-unit fixed-point dust measured on real and healthy surfaces,
-  because the aggregate payout-tree walk nets signed boundary contributions
-  across orders; a rise within it is dust and prices through.
+  boundary UP prices rise above the walk's running minimum by more than
+  `pricing::price_monotonicity_tolerance`, headroom over the one-raw-unit
+  fixed-point dust measured on real and healthy surfaces, because the aggregate
+  payout-tree walk nets signed boundary contributions across orders; a rise
+  within it is dust and prices through.
 - **v1 scope exclusions.** Double-sided range leverage, a fungible "2x beta" token,
   and utilization-based financing rates are excluded from v1 — exact strike-level
   liquidation indexing requires monotonic single-sided payoffs and history-independent

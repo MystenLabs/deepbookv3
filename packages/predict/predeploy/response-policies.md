@@ -834,14 +834,14 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   synthetic-parameter envelope.
 - **Reasoning:** keeping the quoted price leaves every book that valued before
   the bound valued identically. What the netted aggregate can lose is confined
-  to orders whose own boundaries invert: the aggregate lets each such segment
-  cancel where the per-order sum floors it at zero, so the walk understates
-  liability, and NAV reads high, by at most the rise times that order's
-  quantity, summed over those orders. On real and healthy surfaces every rise is
-  exactly one unit, the signature of the two separately floored terms; the
-  pricer's other rounding (the floored `sqrt(w)`, smile root and `w'`) is larger
-  per strike, but the true slope outruns it there. A search over 20,865
-  butterfly-free surfaces found rises above one only on surfaces near the
+  to orders whose own boundaries invert: the aggregate carries each such
+  segment's small negative value where the per-order sum floors it at zero, so
+  the walk understates liability, and NAV reads high, by at most the rise times
+  that order's quantity, summed over those orders. On real and healthy surfaces
+  every rise is exactly one unit, the signature of the two separately floored
+  terms; the pricer's other rounding (the floored `sqrt(w)`, smile root and
+  `w'`) is larger per strike, but the true slope outruns it there. A search over
+  20,865 butterfly-free surfaces found rises above one only on surfaces near the
   butterfly-arbitrage boundary (Durrleman's `g` below 0.03), and there they
   range from 2 to 2,808 with no gap (evidence). Aborting on the one-unit dust is
   a false positive in a mandatory path over a market-moved variable, which the
@@ -894,10 +894,12 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
   (the sign and size of the NAV error),
   `a_rise_of_exactly_the_tolerance_is_walked_at_its_quoted_prices` and
   `a_rise_one_unit_past_the_tolerance_aborts` (the bound to the unit, and `<=`),
-  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance` and
-  `the_frozen_walk_keeps_one_running_minimum_across_husks` (the running minimum
-  in the live walk and across snapshot copies in the frozen walk),
-  `inversion_on_a_cancelling_last_boundary_still_aborts`;
+  `a_staircase_of_tolerable_rises_aborts_past_the_tolerance`,
+  `the_running_minimum_follows_a_falling_price`,
+  `the_live_walk_drops_the_staircase_husks` and
+  `the_frozen_walk_keeps_one_running_minimum_across_husks` (the running minimum,
+  including after a fall, in the live walk and across snapshot copies in the
+  frozen walk), `inversion_on_a_cancelling_last_boundary_still_aborts`;
   `current_nav_flow_tests.move` —
   `current_nav_rejects_non_monotone_active_book_surface`;
   `pool_valuation_flow_tests.move` —
@@ -915,11 +917,18 @@ Each entry records: **Trigger state** / **Controller** / **Blast radius** /
 - **Reopen when:** a re-measurement after `compute_up_price` changes its
   rounding or primitives, or after the SVI envelope widens, finds a rise of more
   than one raw unit on a real or healthy surface (the bound keeps one unit of
-  margin); the provider publishes surfaces near the butterfly boundary often
-  enough that flushes stall on them; P-16 or P-28 is resolved and the
-  regenerated reference changes that picture; Block Scholes changes or violates
-  the surface guarantee; Predict accepts another SVI publisher without the same
-  guarantee; or NAV valuation gains a safe per-market skip/carry design.
+  margin); a cadence's admission grid becomes finer than about $0.001 at
+  BTC-scale forwards, or Predict lists an underlying far below the
+  $1,000-$200,000 forwards the audit sampled (real slices rise by 2 to 21 on
+  grids of $0.0001 and finer); the provider publishes surfaces near the
+  butterfly boundary often enough that flushes stall on them; P-16 or P-28 is
+  resolved and the regenerated reference changes that picture; Block Scholes
+  changes or violates the surface guarantee; Predict accepts another SVI
+  publisher without the same guarantee; or NAV valuation gains a safe per-market
+  skip/carry design. Absorbed rises emit nothing on chain, so the first
+  condition is caught only by re-measurement or an off-chain monitor that prices
+  active boundaries through devInspect; a provider inversion of at most two
+  units is likewise invisible on chain.
 
 ---
 
