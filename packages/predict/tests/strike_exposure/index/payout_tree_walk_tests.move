@@ -110,6 +110,35 @@ const ONE_MINUTE_SVI_M: u64 = 739;
 const ONE_MINUTE_RIPPLE_LOWER_TICK: u64 = 66_811;
 const ONE_MINUTE_RIPPLE_HIGHER_TICK: u64 = 66_812;
 const RIPPLE_QUANTITY: u64 = 2_000_000_000;
+/// A butterfly-free surface (smallest Durrleman `g` 0.027) on which adjacent $0.01
+/// strikes rise by exactly two raw units: rounding noise beyond the one-unit ripple,
+/// which the tolerance's headroom admits. From RP-15's tolerance audit (`rho`
+/// positive, `m` negative).
+const TWO_UNIT_FORWARD: u64 = 131_066_329_593_242;
+const TWO_UNIT_SVI_A: u64 = 27_519_073;
+const TWO_UNIT_SVI_B: u64 = 507_873_048;
+const TWO_UNIT_SVI_SIGMA: u64 = 106_067_390;
+const TWO_UNIT_SVI_RHO_MAGNITUDE: u64 = 859_667_519;
+const TWO_UNIT_SVI_M_MAGNITUDE: u64 = 178_490_722;
+const CENT_TICK_SIZE: u64 = 10_000_000;
+const TWO_UNIT_LOWER_TICK: u64 = 16_320_146;
+const TWO_UNIT_HIGHER_TICK: u64 = 16_320_147;
+const TWO_UNIT_RISE: u64 = 2;
+/// A surface that is still butterfly-free but sits at the arbitrage edge (smallest
+/// `g` 0.00026): adjacent $1 strikes rise by 502 raw units, so the walk fails closed
+/// on it, which is RP-15's accepted residual. From the same audit (`rho` and `m`
+/// negative).
+const BUTTERFLY_EDGE_FORWARD: u64 = 170_742_326_426_584;
+const BUTTERFLY_EDGE_SVI_A: u64 = 4_003;
+const BUTTERFLY_EDGE_SVI_B: u64 = 2_375_780;
+const BUTTERFLY_EDGE_SVI_SIGMA: u64 = 11_969;
+const BUTTERFLY_EDGE_SVI_RHO_MAGNITUDE: u64 = 701_075_992;
+const BUTTERFLY_EDGE_SVI_M_MAGNITUDE: u64 = 7_234;
+const BUTTERFLY_EDGE_LOWER_TICK: u64 = 170_691;
+const BUTTERFLY_EDGE_HIGHER_TICK: u64 = 170_692;
+/// A whole multiple of 1e9, so every boundary product is exact and the walk's
+/// divergence from the per-order sum is exactly the rise times it.
+const SELF_INVERTED_QUANTITY: u64 = 2_000_000_000_000;
 
 /// A cancelling boundary must still be PRICED, not just skipped in the arithmetic.
 ///
@@ -309,13 +338,15 @@ fun a_fixed_point_dust_inversion_on_a_real_surface_is_walked_not_aborted() {
 /// independent per-order sum instead of aborting.
 #[test]
 fun a_ripple_on_a_short_dated_backfill_slice_is_walked() {
-    let (fixture, oracle, pricer) = slice_pricer(
+    let (fixture, oracle, pricer) = svi_pricer(
         BACKFILL_FORWARD,
         BACKFILL_SVI_A,
         BACKFILL_SVI_B,
         BACKFILL_SVI_SIGMA,
         BACKFILL_SVI_RHO_MAGNITUDE,
+        true,
         BACKFILL_SVI_M,
+        false,
     );
     assert_ripple_is_walked(
         fixture,
@@ -328,13 +359,15 @@ fun a_ripple_on_a_short_dated_backfill_slice_is_walked() {
 
 #[test]
 fun a_ripple_on_a_one_minute_ssvi_slice_is_walked() {
-    let (fixture, oracle, pricer) = slice_pricer(
+    let (fixture, oracle, pricer) = svi_pricer(
         ONE_MINUTE_FORWARD,
         ONE_MINUTE_SVI_A,
         ONE_MINUTE_SVI_B,
         ONE_MINUTE_SVI_SIGMA,
         ONE_MINUTE_SVI_RHO_MAGNITUDE,
+        true,
         ONE_MINUTE_SVI_M,
+        false,
     );
     assert_ripple_is_walked(
         fixture,
@@ -343,6 +376,114 @@ fun a_ripple_on_a_one_minute_ssvi_slice_is_walked() {
         ONE_MINUTE_RIPPLE_LOWER_TICK,
         ONE_MINUTE_RIPPLE_HIGHER_TICK,
     );
+}
+
+/// Headroom above the one-unit ripple: on a butterfly-free surface where adjacent
+/// $0.01 strikes rise by exactly two raw units, the book walks at the per-order
+/// sum. A tolerance of one would abort it.
+#[test]
+fun a_two_unit_rise_on_a_valid_surface_is_walked() {
+    let (mut fixture, oracle, pricer) = svi_pricer(
+        TWO_UNIT_FORWARD,
+        TWO_UNIT_SVI_A,
+        TWO_UNIT_SVI_B,
+        TWO_UNIT_SVI_SIGMA,
+        TWO_UNIT_SVI_RHO_MAGNITUDE,
+        false,
+        TWO_UNIT_SVI_M_MAGNITUDE,
+        true,
+    );
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(
+        range_codec::strike_from_tick(TWO_UNIT_LOWER_TICK, CENT_TICK_SIZE),
+    );
+    let higher_price = pricer.up_price(
+        range_codec::strike_from_tick(TWO_UNIT_HIGHER_TICK, CENT_TICK_SIZE),
+    );
+    assert_eq!(higher_price - lower_price, TWO_UNIT_RISE);
+    assert!(TWO_UNIT_RISE <= pricing::price_monotonicity_tolerance!());
+
+    insert_up(&mut tree, TWO_UNIT_LOWER_TICK, RIPPLE_QUANTITY);
+    insert_up(&mut tree, TWO_UNIT_HIGHER_TICK, RIPPLE_QUANTITY);
+    assert_eq!(
+        tree.walk_linear(&pricer, CENT_TICK_SIZE),
+        math::mul_down(lower_price, RIPPLE_QUANTITY) + math::mul_down(higher_price, RIPPLE_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// RP-15's accepted residual: a surface that is butterfly-free but at the
+/// arbitrage edge rises by far more than the tolerance between adjacent $1 strikes,
+/// because the true slope there no longer outruns the pricer's rounding, and the
+/// walk fails closed on it.
+#[test, expected_failure(abort_code = strike_payout_tree::ENonMonotonePrice)]
+fun a_valid_surface_at_the_butterfly_edge_fails_closed() {
+    let (mut fixture, oracle, pricer) = svi_pricer(
+        BUTTERFLY_EDGE_FORWARD,
+        BUTTERFLY_EDGE_SVI_A,
+        BUTTERFLY_EDGE_SVI_B,
+        BUTTERFLY_EDGE_SVI_SIGMA,
+        BUTTERFLY_EDGE_SVI_RHO_MAGNITUDE,
+        true,
+        BUTTERFLY_EDGE_SVI_M_MAGNITUDE,
+        true,
+    );
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(raw(BUTTERFLY_EDGE_LOWER_TICK));
+    let higher_price = pricer.up_price(raw(BUTTERFLY_EDGE_HIGHER_TICK));
+    assert!(higher_price - lower_price > pricing::price_monotonicity_tolerance!());
+
+    insert_up(&mut tree, BUTTERFLY_EDGE_LOWER_TICK, RIPPLE_QUANTITY);
+    insert_up(&mut tree, BUTTERFLY_EDGE_HIGHER_TICK, RIPPLE_QUANTITY);
+    tree.walk_linear(&pricer, tick_size());
+
+    destroy(tree);
+    cleanup(fixture, oracle);
+}
+
+/// The sign and size of the walk's one divergence from the per-order sum: when an
+/// order's own two boundaries invert, its per-order value floors at zero while the
+/// netted walk lets the pair cancel, so the walk understates liability (NAV reads
+/// high) by exactly the rise times that order's quantity.
+#[test]
+fun a_self_inverted_order_understates_liability_by_its_rise() {
+    let (mut fixture, oracle, pricer) = real_scenario_pricer();
+    let mut tree = strike_payout_tree::new(fixture.scenario_mut().ctx());
+
+    let lower_price = pricer.up_price(raw(DUST_INVERSION_LOWER_TICK));
+    let higher_price = pricer.up_price(raw(DUST_INVERSION_HIGHER_TICK));
+    assert!(higher_price > lower_price);
+
+    // The first order spans the inverted pair itself; the second continues from its
+    // top boundary, so that boundary's start and end cancel.
+    tree.insert_range(
+        DUST_INVERSION_LOWER_TICK,
+        DUST_INVERSION_HIGHER_TICK,
+        SELF_INVERTED_QUANTITY,
+    );
+    tree.insert_range(
+        DUST_INVERSION_HIGHER_TICK,
+        DUST_INVERSION_SHARED_TICK,
+        SELF_INVERTED_QUANTITY,
+    );
+
+    let reference = range_reference(
+        &pricer,
+        vector[DUST_INVERSION_LOWER_TICK, DUST_INVERSION_HIGHER_TICK],
+        vector[DUST_INVERSION_HIGHER_TICK, DUST_INVERSION_SHARED_TICK],
+        vector[SELF_INVERTED_QUANTITY, SELF_INVERTED_QUANTITY],
+    );
+    assert_eq!(
+        reference - walk_linear(&tree, &pricer),
+        math::mul_down(higher_price - lower_price, SELF_INVERTED_QUANTITY),
+    );
+
+    destroy(tree);
+    cleanup(fixture, oracle);
 }
 
 /// A rise of exactly the tolerance prices through at the quoted boundary prices:
@@ -622,15 +763,17 @@ fun shallow_inversion_pricer(): (OracleFixture, OracleBundle, Pricer) {
     (fixture, oracle, pricer)
 }
 
-/// A real short-dated slice at `forward` (spot set to the forward) with negative
-/// `rho` and positive `a` and `m`, as P-35 records them.
-fun slice_pricer(
+/// A real SVI surface at `forward` (spot set to the forward) with positive `a` and
+/// the given signs for `rho` and `m`.
+fun svi_pricer(
     forward: u64,
     svi_a: u64,
     svi_b: u64,
     svi_sigma: u64,
     svi_rho_magnitude: u64,
-    svi_m: u64,
+    svi_rho_is_negative: bool,
+    svi_m_magnitude: u64,
+    svi_m_is_negative: bool,
 ): (OracleFixture, OracleBundle, Pricer) {
     let mut fixture = oracle_fixture::setup_oracle(
         forward,
@@ -647,9 +790,9 @@ fun slice_pricer(
         svi_b,
         svi_sigma,
         svi_rho_magnitude,
-        true,
-        svi_m,
-        false,
+        svi_rho_is_negative,
+        svi_m_magnitude,
+        svi_m_is_negative,
     );
     let pricer = fixture.load_pricer_bundle(&oracle);
     (fixture, oracle, pricer)
