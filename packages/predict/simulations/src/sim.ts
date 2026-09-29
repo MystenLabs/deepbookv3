@@ -16,7 +16,7 @@ import {
     bindFeedsToUnderlyingTx, clockTimestampMs, createAccountTx, createExpiryMarketTx,
     depositToAccountTx, deriveAccountWrapperId, execute, executeAndWait,
     finalizeUsdcCurrencyRegistrationTx, keeperSettleTx, lockCapitalTx,
-    mintLifecycleCapTx, mintPoolValuationCapTx, readPredictEconomicState,
+    addSettledRedeemKeeperTx, mintLifecycleCapTx, mintPoolValuationCapTx, readPredictEconomicState,
     rebalanceExpiryCashTx, redeemSettledTx, refreshOracleAndFlushTxs,
     refreshOracleAndMintTxs, refreshOracleAndRedeemTxs,
     registerUnderlyingAndCreateFeedsTx, requestSupplyTx, requestWithdrawTx,
@@ -262,6 +262,8 @@ async function setup(config: ScenarioConfig, seed: OracleRefreshData): Promise<S
     const lifecycleCapId = createdObjectId(capResult, "MarketLifecycleCap");
     const valuationCapResult = await executeAndWait(mintPoolValuationCapTx(address), "mint_pool_valuation_cap");
     const poolValuationCapId = createdObjectId(valuationCapResult, "PoolValuationCap");
+    // The scenario's permissionless settled redeems are signed by this same address.
+    await executeAndWait(addSettledRedeemKeeperTx(address), "add_settled_redeem_keeper");
     const feedResult = await executeAndWait(registerUnderlyingAndCreateFeedsTx(), "register_underlying_and_create_feeds");
     const pythFeedId = createdObjectId(feedResult, "pyth_feed::PythFeed");
     const bsValueStoreId = createdObjectId(feedResult, "BlockScholesValueStore");

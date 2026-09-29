@@ -23,6 +23,12 @@ const MIN_TRADING_FEE: u64 = 5_000_000;
 const DEFAULT_REFERRAL_FEE: u64 = 500_000;
 const SUBSIDY_AT_RATE_CAP: u64 = 1_000_000;
 const SUBSIDIZED_REFERRAL_FEE: u64 = 400_000;
+/// An admin-set 50% subsidy rate: the sponsor pays 0.5 * 5e6 = 2.5e6, so the
+/// referral basis is the 2.5e6 the trader still pays and the referral is
+/// 0.1 * 2.5e6 = 250_000.
+const HALF_SUBSIDY_RATE: u64 = 500_000_000;
+const SUBSIDY_AT_HALF_RATE: u64 = 2_500_000;
+const HALF_SUBSIDIZED_REFERRAL_FEE: u64 = 250_000;
 const BUILDER_FEE_ATM: u64 = 500_000;
 const BUILDER_CODE_INDEX: u64 = 0;
 const ROUNDING_TO_ZERO_RATE: u64 = 1;
@@ -299,6 +305,60 @@ fun rounded_zero_fee_keeps_referrer_event_attribution() {
         block_scholes_svi_source_timestamp_ms: test_constants::live_source_timestamp_ms(),
     };
     assert_eq!(bcs::to_bytes(&events[0]), bcs::to_bytes(&expected));
+    helpers::assert_market_backed_bundle(&market);
+
+    helpers::return_account_bundle(account);
+    helpers::return_market_bundle(market);
+    fx.finish();
+}
+
+/// The referral basis nets out the subsidy at the rate the admin set, not at the
+/// shipped 20%.
+#[test]
+fun configured_subsidy_rate_sets_the_subsidy_netted_from_the_referral_basis() {
+    let (mut fx, expiry_id, trader, _referrer) = helpers::setup_referred_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let mut market = fx.take_market_bundle(expiry_id);
+    let mut account = fx.take_account_bundle(&trader);
+    fx.sponsor_fee_incentives_bundle(&mut market, constants::min_fee_incentive_sponsorship!());
+    fx.rebalance_expiry_cash_bundle(&mut market);
+    fx.set_fee_incentive_subsidy_rate_bundle(&mut market, HALF_SUBSIDY_RATE);
+
+    let quote = fx.quote_mint_for_account_bundle(
+        &market,
+        &account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+    );
+    assert_eq!(quote.trading_fee(), MIN_TRADING_FEE);
+    assert_eq!(quote.fee_incentive_subsidy(), SUBSIDY_AT_HALF_RATE);
+    let trader_balance_before = fx.account_balance_bundle<USDC>(&account);
+    let market_cash_before = helpers::market(&market).cash_balance();
+
+    fx.mint_exact_quantity_bundle(
+        &mut market,
+        &mut account,
+        helpers::strike_tick(),
+        constants::pos_inf_tick!(),
+        test_constants::mint_quantity(),
+        quote.all_in_cost(),
+        std::u64::max_value!(),
+    );
+
+    // The referral leaves the trader's debit unchanged and comes out of what the
+    // market keeps.
+    assert_eq!(
+        fx.account_balance_bundle<USDC>(&account),
+        trader_balance_before - quote.all_in_cost(),
+    );
+    assert_eq!(
+        helpers::market(&market).cash_balance(),
+        market_cash_before + quote.premium() + MIN_TRADING_FEE - HALF_SUBSIDIZED_REFERRAL_FEE,
+    );
     helpers::assert_market_backed_bundle(&market);
 
     helpers::return_account_bundle(account);

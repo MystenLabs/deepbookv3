@@ -77,8 +77,13 @@ public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
 
 /// Decrease the supply given an absolute amount. Used when the supply needs to be
 /// decreased without decreasing shares.
+/// Liquidation defaults written off here can exceed `total_supply`: borrowers accrue the
+/// protocol spread that suppliers never receive, so once unwithdrawn protocol fees exceed
+/// the vault's cash, a large enough default is more than suppliers are owed. Suppliers
+/// cannot lose more than everything, so the write-off stops at zero instead of aborting
+/// the liquidation.
 public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
-    self.total_supply = self.total_supply - amount;
+    self.total_supply = self.total_supply.saturating_sub(amount);
 }
 
 /// Increase the borrow given an amount. Return the individual borrow shares

@@ -137,6 +137,18 @@ public(package) fun initial_expiry_cash(ledger: &Ledger, expiry_market_id: ID): 
     ledger.registered_expiries.borrow(expiry_market_id).initial_expiry_cash
 }
 
+/// Return the lifetime USDC the pool has sent into one expiry.
+public(package) fun sent_to_expiry(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    ledger.registered_expiries.borrow(expiry_market_id).sent_to_expiry
+}
+
+/// Return the lifetime USDC one expiry has returned to the pool.
+public(package) fun received_from_expiry(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    ledger.registered_expiries.borrow(expiry_market_id).received_from_expiry
+}
+
 /// Return remaining net USDC the pool may fund into one expiry under its
 /// snapshotted allocation cap.
 public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
@@ -151,18 +163,22 @@ public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: 
 }
 
 /// Register an expiry as active pool risk. Records an accounting row only; no
-/// cash moves, so the expiry is not yet funded.
+/// cash moves, so the expiry is not yet funded. The row snapshots the expiry's
+/// absolute fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`, so a
+/// later change to that rate reaches only expiries registered after it. Returns the
+/// absolute cap it snapshotted, for the caller's registration event.
 public(package) fun register_expiry(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
-) {
+    fee_incentive_lifetime_cap_rate: u64,
+): u64 {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
     let fee_incentive_lifetime_cap = math::mul_down(
         max_expiry_allocation,
-        constants::fee_incentive_lifetime_cap_rate!(),
+        fee_incentive_lifetime_cap_rate,
     );
     ledger.active_expiry_markets.push_back(ActiveExpiry { expiry_market_id, expiry_ms });
     ledger
@@ -180,6 +196,7 @@ public(package) fun register_expiry(
                 terminal_received_watermark: 0,
             },
         );
+    fee_incentive_lifetime_cap
 }
 
 /// Remove an expiry from active valuation if present, returning whether it was active.

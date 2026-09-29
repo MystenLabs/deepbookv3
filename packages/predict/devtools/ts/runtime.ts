@@ -1528,9 +1528,10 @@ function addRedeem(tx: Transaction, params: RedeemParams): void {
 // One PTB that redeems every settled position on `wrapper` (permissionless full-close). This is
 // the maximally-incentivized keeper/MEV cleanout: it deletes the N position dynamic-field
 // entries, so its net gas (comp + storage - rebate) is the E1 self-incentive signal (negative =
-// the cleaner is paid). Requires the market SETTLED. The permissionless entrypoint derives
+// the cleaner is paid). Requires the market SETTLED. The keeper entrypoint derives
 // PredictApp app-auth internally, so the caller needs no Auth object and can clean out ANY
-// account's wrapper — the actual on-chain keeper surface, priced as-is.
+// account's wrapper — the actual on-chain keeper surface, priced as-is. The sender must be
+// on the settled-redeem keeper allowlist (`addSettledRedeemKeeperTx`).
 export interface CleanoutPosition {
     orderId: string;
 }
@@ -1636,6 +1637,19 @@ export function mintPoolValuationCapTx(recipient: string): Transaction {
         arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.object(PROTOCOL_CONFIG_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
+// Admin adds `keeper` to the ProtocolConfig allowlist that gates
+// `expiry_market::redeem_settled_permissionless`. `add_settled_redeem_keeper(config,
+// admin_cap, keeper)` is version-gated and aborts if `keeper` is already listed, so
+// run it once per fresh deployment, not on every restart.
+export function addSettledRedeemKeeperTx(keeper: string): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "add_settled_redeem_keeper"),
+        arguments: [tx.object(PROTOCOL_CONFIG_ID), tx.object(ADMIN_CAP_ID), tx.pure.address(keeper)],
+    });
     return tx;
 }
 

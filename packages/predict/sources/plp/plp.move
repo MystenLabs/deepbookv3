@@ -57,6 +57,7 @@ const EValuationWindowExpired: u64 = 10;
 const ESnapshotStageOpen: u64 = 11;
 const EBelowMinUsdcContribution: u64 = 12;
 const EContributionExceedsPriceCeiling: u64 = 13;
+const EInsufficientFeeIncentiveReserve: u64 = 14;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -92,6 +93,7 @@ public struct PoolVault has key {
     /// withdraws this balance.
     protocol_reserve_balance: Balance<USDC>,
     /// Sponsor-funded USDC reserved for taker fee sponsorship, excluded from PLP NAV.
+    /// Admin may reclaim it through `withdraw_fee_incentives`.
     fee_incentive_reserve: Balance<USDC>,
     /// PLP share issuance plus queued supply/withdraw escrow.
     lp: LpBook<PLP>,
@@ -630,7 +632,9 @@ public fun rebalance_expiry_cash(
 
 /// Sponsor taker fee incentives with USDC. Anyone may contribute; the payment
 /// joins a pool-level reserve that is excluded from PLP NAV and later allocated to
-/// expiry markets by the normal rebalance flow.
+/// expiry markets by the normal rebalance flow. A contribution is not
+/// earmarked to its sponsor: admin can withdraw any of the reserve through
+/// `withdraw_fee_incentives`.
 public fun sponsor_fee_incentives(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -651,6 +655,38 @@ public fun sponsor_fee_incentives(
         amount,
         vault.fee_incentive_reserve.value(),
     );
+}
+
+/// Withdraw `amount` USDC of sponsor-funded fee incentives from the pool-level
+/// reserve, for sponsorship the protocol no longer wants to spend. Admin-only.
+///
+/// Reaches the reserve only. Incentives already allocated to a live market stay in
+/// that market's `fee_incentive_balance` and return to the reserve when its
+/// settled-market sweep runs, after which they can be withdrawn here; setting
+/// `protocol_config::set_fee_incentive_subsidy_rate` to zero stops them being spent
+/// in the meantime. The per-expiry lifetime allocation counters are not credited
+/// back: they bound what a market may ever receive, and a withdrawal does not
+/// change what a market already received.
+///
+/// Not gated on the valuation flag, in either stage of a flush: the reserve is
+/// excluded from PLP NAV and no flush figure, frozen or live, reads it, so a
+/// withdrawal cannot reach the mark.
+public fun withdraw_fee_incentives(
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<USDC> {
+    config.assert_version();
+    assert!(amount <= vault.fee_incentive_reserve.value(), EInsufficientFeeIncentiveReserve);
+    let withdrawn = vault.fee_incentive_reserve.split(amount);
+    vault_events::emit_fee_incentives_withdrawn(
+        vault.id(),
+        amount,
+        vault.fee_incentive_reserve.value(),
+    );
+    withdrawn.into_coin(ctx)
 }
 
 /// Add USDC straight to pool idle liquidity without minting any PLP. Anyone may
@@ -916,7 +952,8 @@ public(package) fun new_pool_valuation_proof(): PoolValuationProof {
     PoolValuationProof {}
 }
 
-/// Register a freshly created expiry market with the pool as an accounting row.
+/// Register a freshly created expiry market with the pool as an accounting row,
+/// snapshotting its fee-incentive lifetime cap from `fee_incentive_lifetime_cap_rate`.
 /// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
 /// it. Called by `registry::create_and_share_expiry_market`.
 public(package) fun register_expiry(
@@ -925,6 +962,7 @@ public(package) fun register_expiry(
     expiry_ms: u64,
     max_expiry_allocation: u64,
     initial_expiry_cash: u64,
+    fee_incentive_lifetime_cap_rate: u64,
     clock: &Clock,
 ) {
     let now_ms = clock.timestamp_ms();
@@ -936,9 +974,20 @@ public(package) fun register_expiry(
             EMaxLiveExpiryMarketsExceeded,
         );
     };
-    vault
+    let fee_incentive_lifetime_cap = vault
         .expiry_accounting
-        .register_expiry(expiry_market_id, expiry_ms, max_expiry_allocation, initial_expiry_cash);
+        .register_expiry(
+            expiry_market_id,
+            expiry_ms,
+            max_expiry_allocation,
+            initial_expiry_cash,
+            fee_incentive_lifetime_cap_rate,
+        );
+    vault_events::emit_fee_incentive_lifetime_cap_snapshotted(
+        vault.id(),
+        expiry_market_id,
+        fee_incentive_lifetime_cap,
+    );
 }
 
 // === Private Functions ===
@@ -996,13 +1045,18 @@ fun sweep_or_rebalance_expiry(
     } else if (clock.timestamp_ms() >= market.expiry()) {
         false
     } else {
-        vault.rebalance_live_expiry(market, expiry_market_id);
+        vault.rebalance_live_expiry(market, config, expiry_market_id);
         false
     }
 }
 
-fun rebalance_live_expiry(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
-    vault.sync_fee_incentives(market, expiry_market_id);
+fun rebalance_live_expiry(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
+    vault.sync_fee_incentives(market, config, expiry_market_id);
 
     let initial_expiry_cash = vault.expiry_accounting.initial_expiry_cash(expiry_market_id);
     let (target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
@@ -1067,11 +1121,19 @@ fun sweep_live_expiry_surplus(
     );
 }
 
-fun sync_fee_incentives(vault: &mut PoolVault, market: &mut ExpiryMarket, expiry_market_id: ID) {
+/// Top a live market's fee-incentive balance up to the configured live target share
+/// of its allocation cap, from the pool reserve and within its lifetime cap. Never
+/// takes a balance back: a market already above the target receives nothing.
+fun sync_fee_incentives(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
     let max_expiry_allocation = vault.expiry_accounting.max_expiry_allocation(expiry_market_id);
     let requested_allocation = math::mul_down(
         max_expiry_allocation,
-        constants::fee_incentive_live_target_rate!(),
+        config.fee_incentive_live_target_rate(),
     )
         .saturating_sub(market.fee_incentive_balance())
         .min(vault.fee_incentive_reserve.value());
@@ -1111,9 +1173,10 @@ fun expiry_rebalance_cash_terms(market: &ExpiryMarket, initial_expiry_cash: u64)
 }
 
 /// Settled-market sweep: deactivate the expiry, return its free cash to idle,
-/// materialize its terminal profit, and return unused fee incentives to the pool
-/// reserve. Idempotent — a settled market already swept returns zero cash and
-/// recognizes no further profit, so a second pass is a no-op.
+/// report the expiry's lifetime PnL, materialize its terminal profit, and return
+/// unused fee incentives to the pool reserve. Idempotent — a settled market already
+/// swept returns zero cash, emits nothing, and recognizes no further profit, so a
+/// second pass is a no-op.
 fun sweep_settled_expiry(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -1131,6 +1194,16 @@ fun sweep_settled_expiry(
             expiry_market_id,
             market.settlement_price(),
             returned_cash_amount,
+        );
+        vault_events::emit_expiry_pnl(
+            vault.id(),
+            expiry_market_id,
+            market.propbook_underlying_id(),
+            market.reference_tick_source_timestamp_ms(),
+            market.expiry(),
+            market.settlement_price(),
+            vault.expiry_accounting.sent_to_expiry(expiry_market_id),
+            vault.expiry_accounting.received_from_expiry(expiry_market_id),
         );
     };
     vault.materialize_expiry_profit(config, expiry_market_id);

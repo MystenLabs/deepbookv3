@@ -5,7 +5,7 @@
 #[test_only]
 module deepbook_predict::config_events_tests;
 
-use deepbook_predict::{config_events, test_helpers};
+use deepbook_predict::{config_events, test_constants, test_helpers};
 use std::{bcs, unit_test::{assert_eq, destroy}};
 use sui::{clock, event, test_scenario::return_shared};
 
@@ -36,6 +36,13 @@ const EWMA_PENALTY_RATE: u64 = 1_500_000;
 const DEFAULT_PLP_WITHDRAW_FEE_RATE: u64 = 2_000_000;
 const PLP_SUPPLY_FEE_RATE: u64 = 1_000_000;
 const PLP_WITHDRAW_FEE_RATE: u64 = 3_000_000;
+
+const FEE_INCENTIVE_SUBSIDY_RATE: u64 = 500_000_000;
+const DISABLED_FEE_INCENTIVE_SUBSIDY_RATE: u64 = 0;
+
+const DEFAULT_FEE_INCENTIVE_LIVE_TARGET_RATE: u64 = 20_000_000;
+const RAISED_FEE_INCENTIVE_LIFETIME_CAP_RATE: u64 = 250_000_000;
+const RAISED_FEE_INCENTIVE_LIVE_TARGET_RATE: u64 = 50_000_000;
 
 public struct ExpectedStrikeExposureTemplateConfigUpdated has copy, drop {
     backing_buffer_lambda: u64,
@@ -68,6 +75,22 @@ public struct ExpectedEwmaConfigUpdated has copy, drop {
 public struct ExpectedPlpFeeRatesUpdated has copy, drop {
     plp_supply_fee_rate: u64,
     plp_withdraw_fee_rate: u64,
+    onchain_timestamp_ms: u64,
+}
+
+public struct ExpectedSettledRedeemKeeperUpdated has copy, drop {
+    keeper: address,
+    allowed: bool,
+}
+
+public struct ExpectedFeeIncentiveSubsidyRateUpdated has copy, drop {
+    fee_incentive_subsidy_rate: u64,
+    onchain_timestamp_ms: u64,
+}
+
+public struct ExpectedFeeIncentiveAllocationRatesUpdated has copy, drop {
+    fee_incentive_live_target_rate: u64,
+    fee_incentive_lifetime_cap_rate: u64,
     onchain_timestamp_ms: u64,
 }
 
@@ -209,6 +232,106 @@ fun either_plp_fee_setter_emits_both_rates() {
         onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
     };
     assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&withdraw_expected));
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(registry);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Each allowlist change emits the keeper and its membership after the change, so an
+/// indexer can rebuild the current set from this event stream alone.
+#[test]
+fun settled_redeem_keeper_changes_emit_keeper_and_membership() {
+    let (scenario, registry, mut config, admin_cap) = test_helpers::begin_registry_test();
+
+    config.add_settled_redeem_keeper(&admin_cap, test_constants::alice());
+    config.remove_settled_redeem_keeper(&admin_cap, test_constants::alice());
+
+    let events = event::events_by_type<config_events::SettledRedeemKeeperUpdated>();
+    assert_eq!(events.length(), TWO_EVENTS);
+    let added = ExpectedSettledRedeemKeeperUpdated {
+        keeper: test_constants::alice(),
+        allowed: true,
+    };
+    assert_eq!(bcs::to_bytes(&events[FIRST_EVENT_INDEX]), bcs::to_bytes(&added));
+    let removed = ExpectedSettledRedeemKeeperUpdated {
+        keeper: test_constants::alice(),
+        allowed: false,
+    };
+    assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&removed));
+
+    destroy(admin_cap);
+    return_shared(registry);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Both the first set (which creates the dynamic field) and a later overwrite emit
+/// the post-state rate.
+#[test]
+fun fee_incentive_subsidy_rate_setter_emits_post_state() {
+    let (mut scenario, registry, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(EVENT_TIMESTAMP_MS);
+
+    config.set_fee_incentive_subsidy_rate(&admin_cap, FEE_INCENTIVE_SUBSIDY_RATE, &clock);
+    config.set_fee_incentive_subsidy_rate(&admin_cap, DISABLED_FEE_INCENTIVE_SUBSIDY_RATE, &clock);
+
+    let events = event::events_by_type<config_events::FeeIncentiveSubsidyRateUpdated>();
+    assert_eq!(events.length(), TWO_EVENTS);
+    let created = ExpectedFeeIncentiveSubsidyRateUpdated {
+        fee_incentive_subsidy_rate: FEE_INCENTIVE_SUBSIDY_RATE,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[FIRST_EVENT_INDEX]), bcs::to_bytes(&created));
+    let overwritten = ExpectedFeeIncentiveSubsidyRateUpdated {
+        fee_incentive_subsidy_rate: DISABLED_FEE_INCENTIVE_SUBSIDY_RATE,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&overwritten));
+
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    return_shared(registry);
+    return_shared(config);
+    scenario.end();
+}
+
+/// Either allocation-rate setter emits both rates' post-state, so an indexer never
+/// has to join the two setters' histories.
+#[test]
+fun either_fee_incentive_allocation_setter_emits_both_rates() {
+    let (mut scenario, registry, mut config, admin_cap) = test_helpers::begin_registry_test();
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(EVENT_TIMESTAMP_MS);
+
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        RAISED_FEE_INCENTIVE_LIFETIME_CAP_RATE,
+        &clock,
+    );
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        RAISED_FEE_INCENTIVE_LIVE_TARGET_RATE,
+        &clock,
+    );
+
+    let events = event::events_by_type<config_events::FeeIncentiveAllocationRatesUpdated>();
+    assert_eq!(events.length(), TWO_EVENTS);
+    let cap_raised = ExpectedFeeIncentiveAllocationRatesUpdated {
+        fee_incentive_live_target_rate: DEFAULT_FEE_INCENTIVE_LIVE_TARGET_RATE,
+        fee_incentive_lifetime_cap_rate: RAISED_FEE_INCENTIVE_LIFETIME_CAP_RATE,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[FIRST_EVENT_INDEX]), bcs::to_bytes(&cap_raised));
+    let target_raised = ExpectedFeeIncentiveAllocationRatesUpdated {
+        fee_incentive_live_target_rate: RAISED_FEE_INCENTIVE_LIVE_TARGET_RATE,
+        fee_incentive_lifetime_cap_rate: RAISED_FEE_INCENTIVE_LIFETIME_CAP_RATE,
+        onchain_timestamp_ms: EVENT_TIMESTAMP_MS,
+    };
+    assert_eq!(bcs::to_bytes(&events[TWO_EVENTS - ONE_EVENT]), bcs::to_bytes(&target_raised));
 
     clock.destroy_for_testing();
     destroy(admin_cap);

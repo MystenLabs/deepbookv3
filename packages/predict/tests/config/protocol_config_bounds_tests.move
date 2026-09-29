@@ -4,8 +4,9 @@
 /// Validation-envelope tests for the admin-tunable values on `ProtocolConfig`
 /// whose `config_constants` bounds were previously untested: the
 /// strike-exposure templates (base fee, min fee, entry-probability bounds,
-/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate) and the
-/// live protocol-wide referral fee rate.
+/// expiry-fee ramp, backing buffer lambda, inventory-impact max rate), the
+/// live protocol-wide referral fee rate, and the fee-incentive subsidy, live-target,
+/// and lifetime-cap rates.
 /// Every abort test drives the real
 /// admin setter on a shared
 /// `ProtocolConfig` with a value one unit outside the envelope; pass tests assert
@@ -273,6 +274,169 @@ fun referral_fee_rate_ships_at_ten_percent_and_accepts_boundaries() {
 
     config.set_referral_fee_rate(&admin_cap, config_constants::max_referral_fee_rate!());
     assert_eq!(config.referral_fee_rate(), 250_000_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+// === Fee-incentive subsidy rate ===
+//
+// The floor is 0, so there is no reachable below-min case for a `u64`. The rate
+// lives in a dynamic field added after deploy, so the first read comes from a
+// config that has never stored it.
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeIncentiveSubsidyRate)]
+fun fee_incentive_subsidy_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_subsidy_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test]
+fun fee_incentive_subsidy_rate_ships_at_twenty_percent_and_accepts_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Never set: reads the rate every earlier package version charged.
+    assert_eq!(config.fee_incentive_subsidy_rate(), 200_000_000);
+
+    // The first set creates the field, later sets overwrite it.
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 0);
+
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 500_000_000);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+// === Fee-incentive allocation rates ===
+//
+// The floors are 0, so there is no reachable below-min case for a `u64`. Both live
+// in dynamic fields added after deploy, so the first read comes from a config that
+// has never stored either. The two are independent: the live target may exceed the
+// lifetime cap, which then bounds what a market receives.
+
+/// The shipped shares, read before either rate is ever set.
+const SHIPPED_LIVE_TARGET_RATE: u64 = 20_000_000;
+const SHIPPED_LIFETIME_CAP_RATE: u64 = 100_000_000;
+/// The 100% ceiling of both envelopes.
+const FULL_RATE: u64 = 1_000_000_000;
+/// Distinct in-envelope values for the key-independence test: 5% live target and a
+/// 40% subsidy, under a 100% lifetime cap.
+const DISTINCT_LIVE_TARGET_RATE: u64 = 50_000_000;
+const DISTINCT_SUBSIDY_RATE: u64 = 400_000_000;
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeIncentiveLiveTargetRate)]
+fun fee_incentive_live_target_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_live_target_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidFeeIncentiveLifetimeCapRate)]
+fun fee_incentive_lifetime_cap_rate_above_max_aborts() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!() + 1,
+        &clock,
+    );
+    abort 999
+}
+
+#[test]
+fun fee_incentive_allocation_rates_ship_at_two_and_ten_percent_and_accept_boundaries() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    // Never set: read the shares every earlier package version used.
+    assert_eq!(config.fee_incentive_live_target_rate(), SHIPPED_LIVE_TARGET_RATE);
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), SHIPPED_LIFETIME_CAP_RATE);
+
+    // Up to the 100% ceiling. The target goes first, above the still-shipped 10%
+    // cap, which the setters accept because the two are independent.
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_live_target_rate(), FULL_RATE);
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), SHIPPED_LIFETIME_CAP_RATE);
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::max_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), FULL_RATE);
+
+    // Down to the 0 floor; each overwrite replaces the stored value.
+    config.set_template_fee_incentive_lifetime_cap_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_lifetime_cap_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), 0);
+    config.set_fee_incentive_live_target_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_live_target_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_live_target_rate(), 0);
+
+    return_shared(config);
+    clock.destroy_for_testing();
+    destroy(admin_cap);
+    scenario.end();
+}
+
+/// The three fee-incentive rates live under three dynamic-field keys. Setting each
+/// to a distinct value and then changing one must leave the other two alone, which
+/// catches two setters or getters sharing a key.
+#[test]
+fun fee_incentive_rates_are_stored_independently() {
+    let (scenario, admin_cap, config_id, clock) = new_shared_config();
+    let mut config = scenario.take_shared_by_id<ProtocolConfig>(config_id);
+
+    config.set_template_fee_incentive_lifetime_cap_rate(&admin_cap, FULL_RATE, &clock);
+    config.set_fee_incentive_live_target_rate(&admin_cap, DISTINCT_LIVE_TARGET_RATE, &clock);
+    config.set_fee_incentive_subsidy_rate(&admin_cap, DISTINCT_SUBSIDY_RATE, &clock);
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), FULL_RATE);
+    assert_eq!(config.fee_incentive_live_target_rate(), DISTINCT_LIVE_TARGET_RATE);
+    assert_eq!(config.fee_incentive_subsidy_rate(), DISTINCT_SUBSIDY_RATE);
+
+    config.set_fee_incentive_subsidy_rate(
+        &admin_cap,
+        config_constants::min_fee_incentive_subsidy_rate!(),
+        &clock,
+    );
+    assert_eq!(config.fee_incentive_subsidy_rate(), 0);
+    assert_eq!(config.fee_incentive_lifetime_cap_rate(), FULL_RATE);
+    assert_eq!(config.fee_incentive_live_target_rate(), DISTINCT_LIVE_TARGET_RATE);
 
     return_shared(config);
     clock.destroy_for_testing();

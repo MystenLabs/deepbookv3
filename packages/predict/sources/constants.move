@@ -8,7 +8,7 @@ module deepbook_predict::constants;
 // === Package Versioning ===
 
 /// Returns the package version compared against `ProtocolConfig.version_watermark` by version-gated entrypoints.
-public macro fun current_version(): u64 { 3 }
+public macro fun current_version(): u64 { 4 }
 
 // === Scaling ===
 
@@ -142,15 +142,6 @@ public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
 public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
 // === Fee Incentives ===
-
-/// Fraction of the trading fee paid by sponsor-funded incentives.
-public(package) macro fun fee_incentive_subsidy_rate(): u64 { 200_000_000 }
-
-/// Fraction of the expiry allocation cap an expiry can hold in live fee incentives.
-public(package) macro fun fee_incentive_live_target_rate(): u64 { 20_000_000 }
-
-/// Fraction of the expiry allocation cap an expiry can receive over its lifetime.
-public(package) macro fun fee_incentive_lifetime_cap_rate(): u64 { 100_000_000 }
 
 /// Minimum USDC a single fee-incentive sponsorship may contribute.
 public(package) macro fun min_fee_incentive_sponsorship(): u64 { 10_000_000 }
